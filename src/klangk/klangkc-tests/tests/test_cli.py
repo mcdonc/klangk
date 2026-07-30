@@ -1418,6 +1418,55 @@ class TestKlangkClient:
         assert len(new_cmds) == 1
         assert new_cmds[0]["name"] == "term-1"
 
+    def test_rename_terminal(self):
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                        {"index": 1, "name": "build", "id": "@1"},
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "main", "id": "@0"},
+                        {"index": 1, "name": "ci", "id": "@1"},
+                    ],
+                }
+            ),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            windows = asyncio.run(client.rename_terminal("alpha", 1, "ci"))
+        assert len(windows) == 2
+        assert windows[1]["name"] == "ci"
+        # Verify terminal_rename_window was sent with index + name
+        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
+        rename_cmds = [
+            s for s in sent if s.get("cmd") == "terminal_rename_window"
+        ]
+        assert len(rename_cmds) == 1
+        assert rename_cmds[0]["index"] == 1
+        assert rename_cmds[0]["name"] == "ci"
+
     def test_list_workspaces_parses_response(self):
         client = KlangkClient("http://test:8995", "valid-token")
         mock_resp = MagicMock()

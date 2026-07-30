@@ -225,6 +225,11 @@ class TuiState:
     async def create_terminal(self, name: str, window_name: str) -> list[dict]:
         return await self.client().create_terminal(name, window_name)
 
+    async def rename_terminal(
+        self, name: str, index: int, new_name: str
+    ) -> list[dict]:
+        return await self.client().rename_terminal(name, index, new_name)
+
     # --- auth mode (probed live via /config) ---
 
     def auth_mode(self) -> str:

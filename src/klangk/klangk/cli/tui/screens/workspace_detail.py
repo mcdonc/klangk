@@ -55,7 +55,8 @@ class WorkspaceDetailScreen(Screen):
         # Terminal-scoped keys are hidden from the Footer — their hints
         # are shown inline on the Terminals list header instead (#1860).
         Binding("n", "new_terminal", "New term", show=False),
-        Binding("delete", "delete_terminal", "Del term", show=False),
+        Binding("m", "rename_terminal", "Rename term", show=False),
+        Binding("t", "delete_terminal", "Del term", show=False),
         Binding("?", "cheatsheet", "Keys", show=False),
     ]
 
@@ -101,7 +102,11 @@ class WorkspaceDetailScreen(Screen):
         yield Vertical(
             Horizontal(
                 Static("Terminals", id="term_label"),
-                Static("[n] new  [⌿] delete", id="term_hints", markup=False),
+                Static(
+                    "[n] new  [m] rename  [t] delete",
+                    id="term_hints",
+                    markup=False,
+                ),
                 id="term_header",
             ),
             SpatialListView(id="term_list"),
@@ -213,7 +218,8 @@ class WorkspaceDetailScreen(Screen):
             Binding("u", "duplicate", "Dup"),
             Binding("d", "delete", "Del ws"),
             Binding("n", "new_terminal", "New term", show=False),
-            Binding("delete", "delete_terminal", "Del term", show=False),
+            Binding("m", "rename_terminal", "Rename term", show=False),
+            Binding("t", "delete_terminal", "Del term", show=False),
             # `?` must survive the per-display BINDINGS rebuild so the
             # cheatsheet stays reachable after _display() runs on mount
             # (#1802).
@@ -614,13 +620,15 @@ class WorkspaceDetailScreen(Screen):
         # label is a friendly name for messages; falls back to the id
         # when not supplied (e.g. direct test calls).
         display = label if label is not None else window_id
-        self._msg(f"Deleting terminal {display}…")
+        self.app.notify(f"Deleting terminal {display}…")
         try:
             windows = await self.app.tui_state.close_terminal(
                 self._name, window_id
             )
         except Exception as exc:
-            self._msg(f"Delete failed: {exc}", error=True)
+            self.app.notify(
+                f"Delete failed: {exc}", severity="error", timeout=8
+            )
             # The id may no longer exist server-side — refresh so the
             # dead row self-heals instead of failing on every retry (#1965).
             await self._load_terminals()
@@ -628,14 +636,16 @@ class WorkspaceDetailScreen(Screen):
         if not windows:
             # The last terminal is protected client-side, so an empty result
             # here means the close/refresh failed — don't claim success.
-            self._msg(
-                "Delete failed — could not refresh terminals.", error=True
+            self.app.notify(
+                "Delete failed — could not refresh terminals.",
+                severity="error",
+                timeout=8,
             )
             await self._load_terminals()
             return
         self._terminals = windows
         await self._render_terminals()
-        self._msg(f"Deleted terminal {display}.")
+        self.app.notify(f"Deleted terminal {display}.")
 
     def _terminal_label_for(self, key: str) -> str:
         """Friendly label for a list row: the window name, or the key."""
@@ -647,6 +657,61 @@ class WorkspaceDetailScreen(Screen):
             if w.get("index") == idx:
                 return str(w.get("name") or idx)
         return key
+
+    def action_rename_terminal(self) -> None:
+        lv = self.query_one("#term_list", ListView)
+        child = lv.highlighted_child
+        if child is None or not child.name:
+            return
+        # The rename controller targets the window by INDEX (tmux
+        # rename-window -t session:INDEX), not the @N id used by select /
+        # delete. The list row key *is* the index (#1965).
+        index = int(child.name)
+        current = self._terminal_label_for(child.name)
+
+        def _on_rename(new_name: str | None) -> None:
+            # InputScreen dismisses None on cancel/escape (#2016); an
+            # unchanged name also skips the round-trip.
+            if not new_name or new_name == current:
+                return
+            self.run_worker(
+                self._do_rename_terminal(index, new_name),
+                exit_on_error=False,
+            )
+
+        self.app.push_screen(
+            InputScreen(
+                f"Rename '{current}' to:",
+                default=current,
+                ok_label="Rename",
+                select_on_focus=False,
+            ),
+            _on_rename,
+        )
+
+    async def _do_rename_terminal(self, index: int, new_name: str) -> None:
+        try:
+            windows = await self.app.tui_state.rename_terminal(
+                self._name, index, new_name
+            )
+        except Exception as exc:
+            self.app.notify(
+                f"Rename failed: {exc}", severity="error", timeout=8
+            )
+            # Stale index — refresh so the row self-heals (#1965).
+            await self._load_terminals()
+            return
+        if not windows:
+            self.app.notify(
+                "Rename failed — could not refresh terminals.",
+                severity="error",
+                timeout=8,
+            )
+            await self._load_terminals()
+            return
+        self._terminals = windows
+        await self._render_terminals()
+        self.app.notify(f"Renamed terminal to '{new_name}'.")
 
     def action_new_terminal(self) -> None:
         if self._ws is None:
@@ -663,22 +728,26 @@ class WorkspaceDetailScreen(Screen):
         else:
             candidate = f"term-{len(self._terminals)}"  # pragma: no cover
 
-        self._msg(f"Creating terminal '{candidate}'…")
+        self.app.notify(f"Creating terminal '{candidate}'…")
         try:
             windows = await self.app.tui_state.create_terminal(
                 self._name, candidate
             )
         except Exception as exc:
-            self._msg(f"Create failed: {exc}", error=True)
+            self.app.notify(
+                f"Create failed: {exc}", severity="error", timeout=8
+            )
             return
         if not windows:
-            self._msg(
-                "Create failed — could not refresh terminals.", error=True
+            self.app.notify(
+                "Create failed — could not refresh terminals.",
+                severity="error",
+                timeout=8,
             )
             return
         self._terminals = windows
         await self._render_terminals()
-        self._msg(f"Created terminal '{candidate}'.")
+        self.app.notify(f"Created terminal '{candidate}'.")
 
     # --- actions ---
 
@@ -854,7 +923,8 @@ class WorkspaceDetailScreen(Screen):
                 "Terminals",
                 [
                     ("n", "New terminal"),
-                    ("Del", "Delete terminal"),
+                    ("m", "Rename terminal"),
+                    ("t", "Delete terminal"),
                 ],
             ),
         ]

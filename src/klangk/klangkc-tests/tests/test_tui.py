@@ -638,6 +638,28 @@ async def test_create_terminal_delegates(monkeypatch, redirect_xdg):
     assert len(result) == 2
 
 
+async def test_rename_terminal_delegates(monkeypatch, redirect_xdg):
+
+    renamed = {}
+
+    async def fake_rename(name, index, new_name):
+        renamed.update(name=name, index=index, new=new_name)
+        return [
+            {"index": 0, "name": "main"},
+            {"index": 1, "name": new_name},
+        ]
+
+    from unittest.mock import MagicMock
+
+    fake_client = MagicMock()
+    fake_client.rename_terminal = fake_rename
+    t = TuiState("https://x.example")
+    monkeypatch.setattr(t, "client", lambda: fake_client)
+    result = await t.rename_terminal("ws1", 1, "ci")
+    assert renamed == {"name": "ws1", "index": 1, "new": "ci"}
+    assert len(result) == 2
+
+
 def test_login_password_success(monkeypatch, redirect_xdg):
     captured = {}
 
@@ -4498,9 +4520,10 @@ async def test_detail_terminal_actions_inline_not_in_footer(monkeypatch):
 
         # (b) Terminal keys still exist (so the keys work) but are hidden
         # from the Footer.
-        assert "n" in bindings and "delete" in bindings
+        assert "n" in bindings and "m" in bindings and "t" in bindings
         assert bindings["n"].show is False
-        assert bindings["delete"].show is False
+        assert bindings["m"].show is False
+        assert bindings["t"].show is False
 
         # (c) Workspace-scoped keys remain visible ...
         for key in ("e", "r", "s", "u", "d"):
@@ -5522,6 +5545,10 @@ async def test_detail_delete_terminal(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.query_one("#term_list").index = 1
         d.action_delete_terminal()
         for _ in range(3):
@@ -5604,9 +5631,13 @@ async def test_detail_delete_terminal_refreshes_on_server_failure(
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         before = calls["list"]
         await d._do_delete_terminal("@1")
-        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+        assert any("Delete failed" in m for m in notified)
         # Failure triggered a refresh.
         assert calls["list"] > before
 
@@ -5638,6 +5669,10 @@ async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.query_one("#term_list").index = 1
         d.action_delete_terminal()
         # While close_terminal is blocked on the gate, the in-flight
@@ -5670,9 +5705,13 @@ async def test_detail_delete_terminal_failure(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         await d._do_delete_terminal("@1")  # close raises
         await app.workers.wait_for_complete()
-        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+        assert any("Delete failed" in m for m in notified)
 
 
 def test_detail_window_id_for_resolves_index_and_falls_back():
@@ -6058,12 +6097,16 @@ async def test_detail_delete_terminal_empty_result(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         before = calls["list"]
         await d._do_delete_terminal("@1")
         await app.workers.wait_for_complete()
         # Let the refresh's clear/append reconcile in the DOM.
         await pilot.pause()
-        assert "Delete failed" in str(d.query_one("#detail_msg").render())
+        assert any("Delete failed" in m for m in notified)
         assert (
             len(d.query_one("#term_list", ListView).query(ListItem)) == 2
         )  # unchanged
@@ -6101,6 +6144,10 @@ async def test_detail_new_terminal(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         d.action_new_terminal()
         for _ in range(5):
             await pilot.pause()
@@ -6132,9 +6179,13 @@ async def test_detail_new_terminal_failure(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         await d._do_new_terminal()
         await app.workers.wait_for_complete()
-        assert "Create failed" in str(d.query_one("#detail_msg").render())
+        assert any("Create failed" in m for m in notified)
 
 
 async def test_detail_new_terminal_empty_result(monkeypatch):
@@ -6159,9 +6210,13 @@ async def test_detail_new_terminal_empty_result(monkeypatch):
         await app.screen._load_terminals()
         await pilot.pause()
         d = app.screen
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
         await d._do_new_terminal()
         await app.workers.wait_for_complete()
-        assert "Create failed" in str(d.query_one("#detail_msg").render())
+        assert any("Create failed" in m for m in notified)
 
 
 async def test_detail_new_terminal_no_workspace(monkeypatch):
@@ -6181,6 +6236,197 @@ async def test_detail_new_terminal_no_workspace(monkeypatch):
         d = app.screen
         d.action_new_terminal()  # _ws is None -> no-op
         await app.workers.wait_for_complete()
+
+
+async def test_detail_rename_terminal(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    renamed = {}
+
+    async def _rename(name, index, new_name):
+        renamed.update(name=name, index=index, new=new_name)
+        return [
+            {"index": 0, "name": "main", "id": "@0"},
+            {"index": 1, "name": new_name, "id": "@1"},
+        ]
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, rename_terminal=_rename)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
+        d.action_rename_terminal()
+        await pilot.pause()
+        # InputScreen pushed, prefilled with the current name "build".
+        assert isinstance(app.screen, InputScreen)
+        assert app.screen.query_one("#inp_value", Input).value == "build"
+        app.screen.query_one("#inp_value", Input).value = "ci"
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        for _ in range(4):
+            await pilot.pause()
+        assert renamed == {"name": "alpha", "index": 1, "new": "ci"}
+        assert any("Renamed terminal to 'ci'" in m for m in notified)
+
+
+async def test_detail_rename_terminal_no_selection(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, rename_terminal=_async_empty)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = None
+        d.action_rename_terminal()  # nothing highlighted -> no-op
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # No InputScreen pushed — still on the detail screen.
+        assert app.screen is d
+
+
+async def test_detail_rename_terminal_cancel(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    renamed = []
+
+    async def _rename(*a, **k):
+        renamed.append(True)
+        return []
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, rename_terminal=_rename)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        d.action_rename_terminal()
+        await pilot.pause()
+        assert isinstance(app.screen, InputScreen)
+        app.screen.on_button_pressed(FakeBtnPress("cancel"))  # -> None
+        for _ in range(3):
+            await pilot.pause()
+        assert renamed == []
+        assert app.screen is d
+
+
+async def test_detail_rename_terminal_failure(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    async def _rename(name, index, new_name):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, rename_terminal=_rename)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
+        d.action_rename_terminal()
+        await pilot.pause()
+        app.screen.query_one("#inp_value", Input).value = "ci"
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        for _ in range(4):
+            await pilot.pause()
+        assert any("Rename failed" in m for m in notified)
+
+
+async def test_detail_rename_terminal_empty_result(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    async def _rename(name, index, new_name):
+        return []
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, rename_terminal=_rename)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        notified = []
+        monkeypatch.setattr(
+            app, "notify", lambda *a, **k: notified.append(a[0] if a else "")
+        )
+        d.action_rename_terminal()
+        await pilot.pause()
+        app.screen.query_one("#inp_value", Input).value = "ci"
+        app.screen.on_button_pressed(FakeBtnPress("ok"))
+        for _ in range(4):
+            await pilot.pause()
+        assert any("could not refresh" in m for m in notified)
+
+
+async def test_detail_rename_terminal_appends_to_default(monkeypatch):
+    """The rename input appends (select_on_focus=False): typing into a
+    prefilled 'build' field yields 'build2', not a replace (#2020)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws(list_terminals=_async_terms, rename_terminal=_async_empty)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        d = app.screen
+        d.query_one("#term_list").index = 1
+        d.action_rename_terminal()
+        await pilot.pause()
+        assert isinstance(app.screen, InputScreen)
+        inp = app.screen.query_one("#inp_value", Input)
+        assert inp.value == "build"
+        await pilot.press("2")
+        await pilot.pause()
+        assert inp.value == "build2"  # appended, not replaced
+        app.screen.dismiss(None)
 
 
 # ---------------------------------------------------------------------------
@@ -9600,7 +9846,19 @@ async def test_detail_screen_cheatsheet_modal():
         await pilot.pause()
         assert isinstance(app.screen, CheatsheetScreen)
         text = _cheatsheet_text(app.screen)
-        for key in ("Esc", "Enter", "e", "r", "s", "u", "d", "x", "n", "Del"):
+        for key in (
+            "Esc",
+            "Enter",
+            "e",
+            "r",
+            "s",
+            "u",
+            "d",
+            "x",
+            "n",
+            "m",
+            "t",
+        ):
             assert key in text, f"missing {key!r} in cheatsheet"
         assert "Back to workspace list" in text
 
