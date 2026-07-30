@@ -2542,6 +2542,74 @@ async def test_main_screen_action_edit_load_fallbacks(monkeypatch):
         assert isinstance(app2.screen, EditWorkspaceScreen)
 
 
+async def test_main_screen_edit_find_auth_error_shows_overlay(monkeypatch):
+    """AuthError in find_workspace during _do_edit (main screen) triggers
+    session-expired overlay (#2035)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha")
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: (_ for _ in ()).throw(AuthError("expired"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_edit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+
+
+async def test_main_screen_edit_auth_error_shows_overlay(monkeypatch):
+    """AuthError in list_images during _do_edit (main screen) triggers
+    session-expired overlay instead of opening the form with defaults (#2035)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha")
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.list_images = lambda: (_ for _ in ()).throw(AuthError("expired"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_edit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+
+
+async def test_main_screen_edit_autostart_auth_error_shows_overlay(
+    monkeypatch,
+):
+    """AuthError fetching allow_autostart in _do_edit (main screen) triggers
+    the session-expired overlay (#2035)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha")
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.list_images = lambda: {"default": "base", "allowed": ["base"]}
+    st.allow_autostart = lambda: (_ for _ in ()).throw(AuthError("expired"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_edit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+
+
 async def test_main_screen_on_edited_refreshes(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -6049,6 +6117,90 @@ async def test_detail_auth_expired_shows_overlay(monkeypatch):
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+
+
+async def test_detail_load_terminals_auth_error_shows_overlay(monkeypatch):
+    """AuthError in _load_terminals triggers the session-expired overlay
+    instead of silently showing an empty terminal list (#2035)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+
+    async def bad_terminals(n):
+        raise AuthError("expired")
+
+    st.list_terminals = bad_terminals
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+
+
+async def test_detail_edit_auth_error_in_images_shows_overlay(monkeypatch):
+    """AuthError fetching images in _do_edit (detail screen) triggers the
+    session-expired overlay instead of opening the form with defaults (#2035)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.list_images = lambda: (_ for _ in ()).throw(AuthError("expired"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Trigger edit from the detail screen.
+        screen = next(
+            s for s in app.screen_stack if isinstance(s, WorkspaceDetailScreen)
+        )
+        screen.run_worker(screen._do_edit, exit_on_error=False)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+
+
+async def test_detail_edit_auth_error_in_autostart_shows_overlay(monkeypatch):
+    """AuthError fetching allow_autostart in _do_edit (detail screen) triggers
+    the session-expired overlay (#2035)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.list_images = lambda: {"default": "base", "allowed": ["base"]}
+    st.allow_autostart = lambda: (_ for _ in ()).throw(AuthError("expired"))
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        screen = next(
+            s for s in app.screen_stack if isinstance(s, WorkspaceDetailScreen)
+        )
+        screen.run_worker(screen._do_edit, exit_on_error=False)
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, SessionExpiredScreen)

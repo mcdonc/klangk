@@ -622,6 +622,9 @@ class MainScreen(Screen):
         except WorkspaceNotFoundError:
             self._flash(f"Workspace '{name}' not found.")
             return
+        except AuthError:
+            self.app.session_expired()
+            return
         except Exception as exc:
             self._flash(f"Could not load workspace: {exc}")
             return
@@ -629,10 +632,16 @@ class MainScreen(Screen):
             data = await asyncio.to_thread(state.list_images)
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
+        except AuthError:
+            self.app.session_expired()
+            return
         except Exception:
             default, allowed = "", []
         try:
             allow_autostart = await asyncio.to_thread(state.allow_autostart)
+        except AuthError:
+            self.app.session_expired()
+            return
         except Exception:
             allow_autostart = False
         self.app.push_screen(
