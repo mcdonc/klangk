@@ -55,7 +55,7 @@ class WorkspaceDetailScreen(Screen):
         # Terminal-scoped keys are hidden from the Footer — their hints
         # are shown inline on the Terminals list header instead (#1860).
         Binding("n", "new_terminal", "New term", show=False),
-        Binding("f2", "rename_terminal", "Rename term", show=False),
+        Binding("m", "rename_terminal", "Rename term", show=False),
         Binding("delete", "delete_terminal", "Del term", show=False),
         Binding("?", "cheatsheet", "Keys", show=False),
     ]
@@ -103,7 +103,7 @@ class WorkspaceDetailScreen(Screen):
             Horizontal(
                 Static("Terminals", id="term_label"),
                 Static(
-                    "[n] new  [F2] rename  [⌿] delete",
+                    "[n] new  [m] rename  [⌿] delete",
                     id="term_hints",
                     markup=False,
                 ),
@@ -214,7 +214,7 @@ class WorkspaceDetailScreen(Screen):
             Binding("u", "duplicate", "Dup"),
             Binding("d", "delete", "Del ws"),
             Binding("n", "new_terminal", "New term", show=False),
-            Binding("f2", "rename_terminal", "Rename term", show=False),
+            Binding("m", "rename_terminal", "Rename term", show=False),
             Binding("delete", "delete_terminal", "Del term", show=False),
             # `?` must survive the per-display BINDINGS rebuild so the
             # cheatsheet stays reachable after _display() runs on mount
@@ -897,7 +897,7 @@ class WorkspaceDetailScreen(Screen):
                 "Terminals",
                 [
                     ("n", "New terminal"),
-                    ("F2", "Rename terminal"),
+                    ("m", "Rename terminal"),
                     ("Del", "Delete terminal"),
                 ],
             ),
