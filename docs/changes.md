@@ -27,6 +27,11 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Workspace tmux status bar shows the disconnect hint (#2006).** The
+  status bar now surfaces `Exit: Enter, then ~.` — the CLI's `~.` escape to
+  close a `klangk shell` session — so the escape is discoverable without
+  reading the docs.
+
 - **`chat` feature — workspace chat surface extracted into a compiled-in,
   opt-in feature (#1976).** The chat tab + clanker agent UI moved out of the
   host frontend into `features/chat/`, registered as a workspace tab via the

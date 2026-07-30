@@ -27,7 +27,8 @@ Klangk uses tmux for three reasons:
 
 Tmux runs with no prefix key and no keybindings beyond scrollback — it
 looks and feels like a plain terminal, with a subtle status bar at the
-bottom showing the workspace and terminal name.
+bottom showing the workspace name (left) and the disconnect hint
+`Exit: Enter, then ~.` (right) — the CLI's `~.` escape to close the session.
 
 ## How it maps to what you see
 
