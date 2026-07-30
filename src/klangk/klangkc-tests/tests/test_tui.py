@@ -848,10 +848,10 @@ async def test_app_opens_login_when_unauthenticated():
         assert isinstance(app.screen, LoginScreen)
 
 
-async def test_app_uses_ansi_light_theme():
-    """#1904: the TUI defaults to Textual's built-in ansi-light theme
-    (terminal-palette-aware) instead of the hard-coded klangk palette. The
-    klangk theme stays registered so it remains selectable."""
+async def test_app_uses_klangk_theme():
+    """#2003: the TUI defaults to the custom klangk theme (matching the web
+    UI's GitHub-dark palette) rather than Textual's built-in ansi-light. The
+    built-in themes stay registered so they remain selectable."""
     from klangk.cli.tui.app import KLANGK_THEME
 
     st = _st(
@@ -863,17 +863,17 @@ async def test_app_uses_ansi_light_theme():
     )
     app = KlangkApp(st)
     # The default is set in __init__, before run_test mounts the app.
-    assert app.theme == "ansi-light"
+    assert app.theme == "klangk"
     async with app.run_test() as pilot:
         await pilot.pause()
-        # Still ansi-light after mount (no on_mount override flips it).
-        assert app.theme == "ansi-light"
-        # The klangk theme stays registered — switching to it must not raise
-        # (Textual raises ThemeError for an unknown theme name).
-        app.theme = "klangk"
-        await pilot.pause()
+        # Still klangk after mount (no on_mount override flips it).
         assert app.theme == "klangk"
         assert KLANGK_THEME.name == "klangk"
+        # The built-in themes stay registered — switching to ansi-light must
+        # not raise (Textual raises ThemeError for an unknown theme name).
+        app.theme = "ansi-light"
+        await pilot.pause()
+        assert app.theme == "ansi-light"
 
 
 async def test_app_none_mode_auto_logs_in():

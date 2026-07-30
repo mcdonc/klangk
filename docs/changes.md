@@ -544,6 +544,12 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI now defaults to the `klangk` theme again (#2003).** Reverts the
+  #1904 default: the CLI TUI selects the custom `klangk` theme (GitHub-dark
+  palette matching the web UI) out of the box instead of Textual's built-in
+  `ansi-light`. Textual's built-in themes remain registered and selectable
+  for users who prefer a terminal-palette-aware look.
+
 - **The clanker agent is now opt-in (off by default) (#1977).** The
   `pi --mode rpc` agent subprocess spawns only when the `chat` feature is
   active (`KLANGKD_FEATURES_ENABLE`) **and** the operator enables it via
