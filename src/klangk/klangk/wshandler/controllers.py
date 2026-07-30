@@ -165,10 +165,20 @@ class SshAgentForwarder:
         # other's accept-time socket file, so ``ssh-add`` sees the path
         # flicker in and out ("No such file or directory") (#2001).
         #
-        # The deterministic per-user path makes a targeted pkill safe: it
-        # matches the exact socket string, so only stale relays for THIS
-        # user die — never an unrelated process. Done before our own bind
-        # so we own the socket cleanly.
+        # ``pkill -f`` matches the full argv; scoped to this user's exact
+        # socket string it only reaps *this* user's stale socat relays — never
+        # another user's relay or an unrelated process. ``pkill`` exits 1 when
+        # nothing matches (first connect on a clean container);
+        # ``exec_container`` runs ``check=False`` (``Podman.run`` only raises on
+        # non-zero when ``check`` is set), so that no-match exit is swallowed
+        # and the bind proceeds.
+        #
+        # Isolation caveat: the socket is bound ``mode=600``, which isolates
+        # it across OS users — but in a shared workspace all members run as
+        # the same in-container uid (``klangk``), so a collaborator can reach
+        # another member's forwarded-agent socket and use its identities. That
+        # exposure predates #2001 (the relay always bound this path); a
+        # per-user private socket directory would close it.
         await self._conn.app.state.podman.exec_container(
             container_id,
             ["pkill", "-f", f"UNIX-LISTEN:{sock_path}"],
