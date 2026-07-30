@@ -165,9 +165,13 @@ class WorkspaceDetailScreen(Screen):
             self._missing = True
             self._load_error = None
         except AuthError:
+            # Session is dead — surface the app-wide overlay (#2025) instead
+            # of a small inline message. The screen stays mounted under the
+            # overlay until the user acknowledges it and is redirected.
             self._ws = None
             self._missing = False
-            self._load_error = "Session expired — please log in again."
+            self._load_error = None
+            self.app.session_expired()
         except Exception as exc:
             self._ws = None
             self._missing = False

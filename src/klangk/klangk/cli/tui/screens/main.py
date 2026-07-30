@@ -806,13 +806,15 @@ class MainScreen(Screen):
         try:
             owned, shared = await self._fetch_lists()
         except AuthError:
+            # Session is dead — clear the lists and surface the app-wide
+            # session-expired overlay (#2025). No inline label: the overlay
+            # is the single, unmissable signal across every page.
             self._owned_all = []
             self._shared_all = []
             for sel in ("#owned_list", "#shared_list"):
-                self._populate(
-                    sel, [], empty_label="(session expired — re-login)"
-                )
+                self._populate(sel, [])
             self._refresh_status()
+            self.app.session_expired()
             return
         except ServerUnreachable:
             self._enter_unreachable()

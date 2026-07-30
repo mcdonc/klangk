@@ -555,6 +555,18 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI: session expiry now shows a prominent app-wide overlay, not a
+  small inline label + fleeting toast (#2025).** When the access token is
+  irrecoverably dead (auth failure on a workspace fetch/detail load, a
+  create/edit save, the status WS, or the token-refresh loop), a centered
+  modal overlay appears over whatever page is active — mirroring the
+  server-down overlay — with a single "Log in again" action (`Enter` / `Esc`
+  / the button all proceed). This replaces the easy-to-miss one-line
+  `(session expired — re-login)` list label, the small `_msg`/`_load_error`
+  text on the detail/form pages, and the 8-second toast, giving one
+  consistent, unmissable UI for the expired-session state across every
+  page.
+
 - **TUI: workspace detail success/in-progress messages are now toasts, not
   persistent in-page text (#2019).** `Starting container…`, `Container
 started.`, and the other operational feedback messages (`Restart/Stop/Start
