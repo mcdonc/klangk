@@ -239,9 +239,12 @@ class MainScreen(Screen):
         # Backend-reconnect state (#2012). ``_server_unreachable`` is True
         # while the list fetch is failing at the transport layer;
         # ``_reconnect_active`` guards against spawning a second poll loop.
+        # ``_gave_up`` is set when the reconnect loop exhausts its attempts;
+        # it prevents the heartbeat from re-arming a new loop (#2036).
         self._server_unreachable = False
         self._reconnect_attempt = 0
         self._reconnect_active = False
+        self._gave_up = False
         self.query_one("#filter_bar").display = False
         self._refresh_action_hints()
         self.refresh_lists()
@@ -266,6 +269,7 @@ class MainScreen(Screen):
         """
         if (
             self._server_unreachable
+            or self._gave_up
             or self not in self.app.screen_stack
             or not self.app.tui_state.is_authenticated()
         ):
@@ -881,6 +885,7 @@ class MainScreen(Screen):
     def _exit_unreachable(self) -> None:
         """Backend reachable again — clear the down state."""
         self._reconnect_attempt = 0
+        self._gave_up = False
         if self._server_unreachable:
             self._server_unreachable = False
             self.app.live_extra = ""
@@ -927,6 +932,7 @@ class MainScreen(Screen):
                 self._reconnect_attempt += 1
                 if self._reconnect_attempt > _MAX_RECONNECT_ATTEMPTS:
                     self._server_unreachable = False
+                    self._gave_up = True
                     self._render_unreachable(
                         "(server down — switch server or restart to reconnect)"
                     )
