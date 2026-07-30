@@ -1240,6 +1240,16 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **Duplicate `klangkd` launch no longer spams the running instance's log
+  with ERROR "Another klangk instance is already running" lines (#2021).**
+  The _losing_ (second) process still reports why it exits, but now
+  de-duplicated against the live winner PID: the first collision logs once,
+  and a service supervisor's restart loop of the loser stays quiet for
+  retries against the same winner instead of emitting one ERROR per retry
+  into the shared log stream. A _different_ winner PID (a restart) is
+  reported fresh. The _winning_ (first) process never reaches the refusal
+  path, so it never logs this — independent of whether stderr is a TTY.
+
 - **CLI TUI now shows a global "server down" overlay and auto-reconnects
   instead of a misleading empty workspace list (#2012).** When the backend
   was unreachable (but the CLI still held a valid JWT, e.g. `auth=none`),

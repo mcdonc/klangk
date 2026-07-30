@@ -148,6 +148,59 @@ def _check_pid_preflight(settings: KlangkSettings) -> int | None:
     return pid
 
 
+# Per-instance marker recording the live winner PID whose duplicate-launch
+# collision was already reported (#2021). The *losing* (second) process still
+# logs why it is exiting — once — but a service supervisor's restart loop of
+# that loser would otherwise emit one ERROR per retry into the shared log
+# stream (which reads like a server fault). Keying the dedup on the live
+# winner PID means: the first collision logs, subsequent retries against the
+# same winner stay quiet, and a *new* winner (different PID) is reported
+# fresh. The *winning* (first) process never reaches the refusal path at all
+# (no pidfile on a fresh start; its own PID is excluded), so it never logs
+# this — independent of whether stderr is a TTY.
+_REFUSAL_MARKER_SUFFIX = ".refusal"
+
+
+def _refusal_marker_path(settings: KlangkSettings) -> Path | None:
+    """Path to the per-instance refusal marker, or ``None`` if no instance id.
+
+    Sibling of the pidfile (``klangk-<instance>.refusal`` in the state dir).
+    ``None`` (no dedup — always emit) when there is no instance id on disk.
+    """
+    instance_id_path = Path(settings.data_dir) / "instance-id"
+    try:
+        instance_id = instance_id_path.read_text().strip()
+    except (FileNotFoundError, ValueError):
+        return None
+    if not instance_id:
+        return None
+    return (
+        Path(settings.state_dir)
+        / f"klangk-{instance_id}{_REFUSAL_MARKER_SUFFIX}"
+    )
+
+
+def _refusal_already_reported(marker: Path, winner_pid: int) -> bool:
+    """True if a refusal for this live winner PID was already logged (#2021)."""
+    try:
+        return int(marker.read_text().strip()) == winner_pid
+    except (FileNotFoundError, ValueError):
+        return False
+
+
+def _mark_refusal_reported(marker: Path, winner_pid: int) -> None:
+    """Record that a refusal for this winner PID was logged (#2021).
+
+    Best-effort: a write failure just means the next retry logs again (one
+    extra line) — never a missed refusal or a spurious "already running".
+    """
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(winner_pid))
+    except OSError:
+        pass
+
+
 def _prepend_gnubin_paths() -> None:  # pragma: no cover
     """On macOS, prepend Homebrew gnubin dirs to ``PATH`` (#1947).
 
@@ -235,13 +288,25 @@ def main(  # pragma: no cover
     # klangkd doesn't destroy the first instance's socket (#1837).
     # The lifespan has its own authoritative check, but that runs after
     # uvicorn binds — too late to protect the socket file.
+    #
+    # Only the *losing* (second) process reaches here — the *winning* (first)
+    # process has no pidfile to find on a fresh start, and its own PID is
+    # excluded by _check_pid_preflight. The loser reports why it is exiting,
+    # but de-duplicated against the live winner PID (#2021): a supervisor's
+    # restart loop logs the refusal once (first collision) and then stays
+    # quiet for retries against the same winner, instead of spamming one
+    # ERROR per retry. A different winner PID is reported fresh.
     existing = _check_pid_preflight(settings)
     if existing is not None:
-        logger.error(
-            "Another klangk instance (PID %d) is already running — "
-            "refusing to start",
-            existing,
-        )
+        marker = _refusal_marker_path(settings)
+        if marker is None or not _refusal_already_reported(marker, existing):
+            logger.error(
+                "Another klangk instance (PID %d) is already running — "
+                "refusing to start",
+                existing,
+            )
+            if marker is not None:
+                _mark_refusal_reported(marker, existing)
         sys.exit(1)
 
     # Bind the UDS. A stale socket from a kill -9'd process makes the
