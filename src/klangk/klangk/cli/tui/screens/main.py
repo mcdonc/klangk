@@ -969,6 +969,13 @@ class MainScreen(Screen):
                 retries += 1
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
+                # The status WS is the first thing to notice a backend drop;
+                # re-fetch the list so a mid-session outage surfaces the
+                # "server unreachable" state instead of a stale list (#2012).
+                # The refresh self-gates: it only flips unreachable on an
+                # actual transport failure, so a benign idle-timeout close on
+                # an up server is a no-op.
+                self.refresh_lists()
                 await asyncio.sleep(2)
                 continue
             except AuthError:
@@ -986,6 +993,8 @@ class MainScreen(Screen):
                     break
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
+                # Same mid-session outage detection as the clean-close branch.
+                self.refresh_lists()
                 await asyncio.sleep(min(2 * (2 ** (retries - 1)), 30))
                 continue
         self.app.live_extra = (

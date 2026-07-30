@@ -3087,6 +3087,68 @@ async def test_reconnect_gives_up_after_cap(monkeypatch):
         assert "gave up" in (app.live_extra or "").lower()
 
 
+async def test_status_disconnect_triggers_unreachable_mid_session(monkeypatch):
+    """A backend drop detected by the status WS *after* the page is already
+    shown surfaces the "server unreachable" state — the mid-session case
+    that a mount-only check would miss (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    # The status WS notices the drop first (transport error).
+    async def boom_status(*a, **k):
+        raise httpx.ConnectError("ws down")
+
+    monkeypatch.setattr(scr_main, "listen_for_status", boom_status)
+    # Park the list reconnect loop so we assert the *trigger*, not its polling.
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    # Neutralize _status_loop's own backoff sleeps.
+    import asyncio as _asyncio
+
+    _real_sleep = _asyncio.sleep
+
+    async def _nowait(_t):
+        await _real_sleep(0)
+
+    monkeypatch.setattr(_asyncio, "sleep", _nowait)
+
+    up = {"yes": True}
+    alpha = _wsobj("alpha")
+
+    def owned():
+        if up["yes"]:
+            return [alpha]
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+    )
+    async with app.run_test() as pilot:
+        screen = app.screen
+        # Initially the server is up: the list renders normally.
+        for _ in range(6):
+            await pilot.pause()
+        assert screen._server_unreachable is False
+        assert (
+            "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
+        )
+
+        # Server goes down mid-session.
+        up["yes"] = False
+        # The status loop detects the drop and triggers a list refresh. Don't
+        # wait_for_complete() afterwards — the refresh starts the reconnect
+        # loop, which is parked (real 999s backoff); pause a few times to let
+        # the refresh + _enter_unreachable render, then assert.
+        await _real_status_loop(screen)
+        for _ in range(8):
+            await pilot.pause()
+        assert screen._server_unreachable is True
+        assert (
+            "server unreachable"
+            in _lv_texts(screen.query_one("#owned_list", ListView))[0].lower()
+        )
+
+
 async def test_reconnect_loop_exits_when_screen_popped(monkeypatch):
     """If the MainScreen leaves the stack (logout / server switch) while a
     reconnect is pending, the loop stops instead of mutating a dead screen
