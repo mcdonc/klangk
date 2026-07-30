@@ -1210,15 +1210,17 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
-- **The already-running klangkd no longer logs "Another klangk instance is
-  already running" on a duplicate start attempt (#2021).** The duplicate-
-  start message was logged in two places — the launcher's pre-flight PID
-  check _and_ the app lifespan — so repeated attempts to start a second
-  instance against the same state spammed ERROR lines into the running
-  instance's log stream. The lifespan no longer logs (it is a silent
-  backstop only); the launcher pre-flight is now the sole place this is
-  reported, emitted once by the prevented process before it exits. The
-  already-running instance stays silent.
+- **The already-running klangkd no longer gets its log spammed with "Another
+  klangk instance is already running" on repeated duplicate starts (#2021).**
+  A duplicate start is still refused (the process exits non-zero before
+  touching the socket), but the message is now printed only on an
+  _interactive_ terminal (stderr is a TTY) — so an operator who manually
+  launches a second klangkd is still told why it exited, while a
+  non-interactive retry loop (supervisor/watchdog whose refused starts share
+  the running instance's log stream) stays silent. The duplicate-start log
+  was also deduped to a single site (the launcher pre-flight); the app
+  lifespan check is now a silent backstop, so the already-running instance
+  itself never logs this.
 
 - **Opening a terminal from the TUI no longer flashes the pre-TUI screen
   (#2010).** `on_list_view_selected` clears the primary screen buffer

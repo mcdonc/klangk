@@ -233,18 +233,23 @@ def main(  # pragma: no cover
 
     # Pre-flight PID check: abort *before* touching the UDS so a second
     # klangkd doesn't destroy the first instance's socket (#1837).
-    # This is the *sole* place a duplicate start is logged (#2021): the
-    # already-running instance stays silent (another process trying to start
-    # is not its problem), and this prevented process logs once then exits.
-    # The lifespan keeps a silent SystemExit backstop for the narrow race
-    # where two launchers start near-simultaneously and both miss this check.
+    # This is the *sole* place a duplicate start is reported (#2021), and it
+    # only speaks up on an *interactive* terminal (stderr is a TTY): a human
+    # who accidentally launches a second klangkd still learns why it exited,
+    # but a non-interactive retry loop (supervisor/watchdog whose refused
+    # starts share the already-running instance's log stream) exits silently
+    # instead of spamming that daemon log with "refusing to start" every
+    # retry. The running instance itself never logs this — its own PID is
+    # excluded by _check_pid_preflight, and the lifespan check is a silent
+    # backstop.
     existing = _check_pid_preflight(settings)
     if existing is not None:
-        logger.error(
-            "Another klangk instance (PID %d) is already running — "
-            "refusing to start",
-            existing,
-        )
+        if sys.stderr.isatty():
+            logger.error(
+                "Another klangk instance (PID %d) is already running — "
+                "refusing to start",
+                existing,
+            )
         sys.exit(1)
 
     # Bind the UDS. A stale socket from a kill -9'd process makes the

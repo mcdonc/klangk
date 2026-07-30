@@ -1918,8 +1918,10 @@ class TestCheckPidPreflight:
 
 
 class TestLauncherPidPreflightGracefulExit:
-    """The launcher's ``main()`` must log and ``sys.exit(1)`` — not crash with
-    ``ImportError`` — when a second instance collides with a running one (#1993).
+    """The launcher's ``main()`` must ``sys.exit(1)`` — not crash with
+    ``ImportError`` — when a second instance collides with a running one
+    (#1993), and must stay silent on a *non-interactive* (non-TTY) start so a
+    # retry loop can't spam the already-running instance's log (#2021).
 
     ``_check_pid_preflight`` is unit-tested above; this exercises the *error
     path that consumes it* (inside ``main()``, which is otherwise
@@ -1957,10 +1959,14 @@ class TestLauncherPidPreflightGracefulExit:
 
         # Graceful refusal, not a Python traceback.
         assert result.returncode == 1, result.stderr
-        assert "Another klangk instance" in result.stderr
         # The pre-fix bug crashed with ImportError before the message could
         # be logged (``from klangk.logger import logger`` — no such symbol).
         assert "ImportError" not in result.stderr
+        # Non-interactive (captured) start: the duplicate-start message must
+        # NOT be emitted, so a supervisor/watchdog retry loop can't pollute
+        # the running instance's shared log stream (#2021). It only prints
+        # to a real interactive terminal (stderr is a TTY).
+        assert "Another klangk instance" not in result.stderr
 
 
 class TestBuildApp:
