@@ -1279,6 +1279,17 @@ set-password <email>` (set a known password for the default user — whose
   state per workspace is now held in an overlay that every list refresh
   re-applies, so a fetch returning stale data can't regress a start/stop the
   TUI already saw.
+- **CLI TUI no longer crashes or misbehaves when tearing down its screen
+  stack on session expiry / server switch (#2034).** `confirm_session_expired`,
+  `server_changed`, and `server_changed_needs_login` popped screens one-by-one
+  in a `while top is not X: pop_screen()` loop, which raised `ScreenStackError`
+  when `MainScreen` wasn't in the stack (the loop popped textual's implicit
+  base screen, which is never a `MainScreen`, then tried to pop it). They now
+  remove a fixed snapshot of the screens above their target (never the target
+  itself), return early when the target is absent, and push a fresh
+  `MainScreen` (clearing the stack first) when none is reachable — so a late
+  server-switch worker can no longer strand the login screen after a
+  concurrent session-expiry teardown.
 
 - **Duplicate `klangkd` launch no longer spams the running instance's log
   with ERROR "Another klangk instance is already running" lines (#2021).**

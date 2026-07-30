@@ -9898,6 +9898,204 @@ async def test_session_expired_overlay_covers_any_active_page(monkeypatch):
         assert detail in app.screen_stack
 
 
+# --- safe screen-stack teardown (#2034) ---
+# confirm_session_expired / server_changed / server_changed_needs_login used
+# to pop screens in a ``while top is not X: pop_screen()`` loop, which is
+# fragile (a side effect that pushes a screen mid-teardown can extend or
+# loop it) and crashes (ScreenStackError) when the target screen isn't in
+# the stack. They now route through KlangkApp._pop_above, a snapshot-guarded
+# helper. These tests pin the new behavior.
+
+
+async def test_pop_above_returns_false_when_target_absent(monkeypatch):
+    """_pop_above is a no-op (returns False) when target isn't on the stack."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    from textual.screen import Screen as _Screen
+
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        before = list(app.screen_stack)
+        result = app._pop_above(_Screen())  # never pushed -> absent
+        assert result is False
+        assert app.screen_stack == before  # nothing popped
+
+
+async def test_pop_above_stops_when_top_changes_mid_teardown(monkeypatch):
+    """If the live top is no longer the screen ``_pop_above`` planned to pop
+    next, it stops instead of popping a screen it didn't plan to remove.
+
+    ``pop_screen`` is synchronous, so a real call never changes the top out
+    from under the loop; the condition is forced here by stubbing
+    ``pop_screen`` to push a sentinel, which is the only way to exercise the
+    defensive guard. It documents the guard's contract, not a production
+    path (#2034)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    from textual.screen import Screen as _Screen
+
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Stack: [base, MainScreen, a, b]; tear down to MainScreen.
+        a = _Screen()
+        b = _Screen()
+        app.push_screen(a)
+        app.push_screen(b)
+        await pilot.pause()
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        sentinel = _Screen()
+        original = app.pop_screen
+        calls = {"n": 0}
+
+        def patched():
+            result = original()
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Force the guard's condition: a new screen lands on top.
+                app.push_screen(sentinel)
+            return result
+
+        monkeypatch.setattr(app, "pop_screen", patched)
+        result = app._pop_above(main)
+        # b was popped, then sentinel was pushed -> the top is no longer the
+        # planned 'a', so the loop stops with MainScreen NOT exposed.
+        assert result is False
+        assert sentinel in app.screen_stack
+        assert a in app.screen_stack  # not torn down
+        assert b not in app.screen_stack
+
+
+async def test_server_changed_pops_to_main_and_refreshes(monkeypatch):
+    """server_changed pops back to MainScreen and refreshes it."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    refreshed = []
+    monkeypatch.setattr(
+        MainScreen, "refresh_lists", lambda self: refreshed.append(True)
+    )
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        assert isinstance(app.screen, ServerSwitchScreen)
+        app.server_changed()
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+        assert not any(
+            isinstance(s, ServerSwitchScreen) for s in app.screen_stack
+        )
+        assert refreshed  # MainScreen refreshed after the switch
+
+
+async def test_server_changed_clears_stack_when_main_absent(monkeypatch):
+    """When no MainScreen is in the stack, server_changed clears down to the
+    base and pushes a fresh MainScreen — it does NOT strand the screens below
+    it (#2034).
+
+    This path is reachable: the server-switch / add-server workers are
+    fire-and-forget and aren't cancelled when their screen is popped, so one
+    can resume after a concurrent session-expiry teardown has removed the
+    MainScreen, then call server_changed(). Pushing on top of the leftover
+    login screen would strand it and corrupt the next logout."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Simulate the race: a session-expiry teardown leaves the stack at
+        # [base, LoginScreen] (no MainScreen) when the late switch worker
+        # calls server_changed().
+        app.server_changed_needs_login()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        assert not any(isinstance(s, MainScreen) for s in app.screen_stack)
+        app.server_changed()
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+        # The login screen was cleared, not stranded underneath MainScreen.
+        assert not any(isinstance(s, LoginScreen) for s in app.screen_stack)
+        # Final stack is exactly [base, MainScreen].
+        assert len(app.screen_stack) == 2
+
+
+async def test_server_changed_needs_login_clears_to_login(monkeypatch):
+    """server_changed_needs_login tears down MainScreen + any modals and
+    lands on LoginScreen."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        app.server_changed_needs_login()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        assert not any(isinstance(s, MainScreen) for s in app.screen_stack)
+        assert not any(
+            isinstance(s, ServerSwitchScreen) for s in app.screen_stack
+        )
+
+
+async def test_confirm_session_expired_clears_every_screen_above_base(
+    monkeypatch,
+):
+    """Acknowledging the expiry overlay tears down every screen above the
+    base (not just one), landing cleanly on login (#2034)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _authed_state()
+    st.logout = lambda: None  # no real credential I/O
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from textual.screen import Screen as _Screen
+
+        # Stack: [base, MainScreen, detail, sub].
+        detail = _Screen()
+        sub = _Screen()
+        app.push_screen(detail)
+        app.push_screen(sub)
+        await pilot.pause()
+        app.session_expired()
+        await pilot.pause()
+        await pilot.press("enter")  # acknowledge the overlay
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        # Everything above the base is gone.
+        assert detail not in app.screen_stack
+        assert sub not in app.screen_stack
+        assert not any(isinstance(s, MainScreen) for s in app.screen_stack)
+
+
 async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):
     """If the token was rotated concurrently, don't expire — keep running."""
     import time as _time
