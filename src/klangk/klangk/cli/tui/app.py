@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from textual.app import App
+from textual.screen import Screen
 from textual.theme import Theme
 
 from .screens import (
@@ -260,24 +261,73 @@ class KlangkApp(App):
 
         self.run_worker(_logout, exit_on_error=False)
 
+    def _pop_above(self, target: Screen) -> bool:
+        """Pop every screen above ``target`` (leaving it on top), safely.
+
+        Replacement for the ``while top is not target: self.pop_screen()``
+        idiom (#2034). It computes the screens to remove from a snapshot up
+        front and pops exactly that fixed set, so the teardown is bounded by
+        the snapshot rather than re-evaluated against the live stack every
+        iteration.
+
+        The ``ScreenStackError`` safety comes from two places, neither of
+        which is the in-loop check: (1) the early ``target not in stack``
+        return — the old loop kept popping because textual's implicit base
+        screen is never the ``MainScreen`` it was searching for, then raised
+        trying to pop that base; and (2) ``target`` itself is never in the
+        snapshot, so it is never popped and the stack never empties past it.
+
+        Returns ``True`` if ``target`` was in the stack (and is now on top),
+        ``False`` if it was absent (nothing was popped).
+        """
+        if target not in self.screen_stack:
+            return False
+        to_remove: list[Screen] = []
+        for screen in reversed(self.screen_stack):
+            if screen is target:
+                break
+            to_remove.append(screen)
+        for screen in to_remove:
+            # Defensive: ``pop_screen`` is synchronous, so today the live top
+            # always equals the next planned screen and the loop ends by
+            # exhausting ``to_remove``. The check keeps it correct if the
+            # stack is ever changed between iterations (e.g. a re-entrant
+            # pop) — stop rather than pop a screen we didn't plan to, and
+            # never index an empty stack.
+            if not self.screen_stack or self.screen_stack[-1] is not screen:
+                break
+            self.pop_screen()
+        return bool(self.screen_stack) and self.screen_stack[-1] is target
+
     def server_changed(self) -> None:
         """Pop back to the MainScreen and refresh it after a server change."""
-        while self.screen_stack and not isinstance(
-            self.screen_stack[-1], MainScreen
-        ):
-            self.pop_screen()
-        top = self.screen_stack[-1] if self.screen_stack else None
-        if isinstance(top, MainScreen):
-            top.refresh_lists()
+        main = next(
+            (s for s in self.screen_stack if isinstance(s, MainScreen)), None
+        )
+        if main is None:
+            # No MainScreen is reachable. This is reachable, not just
+            # defensive: the server-switch / add-server workers run
+            # fire-and-forget and are NOT cancelled when their screen is
+            # popped, so one can resume after a concurrent session-expiry
+            # teardown has already removed the MainScreen. Clear down to the
+            # base and push a fresh MainScreen — pushing on top of the
+            # current stack would strand the login screen underneath it and
+            # corrupt the next logout (#2034).
+            if self.screen_stack:
+                self._pop_above(self.screen_stack[0])
+            self.push_screen(MainScreen())
+            return
+        self._pop_above(main)
+        main.refresh_lists()
 
     def server_changed_needs_login(self) -> None:
         """Switch server then show LoginScreen (invalid/missing creds)."""
-        while self.screen_stack and not isinstance(
-            self.screen_stack[-1], MainScreen
-        ):
-            self.pop_screen()
-        if self.screen_stack and isinstance(self.screen_stack[-1], MainScreen):
-            self.pop_screen()
+        # Tear down every screen above the base, then push login. The
+        # ``target not in stack`` early return in ``_pop_above`` is what
+        # prevents the ScreenStackError the old pop-until-MainScreen loop hit
+        # when MainScreen wasn't in the stack (#2034).
+        if self.screen_stack:
+            self._pop_above(self.screen_stack[0])
         self.push_screen(LoginScreen())
 
     def session_expired(self) -> None:
@@ -316,8 +366,12 @@ class KlangkApp(App):
         async def _expire() -> None:
             try:
                 await asyncio.to_thread(self.tui_state.logout)
-                while len(self.screen_stack) > 1:
-                    self.pop_screen()
+                # Clear every screen above the base, then show login.
+                # ``_pop_above`` pops a fixed snapshot, so the teardown is
+                # bounded regardless of what a concurrent worker does between
+                # this call and the push (#2034).
+                if self.screen_stack:
+                    self._pop_above(self.screen_stack[0])
                 self.live_extra = ""
                 self.push_screen(LoginScreen())
             finally:
