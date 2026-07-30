@@ -676,10 +676,12 @@ class KlangkSettings(BaseSettings):
     netfilter_default_domains: list[str] | None = None
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
-    # --pids-limit. Unset (default) = no flag = today's unbounded behavior
-    # (no regression); a workspace exceeding a set limit is throttled /
-    # OOM-killed / fork-bomb-contained rather than taking down the host or
-    # neighbouring workspaces. Read at boot and on SIGHUP (reloadable) and
+    # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 512 PIDs,
+    # #2030) so a fresh install is bounded out of the box — a workspace
+    # exceeding a limit is throttled / OOM-killed / fork-bomb-contained
+    # rather than taking down the host or its neighbours. Set a field to an
+    # empty value (env `""`) to explicitly disable that one cap and restore
+    # unbounded behavior for it. Read at boot and on SIGHUP (reloadable) and
     # passed through container.create_kwargs at every workspace start, so a
     # reload applies to containers started after the reload (existing
     # containers keep their original cgroup limits for the rest of their
@@ -688,9 +690,9 @@ class KlangkSettings(BaseSettings):
     # disabling the safety control — see each field's validator. Per-
     # workspace overrides (creator may go larger *or* smaller than the
     # deploy default, no clamping) are a follow-up (Phase 2).
-    container_cpu_limit: float | None = None
-    container_memory_limit: str | None = None
-    container_pids_limit: int | None = None
+    container_cpu_limit: float | None = 2.0
+    container_memory_limit: str | None = "8g"
+    container_pids_limit: int | None = 512
     test_mode: str | None = None
     version_file: str | None = None
 

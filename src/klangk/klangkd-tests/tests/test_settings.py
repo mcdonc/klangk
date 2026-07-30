@@ -256,12 +256,14 @@ class TestConfigFile:
 
     # --- Container resource limits (#34) ---
 
-    def test_container_limits_default_none(self):
-        # #34: unset = no cap = today's unbounded behavior.
+    def test_container_limits_default_to_protective_caps(self):
+        # #2030: a fresh config ships bounded — 2 CPUs / 8g / 512 PIDs —
+        # so a runaway workspace can't take down the host out of the box.
+        # Set a field to an empty env value to disable just that one cap.
         s = make_settings({})
-        assert s.container_cpu_limit is None
-        assert s.container_memory_limit is None
-        assert s.container_pids_limit is None
+        assert s.container_cpu_limit == 2.0
+        assert s.container_memory_limit == "8g"
+        assert s.container_pids_limit == 512
 
     def test_container_cpu_limit_from_env(self):
         s = make_settings({"KLANGKD_CONTAINER_CPU_LIMIT": "1.5"})

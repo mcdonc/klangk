@@ -48,13 +48,16 @@ image_name: klangk-workspace
 
 # --- Container resource limits (#34) ---
 # Deploy-wide CPU / memory / PIDs caps applied to every workspace
-# container (podman --cpus / --memory / --pids-limit). Unset = no cap =
-# today's unbounded behavior; a malformed value aborts startup. A reload
-# applies to containers started after the reload (existing containers keep
-# their original cgroup limits for the rest of their life).
-# container_cpu_limit: 1.5
-# container_memory_limit: 2g
-# container_pids_limit: 512
+# container (podman --cpus / --memory / --pids-limit). These are the
+# built-in defaults (shown uncommented so they're discoverable, #2030); a
+# fresh install is bounded at 2 CPUs / 8g / 512 PIDs so a runaway
+# workspace can't take down the host. A malformed value aborts startup. A
+# reload applies to containers started after the reload (existing
+# containers keep their original cgroup limits for the rest of their
+# life). Set a field to empty ("" ) to disable just that one cap.
+container_cpu_limit: 2.0
+container_memory_limit: 8g
+container_pids_limit: 512
 
 # --- Per-workspace egress filtering (#1365) ---
 # Set to a directory the OCI runtime can read to enable opt-in per-workspace

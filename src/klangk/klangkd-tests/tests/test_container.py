@@ -648,17 +648,20 @@ class TestStartContainer:
         reg = container.ContainerRegistry(app_state)
         assert reg._egress_filter(["github.com"]) == (None, None, None)
 
-    async def test_resource_limits_unset_emit_no_flags(self, workspace):
-        # #34: with no deploy limits set, create_container gets None for
-        # all three (podman.create omits the flags entirely).
+    async def test_resource_limits_defaults_emit_flags(self, workspace):
+        # #2030: with no deploy limits configured, the built-in protective
+        # defaults (2 CPUs / 8g / 512 PIDs) still flow through to podman as
+        # --cpus / --memory / --pids-limit — a fresh install is bounded out
+        # of the box. (Setting an env var to "" disables one cap -> None ->
+        # no flag; see test_settings.py.)
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"], "/tmp/ws", "/tmp/home"
             )
         kwargs = p.create_container.call_args.kwargs
-        assert kwargs["cpus"] is None
-        assert kwargs["memory"] is None
-        assert kwargs["pids_limit"] is None
+        assert kwargs["cpus"] == 2.0
+        assert kwargs["memory"] == "8g"
+        assert kwargs["pids_limit"] == 512
 
     async def test_resource_limits_passed_through(
         self, workspace, monkeypatch
@@ -748,10 +751,16 @@ class TestStartContainer:
         assert kwargs["pids_limit"] == 512
 
     async def test_workspace_settings_override_when_no_deploy_default(
-        self, workspace
+        self, workspace, monkeypatch
     ):
         # No deploy default + an override -> the override applies; the
-        # other two limits stay None (no flag).
+        # other two limits stay None (no flag). The deploy defaults are
+        # non-empty out of the box now (#2030), so null them out here to
+        # exercise the genuine "no deploy default" path.
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_cpu_limit", None)
+        monkeypatch.setattr(settings, "container_memory_limit", None)
+        monkeypatch.setattr(settings, "container_pids_limit", None)
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 workspace["id"],
