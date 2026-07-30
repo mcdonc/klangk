@@ -57,6 +57,7 @@ from klangk.cli.tui.screens import (
     InputScreen,
     LoginScreen,
     MainScreen,
+    ServerDownScreen,
     ServerSwitchScreen,
     TransferScreen,
     WorkspaceDetailScreen,
@@ -3055,6 +3056,444 @@ async def test_main_screen_list_error_shows_placeholder(monkeypatch):
         m = app.screen
         assert len(m.query_one("#owned_list", ListView).query(ListItem)) == 1
         assert len(m.query_one("#shared_list", ListView).query(ListItem)) == 1
+
+
+def test_reconnect_backoff_is_bounded():
+    """_reconnect_backoff stays within [0, _MAX_BACKOFF_SECONDS] for every
+    attempt and respects the cap once the exponential ramp exceeds it (#2012)."""
+    delays = [scr_main._reconnect_backoff(a) for a in range(1, 30)]
+    assert all(0.0 <= d <= scr_main._MAX_BACKOFF_SECONDS for d in delays)
+    # The exponential base (1 << attempt) quickly exceeds the cap; the cap
+    # (not the raw exponential) must bound the result from there on.
+    assert scr_main._reconnect_backoff(50) <= scr_main._MAX_BACKOFF_SECONDS
+
+
+def test_is_unreachable_classifies_transport_errors():
+    """Only transport-layer failures count as 'server down' — auth and HTTP
+    status errors mean the server responded, so they are reachable (#2012)."""
+    assert scr_main._is_unreachable(httpx.ConnectError("refused"))
+    assert scr_main._is_unreachable(httpx.ConnectTimeout("slow"))
+    assert scr_main._is_unreachable(ConnectionRefusedError())  # OSError
+    req = httpx.Request("GET", "https://x.example/")
+    resp = httpx.Response(500, request=req)
+    assert not scr_main._is_unreachable(
+        httpx.HTTPStatusError("boom", request=req, response=resp)
+    )
+    assert not scr_main._is_unreachable(RuntimeError("net"))
+    assert not scr_main._is_unreachable(scr_main.AuthError("expired"))
+
+
+async def test_main_screen_server_down_shows_indicator(monkeypatch):
+    """A transport failure (server unreachable) shows a "server down" state,
+    not a misleading "no workspaces" — and kicks off a visible reconnect (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    # Park the reconnect loop mid-backoff so we can assert the in-flight state.
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    def down():
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=down, list_shared_workspaces=down)
+    )
+    async with app.run_test() as pilot:
+        # Let the initial refresh fail, enter unreachable, and run the
+        # reconnect loop up to its (parked) backoff sleep. Don't call
+        # wait_for_complete() — the loop is intentionally parked mid-backoff.
+        for _ in range(8):
+            await pilot.pause()
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        assert main._server_unreachable is True
+        owned_lv = main.query_one("#owned_list", ListView)
+        shared_lv = main.query_one("#shared_list", ListView)
+        assert "server unreachable" in _lv_texts(owned_lv)[0].lower()
+        assert "server unreachable" in _lv_texts(shared_lv)[0].lower()
+        assert "unreachable" in (app.live_extra or "").lower()
+        assert "attempt 1" in (app.live_extra or "")
+        # App-wide overlay covers whatever page is active (#2012).
+        assert isinstance(app.screen, ServerDownScreen)
+        assert "server unreachable" in app.screen._message.lower()
+
+
+async def test_main_screen_http_error_is_not_unreachable(monkeypatch):
+    """An HTTP error status means the server *is* up — keep the historical
+    empty-list rendering rather than flagging it as down (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    req = httpx.Request("GET", "https://x.example/api/workspaces")
+    resp = httpx.Response(500, request=req)
+
+    def boom():
+        raise httpx.HTTPStatusError("boom", request=req, response=resp)
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=boom, list_shared_workspaces=boom)
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        screen = app.screen
+        assert screen._server_unreachable is False
+        owned_lv = screen.query_one("#owned_list", ListView)
+        assert "no workspaces" in _lv_texts(owned_lv)[0].lower()
+
+
+async def _fast_reconnect(monkeypatch):
+    """Make the reconnect loop instant: zero backoff + no real sleep."""
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 0.0)
+
+    async def _nowait(_t):
+        return None
+
+    monkeypatch.setattr(scr_main, "_reconnect_sleep", _nowait)
+
+
+async def test_reconnect_recovers_when_server_returns(monkeypatch):
+    """Once the backend comes back, the reconnect loop repopulates the lists
+    without a logout/relogin (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    await _fast_reconnect(monkeypatch)
+
+    calls = {"n": 0}
+    alpha = _wsobj("alpha")
+
+    def owned():
+        calls["n"] += 1
+        # Initial owned+shared fetch (calls 1-2) fails -> enter unreachable;
+        # the reconnect loop's fetch (call 3+) succeeds.
+        if calls["n"] <= 2:
+            raise httpx.ConnectError("refused")
+        return [alpha]
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        screen = app.screen
+        assert screen._server_unreachable is False
+        assert app.live_extra == ""
+        assert (
+            "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
+        )
+
+
+async def test_reconnect_gives_up_after_cap(monkeypatch):
+    """After the attempt cap the loop stops and tells the user to act (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "_MAX_RECONNECT_ATTEMPTS", 2)
+    await _fast_reconnect(monkeypatch)
+
+    def down():
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=down, list_shared_workspaces=down)
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        assert main._server_unreachable is False
+        owned_lv = main.query_one("#owned_list", ListView)
+        label = _lv_texts(owned_lv)[0].lower()
+        assert "server down" in label
+        assert "switch server" in label
+        assert "gave up" in (app.live_extra or "").lower()
+        # The app-wide overlay carries the give-up message too (#2012).
+        assert isinstance(app.screen, ServerDownScreen)
+        assert "couldn't reach" in app.screen._message.lower()
+
+
+async def test_server_down_overlay_dismiss_then_no_repop(monkeypatch):
+    """Esc dismisses the app-wide overlay; once dismissed the reconnect loop
+    won't re-pop it for the rest of this outage (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    def down():
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=down, list_shared_workspaces=down)
+    )
+    async with app.run_test() as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        assert isinstance(app.screen, ServerDownScreen)
+        await pilot.press("escape")
+        for _ in range(3):
+            await pilot.pause()
+        # Overlay gone; the app flagged it dismissed for this outage.
+        assert not isinstance(app.screen, ServerDownScreen)
+        assert app._server_down_dismissed is True
+        # A subsequent set_server_down call is a no-op (won't re-pop).
+        app.set_server_down("again")
+        assert not isinstance(app.screen, ServerDownScreen)
+
+
+async def test_server_down_overlay_c_opens_switch_server(monkeypatch):
+    """'c' from the overlay closes it and opens the server-switch screen (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    def down():
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=down, list_shared_workspaces=down)
+    )
+    async with app.run_test() as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        assert isinstance(app.screen, ServerDownScreen)
+        await pilot.press("c")
+        for _ in range(4):
+            await pilot.pause()
+        assert isinstance(app.screen, ServerSwitchScreen)
+        assert app._server_down_dismissed is True
+
+
+async def test_server_down_overlay_covers_any_active_page(monkeypatch):
+    """The app-level overlay lands on top of whatever screen is active — not
+    just the workspaces page — so a drop while a detail/form page is open is
+    still signalled everywhere (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    up = {"yes": True}
+    alpha = _wsobj("alpha")
+
+    def owned():
+        if up["yes"]:
+            return [alpha]
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+    )
+    async with app.run_test() as pilot:
+        for _ in range(6):
+            await pilot.pause()
+        # Navigate "away" from the workspaces page onto a detail/form page.
+        from textual.screen import Screen as _Screen
+
+        detail = _Screen()
+        app.push_screen(detail)
+        for _ in range(3):
+            await pilot.pause()
+        assert app.screen is detail
+        # Backend drops; the heartbeat (on the still-mounted MainScreen)
+        # detects it and pushes the overlay on TOP of the detail page.
+        up["yes"] = False
+        next(
+            s for s in app.screen_stack if isinstance(s, MainScreen)
+        )._heartbeat_tick()
+        for _ in range(8):
+            await pilot.pause()
+        assert isinstance(app.screen, ServerDownScreen)
+        # The detail page is still in the stack, underneath the overlay.
+        assert detail in app.screen_stack
+
+
+async def test_heartbeat_detects_drop_after_initial_load(monkeypatch):
+    """The reachability heartbeat re-fetches the list on a timer, so a backend
+    that drops after the page is already shown (mid-session, or while a detail
+    page was open) surfaces "server unreachable" on the next tick — one
+    mechanism covering every detection path (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    # Park the reconnect loop so the heartbeat tick is what we exercise.
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+
+    up = {"yes": True}
+    alpha = _wsobj("alpha")
+
+    def owned():
+        if up["yes"]:
+            return [alpha]
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+    )
+    async with app.run_test() as pilot:
+        screen = app.screen
+        for _ in range(6):
+            await pilot.pause()
+        assert screen._server_unreachable is False
+        assert (
+            "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
+        )
+
+        # Backend drops; the next heartbeat tick re-fetches and detects it.
+        up["yes"] = False
+        screen._heartbeat_tick()
+        for _ in range(8):
+            await pilot.pause()
+        assert screen._server_unreachable is True
+        assert (
+            "server unreachable"
+            in _lv_texts(screen.query_one("#owned_list", ListView))[0].lower()
+        )
+
+
+async def test_heartbeat_tick_skips_when_down_or_unauthenticated(monkeypatch):
+    """The heartbeat is a no-op once unreachable (the reconnect loop owns
+    retry) or once unauthenticated (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test():
+        screen = app.screen
+        fired = []
+        monkeypatch.setattr(screen, "refresh_lists", lambda: fired.append(1))
+
+        # Already unreachable: skip (reconnect loop handles retry).
+        screen._server_unreachable = True
+        screen._heartbeat_tick()
+        assert fired == []
+
+        # Unauthenticated: skip.
+        screen._server_unreachable = False
+        monkeypatch.setattr(
+            screen.app.tui_state, "is_authenticated", lambda: False
+        )
+        screen._heartbeat_tick()
+        assert fired == []
+
+        # Authenticated and up: fires a refresh.
+        monkeypatch.setattr(
+            screen.app.tui_state, "is_authenticated", lambda: True
+        )
+        screen._heartbeat_tick()
+        assert fired == [1]
+
+
+async def test_reconnect_loop_exits_when_screen_popped(monkeypatch):
+    """If the MainScreen leaves the stack (logout / server switch) while a
+    reconnect is pending, the loop stops instead of mutating a dead screen
+    (#2012). Covers the top-of-iteration guard."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    await _fast_reconnect(monkeypatch)
+    app = KlangkApp(_ws())  # list contents irrelevant — loop returns early
+    async with app.run_test():
+        screen = app.screen
+        assert isinstance(screen, MainScreen)
+        screen._server_unreachable = True
+        screen._reconnect_active = True
+        # Pretend the screen was already removed (e.g. logout completed).
+        from textual.app import App as _App
+
+        monkeypatch.setattr(_App, "screen_stack", property(lambda self: []))
+        await scr_main.MainScreen._reconnect_loop(screen)
+        assert screen._reconnect_active is False  # finally ran
+
+
+async def test_reconnect_loop_exits_when_screen_popped_during_backoff(
+    monkeypatch,
+):
+    """A screen pop during the backoff sleep is caught by the post-sleep
+    guard — the loop exits without a fetch or a render (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 0.0)
+    rendered: list = []
+    app = KlangkApp(_ws())
+    async with app.run_test():
+        screen = app.screen
+        assert isinstance(screen, MainScreen)
+        screen._server_unreachable = True
+        screen._reconnect_active = True
+
+        async def pop_during_sleep(_delay):
+            # Simulate the screen being popped while the loop is parked.
+            from textual.app import App as _App
+
+            monkeypatch.setattr(
+                _App, "screen_stack", property(lambda self: [])
+            )
+
+        monkeypatch.setattr(scr_main, "_reconnect_sleep", pop_during_sleep)
+        monkeypatch.setattr(
+            screen, "_render_unreachable", lambda *a, **k: rendered.append(1)
+        )
+        await scr_main.MainScreen._reconnect_loop(screen)
+        assert screen._reconnect_active is False
+        assert rendered == []  # never rendered on the dead screen
+
+
+async def test_reconnect_auth_failure_redirects_to_login(monkeypatch):
+    """An auth failure surfacing during reconnect triggers session_expired (#2012)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    await _fast_reconnect(monkeypatch)
+
+    calls = {"n": 0}
+
+    def fn():
+        calls["n"] += 1
+        # Initial fetch (calls 1-2) fails as unreachable; the loop's fetch
+        # then raises AuthError.
+        if calls["n"] <= 2:
+            raise httpx.ConnectError("refused")
+        raise AuthError("expired")
+
+    app = KlangkApp(_ws(list_owned_workspaces=fn, list_shared_workspaces=fn))
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert expired  # reconnect saw AuthError -> session_expired
 
 
 async def test_focus_visible_list_on_mount(monkeypatch):

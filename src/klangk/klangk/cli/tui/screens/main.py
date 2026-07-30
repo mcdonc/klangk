@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import random
 import time
 from pathlib import Path
 
@@ -47,6 +48,57 @@ logger = logging.getLogger(__name__)
 
 _TOKEN_REFRESH_MARGIN = 600  # refresh 10 minutes before expiry
 _TOKEN_REFRESH_POLL = 60  # check every 60 seconds
+
+# Auto-reconnect for the workspaces list when the backend is unreachable
+# (#2012). Mirrors the Flutter WS client
+# (src/frontend/lib/ws/ws_client.dart: ``_scheduleReconnect`` / ``_backoffDelay``):
+# bounded exponential backoff with jitter and a hard attempt cap, after which
+# we give up and tell the user to switch server / restart.
+_MAX_RECONNECT_ATTEMPTS = 25
+_MAX_BACKOFF_SECONDS = 5
+
+# How often the always-on reachability heartbeat re-fetches the workspace
+# list while the backend is up, so a drop is detected regardless of whether
+# the status WS notices (#2012). A timer (not a worker), so it doesn't keep
+# ``app.workers.wait_for_complete()`` pending in tests.
+_HEARTBEAT_SECONDS = 15
+
+# Indirection so tests can advance the reconnect loop without real delays
+# (and without patching the global ``asyncio.sleep``, which Textual's own
+# event loop depends on).
+_reconnect_sleep = asyncio.sleep
+
+
+class ServerUnreachable(Exception):
+    """The backend could not be reached at the transport layer.
+
+    Distinct from :class:`AuthError` (expired session — the server *is* up)
+    and from an actually-empty result (server up, no workspaces). Raised by
+    the workspaces-list fetch so the UI can show a "server down" state
+    instead of a misleading empty list.
+    """
+
+
+def _is_unreachable(exc: BaseException) -> bool:
+    """True for transport-layer failures (server down / unreachable).
+
+    Covers httpx connect/timeout/protocol errors and raw socket errors, but
+    *not* ``AuthError`` or ``httpx.HTTPStatusError`` — those mean the server
+    responded, so it is reachable.
+    """
+    return isinstance(exc, (httpx.TransportError, OSError))
+
+
+def _reconnect_backoff(attempt: int) -> float:
+    """Backoff delay (seconds) for reconnect *attempt* (1-based).
+
+    Ported from ``WsClient._backoffDelay``: an exponential base capped at
+    ``_MAX_BACKOFF_SECONDS``, halved with random jitter so retries spread out
+    instead of stampeding a just-restarted server.
+    """
+    base = min(1 << attempt, _MAX_BACKOFF_SECONDS)
+    jitter = random.random() * base
+    return (base + jitter) / 2.0
 
 
 async def run_token_refresh_loop(state) -> str:
@@ -184,12 +236,41 @@ class MainScreen(Screen):
         self._owned_all: list = []
         self._shared_all: list = []
         self._filter_text = ""
+        # Backend-reconnect state (#2012). ``_server_unreachable`` is True
+        # while the list fetch is failing at the transport layer;
+        # ``_reconnect_active`` guards against spawning a second poll loop.
+        self._server_unreachable = False
+        self._reconnect_attempt = 0
+        self._reconnect_active = False
         self.query_one("#filter_bar").display = False
         self._refresh_action_hints()
         self.refresh_lists()
+        # Always-on reachability heartbeat: re-fetches the list on a timer
+        # while the backend is up so a drop is detected uniformly — at first
+        # display, mid-session, and after navigating back — without relying
+        # on the status WS (#2012). One mechanism, one UI.
+        self._heartbeat_timer = self.set_interval(
+            _HEARTBEAT_SECONDS, self._heartbeat_tick
+        )
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
             self.app.run_worker(self._token_refresh_loop, name="token-refresh")
+
+    def _heartbeat_tick(self) -> None:
+        """Periodic reachability probe (#2012).
+
+        Re-fetches the list only while the backend is believed up; once a
+        fetch fails, ``_enter_unreachable`` takes over with the (faster)
+        reconnect loop. Skips when unauthenticated or once the screen has
+        left the stack (logout / server switch).
+        """
+        if (
+            self._server_unreachable
+            or self not in self.app.screen_stack
+            or not self.app.tui_state.is_authenticated()
+        ):
+            return
+        self.refresh_lists()
 
     def on_tabbed_content_tab_activated(self, event) -> None:
         """Focus the first workspace row when switching tabs (#1792)."""
@@ -723,8 +804,7 @@ class MainScreen(Screen):
     async def _refresh_lists_async(self) -> None:
         self._ws_by_id: dict[str, object] = {}
         try:
-            owned = await self._safe_list(owned=True)
-            shared = await self._safe_list(owned=False)
+            owned, shared = await self._fetch_lists()
         except AuthError:
             self._owned_all = []
             self._shared_all = []
@@ -734,8 +814,30 @@ class MainScreen(Screen):
                 )
             self._refresh_status()
             return
+        except ServerUnreachable:
+            self._enter_unreachable()
+            return
+        # Success — clear any prior unreachable state and render the lists.
+        self._exit_unreachable()
+        self._populate_workspaces(owned, shared)
+
+    async def _fetch_lists(self) -> tuple[list, list]:
+        """Fetch owned + shared workspace lists.
+
+        Raises :class:`AuthError` on an expired session or
+        :class:`ServerUnreachable` when the backend can't be reached at the
+        transport layer (server down). Anything else the backend returns is
+        a real (possibly empty) result.
+        """
+        owned = await self._safe_list(owned=True)
+        shared = await self._safe_list(owned=False)
+        return owned, shared
+
+    def _populate_workspaces(self, owned: list, shared: list) -> None:
+        """Cache + render a freshly fetched set of workspace lists."""
         self._owned_all = owned
         self._shared_all = shared
+        self._ws_by_id = {}
         for ws in owned + shared:
             wid = str(getattr(ws, "id", "") or "")
             if wid:
@@ -745,6 +847,117 @@ class MainScreen(Screen):
         if not self._initial_focus_done:
             self._initial_focus_done = True
             self._focus_visible_list()
+
+    def _render_unreachable(self, label: str) -> None:
+        """Show *label* as the only row in both workspace lists."""
+        self._owned_all = []
+        self._shared_all = []
+        for sel in ("#owned_list", "#shared_list"):
+            self._populate(sel, [], empty_label=label)
+        self._refresh_status()
+
+    def _enter_unreachable(self) -> None:
+        """Backend unreachable — surface it and start a reconnect loop."""
+        # Fresh attempt counter for this outage (so a heartbeat that re-arms
+        # the reconnect after a prior give-up gets a full retry budget again).
+        self._reconnect_attempt = 0
+        if not self._server_unreachable:
+            self._server_unreachable = True
+            self._render_unreachable("(server unreachable — retrying…)")
+            self.app.set_server_down(self._down_overlay_message())
+        if not self._reconnect_active:
+            self._reconnect_active = True
+            # Own group so refresh_lists (group "default", exclusive) can't
+            # cancel it; the ``_reconnect_active`` flag prevents duplicates.
+            self.run_worker(
+                self._reconnect_loop,
+                name="reconnect",
+                group="reconnect",
+                exit_on_error=False,
+            )
+
+    def _exit_unreachable(self) -> None:
+        """Backend reachable again — clear the down state."""
+        self._reconnect_attempt = 0
+        if self._server_unreachable:
+            self._server_unreachable = False
+            self.app.live_extra = ""
+            self._refresh_status()
+            self.app.clear_server_down()
+
+    def _down_overlay_message(self, gave_up: bool = False) -> str:
+        """Text for the app-wide server-down overlay (#2012)."""
+        if gave_up:
+            return (
+                "⛔ Server down\n\n"
+                "Couldn't reach the backend after repeated attempts;"
+                " it will keep retrying.\n"
+                "[c] switch server   [Esc] dismiss"
+            )
+        if self._reconnect_attempt <= 0:
+            return (
+                "⏳ Server unreachable\n\nReconnecting…\n"
+                "The page will reload when the backend returns.\n"
+                "[c] switch server   [Esc] dismiss"
+            )
+        return (
+            f"⏳ Server unreachable\n\nReconnecting "
+            f"(attempt {self._reconnect_attempt}/"
+            f"{_MAX_RECONNECT_ATTEMPTS})…\n"
+            "The page will reload when the backend returns.\n"
+            "[c] switch server   [Esc] dismiss"
+        )
+
+    async def _reconnect_loop(self) -> None:
+        """Poll the backend with bounded backoff until it's reachable again,
+        an auth failure surfaces, or the attempt cap is hit.
+
+        Mirrors the Flutter WS client's auto-reconnect
+        (``ws_client._scheduleReconnect`` / ``_backoffDelay``). Drives the
+        same fetch path as a normal refresh, so initial-display-down and
+        mid-session-disconnect both self-heal without a re-login.
+        """
+        try:
+            while self._server_unreachable:
+                # Screen popped (logout / server switch) — stop polling.
+                if self not in self.app.screen_stack:
+                    return
+                self._reconnect_attempt += 1
+                if self._reconnect_attempt > _MAX_RECONNECT_ATTEMPTS:
+                    self._server_unreachable = False
+                    self._render_unreachable(
+                        "(server down — switch server or restart to reconnect)"
+                    )
+                    self.app.live_extra = "server: down (gave up reconnecting)"
+                    self._refresh_status()
+                    self.app.set_server_down(
+                        self._down_overlay_message(gave_up=True)
+                    )
+                    return
+                delay = _reconnect_backoff(self._reconnect_attempt)
+                self.app.live_extra = (
+                    f"server: unreachable, retrying "
+                    f"(attempt {self._reconnect_attempt}/"
+                    f"{_MAX_RECONNECT_ATTEMPTS})…"
+                )
+                self._refresh_status()
+                self.app.set_server_down(self._down_overlay_message())
+                await _reconnect_sleep(delay)
+                if self not in self.app.screen_stack:
+                    return
+                try:
+                    owned, shared = await self._fetch_lists()
+                except ServerUnreachable:
+                    continue
+                except AuthError:
+                    self._server_unreachable = False
+                    self.app.session_expired()
+                    return
+                self._exit_unreachable()
+                self._populate_workspaces(owned, shared)
+                return
+        finally:
+            self._reconnect_active = False
 
     async def _safe_list(self, *, owned: bool) -> list:
         state = self.app.tui_state
@@ -756,7 +969,17 @@ class MainScreen(Screen):
             )
         except AuthError:
             raise
-        except Exception:
+        except Exception as exc:
+            if _is_unreachable(exc):
+                raise ServerUnreachable(
+                    str(exc) or "server unreachable"
+                ) from exc
+            # A non-transport failure (e.g. a decode error) with the server
+            # reachable: preserve the historical "treat as empty" behaviour
+            # rather than mislabel a healthy account as down.
+            logger.debug(
+                "workspace list fetch failed (non-transport): %s", exc
+            )
             return []
 
     @staticmethod
