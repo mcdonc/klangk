@@ -111,7 +111,13 @@ async def test_placeholder_highlighted_and_focused_while_loading(tmp_path):
                 break
         assert lv.index == 0, "first terminal must be selected after load"
         assert getattr(app.focused, "id", None) == "term_list"
-        assert len(lv.query("ListItem")) == len(REAL_TERMINALS)
+        items = lv.query("ListItem")
+        assert len(items) == len(REAL_TERMINALS)
+        # The first row must actually carry the highlight (not just index==0):
+        # setting index before the appended items mount leaves no row
+        # highlighted (#1956 "both terminals grey").
+        assert items[0].highlighted is True
+        assert items[1].highlighted is False
 
 
 @pytest.mark.asyncio
