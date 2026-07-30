@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TypeVar
 
 from rich.text import Text
 
@@ -21,8 +22,70 @@ from textual.widgets import (
 )
 
 
-class ConfirmScreen(ModalScreen[bool]):
-    """A yes/no confirmation dialog. Dismisses with True on confirm."""
+_ScreenResult = TypeVar("_ScreenResult")
+
+
+class ButtonRowModalScreen(ModalScreen[_ScreenResult]):
+    """Spatial arrow navigation for a modal dialog with an optional input
+    field above a horizontal row of buttons (#2016).
+
+    Left/Right move between sibling buttons in reading order; Down from
+    the input enters the first button; Up from a button returns to the
+    input. Arrows are always sufficient to reach every option — Tab /
+    Shift-Tab remains a fallback (no focus traps, per AGENTS.md "TUI
+    spatial navigation (no focus traps)").
+    """
+
+    # Button ids left-to-right (reading order); optionally the id of an
+    # input field sitting above the row.
+    _BUTTONS: list[str] = []
+    _INPUT: str | None = None
+
+    BINDINGS = [
+        Binding("left", "btn_left", show=False),
+        Binding("right", "btn_right", show=False),
+        Binding("up", "btn_up", show=False),
+        Binding("down", "btn_down", show=False),
+    ]
+
+    def _focus_id(self, widget_id: str) -> None:
+        self.query_one(f"#{widget_id}").focus()
+
+    def _focused_id(self) -> str | None:
+        focused = self.focused
+        return focused.id if focused is not None else None
+
+    def _btn_step(self, step: int) -> None:
+        fid = self._focused_id()
+        if fid in self._BUTTONS:
+            pos = self._BUTTONS.index(fid)
+            nxt = pos + step
+            if 0 <= nxt < len(self._BUTTONS):
+                self._focus_id(self._BUTTONS[nxt])
+
+    def action_btn_left(self) -> None:
+        self._btn_step(-1)
+
+    def action_btn_right(self) -> None:
+        self._btn_step(1)
+
+    def action_btn_up(self) -> None:
+        if self._focused_id() in self._BUTTONS and self._INPUT:
+            self._focus_id(self._INPUT)
+
+    def action_btn_down(self) -> None:
+        if self._focused_id() == self._INPUT and self._BUTTONS:
+            self._focus_id(self._BUTTONS[0])
+
+
+class ConfirmScreen(ButtonRowModalScreen[bool]):
+    """A yes/no confirmation dialog. Dismisses with True on confirm.
+
+    Arrows move between Cancel / confirm (Left/Right) — no Tab needed
+    (#2016).
+    """
+
+    _BUTTONS = ["no", "yes"]
 
     DEFAULT_CSS = """
     ConfirmScreen { align: center middle; }
@@ -188,8 +251,15 @@ class WorkspaceListView(SpatialListView):
     SPATIAL_UP_TARGET = Tabs
 
 
-class DuplicateScreen(ModalScreen):
-    """Prompt for a new name to duplicate a workspace under."""
+class DuplicateScreen(ButtonRowModalScreen):
+    """Prompt for a new name to duplicate a workspace under.
+
+    Down from the name input enters the button row; Left/Right move
+    between Cancel / Dup (#2016).
+    """
+
+    _BUTTONS = ["cancel", "ok"]
+    _INPUT = "dup_name"
 
     DEFAULT_CSS = """
     DuplicateScreen { align: center middle; }
@@ -248,11 +318,16 @@ def _fmt_transfer(done: float, total: float | None) -> str:
     return f"{d} / {_human_bytes(total)}" if total else f"{d} (size unknown)"
 
 
-class InputScreen(ModalScreen):
+class InputScreen(ButtonRowModalScreen):
     """Generic single-line input prompt (title + default + OK/Cancel).
 
     Dismisses with the trimmed value on OK, or ``None`` on cancel (#1758).
+    Down from the input enters the button row; Left/Right move between
+    Cancel / OK (#2016).
     """
+
+    _BUTTONS = ["cancel", "ok"]
+    _INPUT = "inp_value"
 
     DEFAULT_CSS = """
     InputScreen { align: center middle; }

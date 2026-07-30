@@ -2112,6 +2112,114 @@ async def test_input_screen_ok_cancel_and_enter(monkeypatch):
         assert cap["s"] == "z"
 
 
+async def test_confirm_screen_arrow_nav(monkeypatch):
+    """ConfirmScreen: Left/Right move between Cancel/confirm; arrows are
+    sufficient (no Tab needed) (#2016)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("Delete 'alpha'?"), lambda r: None)
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        app.screen.query_one("#no").focus()
+        await pilot.pause()
+        assert app.screen.focused.id == "no"
+
+        # Right moves Cancel -> confirm.
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.screen.focused.id == "yes"
+        # Right at the edge stays put.
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.screen.focused.id == "yes"
+
+        # Left moves confirm -> Cancel.
+        await pilot.press("left")
+        await pilot.pause()
+        assert app.screen.focused.id == "no"
+        # Left at the edge stays put.
+        await pilot.press("left")
+        await pilot.pause()
+        assert app.screen.focused.id == "no"
+
+        # No input above the row — Up/Down are no-ops.
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.screen.focused.id == "no"
+        app.screen.dismiss(False)
+
+
+async def test_input_screen_arrow_nav(monkeypatch):
+    """InputScreen: Down leaves the input for the button row; Left/Right
+    move between Cancel/OK; Up returns to the input (#2016)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        app.push_screen(InputScreen("Path:"), lambda r: None)
+        await pilot.pause()
+        assert isinstance(app.screen, InputScreen)
+        assert app.screen.focused.id == "inp_value"
+
+        # Down from the input enters the first button (Cancel).
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.screen.focused.id == "cancel"
+
+        # Right moves Cancel -> OK; at the edge stays put.
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.screen.focused.id == "ok"
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.screen.focused.id == "ok"
+
+        # Up from a button returns to the input.
+        await pilot.press("left")
+        await pilot.pause()
+        assert app.screen.focused.id == "cancel"
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.screen.focused.id == "inp_value"
+        app.screen.dismiss(None)
+
+
+async def test_duplicate_screen_arrow_nav(monkeypatch):
+    """DuplicateScreen: Down from the name input enters the button row;
+    Left/Right move between Cancel/Dup (#2016)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha")]))
+    async with app.run_test() as pilot:
+        app.push_screen(DuplicateScreen("alpha"), lambda r: None)
+        await pilot.pause()
+        assert isinstance(app.screen, DuplicateScreen)
+        app.screen.query_one("#dup_name").focus()
+        await pilot.pause()
+        assert app.screen.focused.id == "dup_name"
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.screen.focused.id == "cancel"
+        await pilot.press("right")
+        await pilot.pause()
+        assert app.screen.focused.id == "ok"
+        app.screen.dismiss(None)
+
+
 async def test_transfer_screen_success_error_and_progress(monkeypatch):
     """TransferScreen drives the bar from the worker thread and reports
     success/failure via its dismiss value (#1758)."""
