@@ -199,6 +199,70 @@ class ServerDownScreen(ModalScreen[None]):
         self.app.server_down_switch_server()
 
 
+class SessionExpiredScreen(ModalScreen[None]):
+    """Dimmed overlay shown app-wide when the session has expired (#2025).
+
+    Mirrors :class:`ServerDownScreen`: a centered panel over a dimmed
+    background. The access token is irrecoverably dead, so the only action
+    is to re-login — ``Enter`` / ``Esc`` / the button all dismiss the overlay
+    and redirect to the login screen. Shown by ``KlangkApp.session_expired``
+    over whatever page is active (workspaces list, workspace detail,
+    create/edit form), so an expired session is signalled uniformly on every
+    screen instead of a missable one-line inline label + a fleeting toast.
+    """
+
+    DEFAULT_CSS = """
+    SessionExpiredScreen { align: center middle; }
+    SessionExpiredScreen > Vertical {
+        width: 64;
+        max-width: 90%;
+        height: auto;
+        padding: 1 2;
+        border: round $error;
+        background: $panel;
+    }
+    SessionExpiredScreen Static {
+        text-align: center;
+    }
+    SessionExpiredScreen Horizontal {
+        align-horizontal: center;
+        height: auto;
+        padding-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "proceed", "Log in again", show=False),
+        Binding("enter", "proceed", "Log in again", show=False),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(
+                Text(
+                    "Session expired\n\n"
+                    "Your access token is no longer valid.\n"
+                    "Please log in again."
+                ),
+                id="session_expired_msg",
+            ),
+            Horizontal(
+                Button("Log in again", id="proceed", variant="primary"),
+            ),
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "proceed":
+            self.action_proceed()
+
+    def on_mount(self) -> None:
+        # Focus the action button so Enter confirms immediately.
+        self.query_one("#proceed", Button).focus()
+
+    def action_proceed(self) -> None:
+        self.app.confirm_session_expired()
+
+
 class SpatialListView(ListView):
     """A ListView that releases focus at its top/bottom boundaries to a
     target widget, enabling spatial navigation without Tab (#1781).

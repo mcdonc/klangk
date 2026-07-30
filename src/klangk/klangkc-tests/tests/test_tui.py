@@ -59,6 +59,7 @@ from klangk.cli.tui.screens import (
     MainScreen,
     ServerDownScreen,
     ServerSwitchScreen,
+    SessionExpiredScreen,
     TransferScreen,
     WorkspaceDetailScreen,
 )
@@ -5960,11 +5961,15 @@ async def test_status_bar_markup_safe(monkeypatch):
         assert "foo[/]bar" in str(app.screen.query_one("#status").render())
 
 
-async def test_main_screen_auth_expired_placeholder(monkeypatch):
+async def test_main_screen_auth_expired_shows_overlay(monkeypatch):
+    """An expired session on the workspaces fetch shows the app-wide overlay,
+    not a small inline label (#2025)."""
+
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
 
     def boom():
         raise AuthError("expired")
@@ -5972,26 +5977,35 @@ async def test_main_screen_auth_expired_placeholder(monkeypatch):
     app = KlangkApp(
         _ws(list_owned_workspaces=boom, list_shared_workspaces=boom)
     )
-    async with app.run_test():
-        lv = app.screen.query_one("#owned_list", ListView)
-        assert len(lv.query(ListItem)) == 1
-        assert "session expired" in _lv_texts(lv)[0].lower()
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # App-wide overlay covers the page (#2025).
+        assert isinstance(app.screen, SessionExpiredScreen)
+        # The underlying lists are cleared — no misleading inline label.
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        owned_lv = main.query_one("#owned_list", ListView)
+        assert "no workspaces" in _lv_texts(owned_lv)[0].lower()
 
 
-async def test_detail_auth_expired_message(monkeypatch):
+async def test_detail_auth_expired_shows_overlay(monkeypatch):
+    """An expired session on the workspace detail load shows the app-wide
+    overlay, not a small inline message (#2025)."""
+
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
     st = _ws()
     st.find_workspace = lambda n: (_ for _ in ()).throw(AuthError("expired"))
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
-        assert "Session expired" in str(
-            app.screen.query_one("#detail_body").render()
-        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
 
 
 async def test_detail_pops_when_workspace_deleted(monkeypatch):
@@ -6481,7 +6495,9 @@ async def test_create_screen_auth_error(monkeypatch):
         cs.query_one("#name").value = "ws"
         cs._create()
         await app.workers.wait_for_complete()
-        assert "Session expired" in str(cs.query_one("#create_msg").render())
+        await pilot.pause()
+        # AuthError surfaces the app-wide overlay, not an inline form message (#2025).
+        assert isinstance(app.screen, SessionExpiredScreen)
 
 
 async def test_create_screen_images_unavailable(monkeypatch):
@@ -7206,7 +7222,9 @@ async def test_edit_screen_save_auth_error(monkeypatch):
         es = app.screen
         es._save()
         await app.workers.wait_for_complete()
-        assert "Session expired" in str(es.query_one("#edit_msg").render())
+        await pilot.pause()
+        # AuthError surfaces the app-wide overlay, not an inline form message (#2025).
+        assert isinstance(app.screen, SessionExpiredScreen)
 
 
 async def test_edit_screen_save_generic_error(monkeypatch):
@@ -8992,8 +9010,9 @@ async def test_detail_terminal_push_falls_back_when_no_windows(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_session_expired_redirects_to_login(monkeypatch):
-    """KlangkApp.session_expired() pops to login with a notification."""
+async def test_session_expired_shows_overlay_then_redirects(monkeypatch):
+    """session_expired() shows the overlay; acknowledging it logs out and
+    redirects to login (#2025)."""
 
     async def noop(*a, **k):
         return None
@@ -9007,6 +9026,12 @@ async def test_session_expired_redirects_to_login(monkeypatch):
     async with app.run_test() as pilot:
         assert isinstance(app.screen, MainScreen)
         app.session_expired()
+        await pilot.pause()
+        # The overlay is shown app-wide; no logout yet.
+        assert isinstance(app.screen, SessionExpiredScreen)
+        assert logged_out == []
+        # Acknowledge (Enter) — logs out and redirects to login.
+        await pilot.press("enter")
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert isinstance(app.screen, LoginScreen)
@@ -9232,7 +9257,7 @@ async def test_token_refresh_loop_expires_session(monkeypatch):
 
 
 async def test_session_expired_is_re_entrant_safe(monkeypatch):
-    """Concurrent session_expired() calls fire the redirect exactly once."""
+    """Concurrent session_expired() calls show the overlay exactly once."""
 
     async def noop(*a, **k):
         return None
@@ -9243,13 +9268,85 @@ async def test_session_expired_is_re_entrant_safe(monkeypatch):
     st.logout = lambda: None  # avoid real credential I/O
     app = KlangkApp(st)
     async with app.run_test() as pilot:
-        app.session_expired()  # first call: sets _expiring, spawns worker
+        app.session_expired()  # first call: sets _expiring, pushes overlay
         app.session_expired()  # second call: bails on _expiring
         await pilot.pause()
-        logins = [
-            s for s in app.screen_stack if isinstance(s, scr.LoginScreen)
+        overlays = [
+            s for s in app.screen_stack if isinstance(s, SessionExpiredScreen)
         ]
-        assert len(logins) == 1
+        assert len(overlays) == 1
+
+
+async def test_session_expired_overlay_esc_redirects(monkeypatch):
+    """Esc on the overlay logs out and redirects to login (#2025)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _authed_state()
+    logged_out = []
+    st.logout = lambda: logged_out.append(True)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.session_expired()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+        await pilot.press("escape")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        assert logged_out == [True]
+
+
+async def test_session_expired_overlay_button_redirects(monkeypatch):
+    """The 'Log in again' button logs out and redirects to login (#2025)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    st = _authed_state()
+    logged_out = []
+    st.logout = lambda: logged_out.append(True)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.session_expired()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+        await pilot.press("enter")  # button is focused on mount
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        assert logged_out == [True]
+
+
+async def test_session_expired_overlay_covers_any_active_page(monkeypatch):
+    """The overlay lands on top of whatever screen is active — not just the
+    workspaces page — so an expired session is signalled everywhere (#2025)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        # Navigate "away" from the workspaces page onto a detail page.
+        from textual.screen import Screen as _Screen
+
+        detail = _Screen()
+        app.push_screen(detail)
+        await pilot.pause()
+        assert app.screen is detail
+        # Session expires; the overlay is pushed on TOP of the detail page.
+        app.session_expired()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionExpiredScreen)
+        # The detail page is still in the stack, underneath the overlay.
+        assert detail in app.screen_stack
 
 
 async def test_run_token_refresh_loop_concurrent_rotation(monkeypatch):

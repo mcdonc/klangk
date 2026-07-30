@@ -15,6 +15,7 @@ from .screens import (
     MainScreen,
     ServerDownScreen,
     ServerSwitchScreen,
+    SessionExpiredScreen,
     WorkspaceDetailScreen,
 )
 from .state import TuiState
@@ -203,6 +204,10 @@ class KlangkApp(App):
         # backend is reachable again (``clear_server_down`` resets it).
         self._server_down_screen: ServerDownScreen | None = None
         self._server_down_dismissed = False
+        # App-wide session-expired overlay (#2025). ``_session_expired_screen``
+        # is the shown modal (None when hidden); ``_expiring`` guards against
+        # re-entry while it's up and during the redirect to login.
+        self._session_expired_screen: SessionExpiredScreen | None = None
         self.register_theme(KLANGK_THEME)
         self.theme = "klangk"
 
@@ -276,16 +281,37 @@ class KlangkApp(App):
         self.push_screen(LoginScreen())
 
     def session_expired(self) -> None:
-        """Redirect to login when the access token is irrecoverably dead.
+        """Show the app-wide session-expired overlay when the access token is
+        irrecoverably dead (#2025).
 
-        Re-entrancy-safe: the status loop, token-refresh loop, and
-        workspace loads can all detect auth failure near-simultaneously.
-        ``_expiring`` is set synchronously before the worker spawns, so
-        only the first call runs the redirect; the rest bail out.
+        Replaces the old easy-to-miss inline label + fleeting toast with a
+        prominent centered overlay (mirroring ``ServerDownScreen``). Pushed at
+        the app level, so it covers whatever screen is current — workspaces
+        list, workspace detail, create/edit form — giving one uniform signal
+        on every page.
+
+        Re-entrancy-safe: the status loop, token-refresh loop, and workspace
+        loads can all detect auth failure near-simultaneously. ``_expiring``
+        is set synchronously before the overlay is pushed, so only the first
+        call shows it; the rest bail out.
         """
         if self._expiring or isinstance(self.screen, LoginScreen):
             return
         self._expiring = True
+        self._session_expired_screen = SessionExpiredScreen()
+        self.push_screen(self._session_expired_screen)
+
+    def confirm_session_expired(self) -> None:
+        """User acknowledged the expiry overlay — log out and go to login.
+
+        Called by :class:`SessionExpiredScreen` (button / ``Enter`` / ``Esc``).
+        Dismisses the overlay, then runs the logout + redirect in a worker so
+        credential I/O doesn't block the UI thread.
+        """
+        screen = self._session_expired_screen
+        self._session_expired_screen = None
+        if screen is not None and screen in self.screen_stack:
+            screen.dismiss(None)
 
         async def _expire() -> None:
             try:
@@ -294,11 +320,6 @@ class KlangkApp(App):
                     self.pop_screen()
                 self.live_extra = ""
                 self.push_screen(LoginScreen())
-                self.notify(
-                    "Session expired — please log in again.",
-                    severity="warning",
-                    timeout=8,
-                )
             finally:
                 self._expiring = False
 

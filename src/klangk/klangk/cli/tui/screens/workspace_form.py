@@ -432,7 +432,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                 allowed_domains=allowed_domains,
             )
         except AuthError:
-            self._msg("Session expired — please log in again.", error=True)
+            self.app.session_expired()
             return
         except httpx.HTTPStatusError as exc:
             try:
@@ -947,7 +947,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
                 self.app.tui_state.update_workspace, ws.id, **body
             )
         except AuthError:
-            self._msg("Session expired — please log in again.", error=True)
+            self.app.session_expired()
             return
         except httpx.HTTPStatusError as exc:
             try:
