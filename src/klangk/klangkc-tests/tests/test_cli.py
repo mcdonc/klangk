@@ -258,23 +258,23 @@ class TestSeedConfig:
         cfg = CLIConfig.load()
         assert "myhost" in cfg.servers
 
-    def test_includes_commented_forward_agent_opt_in(
+    def test_generated_config_defaults_forward_agent_on(
         self, tmp_path, monkeypatch
     ):
-        """#1923: a freshly generated klangk.yaml includes forward-agent as a
-        commented-out opt-in line; it stays OFF by default (forwarding only
-        happens when the user uncomments it, passes -A, or sets it
-        per-server), since a forwarded agent can be abused by an untrusted
-        host."""
+        """#1923/#2000: a freshly generated klangk.yaml sets forward-agent: true
+        (active), so SSH agent forwarding is ON by default. Disable by setting
+        forward-agent: false globally or per-server; a forwarded agent can be
+        abused by an untrusted host."""
         config_path = tmp_path / "klangk.yaml"
         monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
         seed_config("http://localhost:8995", "admin@example.com")
         text = config_path.read_text()
-        # Present as a commented-out, discoverable opt-in line...
-        assert "# forward-agent: true" in text
-        # ...and inactive (off by default).
+        # Present as an active line (on by default)...
+        assert "forward-agent: true" in text
+        assert "# forward-agent: true" not in text
+        # ...and effective.
         cfg = CLIConfig.load()
-        assert cfg.forward_agent is None
+        assert cfg.forward_agent is True
         assert "localhost" in cfg.servers
 
 
@@ -288,10 +288,12 @@ class TestEnsureConfig:
         ensure_config()
         assert config_path.exists()
         text = config_path.read_text()
-        assert "# forward-agent: true" in text
+        assert "forward-agent: true" in text
+        assert "# forward-agent: true" not in text  # active, not commented out
         assert "servers: {}" in text
         cfg = CLIConfig.load()
         assert cfg.servers == {}
+        assert cfg.forward_agent is True  # on by default
 
     def test_does_not_overwrite_existing(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"

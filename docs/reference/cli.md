@@ -73,7 +73,7 @@ hostname as the alias and the login user as the default:
 ```bash
 klangk login http://myhost:8997 admin@example.com
 # Creates ~/.config/klangk/klangk.yaml with:
-#   # forward-agent: true   # opt-in: uncomment to enable
+#   forward-agent: true   # on by default (set false to disable)
 #   servers:
 #     myhost:
 #       url: http://myhost:8997
@@ -87,7 +87,7 @@ freely after the initial creation.
 
 | Setting         | Scope            | Default  | Description                                       |
 | --------------- | ---------------- | -------- | ------------------------------------------------- |
-| `forward-agent` | global or server | `false`  | Forward local SSH agent into containers           |
+| `forward-agent` | global or server | `true`   | Forward local SSH agent into containers           |
 | `ws-max-size`   | global or server | 16777216 | Maximum WebSocket message size in bytes           |
 | `user`          | server only      |          | Default user (email or handle) for `klangk login` |
 | `url`           | server only      |          | Server URL (required for each server entry)       |
