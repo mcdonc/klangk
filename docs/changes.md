@@ -1214,6 +1214,15 @@ set-password <email>` (set a known password for the default user — whose
   (#2010).** `on_list_view_selected` clears the primary screen buffer
   inside the `suspend()` block before spawning `klangk shell`, so the
   stale content that briefly surfaced during the buffer swap is gone.
+- **TUI workspace-detail terminal list is now focused and selected by
+  default from the first frame (#1956).** On a first visit (stopped
+  workspace), the terminal list was empty and unfocused for the whole
+  container auto-start window — focus was `None` and Tab/arrows/Enter were
+  dead, so the initial terminal could not be reached or selected with the
+  keyboard (a focus trap). The list now shows a placeholder row
+  immediately, highlighted (`index == 0`) and focused on mount and on every
+  `on_show` (so focus is re-asserted after a foreground modal closes too);
+  `_render_terminals` keeps the first terminal selected once it loads.
 
 - **SSH agent forwarding now works on reconnect and in the TUI (#2001).**
   Two bugs, one symptom (`ssh-add -l` → _"Could not open a connection to

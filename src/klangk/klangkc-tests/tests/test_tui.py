@@ -3497,6 +3497,32 @@ async def test_detail_loads_and_renders(monkeypatch):
         assert _detail_value(body, "owner") == "o@x"
 
 
+async def test_focus_term_list_noop_while_modal_open(monkeypatch):
+    """#1956: _focus_term_list must not yank focus to the terminals list
+    while a modal dialog is open over the detail screen."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        detail = app.screen
+        app.push_screen(ConfirmScreen("sure?"))
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        # Guard contract: a focus re-assert while the modal is up is a no-op.
+        detail._focus_term_list()
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        assert getattr(app.focused, "id", None) != "term_list"
+
+
 async def test_detail_shows_full_id(monkeypatch):
     """#1899: the detail screen shows the full server-assigned workspace id,
     so it can be copied for CLI / log / support correlation."""

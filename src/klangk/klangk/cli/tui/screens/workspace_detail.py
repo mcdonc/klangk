@@ -108,11 +108,38 @@ class WorkspaceDetailScreen(Screen):
     def on_mount(self) -> None:
         self.run_worker(self._mount_async, exit_on_error=False)
         self._uptime_timer = self.set_interval(5, self._tick_uptime)
-        # Autofocus the Terminals list so the keyboard path reaches it on
-        # entry (spatial-nav rule, AGENTS.md). The list is the only focusable
-        # widget; without an explicit grab focus can stay on the underlying
-        # screen after push_screen, leaving the list mouse-only (#1956).
-        self.query_one("#term_list").focus()
+        # Put a placeholder row in the list immediately and focus it. The real
+        # terminal list is only rendered by _render_terminals, which runs AFTER
+        # _mount_async — i.e. after a possibly multi-second container
+        # auto-start. Without this, the list is empty and unfocused for that
+        # whole window, so the keyboard (Tab/arrows/Enter) is dead and the
+        # user cannot reach or select the initial terminal (#1956).
+        lv = self.query_one("#term_list", ListView)
+        lv.append(ListItem(Label(Text("(loading terminals…)")), name=""))
+        if lv.index is None:
+            lv.index = 0  # highlight the placeholder so the list is selected by default
+        self.call_after_refresh(self._focus_term_list)
+
+    def on_show(self) -> None:
+        # Re-assert focus on the terminals list every time this screen is
+        # shown. Focusing in on_mount alone does not survive Textual's
+        # screen-activation focus transfer (the #1956 grab was being lost on
+        # entry, leaving the list unreachable via keyboard). on_show also
+        # fires after a foreground modal (edit form, confirm dialog) is
+        # dismissed, returning focus to the list.
+        self._focus_term_list()
+
+    def _focus_term_list(self) -> None:
+        """Focus #term_list when this screen is the active one.
+
+        Skipped while a modal sits on top (app.screen is not self) so a
+        background terminals_changed reload never yanks focus out of the
+        foreground dialog. The list is the screen's primary interactive
+        widget, so always prefer it when this screen is active.
+        """
+        if self.app.screen is not self:
+            return
+        self.query_one("#term_list", ListView).focus()
 
     async def _mount_async(self) -> None:
         await self._load()
@@ -440,7 +467,7 @@ class WorkspaceDetailScreen(Screen):
         # open over this screen, so a background terminals_changed reload
         # never yanks focus out of the foreground dialog.
         if self.app.screen is self:
-            lv.focus()
+            self._focus_term_list()
         if lv.index is None:
             lv.index = 0
 
