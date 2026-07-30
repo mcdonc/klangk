@@ -186,6 +186,25 @@ def _wsobj(name, **k):
     return Workspace(id="id-" + name, name=name, created_at="x", **k)
 
 
+def _attach_notify_spy(app) -> list:
+    """Spy on ``app.notify`` and return the list of toasted messages (#2019).
+
+    Operational success / in-progress feedback on the detail screen is now
+    shown via auto-dismissing toasts (``app.notify``) rather than a lingering
+    in-page line; tests assert on the captured messages. Mirrors the inline
+    pattern the export test used for its completion toast (#1758).
+    """
+    notified: list = []
+    orig = app.notify
+
+    def spy(message="", *a, **k):
+        notified.append(message)
+        return orig(message, *a, **k)
+
+    app.notify = spy
+    return notified
+
+
 def _detail_value(body: str, label: str) -> str | None:
     """Return the value-column text for ``label``'s row in the workspace
     detail table, or None if no such row.
@@ -2303,16 +2322,7 @@ async def test_detail_export_flow_with_progress(monkeypatch):
     st.find_workspace = lambda n: a
     st.export_workspace = fake_export
     app = KlangkApp(st)
-    # Spy on app.notify so we can assert the completion toast (#1758):
-    # a resolved absolute filesystem path is toasted on success.
-    notified = []
-    orig_notify = app.notify
-
-    def spy_notify(message="", *a, **k):
-        notified.append(message)
-        return orig_notify(message, *a, **k)
-
-    app.notify = spy_notify
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -3866,6 +3876,7 @@ async def test_detail_restart_confirm_cancel_error(monkeypatch):
     st.find_workspace = lambda n: a
     st.restart_workspace = lambda n: restarted.__setitem__("r", n)
     app = KlangkApp(st)
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -3883,9 +3894,7 @@ async def test_detail_restart_confirm_cancel_error(monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert restarted.get("r") == "alpha"
-        assert "Restart requested" in str(
-            app.screen.query_one("#detail_msg").render()
-        )
+        assert any("Restart requested" in m for m in notified)
         # service_started_at reset on restart (#1814).
         assert a.service_started_at is not None
         # error
@@ -3913,13 +3922,12 @@ async def test_detail_auto_starts_stopped_workspace(monkeypatch):
     st.find_workspace = lambda n: a
     st.restart_workspace = lambda n: started.append(n)
     app = KlangkApp(st)
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         assert started == ["alpha"]
-        assert "Container started" in str(
-            app.screen.query_one("#detail_msg").render()
-        )
+        assert any("Container started" in m for m in notified)
 
 
 async def test_detail_auto_start_skipped_when_running(monkeypatch):
@@ -3972,6 +3980,7 @@ async def test_detail_stop_when_running(monkeypatch):
     st.find_workspace = lambda n: a
     st.stop_workspace = lambda n: stopped.__setitem__("s", n)
     app = KlangkApp(st)
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -3982,9 +3991,7 @@ async def test_detail_stop_when_running(monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert stopped.get("s") == "alpha"
-        assert "Stop requested" in str(
-            app.screen.query_one("#detail_msg").render()
-        )
+        assert any("Stop requested" in m for m in notified)
         # After stop, binding label should toggle to "Start".
         labels = [b.description for b in app.screen.BINDINGS if b.key == "s"]
         assert labels == ["Start"]
@@ -4006,6 +4013,7 @@ async def test_detail_start_when_stopped(monkeypatch):
     st.find_workspace = lambda n: a
     st.start_workspace = lambda n: started.__setitem__("s", n)
     app = KlangkApp(st)
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -4013,9 +4021,7 @@ async def test_detail_start_when_stopped(monkeypatch):
         app.screen.action_stop()
         await app.workers.wait_for_complete()
         assert started.get("s") == "alpha"
-        assert "Start requested" in str(
-            app.screen.query_one("#detail_msg").render()
-        )
+        assert any("Start requested" in m for m in notified)
         # After start, binding label should toggle to "Stop".
         labels = [b.description for b in app.screen.BINDINGS if b.key == "s"]
         assert labels == ["Stop"]
@@ -4278,6 +4284,7 @@ async def test_detail_duplicate_ok_cancel_input_error(monkeypatch):
     st.find_workspace = lambda n: a
     st.duplicate_workspace = lambda n, nn: duped.__setitem__("d", (n, nn))
     app = KlangkApp(st)
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -4295,9 +4302,7 @@ async def test_detail_duplicate_ok_cancel_input_error(monkeypatch):
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert duped.get("d") == ("alpha", "alpha-copy")
-        assert "Duplicated" in str(
-            app.screen.query_one("#detail_msg").render()
-        )
+        assert any("Duplicated" in m for m in notified)
         # ok via input submit (enter)
         app.screen.action_duplicate()
         await pilot.pause()
@@ -5070,6 +5075,7 @@ async def test_detail_delete_terminal(monkeypatch):
     st = _ws(list_terminals=_async_terms, close_terminal=_close)
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -5081,9 +5087,7 @@ async def test_detail_delete_terminal(monkeypatch):
         for _ in range(3):
             await pilot.pause()
         assert closed.get("i") == "@1"
-        assert "Deleted terminal build" in str(
-            d.query_one("#detail_msg").render()
-        )
+        assert any("Deleted terminal build" in m for m in notified)
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 1
 
 
@@ -5187,6 +5191,7 @@ async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
     st = _ws(list_terminals=_async_terms, close_terminal=_close)
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -5196,19 +5201,15 @@ async def test_detail_delete_terminal_shows_inflight_msg(monkeypatch):
         d.query_one("#term_list").index = 1
         d.action_delete_terminal()
         # While close_terminal is blocked on the gate, the in-flight
-        # message must already be visible.
+        # toast must already have fired.
         for _ in range(3):
             await pilot.pause()
-        assert "Deleting terminal build" in str(
-            d.query_one("#detail_msg").render()
-        )
-        # Releasing the close call replaces it with the success message.
+        assert any("Deleting terminal build" in m for m in notified)
+        # Releasing the close call fires the success toast.
         gate.set()
         for _ in range(3):
             await pilot.pause()
-        assert "Deleted terminal build" in str(
-            d.query_one("#detail_msg").render()
-        )
+        assert any("Deleted terminal build" in m for m in notified)
 
 
 async def test_detail_delete_terminal_failure(monkeypatch):
@@ -5640,6 +5641,7 @@ async def test_detail_new_terminal(monkeypatch):
     )
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
+    notified = _attach_notify_spy(app)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
@@ -5652,7 +5654,7 @@ async def test_detail_new_terminal(monkeypatch):
         await app.workers.wait_for_complete()
         assert created["name"] == "term-2"
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 3
-        assert "Created terminal" in str(d.query_one("#detail_msg").render())
+        assert any("Created terminal" in m for m in notified)
 
 
 async def test_detail_new_terminal_failure(monkeypatch):
