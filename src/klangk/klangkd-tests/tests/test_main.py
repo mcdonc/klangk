@@ -1923,32 +1923,8 @@ class TestLauncherPidPreflightGracefulExit:
     """
 
     def test_second_instance_exits_cleanly(self, tmp_path):
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        (data_dir / "instance-id").write_text("test-id")
-        state_dir = tmp_path / "state"
-        state_dir.mkdir()
-        # A live foreign PID: this test process's parent is alive and is not
-        # the launcher's own PID (same trick as test_live_foreign_pid above).
-        live_pid = os.getppid()
-        (state_dir / "klangk-test-id.pid").write_text(str(live_pid))
-
-        # Strip inherited KLANGKD_* so the subprocess sees only what we set
-        # (env > file precedence; CI/dev shells carry KLANGKD_* vars that
-        # would otherwise override our planted dirs).
-        env = {
-            k: v for k, v in os.environ.items() if not k.startswith("KLANGKD_")
-        }
-        env["KLANGKD_STATE_DIR"] = str(state_dir)
-        env["KLANGKD_DATA_DIR"] = str(data_dir)
-
-        result = subprocess.run(
-            [sys.executable, "-m", "klangk.launcher", "--config=none"],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        state_dir, data_dir = _plant_live_winner(tmp_path, os.getppid())
+        result = _launch_refusal_subprocess(state_dir, data_dir)
 
         # Graceful refusal, not a Python traceback.
         assert result.returncode == 1, result.stderr
@@ -1956,6 +1932,188 @@ class TestLauncherPidPreflightGracefulExit:
         # The pre-fix bug crashed with ImportError before the message could
         # be logged (``from klangk.logger import logger`` — no such symbol).
         assert "ImportError" not in result.stderr
+
+
+def _plant_live_winner(tmp_path, winner_pid):
+    """Plant an instance-id + pidfile recording a live foreign winner PID.
+
+    The launcher's pre-flight sees a live, non-self PID and refuses (#1837).
+    Returns ``(state_dir, data_dir)``.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "instance-id").write_text("test-id")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "klangk-test-id.pid").write_text(str(winner_pid))
+    return state_dir, data_dir
+
+
+def _launch_refusal_subprocess(state_dir, data_dir):
+    """Run the real launcher in a subprocess against planted state/data dirs.
+
+    Strips inherited ``KLANGKD_*`` so the subprocess sees only the planted
+    dirs (env > file precedence; CI/dev shells carry ``KLANGKD_*`` that would
+    otherwise override them).
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("KLANGKD_")}
+    env["KLANGKD_STATE_DIR"] = str(state_dir)
+    env["KLANGKD_DATA_DIR"] = str(data_dir)
+    return subprocess.run(
+        [sys.executable, "-m", "klangk.launcher", "--config=none"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+class TestLauncherPidRefusalDedup:
+    """#2021: a losing (second) process reports why it exits — but only the
+    first time it collides with a given live winner PID. A service
+    supervisor's restart loop of the loser must not spam one refusal line
+    per retry; a *different* winner PID is reported fresh.
+
+    The dedup is independent of whether stderr is a TTY: the discriminator is
+    winner-vs-loser, not interactive-vs-supervised.
+    """
+
+    def test_retry_against_same_winner_is_silent(self, tmp_path):
+        # First collision logs + records the winner PID.
+        winner_pid = os.getppid()
+        state_dir, data_dir = _plant_live_winner(tmp_path, winner_pid)
+        first = _launch_refusal_subprocess(state_dir, data_dir)
+        assert first.returncode == 1, first.stderr
+        assert "Another klangk instance" in first.stderr
+
+        # A supervisor restart against the SAME winner PID stays quiet: the
+        # refusal was already reported for this PID. Still exits non-zero.
+        second = _launch_refusal_subprocess(state_dir, data_dir)
+        assert second.returncode == 1, second.stderr
+        assert "Another klangk instance" not in second.stderr
+
+    def test_new_winner_pid_logs_again(self, tmp_path):
+        # The dedup marker is keyed on the winner PID, so a *new* live winner
+        # is reported fresh rather than permanently silenced.
+        state_dir, data_dir = _plant_live_winner(tmp_path, os.getppid())
+        first = _launch_refusal_subprocess(state_dir, data_dir)
+        assert "Another klangk instance" in first.stderr
+
+        # A second, distinct live foreign PID (a child we keep alive).
+        sleeper = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+        )
+        try:
+            (state_dir / "klangk-test-id.pid").write_text(str(sleeper.pid))
+            second = _launch_refusal_subprocess(state_dir, data_dir)
+            assert second.returncode == 1, second.stderr
+            assert "Another klangk instance" in second.stderr
+        finally:
+            sleeper.terminate()
+            sleeper.wait()
+
+    def test_marker_file_is_written_sibling_of_pidfile(self, tmp_path):
+        state_dir, data_dir = _plant_live_winner(tmp_path, os.getppid())
+        _launch_refusal_subprocess(state_dir, data_dir)
+        assert (state_dir / "klangk-test-id.refusal").exists()
+
+
+class TestRefusalDedupHelpers:
+    """Unit tests for the refusal-dedup helpers in launcher.py (#2021)."""
+
+    def test_marker_path_none_without_instance_id(self, tmp_path):
+        from klangk.launcher import _refusal_marker_path
+
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(tmp_path / "state"),
+                "KLANGKD_DATA_DIR": str(tmp_path / "data"),
+            }
+        )
+        assert _refusal_marker_path(settings) is None
+
+    def test_marker_path_none_for_empty_instance_id(self, tmp_path):
+        from klangk.launcher import _refusal_marker_path
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("")
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(tmp_path / "state"),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert _refusal_marker_path(settings) is None
+
+    def test_marker_path_sibling_of_pidfile(self, tmp_path):
+        from klangk.launcher import _refusal_marker_path
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "instance-id").write_text("abc")
+        settings = make_settings(
+            {
+                "KLANGKD_STATE_DIR": str(tmp_path / "state"),
+                "KLANGKD_DATA_DIR": str(data_dir),
+            }
+        )
+        assert (
+            _refusal_marker_path(settings)
+            == tmp_path / "state" / "klangk-abc.refusal"
+        )
+
+    def test_already_reported_false_when_absent(self, tmp_path):
+        from klangk.launcher import _refusal_already_reported
+
+        assert not _refusal_already_reported(tmp_path / "missing.refusal", 123)
+
+    def test_already_reported_true_when_pid_matches(self, tmp_path):
+        from klangk.launcher import (
+            _mark_refusal_reported,
+            _refusal_already_reported,
+        )
+
+        marker = tmp_path / "klangk-x.refusal"
+        _mark_refusal_reported(marker, 456)
+        assert _refusal_already_reported(marker, 456)
+
+    def test_already_reported_false_when_pid_differs(self, tmp_path):
+        from klangk.launcher import (
+            _mark_refusal_reported,
+            _refusal_already_reported,
+        )
+
+        marker = tmp_path / "klangk-x.refusal"
+        _mark_refusal_reported(marker, 456)
+        assert not _refusal_already_reported(marker, 789)
+
+    def test_already_reported_false_on_corrupt_marker(self, tmp_path):
+        from klangk.launcher import _refusal_already_reported
+
+        marker = tmp_path / "klangk-x.refusal"
+        marker.write_text("not-a-pid")
+        assert not _refusal_already_reported(marker, 123)
+
+    def test_mark_refusal_reported_creates_parent(self, tmp_path):
+        from klangk.launcher import _mark_refusal_reported
+
+        marker = tmp_path / "nested" / "dir" / "klangk-x.refusal"
+        _mark_refusal_reported(marker, 999)
+        assert marker.read_text() == "999"
+
+    def test_mark_refusal_reported_swallows_oserror(self, tmp_path):
+        # A marker whose parent is a regular file can't be created → OSError
+        # (FileExistsError) from mkdir. Best-effort: must not raise, so the
+        # refusal path still exits cleanly (worst case: one extra line next
+        # retry).
+        from klangk.launcher import _mark_refusal_reported
+
+        blocker = tmp_path / "blocker"
+        blocker.write_text("")  # a file, not a directory
+        marker = blocker / "klangk-x.refusal"
+        _mark_refusal_reported(marker, 999)  # must not raise
+        assert not marker.exists()
 
 
 class TestBuildApp:
