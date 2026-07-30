@@ -148,8 +148,10 @@ class ServerSwitchScreen(Screen):
         )
         if status == "unreachable":
             msg.update(
-                "[red]Cannot reach the server. "
-                "Check that klangkd is running.[/red]"
+                Text(
+                    "Cannot reach the server. Check that klangkd is running.",
+                    style="red",
+                )
             )
             return
         await asyncio.to_thread(self.app.tui_state.switch_server, url)
@@ -194,12 +196,15 @@ class AddServerScreen(Screen):
         url = self.query_one("#url", Input).value.strip()
         msg = self.query_one("#add_msg", Static)
         if not alias or not url:
-            msg.update("[red]Alias and URL are required.[/red]")
+            msg.update(Text("Alias and URL are required.", style="red"))
             return
         if not is_valid_server_spec(url):
             msg.update(
-                "[red]URL must be http(s)://host or an absolute socket"
-                " path (/...).[/red]"
+                Text(
+                    "URL must be http(s)://host or an absolute socket"
+                    " path (/...).",
+                    style="red",
+                )
             )
             return
         self.run_worker(self._do_add_server(alias, url), exit_on_error=False)
@@ -210,8 +215,11 @@ class AddServerScreen(Screen):
         except AliasConflictError:
             msg = self.query_one("#add_msg", Static)
             msg.update(
-                f"[red]Alias '{alias}' already exists. Choose a"
-                " different name or edit the existing entry.[/red]"
+                Text(
+                    f"Alias '{alias}' already exists. Choose a"
+                    " different name or edit the existing entry.",
+                    style="red",
+                )
             )
             return
         self.app.server_changed()
@@ -267,12 +275,15 @@ class EditServerScreen(ModalScreen):
         url = self.query_one("#url", Input).value.strip()
         msg = self.query_one("#edit_srv_msg", Static)
         if not alias or not url:
-            msg.update("[red]Alias and URL are required.[/red]")
+            msg.update(Text("Alias and URL are required.", style="red"))
             return
         if not is_valid_server_spec(url):
             msg.update(
-                "[red]URL must be http(s)://host or an absolute socket"
-                " path (/...).[/red]"
+                Text(
+                    "URL must be http(s)://host or an absolute socket"
+                    " path (/...).",
+                    style="red",
+                )
             )
             return
         self.run_worker(self._do_save(alias, url), exit_on_error=False)
@@ -292,7 +303,7 @@ class EditServerScreen(ModalScreen):
             return
         if not ok:
             self.query_one("#edit_srv_msg", Static).update(
-                "[red]Server not found.[/red]"
+                Text("Server not found.", style="red")
             )
             return
         # Signal whether server_changed() should follow (URL changed →
