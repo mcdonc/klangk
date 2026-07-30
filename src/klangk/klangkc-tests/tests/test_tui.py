@@ -1030,27 +1030,35 @@ async def test_status_loop_no_token_returns_early(monkeypatch):
         await _real_status_loop(app.screen)  # no token -> early return
 
 
-async def test_status_loop_handles_disconnect(monkeypatch):
+async def test_status_loop_retries_indefinitely_on_error(monkeypatch):
+    """Transient errors trigger unlimited retries; the loop only exits when
+    the token disappears (session_expired)."""
+    attempts = {"n": 0}
+
     async def boom(*a, **k):
+        attempts["n"] += 1
         raise RuntimeError("ws died")
 
     monkeypatch.setattr(scr_main, "listen_for_status", boom)
-    # The exponential backoff sleeps (2s, 4s, 8s) are incidental to the
-    # disconnect -> give-up flow under test; neutralize them so the loop
-    # exhausts its retries without burning ~14s of wall-clock (#1989).
     import asyncio as _asyncio
 
     _real_sleep = _asyncio.sleep
 
     async def _no_wait(_t):
-        await _real_sleep(0)  # yield once, no real delay
+        await _real_sleep(0)
 
     monkeypatch.setattr(_asyncio, "sleep", _no_wait)
-    app = KlangkApp(_authed_state())
+    # Token present for more than 3 iterations (old limit), then removed.
+    tokens = iter(["tok"] * 7 + [None])
+    app = KlangkApp(_authed_state(token=lambda: next(tokens)))
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
     async with app.run_test() as pilot:
         await _real_status_loop(app.screen)
         await pilot.pause()
-        assert "status: disconnected" in app.live_extra
+    # Must have retried more than the old 3-retry cap.
+    assert attempts["n"] > 3
+    assert expired
 
 
 async def test_status_loop_clean_close_reconnects(monkeypatch):
@@ -1075,6 +1083,48 @@ async def test_status_loop_clean_close_reconnects(monkeypatch):
     # The clean-close reconnect branch ran before the token dropped.
     assert "status: reconnecting" in (app.live_extra or "")
     assert expired  # iteration 2 saw no token -> session_expired
+
+
+async def test_status_loop_resets_backoff_after_success(monkeypatch):
+    """After a successful connection (clean close), the error retry counter
+    resets so subsequent failures get a fresh backoff sequence (#2033)."""
+    import asyncio as _asyncio
+
+    _real_sleep = _asyncio.sleep
+    sleeps = []
+
+    async def _spy_sleep(t):
+        sleeps.append(t)
+        await _real_sleep(0)
+
+    monkeypatch.setattr(_asyncio, "sleep", _spy_sleep)
+
+    # Sequence: 2 errors, then 1 success (clean close), then 2 more errors,
+    # then token drops. If retries reset, the second batch of errors uses the
+    # same low-backoff values as the first.
+    calls = {"n": 0}
+
+    async def mixed(*a, **k):
+        calls["n"] += 1
+        n = calls["n"]
+        if n <= 2:
+            raise RuntimeError("err")  # first 2 errors
+        if n == 3:
+            return None  # success — clean close
+        if n <= 5:
+            raise RuntimeError("err")  # 2 more errors after reset
+        return None  # another clean close before token drops
+
+    monkeypatch.setattr(scr_main, "listen_for_status", mixed)
+    tokens = iter(["tok"] * 8 + [None])
+    app = KlangkApp(_authed_state(token=lambda: next(tokens)))
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
+    async with app.run_test() as pilot:
+        await _real_status_loop(app.screen)
+        await pilot.pause()
+    assert expired
+    assert calls["n"] >= 5
 
 
 async def test_login_password_flow_success(monkeypatch):

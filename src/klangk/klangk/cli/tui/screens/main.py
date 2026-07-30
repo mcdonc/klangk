@@ -1081,8 +1081,7 @@ class MainScreen(Screen):
         if not url or not token:
             return
         retries = 0
-        max_retries = 3
-        while retries <= max_retries:
+        while True:
             token = state.token()
             if not token:
                 self.app.session_expired()
@@ -1091,8 +1090,9 @@ class MainScreen(Screen):
                 await listen_for_status(
                     url, token, on_event=self._on_status_event
                 )
-                # Clean close (server restart, idle timeout) — reconnect.
-                retries += 1
+                # Clean close (server restart, idle timeout) — reset
+                # backoff since the connection was healthy.
+                retries = 0
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
                 await asyncio.sleep(2)
@@ -1101,23 +1101,13 @@ class MainScreen(Screen):
                 self.app.session_expired()
                 return
             except Exception as exc:
-                # Transient error — back off (exponential) and retry.
+                # Transient error — back off and retry indefinitely.
                 retries += 1
-                if retries > max_retries:
-                    logger.debug(
-                        "Status WS gave up after %d retries: %s",
-                        max_retries,
-                        exc,
-                    )
-                    break
+                logger.debug("Status WS error (attempt %d): %s", retries, exc)
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
-                await asyncio.sleep(min(2 * (2 ** (retries - 1)), 30))
+                await asyncio.sleep(_reconnect_backoff(retries))
                 continue
-        self.app.live_extra = (
-            "status: disconnected (switch server to reconnect)"
-        )
-        self._refresh_status()
 
     async def _token_refresh_loop(self) -> None:
         """Proactively refresh the access token before it expires."""

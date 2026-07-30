@@ -1240,6 +1240,14 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **The TUI's live status feed no longer dies after 3 reconnect
+  failures (#2033).** `_status_loop` capped retries at 3, after which
+  live updates (container status, workspace changes, service health)
+  stopped for the whole session with no recovery short of re-login. It
+  now retries indefinitely with the same bounded backoff the workspace-list
+  reconnect uses (≤5s), resetting after a healthy connection, and exits
+  only on auth failure (session expiry).
+
 - **Duplicate `klangkd` launch no longer spams the running instance's log
   with ERROR "Another klangk instance is already running" lines (#2021).**
   The _losing_ (second) process still reports why it exits, but now
