@@ -110,6 +110,20 @@ def _is_allowed_read_only_input(data: str) -> bool:
     return _READ_ONLY_INPUT.fullmatch(data) is not None
 
 
+def ssh_agent_socket_path(user_id: str) -> str:
+    """Deterministic in-container path for a user's forwarded SSH-agent socket.
+
+    ``/tmp/klangk-ssh-agent-<user_id>.sock`` is the path the socat relay
+    (:meth:`SshAgentForwarder.start`) binds when a client opts into agent
+    forwarding. It is stable across reconnections and independent of *when*
+    the relay starts — which is what lets every interactive terminal wire
+    ``SSH_AUTH_SOCK`` here at creation time and go live the moment a relay
+    binds this path, instead of only working when the relay happened to be
+    up first (#2001).
+    """
+    return f"/tmp/klangk-ssh-agent-{user_id}.sock"
+
+
 class SshAgentForwarder:
     """SSH agent forwarding relay via socat inside the container.
 
@@ -139,7 +153,36 @@ class SshAgentForwarder:
         # Clean up any existing agent relay.
         await self.stop()
         user_id = self._conn.user["id"]
-        sock_path = f"/tmp/klangk-ssh-agent-{user_id}.sock"
+        sock_path = ssh_agent_socket_path(user_id)
+        # Reap any competing relay a prior connection left behind.
+        #
+        # Each ``klangk shell -A`` is a fresh Connection with its own
+        # SshAgentForwarder; the previous connection's stop() ran against
+        # *its* proc (unknown to us), and if it didn't fully tear down — a
+        # crashed/disconnected client, or a reconnect before the old relay
+        # finished dying — its socat is still listening on this path. Two
+        # socats with ``unlink-early`` on the same socket unlinks each
+        # other's accept-time socket file, so ``ssh-add`` sees the path
+        # flicker in and out ("No such file or directory") (#2001).
+        #
+        # ``pkill -f`` matches the full argv; scoped to this user's exact
+        # socket string it only reaps *this* user's stale socat relays — never
+        # another user's relay or an unrelated process. ``pkill`` exits 1 when
+        # nothing matches (first connect on a clean container);
+        # ``exec_container`` runs ``check=False`` (``Podman.run`` only raises on
+        # non-zero when ``check`` is set), so that no-match exit is swallowed
+        # and the bind proceeds.
+        #
+        # Isolation caveat: the socket is bound ``mode=600``, which isolates
+        # it across OS users — but in a shared workspace all members run as
+        # the same in-container uid (``klangk``), so a collaborator can reach
+        # another member's forwarded-agent socket and use its identities. That
+        # exposure predates #2001 (the relay always bound this path); a
+        # per-user private socket directory would close it.
+        await self._conn.app.state.podman.exec_container(
+            container_id,
+            ["pkill", "-f", f"UNIX-LISTEN:{sock_path}"],
+        )
         # Remove stale socket if it exists from a previous session.
         await self._conn.app.state.podman.exec_container(
             container_id, ["rm", "-f", sock_path]
@@ -226,13 +269,32 @@ class SshAgentForwarder:
                 logger.debug("SSH agent process already exited")
             self.proc = None
         container_id = self._conn.container_id
+        # Reap the in-container socat directly. ``proc.kill()`` above sends
+        # SIGKILL to the local ``podman exec`` handle, which does NOT reliably
+        # terminate the container-side socat it spawned — so the listener can
+        # survive as an orphan. With ``unlink-early`` that orphan then races
+        # the next connection's bind (and ``rm -f`` below leaves a live
+        # listener with no socket file). Killing by the deterministic path
+        # (same ``pkill -f`` ``start()`` uses) guarantees the container-side
+        # process is gone before we remove the socket (#2001).
         if self.socket and container_id:
+            # Best-effort teardown: a failure here (container already gone,
+            # podman subprocess can't launch) must not break disconnect.
+            # ``exec_container`` runs ``check=False`` so non-zero exits don't
+            # raise; this catches the remaining launch/IO failures.
+            try:
+                await self._conn.app.state.podman.exec_container(
+                    container_id,
+                    ["pkill", "-f", f"UNIX-LISTEN:{self.socket}"],
+                )
+            except Exception as e:  # best-effort reap
+                logger.debug("Failed to reap SSH agent socat: %s", e)
             try:
                 await self._conn.app.state.podman.exec_container(
                     container_id,
                     ["rm", "-f", self.socket],
                 )
-            except OSError as e:
+            except Exception as e:
                 logger.warning(
                     "Failed to remove SSH agent socket %s: %s",
                     self.socket,
@@ -280,9 +342,16 @@ class ExecController:
         if user_home is not None:
             env.append(f"HOME={user_home}")
             work_dir = user_home
-        ssh_agent_socket = self._conn._ssh_agent_socket
-        if ssh_agent_socket is not None:
-            env.append(f"SSH_AUTH_SOCK={ssh_agent_socket}")
+        # Wire SSH_AUTH_SOCK to the deterministic per-user path on every
+        # exec, not only when a relay is already active (#2001): exec
+        # sessions are short-lived one-shot commands and have no persistent
+        # base session, but the same creation-path uniformity applies — the
+        # var is inert until a relay binds this path. The forwarder's
+        # ``ssh_agent.socket`` (when the relay is up) is the same path, so
+        # this strictly generalizes the old relay-gated wiring.
+        env.append(
+            f"SSH_AUTH_SOCK={ssh_agent_socket_path(self._conn.user['id'])}"
+        )
         # `login` (default raw) selects whether the command runs as a
         # bash login shell (sources ~/.profile, like a terminal) or as
         # raw argv (no shell, for programmatic transports like rsync).
@@ -602,13 +671,22 @@ class TerminalController:
         # in ``_start_terminal`` (after the shell session is up) so a
         # post-setup ``terminal_start`` still triggers it (#1033).
         ws = self._conn.workspace
+        # Wire SSH_AUTH_SOCK to the deterministic per-user agent-socket path
+        # on EVERY terminal, whether or not a relay is active yet (#2001).
+        # The var is inert until a relay binds this path (which only happens
+        # when the client opts into forwarding), so pre-pointing it here means
+        # a base session created before the relay starts — the TUI path opens
+        # the tmux session, then spawns `klangk shell -A` which starts the
+        # relay — already has it set, and goes live the moment the relay binds.
+        # A reconnect to an existing session inherits it from that first
+        # creation. No per-creation-path special-casing.
         session = TerminalSession(
             self._conn.container_id,
             session_name=self._conn.user["id"],
             user_home=self._conn._user_home,
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
-            ssh_agent_socket=self._conn._ssh_agent_socket,
+            ssh_agent_socket=ssh_agent_socket_path(self._conn.user["id"]),
             terminal=self._conn.app.state.terminal,
             workspace_name=ws.get("name") if ws else None,
         )
@@ -1296,6 +1374,10 @@ class SharedTerminalController:
             read_only=read_only,
             user_id=self._conn.user["id"],
             user_handle=self._conn.user.get("handle"),
+            # Same deterministic path as the owner's interactive terminal
+            # (#2001): the joiner's shell gets its own per-user agent
+            # socket pre-wired, live the moment it forwards an agent.
+            ssh_agent_socket=ssh_agent_socket_path(self._conn.user["id"]),
             terminal=self._conn.app.state.terminal,
         )
         self._conn.terminal_session = session

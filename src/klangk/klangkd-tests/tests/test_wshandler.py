@@ -779,7 +779,7 @@ class TestHandleTerminalStart:
             user_home="/home/testuser",
             user_id="uid",
             user_handle="testuser",
-            ssh_agent_socket=None,
+            ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             terminal=_mock_term,
             workspace_name=None,
         )
@@ -1293,7 +1293,7 @@ class TestHandleTerminalStart:
             user_home="/home/testuser",
             user_id="uid",
             user_handle="testuser",
-            ssh_agent_socket=None,
+            ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             terminal=_mock_term,
             workspace_name=None,
         )
@@ -2461,7 +2461,6 @@ class TestExecHandlers:
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
-        conn._ssh_agent_socket = "/tmp/agent.sock"
         mock_session = AsyncMock()
         mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock()
@@ -2482,7 +2481,12 @@ class TestExecHandlers:
                 ):
                     await conn.handle_exec_start({"command": ["ls"]})
         call_kwargs = mock_cls.call_args[1]
-        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in call_kwargs["env"]
+        # exec wires SSH_AUTH_SOCK to the deterministic per-user path on
+        # every run, regardless of relay state (#2001).
+        assert (
+            "SSH_AUTH_SOCK=/tmp/klangk-ssh-agent-uid.sock"
+            in call_kwargs["env"]
+        )
         assert "HOME=/home/admin" in call_kwargs["env"]
         assert call_kwargs["work_dir"] == "/home/admin"
         conn.exec_task.cancel()
@@ -2643,6 +2647,13 @@ class TestExecController:
             _ssh_agent_socket=ssh_agent_socket,
             _has_perm=AsyncMock(return_value=has_perm),
             app=app_state,
+            # exec start derives the SSH_AUTH_SOCK path from the user id
+            # (#2001), so the fake connection needs a user identity.
+            user={
+                "id": "uid",
+                "email": "testuser@example.com",
+                "handle": "testuser",
+            },
         )
         return ExecController(conn), sock, conn
 
@@ -2715,7 +2726,9 @@ class TestExecController:
                 pass
         kwargs = MockExec.call_args.kwargs
         assert "HOME=/home/admin" in kwargs["env"]
-        assert "SSH_AUTH_SOCK=/tmp/agent.sock" in kwargs["env"]
+        # SSH_AUTH_SOCK is always the deterministic per-user path (#2001);
+        # the relay-state socket is no longer the source.
+        assert "SSH_AUTH_SOCK=/tmp/klangk-ssh-agent-uid.sock" in kwargs["env"]
         assert kwargs["work_dir"] == "/home/admin"
 
     async def test_start_defaults_work_dir_when_no_user_home(self, app_state):
@@ -2735,8 +2748,39 @@ class TestExecController:
             except asyncio.CancelledError:
                 pass
         kwargs = MockExec.call_args.kwargs
-        assert kwargs["env"] == []
+        # No HOME (user_home is None), but SSH_AUTH_SOCK is still wired
+        # to the deterministic per-user path on every exec (#2001).
+        assert kwargs["env"] == [
+            "SSH_AUTH_SOCK=/tmp/klangk-ssh-agent-uid.sock"
+        ]
         assert kwargs["work_dir"] == "/home/work"
+
+    async def test_exec_start_sets_ssh_agent_socket_without_relay(
+        self, app_state
+    ):
+        """exec_start wires ``SSH_AUTH_SOCK`` to the deterministic per-user
+        path even with no agent relay active (#2001) — a set-but-inert var
+        that goes live the moment a relay binds. Mirrors the terminal-start
+        without-relay contract for the exec path (notably the rsync /
+        git-over-ssh transports, which previously ran with the var unset)."""
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        ctrl, _, conn = self._controller(app_state=app_state)
+        assert conn._ssh_agent_socket is None  # no relay active
+        with (
+            patch("klangk.wshandler.controllers.ExecSession") as MockExec,
+            patch.object(registry, "record_activity"),
+        ):
+            mock_session = MockExec.return_value
+            mock_session.start = AsyncMock()
+            await ctrl.start({"command": ["rsync"], "login": False})
+            ctrl.task.cancel()
+            try:
+                await ctrl.task
+            except asyncio.CancelledError:
+                pass
+        env = MockExec.call_args.kwargs["env"]
+        assert "SSH_AUTH_SOCK=/tmp/klangk-ssh-agent-uid.sock" in env
 
     async def test_start_default_login_false(self, app_state):
         """#1041: a message with no ``login`` key runs raw argv (no
@@ -3046,10 +3090,10 @@ class TestSSHAgentHandlers:
         ):
             await conn.handle_ssh_agent_start()
             # Let the relay task run and finish (stdout returns b"").
-            assert conn._ssh_agent_task is not None
-            await conn._ssh_agent_task
-        assert conn._ssh_agent_proc is mock_proc
-        assert conn._ssh_agent_socket is not None
+            assert conn.ssh_agent.task is not None
+            await conn.ssh_agent.task
+        assert conn.ssh_agent.proc is mock_proc
+        assert conn.ssh_agent.socket is not None
         sock.send_json.assert_called()
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "ssh_agent_started"
@@ -3065,7 +3109,7 @@ class TestSSHAgentHandlers:
         mock_proc.stdin = AsyncMock()
         mock_proc.stdin.write = MagicMock()
         mock_proc.stdin.drain = AsyncMock()
-        conn._ssh_agent_proc = mock_proc
+        conn.ssh_agent.proc = mock_proc
         data = base64.b64encode(b"agent-request").decode()
         await conn.handle_ssh_agent_data({"data": data})
         mock_proc.stdin.write.assert_called_once_with(b"agent-request")
@@ -3082,17 +3126,17 @@ class TestSSHAgentHandlers:
         mock_proc = AsyncMock()
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock()
-        conn._ssh_agent_proc = mock_proc
-        conn._ssh_agent_socket = "/tmp/test.sock"
-        conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
+        conn.ssh_agent.proc = mock_proc
+        conn.ssh_agent.socket = "/tmp/test.sock"
+        conn.ssh_agent.task = asyncio.create_task(asyncio.sleep(999))
         with patch.object(
             _mock_pod,
             "exec_container",
             new=AsyncMock(),
         ):
             await conn.handle_ssh_agent_stop()
-        assert conn._ssh_agent_proc is None
-        assert conn._ssh_agent_socket is None
+        assert conn.ssh_agent.proc is None
+        assert conn.ssh_agent.socket is None
         sock.send_json.assert_called()
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "ssh_agent_stopped"
@@ -3104,18 +3148,18 @@ class TestSSHAgentHandlers:
         mock_proc = AsyncMock()
         mock_proc.kill = MagicMock()
         mock_proc.wait = AsyncMock()
-        conn._ssh_agent_proc = mock_proc
-        conn._ssh_agent_socket = "/tmp/test.sock"
-        conn._ssh_agent_task = asyncio.create_task(asyncio.sleep(999))
+        conn.ssh_agent.proc = mock_proc
+        conn.ssh_agent.socket = "/tmp/test.sock"
+        conn.ssh_agent.task = asyncio.create_task(asyncio.sleep(999))
         with patch.object(
             _mock_pod,
             "exec_container",
             new=AsyncMock(),
         ):
             await conn._stop_ssh_agent()
-        assert conn._ssh_agent_proc is None
-        assert conn._ssh_agent_task is None
-        assert conn._ssh_agent_socket is None
+        assert conn.ssh_agent.proc is None
+        assert conn.ssh_agent.task is None
+        assert conn.ssh_agent.socket is None
 
     async def test_forward_ssh_agent_output(self):
         import base64
@@ -3127,7 +3171,7 @@ class TestSSHAgentHandlers:
         read_data = [b"agent-response", b""]
         mock_proc.stdout = AsyncMock()
         mock_proc.stdout.read = AsyncMock(side_effect=read_data)
-        conn._ssh_agent_proc = mock_proc
+        conn.ssh_agent.proc = mock_proc
         await conn._forward_ssh_agent_output()
         calls = [
             c[0][0]
@@ -3145,7 +3189,6 @@ class TestSSHAgentHandlers:
         conn = _base_conn(ws=sock, app_state=app_state)
         conn.container_id = "cid"
         conn._user_home = "/home/testuser"
-        conn._ssh_agent_socket = "/tmp/klangk-ssh-agent-uid.sock"
         mock_session = AsyncMock()
         mock_session.output = _empty_async_generator
         mock_session.start = AsyncMock()
@@ -3196,6 +3239,57 @@ class TestSSHAgentHandlers:
             workspace_name=None,
         )
 
+    async def test_terminal_start_wires_agent_socket_without_relay(
+        self, app_state
+    ):
+        """terminal_start points SSH_AUTH_SOCK at the deterministic path even
+        when no agent relay is active yet (#2001).
+
+        This is the TUI / autostart case that was broken: the base tmux
+        session is created (window-0 shell spawned) BEFORE the agent relay
+        starts, so the shell never received SSH_AUTH_SOCK. The fix wires
+        every terminal to the deterministic per-user socket path at creation
+        time — inert until a relay binds it, live the moment one does — so it
+        does not matter how or when the terminal (or its agent) was created.
+        Here ``conn.ssh_agent.socket`` is left at its default (None, no
+        relay) yet the deterministic path is still passed through.
+        """
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn._user_home = "/home/testuser"
+        assert conn.ssh_agent.socket is None  # no relay active
+        mock_session = AsyncMock()
+        mock_session.start = AsyncMock()
+        mock_session.session_name = "uid"
+        mock_session.tmux_session_name = "uid"
+
+        async def empty_output():
+            return
+            yield  # pragma: no cover
+
+        mock_session.output = empty_output
+        with (
+            patch(
+                "klangk.wshandler.controllers.TerminalSession",
+                return_value=mock_session,
+            ) as MockTS,
+            patch.object(
+                app_state.state.container_registry, "record_activity"
+            ),
+            patch.object(_mock_term, "attach_browser", new=AsyncMock()),
+            patch.object(_mock_term, "list_windows", return_value=[]),
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)),
+        ):
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            for _ in range(4):
+                await asyncio.sleep(0)
+
+        assert MockTS.call_args.kwargs["ssh_agent_socket"] == (
+            "/tmp/klangk-ssh-agent-uid.sock"
+        )
+
 
 class TestSshAgentForwarder:
     """Unit tests for the SshAgentForwarder collaborator in isolation.
@@ -3206,6 +3300,17 @@ class TestSshAgentForwarder:
     branches that were previously excluded with
     ``# pragma: no cover``.
     """
+
+    def test_socket_path_is_deterministic_per_user(self):
+        """``ssh_agent_socket_path`` is the stable per-user relay path (#2001)."""
+        assert (
+            _ws_controllers.ssh_agent_socket_path("uid")
+            == "/tmp/klangk-ssh-agent-uid.sock"
+        )
+        assert (
+            _ws_controllers.ssh_agent_socket_path("user-42")
+            == "/tmp/klangk-ssh-agent-user-42.sock"
+        )
 
     def _forwarder(self, *, container_id="cid", user=None, sock=None):
         if sock is None:
@@ -3280,6 +3385,70 @@ class TestSshAgentForwarder:
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "ssh_agent_started"
         assert msg["socket"] == "/tmp/klangk-ssh-agent-uid.sock"
+
+    async def test_start_reaps_stale_relay_then_removes_socket(self):
+        """start() reaps a leftover relay (``pkill -f <path>``) BEFORE removing
+        the socket file, in that order — the crux of the #2001 fix."""
+        fwd, sock = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = AsyncMock()
+        calls = []
+
+        async def fake_exec(container_id, argv, **kw):
+            calls.append(list(argv))
+            return (0, "", "")
+
+        with (
+            patch.object(_mock_pod, "exec_container", new=fake_exec),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+        ):
+            async with self._track_tasks():
+                await fwd.start()
+                for _ in range(5):
+                    await asyncio.sleep(0)
+        # pkill the stale relay first, then rm the socket file — in order.
+        assert calls[0] == [
+            "pkill",
+            "-f",
+            "UNIX-LISTEN:/tmp/klangk-ssh-agent-uid.sock",
+        ]
+        assert calls[1] == ["rm", "-f", "/tmp/klangk-ssh-agent-uid.sock"]
+
+    async def test_start_tolerates_pkill_no_match(self):
+        """pkill exits 1 when no stale relay exists (first connect on a clean
+        container). ``exec_container`` is ``check=False``, so start() must
+        tolerate that and still bind (#2001) — guards against a future flip
+        to ``check=True`` silently breaking first-connect."""
+        fwd, sock = self._forwarder()
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = AsyncMock()
+        # pkill returns (1, ...) "no processes matched"; rm returns (0, ...).
+        results = iter([(1, "", "no processes matched"), (0, "", "")])
+
+        async def fake_exec(container_id, argv, **kw):
+            return next(results)
+
+        with (
+            patch.object(_mock_pod, "exec_container", new=fake_exec),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+        ):
+            async with self._track_tasks():
+                await fwd.start()
+                for _ in range(5):
+                    await asyncio.sleep(0)
+        # First-connect (nothing to reap) still binds + records the socket.
+        assert fwd.socket == "/tmp/klangk-ssh-agent-uid.sock"
+        assert fwd.proc is mock_proc
 
     async def test_start_no_container_sends_error(self):
         fwd, sock = self._forwarder(container_id=None)
@@ -3391,16 +3560,44 @@ class TestSshAgentForwarder:
     async def test_stop_handles_socket_remove_oserror(self):
         fwd, _ = self._forwarder()
         fwd.socket = "/tmp/agent.sock"
+        # stop() reaps the in-container socat (pkill) then removes the socket
+        # file (rm). The pkill is best-effort; the rm OSError is the one we
+        # warn about.
         with patch.object(
             _mock_pod,
             "exec_container",
-            new=AsyncMock(side_effect=OSError("boom")),
+            new=AsyncMock(side_effect=[(0, "", ""), OSError("boom")]),
         ) as exec_mock:
             with patch("klangk.wshandler.controllers.logger") as lg:
                 await fwd.stop()
-        exec_mock.assert_awaited_once()
+        assert exec_mock.await_count == 2
+        assert exec_mock.await_args_list[0].args[1] == [
+            "pkill",
+            "-f",
+            "UNIX-LISTEN:/tmp/agent.sock",
+        ]
+        assert exec_mock.await_args_list[1].args[1] == [
+            "rm",
+            "-f",
+            "/tmp/agent.sock",
+        ]
         lg.warning.assert_called_once()
         assert "Failed to remove SSH agent socket" in str(lg.warning.call_args)
+        assert fwd.socket is None
+
+    async def test_stop_tolerates_pkill_failure(self):
+        """The pkill reap is best-effort: if it raises (container already
+        gone, podman launch error) stop() swallows it and still removes the
+        socket file — teardown must not break on a cleanup failure."""
+        fwd, _ = self._forwarder()
+        fwd.socket = "/tmp/agent.sock"
+        with patch.object(
+            _mock_pod,
+            "exec_container",
+            new=AsyncMock(side_effect=[OSError("boom"), (0, "", "")]),
+        ) as exec_mock:
+            await fwd.stop()
+        assert exec_mock.await_count == 2
         assert fwd.socket is None
 
     async def test_stop_cancels_task_and_kills_proc(self):
