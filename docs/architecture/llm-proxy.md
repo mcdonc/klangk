@@ -20,3 +20,78 @@ location /llm-proxy/ {
 ```
 
 In CI, `devenv processes up -d` starts the proxy before E2E tests run.
+
+## Multiple models from one provider
+
+If the upstream pointed to by `KLANGKD_LLM_BASE_URL` serves multiple models (e.g. OpenAI's API exposes `gpt-4o`, `gpt-4o-mini`, `o3`; or a self-hosted vLLM/Ollama instance serving several models), **no klangk changes are needed**. The `llm-proxy-models.ts` extension calls `GET /models` on the proxy, discovers every model the upstream advertises, and registers them all with Pi. The user picks any discovered model from Pi's model selector.
+
+## Multiple providers (LLM aggregator sidecar)
+
+To route to **multiple distinct providers** (e.g. OpenAI + Anthropic + a local Ollama, each with its own base URL and API key), klangk can run a **LiteLLM aggregator sidecar** (#2046). The sidecar is a podman container (`ghcr.io/berriai/litellm`) that exposes a single OpenAI-compatible endpoint and routes per-request by `model` name. The existing proxy plumbing and model discovery work unchanged.
+
+### How it works
+
+1. The operator configures `KLANGKD_LLM_AGGREGATOR_MODELS` with a list of `provider/model:api_base:api_key` entries.
+2. At startup, klangk renders a LiteLLM `config.yaml` from those entries and runs the LiteLLM container with that config (config-only mode, no DB, no UI).
+3. `KLANGKD_LLM_BASE_URL` points at the sidecar (`http://127.0.0.1:4000/v1`).
+4. The proxy forwards `/llm-proxy/` to the sidecar, which routes to the correct provider based on the `model` field in each request.
+5. `llm-proxy-models.ts` calls `/models` on the sidecar and discovers all models across all configured providers.
+
+### Configuration
+
+Set these environment variables (or their equivalents in `klangkd.yaml`):
+
+```bash
+# Required: list of provider/model entries (comma-separated).
+# Format: litellm_model:api_base:api_key
+#   - litellm_model: provider/model in LiteLLM notation
+#   - api_base: provider API base URL (empty = use provider default)
+#   - api_key: provider API key (empty = keyless, e.g. local Ollama)
+KLANGKD_LLM_AGGREGATOR_MODELS="openai/gpt-4o::sk-xxx,anthropic/claude-sonnet-4::sk-ant-xxx,ollama/llama3:http://gpu:11434:"
+
+# Point the proxy at the sidecar.
+KLANGKD_LLM_BASE_URL="http://127.0.0.1:4000/v1"
+
+# Optional: master key for the LiteLLM sidecar (default: empty = no auth).
+KLANGKD_LLM_AGGREGATOR_MASTER_KEY="sk-master"
+
+# Optional: host port the sidecar listens on (default: 4000).
+KLANGKD_LLM_AGGREGATOR_PORT=4000
+
+# Optional: container image (default: ghcr.io/berriai/litellm:main-stable).
+KLANGKD_LLM_AGGREGATOR_IMAGE="ghcr.io/berriai/litellm:main-stable"
+```
+
+Or in `klangkd.yaml`:
+
+```yaml
+llm-base-url: "http://127.0.0.1:4000/v1"
+llm-aggregator-models:
+  - "openai/gpt-4o::sk-xxx"
+  - "anthropic/claude-sonnet-4::sk-ant-xxx"
+  - "ollama/llama3:http://gpu:11434:"
+llm-aggregator-master-key: "sk-master"
+```
+
+### Architecture
+
+```text
+Pi container
+  → host.containers.internal:8995/llm-proxy/chat/completions
+    → reverse proxy (caddy/nginx)
+      → http://127.0.0.1:4000/v1/chat/completions   (LiteLLM sidecar)
+        → routes by "model" field in request body:
+          → openai/gpt-4o    → https://api.openai.com/v1
+          → anthropic/...    → https://api.anthropic.com/v1
+          → ollama/llama3    → http://gpu:11434
+```
+
+The sidecar is supervised by `LiteLLMWatchdog` (mirroring `ProxyWatchdog`): it respawns on unexpected exit with exponential backoff, and is stopped cleanly on shutdown. Settings changes via SIGHUP trigger a container restart with the re-rendered config.
+
+### Provider defaults
+
+When `api_base` is empty, the following providers use their well-known API base URLs automatically: `openai`, `anthropic`, `cohere`, `mistral`, `groq`, `together_ai`, `deepseek`, `fireworks_ai`. For any other provider (or a custom endpoint), supply the full `api_base`.
+
+### Packaging decision
+
+LiteLLM pulls a large dependency tree. To avoid polluting klangk's Python venv, the sidecar runs as a **podman container** using the official `ghcr.io/berriai/litellm` image. This is the cleanest NixOS-friendly route and reuses the podman infrastructure klangk already depends on for workspaces.

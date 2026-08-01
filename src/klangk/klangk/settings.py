@@ -720,6 +720,19 @@ class KlangkSettings(BaseSettings):
     llm_base_url: str | None = None
     llm_api_key: str = ""
     llm_model: str = ""
+    # --- LLM aggregator (LiteLLM sidecar, #2046) ---
+    # When set, klangk renders a LiteLLM config.yaml and runs a LiteLLM
+    # container as a sidecar.  The proxy's KLANGKD_LLM_BASE_URL should
+    # then point at the sidecar (http://127.0.0.1:<port>/v1).
+    # Each entry is "provider/model:api_base:api_key" — e.g.
+    #   openai/gpt-4o::sk-xxx          (api_base defaults to provider)
+    #   anthropic/claude-sonnet-4::sk-ant-xxx
+    #   ollama/llama3:http://gpu:11434:
+    # Comma-separated in the env var; a YAML list in klangkd.yaml.
+    llm_aggregator_models: list[str] | None = None
+    llm_aggregator_master_key: str = ""
+    llm_aggregator_port: int = 4000
+    llm_aggregator_image: str = "ghcr.io/berriai/litellm:main-stable"
 
     # --- OIDC ---
     oidc_config: str | None = None
@@ -1224,6 +1237,38 @@ class KlangkSettings(BaseSettings):
                 f"KLANGKD_CONTAINER_PIDS_LIMIT={v!r} must be > 0."
             )
         return value
+
+    @field_validator("llm_aggregator_models", mode="before")
+    @classmethod
+    def _coerce_llm_aggregator_models(cls, v):
+        """Accept comma-separated string (env) or list (YAML) (#2046).
+
+        Each entry is ``provider/model:api_base:api_key``. A bare
+        ``provider/model::key`` uses the provider's default API base. An
+        empty value or ``None`` → ``None`` (aggregator disabled).
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            items = [s.strip() for s in v.split(",")]
+            items = [i for i in items if i]
+        elif isinstance(v, list):
+            items = [str(s).strip() for s in v if str(s).strip()]
+        else:  # pragma: no cover
+            raise ValueError(
+                f"KLANGKD_LLM_AGGREGATOR_MODELS={v!r} must be a list or "
+                f"a comma-separated string (got {type(v).__name__})."
+            )
+        if not items:
+            return None
+        for item in items:
+            if item.count(":") < 2:
+                raise ValueError(
+                    f"KLANGKD_LLM_AGGREGATOR_MODELS entry {item!r} must be "
+                    f"'provider/model:api_base:api_key' (need at least two "
+                    f"colons separating the three fields)."
+                )
+        return items
 
     @model_validator(mode="after")
     def _warn_on_deprecated_proxy_engine(self) -> "KlangkSettings":
