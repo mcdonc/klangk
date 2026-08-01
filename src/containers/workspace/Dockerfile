@@ -3,7 +3,7 @@ FROM $WORKSPACE_BASE_IMAGE
 
 # Install Pi coding agent globally. This layer is expensive (~30s) and
 # rarely changes, so it goes first.
-RUN npm install -g @earendil-works/pi-coding-agent@0.79.9 \
+RUN npm install -g @earendil-works/pi-coding-agent@0.83.0 \
     && mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills
 
 # Copy full feature repos and symlink discoverable pieces into central dirs.
@@ -36,6 +36,15 @@ COPY builtin-extensions/ /opt/klangk/pi-agent/extensions/
 RUN curl -LsSf https://astral.sh/uv/0.11.23/install.sh | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv \
     && mv /root/.local/bin/uvx /usr/local/bin/uvx
+
+# Install process-compose supervisor (standalone Go binary, arch-aware).
+# Extracts the single binary from the release tarball into /usr/local/bin
+# so it is on PATH for all login and non-login shells.
+ARG PROCESS_COMPOSE_VERSION=1.120.0
+RUN ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://github.com/F1bonacc1/process-compose/releases/download/v${PROCESS_COMPOSE_VERSION}/process-compose_linux_${ARCH}.tar.gz" \
+       | tar -xz -C /usr/local/bin process-compose \
+    && chmod +x /usr/local/bin/process-compose
 
 # Entrypoint, agent context file, bash defaults (change frequently during dev)
 COPY agent-context.md /opt/klangk/agent-context.md
