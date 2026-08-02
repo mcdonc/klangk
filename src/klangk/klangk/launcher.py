@@ -340,8 +340,13 @@ def main(  # pragma: no cover
             # also rewrite client would double-resolve.
             proxy_headers=False,
             ws_max_size=ws_max_size,
-            ws_ping_interval=20,
-            ws_ping_timeout=20,
+            # Tighter than uvicorn's default (20/20) so a wedged / half-open
+            # client connection is dropped fast — the TUI treats the status
+            # WS lifecycle as its single reachability signal and pings back on
+            # the same interval, so a silent drop surfaces in ~20s with no
+            # REST polling (#2052).
+            ws_ping_interval=10,
+            ws_ping_timeout=10,
         )
     except OSError as exc:
         logger.error(

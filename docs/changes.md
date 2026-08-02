@@ -582,6 +582,16 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **TUI: backend reachability is now driven by the status WebSocket (#2052).**
+  The TUI previously ran two competing reachability signals — a REST
+  heartbeat poll and the status WS — which could disagree. The REST
+  heartbeat and its reconnect loop are removed; the status WS connection
+  lifecycle (with protocol pings tightened to 10 s / 10 s) is now the single
+  signal that drives the "server unreachable" overlay and reconnect. A
+  transient drop gets one silent grace retry before the overlay appears; on
+  (re)connect the overlay clears and the list refreshes; after a bounded
+  attempt cap the loop gives up and tells the user to switch server.
+
 - **Bumped `@earendil-works/pi-coding-agent` in the workspace image from
   `0.79.9` to `0.83.0` (#2049).** The in-container coding agent is now the
   latest published release.

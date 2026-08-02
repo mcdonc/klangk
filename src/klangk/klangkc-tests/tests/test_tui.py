@@ -858,6 +858,7 @@ class FakeCM:
 
 async def test_listen_for_status_filters_and_forwards(monkeypatch):
     collected = []
+    connected = []
     frames = [
         '{"type": "workspaces_changed"}',
         "not-json",
@@ -867,7 +868,13 @@ async def test_listen_for_status_filters_and_forwards(monkeypatch):
     monkeypatch.setattr(
         ws_mod, "ws_connect", lambda *a, **k: FakeCM(FakeWS(frames))
     )
-    await listen_for_status("/sock", "tok", on_event=collected.append)
+    await listen_for_status(
+        "/sock",
+        "tok",
+        on_event=collected.append,
+        on_connect=lambda: connected.append(1),
+    )
+    assert connected == [1]  # fires once after connect, before any frames
     assert collected == [
         {"type": "workspaces_changed"},
         {"type": "service_health"},
@@ -3329,15 +3336,19 @@ def test_is_unreachable_classifies_transport_errors():
 
 
 async def test_main_screen_server_down_shows_indicator(monkeypatch):
-    """A transport failure (server unreachable) shows a "server down" state,
-    not a misleading "no workspaces" — and kicks off a visible reconnect (#2012)."""
+    """A transport failure on the mount-time list fetch enters the 'server
+    down' state — an explicit 'server unreachable' row instead of a misleading
+    'no workspaces' — and surfaces the app-wide overlay (#2012, #2052).
+
+    The WS loop is now the single reachability signal (#2052); the autouse
+    fixture stubs it here, so this test drives only the mount-time REST fetch.
+    The attempt-counter / reconnect path is exercised by the dedicated
+    ``_status_loop`` tests below."""
 
     async def noop(*a, **k):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    # Park the reconnect loop mid-backoff so we can assert the in-flight state.
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
 
     def down():
         raise httpx.ConnectError("refused")
@@ -3346,11 +3357,10 @@ async def test_main_screen_server_down_shows_indicator(monkeypatch):
         _ws(list_owned_workspaces=down, list_shared_workspaces=down)
     )
     async with app.run_test() as pilot:
-        # Let the initial refresh fail, enter unreachable, and run the
-        # reconnect loop up to its (parked) backoff sleep. Don't call
-        # wait_for_complete() — the loop is intentionally parked mid-backoff.
-        for _ in range(8):
-            await pilot.pause()
+        # Let the mount-time refresh_lists fail and enter unreachable.
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
         assert main._server_unreachable is True
         owned_lv = main.query_one("#owned_list", ListView)
@@ -3358,7 +3368,6 @@ async def test_main_screen_server_down_shows_indicator(monkeypatch):
         assert "server unreachable" in _lv_texts(owned_lv)[0].lower()
         assert "server unreachable" in _lv_texts(shared_lv)[0].lower()
         assert "unreachable" in (app.live_extra or "").lower()
-        assert "attempt 1" in (app.live_extra or "")
         # App-wide overlay covers whatever page is active (#2012).
         assert isinstance(app.screen, ServerDownScreen)
         assert "server unreachable" in app.screen._message.lower()
@@ -3402,13 +3411,10 @@ async def _fast_reconnect(monkeypatch):
 
 
 async def test_reconnect_recovers_when_server_returns(monkeypatch):
-    """Once the backend comes back, the reconnect loop repopulates the lists
-    without a logout/relogin (#2012)."""
+    """Once the backend comes back, the status WS reconnects and its
+    on-connect callback clears the unreachable state and repopulates the
+    lists — no logout/relogin needed (#2012, #2052)."""
 
-    async def noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
     await _fast_reconnect(monkeypatch)
 
     calls = {"n": 0}
@@ -3416,34 +3422,63 @@ async def test_reconnect_recovers_when_server_returns(monkeypatch):
 
     def owned():
         calls["n"] += 1
-        # Initial owned+shared fetch (calls 1-2) fails -> enter unreachable;
-        # the reconnect loop's fetch (call 3+) succeeds.
-        if calls["n"] <= 2:
+        # Mount fetch (call 1) fails -> enter unreachable; the recovery
+        # fetch from _on_ws_connected (call 2+) succeeds.
+        if calls["n"] <= 1:
             raise httpx.ConnectError("refused")
         return [alpha]
 
+    ws_calls = {"n": 0}
+
+    async def ws_script(*a, **k):
+        ws_calls["n"] += 1
+        if ws_calls["n"] == 1:
+            raise RuntimeError("ws refused")  # still down
+        # Backend is back: connect (fires _on_ws_connected -> recovery),
+        # then clean close.
+        on_connect = k.get("on_connect")
+        if on_connect is not None:
+            on_connect()
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", ws_script)
+    tokens = iter(["tok"] * 3 + [None])
     app = KlangkApp(
-        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+        _ws(
+            list_owned_workspaces=owned,
+            list_shared_workspaces=owned,
+            token=lambda: next(tokens),
+        )
     )
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
     async with app.run_test() as pilot:
+        # Mount fetch fails -> unreachable (overlay pushed, so grab the
+        # MainScreen explicitly, not app.screen).
         await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
-        screen = app.screen
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        assert screen._server_unreachable is True
+        # Drive the WS loop: attempt 1 fails (grace), attempt 2 reconnects
+        # (fires _on_ws_connected -> clears unreachable + refreshes lists).
+        await _real_status_loop(screen)
+        await app.workers.wait_for_complete()  # let recovery refresh finish
+        await pilot.pause()
         assert screen._server_unreachable is False
-        assert app.live_extra == ""
         assert (
             "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
         )
 
 
 async def test_reconnect_gives_up_after_cap(monkeypatch):
-    """After the attempt cap the loop stops and tells the user to act (#2012)."""
+    """After the attempt cap the WS reconnect loop stops and tells the user
+    to act (#2012, #2052)."""
 
-    async def noop(*a, **k):
-        return None
+    async def fail(*a, **k):
+        raise RuntimeError("ws refused")
 
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", fail)
     monkeypatch.setattr(scr_main, "_MAX_RECONNECT_ATTEMPTS", 2)
     await _fast_reconnect(monkeypatch)
 
@@ -3458,6 +3493,10 @@ async def test_reconnect_gives_up_after_cap(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        # Drive the WS loop: it burns through the (low) attempt cap and
+        # returns on its own via the give-up branch (no token-drop bound).
+        await _real_status_loop(main)
+        await pilot.pause()
         assert main._server_unreachable is False
         assert main._gave_up is True
         owned_lv = main.query_one("#owned_list", ListView)
@@ -3529,88 +3568,95 @@ async def test_server_down_overlay_c_opens_switch_server(monkeypatch):
 
 async def test_server_down_overlay_covers_any_active_page(monkeypatch):
     """The app-level overlay lands on top of whatever screen is active — not
-    just the workspaces page — so a drop while a detail/form page is open is
-    still signalled everywhere (#2012)."""
+    just the workspaces page — so a WS-detected drop while a detail/form page
+    is open is still signalled everywhere (#2012, #2052)."""
 
-    async def noop(*a, **k):
-        return None
+    async def fail(*a, **k):
+        raise RuntimeError("ws refused")
 
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    monkeypatch.setattr(scr_main, "listen_for_status", fail)
+    await _fast_reconnect(monkeypatch)
 
-    up = {"yes": True}
     alpha = _wsobj("alpha")
 
     def owned():
-        if up["yes"]:
-            return [alpha]
-        raise httpx.ConnectError("refused")
+        return [alpha]
 
+    tokens = iter(["tok"] * 10 + [None])
     app = KlangkApp(
-        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+        _ws(
+            list_owned_workspaces=owned,
+            list_shared_workspaces=owned,
+            token=lambda: next(tokens),
+        )
     )
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
     async with app.run_test() as pilot:
-        for _ in range(6):
-            await pilot.pause()
+        # Initial REST fetch succeeds; lists populate.
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         # Navigate "away" from the workspaces page onto a detail/form page.
         from textual.screen import Screen as _Screen
 
         detail = _Screen()
         app.push_screen(detail)
-        for _ in range(3):
-            await pilot.pause()
+        await pilot.pause()
         assert app.screen is detail
-        # Backend drops; the heartbeat (on the still-mounted MainScreen)
-        # detects it and pushes the overlay on TOP of the detail page.
-        up["yes"] = False
-        next(
-            s for s in app.screen_stack if isinstance(s, MainScreen)
-        )._heartbeat_tick()
-        for _ in range(8):
-            await pilot.pause()
+        # The status WS can't connect (server down); the WS reconnect loop
+        # (run on the still-mounted MainScreen) detects it and pushes the
+        # overlay on TOP of the detail page. Token drops to None to bound the
+        # loop (session_expired is stubbed so it doesn't replace the overlay).
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        await _real_status_loop(main)
+        await pilot.pause()
         assert isinstance(app.screen, ServerDownScreen)
         # The detail page is still in the stack, underneath the overlay.
         assert detail in app.screen_stack
 
 
-async def test_heartbeat_detects_drop_after_initial_load(monkeypatch):
-    """The reachability heartbeat re-fetches the list on a timer, so a backend
-    that drops after the page is already shown (mid-session, or while a detail
-    page was open) surfaces "server unreachable" on the next tick — one
-    mechanism covering every detection path (#2012)."""
+async def test_ws_detects_drop_after_initial_load(monkeypatch):
+    """The status WS is the single reachability signal (#2052): a backend that
+    drops after the page is already shown surfaces 'server unreachable' when
+    the WS reconnect loop's second attempt fails — one mechanism covering the
+    mid-session drop."""
 
-    async def noop(*a, **k):
-        return None
+    async def fail(*a, **k):
+        raise RuntimeError("ws refused")
 
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    # Park the reconnect loop so the heartbeat tick is what we exercise.
-    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    monkeypatch.setattr(scr_main, "listen_for_status", fail)
+    await _fast_reconnect(monkeypatch)
 
-    up = {"yes": True}
     alpha = _wsobj("alpha")
 
     def owned():
-        if up["yes"]:
-            return [alpha]
-        raise httpx.ConnectError("refused")
+        return [alpha]
 
+    tokens = iter(["tok"] * 8 + [None])
     app = KlangkApp(
-        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+        _ws(
+            list_owned_workspaces=owned,
+            list_shared_workspaces=owned,
+            token=lambda: next(tokens),
+        )
     )
+    expired = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
     async with app.run_test() as pilot:
         screen = app.screen
-        for _ in range(6):
-            await pilot.pause()
+        # Initial REST fetch succeeds; lists populate, not unreachable.
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         assert screen._server_unreachable is False
         assert (
             "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
         )
-
-        # Backend drops; the next heartbeat tick re-fetches and detects it.
-        up["yes"] = False
-        screen._heartbeat_tick()
-        for _ in range(8):
-            await pilot.pause()
+        # The status WS can't connect (server down); the reconnect loop
+        # detects it on the second failed attempt and surfaces unreachable.
+        await _real_status_loop(screen)
+        await pilot.pause()
         assert screen._server_unreachable is True
         assert (
             "server unreachable"
@@ -3618,89 +3664,47 @@ async def test_heartbeat_detects_drop_after_initial_load(monkeypatch):
         )
 
 
-async def test_heartbeat_tick_skips_when_down_or_unauthenticated(monkeypatch):
-    """The heartbeat is a no-op once unreachable (the reconnect loop owns
-    retry) or once unauthenticated (#2012)."""
+async def test_status_loop_exits_when_screen_popped(monkeypatch):
+    """If the MainScreen leaves the stack (logout / server switch) while the
+    WS loop is running, the top-of-iteration guard stops it instead of
+    mutating a dead screen (#2052)."""
 
-    async def noop(*a, **k):
-        return None
+    async def fail(*a, **k):
+        raise RuntimeError("ws died")
 
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    app = KlangkApp(_authed_state())
-    async with app.run_test():
-        screen = app.screen
-        fired = []
-        monkeypatch.setattr(screen, "refresh_lists", lambda: fired.append(1))
-
-        # Already unreachable: skip (reconnect loop handles retry).
-        screen._server_unreachable = True
-        screen._heartbeat_tick()
-        assert fired == []
-
-        # Unauthenticated: skip.
-        screen._server_unreachable = False
-        monkeypatch.setattr(
-            screen.app.tui_state, "is_authenticated", lambda: False
-        )
-        screen._heartbeat_tick()
-        assert fired == []
-
-        # Gave up reconnecting: skip (don't re-arm a new loop, #2036).
-        screen._gave_up = True
-        monkeypatch.setattr(
-            screen.app.tui_state, "is_authenticated", lambda: True
-        )
-        screen._heartbeat_tick()
-        assert fired == []
-
-        # Authenticated and up (not gave_up): fires a refresh.
-        screen._gave_up = False
-        screen._heartbeat_tick()
-        assert fired == [1]
-
-
-async def test_reconnect_loop_exits_when_screen_popped(monkeypatch):
-    """If the MainScreen leaves the stack (logout / server switch) while a
-    reconnect is pending, the loop stops instead of mutating a dead screen
-    (#2012). Covers the top-of-iteration guard."""
-
-    async def noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", fail)
     await _fast_reconnect(monkeypatch)
     app = KlangkApp(_ws())  # list contents irrelevant — loop returns early
     async with app.run_test():
         screen = app.screen
         assert isinstance(screen, MainScreen)
-        screen._server_unreachable = True
-        screen._reconnect_active = True
         # Pretend the screen was already removed (e.g. logout completed).
         from textual.app import App as _App
 
         monkeypatch.setattr(_App, "screen_stack", property(lambda self: []))
-        await scr_main.MainScreen._reconnect_loop(screen)
-        assert screen._reconnect_active is False  # finally ran
+        expired = []
+        monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
+        await _real_status_loop(screen)
+        assert expired == []  # screen-pop exit, not session_expired
 
 
-async def test_reconnect_loop_exits_when_screen_popped_during_backoff(
+async def test_status_loop_exits_when_screen_popped_during_backoff(
     monkeypatch,
 ):
-    """A screen pop during the backoff sleep is caught by the post-sleep
-    guard — the loop exits without a fetch or a render (#2012)."""
+    """A screen pop during the backoff sleep is caught by the next
+    iteration's top guard — the loop exits without a render on the dead
+    screen (#2052)."""
 
-    async def noop(*a, **k):
-        return None
+    async def fail(*a, **k):
+        raise RuntimeError("ws died")
 
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "listen_for_status", fail)
     monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 0.0)
     rendered: list = []
     app = KlangkApp(_ws())
     async with app.run_test():
         screen = app.screen
         assert isinstance(screen, MainScreen)
-        screen._server_unreachable = True
-        screen._reconnect_active = True
 
         async def pop_during_sleep(_delay):
             # Simulate the screen being popped while the loop is parked.
@@ -3714,38 +3718,54 @@ async def test_reconnect_loop_exits_when_screen_popped_during_backoff(
         monkeypatch.setattr(
             screen, "_render_unreachable", lambda *a, **k: rendered.append(1)
         )
-        await scr_main.MainScreen._reconnect_loop(screen)
-        assert screen._reconnect_active is False
-        assert rendered == []  # never rendered on the dead screen
+        await _real_status_loop(screen)
+        # iter 1 fails -> grace (no render) -> sleep pops the screen; iter 2's
+        # top guard exits before a second attempt can render on the dead
+        # screen.
+        assert rendered == []
 
 
 async def test_reconnect_auth_failure_redirects_to_login(monkeypatch):
-    """An auth failure surfacing during reconnect triggers session_expired (#2012)."""
+    """An auth failure surfacing on the status WS triggers session_expired
+    (#2012, #2052)."""
 
-    async def noop(*a, **k):
-        return None
-
-    monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    await _fast_reconnect(monkeypatch)
-
-    calls = {"n": 0}
-
-    def fn():
-        calls["n"] += 1
-        # Initial fetch (calls 1-2) fails as unreachable; the loop's fetch
-        # then raises AuthError.
-        if calls["n"] <= 2:
-            raise httpx.ConnectError("refused")
+    async def auth_fail(*a, **k):
         raise AuthError("expired")
 
-    app = KlangkApp(_ws(list_owned_workspaces=fn, list_shared_workspaces=fn))
+    monkeypatch.setattr(scr_main, "listen_for_status", auth_fail)
+    await _fast_reconnect(monkeypatch)
+    app = KlangkApp(_ws())
     expired = []
     monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-        assert expired  # reconnect saw AuthError -> session_expired
+    async with app.run_test():
+        await _real_status_loop(app.screen)
+        assert expired  # WS saw AuthError -> session_expired
+
+
+async def test_status_loop_exits_when_screen_popped_after_listen(monkeypatch):
+    """A screen pop that lands while listen_for_status is in flight (so it
+    returns normally) is caught by the post-listen guard — the loop exits
+    without a reconnect attempt on the dead screen (#2052)."""
+
+    from textual.app import App as _App
+
+    async def pop_then_close(*a, **k):
+        # Screen popped (logout) while "reading frames"; listen returns.
+        monkeypatch.setattr(_App, "screen_stack", property(lambda self: []))
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", pop_then_close)
+    await _fast_reconnect(monkeypatch)
+    app = KlangkApp(_ws())
+    rendered = []
+    async with app.run_test():
+        screen = app.screen
+        monkeypatch.setattr(
+            screen, "_render_unreachable", lambda *a, **k: rendered.append(1)
+        )
+        await _real_status_loop(screen)
+        # Post-listen guard fired before the reconnect branch could run.
+        assert rendered == []
 
 
 async def test_focus_visible_list_on_mount(monkeypatch):

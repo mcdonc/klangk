@@ -57,13 +57,7 @@ _TOKEN_REFRESH_POLL = 60  # check every 60 seconds
 _MAX_RECONNECT_ATTEMPTS = 25
 _MAX_BACKOFF_SECONDS = 5
 
-# How often the always-on reachability heartbeat re-fetches the workspace
-# list while the backend is up, so a drop is detected regardless of whether
-# the status WS notices (#2012). A timer (not a worker), so it doesn't keep
-# ``app.workers.wait_for_complete()`` pending in tests.
-_HEARTBEAT_SECONDS = 15
-
-# Indirection so tests can advance the reconnect loop without real delays
+# Indirection so tests can advance the WS reconnect loop without real delays
 # (and without patching the global ``asyncio.sleep``, which Textual's own
 # event loop depends on).
 _reconnect_sleep = asyncio.sleep
@@ -236,14 +230,13 @@ class MainScreen(Screen):
         self._owned_all: list = []
         self._shared_all: list = []
         self._filter_text = ""
-        # Backend-reconnect state (#2012). ``_server_unreachable`` is True
-        # while the list fetch is failing at the transport layer;
-        # ``_reconnect_active`` guards against spawning a second poll loop.
-        # ``_gave_up`` is set when the reconnect loop exhausts its attempts;
-        # it prevents the heartbeat from re-arming a new loop (#2036).
+        # Reachability state (#2012, #2052). The status WebSocket connection
+        # lifecycle is the single reachability signal: ``_server_unreachable``
+        # is True while the WS can't stay connected; ``_reconnect_attempt``
+        # counts consecutive WS connection losses; ``_gave_up`` is set when the
+        # WS reconnect loop exhausts its attempts.
         self._server_unreachable = False
         self._reconnect_attempt = 0
-        self._reconnect_active = False
         self._gave_up = False
         # Latest ``container_status`` running state per workspace id (#2032).
         # Recorded on every broadcast and re-applied onto each fresh fetch in
@@ -262,34 +255,14 @@ class MainScreen(Screen):
         self._running_overlay: dict[str, bool] = {}
         self.query_one("#filter_bar").display = False
         self._refresh_action_hints()
+        # One-time list load. There is no reachability heartbeat and no REST
+        # poll thereafter (#2052): the status WS connection lifecycle — started
+        # just below — is the single reachability signal, and ``workspaces_changed``
+        # broadcasts plus the WS reconnect keep the list fresh.
         self.refresh_lists()
-        # Always-on reachability heartbeat: re-fetches the list on a timer
-        # while the backend is up so a drop is detected uniformly — at first
-        # display, mid-session, and after navigating back — without relying
-        # on the status WS (#2012). One mechanism, one UI.
-        self._heartbeat_timer = self.set_interval(
-            _HEARTBEAT_SECONDS, self._heartbeat_tick
-        )
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
             self.app.run_worker(self._token_refresh_loop, name="token-refresh")
-
-    def _heartbeat_tick(self) -> None:
-        """Periodic reachability probe (#2012).
-
-        Re-fetches the list only while the backend is believed up; once a
-        fetch fails, ``_enter_unreachable`` takes over with the (faster)
-        reconnect loop. Skips when unauthenticated or once the screen has
-        left the stack (logout / server switch).
-        """
-        if (
-            self._server_unreachable
-            or self._gave_up
-            or self not in self.app.screen_stack
-            or not self.app.tui_state.is_authenticated()
-        ):
-            return
-        self.refresh_lists()
 
     def on_tabbed_content_tab_activated(self, event) -> None:
         """Focus the first workspace row when switching tabs (#1792)."""
@@ -907,24 +880,37 @@ class MainScreen(Screen):
         self._refresh_status()
 
     def _enter_unreachable(self) -> None:
-        """Backend unreachable — surface it and start a reconnect loop."""
-        # Fresh attempt counter for this outage (so a heartbeat that re-arms
-        # the reconnect after a prior give-up gets a full retry budget again).
-        self._reconnect_attempt = 0
-        if not self._server_unreachable:
-            self._server_unreachable = True
-            self._render_unreachable("(server unreachable — retrying…)")
-            self.app.set_server_down(self._down_overlay_message())
-        if not self._reconnect_active:
-            self._reconnect_active = True
-            # Own group so refresh_lists (group "default", exclusive) can't
-            # cancel it; the ``_reconnect_active`` flag prevents duplicates.
-            self.run_worker(
-                self._reconnect_loop,
-                name="reconnect",
-                group="reconnect",
-                exit_on_error=False,
-            )
+        """Mark the backend unreachable and surface the overlay (idempotent).
+
+        The status WS connection lifecycle is the single reachability signal
+        (#2052): this is called from the WS reconnect loop (on a sustained
+        connection loss) and from a transport-failed list fetch. Per-attempt
+        status-bar / overlay text is refreshed by the caller via
+        :meth:`_refresh_unreachable_display` so the attempt counter advances.
+        """
+        if self._server_unreachable:
+            return
+        self._server_unreachable = True
+        self._render_unreachable("(server unreachable — retrying…)")
+        self._refresh_unreachable_display()
+
+    def _unreachable_status_extra(self) -> str:
+        """Status-bar suffix for the current reconnect attempt (#2052)."""
+        if self._reconnect_attempt <= 0:
+            return "server: unreachable, reconnecting…"
+        return (
+            f"server: unreachable, retrying "
+            f"(attempt {self._reconnect_attempt}/"
+            f"{_MAX_RECONNECT_ATTEMPTS})…"
+        )
+
+    def _refresh_unreachable_display(self) -> None:
+        """Refresh the status-bar extra + overlay message for the current
+        reconnect attempt. Called on entry and on every WS reconnect retry so
+        the attempt counter in the UI advances (#2052)."""
+        self.app.live_extra = self._unreachable_status_extra()
+        self._refresh_status()
+        self.app.set_server_down(self._down_overlay_message())
 
     def _exit_unreachable(self) -> None:
         """Backend reachable again — clear the down state."""
@@ -958,58 +944,6 @@ class MainScreen(Screen):
             "The page will reload when the backend returns.\n"
             "[c] switch server   [Esc] dismiss"
         )
-
-    async def _reconnect_loop(self) -> None:
-        """Poll the backend with bounded backoff until it's reachable again,
-        an auth failure surfaces, or the attempt cap is hit.
-
-        Mirrors the Flutter WS client's auto-reconnect
-        (``ws_client._scheduleReconnect`` / ``_backoffDelay``). Drives the
-        same fetch path as a normal refresh, so initial-display-down and
-        mid-session-disconnect both self-heal without a re-login.
-        """
-        try:
-            while self._server_unreachable:
-                # Screen popped (logout / server switch) — stop polling.
-                if self not in self.app.screen_stack:
-                    return
-                self._reconnect_attempt += 1
-                if self._reconnect_attempt > _MAX_RECONNECT_ATTEMPTS:
-                    self._server_unreachable = False
-                    self._gave_up = True
-                    self._render_unreachable(
-                        "(server down — switch server or restart to reconnect)"
-                    )
-                    self.app.live_extra = "server: down (gave up reconnecting)"
-                    self._refresh_status()
-                    self.app.set_server_down(
-                        self._down_overlay_message(gave_up=True)
-                    )
-                    return
-                delay = _reconnect_backoff(self._reconnect_attempt)
-                self.app.live_extra = (
-                    f"server: unreachable, retrying "
-                    f"(attempt {self._reconnect_attempt}/"
-                    f"{_MAX_RECONNECT_ATTEMPTS})…"
-                )
-                self._refresh_status()
-                self.app.set_server_down(self._down_overlay_message())
-                await _reconnect_sleep(delay)
-                if self not in self.app.screen_stack:
-                    return
-                try:
-                    owned, shared = await self._fetch_lists()
-                except ServerUnreachable:
-                    continue
-                except AuthError:
-                    self._server_unreachable = False
-                    self.app.session_expired()
-                    return
-                self._exit_unreachable()
-                self._populate_workspaces(owned, shared)
-                return
-        finally:
-            self._reconnect_active = False
 
     async def _safe_list(self, *, owned: bool) -> list:
         state = self.app.tui_state
@@ -1110,39 +1044,86 @@ class MainScreen(Screen):
             self.app.push_screen(WorkspaceDetailScreen(name))
 
     async def _status_loop(self) -> None:
+        """Single reachability signal: maintain the status WS and drive the
+        unreachable overlay from its lifecycle (#2052).
+
+        On a sustained connection loss the reconnect loop surfaces the
+        overlay with bounded backoff and a hard attempt cap; on (re)connect
+        it clears the overlay and refreshes the list. There is no REST
+        reachability poll — the WS protocol pings (lowered to 10 s / 10 s)
+        detect a wedged / half-open connection, and a reconnect-triggered
+        list refresh catches a REST-only degradation lazily.
+        """
         state = self.app.tui_state
         url = state.current_url()
         token = state.token()
         if not url or not token:
             return
-        retries = 0
         while True:
             token = state.token()
             if not token:
                 self.app.session_expired()
                 return
+            # Screen popped (logout / server switch) — stop reconnecting.
+            if self not in self.app.screen_stack:
+                return
             try:
                 await listen_for_status(
-                    url, token, on_event=self._on_status_event
+                    url,
+                    token,
+                    on_event=self._on_status_event,
+                    on_connect=self._on_ws_connected,
                 )
-                # Clean close (server restart, idle timeout) — reset
-                # backoff since the connection was healthy.
-                retries = 0
-                self.app.live_extra = "status: reconnecting…"
-                self._refresh_status()
-                await asyncio.sleep(2)
-                continue
             except AuthError:
                 self.app.session_expired()
                 return
             except Exception as exc:
-                # Transient error — back off and retry indefinitely.
-                retries += 1
-                logger.debug("Status WS error (attempt %d): %s", retries, exc)
+                logger.debug(
+                    "Status WS error (attempt %d): %s",
+                    self._reconnect_attempt + 1,
+                    exc,
+                )
+            # Connection lost (clean close or error). Reconnect with bounded
+            # backoff; the top-of-iteration guard catches a screen pop that
+            # lands during the backoff sleep.
+            if self not in self.app.screen_stack:
+                return
+            self._reconnect_attempt += 1
+            if self._reconnect_attempt > _MAX_RECONNECT_ATTEMPTS:
+                self._gave_up = True
+                self._server_unreachable = False
+                self._render_unreachable(
+                    "(server down — switch server or restart to reconnect)"
+                )
+                self.app.live_extra = "server: down (gave up reconnecting)"
+                self._refresh_status()
+                self.app.set_server_down(
+                    self._down_overlay_message(gave_up=True)
+                )
+                return
+            delay = _reconnect_backoff(self._reconnect_attempt)
+            if self._reconnect_attempt == 1:
+                # Grace: a transient drop / clean close (server restart, idle
+                # timeout) gets one silent quick retry before the overlay
+                # appears, so a healthy restart doesn't flash "server down".
                 self.app.live_extra = "status: reconnecting…"
                 self._refresh_status()
-                await asyncio.sleep(_reconnect_backoff(retries))
-                continue
+            else:
+                self._enter_unreachable()
+                self._refresh_unreachable_display()
+            await _reconnect_sleep(delay)
+
+    def _on_ws_connected(self) -> None:
+        """The status WS (re)connected — the backend is reachable again.
+
+        Called once per connection by :func:`listen_for_status` (via its
+        ``on_connect`` callback) before any frames are read. Clears the
+        unreachable overlay, resets the reconnect counter, and re-fetches
+        the list so a reconnect boundary also catches a REST-only
+        degradation (#2052).
+        """
+        self._exit_unreachable()
+        self.refresh_lists()
 
     async def _token_refresh_loop(self) -> None:
         """Proactively refresh the access token before it expires."""
