@@ -663,6 +663,31 @@ class TestStartContainer:
         assert kwargs["memory"] == "8g"
         assert kwargs["pids_limit"] == 512
 
+    async def test_ping_cap_add_emitted_by_default(self, workspace):
+        # #2045: enable_ping defaults to True, so the workspace container
+        # is granted CAP_NET_RAW — unprivileged ping works. The sysctl /
+        # setcap alternatives don't work under rootless podman (#2045).
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cap_add"] == ["net_raw"]
+
+    async def test_ping_cap_add_omitted_when_disabled(
+        self, workspace, monkeypatch
+    ):
+        # #2045: enable_ping=False -> no cap_add kwarg -> no --cap-add flag,
+        # restoring the locked-down behavior (no unprivileged ICMP echo).
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "enable_ping", False)
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert "cap_add" not in kwargs
+
     async def test_resource_limits_passed_through(
         self, workspace, monkeypatch
     ):

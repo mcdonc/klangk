@@ -27,6 +27,19 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Unprivileged `ping` enabled in workspace containers (#2045).**
+  Workspaces now ship with `CAP_NET_RAW` granted to the container so
+  `iputils ping` works out of the box. The ping-socket sysctl
+  (`net.ipv4.ping_group_range`) and a `setcap`'d ping binary — the
+  least-privilege alternatives — are both rejected under rootless podman
+  (the sysctl write fails with `EINVAL` at container start; file
+  capabilities are ignored in a user namespace), so the capability is the
+  only path that works in klangk's rootless deployment. Its real cost is
+  low rootless: the container lives in a private netns behind pasta/slirp
+  with no shared L2 bridge, so the cap grants neither bridge sniffing nor
+  ARP spoofing — only raw-socket crafting inside the container's own netns.
+  A deploy setting `enable_ping` (default `true`, env `KLANGKD_ENABLE_PING`)
+  turns it off for locked-down deploys.
 - **`process-compose` supervisor installed in the workspace container (#2049).**
   The workspace image now ships the `process-compose` binary at
   `/usr/local/bin/process-compose` (arch-aware build, pinned to `v1.120.0`),

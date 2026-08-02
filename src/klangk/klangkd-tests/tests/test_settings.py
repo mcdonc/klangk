@@ -254,6 +254,14 @@ class TestConfigFile:
         s = make_settings({"KLANGKD_NETFILTER_ENABLED": "false"})
         assert s.netfilter_enabled is False
 
+    def test_enable_ping_defaults_true(self):
+        # #2045: unprivileged ping is enabled out of the box.
+        assert make_settings({}).enable_ping is True
+
+    def test_enable_ping_env_override(self):
+        s = make_settings({"KLANGKD_ENABLE_PING": "false"})
+        assert s.enable_ping is False
+
     # --- Container resource limits (#34) ---
 
     def test_container_limits_default_to_protective_caps(self):

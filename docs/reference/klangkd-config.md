@@ -287,6 +287,7 @@ port: "8997"
 | `allow_sudo`                 |                                 | `KLANGKD_ALLOW_SUDO`                 |
 | `container_subnets`          | _(auto-derived)_                | `KLANGKD_CONTAINER_SUBNETS`          |
 | `userns`                     |                                 | `KLANGKD_USERNS`                     |
+| `enable_ping`                | `true`                          | `KLANGKD_ENABLE_PING`                |
 | `podman_bin`                 | `podman`                        | `KLANGKD_PODMAN_BIN`                 |
 | `disable_tmux`               |                                 | `KLANGKD_DISABLE_TMUX`               |
 | `netfilter_enabled`          | `true`                          | `KLANGKD_NETFILTER_ENABLED`          |

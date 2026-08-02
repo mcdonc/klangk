@@ -354,6 +354,24 @@ class TestCreateContainer:
         assert "--memory" not in args
         assert "--pids-limit" not in args
 
+    async def test_cap_add_emitted(self):
+        # #2045: each cap_add entry becomes a --cap-add flag.
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", cap_add=["net_raw"], replace=False
+            )
+        args = _args(m)
+        assert ["--cap-add", "net_raw"] == args[
+            args.index("--cap-add") : args.index("--cap-add") + 2
+        ]
+
+    async def test_cap_add_unset_emit_no_flags(self):
+        # no cap_add passed = no --cap-add flag = no behavior change.
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container("n", "img", replace=False)
+        args = _args(m)
+        assert "--cap-add" not in args
+
 
 class TestStartContainer:
     async def test_start(self):

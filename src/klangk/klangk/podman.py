@@ -271,6 +271,7 @@ class Podman:
         replace: bool = True,
         userns: str | None = None,
         cap_drop: list[str] | None = None,
+        cap_add: list[str] | None = None,
         cpus: float | None = None,
         memory: str | None = None,
         pids_limit: int | None = None,
@@ -288,7 +289,9 @@ class Podman:
         createContainer hooks running (#1770); unrestricted workspaces omit
         the flag entirely (no behavior change). ``cap_drop`` becomes one
         ``--cap-drop`` flag each (used to drop ``NET_ADMIN`` on filtered
-        workspaces, #1773). ``cpus``/``memory``/``pids_limit`` are the
+        workspaces, #1773). ``cap_add`` becomes one ``--cap-add`` flag
+        each (used to grant ``NET_RAW`` so unprivileged ``ping`` works,
+        #2045). ``cpus``/``memory``/``pids_limit`` are the
         deploy-wide resource caps (#34): each emits its flag **only when
         non-None**, so an unset limit = no flag = no behavior change — the
         same omit-when-unset posture as ``cap_drop``/``userns``.
@@ -306,6 +309,8 @@ class Podman:
             args += ["--userns", userns]
         for cap in cap_drop or []:
             args += ["--cap-drop", cap]
+        for cap in cap_add or []:
+            args += ["--cap-add", cap]
         if cpus is not None:
             args += ["--cpus", str(cpus)]
         if memory is not None:

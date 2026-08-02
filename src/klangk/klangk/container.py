@@ -1656,6 +1656,22 @@ class ContainerRegistry:
             create_kwargs["hooks_dir"] = hooks_dirs
             create_kwargs["cap_drop"] = cap_drop
 
+        # #2045: allow unprivileged ``ping`` inside the workspace by
+        # granting the container CAP_NET_RAW. The ping-socket sysctl
+        # (``net.ipv4.ping_group_range``) and a setcap'd ping binary are
+        # both rejected under rootless podman — the sysctl write fails with
+        # EINVAL at container start, and file capabilities are ignored in
+        # a user namespace — so the capability is the only path that works
+        # in klangk's (rootless) deployment model. Its real cost is low
+        # rootless: the container sits in a private netns behind pasta/
+        # slirp with no shared L2 bridge, so the capability grants neither
+        # bridge sniffing nor ARP spoofing — only raw-socket crafting
+        # inside the container's own netns. Read live off settings so a
+        # reload/SIGHUP propagates (the app-ownership rule). Default on; an
+        # operator can disable it for locked-down deploys.
+        if self.app.state.settings.enable_ping:
+            create_kwargs["cap_add"] = ["net_raw"]
+
         logger.info(
             "workspace-open: build env vars, volumes, and "
             "container config: %.3fs",
