@@ -635,6 +635,19 @@ class KlangkSettings(BaseSettings):
     allow_sudo: str = ""
     container_subnets: str | None = None
     userns: str = "keep-id:uid=1000,gid=1000"
+    # enable_ping: allow unprivileged ICMP echo (``ping``) inside workspace
+    # containers (#2045) by granting the container CAP_NET_RAW. The
+    # alternatives (widening net.ipv4.ping_group_range, or a setcap'd ping
+    # binary) are both rejected under rootless podman — the sysctl write
+    # fails with EINVAL at container start, and file capabilities are
+    # ignored in a user namespace — so the capability is the only working
+    # path in klangk's (rootless) deployment. Its cost is low rootless: the
+    # private netns behind pasta/slirp has no shared L2 bridge, so the cap
+    # grants neither bridge sniffing nor ARP spoofing — only raw-socket
+    # crafting within the container's own netns. Defaults to True: a fresh
+    # install can ``ping`` out of the box. Set False for locked-down deploys
+    # that want to deny ICMP echo. Read at boot and on SIGHUP (reloadable).
+    enable_ping: bool = True
     podman_bin: str | None = "podman"
     disable_tmux: str = ""
     health_check_interval: str | None = None
