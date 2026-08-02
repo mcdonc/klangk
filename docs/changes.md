@@ -27,6 +27,11 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`process-compose` supervisor installed in the workspace container (#2049).**
+  The workspace image now ships the `process-compose` binary at
+  `/usr/local/bin/process-compose` (arch-aware build, pinned to `v1.120.0`),
+  so a managed set of processes can be run inside the container. The base
+  image's `supervisor` (supervisord) is unaffected.
 - **TUI: rename a terminal from the terminals list (#2020).** Press `m`
   on a highlighted terminal for an input prefilled with the current name
   (typing appends; Enter renames, Escape cancels; the result shows as a
@@ -564,6 +569,9 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **Bumped `@earendil-works/pi-coding-agent` in the workspace image from
+  `0.79.9` to `0.83.0` (#2049).** The in-container coding agent is now the
+  latest published release.
 - **`none` auth mode is declared an unsupported configuration with the
   published Docker host image (#1391).** `none` (no-login single-user,
   loopback-only) is safe only when solely the operator's loopback can reach

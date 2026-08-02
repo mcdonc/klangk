@@ -64,6 +64,15 @@ so common development tasks work out of the box.
 - **Pi** (`@earendil-works/pi-coding-agent`) — terminal-based coding
   agent; see [AI Coding Harnesses](ai-coding-harnesses.md)
 
+## Process Supervisors
+
+- **process-compose** (`/usr/local/bin/process-compose`) — standalone
+  process supervisor for running a managed set of processes inside the
+  workspace container. See the
+  [process-compose docs](https://f1bonacc1.github.io/process-compose/).
+- `supervisor` (supervisord) — Python-based supervisor, installed via apt
+  in the base image.
+
 ## Installing Additional Packages
 
 By default the `klangk` user does **not** have root access.
