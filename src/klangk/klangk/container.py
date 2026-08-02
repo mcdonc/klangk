@@ -1656,19 +1656,19 @@ class ContainerRegistry:
             create_kwargs["hooks_dir"] = hooks_dirs
             create_kwargs["cap_drop"] = cap_drop
 
-        # #2045: allow unprivileged ``ping`` inside the workspace by
-        # granting the container CAP_NET_RAW. The ping-socket sysctl
-        # (``net.ipv4.ping_group_range``) and a setcap'd ping binary are
-        # both rejected under rootless podman — the sysctl write fails with
-        # EINVAL at container start, and file capabilities are ignored in
-        # a user namespace — so the capability is the only path that works
-        # in klangk's (rootless) deployment model. Its real cost is low
-        # rootless: the container sits in a private netns behind pasta/
-        # slirp with no shared L2 bridge, so the capability grants neither
-        # bridge sniffing nor ARP spoofing — only raw-socket crafting
-        # inside the container's own netns. Read live off settings so a
-        # reload/SIGHUP propagates (the app-ownership rule). Default on; an
-        # operator can disable it for locked-down deploys.
+        # #2045: grant the container CAP_NET_RAW so unprivileged ``ping``
+        # works (a setuid ping binary in the base image bridges the cap to
+        # the non-root klangk user). The ping_group_range / setcap
+        # alternatives don't work rootless — see #2045 for the full
+        # analysis. CAP_NET_RAW does NOT let a filtered workspace escape
+        # egress filtering: raw-socket packets still traverse the netfilter
+        # OUTPUT chain (default DROP + dest-IP allowlist), and in rootless
+        # pasta/slirp only forwards TCP/UDP/ICMP — so it grants neither
+        # bridge sniffing/ARP (no shared L2) nor egress to disallowed
+        # hosts. Applies to newly-created containers only: a SIGHUP reload
+        # changes the setting for future workspaces; a running container
+        # keeps its existing cap set until recreated. Read live off
+        # settings (the app-ownership rule). Default on.
         if self.app.state.settings.enable_ping:
             create_kwargs["cap_add"] = ["net_raw"]
 
