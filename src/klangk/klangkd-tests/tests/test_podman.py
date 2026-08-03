@@ -219,6 +219,7 @@ class TestCreateContainer:
                 publish=[(9000, 8000)],
                 add_hosts=["host.containers.internal:host-gateway"],
                 dns=["8.8.8.8"],
+                dns_search=["corp.example"],
                 env=["K=V"],
                 init=True,
                 interactive=True,
@@ -247,6 +248,9 @@ class TestCreateContainer:
         ]
         assert ["--dns", "8.8.8.8"] == args[
             args.index("--dns") : args.index("--dns") + 2
+        ]
+        assert ["--dns-search", "corp.example"] == args[
+            args.index("--dns-search") : args.index("--dns-search") + 2
         ]
         assert ["-e", "K=V"] == args[args.index("-e") : args.index("-e") + 2]
         assert args[-1] == "img"

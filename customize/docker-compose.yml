@@ -90,6 +90,7 @@ services:
       # --- Other ---
       # KLANGKD_DISABLE_REGISTRATION: "1"
       # KLANGKD_DNS_SERVERS: "100.100.100.100,8.8.8.8"
+      # KLANGKD_DNS_SEARCH: "corp.example,svc.example"
       KLANGKD_ALLOWED_MOUNT_ROOTS: "/home/klangk/mount"
 
     volumes:
