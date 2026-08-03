@@ -1093,34 +1093,45 @@ async def test_status_loop_clean_close_reconnects(monkeypatch):
 
 
 async def test_status_loop_resets_backoff_after_success(monkeypatch):
-    """After a successful connection (clean close), the error retry counter
-    resets so subsequent failures get a fresh backoff sequence (#2033)."""
+    """A successful WS connection (on_connect) resets the reconnect counter so
+    subsequent failures get a fresh backoff sequence (#2033, #2052)."""
     import asyncio as _asyncio
 
     _real_sleep = _asyncio.sleep
-    sleeps = []
 
-    async def _spy_sleep(t):
-        sleeps.append(t)
+    async def _nowait(_t):
         await _real_sleep(0)
 
-    monkeypatch.setattr(_asyncio, "sleep", _spy_sleep)
+    monkeypatch.setattr(_asyncio, "sleep", _nowait)
 
-    # Sequence: 2 errors, then 1 success (clean close), then 2 more errors,
-    # then token drops. If retries reset, the second batch of errors uses the
-    # same low-backoff values as the first.
+    # Spy on the backoff arg (= _reconnect_attempt after each increment) so we
+    # can see the counter climb, reset on connect, then re-climb.
+    orig_backoff = scr_main._reconnect_backoff
+    seen = []
+
+    def spy_backoff(attempt):
+        seen.append(attempt)
+        return orig_backoff(attempt)
+
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", spy_backoff)
+
     calls = {"n": 0}
 
     async def mixed(*a, **k):
         calls["n"] += 1
         n = calls["n"]
         if n <= 2:
-            raise RuntimeError("err")  # first 2 errors
+            raise RuntimeError("err")  # first 2 connection failures
         if n == 3:
-            return None  # success — clean close
+            # Backend returns: connect (fires _on_ws_connected -> reset),
+            # then clean close.
+            on_connect = k.get("on_connect")
+            if on_connect is not None:
+                on_connect()
+            return None
         if n <= 5:
-            raise RuntimeError("err")  # 2 more errors after reset
-        return None  # another clean close before token drops
+            raise RuntimeError("err")  # 2 more failures after reset
+        return None  # clean close before token drops
 
     monkeypatch.setattr(scr_main, "listen_for_status", mixed)
     tokens = iter(["tok"] * 8 + [None])
@@ -1128,10 +1139,18 @@ async def test_status_loop_resets_backoff_after_success(monkeypatch):
     expired = []
     monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
     async with app.run_test() as pilot:
+        # Neutralise the list refresh _on_ws_connected triggers, so the
+        # counter reset under test is the only thing touching
+        # _reconnect_attempt.
+        monkeypatch.setattr(app.screen, "refresh_lists", lambda: None)
         await _real_status_loop(app.screen)
         await pilot.pause()
     assert expired
     assert calls["n"] >= 5
+    # Without the reset the counter climbs 1,2,3,4,5,6. The success at call 3
+    # collapses it back to 0, so the third backoff is a fresh attempt 1.
+    assert seen[:2] == [1, 2]
+    assert seen[2] == 1
 
 
 async def test_login_password_flow_success(monkeypatch):
@@ -3371,6 +3390,53 @@ async def test_main_screen_server_down_shows_indicator(monkeypatch):
         # App-wide overlay covers whatever page is active (#2012).
         assert isinstance(app.screen, ServerDownScreen)
         assert "server unreachable" in app.screen._message.lower()
+
+
+async def test_rest_blip_while_ws_up_keeps_list(monkeypatch):
+    """A transient REST list-fetch failure while the status WS is connected
+    does NOT flag the server unreachable — the WS proves the backend is
+    reachable, so the last good list is kept and refreshed on the next
+    broadcast / reconnect (#2052)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+
+    alpha = _wsobj("alpha")
+    up = {"yes": True}
+
+    def owned():
+        if up["yes"]:
+            return [alpha]
+        raise httpx.ConnectError("refused")
+
+    app = KlangkApp(
+        _ws(list_owned_workspaces=owned, list_shared_workspaces=owned)
+    )
+    async with app.run_test() as pilot:
+        screen = app.screen
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # WS is connected; list populated.
+        screen._ws_connected = True
+        assert (
+            "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
+        )
+        assert screen._server_unreachable is False
+        # A REST blip while the WS is up must NOT flag the server unreachable…
+        up["yes"] = False
+        screen.refresh_lists()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._server_unreachable is False
+        assert not isinstance(app.screen, ServerDownScreen)
+        # …and the last good list is retained (not replaced with an
+        # "unreachable" label or cleared to "no workspaces").
+        assert (
+            "alpha" in _lv_texts(screen.query_one("#owned_list", ListView))[0]
+        )
 
 
 async def test_main_screen_http_error_is_not_unreachable(monkeypatch):

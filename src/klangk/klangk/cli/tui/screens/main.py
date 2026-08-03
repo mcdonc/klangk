@@ -238,6 +238,12 @@ class MainScreen(Screen):
         self._server_unreachable = False
         self._reconnect_attempt = 0
         self._gave_up = False
+        # True only while the status WS is actively connected (set in
+        # ``_on_ws_connected``, cleared when the connection drops). Lets a
+        # transport-failed REST list fetch distinguish a real outage (WS also
+        # down) from a transient REST blip while the backend is reachable
+        # (#2052).
+        self._ws_connected = False
         # Latest ``container_status`` running state per workspace id (#2032).
         # Recorded on every broadcast and re-applied onto each fresh fetch in
         # ``_populate_workspaces``, so a refresh whose snapshot raced behind a
@@ -817,7 +823,14 @@ class MainScreen(Screen):
             self.app.session_expired()
             return
         except ServerUnreachable:
-            self._enter_unreachable()
+            # The WS connection lifecycle is the single reachability signal
+            # (#2052). A transport failure on this REST fetch only means the
+            # server is down if the WS agrees: if the WS is currently
+            # connected the backend is reachable and this is a transient REST
+            # blip, so keep the last list (the next broadcast / reconnect
+            # refreshes it) rather than falsely flagging the server down.
+            if not self._ws_connected:
+                self._enter_unreachable()
             return
         # Success — clear any prior unreachable state and render the lists.
         # ``_populate_workspaces`` re-applies ``_running_overlay`` so a stale
@@ -913,7 +926,14 @@ class MainScreen(Screen):
         self.app.set_server_down(self._down_overlay_message())
 
     def _exit_unreachable(self) -> None:
-        """Backend reachable again — clear the down state."""
+        """Backend reachable again — clear the down state.
+
+        Resets the reconnect counter on a confirmed connection. Note a
+        flapping backend (one that completes the WS handshake then drops)
+        resets on every connect, so it stays in the silent grace retry and
+        never reaches ``_MAX_RECONNECT_ATTEMPTS`` — the cap is hit only by a
+        backend that can't establish a connection at all (#2052).
+        """
         self._reconnect_attempt = 0
         self._gave_up = False
         if self._server_unreachable:
@@ -927,8 +947,8 @@ class MainScreen(Screen):
         if gave_up:
             return (
                 "⛔ Server down\n\n"
-                "Couldn't reach the backend after repeated attempts;"
-                " it will keep retrying.\n"
+                "Couldn't reach the backend after repeated attempts."
+                " Reconnect paused — switch server or restart to retry.\n"
                 "[c] switch server   [Esc] dismiss"
             )
         if self._reconnect_attempt <= 0:
@@ -1083,6 +1103,9 @@ class MainScreen(Screen):
                     self._reconnect_attempt + 1,
                     exc,
                 )
+            # The connection is over (clean close or error) — the backend is
+            # no longer WS-reachable from this screen's point of view.
+            self._ws_connected = False
             # Connection lost (clean close or error). Reconnect with bounded
             # backoff; the top-of-iteration guard catches a screen pop that
             # lands during the backoff sleep.
@@ -1122,6 +1145,7 @@ class MainScreen(Screen):
         the list so a reconnect boundary also catches a REST-only
         degradation (#2052).
         """
+        self._ws_connected = True
         self._exit_unreachable()
         self.refresh_lists()
 

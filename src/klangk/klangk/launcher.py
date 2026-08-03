@@ -340,13 +340,14 @@ def main(  # pragma: no cover
             # also rewrite client would double-resolve.
             proxy_headers=False,
             ws_max_size=ws_max_size,
-            # Tighter than uvicorn's default (20/20) so a wedged / half-open
-            # client connection is dropped fast — the TUI treats the status
-            # WS lifecycle as its single reachability signal and pings back on
-            # the same interval, so a silent drop surfaces in ~20s with no
-            # REST polling (#2052).
-            ws_ping_interval=10,
-            ws_ping_timeout=10,
+            # Server stays at uvicorn's default (20/20). The TUI detects a
+            # wedged / half-open connection via its own client-side pings
+            # (set in ``cli/tui/ws.py``, 10s/10s) — its single reachability
+            # signal (#2052) — so there's no need to tighten the server
+            # globally (which would also affect the web UI and `klangk
+            # monitor`).
+            ws_ping_interval=20,
+            ws_ping_timeout=20,
         )
     except OSError as exc:
         logger.error(

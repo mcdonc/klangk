@@ -586,11 +586,20 @@ invitations send` stay email-only (a deliverable address is required);
   The TUI previously ran two competing reachability signals — a REST
   heartbeat poll and the status WS — which could disagree. The REST
   heartbeat and its reconnect loop are removed; the status WS connection
-  lifecycle (with protocol pings tightened to 10 s / 10 s) is now the single
-  signal that drives the "server unreachable" overlay and reconnect. A
-  transient drop gets one silent grace retry before the overlay appears; on
-  (re)connect the overlay clears and the list refreshes; after a bounded
-  attempt cap the loop gives up and tells the user to switch server.
+  lifecycle is now the single signal that drives the "server unreachable"
+  overlay and reconnect. The TUI client pings the server every 10 s (10 s
+  pong timeout) — tighter than the library default — so a wedged /
+  half-open connection is detected without REST polling; the server-side
+  ping interval is unchanged. A transient drop gets one silent grace retry
+  before the overlay appears; on (re)connect the overlay clears and the list
+  refreshes; after a bounded attempt cap the loop gives up and tells the
+  user to switch server. A transient REST list-fetch failure while the WS is
+  connected no longer falsely flags the server unreachable (the WS proves
+  reachability); the last good list is kept and refreshed on the next
+  broadcast / reconnect. Note the attempt cap is hit only by a backend that
+  can't establish a connection at all — a flapping backend that completes
+  the handshake then drops resets its counter on each connect and stays in
+  the silent grace retry.
 
 - **Bumped `@earendil-works/pi-coding-agent` in the workspace image from
   `0.79.9` to `0.83.0` (#2049).** The in-container coding agent is now the
