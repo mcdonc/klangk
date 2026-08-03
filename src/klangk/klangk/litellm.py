@@ -269,17 +269,17 @@ class LiteLLMWatchdog:
                 continue
 
             # Wait for the container to exit.
-            backoff = 1.0
             await self._wait_for_exit()
 
             if self._stopping:
                 return
+            # Reset backoff — the container ran (start succeeded).
+            backoff = 1.0
             logger.warning(
                 "litellm sidecar exited unexpectedly; restarting in %.1fs",
                 backoff,
             )
             await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30.0)
 
     async def _wait_for_exit(self) -> None:
         """Poll until the container is no longer running."""

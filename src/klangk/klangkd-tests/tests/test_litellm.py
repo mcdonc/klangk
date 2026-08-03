@@ -623,6 +623,43 @@ class TestLiteLLMWatchdog:
         create_calls = [c for c in podman.calls if c[0] == "create"]
         assert len(create_calls) == 2
 
+    async def test_watch_backoff_resets_after_successful_run(self):
+        """Backoff resets to 1.0 after each successful container run,
+        so repeated unexpected exits don't escalate the delay."""
+        podman = _FakePodman()
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s, podman=podman)
+
+        sleep_durations = []
+
+        async def _tracking_sleep(duration):
+            sleep_durations.append(duration)
+            # Don't actually sleep.
+
+        exit_count = 0
+
+        async def _fake_wait():
+            nonlocal exit_count
+            exit_count += 1
+            if exit_count >= 3:
+                wd._stopping = True
+
+        wd._wait_for_exit = _fake_wait
+        conf_path = wd._config_path()
+        wd._renderer.write_config(conf_path)
+
+        orig_asyncio_sleep = asyncio.sleep
+        asyncio.sleep = _tracking_sleep
+        try:
+            await wd._watch(conf_path)
+        finally:
+            asyncio.sleep = orig_asyncio_sleep
+
+        # Each respawn should sleep 1.0 (reset), not 1.0 then 2.0.
+        assert sleep_durations == [1.0, 1.0]
+
     async def test_watch_retries_on_create_failure(self):
         """_watch retries with backoff when create_container fails."""
         podman = _FakePodman()
