@@ -259,7 +259,7 @@ class Podman:
         labels: dict[str, str] | None = None,
         binds: list[str] | None = None,
         tmpfs: dict[str, str] | None = None,
-        publish: list[tuple[int, int]] | None = None,
+        publish: list[tuple[int, int] | tuple[str, int, int]] | None = None,
         add_hosts: list[str] | None = None,
         dns: list[str] | None = None,
         dns_search: list[str] | None = None,
@@ -279,7 +279,8 @@ class Podman:
     ) -> str:
         """Create a container and return its id.
 
-        ``publish`` is a list of ``(host_port, container_port)`` pairs.
+        ``publish`` is a list of ``(host_port, container_port)`` or
+        ``(bind_addr, host_port, container_port)`` tuples.
         ``replace=True`` removes an existing container with the same name.
         ``annotations``/``hooks_dir`` carry per-workspace OCI hooks (e.g.
         the netfilter egress filter, #1365): each annotation becomes a
@@ -326,8 +327,13 @@ class Podman:
             args += ["-v", bind]
         for path, opts in (tmpfs or {}).items():
             args += ["--tmpfs", f"{path}:{opts}"]
-        for host_port, container_port in publish or []:
-            args += ["-p", f"{host_port}:{container_port}"]
+        for entry in publish or []:
+            if len(entry) == 3:
+                bind, host_port, container_port = entry
+                args += ["-p", f"{bind}:{host_port}:{container_port}"]
+            else:
+                host_port, container_port = entry
+                args += ["-p", f"{host_port}:{container_port}"]
         for host in add_hosts or []:
             args += ["--add-host", host]
         for server in dns or []:

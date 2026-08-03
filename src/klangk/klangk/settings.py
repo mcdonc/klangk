@@ -731,6 +731,19 @@ class KlangkSettings(BaseSettings):
     llm_base_url: str | None = None
     llm_api_key: str = ""
     llm_model: str = ""
+    # --- LLM aggregator (LiteLLM sidecar, #2046) ---
+    # When set, klangk renders a LiteLLM config.yaml and runs a LiteLLM
+    # container as a sidecar.  The proxy's KLANGKD_LLM_BASE_URL should
+    # then point at the sidecar (http://127.0.0.1:<port>/v1).
+    # Each entry is "provider/model:api_base:api_key" — e.g.
+    #   openai/gpt-4o::sk-xxx          (api_base defaults to provider)
+    #   anthropic/claude-sonnet-4::sk-ant-xxx
+    #   ollama/llama3:http://gpu:11434:
+    # Comma-separated in the env var; a YAML list in klangkd.yaml.
+    llm_aggregator_models: list[str] | None = None
+    llm_aggregator_master_key: str = ""
+    llm_aggregator_port: int = 4000
+    llm_aggregator_image: str = "ghcr.io/berriai/litellm:main-stable"
 
     # --- OIDC ---
     oidc_config: str | None = None
@@ -1235,6 +1248,63 @@ class KlangkSettings(BaseSettings):
                 f"KLANGKD_CONTAINER_PIDS_LIMIT={v!r} must be > 0."
             )
         return value
+
+    @field_validator("llm_aggregator_models", mode="before")
+    @classmethod
+    def _coerce_llm_aggregator_models(cls, v):
+        """Accept comma-separated string (env) or list (YAML) (#2046).
+
+        Each entry is either:
+
+        - A colon-delimited string: ``provider/model:api_base:api_key``
+          (a bare ``provider/model::key`` uses the provider's default
+          API base).
+        - A dict with ``id`` (required), ``base-url``/``base_url``,
+          and ``api-key``/``api_key``.  The dict form lets values use
+          ``file:`` / ``cmd:`` indirection so secrets stay out of config.
+
+        An empty value or ``None`` → ``None`` (aggregator disabled).
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            raw = [s.strip() for s in v.split(",")]
+            raw = [i for i in raw if i]
+        elif isinstance(v, list):
+            raw = [i for i in v if i]
+        else:  # pragma: no cover
+            raise ValueError(
+                f"KLANGKD_LLM_AGGREGATOR_MODELS={v!r} must be a list or "
+                f"a comma-separated string (got {type(v).__name__})."
+            )
+        if not raw:
+            return None
+        items: list[str] = []
+        for entry in raw:
+            if isinstance(entry, dict):
+                model_id = entry.get("id")
+                if not model_id:
+                    raise ValueError(
+                        "KLANGKD_LLM_AGGREGATOR_MODELS dict entry must "
+                        "have an 'id' key."
+                    )
+                base_url = entry.get("base-url") or entry.get("base_url", "")
+                api_key = entry.get("api-key") or entry.get("api_key", "")
+                # Resolve file:/cmd: indirection on secrets.
+                api_key = _resolve_indirection(api_key, "api-key") or ""
+                base_url = _resolve_indirection(base_url, "base-url") or ""
+                items.append(f"{model_id}:{base_url}:{api_key}")
+            else:
+                item = str(entry).strip()
+                if item.count(":") < 2:
+                    raise ValueError(
+                        f"KLANGKD_LLM_AGGREGATOR_MODELS entry {item!r} "
+                        f"must be 'provider/model:api_base:api_key' "
+                        f"(need at least two colons separating the three "
+                        f"fields)."
+                    )
+                items.append(item)
+        return items
 
     @model_validator(mode="after")
     def _warn_on_deprecated_proxy_engine(self) -> "KlangkSettings":

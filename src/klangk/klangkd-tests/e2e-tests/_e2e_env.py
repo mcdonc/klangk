@@ -104,6 +104,7 @@ def clean_env(**overrides: str) -> dict[str, str]:
         env["XDG_STATE_HOME"] = f"{overrides['HOME']}/.local/state"
     # E2E baseline defaults.
     env["_KLANGKD_DISABLE_PROXY"] = "1"
+    env["_KLANGKD_DISABLE_LITELLM"] = "1"
     env.setdefault("KLANGKD_AUTH_MODES", "password")
     env.update(overrides)
     return env
