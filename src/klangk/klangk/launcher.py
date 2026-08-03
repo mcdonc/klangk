@@ -340,6 +340,12 @@ def main(  # pragma: no cover
             # also rewrite client would double-resolve.
             proxy_headers=False,
             ws_max_size=ws_max_size,
+            # Server stays at uvicorn's default (20/20). The TUI detects a
+            # wedged / half-open connection via its own client-side pings
+            # (set in ``cli/tui/ws.py``, 10s/10s) — its single reachability
+            # signal (#2052) — so there's no need to tighten the server
+            # globally (which would also affect the web UI and `klangk
+            # monitor`).
             ws_ping_interval=20,
             ws_ping_timeout=20,
         )
