@@ -146,6 +146,11 @@ class LiteLLMRenderer:
             "model_list": model_list,
         }
 
+        # drop_params: clients (Pi) send OpenAI-style params that not every
+        # provider supports (e.g. max_completion_tokens on zai/glm-*). Drop
+        # unsupported params silently instead of 400ing the whole request.
+        config["litellm_settings"] = {"drop_params": True}
+
         # Optional master_key: when set, LiteLLM enforces bearer auth on the
         # sidecar (the proxy must send the same value as llm_api_key). When
         # unset (the default) the sidecar is no-auth, protected by the

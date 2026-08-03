@@ -1313,6 +1313,15 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **LiteLLM sidecar drops unsupported params instead of 400ing
+  (stopgap for the param side of #2066).** Clients (Pi) send OpenAI-style
+  params that not every provider supports (e.g. `max_completion_tokens` on
+  `zai/glm-*`), which LiteLLM rejected with a 400 `UnsupportedParamsError`.
+  The rendered config now sets `litellm_settings.drop_params: true` so
+  unsupported params are silently dropped per provider. The generic,
+  per-model fix (per-model `supported-params` + context-window metadata) is
+  tracked in #2066.
+
 - **LiteLLM aggregator sidecar no longer flaps on startup (#2062).**
   Three defects prevented the sidecar from ever serving: (1) the watchdog
   passed `DATABASE_URL=` (empty), which LiteLLM treats as an invalid scheme

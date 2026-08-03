@@ -329,6 +329,17 @@ class TestLiteLLMRenderer:
         config = yaml.safe_load(r.render_config())
         assert config["general_settings"]["master_key"] == "sk-master"
 
+    def test_drop_params_always_set(self):
+        """Rendered config sets litellm_settings.drop_params so unsupported
+        client params (e.g. max_completion_tokens on zai) are dropped
+        silently instead of 400ing the whole request."""
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        r = _renderer(s)
+        config = yaml.safe_load(r.render_config())
+        assert config["litellm_settings"]["drop_params"] is True
+
     def test_no_master_key_no_general_settings(self):
         s = make_settings(
             {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
