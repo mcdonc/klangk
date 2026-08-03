@@ -440,6 +440,41 @@ class TestDnsConfig:
         )
 
 
+class TestDnsSearchConfig:
+    """settings.dns_search → container_dns_search_config() (#2055)."""
+
+    def _registry(self, env):
+        import types as types_mod
+
+        settings = make_settings(env)
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace(settings=settings)
+        )
+        return container.ContainerRegistry(app_state)
+
+    def test_no_env_returns_empty(self):
+        assert self._registry({}).container_dns_search_config() == []
+
+    def test_single_domain(self):
+        assert self._registry(
+            {"KLANGKD_DNS_SEARCH": "corp.example"}
+        ).container_dns_search_config() == ["corp.example"]
+
+    def test_multiple_domains(self):
+        result = self._registry(
+            {"KLANGKD_DNS_SEARCH": "corp.example, svc.example"}
+        ).container_dns_search_config()
+        assert result == ["corp.example", "svc.example"]
+
+    def test_empty_string(self):
+        assert (
+            self._registry(
+                {"KLANGKD_DNS_SEARCH": ""}
+            ).container_dns_search_config()
+            == []
+        )
+
+
 class TestConstants:
     def setup_method(self):
         app_state = _make_app_state()

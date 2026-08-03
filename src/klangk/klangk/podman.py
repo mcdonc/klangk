@@ -262,6 +262,7 @@ class Podman:
         publish: list[tuple[int, int]] | None = None,
         add_hosts: list[str] | None = None,
         dns: list[str] | None = None,
+        dns_search: list[str] | None = None,
         env: list[str] | None = None,
         annotations: dict[str, str] | None = None,
         hooks_dir: list[str] | None = None,
@@ -331,6 +332,8 @@ class Podman:
             args += ["--add-host", host]
         for server in dns or []:
             args += ["--dns", server]
+        for domain in dns_search or []:
+            args += ["--dns-search", domain]
         for entry in env or []:
             args += ["-e", entry]
         args.append(image)

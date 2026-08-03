@@ -264,6 +264,7 @@ port: "8997"
 | `cors_origins`           |                                  | `KLANGKD_CORS_ORIGINS`           |
 | `frontend_dir`           | _(in-package `klangk/frontend`)_ | `KLANGKD_FRONTEND_DIR`           |
 | `dns_servers`            |                                  | `KLANGKD_DNS_SERVERS`            |
+| `dns_search`             |                                  | `KLANGKD_DNS_SEARCH`             |
 | `hosting_hostname`       | _(auto-derived)_                 | `KLANGKD_HOSTING_HOSTNAME`       |
 | `hosting_proto`          | _(auto-derived)_                 | `KLANGKD_HOSTING_PROTO`          |
 | `hosting_base_path`      | _(auto-derived)_                 | `KLANGKD_HOSTING_BASE_PATH`      |

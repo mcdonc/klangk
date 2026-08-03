@@ -27,6 +27,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Configurable DNS search domains for workspace containers (#2055).**
+  A new deploy setting `dns_search` (env `KLANGKD_DNS_SEARCH`, comma-separated)
+  is passed to workspace containers via podman `--dns-search`, so short
+  hostnames that rely on a search suffix (e.g. `db` → `db.corp.example` on a
+  corporate or Tailscale network) resolve inside containers. It pairs with
+  the existing `dns_servers` / `--dns` plumbing (nameservers vs. the `search`
+  line of `/etc/resolv.conf`). Read live off settings (reloadable on SIGHUP);
+  applies to newly-created containers. Unset → podman's default search
+  behavior (no change).
+
 - **Unprivileged `ping` enabled in workspace containers (#2045).**
   Workspaces now ship with `CAP_NET_RAW` granted to the container so
   `iputils ping` works out of the box. The ping-socket sysctl

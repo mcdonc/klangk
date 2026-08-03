@@ -677,6 +677,11 @@ class ContainerRegistry:
         raw = self.app.state.settings.dns_servers
         return [d.strip() for d in raw.split(",") if d.strip()]
 
+    def container_dns_search_config(self) -> list[str]:
+        """Return DNS search-domain list from settings.dns_search (#2055)."""
+        raw = self.app.state.settings.dns_search
+        return [d.strip() for d in raw.split(",") if d.strip()]
+
     def image_pull_policy(self) -> str:
         """Resolve the workspace-image pull policy from settings."""
         policy = self.app.state.settings.image_pull_policy
@@ -1629,6 +1634,7 @@ class ContainerRegistry:
             publish=publish,
             add_hosts=["host.containers.internal:host-gateway"],
             dns=self.container_dns_config() or None,
+            dns_search=self.container_dns_search_config() or None,
             env=env_vars,
             init=True,
             interactive=True,

@@ -587,7 +587,18 @@ class KlangkSettings(BaseSettings):
     # file:/cmd: resolution), not raw env.
     websocket_msg_size_max: str | None = "16777216"
     cors_origins: str | None = None
+    # dns_servers: comma-separated DNS nameserver IPs passed to workspace
+    # containers via podman --dns (container_dns_config() → create_container).
+    # Pairs with dns_search (#2055): dns_servers is the ``nameserver`` line and
+    # dns_search is the ``search`` line of the container's /etc/resolv.conf.
+    # Both read live off settings (reloadable on SIGHUP); apply to newly-created
+    # containers (a running container keeps its resolv.conf until recreated).
     dns_servers: str = ""
+    # dns_search: comma-separated DNS search domains passed to workspace
+    # containers via podman --dns-search (#2055), so short hostnames that rely
+    # on a search suffix (e.g. ``db`` → ``db.corp.example``) resolve inside
+    # containers. Unset → podman's default search behavior (no change).
+    dns_search: str = ""
     hosting_hostname: str | None = None
     hosting_proto: str | None = None
     hosting_base_path: str | None = None
