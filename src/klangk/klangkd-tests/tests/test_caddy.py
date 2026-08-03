@@ -393,124 +393,29 @@ class TestCommonHeaders:
 
 
 class TestLlmBlock:
-    def test_empty_without_url(self):
-        assert (
-            _renderer(make_settings({}))._build_llm_block(
-                "upstream", "1.2.3.4"
-            )
-            == ""
-        )
+    """The /llm-proxy/ block routes to the klangkd backend (#2073)."""
 
-    def test_with_url_and_key(self):
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGKD_LLM_API_KEY": "sekret",
-            }
-        )
+    def test_always_emits_block(self):
+        """The LLM block is always emitted (no llm_base_url conditional)."""
+        b = _renderer(make_settings({}))._build_llm_block("upstream", "")
+        assert "handle /llm-proxy/*" in b
+        assert "reverse_proxy upstream" in b
+
+    def test_includes_guard(self):
         guard = "\t\trespond @notContainerSrc 403\n"
-        b = _renderer(s)._build_llm_block("upstream", guard)
-        assert "path /llm-proxy/*" in b
-        assert "reverse_proxy http://127.0.0.1:11434" in b
-        assert 'Authorization "Bearer sekret"' in b
+        b = _renderer(make_settings({}))._build_llm_block("upstream", guard)
         assert "respond @notContainerSrc 403" in b
 
-    def test_path_bearing_url_split_into_upstream_and_rewrite(self):
-        """Path-bearing ``llm_base_url`` values (z.ai, OpenRouter, most
-        providers) must not be passed verbatim to ``reverse_proxy`` — caddy
-        rejects upstream URLs with a path component (``URLs for proxy
-        upstreams only support scheme, host, and port components``), which
-        crashed the whole LLM block for any non-host-root base URL. Split
-        the host off into ``reverse_proxy`` and re-attach the path via
-        ``rewrite`` so the final upstream path is preserved (#1681)."""
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
+    def test_no_api_key_injection(self):
+        """No Authorization header — the in-process Router handles keys."""
+        s = make_settings(env={"KLANGKD_LLM_API_KEY": "sekret"})
         b = _renderer(s)._build_llm_block("upstream", "")
-        # host-only upstream — no path component
-        assert "reverse_proxy https://api.z.ai" in b
-        assert "reverse_proxy https://api.z.ai/api/coding/paas/v4" not in b
-        # handle_path strips /llm-proxy atomically before the rewrite reads
-        # the URI; the rewrite then prepends the base path and uses
-        # {http.request.uri.path} (path only — drops the container user's
-        # query per the trust-boundary rule, #1687) so the final upstream
-        # path is /api/coding/paas/v4/chat/completions.
-        assert "handle_path /llm-proxy/*" in b
-        assert "rewrite * /api/coding/paas/v4{http.request.uri.path}?" in b
+        assert "Authorization" not in b
 
-    def test_path_bearing_url_trailing_slash_not_doubled(self):
-        """A trailing slash on the base path must not double up: base_path
-        "/v4/" stripped to "/v4" so concatenation with
-        {http.request.uri.path} "/chat" yields "/v4/chat" rather than
-        "/v4//chat"."""
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": "http://proxy.local/v1/",
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
-        b = _renderer(s)._build_llm_block("upstream", "")
-        assert "rewrite * /v1{http.request.uri.path}?" in b
-        assert "//{http.request.uri.path}" not in b
-
-    def test_host_only_url_emits_path_only_rewrite(self):
-        """A bare host (no path, no query) still emits a rewrite that uses
-        {http.request.uri.path} — handle_path's strip alone would forward
-        {uri} (path + query), but the container user's query is untrusted
-        and must be dropped (#1687). The rewrite target is just the path
-        with no prefix and no query."""
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
-        b = _renderer(s)._build_llm_block("upstream", "")
-        assert "handle_path /llm-proxy/*" in b
-        # Trailing "?" with empty base query — REQUIRED so caddy treats the
-        # rewrite as query-replacing rather than query-preserving (otherwise
-        # the container user's per-request query would leak to the upstream;
-        # see review of #1696).
-        assert "rewrite * {http.request.uri.path}?" in b
-        assert "rewrite * {http.request.uri.path}\n" not in b
-
-    def test_base_query_reattached_after_path(self):
-        """A base URL with a query string (Gemini-style ?key=..., documented
-        but discouraged by Google on security grounds; the OpenAI Python
-        client also preserves hardcoded query params on base_url —
-        openai/openai-python@73ea2f7) is preserved: the rewrite target is
-        <base_path>{http.request.uri.path}?<base_query>. The container
-        user's per-request query is dropped ({http.request.uri.path} is
-        path-only), so only operator-configured query params reach the
-        upstream (#1687)."""
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": (
-                    "https://generativelanguage.googleapis.com/v1beta"
-                    "?key=AIzaSy-example"
-                ),
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
-        b = _renderer(s)._build_llm_block("upstream", "")
-        assert (
-            "rewrite * /v1beta{http.request.uri.path}?key=AIzaSy-example" in b
-        )
-
-    def test_base_query_with_no_path_reattached(self):
-        """Base query with no base path: rewrite target is
-        {http.request.uri.path}?<base_query> (no path prefix)."""
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": "http://gateway.local?token=op-secret",
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
-        b = _renderer(s)._build_llm_block("upstream", "")
-        assert "rewrite * {http.request.uri.path}?token=op-secret" in b
+    def test_no_rewrite(self):
+        """No URL rewriting — the backend handles /llm-proxy/ directly."""
+        b = _renderer(make_settings({}))._build_llm_block("upstream", "")
+        assert "rewrite" not in b
 
 
 class TestHostedBlock:
@@ -535,7 +440,7 @@ class TestHostedBlock:
 
 
 class TestLlmBlockCaddyAdapt:
-    """Smoke-test the rendered Caddyfile by adapting it through a real caddy.
+    """Smoke-test that the simplified /llm-proxy block compiles via caddy adapt.
 
     The string assertions in ``TestLlmBlock`` are brittle: a future edit that
     emits valid-looking-but-broken Caddyfile for the path-bearing case would
@@ -549,15 +454,11 @@ class TestLlmBlockCaddyAdapt:
     where caddy is present). Locally with devenv, these run.
     """
 
-    @staticmethod
-    def _has_caddy() -> bool:
-        import shutil
-
-        return shutil.which("caddy") is not None
-
     @pytest.fixture(autouse=True)
     def _skip_without_caddy(self):
-        if not self._has_caddy():
+        import shutil
+
+        if not shutil.which("caddy"):
             pytest.skip("no `caddy` binary on PATH (run under devenv)")
 
     @staticmethod
@@ -584,302 +485,11 @@ class TestLlmBlockCaddyAdapt:
         assert r.returncode == 0, f"caddy adapt failed:\n{r.stderr}"
         return json.loads(r.stdout)
 
-    @staticmethod
-    def _find_llm_subroute(adapted: dict) -> list:
-        """Walk the adapted config; return the routes inside the /llm-proxy handle_path block."""
-        routes_out = []
-        for server in (
-            adapted.get("apps", {}).get("http", {}).get("servers", {}).values()
-        ):
-            for route in server.get("routes", []):
-                match = route.get("match", [])
-                if not any("/llm-proxy" in str(m) for m in match):
-                    continue
-                # The match-all handle wraps a subroute; descend into it.
-                for h in route.get("handle", []):
-                    for sub in h.get("routes", []):
-                        routes_out.append(sub)
-        return routes_out
-
-    def test_path_bearing_url_compiles_and_routes_correctly(self):
-        """End-to-end render + caddy adapt for a path-bearing llm_base_url.
-
-        Asserts the property the substring tests can't: the rewrite that
-        re-attaches the base path runs AFTER handle_path's strip_prefix,
-        so a request to /llm-proxy/chat/completions lands at
-        /api/coding/paas/v4/chat/completions on the upstream. This is the
-        headline fix of #1681; without a compile-level test a future edit
-        that broke the strip+rewrite ordering (e.g. by switching back to
-        ``uri strip_prefix`` + ``rewrite``, which caddy reorders) would
-        silently ship broken.
-        """
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
+    def test_llm_block_compiles(self):
+        """The simplified /llm-proxy block compiles through caddy adapt."""
+        s = make_settings({})
         cf = _renderer(s).render_config("unix//s", "/d/caddy-admin.sock")
-        adapted = self._adapt(cf)
-
-        routes = self._find_llm_subroute(adapted)
-        assert routes, "no /llm-proxy route in adapted config"
-
-        # The strip_path_prefix handler must come before the rewrite handler.
-        handlers = []
-        for r in routes:
-            for h in r.get("handle", []):
-                if "strip_path_prefix" in h:
-                    handlers.append("strip")
-                elif "uri" in h and "rewrite" == h.get("handler"):
-                    handlers.append("rewrite")
-        assert "strip" in handlers, "handle_path's strip_prefix missing"
-        assert "rewrite" in handlers, "base-path rewrite missing"
-        assert handlers.index("strip") < handlers.index("rewrite"), (
-            "strip must run before rewrite; otherwise the rewrite sees the "
-            "un-stripped {uri} and the upstream path is wrong (regression of #1680)"
-        )
-
-        # And the rewrite target is the base path + {uri} (so a /chat request
-        # lands at /api/coding/paas/v4/chat).
-        rewrite_uris = [
-            h["uri"]
-            for r in routes
-            for h in r.get("handle", [])
-            if h.get("handler") == "rewrite" and "uri" in h
-        ]
-        assert any("/api/coding/paas/v4" in u for u in rewrite_uris), (
-            f"base path not in rewrite target: {rewrite_uris}"
-        )
-
-    def test_host_only_url_compiles(self):
-        """Sanity: a host-only URL (no path) still compiles — regression guard
-        that the path-split refactor didn't break the simple case."""
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
-        cf = _renderer(s).render_config("unix//s", "/d/caddy-admin.sock")
-        # Smoke: just confirm caddy accepts it. No path assertions needed.
         self._adapt(cf)
-
-    def test_base_query_url_compiles(self):
-        """A base URL with a query string (Gemini-style ?key=...) compiles
-        — the rewrite target ``<path>{http.request.uri.path}?<query>`` is
-        valid Caddyfile syntax. Regression guard that the #1687 query-
-        preserve work didn't introduce a Caddyfile syntax error for the
-        query case."""
-        s = make_settings(
-            env={
-                "KLANGKD_LLM_BASE_URL": (
-                    "https://generativelanguage.googleapis.com/v1beta"
-                    "?key=AIzaSy-example"
-                ),
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
-        cf = _renderer(s).render_config("unix//s", "/d/caddy-admin.sock")
-        adapted = self._adapt(cf)
-        # And the rewrite target carries the base query.
-        routes = self._find_llm_subroute(adapted)
-        rewrite_uris = [
-            h["uri"]
-            for r in routes
-            for h in r.get("handle", [])
-            if h.get("handler") == "rewrite" and "uri" in h
-        ]
-        assert any("?key=AIzaSy-example" in u for u in rewrite_uris), (
-            f"base query not in rewrite target: {rewrite_uris}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# CaddyRenderer — behavioral query-drop test (real caddy + echo upstream)
-# ---------------------------------------------------------------------------
-
-
-class TestLlmBlockCaddyQueryDrop:
-    """Behavioral test for the #1687 trust-boundary claim.
-
-    The substring tests above assert the rewrite *shape*; this class asserts
-    the actual security property by running a real ``caddy`` against a real
-    echo upstream and sending a request with a user-supplied query. If the
-    rewrite ever stops forcing an empty/explicit query component, the
-    upstream will see the user's query — the test catches it. (Substring
-    tests would not — they lock in the rendered text, not the behavior.)
-
-    CI's plain-pip unit job has no ``caddy``; the autouse fixture skips.
-    """
-
-    @staticmethod
-    def _has_caddy() -> bool:
-        import shutil
-
-        return shutil.which("caddy") is not None
-
-    @pytest.fixture(autouse=True)
-    def _skip_without_caddy(self):
-        if not self._has_caddy():
-            pytest.skip("no `caddy` binary on PATH (run under devenv)")
-
-    @staticmethod
-    def _free_port() -> int:
-        import socket
-
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            return s.getsockname()[1]
-
-    @staticmethod
-    def _start_echo(port: int):
-        """Minimal HTTP echo: returns the request path (incl. query) as body."""
-        import threading
-        from http.server import BaseHTTPRequestHandler, HTTPServer
-
-        class H(BaseHTTPRequestHandler):
-            def _handle(self):
-                body = self.path.encode()
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def do_GET(self):
-                self._handle()
-
-            def do_POST(self):
-                self._handle()
-
-            def log_message(self, *a):
-                pass
-
-        srv = HTTPServer(("127.0.0.1", port), H)
-        t = threading.Thread(target=srv.serve_forever, daemon=True)
-        t.start()
-        return srv
-
-    @staticmethod
-    def _stop_echo(srv) -> None:
-        srv.shutdown()
-        srv.server_close()
-
-    @staticmethod
-    def _start_caddy(cf_path: str):
-        import subprocess
-
-        proc = subprocess.Popen(
-            ["caddy", "run", "--config", cf_path, "--adapter", "caddyfile"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return proc
-
-    @staticmethod
-    def _wait_for_port(host: str, port: int, timeout: float = 5.0) -> bool:
-        import socket
-        import time
-
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with socket.socket() as s:
-                s.settimeout(0.25)
-                try:
-                    s.connect((host, port))
-                    return True
-                except OSError:
-                    time.sleep(0.1)
-        return False
-
-    @pytest.mark.parametrize(
-        "base_url",
-        [
-            # Common case: host-only, no path, no query (local Ollama shape).
-            # The trust-boundary property must hold here too — this is the
-            # exact case the original PR #1696 silently leaked.
-            "http://127.0.0.1:{echo_port}",
-            # Path-bearing, no query (z.ai shape).
-            "http://127.0.0.1:{echo_port}/v1beta",
-        ],
-    )
-    def test_user_query_dropped_at_upstream(self, base_url, tmp_path):
-        """A container user's per-request query MUST NOT reach the upstream.
-
-        The base URL is operator config; the per-request query is
-        untrusted. Sending ``/llm-proxy/chat?user_supplied=evil`` must
-        produce ``/chat`` (or ``/<base_path>/chat``) at the upstream, with
-        NO ``?user_supplied=evil``. Caddy's rewrite preserves the incoming
-        query by default when the rewrite target has no query component —
-        the renderer must always emit a query component (even empty) to
-        force query-replacement. (#1696 review.)
-        """
-        import subprocess
-        import urllib.request
-
-        echo_port = self._free_port()
-        proxy_port = self._free_port()
-        url = base_url.format(echo_port=echo_port)
-
-        srv = self._start_echo(echo_port)
-        # Minimal Caddyfile mirroring _build_llm_block's shape for a
-        # no-base-query URL: handle_path + rewrite with a forced empty query.
-        # We render it by hand here rather than calling _build_llm_block so
-        # the test pins the runtime contract independently of the renderer's
-        # exact string (a renderer change that breaks this is caught by the
-        # unit/compile tests above; this test catches the *property*).
-        from klangk.caddy import CaddyRenderer
-        import types
-        from _helpers import make_settings
-
-        s = make_settings(
-            env={"KLANGKD_LLM_BASE_URL": url, "KLANGKD_LLM_API_KEY": "k"}
-        )
-        block = CaddyRenderer(
-            types.SimpleNamespace(state=types.SimpleNamespace(settings=s))
-        )._build_llm_block("upstream", "")
-        # Strip the Authorization header line before writing to disk — the
-        # api_key ("k") is not a real secret, but the rendered Caddyfile
-        # would contain ``Authorization "Bearer k"`` and CodeQL flags any
-        # write of api_key-derived data as clear-text storage of sensitive
-        # information. The trust-boundary property under test (rewrite
-        # drops the user's query) is independent of the Authorization
-        # header, so stripping the line doesn't weaken the test.
-        block_sanitized = "\n".join(
-            line
-            for line in block.splitlines()
-            if not line.strip().startswith("header_up Authorization")
-        )
-        cf = f"{{\n\tadmin off\n}}\n:{proxy_port} {{\n{block_sanitized}\n}}\n"
-        cf_path = str(tmp_path / "Caddyfile")
-        with open(cf_path, "w") as f:
-            f.write(cf)
-
-        proc = self._start_caddy(cf_path)
-        try:
-            assert self._wait_for_port("127.0.0.1", proxy_port), (
-                "caddy did not start"
-            )
-            # POST /llm-proxy/chat?user_supplied=evil — upstream must NOT
-            # see ?user_supplied=evil.
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{proxy_port}/llm-proxy/chat?user_supplied=evil",
-                timeout=5,
-            ) as r:
-                upstream_saw = r.read().decode()
-            assert "user_supplied=evil" not in upstream_saw, (
-                f"caddy leaked the container user's query to the upstream "
-                f"(upstream saw {upstream_saw!r}). The rewrite target must "
-                f"force an empty/explicit query component so caddy treats "
-                f"it as query-replacing rather than query-preserving."
-            )
-        finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            self._stop_echo(srv)
 
 
 # ---------------------------------------------------------------------------
@@ -1042,42 +652,11 @@ class TestRenderConfig:
         # The catch-all still proxies.
         assert "handle {" in cf
 
-    def test_llm_api_key_resolved(self):
-        s = make_settings(
-            env={
-                "KLANGKD_PORT": "8997",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGKD_LLM_API_KEY": "cmd:printf %s resolved-key",
-            }
-        )
-        cf = _renderer(s).render_config("unix//s", self.ADMIN)
-        assert 'Authorization "Bearer resolved-key"' in cf
-        assert "cmd:" not in cf
-
-    def test_llm_proxy_strips_prefix(self):
-        """The /llm-proxy/ prefix is stripped before proxying — nginx rewrites
-        ``/llm-proxy/(.*)`` → ``{base_url}/$1``; Caddy mirrors with
-        ``handle_path /llm-proxy/*``, which atomically matches the path AND
-        strips the prefix before any subsequent directive in the same block
-        reads {uri}. (A plain ``uri strip_prefix`` followed by ``rewrite``
-        does NOT work — caddy's adapter reorders the two rewrite-family
-        handlers, so the rewrite sees the un-stripped {uri}.) Without the
-        strip, the path forwards verbatim and 404s at every provider
-        (regression, found in review)."""
-        s = make_settings(
-            env={
-                "KLANGKD_PORT": "8997",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
-        cf = _renderer(s).render_config("unix//s", self.ADMIN)
-        assert "handle_path /llm-proxy/*" in cf
-
-    def test_llm_absent_without_url(self):
+    def test_llm_block_always_present(self):
+        """The /llm-proxy block is always rendered (#2073)."""
         s = make_settings({"KLANGKD_PORT": "8997"})
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
-        assert "/llm-proxy" not in cf
+        assert "/llm-proxy" in cf
 
     def test_global_block_prepended(self):
         s = make_settings(

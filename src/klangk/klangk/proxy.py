@@ -39,7 +39,6 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
 
 
 logger = logging.getLogger(__name__)
@@ -441,84 +440,25 @@ class ProxyRenderer:
             "    }\n"
         )
 
-    def _build_llm_block(self, acl: str, resolvers: str) -> str:
-        """The /llm-proxy/ location, only when ``KLANGKD_LLM_BASE_URL`` is set.
+    def _build_llm_block(self, acl: str, upstream: str) -> str:
+        """The /llm-proxy/ location (#2073).
 
-        Containers hit this instead of the real endpoint, so they never see the
-        API key. Uses an nginx variable so the upstream resolves at request time
-        (avoids crash on unresolvable hosts). ``file:``/``cmd:`` prefixes on the
-        URL and key are resolved here (Python's resolver, not the retired
-        ``klangk-resolve-value`` console script).
-
-        Two buffering/resolution knobs that matter for LLM traffic:
-
-        - ``proxy_request_buffering off`` (#1682): stream the request body
-          straight to the upstream instead of spilling it to
-          ``client_body_temp_path``. With the default ``on``, any body larger
-          than ``client_body_buffer_size`` (nginx's compiled default — 16 KB on
-          64-bit, 8 KB on 32-bit) is written to that temp dir, which in the
-          keep-id userns is owned by a different uid than the nginx worker →
-          EACCES → 500. Streaming sidesteps the temp dir entirely (matching
-          caddy's ``reverse_proxy``, which never buffers requests to disk) and
-          lets the upstream begin processing as the body arrives. Safe with
-          ``auth_request``: the token-check subrequest runs in the preaccess
-          phase, before ``proxy_pass`` reads the body, so a 401 short-circuits
-          with nothing streamed. The same directive is on the other
-          container-egress locations (``browser-delegate``, ``post-chat-message``)
-          for the same reason — see ``_egress_locations``.
-        - ``resolver ... ipv6=off``: don't resolve AAAA records for the
-          upstream. LLM providers are dual-stack with IPv4 always available;
-          on hosts with no IPv6 egress, attempting the AAAA address produces
-          ``connect() ... failed (Network is unreachable)`` noise (and a
-          failed first attempt before the A fallback) (#1682).
-
-        The location regex ``^/llm-proxy/(.*)$`` matches against ``$uri``
-        (path only), so ``$1`` is the path the container user requested —
-        the incoming request's query string never reaches ``$1``. The
-        load-bearing reason the user query is dropped, though, is that
-        ``proxy_pass`` with a *variable* argument (``$llm_backend``) does
-        not auto-append ``$args`` — a fixed ``proxy_pass`` would. The
-        regex capture being path-only is necessary but not sufficient.
-        Together they implement the trust-boundary rule: the base URL is
-        operator config and is the only source of upstream query params
-        (#1687). A base query (Gemini-style ``?key=...`` auth, documented
-        but discouraged by Google; the OpenAI Python client also preserves
-        hardcoded query params on ``base_url`` — openai/openai-python@73ea2f7)
-        is reassembled AFTER ``$1`` so the final upstream URL is
-        ``{scheme}://{host}{path}/$1?{query}``.
+        Routes ``/llm-proxy/`` requests to the klangkd backend where the
+        in-process ``litellm.Router`` handles them.  The container-source
+        ACL and ``auth_request`` workspace-token check protect the endpoint;
+        no API key injection or URL rewriting is needed since the backend
+        owns the LLM routing.
         """
-        base_url = self._app.state.settings.llm_base_url
-        if not base_url:
-            return ""
-        api_key = self._app.state.settings.llm_api_key
-        # Reassemble so a base query (if any) lands AFTER $1 rather than
-        # being strung into the path. ``urlsplit(base_url).geturl()`` would
-        # round-trip the query mid-URL; instead, strip the query here and
-        # append it explicitly after ``$1``.
-        parts = urlsplit(base_url)
-        base_without_query = parts._replace(query="").geturl()
-        if parts.query:
-            set_value = f"{base_without_query}/$1?{parts.query}"
-        else:
-            set_value = f"{base_without_query}/$1"
         return (
-            f"    location ~ ^/llm-proxy/(.*)$ {{\n"
+            "    location /llm-proxy/ {\n"
             f"{acl}\n"
             "      auth_request /api/v1/auth/verify-workspace-token;\n"
             "      auth_request_set $auth_token_error $upstream_http_x_token_error;\n"
             "      error_page 401 = @token_auth_failed;\n"
-            f"      resolver {resolvers} valid=30s ipv6=off;\n"
-            f"      set $llm_backend {set_value};\n"
-            "      proxy_pass $llm_backend;\n"
-            f'      proxy_set_header Authorization "Bearer {api_key}";\n'
-            "      proxy_set_header Host $proxy_host;\n"
-            "      proxy_ssl_server_name on;\n"
+            f"      proxy_pass {upstream};\n"
             "      proxy_http_version 1.1;\n"
-            '      proxy_set_header Connection "";\n'
             "      proxy_request_buffering off;\n"
             "      proxy_buffering off;\n"
-            "      proxy_cache off;\n"
-            "      chunked_transfer_encoding on;\n"
             "    }\n"
         )
 
@@ -612,7 +552,7 @@ class ProxyRenderer:
         them. All carry CONTAINER_ACL (allow container source IPs, deny all).
         ``upstream`` is the UDS ``proxy_pass`` base.
         """
-        llm_block = self._build_llm_block(acl, resolvers)
+        llm_block = self._build_llm_block(acl, upstream)
         common_headers = (
             "      proxy_set_header Host $http_host;\n"
             "      proxy_set_header X-Real-IP $remote_addr;\n"

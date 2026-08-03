@@ -138,9 +138,10 @@ class TestFeatureParity:
         assert "/llm-proxy/" in conf
 
     @ENGINES
-    def test_llm_block_absent_when_url_unset(self, render):
+    def test_llm_block_always_present(self, render):
+        """The /llm-proxy/ block is always emitted (#2073)."""
         conf = render(_settings())
-        assert "/llm-proxy/" not in conf
+        assert "/llm-proxy/" in conf
 
     @ENGINES
     def test_hosted_block_present_in_full_mode(self, render):

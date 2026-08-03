@@ -338,131 +338,33 @@ class TestRenderConfig:
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
         assert "proxy_pass http://unix:/tmp/klangk.sock:" in conf
 
-    def test_no_llm_block_without_url(self):
+    def test_llm_block_always_present(self):
+        """The /llm-proxy/ block is always emitted (#2073)."""
         s = make_settings({"KLANGKD_PORT": "8997"})
-        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
-        assert "llm-proxy" not in conf
-
-    def test_llm_block_with_url(self):
-        s = make_settings(
-            env={
-                "KLANGKD_PORT": "8997",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
-            }
-        )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
         assert "llm-proxy" in conf
 
-    def test_llm_api_key_resolved(self):
+    def test_llm_block_proxies_to_backend(self):
+        """The /llm-proxy/ block proxies to the klangkd backend."""
+        s = make_settings({"KLANGKD_PORT": "8997"})
+        upstream = tcp_upstream("127.0.0.1", "8997")
+        conf = _renderer(s).render_config(upstream)
+        assert "location /llm-proxy/" in conf
+        assert f"proxy_pass {upstream}" in conf
+
+    def test_llm_block_no_api_key_injection(self):
+        """No Authorization header — the in-process Router handles keys."""
         s = make_settings(
-            env={
-                "KLANGKD_PORT": "8997",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
-                "KLANGKD_LLM_API_KEY": "cmd:printf %s resolved-key",
-            }
+            env={"KLANGKD_PORT": "8997", "KLANGKD_LLM_API_KEY": "sekret"}
         )
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
-        assert 'Authorization "Bearer resolved-key"' in conf
-        assert "cmd:" not in conf
+        assert "Authorization" not in conf or "Bearer sekret" not in conf
 
-    def test_llm_block_preserves_path_bearing_base_url(self):
-        """Regression: path-bearing ``llm_base_url`` (z.ai
-        ``https://api.z.ai/api/coding/paas/v4``, OpenRouter
-        ``https://openrouter.ai/api/v1``, etc.) must round-trip intact —
-        the runtime ``set $llm_backend {base}/$1`` resolves at request
-        time and never structural-validates the URL, so the path survives
-        without splitting. Pinning this so a refactor toward the caddy-style
-        split (upstream + rewrite) keeps nginx's permissive behavior (#1681)."""
-        s = make_settings(
-            env={
-                "KLANGKD_PORT": "8997",
-                "KLANGKD_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
+    def test_llm_block_has_auth_request(self):
+        """The /llm-proxy/ block validates workspace JWTs."""
+        s = make_settings({"KLANGKD_PORT": "8997"})
         conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
-        # The full base URL survives in the runtime variable assignment.
-        # A client POST to /llm-proxy/chat/completions -> $1="chat/completions"
-        # -> upstream https://api.z.ai/api/coding/paas/v4/chat/completions.
-        assert (
-            "set $llm_backend https://api.z.ai/api/coding/paas/v4/$1;" in conf
-        )
-
-    def test_llm_block_streams_request_body_and_disables_ipv6(self):
-        """Regression for #1682: the container-egress locations must stream the
-        request body (``proxy_request_buffering off``) so a body larger than
-        ``client_body_buffer_size`` never spills to ``client_body_temp_path``
-        (EACCES under keep-id userns → 500), and the /llm-proxy/ resolver must
-        disable IPv6 upstream resolution (``ipv6=off``). Asserted by extracting
-        each location block (not a global substring) so a directive drifting
-        out of its block is caught. Both headless and full renders."""
-        import re
-
-        env = {
-            "KLANGKD_LLM_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
-            "KLANGKD_LLM_API_KEY": "k",
-        }
-        # Headless (no KLANGKD_PORT).
-        s_headless = make_settings(env=env)
-        headless = _renderer(s_headless).render_config(
-            tcp_upstream("127.0.0.1", "8997")
-        )
-        # Full/browser mode (KLANGKD_PORT set).
-        s_full = make_settings(env={**env, "KLANGKD_PORT": "8997"})
-        full = _renderer(s_full).render_config(
-            tcp_upstream("127.0.0.1", "8997")
-        )
-        for label, conf in (("headless", headless), ("full", full)):
-            # /llm-proxy/ location: request streaming + IPv6-off resolver.
-            m = re.search(
-                r"location ~ \^/llm-proxy/\(\.\*\)\$ \{(.*?)\}",
-                conf,
-                re.DOTALL,
-            )
-            assert m, f"{label}: /llm-proxy/ block not found"
-            llm = m.group(1)
-            assert "proxy_request_buffering off;" in llm, label
-            assert "ipv6=off" in llm, label
-            # The other container-egress POST locations stream too.
-            for loc_pattern in (
-                r"location /api/v1/browser-delegate \{(.*?)\}",
-                r"location = /api/v1/workspaces/post-chat-message \{(.*?)\}",
-            ):
-                mm = re.search(loc_pattern, conf, re.DOTALL)
-                assert mm, f"{label}: {loc_pattern} block not found"
-                assert "proxy_request_buffering off;" in mm.group(1), label
-
-    def test_llm_block_preserves_base_query_after_path(self):
-        """A base URL with a query string (Gemini-style ?key=..., documented
-        but discouraged by Google on security grounds; the OpenAI Python
-        client also preserves hardcoded query params on base_url —
-        openai/openai-python@73ea2f7) is reassembled AFTER ``$1`` so the
-        final upstream URL is ``{scheme}://{host}{path}/$1?{query}``.
-        Without the reassembly, ``{base_url}/$1`` would interleave the
-        query mid-URL (``{base}/v4?key=secret/$1``) and produce a
-        malformed upstream. The container user's per-request query is
-        dropped by the location regex (``$1`` captures path-only from
-        ``$uri``), so only operator-configured query params reach the
-        upstream (#1687)."""
-        s = make_settings(
-            env={
-                "KLANGKD_PORT": "8997",
-                "KLANGKD_LLM_BASE_URL": (
-                    "https://generativelanguage.googleapis.com/v1beta"
-                    "?key=AIzaSy-example"
-                ),
-                "KLANGKD_LLM_API_KEY": "k",
-            }
-        )
-        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
-        # The base query is appended after $1, not interleaved mid-URL.
-        assert (
-            "set $llm_backend "
-            "https://generativelanguage.googleapis.com/v1beta/$1"
-            "?key=AIzaSy-example;" in conf
-        )
-        # And the malformed form (query before $1) is NOT present.
-        assert "?key=AIzaSy-example/$1" not in conf
+        assert "auth_request /api/v1/auth/verify-workspace-token" in conf
 
     def test_auth_local_loopback_acl(self):
         s = make_settings({"KLANGKD_PORT": "8997"})
@@ -583,18 +485,18 @@ class TestRealipBlock:
         assert realip_pos < first_server
 
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
-        """file:/cmd: values resolve in the renderer."""
+        """file:/cmd: values resolve at the settings layer."""
         secret = tmp_path / "llm.key"
         secret.write_text("file-based-key\n")
         s = make_settings(
             env={
                 "KLANGKD_PORT": "8997",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
                 "KLANGKD_LLM_API_KEY": f"file:{secret}",
             }
         )
-        conf = _renderer(s).render_config(tcp_upstream("127.0.0.1", "8997"))
-        assert 'Authorization "Bearer file-based-key"' in conf
+        # The key is resolved at settings construction, not embedded in
+        # the proxy config (the in-process Router uses it directly).
+        assert s.llm_api_key == "file-based-key"
 
 
 class TestHeadlessTemplate:
@@ -610,16 +512,15 @@ class TestHeadlessTemplate:
     """
 
     def test_headless_emits_egress_with_llm(self):
-        """Headless + LLM ⇒ /llm-proxy + egress paths, no browser surface."""
+        """Headless ⇒ /llm-proxy + egress paths, no browser surface."""
         s = make_settings(
             env={
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
                 "KLANGKD_EGRESS_PORT": "8995",
             }
         )
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
         # /llm-proxy container-egress location is present, token-gated.
-        assert "location ~ ^/llm-proxy/" in conf
+        assert "location /llm-proxy/" in conf
         assert "auth_request /api/v1/auth/verify-workspace-token;" in conf
         # The auth_request subrequest target + 401 page ride along.
         assert "location = /api/v1/auth/verify-workspace-token" in conf
@@ -635,11 +536,11 @@ class TestHeadlessTemplate:
         assert "/hosted/" not in conf  # no hosted/static UI
 
     def test_headless_no_llm_still_serves_egress(self):
-        """Headless + no LLM ⇒ no /llm-proxy, but browser-delegate /
-        post-chat-message + their auth_request infra remain."""
+        """Headless ⇒ /llm-proxy + browser-delegate / post-chat-message +
+        their auth_request infra always present."""
         s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         conf = _renderer(s).render_config(uds_upstream("/tmp/klangk.sock"))
-        assert "location ~ ^/llm-proxy/" not in conf
+        assert "location /llm-proxy/" in conf
         # The other egress locations persist (they don't depend on LLM).
         assert "/api/v1/browser-delegate" in conf
         assert "post-chat-message" in conf
@@ -701,7 +602,6 @@ class TestHeadlessTemplate:
             s_headless = make_settings(
                 env={
                     "KLANGKD_AUTH_MODES": auth,
-                    "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
                     "KLANGKD_EGRESS_PORT": "8995",
                 }
             )
@@ -709,7 +609,7 @@ class TestHeadlessTemplate:
                 uds_upstream("/tmp/klangk.sock")
             )
             assert "location / {" not in headless
-            assert "location ~ ^/llm-proxy/" in headless
+            assert "location /llm-proxy/" in headless
 
             s_full = make_settings(
                 env={

@@ -48,7 +48,6 @@ import signal
 import subprocess
 import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 
@@ -415,91 +414,19 @@ class CaddyRenderer:
     # -- egress locations --------------------------------------------------
 
     def _build_llm_block(self, upstream: str, guard: str) -> str:
-        """The ``/llm-proxy/*`` location, only when ``KLANGKD_LLM_BASE_URL`` is set.
+        """The ``/llm-proxy/*`` location (#2073).
 
-        Containers hit this instead of the real endpoint so they never see the
-        API key. ``file:``/``cmd:`` prefixes on the URL and key are resolved
-        by the settings layer (Python's resolver) before rendering, so the
-        key lands here already resolved — and because the config never touches
-        disk (admin API payload), the secret stays in memory only.
-
-        Path-bearing ``llm_base_url`` values (e.g. z.ai's
-        ``https://api.z.ai/api/coding/paas/v4``, OpenRouter's
-        ``https://openrouter.ai/api/v1``) are split into a host-only upstream
-        for ``reverse_proxy`` plus a ``rewrite`` that re-attaches the path:
-        caddy rejects upstream URLs that include a path (``for now, URLs for
-        proxy upstreams only support scheme, host, and port components``),
-        which crashed the LLM block for every provider whose base URL isn't
-        host-root — the regression surfaced when caddy became the default
-        engine in #1643 (#1681). nginx's ``proxy_pass $llm_backend`` resolves
-        at request time and never structural-validates the URL, so the same
-        base_url works there without splitting.
-
-        No explicit ``header_up Host`` is emitted: caddy ≥2.8 auto-sets
-        ``Host: {upstream_hostport}`` when the transport has TLS
-        (caddyserver/caddy#7454), which covers every HTTPS LLM provider
-        (z.ai, OpenRouter, OpenAI, Anthropic, …). For a plain-HTTP upstream
-        (e.g. local Ollama ``http://127.0.0.1:11434``) caddy passes the
-        original request's Host through — the upstream sees ``Host:
-        host.containers.internal:8995`` rather than ``127.0.0.1:11434``.
-        This is a real but narrow parity gap with nginx (which sets ``Host
-        $proxy_host`` for both schemes); most HTTP upstreams ignore Host, so
-        it's left as-is rather than complicating the block with scheme
-        detection. An earlier attempt to set ``header_up Host
-        {upstream.hostport}`` unconditionally reintroduced the ``http2:
-        invalid Host header`` 502 against HTTPS upstreams — caddy's
-        placeholder substitution in the header context isn't reliable enough
-        to override what it would auto-set. See review of #1681.
+        Routes ``/llm-proxy/`` requests to the klangkd backend where the
+        in-process ``litellm.Router`` handles them.  The container-source
+        ACL guard and ``forward_auth`` workspace-token check (applied by
+        the parent ``_egress_site``) protect the endpoint; no API key
+        injection or URL rewriting is needed since the backend owns the
+        LLM routing.
         """
-        base_url = self.app.state.settings.llm_base_url
-        if not base_url:
-            return ""
-        api_key = self.app.state.settings.llm_api_key
-        # Split scheme://host[:port] from path and query. Trailing slash is
-        # stripped from the path so concatenation with {http.request.uri.path}
-        # (which begins with /) doesn't double it: base_path "" + path "/x"
-        # -> "/x"; base_path "/v4" + path "/chat" -> "/v4/chat".
-        parts = urlsplit(base_url)
-        upstream_url = f"{parts.scheme}://{parts.netloc}"
-        base_path = parts.path.rstrip("/")
-        base_query = parts.query
-        # ``handle_path /llm-proxy/*`` is the caddy directive that both
-        # matches the path AND strips the prefix atomically before any
-        # subsequent directive in the same block reads {uri}. A plain
-        # ``uri strip_prefix`` followed by ``rewrite`` does NOT work —
-        # caddy's Caddyfile adapter reorders the two rewrite-family
-        # handlers, so the rewrite sees the un-stripped {uri} and emits
-        # /api/coding/paas/v4/llm-proxy/chat. nginx's regex capture
-        # (``location ~ ^/llm-proxy/(.*)$``) does strip+substitute in one
-        # directive; handle_path is the caddy equivalent.
-        #
-        # The rewrite uses {http.request.uri.path} (path only), NOT {uri}
-        # (path + query) — the base URL is trusted operator config and is
-        # the only source of upstream query params; the container user's
-        # per-request query is untrusted and is dropped (#1687). The base
-        # query, if present, is re-attached after the path (Gemini-style
-        # ?key=... auth, documented but discouraged by Google on security
-        # grounds; the OpenAI Python client also preserves hardcoded
-        # query params on base_url, openai/openai-python@73ea2f7).
-        #
-        # CRITICAL: the rewrite target MUST carry a query component
-        # (even an empty one) so caddy treats it as query-REPLACING rather
-        # than query-PRESERVING. A bare ``rewrite * {path}`` with no ``?``
-        # leaves the incoming request's query intact — verifiable live:
-        # POST /llm-proxy/chat?user=evil with a no-base-query config
-        # forwards ``/chat?user=evil`` to the upstream, leaking the
-        # container user's query. Appending ``?{base_query}`` (which
-        # expands to ``?`` when base_query is empty) drops the user query
-        # in both cases. (Discovered in review of #1696.)
-        target = f"{base_path}{{http.request.uri.path}}?{base_query}"
-        path_fix = f"		rewrite * {target}\n"
         return (
-            "	handle_path /llm-proxy/* {\n"
+            "	handle /llm-proxy/* {\n"
             f"{guard}"
-            f"{path_fix}"
-            f"		reverse_proxy {upstream_url} {{\n"
-            f'			header_up Authorization "Bearer {api_key}"\n'
-            "		}\n"
+            f"		reverse_proxy {upstream}\n"
             "	}\n"
         )
 
