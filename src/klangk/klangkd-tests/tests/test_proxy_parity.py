@@ -131,7 +131,6 @@ class TestFeatureParity:
     def test_llm_block_present_when_url_set(self, render):
         conf = render(
             _settings(
-                KLANGKD_LLM_BASE_URL="http://127.0.0.1:11434",
                 KLANGKD_LLM_API_KEY="k",
             )
         )

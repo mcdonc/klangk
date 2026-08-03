@@ -123,8 +123,9 @@ def parse_model_entry(entry: str) -> dict:
 class LiteLLMRenderer:
     """Renders a LiteLLM ``config.yaml`` from klangk settings.
 
-    Pure function of ``app.state.settings`` — no side effects beyond
-    writing the config file to disk.
+    Deprecated: the sidecar is replaced by the in-process Router (#2070).
+    This class is kept temporarily for backwards compatibility; it will
+    be removed in #2075.
     """
 
     def __init__(self, app) -> None:
@@ -136,7 +137,7 @@ class LiteLLMRenderer:
     def render_config(self) -> str:
         """Return the YAML content for LiteLLM's ``config.yaml``."""
         settings = self._app.state.settings
-        models = settings.llm_aggregator_models
+        models = getattr(settings, "llm_aggregator_models", None)
         if not models:
             return ""
 
@@ -152,7 +153,7 @@ class LiteLLMRenderer:
         # loopback bind + proxy IP filtering. master_key auth is DB-less: a
         # matching bearer is accepted in-memory; only an *unknown* key would
         # need a DB (which we don't configure) (#2062).
-        master_key = settings.llm_aggregator_master_key
+        master_key = getattr(settings, "llm_aggregator_master_key", "")
         if master_key:
             config["general_settings"] = {
                 "master_key": master_key,
@@ -198,10 +199,14 @@ class LiteLLMWatchdog:
         self._renderer.reconfigure(app)
         new = app.state.settings
         if (
-            old.llm_aggregator_models != new.llm_aggregator_models
-            or old.llm_aggregator_master_key != new.llm_aggregator_master_key
-            or old.llm_aggregator_port != new.llm_aggregator_port
-            or old.llm_aggregator_image != new.llm_aggregator_image
+            getattr(old, "llm_aggregator_models", None)
+            != getattr(new, "llm_aggregator_models", None)
+            or getattr(old, "llm_aggregator_master_key", "")
+            != getattr(new, "llm_aggregator_master_key", "")
+            or getattr(old, "llm_aggregator_port", 8996)
+            != getattr(new, "llm_aggregator_port", 8996)
+            or getattr(old, "llm_aggregator_image", "")
+            != getattr(new, "llm_aggregator_image", "")
         ):
             self._pending_reload = True
 
@@ -211,7 +216,7 @@ class LiteLLMWatchdog:
             return
         self._pending_reload = False
         settings = self._app.state.settings
-        if not settings.llm_aggregator_models:
+        if not getattr(settings, "llm_aggregator_models", None):
             self._stopping = True
             if self._task is not None:
                 self._task.cancel()
@@ -246,8 +251,12 @@ class LiteLLMWatchdog:
         while not self._stopping:
             podman = self._app.state.podman
             settings = self._app.state.settings
-            port = settings.llm_aggregator_port
-            image = settings.llm_aggregator_image
+            port = getattr(settings, "llm_aggregator_port", 8996)
+            image = getattr(
+                settings,
+                "llm_aggregator_image",
+                "ghcr.io/berriai/litellm:main-stable",
+            )
             # No DATABASE_URL: LiteLLM treats an empty/missing-scheme
             # DATABASE_URL as fatal and exits (#2062); config-only mode needs
             # no DB. LITELLM_MASTER_KEY is passed only when the operator set
@@ -256,9 +265,9 @@ class LiteLLMWatchdog:
             # default) the sidecar is no-auth, protected by the loopback bind
             # + proxy IP filtering.
             env = ["STORE_MODEL_IN_DB=False", "LITELLM_LOG=ERROR"]
-            if settings.llm_aggregator_master_key:
+            if getattr(settings, "llm_aggregator_master_key", ""):
                 env.append(
-                    f"LITELLM_MASTER_KEY={settings.llm_aggregator_master_key}"
+                    f"LITELLM_MASTER_KEY={getattr(settings, 'llm_aggregator_master_key', '')}"
                 )
 
             try:
@@ -342,7 +351,7 @@ class LiteLLMWatchdog:
     async def start(self) -> None:
         """Render config and start the LiteLLM sidecar if configured."""
         settings = self._app.state.settings
-        if not settings.llm_aggregator_models:
+        if not getattr(settings, "llm_aggregator_models", None):
             return
         if os.environ.get("_KLANGKD_DISABLE_LITELLM"):
             return

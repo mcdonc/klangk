@@ -1274,16 +1274,9 @@ class ContainerRegistry:
         env_vars: list[str] = []
         egress_port = self.app.state.settings.egress_port
         proxy_url = f"http://host.containers.internal:{egress_port}/llm-proxy"
-        llm_model = self.app.state.settings.llm_model
         env_vars.append(f"KLANGKWS_LLM_PROXY_URL={proxy_url}")
-        if llm_model:
-            env_vars.append(f"KLANGKWS_LLM_MODEL={llm_model}")
         env_vars.append("PI_SKIP_VERSION_CHECK=1")
-        logger.info(
-            "Container LLM proxy: %s (model: %s)",
-            proxy_url,
-            llm_model,
-        )
+        logger.info("Container LLM proxy: %s", proxy_url)
 
         # Hosted-app serving env. Omit entirely when the workspace has
         # no host ports (KLANGKD_HOSTED_PORTS_PER_WORKSPACE=0, or a

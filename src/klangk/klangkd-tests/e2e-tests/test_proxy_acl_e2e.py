@@ -68,7 +68,6 @@ class TestProxyAclConfig:
         conf = _render_conf(
             {
                 "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             },
             str(tmp_path),
         )
@@ -94,7 +93,6 @@ class TestProxyAclConfig:
     def test_auto_detect_host_ips(self, tmp_path):
         """Without override, host IPv4 addresses are auto-detected."""
         conf = _render_conf(
-            {"KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434"},
             str(tmp_path),
         )
         # Scope to the container-endpoint ACL (see test_explicit_subnets for
@@ -125,7 +123,6 @@ class TestProxyAclConfig:
         conf = _render_conf(
             {
                 "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             },
             str(tmp_path),
         )
@@ -143,7 +140,6 @@ class TestProxyAclConfig:
         conf = _render_conf(
             {
                 "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
                 "KLANGKD_LLM_API_KEY": "cmd:printf %s resolved-key",
             },
             str(tmp_path),
@@ -159,7 +155,6 @@ class TestProxyAclConfig:
         conf = _render_conf(
             {
                 "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
                 "KLANGKD_LLM_API_KEY": f"file:{key_file}",
             },
             str(tmp_path),
@@ -172,7 +167,6 @@ class TestProxyAclConfig:
         conf = _render_conf(
             {
                 "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGKD_LLM_BASE_URL": "cmd:printf %s http://127.0.0.1:11434",
             },
             str(tmp_path),
         )
@@ -256,7 +250,6 @@ class TestProxyAclConfig:
         conf = _render_conf(
             {
                 "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24,172.30.0.0/16",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             },
             str(tmp_path),
         )
@@ -386,7 +379,6 @@ class TestProxyAclEnforcement:
             "KLANGKD_LISTEN": "0.0.0.0",
             "KLANGKD_EGRESS_PORT": egress_port,
             "KLANGKD_CONTAINER_SUBNETS": "192.0.2.0/24",
-            "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:1",
             "KLANGKD_LLM_API_KEY": "fake-key",
             "KLANGKD_DATA_DIR": data_dir,
             "KLANGKD_STATE_DIR": state_dir,

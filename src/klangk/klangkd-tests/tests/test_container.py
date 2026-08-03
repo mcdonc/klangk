@@ -1049,9 +1049,6 @@ class TestStartContainer:
     async def test_llm_proxy_env_vars(self, workspace, monkeypatch):
         """Container gets proxy URL, not real API keys."""
         monkeypatch.setattr(
-            self.registry.app.state.settings, "llm_model", "gemma4:31b"
-        )
-        monkeypatch.setattr(
             self.registry.app.state.settings, "egress_port", "8995"
         )
 
@@ -1067,7 +1064,6 @@ class TestStartContainer:
         assert env_dict["KLANGKWS_LLM_PROXY_URL"] == (
             "http://host.containers.internal:8995/llm-proxy"
         )
-        assert env_dict["KLANGKWS_LLM_MODEL"] == "gemma4:31b"
         # The agent's home is injected at container start so every exec
         # process (terminals, service command, health check) inherits it.
         assert env_dict["KLANGKWS_AGENT_HOME"] == "/home/clanker"

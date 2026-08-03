@@ -293,7 +293,6 @@ class TestCaddyAclEnforcement:
                 "KLANGKD_EGRESS_PORT": str(egress_port),
                 "KLANGKD_EGRESS_LISTEN": "127.0.0.1",
                 "KLANGKD_CONTAINER_SUBNETS": "192.0.2.0/24",
-                "KLANGKD_LLM_BASE_URL": f"http://127.0.0.1:{echo_port}",
                 "KLANGKD_LLM_API_KEY": "fake-llm-key",
             }
             proc, conf_path = _render_and_launch(
@@ -384,7 +383,6 @@ class TestCaddyEgressAclAllow:
                 "KLANGKD_EGRESS_LISTEN": "0.0.0.0",
                 # The host's non-loopback IPv4 is the (sole) container source.
                 "KLANGKD_CONTAINER_SUBNETS": host_ip,
-                "KLANGKD_LLM_BASE_URL": f"http://127.0.0.1:{echo_port}",
                 "KLANGKD_LLM_API_KEY": "fake-llm-key",
             }
             proc, conf_path = _render_and_launch(

@@ -555,7 +555,6 @@ class TestHeadlessTemplate:
         browser catch-all location."""
         s = make_settings(
             env={
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
                 "KLANGKD_EGRESS_PORT": "8995",
             }
         )
@@ -570,7 +569,6 @@ class TestHeadlessTemplate:
         """KLANGKD_EGRESS_LISTEN pins the egress listener interface (#1542)."""
         s = make_settings(
             env={
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
                 "KLANGKD_EGRESS_PORT": "8995",
                 "KLANGKD_EGRESS_LISTEN": "192.168.1.5",
             }
@@ -841,7 +839,6 @@ class TestPrepareProxy:
                 "KLANGKD_STATE_DIR": state,
                 "KLANGKD_SOCKET": str(state_p / "klangk.sock"),
                 "KLANGKD_EGRESS_PORT": "19999",
-                "KLANGKD_LLM_BASE_URL": "http://127.0.0.1:11434",
             }
         )
         monkeypatch.setattr(

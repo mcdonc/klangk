@@ -1,9 +1,8 @@
 """Unit tests for the LiteLLM aggregator sidecar (#2046).
 
-Tests the renderer (config.yaml generation), the settings validator
-for ``KLANGKD_LLM_AGGREGATOR_MODELS``, and the watchdog container
-lifecycle (``_watch``, ``_wait_for_exit``, ``_remove_container``,
-``start``, ``stop``).
+Deprecated: the sidecar is replaced by the in-process Router (#2070).
+These tests reference removed settings (llm_aggregator_*) and will be
+deleted in #2075 along with the sidecar module itself.
 """
 
 import asyncio
@@ -20,6 +19,10 @@ from klangk.litellm import (
     parse_model_entry,
 )
 from _helpers import make_settings
+
+pytestmark = pytest.mark.skip(
+    reason="LiteLLM sidecar settings removed (#2074); pending deletion (#2075)"
+)
 
 
 def _renderer(settings):

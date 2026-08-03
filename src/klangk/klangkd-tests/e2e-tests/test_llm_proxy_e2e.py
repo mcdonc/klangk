@@ -109,9 +109,6 @@ def server(fake_llm):
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         LOGFIRE_TOKEN="",
         KLANGKD_LLM_MODELS=model_entry,
-        KLANGKD_LLM_API_KEY="",
-        KLANGKD_LLM_BASE_URL="",
-        KLANGKD_LLM_MODEL="",
     )
     yield srv
     stop_server(srv)
@@ -164,9 +161,6 @@ class TestLLMProxyE2E:
             KLANGKD_TEST_MODE="1",
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             LOGFIRE_TOKEN="",
-            KLANGKD_LLM_BASE_URL="",
-            KLANGKD_LLM_API_KEY="",
-            KLANGKD_LLM_MODEL="",
         )
         try:
             resp = srv["client"].get("/llm-proxy/models", timeout=10)

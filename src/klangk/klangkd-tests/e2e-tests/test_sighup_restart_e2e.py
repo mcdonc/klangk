@@ -51,9 +51,6 @@ def server():
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_ALLOW_AUTOSTART="1",
         LOGFIRE_TOKEN="",
-        KLANGKD_LLM_BASE_URL="",
-        KLANGKD_LLM_API_KEY="",
-        KLANGKD_LLM_MODEL="",
     )
     yield server
     stop_server(server)
@@ -275,9 +272,6 @@ def test_config_reload_via_sighup():
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         LOGFIRE_TOKEN="",
-        KLANGKD_LLM_BASE_URL="",
-        KLANGKD_LLM_API_KEY="",
-        KLANGKD_LLM_MODEL="",
     )
     client = server["client"]
     try:
