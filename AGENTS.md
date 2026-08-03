@@ -43,6 +43,38 @@ path with no test will fail the build. When iterating
 fast on one file you can scope with `-k` / a path and add `--no-cov`, but
 re-run the full suite **with** coverage (and `-n auto`) before committing.
 
+## Verifying behavior empirically (avoid repro loops)
+
+When you need to confirm a runtime behavior empirically, **add a temporary
+test to the existing pytest suite and run it** — do not write a standalone
+script (`asyncio.run(...)`, `if __name__ == "__main__"`, a one-off driver)
+that instantiates app/framework components directly.
+
+The harness exists to provide the setup production code depends on: the
+autouse fixtures stub background workers and fake the HTTP/WS backends; the
+conftest sets `COVERAGE_CORE=sysmon`; `run_test()` owns the textual event
+loop. A standalone script skips all of that, so it either **hangs** (commonly:
+`run_test()` context-exit waits forever for a real on-mount worker making real
+network calls to a fake URL) or exercises behavior that doesn't match
+production.
+
+This bites hardest for the textual TUI: `MainScreen` spawns real
+`_status_loop` and `_token_refresh_loop` workers on mount. Outside the pytest
+harness (whose autouse `_stub_tui_bg_workers` fixture stubs them) `run_test()`
+teardown hangs forever. To verify TUI behavior, add a temp test to
+`test_tui.py` using the existing helpers (`_real_status_loop`,
+`_fast_reconnect`, `_ws`, `_authed_state`), run it the CI way, then delete it.
+
+- Prefer reading the code and reasoning; reach for a temp test only when a
+  claim genuinely needs proof.
+
+**If a command you launched hangs or emits no output for a long time, do not
+re-run the identical command.** Diagnose first — check whether a child process
+is blocked (on teardown, on a network call, on a missing stub). Re-running a
+hung command verbatim just burns another cycle on the same hang. Figure out
+the cause or switch approaches; a re-run is only justified after you have
+changed something that should make it succeed.
+
 ## `app` ownership rule
 
 State objects (owned subsystems constructed in `build_app` as
