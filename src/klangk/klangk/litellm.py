@@ -17,7 +17,13 @@ Architecture mirrors :mod:`klangk.proxy` (``ProxyRenderer`` + ``ProxyWatchdog``)
 
 The container publishes its port on ``127.0.0.1`` only (loopback) so that
 the proxy can reach it at ``127.0.0.1:<port>`` while the sidecar is not
-reachable from the LAN.
+reachable from the LAN. By default the sidecar runs **without** a LiteLLM
+master key (no-auth) and is protected by the loopback bind plus the proxy's
+IP filtering; an operator may set ``KLANGKD_LLM_AGGREGATOR_MASTER_KEY`` for
+belt-and-suspenders bearer auth (LiteLLM accepts the matching master key
+in-memory — no database required; the proxy must then send the same value
+as ``KLANGKD_LLM_API_KEY``). Only the per-provider keys in ``model_list``
+are stored, so LiteLLM can present them when proxying to each upstream.
 """
 
 from __future__ import annotations
@@ -140,6 +146,12 @@ class LiteLLMRenderer:
             "model_list": model_list,
         }
 
+        # Optional master_key: when set, LiteLLM enforces bearer auth on the
+        # sidecar (the proxy must send the same value as llm_api_key). When
+        # unset (the default) the sidecar is no-auth, protected by the
+        # loopback bind + proxy IP filtering. master_key auth is DB-less: a
+        # matching bearer is accepted in-memory; only an *unknown* key would
+        # need a DB (which we don't configure) (#2062).
         master_key = settings.llm_aggregator_master_key
         if master_key:
             config["general_settings"] = {
@@ -236,6 +248,18 @@ class LiteLLMWatchdog:
             settings = self._app.state.settings
             port = settings.llm_aggregator_port
             image = settings.llm_aggregator_image
+            # No DATABASE_URL: LiteLLM treats an empty/missing-scheme
+            # DATABASE_URL as fatal and exits (#2062); config-only mode needs
+            # no DB. LITELLM_MASTER_KEY is passed only when the operator set
+            # one: with a master_key LiteLLM enforces bearer auth (the proxy
+            # must send the same value as llm_api_key); without one (the
+            # default) the sidecar is no-auth, protected by the loopback bind
+            # + proxy IP filtering.
+            env = ["STORE_MODEL_IN_DB=False", "LITELLM_LOG=ERROR"]
+            if settings.llm_aggregator_master_key:
+                env.append(
+                    f"LITELLM_MASTER_KEY={settings.llm_aggregator_master_key}"
+                )
 
             try:
                 container_id = await podman.create_container(
@@ -243,13 +267,19 @@ class LiteLLMWatchdog:
                     image,
                     labels=_CONTAINER_LABELS,
                     binds=[f"{conf_path}:/app/config.yaml:ro,Z"],
-                    env=[
-                        f"LITELLM_MASTER_KEY={settings.llm_aggregator_master_key}",
-                        "DATABASE_URL=",
-                        "STORE_MODEL_IN_DB=False",
-                        "LITELLM_LOG=ERROR",
-                    ],
+                    env=env,
                     publish=[("127.0.0.1", port, 4000)],
+                    # Override the image Cmd: it defaults to just
+                    # ``--port 4000`` with no ``--config``, so without this the
+                    # mounted /app/config.yaml is never loaded (#2062).
+                    command=[
+                        "--config",
+                        "/app/config.yaml",
+                        "--host",
+                        "0.0.0.0",
+                        "--port",
+                        "4000",
+                    ],
                     pull="missing",
                     replace=True,
                 )

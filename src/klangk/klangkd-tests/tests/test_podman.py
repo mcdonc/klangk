@@ -268,6 +268,22 @@ class TestCreateContainer:
             args.index("-p") : args.index("-p") + 2
         ]
 
+    async def test_command_appended_after_image(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n",
+                "img",
+                command=["--config", "/app/config.yaml"],
+                replace=False,
+            )
+        args = _args(m)
+        # command args follow the image name (override the image Cmd) (#2062).
+        assert args[args.index("img") :] == [
+            "img",
+            "--config",
+            "/app/config.yaml",
+        ]
+
     async def test_pull_policy_override(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
             await _p.create_container(

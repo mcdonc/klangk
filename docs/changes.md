@@ -1313,6 +1313,19 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
+- **LiteLLM aggregator sidecar no longer flaps on startup (#2062).**
+  Three defects prevented the sidecar from ever serving: (1) the watchdog
+  passed `DATABASE_URL=` (empty), which LiteLLM treats as an invalid scheme
+  and exits on — now omitted entirely (config-only mode needs no DB);
+  (2) the watchdog never passed `--config`, so the mounted `config.yaml`
+  (the provider/model list) was never loaded — the container command now
+  passes `--config /app/config.yaml` (`Podman.create_container` gained a
+  `command` override for this); (3) the default host port changed from
+  `4000` to `8996`. The sidecar runs no-auth by default (protected by its
+  `127.0.0.1` bind + the proxy's IP filtering); `KLANGKD_LLM_AGGREGATOR_MASTER_KEY`
+  is optional and works DB-less — when set, set `KLANGKD_LLM_API_KEY` to the
+  same value so the proxy authenticates.
+
 - **The TUI's live status feed no longer dies after 3 reconnect
   failures (#2033).** `_status_loop` capped retries at 3, after which
   live updates (container status, workspace changes, service health)
