@@ -25,6 +25,7 @@ dependencies = [
     "pyyaml>=6.0",
     "httpx>=0.28.0",
     "textual>=0.86.0",
+    "litellm>=1.60.0",
 ]
 
 # Test toolchain — opt in via `pip install klangk[test]` or
