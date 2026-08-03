@@ -1344,3 +1344,59 @@ class TestReload:
             env = dict(s._reload_env)
             env["KLANGKD_AUTH_MODES"] = "bogus"
             KlangkSettings(env)
+
+
+class TestLLMModelsValidator:
+    """Tests for the KLANGKD_LLM_MODELS field validator (#2070)."""
+
+    def test_none_is_disabled(self):
+        s = make_settings({})
+        assert s.llm_models is None
+
+    def test_empty_string_is_disabled(self):
+        s = make_settings({"KLANGKD_LLM_MODELS": ""})
+        assert s.llm_models is None
+
+    def test_comma_separated_string(self):
+        s = make_settings(
+            {
+                "KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx,ollama/llama3:http://x:11434:"
+            }
+        )
+        assert s.llm_models is not None
+        assert len(s.llm_models) == 2
+
+    def test_list_from_yaml(self, tmp_path):
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text(
+            "llm-models:\n"
+            "  - 'openai/gpt-4o::sk-xxx'\n"
+            "  - 'ollama/llama3:http://x:11434:'\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.llm_models is not None
+        assert len(s.llm_models) == 2
+
+    def test_dict_entries_from_yaml(self, tmp_path):
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text(
+            "llm-models:\n"
+            "  - model_name: gpt-4\n"
+            "    litellm_params:\n"
+            "      model: openai/gpt-4o\n"
+            "      api_key: sk-xxx\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.llm_models is not None
+        assert len(s.llm_models) == 1
+        assert isinstance(s.llm_models[0], dict)
+
+    def test_empty_list_is_disabled(self, tmp_path):
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text("llm-models: []\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.llm_models is None
+
+    def test_invalid_string_entry_raises(self):
+        with pytest.raises(Exception, match="two colons"):
+            make_settings({"KLANGKD_LLM_MODELS": "openai/gpt-4o"})

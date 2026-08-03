@@ -35,6 +35,7 @@ from . import (
     workspaces,
     wshandler,
 )
+from .llm_router import LLMRouter
 from .settings import KlangkSettings
 from .logger import configure as configure_logging
 from .api import root_router, router
@@ -478,6 +479,7 @@ class Lifecycle:
             "container_registry",
             "proxy_watchdog",
             "litellm_watchdog",
+            "llm_router",
             "terminal",
             "oidc",
             "features",
@@ -921,6 +923,8 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # provides a single OpenAI-compatible endpoint routing to multiple
     # providers. Opt-in via KLANGKD_LLM_AGGREGATOR_MODELS.
     app.state.litellm_watchdog = litellm_mod.LiteLLMWatchdog(app)
+    # #2070: In-process LLM router backed by litellm.Router (subsystem).
+    app.state.llm_router = LLMRouter(app)
     # #1480: Terminal(app_state) groups the ~25 tmux-session
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.

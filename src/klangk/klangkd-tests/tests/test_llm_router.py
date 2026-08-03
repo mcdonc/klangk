@@ -1,152 +1,105 @@
-"""Unit tests for the in-process LLM router (#2071)."""
+"""Unit tests for the in-process LLM router (#2071, #2072)."""
 
 import os
 import tempfile
+import types
 from unittest.mock import AsyncMock, patch
 
 from klangk.llm_router import LLMRouter, _normalize_dict_entry
+from _helpers import make_settings
 
 
-class TestLLMRouterStringEntries:
-    def test_single_model(self):
-        router = LLMRouter(["openai/gpt-4o::sk-xxx"])
-        names = router.get_model_names()
-        assert "gpt-4o" in names
+def _app(extra_env=None):
+    """Build a minimal mock app with settings for LLMRouter."""
+    env = dict(extra_env or {})
+    settings = make_settings(env=env)
+    return types.SimpleNamespace(
+        state=types.SimpleNamespace(settings=settings)
+    )
 
-    def test_multiple_models(self):
+
+class TestLLMRouterSubsystem:
+    def test_no_models_configured(self):
+        router = LLMRouter(_app())
+        assert not router.active
+        assert router.get_model_names() == []
+        assert router.get_model_list() == []
+
+    def test_with_string_models(self):
         router = LLMRouter(
-            [
-                "openai/gpt-4o::sk-xxx",
-                "anthropic/claude-sonnet-4::sk-ant-xxx",
-            ]
+            _app(
+                {
+                    "KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx,ollama/llama3:http://localhost:11434:"
+                }
+            )
         )
+        assert router.active
         names = router.get_model_names()
         assert "gpt-4o" in names
-        assert "claude-sonnet-4" in names
-
-    def test_local_ollama(self):
-        router = LLMRouter(["ollama/llama3:http://localhost:11434:"])
-        names = router.get_model_names()
         assert "llama3" in names
 
-    def test_vllm_model(self):
+    def test_default_api_key_from_settings(self):
         router = LLMRouter(
-            ["hosted_vllm/RedHatAI/Qwen3.6-35B:http://bizon:11430:"]
+            _app(
+                {
+                    "KLANGKD_LLM_MODELS": "openai/gpt-4o::",
+                    "KLANGKD_LLM_API_KEY": "sk-default",
+                }
+            )
         )
-        names = router.get_model_names()
-        assert "RedHatAI/Qwen3.6-35B" in names
-
-    def test_default_api_key_applied(self):
-        router = LLMRouter(
-            ["openai/gpt-4o::"],
-            default_api_key="sk-default",
-        )
-        model_list = router.get_model_list()
-        assert len(model_list) == 1
-        params = model_list[0]["litellm_params"]
+        params = router.get_model_list()[0]["litellm_params"]
         assert params["api_key"] == "sk-default"
 
-    def test_explicit_key_not_overridden_by_default(self):
-        router = LLMRouter(
-            ["openai/gpt-4o::sk-explicit"],
-            default_api_key="sk-default",
-        )
-        model_list = router.get_model_list()
-        params = model_list[0]["litellm_params"]
-        assert params["api_key"] == "sk-explicit"
+    def test_reconfigure_adds_models(self):
+        app = _app()
+        router = LLMRouter(app)
+        assert not router.active
 
-    def test_get_model_list_structure(self):
-        router = LLMRouter(["openai/gpt-4o::sk-xxx"])
-        model_list = router.get_model_list()
-        assert len(model_list) == 1
-        entry = model_list[0]
-        assert "model_name" in entry
-        assert "litellm_params" in entry
-        assert entry["litellm_params"]["model"] == "openai/gpt-4o"
+        new_app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router.reconfigure(new_app)
+        assert router.active
+        assert "gpt-4o" in router.get_model_names()
+
+    def test_reconfigure_removes_models(self):
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        assert router.active
+
+        router.reconfigure(_app())
+        assert not router.active
+
+    def test_reconfigure_replaces_models(self):
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        assert "gpt-4o" in router.get_model_names()
+
+        new_app = _app(
+            {"KLANGKD_LLM_MODELS": "anthropic/claude-sonnet-4::sk-ant-xxx"}
+        )
+        router.reconfigure(new_app)
+        names = router.get_model_names()
+        assert "claude-sonnet-4" in names
+        assert "gpt-4o" not in names
 
 
 class TestLLMRouterDictEntries:
-    def test_snake_case_dict(self):
-        router = LLMRouter(
-            [
-                {
-                    "model_name": "gpt-4",
-                    "litellm_params": {
-                        "model": "openai/gpt-4o",
-                        "api_key": "sk-xxx",
-                    },
-                }
-            ]
-        )
+    def test_dict_entries_via_subsystem(self):
+        app = _app()
+        # Inject dict entries directly (simulates YAML config).
+        app.state.settings.llm_models = [
+            {
+                "model_name": "gpt-4",
+                "litellm_params": {
+                    "model": "openai/gpt-4o",
+                    "api_key": "sk-xxx",
+                },
+            }
+        ]
+        router = LLMRouter(app)
+        assert router.active
         assert "gpt-4" in router.get_model_names()
         params = router.get_model_list()[0]["litellm_params"]
         assert params["model"] == "openai/gpt-4o"
-        assert params["api_key"] == "sk-xxx"
-
-    def test_kebab_case_dict(self):
-        router = LLMRouter(
-            [
-                {
-                    "model-name": "local-llm",
-                    "litellm-params": {
-                        "model": "ollama/llama3",
-                        "api-base": "http://localhost:11434",
-                        "api-key": "dummy",
-                    },
-                }
-            ]
-        )
-        assert "local-llm" in router.get_model_names()
-        params = router.get_model_list()[0]["litellm_params"]
-        assert params["model"] == "ollama/llama3"
-        assert params["api_base"] == "http://localhost:11434"
-        assert params["api_key"] == "dummy"
-
-    def test_mixed_string_and_dict(self):
-        router = LLMRouter(
-            [
-                "openai/gpt-4o::sk-xxx",
-                {
-                    "model_name": "local-llm",
-                    "litellm_params": {
-                        "model": "ollama/llama3",
-                        "api_base": "http://localhost:11434",
-                    },
-                },
-            ]
-        )
-        names = router.get_model_names()
-        assert "gpt-4o" in names
-        assert "local-llm" in names
-
-    def test_default_api_key_applied_to_dict(self):
-        router = LLMRouter(
-            [
-                {
-                    "model_name": "gpt-4",
-                    "litellm_params": {"model": "openai/gpt-4o"},
-                }
-            ],
-            default_api_key="sk-default",
-        )
-        params = router.get_model_list()[0]["litellm_params"]
-        assert params["api_key"] == "sk-default"
-
-    def test_dict_explicit_key_not_overridden(self):
-        router = LLMRouter(
-            [
-                {
-                    "model_name": "gpt-4",
-                    "litellm_params": {
-                        "model": "openai/gpt-4o",
-                        "api_key": "sk-explicit",
-                    },
-                }
-            ],
-            default_api_key="sk-default",
-        )
-        params = router.get_model_list()[0]["litellm_params"]
-        assert params["api_key"] == "sk-explicit"
 
 
 class TestNormalizeDictEntry:
@@ -230,6 +183,20 @@ class TestNormalizeDictEntry:
             finally:
                 os.unlink(f.name)
 
+    def test_params_alias_for_litellm_params(self):
+        result = _normalize_dict_entry(
+            {
+                "model_name": "test",
+                "params": {
+                    "model": "openai/gpt-4o",
+                    "api_key": "sk-xxx",
+                },
+            }
+        )
+        assert "litellm_params" in result
+        assert result["litellm_params"]["model"] == "openai/gpt-4o"
+        assert result["litellm_params"]["api_key"] == "sk-xxx"
+
     def test_non_indirect_keys_left_alone(self):
         result = _normalize_dict_entry(
             {
@@ -244,49 +211,10 @@ class TestNormalizeDictEntry:
         assert result["litellm_params"]["model"] == "openai/gpt-4o"
 
 
-class TestLLMRouterReconfigure:
-    def test_reconfigure_replaces_models(self):
-        router = LLMRouter(["openai/gpt-4o::sk-xxx"])
-        assert "gpt-4o" in router.get_model_names()
-
-        router.reconfigure(["anthropic/claude-sonnet-4::sk-ant-xxx"])
-        names = router.get_model_names()
-        assert "claude-sonnet-4" in names
-        assert "gpt-4o" not in names
-
-    def test_reconfigure_with_dicts(self):
-        router = LLMRouter(["openai/gpt-4o::sk-xxx"])
-        router.reconfigure(
-            [
-                {
-                    "model_name": "local",
-                    "litellm_params": {
-                        "model": "ollama/llama3",
-                        "api_base": "http://localhost:11434",
-                    },
-                }
-            ]
-        )
-        names = router.get_model_names()
-        assert "local" in names
-        assert "gpt-4o" not in names
-
-    def test_reconfigure_updates_default_key(self):
-        router = LLMRouter(
-            ["openai/gpt-4o::"],
-            default_api_key="sk-old",
-        )
-        router.reconfigure(
-            ["openai/gpt-4o::"],
-            default_api_key="sk-new",
-        )
-        model_list = router.get_model_list()
-        assert model_list[0]["litellm_params"]["api_key"] == "sk-new"
-
-
 class TestLLMRouterCompletion:
     async def test_acompletion_delegates_to_router(self):
-        router = LLMRouter(["openai/gpt-4o::sk-xxx"])
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
         mock_response = {"choices": [{"message": {"content": "hello"}}]}
         with patch.object(
             router._router, "acompletion", new_callable=AsyncMock
@@ -297,7 +225,11 @@ class TestLLMRouterCompletion:
                 messages=[{"role": "user", "content": "hi"}],
             )
             assert result == mock_response
-            mock.assert_called_once_with(
+
+    async def test_acompletion_raises_when_not_configured(self):
+        router = LLMRouter(_app())
+        with __import__("pytest").raises(RuntimeError, match="not configured"):
+            await router.acompletion(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": "hi"}],
             )

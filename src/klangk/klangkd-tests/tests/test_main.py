@@ -82,6 +82,9 @@ def _make_app_state(settings=None):
     from klangk.litellm import LiteLLMWatchdog
 
     app_state.state.litellm_watchdog = LiteLLMWatchdog(app_state)
+    from klangk.llm_router import LLMRouter
+
+    app_state.state.llm_router = LLMRouter(app_state)
     from klangk.terminal import Terminal
     from klangk.acl import ACL
 

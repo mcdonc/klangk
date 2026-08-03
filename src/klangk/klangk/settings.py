@@ -744,6 +744,11 @@ class KlangkSettings(BaseSettings):
     llm_aggregator_master_key: str = ""
     llm_aggregator_port: int = 8996
     llm_aggregator_image: str = "ghcr.io/berriai/litellm:main-stable"
+    # --- LLM models (in-process litellm.Router, #2070) ---
+    # Replaces llm_aggregator_models for the in-process router. Accepts
+    # colon-delimited strings (env var) or LiteLLM-native dicts (YAML).
+    # When set, the in-process router handles /llm-proxy/ requests.
+    llm_models: list[str | dict] | None = None
 
     # --- OIDC ---
     oidc_config: str | None = None
@@ -1299,6 +1304,54 @@ class KlangkSettings(BaseSettings):
                 if item.count(":") < 2:
                     raise ValueError(
                         f"KLANGKD_LLM_AGGREGATOR_MODELS entry {item!r} "
+                        f"must be 'provider/model:api_base:api_key' "
+                        f"(need at least two colons separating the three "
+                        f"fields)."
+                    )
+                items.append(item)
+        return items
+
+    @field_validator("llm_models", mode="before")
+    @classmethod
+    def _coerce_llm_models(cls, v):
+        """Accept comma-separated string (env) or list (YAML) (#2070).
+
+        Each entry is either:
+
+        - A colon-delimited string: ``provider/model:api_base:api_key``
+        - A LiteLLM-native dict with ``model_name``/``model-name`` and
+          ``litellm_params``/``litellm-params``.
+
+        String entries must have at least two colons.  Dict entries are
+        passed through as-is (normalization and ``file:``/``cmd:``
+        indirection are handled by :func:`llm_router._normalize_dict_entry`
+        at router construction time).
+
+        An empty value or ``None`` → ``None`` (router disabled).
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            raw = [s.strip() for s in v.split(",")]
+            raw = [i for i in raw if i]
+        elif isinstance(v, list):
+            raw = [i for i in v if i]
+        else:  # pragma: no cover
+            raise ValueError(
+                f"KLANGKD_LLM_MODELS={v!r} must be a list or "
+                f"a comma-separated string (got {type(v).__name__})."
+            )
+        if not raw:
+            return None
+        items: list[str | dict] = []
+        for entry in raw:
+            if isinstance(entry, dict):
+                items.append(entry)
+            else:
+                item = str(entry).strip()
+                if item.count(":") < 2:
+                    raise ValueError(
+                        f"KLANGKD_LLM_MODELS entry {item!r} "
                         f"must be 'provider/model:api_base:api_key' "
                         f"(need at least two colons separating the three "
                         f"fields)."
