@@ -33,7 +33,7 @@ To route to **multiple distinct providers** (e.g. OpenAI + Anthropic + a local O
 
 1. The operator configures `KLANGKD_LLM_AGGREGATOR_MODELS` with a list of `provider/model:api_base:api_key` entries.
 2. At startup, klangk renders a LiteLLM `config.yaml` from those entries and runs the LiteLLM container with that config (config-only mode, no DB, no UI).
-3. `KLANGKD_LLM_BASE_URL` points at the sidecar (`http://127.0.0.1:4000/v1`).
+3. `KLANGKD_LLM_BASE_URL` points at the sidecar (`http://127.0.0.1:8996/v1`).
 4. The proxy forwards `/llm-proxy/` to the sidecar, which routes to the correct provider based on the `model` field in each request.
 5. `llm-proxy-models.ts` calls `/models` on the sidecar and discovers all models across all configured providers.
 
@@ -50,13 +50,18 @@ Set these environment variables (or their equivalents in `klangkd.yaml`):
 KLANGKD_LLM_AGGREGATOR_MODELS="openai/gpt-4o::sk-xxx,anthropic/claude-sonnet-4::sk-ant-xxx,ollama/llama3:http://gpu:11434:"
 
 # Point the proxy at the sidecar.
-KLANGKD_LLM_BASE_URL="http://127.0.0.1:4000/v1"
+KLANGKD_LLM_BASE_URL="http://127.0.0.1:8996/v1"
 
-# Optional: master key for the LiteLLM sidecar (default: empty = no auth).
+# Optional: master key for the LiteLLM sidecar. Default is empty (no auth —
+# the sidecar is protected by its 127.0.0.1 bind + the proxy's IP filtering).
+# When set, LiteLLM enforces bearer auth: set KLANGKD_LLM_API_KEY to the SAME
+# value (the proxy sends it as the bearer). Works DB-less — a matching key is
+# accepted in-memory.
 KLANGKD_LLM_AGGREGATOR_MASTER_KEY="sk-master"
 
-# Optional: host port the sidecar listens on (default: 4000).
-KLANGKD_LLM_AGGREGATOR_PORT=4000
+# Optional: host port the sidecar is published on (default: 8996; LiteLLM
+# always listens on 4000 inside the container).
+KLANGKD_LLM_AGGREGATOR_PORT=8996
 
 # Optional: container image (default: ghcr.io/berriai/litellm:main-stable).
 KLANGKD_LLM_AGGREGATOR_IMAGE="ghcr.io/berriai/litellm:main-stable"
@@ -65,7 +70,7 @@ KLANGKD_LLM_AGGREGATOR_IMAGE="ghcr.io/berriai/litellm:main-stable"
 Or in `klangkd.yaml` (colon-delimited strings):
 
 ```yaml
-llm-base-url: "http://127.0.0.1:4000/v1"
+llm-base-url: "http://127.0.0.1:8996/v1"
 llm-aggregator-models:
   - "openai/gpt-4o::sk-xxx"
   - "anthropic/claude-sonnet-4::sk-ant-xxx"
@@ -76,7 +81,7 @@ llm-aggregator-master-key: "sk-master"
 Or using the dict format (recommended for `klangkd.yaml` — supports `file:` and `cmd:` indirection on secrets so API keys stay out of the config file):
 
 ```yaml
-llm-base-url: "http://127.0.0.1:4000/v1"
+llm-base-url: "http://127.0.0.1:8996/v1"
 llm-aggregator-models:
   - id: openai/gpt-4o
     api-key: "cmd:pass show openai/api-key"
@@ -95,14 +100,14 @@ Each dict entry has `id` (required), `base-url` (optional — omit to use provid
 Pi container
   → host.containers.internal:8995/llm-proxy/chat/completions
     → reverse proxy (caddy/nginx)
-      → http://127.0.0.1:4000/v1/chat/completions   (LiteLLM sidecar)
+      → http://127.0.0.1:8996/v1/chat/completions   (LiteLLM sidecar)
         → routes by "model" field in request body:
           → openai/gpt-4o    → https://api.openai.com/v1
           → anthropic/...    → https://api.anthropic.com/v1
           → ollama/llama3    → http://gpu:11434
 ```
 
-The sidecar is supervised by `LiteLLMWatchdog` (mirroring `ProxyWatchdog`): it respawns on unexpected exit with exponential backoff, and is stopped cleanly on shutdown. Settings changes via SIGHUP trigger a container restart with the re-rendered config only when aggregator settings actually changed (other SIGHUP changes are ignored). Removing all models via SIGHUP stops the sidecar. The container port is bound to `127.0.0.1` (loopback only) so the sidecar is not reachable from the LAN.
+The sidecar is supervised by `LiteLLMWatchdog` (mirroring `ProxyWatchdog`): it respawns on unexpected exit with exponential backoff, and is stopped cleanly on shutdown. Settings changes via SIGHUP trigger a container restart with the re-rendered config only when aggregator settings actually changed (other SIGHUP changes are ignored). Removing all models via SIGHUP stops the sidecar. The container port is bound to `127.0.0.1` (loopback only) so the sidecar is not reachable from the LAN. By default the sidecar runs without a master key (no-auth, relying on the loopback bind + the proxy's IP filtering); set `KLANGKD_LLM_AGGREGATOR_MASTER_KEY` (and `KLANGKD_LLM_API_KEY` to the same value) for optional bearer auth.
 
 ### Provider defaults
 

@@ -164,7 +164,7 @@ class TestSettingsValidator:
 
     def test_default_port(self):
         s = make_settings({})
-        assert s.llm_aggregator_port == 4000
+        assert s.llm_aggregator_port == 8996
 
     def test_custom_port(self):
         s = make_settings({"KLANGKD_LLM_AGGREGATOR_PORT": "5000"})
@@ -594,10 +594,52 @@ class TestLiteLLMWatchdog:
         assert len(create_calls) == 1
         assert create_calls[0][1] == "klangk-litellm"
         kwargs = create_calls[0][3]
-        assert kwargs["publish"] == [("127.0.0.1", 4000, 4000)]
+        # Host port is llm_aggregator_port (default 8996); container port is
+        # always 4000 (LiteLLM's internal port).
+        assert kwargs["publish"] == [("127.0.0.1", 8996, 4000)]
+        # #2062: --config is passed (else the mounted config is never loaded)
+        # and no fatal empty DATABASE_URL is set.
+        assert kwargs["command"] == [
+            "--config",
+            "/app/config.yaml",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "4000",
+        ]
+        assert "DATABASE_URL=" not in kwargs["env"]
+        # Default (no master_key) -> no LITELLM_MASTER_KEY env (no-auth).
+        assert not any(
+            e.startswith("LITELLM_MASTER_KEY") for e in kwargs["env"]
+        )
 
         start_calls = [c for c in podman.calls if c[0] == "start"]
         assert len(start_calls) == 1
+
+    async def test_watch_passes_master_key_env_when_set(self):
+        """When a master_key is configured, the sidecar env includes
+        LITELLM_MASTER_KEY so LiteLLM enforces bearer auth (#2062)."""
+        podman = _FakePodman()
+        s = make_settings(
+            {
+                "KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx",
+                "KLANGKD_LLM_AGGREGATOR_MASTER_KEY": "sk-master",
+            }
+        )
+        wd = _wd(s, podman=podman)
+
+        async def _fake_wait():
+            wd._stopping = True
+
+        wd._wait_for_exit = _fake_wait
+        conf_path = wd._config_path()
+        wd._renderer.write_config(conf_path)
+        await wd._watch(conf_path)
+
+        create_calls = [c for c in podman.calls if c[0] == "create"]
+        env = create_calls[0][3]["env"]
+        assert "LITELLM_MASTER_KEY=sk-master" in env
+        assert "DATABASE_URL=" not in env
 
     async def test_watch_respawns_on_unexpected_exit(self):
         """_watch respawns when container exits unexpectedly."""

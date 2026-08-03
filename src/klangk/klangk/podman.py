@@ -276,12 +276,16 @@ class Podman:
         cpus: float | None = None,
         memory: str | None = None,
         pids_limit: int | None = None,
+        command: list[str] | None = None,
     ) -> str:
         """Create a container and return its id.
 
         ``publish`` is a list of ``(host_port, container_port)`` or
         ``(bind_addr, host_port, container_port)`` tuples.
         ``replace=True`` removes an existing container with the same name.
+        ``command`` (optional ``list[str]``) overrides the image ``Cmd``:
+        the args are appended after the image name (e.g. LiteLLM's
+        ``--config /app/config.yaml``).
         ``annotations``/``hooks_dir`` carry per-workspace OCI hooks (e.g.
         the netfilter egress filter, #1365): each annotation becomes a
         ``--annotation key=value`` flag, and each ``hooks_dir`` entry becomes
@@ -343,6 +347,7 @@ class Podman:
         for entry in env or []:
             args += ["-e", entry]
         args.append(image)
+        args += command or []
         _rc, out, _err = await self.run(args, timeout=120.0)
         return out.strip()
 

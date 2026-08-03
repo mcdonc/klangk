@@ -742,7 +742,7 @@ class KlangkSettings(BaseSettings):
     # Comma-separated in the env var; a YAML list in klangkd.yaml.
     llm_aggregator_models: list[str] | None = None
     llm_aggregator_master_key: str = ""
-    llm_aggregator_port: int = 4000
+    llm_aggregator_port: int = 8996
     llm_aggregator_image: str = "ghcr.io/berriai/litellm:main-stable"
 
     # --- OIDC ---
