@@ -109,4 +109,4 @@ class TestChatCompletions:
                 },
             )
         assert resp.status_code == 502
-        assert "upstream down" in resp.json()["error"]
+        assert "upstream request failed" in resp.json()["error"]

@@ -54,9 +54,9 @@ async def chat_completions(request: Request):
             if hasattr(response, "model_dump")
             else response
         )
-    except Exception as exc:
+    except Exception:
         logger.exception("LLM completion failed")
         return JSONResponse(
             status_code=502,
-            content={"error": str(exc)},
+            content={"error": "LLM upstream request failed"},
         )
