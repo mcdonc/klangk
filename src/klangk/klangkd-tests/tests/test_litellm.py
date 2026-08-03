@@ -1,10 +1,9 @@
 """Unit tests for the LiteLLM aggregator sidecar (#2046).
 
-Tests the renderer (config.yaml generation) and the settings validator
-for ``KLANGKD_LLM_AGGREGATOR_MODELS``.  Runtime supervision (container
-lifecycle) is covered implicitly by the watchdog pattern shared with
-``ProxyWatchdog`` — the container spawn loop is ``# pragma: no cover``
-like its nginx counterpart.
+Tests the renderer (config.yaml generation), the settings validator
+for ``KLANGKD_LLM_AGGREGATOR_MODELS``, and the watchdog container
+lifecycle (``_watch``, ``_wait_for_exit``, ``_remove_container``,
+``start``, ``stop``).
 """
 
 import asyncio
@@ -30,11 +29,45 @@ def _renderer(settings):
     )
 
 
-def _wd(settings):
+class _FakePodman:
+    """Minimal podman stub for watchdog tests."""
+
+    def __init__(self):
+        self.calls = []
+        self._run_results = []  # queue of (rc, out, err) to return from run()
+        self._remove_error = None
+
+    def queue_run(self, rc, out, err=""):
+        self._run_results.append((rc, out, err))
+
+    async def create_container(self, name, image, **kwargs):
+        self.calls.append(("create", name, image, kwargs))
+        return "fake-container-id-1234567890ab"
+
+    async def start_container(self, container_id):
+        self.calls.append(("start", container_id))
+
+    async def remove_container(self, name):
+        self.calls.append(("remove", name))
+        if self._remove_error:
+            raise self._remove_error
+
+    async def run(self, args, **kwargs):
+        self.calls.append(("run", args))
+        if self._run_results:
+            return self._run_results.pop(0)
+        return (1, "", "")  # container not found by default
+
+
+def _wd(settings, podman=None):
     """Build a LiteLLMWatchdog from settings (wrapped in a minimal mock app)."""
-    return LiteLLMWatchdog(
-        types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
+    app = types.SimpleNamespace(
+        state=types.SimpleNamespace(
+            settings=settings,
+            podman=podman or _FakePodman(),
+        )
     )
+    return LiteLLMWatchdog(app)
 
 
 class TestParseModelEntry:
@@ -479,3 +512,179 @@ class TestLiteLLMWatchdog:
         assert remove_called
         await asyncio.sleep(0)
         assert "conf" in watch_called
+
+    async def test_remove_container_success(self):
+        podman = _FakePodman()
+        s = make_settings({})
+        wd = _wd(s, podman=podman)
+        await wd._remove_container()
+        assert ("remove", "klangk-litellm") in podman.calls
+
+    async def test_remove_container_ignores_error(self):
+        podman = _FakePodman()
+        podman._remove_error = RuntimeError("no such container")
+        s = make_settings({})
+        wd = _wd(s, podman=podman)
+        await wd._remove_container()
+        assert ("remove", "klangk-litellm") in podman.calls
+
+    async def test_wait_for_exit_returns_when_not_running(self):
+        podman = _FakePodman()
+        podman.queue_run(0, "false")
+        s = make_settings({})
+        wd = _wd(s, podman=podman)
+        await wd._wait_for_exit()
+        assert any(c[0] == "run" for c in podman.calls)
+
+    async def test_wait_for_exit_returns_on_inspect_error(self):
+        podman = _FakePodman()
+        podman.queue_run(1, "")
+        s = make_settings({})
+        wd = _wd(s, podman=podman)
+        await wd._wait_for_exit()
+
+    async def test_wait_for_exit_returns_on_exception(self):
+        podman = _FakePodman()
+        s = make_settings({})
+        wd = _wd(s, podman=podman)
+
+        async def _exploding_run(args, **kwargs):
+            raise OSError("podman gone")
+
+        podman.run = _exploding_run
+        await wd._wait_for_exit()
+
+    async def test_wait_for_exit_polls_then_stops(self):
+        """Polls while running, returns when _stopping is set."""
+        podman = _FakePodman()
+        s = make_settings({})
+        wd = _wd(s, podman=podman)
+
+        call_count = 0
+
+        async def _counting_run(args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                wd._stopping = True
+            return (0, "true", "")
+
+        podman.run = _counting_run
+        await wd._wait_for_exit()
+        assert call_count >= 2
+
+    async def test_watch_creates_starts_and_waits(self):
+        """_watch creates a container, starts it, waits for exit, then
+        stops when _stopping is set."""
+        podman = _FakePodman()
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s, podman=podman)
+
+        async def _fake_wait():
+            wd._stopping = True
+
+        wd._wait_for_exit = _fake_wait
+        conf_path = wd._config_path()
+        wd._renderer.write_config(conf_path)
+        await wd._watch(conf_path)
+
+        create_calls = [c for c in podman.calls if c[0] == "create"]
+        assert len(create_calls) == 1
+        assert create_calls[0][1] == "klangk-litellm"
+        kwargs = create_calls[0][3]
+        assert kwargs["publish"] == [("127.0.0.1", 4000, 4000)]
+
+        start_calls = [c for c in podman.calls if c[0] == "start"]
+        assert len(start_calls) == 1
+
+    async def test_watch_respawns_on_unexpected_exit(self):
+        """_watch respawns when container exits unexpectedly."""
+        podman = _FakePodman()
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s, podman=podman)
+
+        exit_count = 0
+
+        async def _fake_wait():
+            nonlocal exit_count
+            exit_count += 1
+            if exit_count >= 2:
+                wd._stopping = True
+
+        wd._wait_for_exit = _fake_wait
+        conf_path = wd._config_path()
+        wd._renderer.write_config(conf_path)
+        await wd._watch(conf_path)
+
+        create_calls = [c for c in podman.calls if c[0] == "create"]
+        assert len(create_calls) == 2
+
+    async def test_watch_retries_on_create_failure(self):
+        """_watch retries with backoff when create_container fails."""
+        podman = _FakePodman()
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s, podman=podman)
+
+        create_count = 0
+        orig_create = podman.create_container
+
+        async def _failing_create(name, image, **kwargs):
+            nonlocal create_count
+            create_count += 1
+            if create_count == 1:
+                raise RuntimeError("image pull failed")
+            wd._stopping = True
+            return await orig_create(name, image, **kwargs)
+
+        podman.create_container = _failing_create
+
+        async def _fake_wait():
+            wd._stopping = True
+
+        wd._wait_for_exit = _fake_wait
+        conf_path = wd._config_path()
+        wd._renderer.write_config(conf_path)
+        await wd._watch(conf_path)
+        assert create_count == 2
+
+    async def test_start_noop_when_disabled(self, monkeypatch):
+        """start() is a no-op when _KLANGKD_DISABLE_LITELLM is set."""
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s)
+        monkeypatch.setenv("_KLANGKD_DISABLE_LITELLM", "1")
+        await wd.start()
+        assert wd._task is None
+
+    async def test_stop_cancels_running_task(self, monkeypatch):
+        """stop() cancels the watch task and removes the container."""
+        podman = _FakePodman()
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s, podman=podman)
+        monkeypatch.delenv("_KLANGKD_DISABLE_LITELLM", raising=False)
+
+        async def _forever():
+            await asyncio.sleep(999)
+
+        wd._task = asyncio.create_task(_forever())
+        await wd.stop()
+        assert wd._stopping is True
+        assert wd._task is None
+        assert any(c[0] == "remove" for c in podman.calls)
+
+    async def test_stop_noop_when_no_task(self):
+        """stop() is safe when no task was started."""
+        s = make_settings({})
+        wd = _wd(s)
+        await wd.stop()
+        assert wd._stopping is True
+        assert wd._task is None

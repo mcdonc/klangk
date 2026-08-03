@@ -228,7 +228,7 @@ class LiteLLMWatchdog:
             self._app.state.settings.state_dir, "litellm-config.yaml"
         )
 
-    async def _watch(self, conf_path: str) -> None:  # pragma: no cover
+    async def _watch(self, conf_path: str) -> None:
         """Create, start, and respawn the LiteLLM container on exit."""
         backoff = 1.0
         while not self._stopping:
@@ -281,7 +281,7 @@ class LiteLLMWatchdog:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 
-    async def _wait_for_exit(self) -> None:  # pragma: no cover
+    async def _wait_for_exit(self) -> None:
         """Poll until the container is no longer running."""
         podman = self._app.state.podman
         while not self._stopping:
@@ -301,7 +301,7 @@ class LiteLLMWatchdog:
                 return
             await asyncio.sleep(2.0)
 
-    async def _remove_container(self) -> None:  # pragma: no cover
+    async def _remove_container(self) -> None:
         """Remove the sidecar container if it exists."""
         podman = self._app.state.podman
         try:
@@ -314,7 +314,7 @@ class LiteLLMWatchdog:
         settings = self._app.state.settings
         if not settings.llm_aggregator_models:
             return
-        if os.environ.get("_KLANGKD_DISABLE_LITELLM"):  # pragma: no cover
+        if os.environ.get("_KLANGKD_DISABLE_LITELLM"):
             return
         conf_path = self._config_path()
         self._renderer.write_config(conf_path)
@@ -325,7 +325,7 @@ class LiteLLMWatchdog:
         """Stop the sidecar container and cancel the watchdog."""
         self._stopping = True
         task = self._task
-        if task is not None:  # pragma: no cover
+        if task is not None:
             task.cancel()
             try:
                 await task

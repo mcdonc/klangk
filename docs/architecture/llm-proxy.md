@@ -62,7 +62,7 @@ KLANGKD_LLM_AGGREGATOR_PORT=4000
 KLANGKD_LLM_AGGREGATOR_IMAGE="ghcr.io/berriai/litellm:main-stable"
 ```
 
-Or in `klangkd.yaml`:
+Or in `klangkd.yaml` (colon-delimited strings):
 
 ```yaml
 llm-base-url: "http://127.0.0.1:4000/v1"
@@ -72,6 +72,22 @@ llm-aggregator-models:
   - "ollama/llama3:http://gpu:11434:"
 llm-aggregator-master-key: "sk-master"
 ```
+
+Or using the dict format (recommended for `klangkd.yaml` — supports `file:` and `cmd:` indirection on secrets so API keys stay out of the config file):
+
+```yaml
+llm-base-url: "http://127.0.0.1:4000/v1"
+llm-aggregator-models:
+  - id: openai/gpt-4o
+    api-key: "cmd:pass show openai/api-key"
+  - id: anthropic/claude-sonnet-4
+    api-key: "file:/run/secrets/anthropic-key"
+  - id: ollama/llama3
+    base-url: "http://gpu:11434"
+llm-aggregator-master-key: "sk-master"
+```
+
+Each dict entry has `id` (required), `base-url` (optional — omit to use provider default), and `api-key` (optional — omit for keyless providers like local Ollama). Both `api-key` and `base-url` support `file:<path>` and `cmd:<command>` indirection.
 
 ### Architecture
 
@@ -86,7 +102,7 @@ Pi container
           → ollama/llama3    → http://gpu:11434
 ```
 
-The sidecar is supervised by `LiteLLMWatchdog` (mirroring `ProxyWatchdog`): it respawns on unexpected exit with exponential backoff, and is stopped cleanly on shutdown. Settings changes via SIGHUP trigger a container restart with the re-rendered config.
+The sidecar is supervised by `LiteLLMWatchdog` (mirroring `ProxyWatchdog`): it respawns on unexpected exit with exponential backoff, and is stopped cleanly on shutdown. Settings changes via SIGHUP trigger a container restart with the re-rendered config only when aggregator settings actually changed (other SIGHUP changes are ignored). Removing all models via SIGHUP stops the sidecar. The container port is bound to `127.0.0.1` (loopback only) so the sidecar is not reachable from the LAN.
 
 ### Provider defaults
 
