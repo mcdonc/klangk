@@ -1243,31 +1243,56 @@ class KlangkSettings(BaseSettings):
     def _coerce_llm_aggregator_models(cls, v):
         """Accept comma-separated string (env) or list (YAML) (#2046).
 
-        Each entry is ``provider/model:api_base:api_key``. A bare
-        ``provider/model::key`` uses the provider's default API base. An
-        empty value or ``None`` → ``None`` (aggregator disabled).
+        Each entry is either:
+
+        - A colon-delimited string: ``provider/model:api_base:api_key``
+          (a bare ``provider/model::key`` uses the provider's default
+          API base).
+        - A dict with ``id`` (required), ``base-url``/``base_url``,
+          and ``api-key``/``api_key``.  The dict form lets values use
+          ``file:`` / ``cmd:`` indirection so secrets stay out of config.
+
+        An empty value or ``None`` → ``None`` (aggregator disabled).
         """
         if v is None:
             return None
         if isinstance(v, str):
-            items = [s.strip() for s in v.split(",")]
-            items = [i for i in items if i]
+            raw = [s.strip() for s in v.split(",")]
+            raw = [i for i in raw if i]
         elif isinstance(v, list):
-            items = [str(s).strip() for s in v if str(s).strip()]
+            raw = [i for i in v if i]
         else:  # pragma: no cover
             raise ValueError(
                 f"KLANGKD_LLM_AGGREGATOR_MODELS={v!r} must be a list or "
                 f"a comma-separated string (got {type(v).__name__})."
             )
-        if not items:
+        if not raw:
             return None
-        for item in items:
-            if item.count(":") < 2:
-                raise ValueError(
-                    f"KLANGKD_LLM_AGGREGATOR_MODELS entry {item!r} must be "
-                    f"'provider/model:api_base:api_key' (need at least two "
-                    f"colons separating the three fields)."
-                )
+        items: list[str] = []
+        for entry in raw:
+            if isinstance(entry, dict):
+                model_id = entry.get("id")
+                if not model_id:
+                    raise ValueError(
+                        "KLANGKD_LLM_AGGREGATOR_MODELS dict entry must "
+                        "have an 'id' key."
+                    )
+                base_url = entry.get("base-url") or entry.get("base_url", "")
+                api_key = entry.get("api-key") or entry.get("api_key", "")
+                # Resolve file:/cmd: indirection on secrets.
+                api_key = _resolve_indirection(api_key, "api-key") or ""
+                base_url = _resolve_indirection(base_url, "base-url") or ""
+                items.append(f"{model_id}:{base_url}:{api_key}")
+            else:
+                item = str(entry).strip()
+                if item.count(":") < 2:
+                    raise ValueError(
+                        f"KLANGKD_LLM_AGGREGATOR_MODELS entry {item!r} "
+                        f"must be 'provider/model:api_base:api_key' "
+                        f"(need at least two colons separating the three "
+                        f"fields)."
+                    )
+                items.append(item)
         return items
 
     @model_validator(mode="after")

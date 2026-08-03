@@ -148,6 +148,106 @@ class TestSettingsValidator:
         os.unlink(f.name)
         assert s.llm_aggregator_models == ["openai/gpt-4o::sk-xxx"]
 
+    def test_dict_entry_from_yaml(self):
+        """YAML dict entries with id/base-url/api-key are accepted."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            yaml.dump(
+                {
+                    "llm-aggregator-models": [
+                        {
+                            "id": "openai/gpt-4o",
+                            "api-key": "sk-xxx",
+                        }
+                    ]
+                },
+                f,
+            )
+            f.flush()
+            s = make_settings({}, config_file=f.name)
+        os.unlink(f.name)
+        assert s.llm_aggregator_models == ["openai/gpt-4o::sk-xxx"]
+
+    def test_dict_entry_with_base_url(self):
+        """Dict entry with explicit base-url."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            yaml.dump(
+                {
+                    "llm-aggregator-models": [
+                        {
+                            "id": "ollama/llama3",
+                            "base-url": "http://gpu:11434",
+                            "api-key": "",
+                        }
+                    ]
+                },
+                f,
+            )
+            f.flush()
+            s = make_settings({}, config_file=f.name)
+        os.unlink(f.name)
+        assert s.llm_aggregator_models == ["ollama/llama3:http://gpu:11434:"]
+
+    def test_dict_entry_missing_id_raises(self):
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            yaml.dump(
+                {"llm-aggregator-models": [{"api-key": "sk-xxx"}]},
+                f,
+            )
+            f.flush()
+            with pytest.raises(Exception, match="'id'"):
+                make_settings({}, config_file=f.name)
+        os.unlink(f.name)
+
+    def test_dict_entry_cmd_indirection(self, tmp_path):
+        """api-key with cmd: prefix is resolved."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            yaml.dump(
+                {
+                    "llm-aggregator-models": [
+                        {
+                            "id": "openai/gpt-4o",
+                            "api-key": "cmd:echo resolved-key",
+                        }
+                    ]
+                },
+                f,
+            )
+            f.flush()
+            s = make_settings({}, config_file=f.name)
+        os.unlink(f.name)
+        assert s.llm_aggregator_models == ["openai/gpt-4o::resolved-key"]
+
+    def test_dict_entry_file_indirection(self, tmp_path):
+        """api-key with file: prefix is resolved."""
+        key_file = tmp_path / "key.txt"
+        key_file.write_text("sk-from-file\n")
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            yaml.dump(
+                {
+                    "llm-aggregator-models": [
+                        {
+                            "id": "openai/gpt-4o",
+                            "api-key": f"file:{key_file}",
+                        }
+                    ]
+                },
+                f,
+            )
+            f.flush()
+            s = make_settings({}, config_file=f.name)
+        os.unlink(f.name)
+        assert s.llm_aggregator_models == ["openai/gpt-4o::sk-from-file"]
+
     def test_default_image(self):
         s = make_settings({})
         assert "litellm" in s.llm_aggregator_image
@@ -236,12 +336,24 @@ class TestLiteLLMWatchdog:
         assert wd._task is None
         assert wd._stopping is False
 
-    def test_reconfigure_flags_reload(self):
-        s = make_settings({})
-        wd = _wd(s)
-        app = types.SimpleNamespace(state=types.SimpleNamespace(settings=s))
-        wd.reconfigure(app)
+    def test_reconfigure_flags_reload_on_change(self):
+        s1 = make_settings({})
+        wd = _wd(s1)
+        s2 = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        app2 = types.SimpleNamespace(state=types.SimpleNamespace(settings=s2))
+        wd.reconfigure(app2)
         assert wd._pending_reload is True
+
+    def test_reconfigure_no_flag_when_unchanged(self):
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s)
+        app2 = types.SimpleNamespace(state=types.SimpleNamespace(settings=s))
+        wd.reconfigure(app2)
+        assert wd._pending_reload is False
 
     async def test_start_noop_when_no_models(self):
         s = make_settings({})
@@ -265,7 +377,7 @@ class TestLiteLLMWatchdog:
             {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
         )
         wd = _wd(s)
-        monkeypatch.delenv("_KLANGKD_DISABLE_PROXY", raising=False)
+        monkeypatch.delenv("_KLANGKD_DISABLE_LITELLM", raising=False)
 
         watch_called = {}
 
@@ -279,3 +391,91 @@ class TestLiteLLMWatchdog:
         await asyncio.sleep(0)
         assert "conf" in watch_called
         assert watch_called["conf"].endswith("litellm-config.yaml")
+
+    async def test_apply_pending_reload_noop_when_not_flagged(self):
+        s = make_settings({})
+        wd = _wd(s)
+        remove_called = []
+
+        async def _fake_remove():
+            remove_called.append(True)
+
+        wd._remove_container = _fake_remove
+        await wd.apply_pending_reload()
+        assert not remove_called
+
+    async def test_apply_pending_reload_disable_branch(self):
+        """When models become empty, stop the task and remove container."""
+        s = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s)
+
+        # Simulate a running task.
+        async def _forever():
+            await asyncio.sleep(999)
+
+        wd._task = asyncio.create_task(_forever())
+        wd._stopping = False
+
+        # Now reconfigure with empty models.
+        s_empty = make_settings({})
+        app_empty = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=s_empty)
+        )
+        wd.reconfigure(app_empty)
+        assert wd._pending_reload is True
+
+        remove_called = []
+
+        async def _fake_remove():
+            remove_called.append(True)
+
+        wd._remove_container = _fake_remove
+        await wd.apply_pending_reload()
+        assert wd._stopping is True
+        assert wd._task is None
+        assert remove_called
+
+    async def test_apply_pending_reload_restart_branch(self, monkeypatch):
+        """When models change, cancel old task and start a new one."""
+        s1 = make_settings(
+            {"KLANGKD_LLM_AGGREGATOR_MODELS": "openai/gpt-4o::sk-xxx"}
+        )
+        wd = _wd(s1)
+
+        # Simulate a running task.
+        async def _forever():
+            await asyncio.sleep(999)
+
+        wd._task = asyncio.create_task(_forever())
+        old_task = wd._task
+
+        # Reconfigure with different models.
+        s2 = make_settings(
+            {
+                "KLANGKD_LLM_AGGREGATOR_MODELS": "anthropic/claude-sonnet-4::sk-ant"
+            }
+        )
+        app2 = types.SimpleNamespace(state=types.SimpleNamespace(settings=s2))
+        wd.reconfigure(app2)
+
+        remove_called = []
+
+        async def _fake_remove():
+            remove_called.append(True)
+
+        watch_called = {}
+
+        async def _fake_watch(conf_path):
+            watch_called["conf"] = conf_path
+
+        wd._remove_container = _fake_remove
+        monkeypatch.setattr(wd, "_watch", _fake_watch)
+        await wd.apply_pending_reload()
+        assert old_task.cancelled()
+        assert wd._stopping is False
+        assert wd._task is not None
+        assert remove_called
+        await asyncio.sleep(0)
+        assert "conf" in watch_called

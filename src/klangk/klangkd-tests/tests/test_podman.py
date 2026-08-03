@@ -251,6 +251,19 @@ class TestCreateContainer:
         assert ["-e", "K=V"] == args[args.index("-e") : args.index("-e") + 2]
         assert args[-1] == "img"
 
+    async def test_publish_with_bind_address(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n",
+                "img",
+                publish=[("127.0.0.1", 4000, 4000)],
+                replace=False,
+            )
+        args = _args(m)
+        assert ["-p", "127.0.0.1:4000:4000"] == args[
+            args.index("-p") : args.index("-p") + 2
+        ]
+
     async def test_pull_policy_override(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
             await _p.create_container(

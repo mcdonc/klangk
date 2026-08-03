@@ -15,9 +15,9 @@ Architecture mirrors :mod:`klangk.proxy` (``ProxyRenderer`` + ``ProxyWatchdog``)
 - :class:`LiteLLMWatchdog` owns the podman container lifecycle
   (create / start / stop / remove) and supervises it with a respawn loop.
 
-The container runs on the host network (``--network=host``) so that the proxy
-can reach it at ``127.0.0.1:<port>`` without port-forwarding complexity, and
-so LiteLLM can reach provider endpoints directly.
+The container publishes its port on ``127.0.0.1`` only (loopback) so that
+the proxy can reach it at ``127.0.0.1:<port>`` while the sidecar is not
+reachable from the LAN.
 """
 
 from __future__ import annotations
@@ -31,13 +31,12 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _CONTAINER_NAME = "klangk-litellm"
-_CONTAINER_LABEL = "klangk.managed=true"
+_CONTAINER_LABELS = {"klangk.managed": "true"}
 
 # Provider defaults: well-known providers whose api_base can be omitted.
 _PROVIDER_DEFAULTS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com/v1",
-    "azure": "",  # requires explicit api_base
     "cohere": "https://api.cohere.ai/v1",
     "mistral": "https://api.mistral.ai/v1",
     "groq": "https://api.groq.com/openai/v1",
@@ -179,19 +178,36 @@ class LiteLLMWatchdog:
         self._renderer = LiteLLMRenderer(app)
         self._task: asyncio.Task | None = None
         self._stopping = False
+        self._pending_reload = False
 
     def reconfigure(self, app) -> None:
+        old = self._app.state.settings
         self._app = app
         self._renderer.reconfigure(app)
-        self._pending_reload = True
+        new = app.state.settings
+        if (
+            old.llm_aggregator_models != new.llm_aggregator_models
+            or old.llm_aggregator_master_key != new.llm_aggregator_master_key
+            or old.llm_aggregator_port != new.llm_aggregator_port
+            or old.llm_aggregator_image != new.llm_aggregator_image
+        ):
+            self._pending_reload = True
 
-    async def apply_pending_reload(self) -> None:  # pragma: no cover
+    async def apply_pending_reload(self) -> None:
         """Restart the sidecar container if settings changed."""
-        if not getattr(self, "_pending_reload", False):
+        if not self._pending_reload:
             return
         self._pending_reload = False
         settings = self._app.state.settings
         if not settings.llm_aggregator_models:
+            self._stopping = True
+            if self._task is not None:
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
+                self._task = None
             await self._remove_container()
             return
         # Stop + restart with new config.
@@ -222,11 +238,10 @@ class LiteLLMWatchdog:
             image = settings.llm_aggregator_image
 
             try:
-                await self._remove_container()
                 container_id = await podman.create_container(
                     _CONTAINER_NAME,
                     image,
-                    labels={"klangk.managed": "true"},
+                    labels=_CONTAINER_LABELS,
                     binds=[f"{conf_path}:/app/config.yaml:ro,Z"],
                     env=[
                         f"LITELLM_MASTER_KEY={settings.llm_aggregator_master_key}",
@@ -234,7 +249,7 @@ class LiteLLMWatchdog:
                         "STORE_MODEL_IN_DB=False",
                         "LITELLM_LOG=ERROR",
                     ],
-                    publish=[(port, 4000)],
+                    publish=[("127.0.0.1", port, 4000)],
                     pull="missing",
                     replace=True,
                 )
@@ -299,7 +314,7 @@ class LiteLLMWatchdog:
         settings = self._app.state.settings
         if not settings.llm_aggregator_models:
             return
-        if os.environ.get("_KLANGKD_DISABLE_PROXY"):  # pragma: no cover
+        if os.environ.get("_KLANGKD_DISABLE_LITELLM"):  # pragma: no cover
             return
         conf_path = self._config_path()
         self._renderer.write_config(conf_path)
