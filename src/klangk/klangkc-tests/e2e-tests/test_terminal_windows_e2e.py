@@ -92,6 +92,7 @@ def _get_token(base_url):
     r = httpx.post(
         f"{base_url}/api/v1/auth/login",
         json={"identifier": "test@example.com", "password": "testpass"},
+        timeout=30,
     )
     r.raise_for_status()
     return r.json()["access_token"]
@@ -202,6 +203,7 @@ class _WebSession:
         self._ctx = websockets.connect(
             f"{ws_url}/ws?token={self.token}",
             max_size=16 * 1024 * 1024,
+            open_timeout=30,
         )
         self.ws = await self._ctx.__aenter__()
         await self.ws.send(
@@ -335,6 +337,7 @@ class TestTerminalWindows:
         r = httpx.get(
             f"{self._base_url}/api/v1/workspaces",
             headers={"Authorization": f"Bearer {self._token}"},
+            timeout=30,
         )
         self._ws_id = None
         for ws in r.json():

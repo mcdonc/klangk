@@ -264,16 +264,13 @@ in
   '';
 
   # CLI E2E tests: start real server, run klangk commands.
-  # Ports are free-allocated (#1393), so xdist is no longer forcibly
-  # disabled. The suite runs serially by default (no -n) because the
-  # tests spawn real podman containers and within-suite parallelism is
-  # bounded by container concurrency. To opt into xdist:
-  #   test-cli-e2e -n auto --dist=loadscope
-  # (--dist=loadscope keeps each module/class-scoped server on one worker).
+  # Free-allocated ports + instance-scoped cleanup (#1393) make xdist
+  # safe with --dist=loadscope. Capped at 2 workers to limit podman
+  # contention (TUI and terminal-windows tests are latency-sensitive). #2059
   scripts.test-cli-e2e.exec = ''
     cd $DEVENV_ROOT
     exec python -m pytest src/klangk/klangkc-tests/e2e-tests \
-      -v --no-cov "$@"
+      -v --no-cov -n 2 --dist=loadscope "$@"
   '';
 
   scripts.test-terminal-windows-e2e.exec = ''
@@ -283,12 +280,14 @@ in
   '';
 
   # Backend E2E tests: start real server, run backend E2E tests.
-  # Same xdist story as test-cli-e2e (free ports, serial by default,
-  # opt-in with -n auto --dist=loadscope). See #1393.
+  # Free-allocated ports + instance-scoped cleanup (#1393) make xdist
+  # safe with --dist=loadscope. Capped at 2 workers: higher counts
+  # cause flaky failures in container-heavy tests (ssh-agent,
+  # service-command) due to podman resource contention. #2059
   scripts.test-backend-e2e.exec = ''
     cd $DEVENV_ROOT
     exec python -m pytest src/klangk/klangkd-tests/e2e-tests \
-      -v --no-cov "$@"
+      -v --no-cov -n 2 --dist=loadscope "$@"
   '';
 
   # Systemd user-service nginx e2e (#1729): runs klangkd with the nginx
@@ -311,12 +310,10 @@ in
 
   # Run the whole corpus as concurrently as is safe (#1393): the unit
   # suites combine into one parallel invocation (test-unit), then the
-  # e2e suites run. E2e suites are now concurrency-safe (free-allocated
-  # ports + instance-scoped container cleanup) so they could be
-  # backgrounded; they run serially here to bound podman/container
-  # resource usage. Requires podman + a built workspace image for the
-  # e2e steps (klangk:build-workspace-image). Passes through args to the
-  # e2e invocations only.
+  # e2e suites run with xdist (--dist=loadscope, 2 workers each).
+  # Requires podman + a built workspace image for the e2e steps
+  # (klangk:build-workspace-image). Passes through args to the e2e
+  # invocations only.
   scripts.test-all.exec = ''
     cd $DEVENV_ROOT
     set -e
@@ -324,9 +321,11 @@ in
     python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
       -v -n auto --no-cov "$@"
     echo "=== server e2e ==="
-    python -m pytest src/klangk/klangkd-tests/e2e-tests -v --no-cov "$@"
+    python -m pytest src/klangk/klangkd-tests/e2e-tests \
+      -v --no-cov -n 2 --dist=loadscope "$@"
     echo "=== client e2e ==="
-    python -m pytest src/klangk/klangkc-tests/e2e-tests -v --no-cov "$@"
+    python -m pytest src/klangk/klangkc-tests/e2e-tests \
+      -v --no-cov -n 2 --dist=loadscope "$@"
     echo "=== all green ==="
   '';
 
