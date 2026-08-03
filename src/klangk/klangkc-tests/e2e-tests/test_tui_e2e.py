@@ -85,6 +85,7 @@ def token(base_url):
     r = httpx.post(
         f"{base_url}/api/v1/auth/login",
         json={"identifier": "tuiuser@example.com", "password": "tuipass"},
+        timeout=30,
     )
     r.raise_for_status()
     return r.json()["access_token"]
@@ -113,6 +114,7 @@ def _api_create_workspace(base_url, token, name):
         f"{base_url}/api/v1/workspaces",
         json={"name": name},
         headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
     )
     r.raise_for_status()
     return r.json()["id"]
@@ -123,6 +125,7 @@ def _api_delete_workspace(base_url, token, ws_id):
     httpx.delete(
         f"{base_url}/api/v1/workspaces/{ws_id}",
         headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
     )
 
 
@@ -131,6 +134,7 @@ def _api_get_workspace(base_url, token, ws_id):
     r = httpx.get(
         f"{base_url}/api/v1/workspaces",
         headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
     )
     r.raise_for_status()
     for ws in r.json():
@@ -394,6 +398,7 @@ class TestTuiE2E:
                 r = httpx.get(
                     f"{base_url}/api/v1/workspaces",
                     headers={"Authorization": f"Bearer {token}"},
+                    timeout=30,
                 )
                 r.raise_for_status()
                 ws_names = [w["name"] for w in r.json()]
@@ -403,6 +408,7 @@ class TestTuiE2E:
                 r = httpx.get(
                     f"{base_url}/api/v1/workspaces",
                     headers={"Authorization": f"Bearer {token}"},
+                    timeout=30,
                 )
                 r.raise_for_status()
                 for w in r.json():
