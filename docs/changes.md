@@ -128,6 +128,12 @@ operators or integrators to act when upgrading.
   bar at the bottom showing the workspace name, current terminal name, and
   the `~.` disconnect hint. The workspace name updates live on rename.
 
+- **`klangkd doctor` pre-flight checker (#1612).** `klangkd doctor` verifies
+  required external binaries (podman, caddy, tmux, socat, GNU tar/du),
+  rootless podman configuration (subuid/subgid, container policy), and
+  common misconfigurations before first run. Reports errors and warnings
+  with actionable install hints tailored to the detected package manager.
+
 - **Account self-service from the CLI (#1753).** A new
   `klangk account` group (`show`, `passwd`, `handle`, `email`) changes your
   password, handle, or email from the command line. It mirrors the Flutter
