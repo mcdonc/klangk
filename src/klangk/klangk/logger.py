@@ -133,6 +133,12 @@ def _apply(level: int) -> None:
     for name, lvl in _THIRD_PARTY_LEVELS.items():
         logging.getLogger(name).setLevel(lvl)
 
+    # LiteLLM attaches its own handlers; stop propagation so its log
+    # records don't also reach klangk's root handler (double-logging,
+    # #2087).
+    for name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"):
+        logging.getLogger(name).propagate = False
+
 
 def configure_defaults() -> None:
     """Configure root logging with default (pre-settings) values.
