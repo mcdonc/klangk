@@ -36,7 +36,7 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any, ClassVar, Mapping
-from urllib.parse import urlsplit
+
 
 import getpass
 
@@ -723,27 +723,13 @@ class KlangkSettings(BaseSettings):
     test_mode: str | None = None
     version_file: str | None = None
 
-    # --- LLM ---
-    # llm_base_url is consumed by the proxy renderer (the /llm-proxy/
-    # location proxies to it so containers never see the API key); it's
-    # not read by the backend itself. Kept here so the renderer reads it
-    # through the same typed config path as everything else (#1396).
-    llm_base_url: str | None = None
+    # --- LLM (#2070) ---
+    # Default API key for models that don't specify their own.
     llm_api_key: str = ""
-    llm_model: str = ""
-    # --- LLM aggregator (LiteLLM sidecar, #2046) ---
-    # When set, klangk renders a LiteLLM config.yaml and runs a LiteLLM
-    # container as a sidecar.  The proxy's KLANGKD_LLM_BASE_URL should
-    # then point at the sidecar (http://127.0.0.1:<port>/v1).
-    # Each entry is "provider/model:api_base:api_key" — e.g.
-    #   openai/gpt-4o::sk-xxx          (api_base defaults to provider)
-    #   anthropic/claude-sonnet-4::sk-ant-xxx
-    #   ollama/llama3:http://gpu:11434:
-    # Comma-separated in the env var; a YAML list in klangkd.yaml.
-    llm_aggregator_models: list[str] | None = None
-    llm_aggregator_master_key: str = ""
-    llm_aggregator_port: int = 8996
-    llm_aggregator_image: str = "ghcr.io/berriai/litellm:main-stable"
+    # Model list for the in-process litellm.Router. Accepts
+    # colon-delimited strings (env var) or LiteLLM-native dicts (YAML).
+    # When set, the in-process router handles /llm-proxy/ requests.
+    llm_models: list[str | dict] | None = None
 
     # --- OIDC ---
     oidc_config: str | None = None
@@ -828,47 +814,6 @@ class KlangkSettings(BaseSettings):
                         f"file:/cmd: reference failed. See logs for detail."
                     )
                 setattr(self, name, resolved)
-        return self
-
-    @model_validator(mode="after")
-    def _validate_llm_base_url(self) -> "KlangkSettings":
-        """Reject ``KLANGKD_LLM_BASE_URL`` values containing a fragment (#1687).
-
-        Fragments are client-side only — every HTTP client strips them
-        before the request goes on the wire — so a fragment on the base
-        URL would be silently dropped by the proxy and never reach the
-        upstream. That's almost always operator error (someone pasted a
-        browser URL with ``#section``), so fail fast at boot with a clear
-        message.
-
-        Query strings (``?key=...``) ARE preserved by both renderers
-        (caddy and nginx): the base URL's query is re-attached after the
-        path rewrite, and the incoming request's query is dropped. Some
-        providers support query-string auth (Gemini's ``?key=`` —
-        documented but discouraged by Google on security grounds), and
-        the OpenAI Python client explicitly preserves hardcoded query
-        params on ``base_url`` (openai/openai-python@73ea2f7), so an
-        operator pointing klangk at a proxy that requires a query-param
-        secret must be able to set one. The container user's per-request
-        query is untrusted by comparison and is dropped to prevent
-        injecting arbitrary upstream params.
-
-        Runs after ``_resolve_indirections`` so a ``cmd:``/``file:`` prefix
-        is already resolved — a ``cmd:cat /etc/llm-url`` whose output
-        contains a ``#`` is caught here too. ``None``/empty (LLM proxy
-        disabled) is left alone.
-        """
-        v = self.llm_base_url
-        if not v:
-            return self
-        parts = urlsplit(v)
-        if parts.fragment:
-            raise ValueError(
-                "KLANGKD_LLM_BASE_URL has a fragment ('#...') suffix that "
-                "HTTP clients strip before the wire — the proxy would "
-                "silently drop it. Remove the fragment. (The URL value is "
-                "intentionally not echoed here; it may contain a secret.)"
-            )
         return self
 
     @model_validator(mode="after")
@@ -1249,21 +1194,23 @@ class KlangkSettings(BaseSettings):
             )
         return value
 
-    @field_validator("llm_aggregator_models", mode="before")
+    @field_validator("llm_models", mode="before")
     @classmethod
-    def _coerce_llm_aggregator_models(cls, v):
-        """Accept comma-separated string (env) or list (YAML) (#2046).
+    def _coerce_llm_models(cls, v):
+        """Accept comma-separated string (env) or list (YAML) (#2070).
 
         Each entry is either:
 
         - A colon-delimited string: ``provider/model:api_base:api_key``
-          (a bare ``provider/model::key`` uses the provider's default
-          API base).
-        - A dict with ``id`` (required), ``base-url``/``base_url``,
-          and ``api-key``/``api_key``.  The dict form lets values use
-          ``file:`` / ``cmd:`` indirection so secrets stay out of config.
+        - A LiteLLM-native dict with ``model_name``/``model-name`` and
+          ``litellm_params``/``litellm-params``.
 
-        An empty value or ``None`` → ``None`` (aggregator disabled).
+        String entries must have at least two colons.  Dict entries are
+        passed through as-is (normalization and ``file:``/``cmd:``
+        indirection are handled by :func:`llm_router._normalize_dict_entry`
+        at router construction time).
+
+        An empty value or ``None`` → ``None`` (router disabled).
         """
         if v is None:
             return None
@@ -1274,31 +1221,20 @@ class KlangkSettings(BaseSettings):
             raw = [i for i in v if i]
         else:  # pragma: no cover
             raise ValueError(
-                f"KLANGKD_LLM_AGGREGATOR_MODELS={v!r} must be a list or "
+                f"KLANGKD_LLM_MODELS={v!r} must be a list or "
                 f"a comma-separated string (got {type(v).__name__})."
             )
         if not raw:
             return None
-        items: list[str] = []
+        items: list[str | dict] = []
         for entry in raw:
             if isinstance(entry, dict):
-                model_id = entry.get("id")
-                if not model_id:
-                    raise ValueError(
-                        "KLANGKD_LLM_AGGREGATOR_MODELS dict entry must "
-                        "have an 'id' key."
-                    )
-                base_url = entry.get("base-url") or entry.get("base_url", "")
-                api_key = entry.get("api-key") or entry.get("api_key", "")
-                # Resolve file:/cmd: indirection on secrets.
-                api_key = _resolve_indirection(api_key, "api-key") or ""
-                base_url = _resolve_indirection(base_url, "base-url") or ""
-                items.append(f"{model_id}:{base_url}:{api_key}")
+                items.append(entry)
             else:
                 item = str(entry).strip()
                 if item.count(":") < 2:
                     raise ValueError(
-                        f"KLANGKD_LLM_AGGREGATOR_MODELS entry {item!r} "
+                        f"KLANGKD_LLM_MODELS entry {item!r} "
                         f"must be 'provider/model:api_base:api_key' "
                         f"(need at least two colons separating the three "
                         f"fields)."

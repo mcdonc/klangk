@@ -37,9 +37,6 @@ def server():
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_HEALTH_CHECK_INTERVAL="2",
         LOGFIRE_TOKEN="",
-        KLANGKD_LLM_BASE_URL="",
-        KLANGKD_LLM_API_KEY="",
-        KLANGKD_LLM_MODEL="",
     )
     yield server
     stop_server(server)

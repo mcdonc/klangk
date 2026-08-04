@@ -36,15 +36,12 @@ outer nginx (443)
 
 ## Tailscale and LLM Proxy
 
-If the LLM provider is on a Tailscale host (e.g., a self-hosted Ollama on another machine in the tailnet), `KLANGKD_LLM_BASE_URL` **must use the Tailscale IP address**, not a hostname.
+If the LLM provider is on a Tailscale host (e.g., a self-hosted Ollama on another machine in the tailnet), the `api-base` in `KLANGKD_LLM_MODELS` **must use the Tailscale IP address**, not a hostname. The in-process litellm Router resolves DNS through the host's resolver stack; on a Tailscale host, bare hostnames and MagicDNS FQDNs may not resolve correctly from the backend process.
 
-The proxy's LLM location uses lazy DNS resolution (so the proxy can start even if the LLM host is temporarily unreachable). The proxy is currently nginx, which means nginx sends raw DNS queries to the resolvers from `/etc/resolv.conf`. On a Tailscale host, those resolvers include MagicDNS (`100.100.100.100`), but MagicDNS only resolves tailnet names through the system resolver stack — raw UDP DNS queries from nginx don't go through Tailscale's networking, so both bare hostnames and FQDNs fail to resolve.
-
-Meanwhile, `KLANGKD_DNS_SERVERS=100.100.100.100,8.8.8.8` is still needed for workspace containers, because podman configures container DNS with search domains that make MagicDNS work correctly inside containers.
+`KLANGKD_DNS_SERVERS=100.100.100.100,8.8.8.8` is still needed for workspace containers, because podman configures container DNS with search domains that make MagicDNS work correctly inside containers.
 
 ```bash
 # In .env on a Tailscale host:
-KLANGKD_LLM_BASE_URL=http://100.122.115.33:11434/v1   # Tailscale IP, not hostname
 KLANGKD_DNS_SERVERS=100.100.100.100,8.8.8.8            # for containers (works fine)
 ```
 

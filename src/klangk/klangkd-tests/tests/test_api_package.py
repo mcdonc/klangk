@@ -35,11 +35,11 @@ api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
-EXPECTED_ROUTE_COUNT = 91
+EXPECTED_ROUTE_COUNT = 93
 
-# Per-domain submodules and the number of routes each owns.  84 sub-routes
+# Per-domain submodules and the number of routes each owns.  86 sub-routes
 # + 3 routes defined directly on the main router (version, config,
-# my-permissions) + 2 on the root router (health, empty) == 89.
+# my-permissions) + 2 on the root router (health, empty) == 91.
 SUBMODULE_ROUTES = {
     "auth": 15,
     "oidc_auth": 2,
@@ -49,6 +49,7 @@ SUBMODULE_ROUTES = {
     "browser_delegate": 2,
     "chat": 1,
     "admin": 29,
+    "llm_proxy": 2,
 }
 
 # One representative path from every domain (and the cross-cutting
@@ -93,6 +94,9 @@ REPRESENTATIVE_PATHS = [
     f"{API_PREFIX}/admin/invitations",
     f"{API_PREFIX}/admin/groups",
     f"{API_PREFIX}/admin/acl/tree",
+    # llm proxy (#2072)
+    "/llm-proxy/models",
+    "/llm-proxy/chat/completions",
     # user-accessible groups
     f"{API_PREFIX}/groups",
 ]
@@ -244,14 +248,14 @@ class TestSubmoduleStructure:
         )
 
     def test_submodule_route_counts_sum_to_subtotal(self):
-        """The 8 sub-routers together account for 83 of the 88 routes."""
+        """The 9 sub-routers together account for 88 of the 93 routes."""
         from importlib import import_module
 
         total = 0
         for submod in SUBMODULE_ROUTES:
             total += len(import_module(f"klangk.api.{submod}").router.routes)
-        # 83 sub-routes + 3 direct (version/config/my-permissions) + 2
-        # root (health/empty) == 88.
+        # 88 sub-routes + 3 direct (version/config/my-permissions) + 2
+        # root (health/empty) == 93.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 
     def test_common_module_has_no_router(self):

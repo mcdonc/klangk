@@ -71,9 +71,6 @@ def _start_server(data_dir, health_interval="2"):
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_HEALTH_CHECK_INTERVAL=health_interval,
         LOGFIRE_TOKEN="",
-        KLANGKD_LLM_BASE_URL="",
-        KLANGKD_LLM_API_KEY="",
-        KLANGKD_LLM_MODEL="",
         log_path=log_path,
     )
     return server, server["url"]

@@ -98,10 +98,13 @@ if [ "$use_proxy" = true ] && [ -n "${KLANGKWS_LLM_PROXY_URL:-}" ]; then
   token="$(/opt/klangk/bin/klangk-workspace-token 2>/dev/null || true)"
 
   # config.yaml -- provider + model (overwritten; they don't change).
+  # KLANGKWS_LLM_MODEL may be empty (models are now discovered dynamically
+  # via /llm-proxy/models, #2070); the Router falls back to the first
+  # configured model for unrecognized names.
   cat >"$INSTALL_DIR/config.yaml" <<EOF
 model:
   provider: klangk-proxy
-  model: "${KLANGKWS_LLM_MODEL}"
+  model: "${KLANGKWS_LLM_MODEL:-unset}"
 custom_providers:
   - name: klangk-proxy
     base_url: "${KLANGKWS_LLM_PROXY_URL}"

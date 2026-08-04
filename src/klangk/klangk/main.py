@@ -21,7 +21,6 @@ from . import (
     container,
     emailsvc,
     files,
-    litellm as litellm_mod,
     model,
     proxy as proxy_mod,
     caddy as caddy_mod,
@@ -35,6 +34,7 @@ from . import (
     workspaces,
     wshandler,
 )
+from .llm_router import LLMRouter
 from .settings import KlangkSettings
 from .logger import configure as configure_logging
 from .api import root_router, router
@@ -477,7 +477,7 @@ class Lifecycle:
             "sockets",
             "container_registry",
             "proxy_watchdog",
-            "litellm_watchdog",
+            "llm_router",
             "terminal",
             "oidc",
             "features",
@@ -517,18 +517,6 @@ class Lifecycle:
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "SIGHUP: caddy config reload failed (skipped): %s", exc
-                )
-        # #2046: LiteLLM watchdog reconfigure flags a container restart
-        # if aggregator settings changed; apply it now (async).
-        litellm_wd = getattr(app.state, "litellm_watchdog", None)
-        if litellm_wd is not None and hasattr(
-            litellm_wd, "apply_pending_reload"
-        ):
-            try:
-                await litellm_wd.apply_pending_reload()
-            except Exception as exc:  # noqa: BLE001  # pragma: no cover
-                logger.warning(
-                    "SIGHUP: litellm config reload failed (skipped): %s", exc
                 )
         # #1610: remount frontend_dir if it changed.
         if old.frontend_dir != new.frontend_dir:
@@ -712,8 +700,6 @@ async def lifespan(app: FastAPI):
     # Start the proxy (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.proxy_watchdog.start()
-    # Start the LiteLLM aggregator sidecar if configured (#2046).
-    await app.state.litellm_watchdog.start()
     logger.info("Klangk backend started")
 
     # uvicorn only handles SIGINT/SIGTERM, so SIGHUP is ours to claim:
@@ -729,7 +715,6 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
-        await app.state.litellm_watchdog.stop()
         await app.state.proxy_watchdog.stop()
         await app.state.lifecycle.runtime_shutdown()
         await app.state.lifecycle.process_shutdown()
@@ -917,10 +902,8 @@ def build_app(settings: KlangkSettings) -> FastAPI:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
     else:
         app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
-    # #2046: LiteLLM aggregator sidecar — supervised podman container that
-    # provides a single OpenAI-compatible endpoint routing to multiple
-    # providers. Opt-in via KLANGKD_LLM_AGGREGATOR_MODELS.
-    app.state.litellm_watchdog = litellm_mod.LiteLLMWatchdog(app)
+    # #2070: In-process LLM router backed by litellm.Router (subsystem).
+    app.state.llm_router = LLMRouter(app)
     # #1480: Terminal(app_state) groups the ~25 tmux-session
     # management functions that share a Podman dependency. Reaches podman,
     # the registry, and settings through the single app_state reference.

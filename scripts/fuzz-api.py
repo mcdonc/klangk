@@ -552,6 +552,14 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         {"workspace_id": "uuid", "message": "string"},
         None,
     ),
+    # LLM proxy (#2072)
+    ("GET", "/llm-proxy/models", None, None),
+    (
+        "POST",
+        "/llm-proxy/chat/completions",
+        {"model": "string", "messages": [{"role": "user", "content": "string"}]},
+        None,
+    ),
     # Test endpoints
     ("GET", f"{P}/test/idle-timeout", None, None),
     ("POST", f"{P}/test/set-idle-timeout", {"seconds": "int"}, None),

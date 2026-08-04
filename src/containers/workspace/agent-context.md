@@ -134,7 +134,7 @@ with your own shell** rather than guessing. Injecting live state here would go
 stale the instant it was written.
 
 - Discover the workspace's environment with `env | grep KLANGKWS_`. Notable vars:
-  `KLANGKWS_LLM_PROXY_URL`, `KLANGKWS_LLM_MODEL`, `KLANGKWS_PORT_MAPPINGS`,
+  `KLANGKWS_LLM_PROXY_URL`, `KLANGKWS_PORT_MAPPINGS`,
   `KLANGKWS_WORKSPACE_ID`, and `KLANGKWS_AGENT_HOME` (your own home directory,
   `/home/<agent_handle>`, injected at container start). (Do not treat this
   list as exhaustive — re-run the command to see what is actually set.)

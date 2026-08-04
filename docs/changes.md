@@ -592,6 +592,19 @@ invitations send` stay email-only (a deliverable address is required);
 
 ### Changed
 
+- **Replace LiteLLM sidecar container with in-process litellm Router (#2070).**
+  LLM routing is now handled in-process instead of via a separate podman
+  container. Configure models via `KLANGKD_LLM_MODELS` (env) or `llm-models`
+  (klangkd.yaml). Two modes: **passthrough** (single wildcard entry like
+  `model_name: '*'`) forwards requests directly to the upstream and discovers
+  its models dynamically — preserving the old single-provider experience;
+  **router** (multiple entries) uses litellm.Router for model-based routing
+  across providers. Retired settings: `KLANGKD_LLM_BASE_URL`,
+  `KLANGKD_LLM_MODEL`, `KLANGKD_LLM_AGGREGATOR_MODELS`,
+  `KLANGKD_LLM_AGGREGATOR_MASTER_KEY`, `KLANGKD_LLM_AGGREGATOR_PORT`,
+  `KLANGKD_LLM_AGGREGATOR_IMAGE`. `KLANGKD_LLM_API_KEY` is kept as the
+  default key for models that don't specify their own.
+
 - **TUI: backend reachability is now driven by the status WebSocket (#2052).**
   The TUI previously ran two competing reachability signals — a REST
   heartbeat poll and the status WS — which could disagree. The REST

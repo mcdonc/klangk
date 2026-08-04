@@ -24,7 +24,6 @@ docker run -it --rm \
   --add-host=host.docker.internal:host-gateway \
   -p 9000:8000 -p 9001:8001 -p 9002:8002 -p 9003:8003 -p 9004:8004 \
   -e KLANGKWS_LLM_PROXY_URL=http://host.docker.internal:8995/llm-proxy \
-  -e KLANGKD_LLM_MODEL=gemma4:31b \
   -e PI_SKIP_VERSION_CHECK=1 \
   -e KLANGKWS_PORT_MAPPINGS=8000:9000,8001:9001,8002:9002,8003:9003,8004:9004 \
   -e KLANGKWS_WORKSPACE_ID="$WORKSPACE_ID" \

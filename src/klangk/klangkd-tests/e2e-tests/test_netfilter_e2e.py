@@ -44,9 +44,6 @@ def server():
         KLANGKD_ALLOW_AUTOSTART="1",
         # netfilter_enabled defaults True; no need to set it explicitly.
         LOGFIRE_TOKEN="",
-        KLANGKD_LLM_BASE_URL="",
-        KLANGKD_LLM_API_KEY="",
-        KLANGKD_LLM_MODEL="",
     )
     config_resp = server["client"].get("/api/v1/config", timeout=10)
     server["instance_id"] = (

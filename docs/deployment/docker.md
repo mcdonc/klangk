@@ -26,9 +26,7 @@ docker run -d \
   -e KLANGKD_DEFAULT_PASSWORD=changeme \
   -e KLANGKD_AUTH_MODES=password \
   -e KLANGKD_JWT_SECRET=$(openssl rand -hex 32) \
-  -e KLANGKD_LLM_BASE_URL=https://ollama.com/v1 \
-  -e KLANGKD_LLM_API_KEY=your-api-key \
-  -e KLANGKD_LLM_MODEL=gemma4:31b \
+  -e KLANGKD_LLM_MODELS="openai/gpt-4o::your-api-key" \
   ghcr.io/mcdonc/klangk/klangk-host:v1.0
 ```
 
@@ -124,9 +122,8 @@ services:
       KLANGKD_DEFAULT_PASSWORD: changeme
       KLANGKD_AUTH_MODES: password
       KLANGKD_JWT_SECRET: change-this-to-a-random-secret
-      KLANGKD_LLM_BASE_URL: https://ollama.com/v1
+      KLANGKD_LLM_MODELS: "openai/gemma4:31b:https://ollama.com/v1:"
       KLANGKD_LLM_API_KEY: your-api-key
-      KLANGKD_LLM_MODEL: gemma4:31b
 
 volumes:
   klangk-data:

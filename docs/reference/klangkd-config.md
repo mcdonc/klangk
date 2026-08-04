@@ -306,11 +306,10 @@ port: "8997"
 
 ### LLM
 
-| Key            | Default | Env var                |
-| -------------- | ------- | ---------------------- |
-| `llm_base_url` |         | `KLANGKD_LLM_BASE_URL` |
-| `llm_api_key`  |         | `KLANGKD_LLM_API_KEY`  |
-| `llm_model`    |         | `KLANGKD_LLM_MODEL`    |
+| Key           | Default | Env var               | Notes                                                      |
+| ------------- | ------- | --------------------- | ---------------------------------------------------------- |
+| `llm-api-key` |         | `KLANGKD_LLM_API_KEY` | Default API key for models without their own               |
+| `llm-models`  |         | `KLANGKD_LLM_MODELS`  | Model list (see [LLM proxy](../architecture/llm-proxy.md)) |
 
 ### OIDC
 

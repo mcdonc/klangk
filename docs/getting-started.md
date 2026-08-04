@@ -22,9 +22,7 @@ docker run -d \
   -e KLANGKD_DEFAULT_PASSWORD=changeme \
   -e KLANGKD_AUTH_MODES=password \
   -e KLANGKD_JWT_SECRET=$(openssl rand -hex 32) \
-  -e KLANGKD_LLM_BASE_URL=https://ollama.com/v1 \
-  -e KLANGKD_LLM_API_KEY=your-api-key \
-  -e KLANGKD_LLM_MODEL=gemma4:31b \
+  -e KLANGKD_LLM_MODELS="openai/gemma4:31b:https://ollama.com/v1:" \
   ghcr.io/mcdonc/klangk/klangk-host:v1.0
 ```
 
@@ -62,9 +60,7 @@ cp -n .env.example .env
 
 # Edit .env with your credentials
 cat > .env << 'EOF'
-KLANGKD_LLM_API_KEY=your-api-key-here
-KLANGKD_LLM_BASE_URL=https://ollama.com/v1
-KLANGKD_LLM_MODEL=gemma4:31b
+KLANGKD_LLM_MODELS="openai/gemma4:31b:https://ollama.com/v1:"
 KLANGKD_JWT_SECRET=change-this-to-a-random-secret
 KLANGKD_DEFAULT_USER=admin@example.com
 # The default auth mode is `none` (no password, loopback-only) — you're

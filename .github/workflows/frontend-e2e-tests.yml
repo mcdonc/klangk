@@ -27,8 +27,6 @@ jobs:
     timeout-minutes: 30
     env:
       KLANGK_LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      KLANGK_LLM_BASE_URL: https://ollama.com/v1
-      KLANGK_LLM_MODEL: gemma4:31b
       KLANGK_JWT_SECRET: e2e-test-secret
       KLANGK_DEFAULT_USER: admin@plope.com
       KLANGK_DEFAULT_PASSWORD: admin

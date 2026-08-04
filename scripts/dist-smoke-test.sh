@@ -263,9 +263,7 @@ DOCKERFILE
       KLANGKD_AUTH_MODES=none \
       KLANGKD_DEFAULT_USER=admin@example.com \
       KLANGKD_JWT_SECRET=smoke-test-secret \
-      KLANGKD_LLM_BASE_URL=http://localhost:11434/v1 \
-      KLANGKD_LLM_API_KEY=test \
-      KLANGKD_LLM_MODEL=test \
+      KLANGKD_LLM_MODELS="openai/test:http://localhost:11434/v1:test" \
       LOGFIRE_TOKEN='' \
       "$VENV_DIR/bin/klangkd" --config=none >"$LOG_PATH" 2>&1 &
     KLANGKD_PID=$!

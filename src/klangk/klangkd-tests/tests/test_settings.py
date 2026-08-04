@@ -966,94 +966,6 @@ class TestLogLevelValidator:
         assert "DEBUG" in msg  # valid levels listed in the message
 
 
-class TestLlmBaseUrlValidator:
-    """KLANGKD_LLM_BASE_URL with a fragment is rejected at construction (#1687);
-    query strings are accepted (both renderers re-attach the base query and
-    drop the incoming request's query, so a Gemini-style ``?key=...`` set
-    by the operator is preserved while container-user query params are not)."""
-
-    def test_unset_accepted(self):
-        s = make_settings({})
-        assert s.llm_base_url is None
-
-    def test_empty_string_accepted(self):
-        s = make_settings({"KLANGKD_LLM_BASE_URL": ""})
-        assert s.llm_base_url == ""
-
-    @pytest.mark.parametrize(
-        "url",
-        [
-            "http://127.0.0.1:11434",  # host-only, no path
-            "https://api.z.ai/api/coding/paas/v4",  # path-bearing (#1681)
-            "https://host.example/",  # bare trailing slash, no query
-            "http://[::1]:8443/v4",  # IPv6 literal
-            # Query strings are preserved by the renderers — Gemini-style
-            # ?key=... auth (documented but discouraged by Google) and
-            # OpenAI-client hardcoded query params (openai/openai-python@73ea2f7)
-            # both rely on the base URL carrying a query.
-            "https://generativelanguage.googleapis.com/v1beta?key=AIzaSy-example",
-            "https://host/v4?foo=bar&baz=qux",
-        ],
-    )
-    def test_query_less_and_query_bearing_urls_accepted(self, url):
-        assert make_settings({"KLANGKD_LLM_BASE_URL": url}).llm_base_url == url
-
-    @pytest.mark.parametrize(
-        "url",
-        [
-            "https://host/v4#section",
-            "https://host/v4?key=secret#section",  # fragment alongside query
-            "https://host#anchor",
-        ],
-    )
-    def test_fragment_rejected_at_construction(self, url):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError) as exc_info:
-            make_settings({"KLANGKD_LLM_BASE_URL": url})
-        msg = str(exc_info.value)
-        # The message names the field and the failure mode. It deliberately
-        # does NOT echo the URL value (it may contain a secret in a query).
-        assert "KLANGKD_LLM_BASE_URL" in msg
-        assert "fragment" in msg
-
-    def test_value_not_echoed_in_error_message(self):
-        """The URL value must NOT appear in the error message — it may
-        contain a secret in a query string (``?key=sk-...``). Mirrors the
-        ``_resolve_indirections`` posture of never logging secret-derived
-        data."""
-        from pydantic import ValidationError
-
-        secret_url = "https://host/v4?key=sk-not-a-real-key-but-still#frag"
-        with pytest.raises(ValidationError) as exc_info:
-            make_settings({"KLANGKD_LLM_BASE_URL": secret_url})
-        msg = str(exc_info.value)
-        assert "sk-not-a-real-key-but-still" not in msg
-        assert "key=sk" not in msg
-
-    def test_cmd_resolved_url_with_fragment_rejected(self, tmp_path):
-        """A ``cmd:`` prefix whose output contains a fragment is also
-        rejected — the validator runs after ``_resolve_indirections``, so
-        the resolved value is checked, not the literal ``cmd:...`` string."""
-        from pydantic import ValidationError
-
-        script = tmp_path / "emit-url"
-        script.write_text("#!/bin/sh\nprintf 'https://host/v4#leaked'\n")
-        script.chmod(0o755)
-        with pytest.raises(ValidationError):
-            make_settings({"KLANGKD_LLM_BASE_URL": f"cmd:{script}"})
-
-    def test_file_resolved_url_with_fragment_rejected(self, tmp_path):
-        """A ``file:`` prefix whose contents contain a fragment is also
-        rejected — same reason as the ``cmd:`` case."""
-        from pydantic import ValidationError
-
-        url_file = tmp_path / "url"
-        url_file.write_text("https://host/v4#anchor\n")
-        with pytest.raises(ValidationError):
-            make_settings({"KLANGKD_LLM_BASE_URL": f"file:{url_file}"})
-
-
 class TestResolveIndirectionsValidator:
     """The ``_resolve_indirections`` model validator runs once at construction
     (#1461): every string field with a ``file:``/``cmd:`` prefix is resolved
@@ -1344,3 +1256,59 @@ class TestReload:
             env = dict(s._reload_env)
             env["KLANGKD_AUTH_MODES"] = "bogus"
             KlangkSettings(env)
+
+
+class TestLLMModelsValidator:
+    """Tests for the KLANGKD_LLM_MODELS field validator (#2070)."""
+
+    def test_none_is_disabled(self):
+        s = make_settings({})
+        assert s.llm_models is None
+
+    def test_empty_string_is_disabled(self):
+        s = make_settings({"KLANGKD_LLM_MODELS": ""})
+        assert s.llm_models is None
+
+    def test_comma_separated_string(self):
+        s = make_settings(
+            {
+                "KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx,ollama/llama3:http://x:11434:"
+            }
+        )
+        assert s.llm_models is not None
+        assert len(s.llm_models) == 2
+
+    def test_list_from_yaml(self, tmp_path):
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text(
+            "llm-models:\n"
+            "  - 'openai/gpt-4o::sk-xxx'\n"
+            "  - 'ollama/llama3:http://x:11434:'\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.llm_models is not None
+        assert len(s.llm_models) == 2
+
+    def test_dict_entries_from_yaml(self, tmp_path):
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text(
+            "llm-models:\n"
+            "  - model_name: gpt-4\n"
+            "    litellm_params:\n"
+            "      model: openai/gpt-4o\n"
+            "      api_key: sk-xxx\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.llm_models is not None
+        assert len(s.llm_models) == 1
+        assert isinstance(s.llm_models[0], dict)
+
+    def test_empty_list_is_disabled(self, tmp_path):
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text("llm-models: []\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.llm_models is None
+
+    def test_invalid_string_entry_raises(self):
+        with pytest.raises(Exception, match="two colons"):
+            make_settings({"KLANGKD_LLM_MODELS": "openai/gpt-4o"})

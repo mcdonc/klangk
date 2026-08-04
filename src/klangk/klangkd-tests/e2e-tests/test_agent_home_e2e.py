@@ -61,9 +61,6 @@ def server():
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_ALLOW_AUTOSTART="1",
         LOGFIRE_TOKEN="",
-        KLANGKD_LLM_BASE_URL="",
-        KLANGKD_LLM_API_KEY="",
-        KLANGKD_LLM_MODEL="",
     )
 
     # Fetch auto-generated instance ID from the running server (used by
