@@ -347,9 +347,7 @@ docker run -d \
   -e KLANGKD_DATA_DIR=/home/klangk/data \
   -e KLANGKD_PRODUCT_NAME="Acme Labs" \
   -e KLANGKD_LOGO_URL="/branding/logo.png" \
-  -e KLANGKD_LLM_BASE_URL=https://ollama.com/v1 \
-  -e KLANGKD_LLM_API_KEY=your-api-key \
-  -e KLANGKD_LLM_MODEL=gemma4:31b \
+  -e KLANGKD_LLM_MODELS="openai/gpt-4o::your-api-key" \
   ghcr.io/mcdonc/klangk/klangk-host:latest
 ```
 

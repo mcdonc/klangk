@@ -78,9 +78,8 @@ services:
       # KLANGKD_OIDC_LOGIN_HOOK: /home/klangk/custom/oidc/login_hook.py
 
       # --- LLM ---
-      KLANGKD_LLM_BASE_URL: "${KLANGKD_LLM_BASE_URL}"
+      KLANGKD_LLM_MODELS: "${KLANGKD_LLM_MODELS}"
       KLANGKD_LLM_API_KEY: "${KLANGKD_LLM_API_KEY}"
-      KLANGKD_LLM_MODEL: "${KLANGKD_LLM_MODEL}"
 
       # --- Observability ---
       LOGFIRE_BASE_URL: "${LOGFIRE_BASE_URL}"

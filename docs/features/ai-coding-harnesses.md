@@ -9,11 +9,9 @@ so no API keys are exposed inside containers.
 Set these environment variables (in `.env` or your deployment config)
 to enable AI features:
 
-| Variable               | Example                     | Purpose                    |
-| ---------------------- | --------------------------- | -------------------------- |
-| `KLANGKD_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint |
-| `KLANGKD_LLM_MODEL`    | `gpt-4o`                    | Default model name         |
-| `KLANGKD_LLM_API_KEY`  | `sk-...`                    | Provider API key           |
+| Variable             | Example | Purpose                                                    |
+| -------------------- | ------- | ---------------------------------------------------------- |
+| `KLANGKD_LLM_MODELS` |         | Model list (see [LLM proxy](../architecture/llm-proxy.md)) |
 
 Without these, Pi and the Pi agent via the chat are non-functional. See
 [Environment Variables](../reference/environment.md) for the full
@@ -34,7 +32,7 @@ pi
 ```
 
 By default Pi uses the LLM proxy with the provider and model
-configured via `KLANGKD_LLM_BASE_URL`, `KLANGKD_LLM_MODEL`, and
+configured via `KLANGKD_LLM_MODELS` and
 `KLANGKD_LLM_API_KEY`. Its config is stored in `~/.pi/agent/` and
 populated automatically at first login by klangk itself.
 
@@ -99,7 +97,7 @@ in the container.
 
 Pi does not have direct access to your LLM API key. Instead, klangk
 configures Pi to send requests through the reverse proxy on the
-host. The proxy forwards the request to your `KLANGKD_LLM_BASE_URL` and
+host. The proxy forwards the request to the in-process litellm Router, which
 injects the real `KLANGKD_LLM_API_KEY` in the `Authorization` header.
 
 This means your LLM API key never enters the container environment.

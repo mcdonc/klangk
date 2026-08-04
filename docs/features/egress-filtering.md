@@ -407,7 +407,7 @@ Self-managed GitLab instances use their own hostname instead of
 | ---------------------- | ---------------------------------------- |
 | `cloud.ollama.com:443` | Ollama cloud API (direct from container) |
 
-A self-hosted Ollama configured as `KLANGKD_LLM_BASE_URL` is proxied
+A self-hosted Ollama configured in `KLANGKD_LLM_MODELS` is proxied
 through the backend's `/llm-proxy/` endpoint and needs no netfilter
 entry. `cloud.ollama.com` is for workspaces that contact the Ollama
 cloud service directly (e.g. from user code or an agent).

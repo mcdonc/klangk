@@ -88,9 +88,7 @@ until another user speaks (interjection) or you @mention someone else.
 
 The agent requires an LLM backend. Set these environment variables:
 
-- `KLANGKD_LLM_BASE_URL` — OpenAI-compatible API endpoint
-- `KLANGKD_LLM_MODEL` — model name (e.g. `gemma4:31b`)
-- `KLANGKD_LLM_API_KEY` — API key (optional, depends on provider)
+- `KLANGKD_LLM_MODELS` — model list (see [LLM proxy](../architecture/llm-proxy.md))
 
 Without these, the agent is unavailable and @clanker mentions are ignored.
 
