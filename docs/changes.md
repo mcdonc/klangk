@@ -622,18 +622,6 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   added the in-container guard (skip when klangkd itself runs in a
   container) (#1554).
 
-- **`test-all` / `test-unit` devenv scripts and concurrency-safe test corpus**
-  (#1393). The whole test corpus is now runnable concurrently: every E2E
-  harness free-allocates its server port and `KLANGKD_PORT_RANGE_START`
-  (via a new `klangk_backend.model.free_port` helper) instead of hardcoding
-  them, and container teardown is instance-scoped (no more `klangk.managed=true`
-  sweeps that nuked other suites' containers). The two unit suites combine
-  into one `python -m pytest src/backend/tests src/cli/tests` invocation
-  (the root `pyproject.toml` now carries the asyncio + capture config that
-  used to conflate them). New `test-all` runs unit + E2E; `test-unit` runs
-  the combined unit corpus. E2E tasks dropped the forced `-p no:xdist` —
-  opt into parallelism with `-n auto --dist=loadscope`.
-
 - **`KLANGKD_AUTH_MODES=none`: no-login single-user (local-dev) mode**
   (#1374). A new `none` auth mode lets the frontend and CLI obtain a token
   for the seeded default user with no password prompt, enabling a frictionless
@@ -701,18 +689,6 @@ set-password <email>` (set a known password for the default user — whose
   stays retired under its historical name; the env-var prefix remains
   `KLANGK_*` (the `KLANGK_*` → `KLANGKD_*` rename is #1653, not yet landed).
 
-- **The Soliplex plugin's config key is renamed `SOLIPLEX_URL` →
-  `KLANGKWS_FEATURE_SOLIPLEX_URL` (#1686).** Same `KLANGKWS_FEATURE_` namespace
-  as the other plugin keys (#1662); the rename was deferred from #1702
-  because soliplex was a remote plugin skipped by the build guard. Now that
-  it's vendored local, the build guard would reject the unprefixed
-  `SOLIPLEX_URL`, so the rename lands here. Operators who set `SOLIPLEX_URL`
-  (only reachable on installs that built soliplex in via
-  `KLANGKBUILD_BUILD_INCLUDE_REMOTE=1` and activated it) must set
-  `KLANGKWS_FEATURE_SOLIPLEX_URL` instead. The frontend `/api/config` key is
-  unchanged at `soliplex_url` (strip prefix + lowercase suffix), so Dart/UI
-  consumers need no change.
-
 - **Plugin-declared config keys must now start with `KLANGKWS_FEATURE_`**
   (#1662). The prefix is the plugin-config namespace: every server setting
   is `KLANGK_<SETTING>` (no `FEATURE_` infix), so the prefix alone guarantees
@@ -745,9 +721,6 @@ set-password <email>` (set a known password for the default user — whose
   set `KLANGKD_CONFIG_DIR` once to relocate it). Explicit overrides are
   unchanged; the host container and shell scripts that set this var are
   unaffected.
-  `KLANGKBUILD_PLUGINS_DIR` is **not** affected by this change — it stays under
-  `<state_dir>/plugins` (as on main). Its tree placement is reworked
-  separately in #1651.
 
 - **One `klangk` distribution ships the renamed server package `klangkd` and the folded-in client `klangk` (#1606).** The backend package is renamed `klangk_backend` → `klangkd` and the standalone `klangkc` distribution is retired — the client is promoted to a sibling top-level package under the same source root. One `pip install klangk` yields both `klangkd` (server) and `klangk` (client); the entrypoint command names are unchanged. The distribution name (`klangk`) is distinct from the import packages (`klangkd` / `klangk`), like `python-dateutil` → `dateutil`.
   - **Integrators** who `import klangk_backend` (e.g. OIDC login hooks) must update to `import klangkd`.
@@ -787,15 +760,6 @@ set-password <email>` (set a known password for the default user — whose
   `klangk admin invitations ls`). Site-wide administration — users and
   invitations — now has a dedicated `admin` CLI surface matching the
   `terminal`/`volumes` noun-subgroup convention.
-
-### Fixed
-
-- **`pip install klangk` no longer warns `typer 0.27.0 does not provide the
-extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
-  `all` extra was removed from typer (its constituents `rich`, `shellingham`,
-  `colorama` are now unconditional typer runtime deps — `colorama` only on
-  Windows). Changed to `typer>=0.12.0`; the deps `[all]` used to pull in are
-  still installed transitively, so no functionality is lost.
 
 ### Security
 
