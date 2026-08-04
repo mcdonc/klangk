@@ -632,23 +632,6 @@ browser-fetch, celebrate, git-credential` (#1700).** `DEFAULT_FEATURES`
   now use). **Integrator action:** if you install `klangk` into an env where
   you also run the test suite, add the `[test]` extra.
 
-- **`KLANGKBUILD_PLUGINS_DIR` is gone from every layer (#1660).** The plugin
-  declaration list is now the checked-in `plugins.yaml` at the repo root
-  (the build-time source of truth, analogue of a committed `package.json` /
-  `Cargo.toml`). The materialized payload — fetched/symlinked plugin trees,
-  `plugins.lock`, the generated `klangk_plugins` Dart package — is a
-  throwaway `mktemp -d` each build script (`flutterbuildweb.sh`,
-  `build-workspace-image.sh`, `build-host-image.sh`) owns and cleans up on
-  exit. `update_plugins.py` and `import_dart_plugins.py` take the payload
-  dir via `--payload-dir` instead of reading `KLANGKBUILD_PLUGINS_DIR` from the
-  environment. The host image no longer copies plugin trees in (the runtime
-  reads `features.json` from the frontend build, not on-disk `package.json`
-  files — the workspace image still bakes them in for Pi). The first-run
-  `plugins.yaml` template-creation bootstrap is removed; the file is
-  source-controlled. Operators who overrode `KLANGKBUILD_PLUGINS_DIR` to point
-  at a custom declaration should instead edit the checked-in `plugins.yaml`
-  (in their fork — see #1663).
-
 - **`KLANGKD_STATE_DIR` now defaults to `$XDG_STATE_HOME/klangk` (#1644).**
   The runtime-state directory (UDS socket, rendered proxy config, pid file,
   DB) defaults to `~/.local/state/klangk` when no explicit value is supplied,
@@ -953,18 +936,6 @@ set-password <email>` (set a known password for the default user — whose
   v0.4 plugin still declares the unprefixed `SOLIPLEX_URL`; this change
   must land together with (or after) #1686, which vendors + renames
   soliplex.
-
-- **`KLANGKBUILD_PLUGINS_DIR` retires as a runtime setting (#1655).** The
-  runtime no longer scans `$KLANGKBUILD_PLUGINS_DIR/*/package.json` for plugin
-  config — that presumed materialized source trees on the klangkd host,
-  which pip/uv installs never have. The server now reads the build-emitted
-  `features.json` (one field — `container_env_keys` — to bridge container
-  env vars; the frontend reads the rest). `KLANGKBUILD_PLUGINS_DIR` is **removed
-  from `KlangkSettings`** with no successor; it stays as a **build-time-only**
-  env var consumed by `update_plugins.py` and the image-build scripts (read
-  from `os.environ`, not via settings). Operators who set it expecting the
-  server to scan it: the server no longer scans anything; the shipped
-  `features.json` is the whole runtime truth.
 
 - **`KLANGKD_CUSTOMIZE_DIR` relocates from the state tree to the config
   tree (#1644).** It holds user-edited, durable intent (branding, email
