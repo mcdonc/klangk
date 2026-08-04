@@ -141,6 +141,9 @@ def _start_server(data_dir, extra_env=None):
         # this is harmless during the install.
         "KLANGKD_HEALTH_CHECK_INTERVAL": "3",
         "KLANGKD_ALLOW_AUTOSTART": "1",
+        # Provide a dummy model so the LLM router is active and containers
+        # get KLANGKWS_LLM_PROXY_URL (#2070).
+        "KLANGKD_LLM_MODELS": "openai/default:http://127.0.0.1:1:dummy",
         "LOGFIRE_TOKEN": "",
         "log_path": log_path,
     }

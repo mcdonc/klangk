@@ -139,6 +139,8 @@ openclaw onboard --non-interactive \
 
 # Write openclaw config on top of onboard's output.
 # We preserve gateway.auth (written by onboard) and merge our settings.
+# KLANGKWS_LLM_MODEL may be empty (#2070); fall back to "default".
+_model="${KLANGKWS_LLM_MODEL:-default}"
 python3 -c "
 import json, os
 cfg_path = '$INSTALL_DIR/.openclaw/openclaw.json'
@@ -155,14 +157,14 @@ cfg['models'] = {
                 'id': 'workspace-token'
             },
             'models': [
-                {'id': '\$KLANGKWS_LLM_MODEL', 'name': '\$KLANGKWS_LLM_MODEL'}
+                {'id': '$_model', 'name': '$_model'}
             ],
         }
     }
 }
 cfg['agents'] = cfg.get('agents', {})
 cfg['agents']['defaults'] = cfg['agents'].get('defaults', {})
-cfg['agents']['defaults']['model'] = {'primary': 'llm-proxy/\$KLANGKWS_LLM_MODEL'}
+cfg['agents']['defaults']['model'] = {'primary': 'llm-proxy/$_model'}
 cfg['gateway']['port'] = 8000
 # Allow the gateway to reach the LLM proxy on the host's private
 # network and listen on all interfaces so Klangk's hosted app
