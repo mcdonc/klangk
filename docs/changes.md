@@ -993,6 +993,13 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
 
 ### Removed
 
+- **The nginx reverse-proxy engine is removed (#1642).** Caddy is the sole
+  engine in 2.X; the `KLANGKD_PROXY_ENGINE` selector and its deprecation
+  warning are gone (`KLANGKD_PROXY_ENGINE` is no longer recognized). The
+  removal is staged across #2080–#2088. **Breaking** for anyone who pinned
+  `KLANGKD_PROXY_ENGINE=nginx` as the Caddy-regression escape hatch — file
+  an issue if a Caddy regression bites.
+
 - **`KLANGKD_SSL_CERT_DIR` is removed (#1523).** Custom CA certificates now
   have a single canonical location: drop `.pem`/`.crt` files into
   `<KLANGKD_CUSTOMIZE_DIR>/certs/`. Operators who set `KLANGKD_SSL_CERT_DIR`
@@ -1230,21 +1237,14 @@ set-password <email>` (set a known password for the default user — whose
   `<state_dir>/plugins` (as on main). Its tree placement is reworked
   separately in #1651.
 
-- **`KLANGKD_PROXY_ENGINE` now defaults to `caddy` (#1634).** The Caddy
-  reverse-proxy engine replaces nginx as the default. The rendered proxy
-  config is delivered to Caddy's admin API over a `klangkd`-owned Unix
-  domain socket (`POST /load`, `text/caddyfile`) instead of being written
-  to an `nginx.conf` and applied by `nginx -c` — no on-disk source of
-  truth, no reload. **Operators with no `KLANGKD_PROXY_ENGINE` set switch
-  engines on upgrade.** The nginx engine remains selectable this release
-  via `KLANGKD_PROXY_ENGINE=nginx` as the escape hatch for a Caddy
-  regression — selecting it fires a deprecation warning, and it will be
-  removed in a future release (#1642). If you hit a regression, set
-  `KLANGKD_PROXY_ENGINE=nginx` and file an issue. Otherwise, unset the
-  variable (caddy is the default). `klangkd` manages the proxy config
-  entirely in both engines — operators never template proxy config or run
-  reloads — so the swap is transparent to anyone not overriding
-  `KLANGKD_PROXY_BIN`.
+- **Caddy is the sole reverse-proxy engine (#1559, #1634, #1642).** The
+  nginx engine is removed in 2.X (see Removed); there is no engine
+  selector. klangkd renders a Caddyfile and delivers it to Caddy's admin
+  API over a `klangkd`-owned Unix domain socket (`POST /load`,
+  `text/caddyfile`) — no on-disk source of truth, no reload. `klangkd`
+  manages the proxy config entirely; operators never template proxy config
+  or run reloads. `KLANGKD_PROXY_BIN` overrides the Caddy binary (falls
+  back to `which caddy` → `/usr/bin/caddy`).
 
 - **One `klangk` distribution ships the renamed server package `klangkd` and the folded-in client `klangk` (#1606).** The backend package is renamed `klangk_backend` → `klangkd` and the standalone `klangkc` distribution is retired — the client is promoted to a sibling top-level package under the same source root. One `pip install klangk` yields both `klangkd` (server) and `klangk` (client); the entrypoint command names are unchanged. The distribution name (`klangk`) is distinct from the import packages (`klangkd` / `klangk`), like `python-dateutil` → `dateutil`.
   - **Integrators** who `import klangk_backend` (e.g. OIDC login hooks) must update to `import klangkd`.
