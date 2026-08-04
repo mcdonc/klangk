@@ -9,10 +9,15 @@ and each version's section is also prepended to its GitHub Release notes (see
 Entries use the following conventions:
 
 - **Added** — new features.
+
 - **Changed** — changes to existing functionality.
+
 - **Deprecated** — soon-to-be removed features.
+
 - **Removed** — now removed features.
+
 - **Fixed** — bug fixes.
+
 - **Security** — fixes for vulnerabilities, in lieu of or in addition to a
   dedicated security advisory.
 
@@ -66,11 +71,13 @@ operators or integrators to act when upgrading.
   ARP spoofing — only raw-socket crafting inside the container's own netns.
   A deploy setting `enable_ping` (default `true`, env `KLANGKD_ENABLE_PING`)
   turns it off for locked-down deploys.
+
 - **`process-compose` supervisor installed in the workspace container (#2049).**
   The workspace image now ships the `process-compose` binary at
   `/usr/local/bin/process-compose` (arch-aware build, pinned to `v1.120.0`),
   so a managed set of processes can be run inside the container. The base
   image's `supervisor` (supervisord) is unaffected.
+
 - **`chat` feature — workspace chat surface extracted into a compiled-in,
   opt-in feature (#1976).** The chat tab + clanker agent UI moved out of the
   host frontend into `features/chat/`, registered as a workspace tab via the
@@ -116,6 +123,7 @@ operators or integrators to act when upgrading.
   `KLANGKD_CONTAINER_PIDS_LIMIT` (default `512`). Per-workspace overrides
   via the workspace `settings` bag. Set a field to empty to disable that
   cap.
+
 - **Tmux status bar in workspace shells (#1880).** Shells display a status
   bar at the bottom showing the workspace name, current terminal name, and
   the `~.` disconnect hint. The workspace name updates live on rename.
@@ -349,6 +357,7 @@ invitations send` stay email-only (a deliverable address is required);
   a `ValidationError`, not silently at use time. Callers read
   `settings.field` directly — no per-call `resolve_indirection` wrap
   (#1461).
+
 - **`state_dir` required; `data_dir` / `customize_dir` / `plugins_dir` derive from it:**
   `KLANGKD_STATE_DIR` has no default — a missing value fails at construction
   with a `ValidationError` (#1459, #1461). `KLANGKD_DATA_DIR` defaults to
@@ -357,16 +366,20 @@ invitations send` stay email-only (a deliverable address is required);
   `<KLANGKD_STATE_DIR>/plugins` when unset; an explicit value always wins
   (#1461, #1506). `klangkd` no longer mutates `os.environ` to inject a
   `state_dir` default; the field enforces its own requirement (#1459).
+
 - **CLI transport resolver:** `klangk --server` now accepts a Unix socket
   path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
   and WebSocket connections route through a single transport resolver that
   picks UDS or TCP based on the server spec (#1399).
+
 - **UDS safe for no-auth mode:** `KLANGKD_AUTH_MODES=none` now accepts a UDS
   bind without `KLANGKD_ALLOW_INSECURE_NO_AUTH` — socket file permissions
   (0700 parent dir) provide the same trust boundary as loopback (#1399).
+
 - **Direct UDS login:** `client_is_loopback` treats direct UDS connections
   (no proxy) as loopback, so `klangk login /path/to/sock` works in
   no-auth mode (#1399).
+
 - **Per-test timeout for the Python test suites** — both backend and CLI
   suites now run with `pytest-timeout` (`--timeout=60`). A hanging test
   fails after 60s instead of burning the whole job budget. New
@@ -377,6 +390,7 @@ invitations send` stay email-only (a deliverable address is required);
 - **Bumped `@earendil-works/pi-coding-agent` in the workspace image from
   `0.79.9` to `0.83.0` (#2049).** The in-container coding agent is now the
   latest published release.
+
 - **`none` auth mode is declared an unsupported configuration with the
   published Docker host image (#1391).** `none` (no-login single-user,
   loopback-only) is safe only when solely the operator's loopback can reach
@@ -389,6 +403,7 @@ invitations send` stay email-only (a deliverable address is required);
   experience, run klangk locally (devenv or the bare binary) instead of the
   published image. This replaces the previous "until #1391 lands"
   placeholder language in the Docker docs.
+
 - **The clanker agent is now opt-in (off by default) (#1977).** The
   `pi --mode rpc` agent subprocess spawns only when the `chat` feature is
   active (`KLANGKD_FEATURES_ENABLE`) **and** the operator enables it via
@@ -629,6 +644,7 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   8 container-cleanup logic tests failed whenever pytest ran inside a
   container (distrobox, CI-in-docker, klangk-in-klangk); the suite is now
   portable across host environments with no test-side patching (#1556).
+
 - **devenv `klangk:kill-containers` task and `scripts.kill-containers`:**
   klangkd now reaps its own instance's leftover containers at startup
   (in `reap_instance_containers`, immediately after `prewarm_podman`),
@@ -636,12 +652,14 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   `podman rm -f` before the backend process starts. The kill now happens
   in every deployment shape (systemd, host-container, bare `klangkd`),
   not just under devenv (#1554).
+
 - **`adopt_orphaned_containers` → `reap_instance_containers`:** the old
   method was effectively a startup reap already (the in-memory registry is
   empty at startup, so every leftover was "untracked" and removed). Renamed
   to reflect what it actually does and dropped the dead tracked-skip branch;
   added the in-container guard (skip when klangkd itself runs in a
   container) (#1554).
+
 - **`scripts/run-host-container.sh`:** retired; the `env | grep '^KLANGK_'`
   env-passthrough mechanism is replaced by mounting a config file (#1417).
 
@@ -672,14 +690,17 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   `klangk login`; the server's auth mode is probed live (not cached) so a
   mode switch takes effect immediately. See [Auth Modes](features/auth-modes.md)
   for the full mode-switching guide.
+
 - **`klangk admin` command group** (#1374): site-wide administration now
   has a dedicated CLI surface — `admin users ls`, `admin users
 set-password <email>` (set a known password for the default user — whose
   password is random unless `KLANGKD_DEFAULT_PASSWORD` was set — before
   flipping `none` -> `password`), and `admin invitations send/ls`. The
   top-level `invite`/`invitations` commands moved under `admin invitations`.
+
 - **`klangk status`** now reports your user id and admin status (derived
   from `/my-permissions`).
+
 - **`KLANGKC_DEBUG_SSH_AGENT` env var (#1522):** the debug-only knob that
   enabled verbose `[ssh-agent]` logging on the backend (`SshAgentForwarder`)
   and CLI (the local agent relay) is gone, along with the `log_stderr()`
@@ -777,6 +798,7 @@ set-password <email>` (set a known password for the default user — whose
 - **Devenv default changed to browser-first.** `klangkd.yaml.example` now
   defaults to `listen: 127.0.0.1` + `auth_modes: password`. Delete your local
   `klangkd.yaml` and re-enter `devenv shell` to regenerate it (#1400).
+
 - **Default auth mode is now `none`** (no-login single-user, loopback-bound)
   when `KLANGKD_AUTH_MODES` is unset and no OIDC provider is configured
   (#1374). Previously the unset default was `password`. A fresh klangk now
@@ -788,6 +810,7 @@ set-password <email>` (set a known password for the default user — whose
   an unsupported configuration with the published Docker host image (a
   published port isn't loopback) — the Docker image uses
   `KLANGKD_AUTH_MODES=password`; see #1391.
+
 - **OIDC settings no longer change the auth mode (#1419).** Previously, when
   `KLANGKD_AUTH_MODES` was unset **and** an OIDC provider was configured, the
   resolved default was silently promoted to `both` (the "OIDC turns auth on"
@@ -798,6 +821,7 @@ set-password <email>` (set a known password for the default user — whose
   explicitly before redeploying** — otherwise your server will boot in `none`
   mode (no-login single-user, loopback-bound; safe by construction, but not
   your intended multi-user posture).
+
 - **`klangk invite` moved under the `admin` group** (#1374). The top-level
   `klangk invite <email>` command is gone, with no backward-compat alias.
   Use `klangk admin invitations send <email>` (and list with
