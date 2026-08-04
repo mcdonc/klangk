@@ -27,6 +27,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`klangkd.yaml` config file (#1645, #1649).** `klangkd` reads
+  configuration from a YAML file at `$KLANGKD_CONFIG_DIR/klangkd.yaml`
+  (default `~/.config/klangkd/klangkd.yaml`). A template is generated on
+  first run if the file doesn't exist. Keys accept both `snake_case` and
+  `kebab-case`. Environment variables override config-file values.
+  See [Configuration](docs/reference/klangkd-config.md).
+
 - **`klangk` TUI (#1746).** Running `klangk` with no subcommand launches an
   interactive terminal UI (built on Textual). Features: in-TUI login
   (password and OIDC hand-off), live server switching, a workspace list with
@@ -206,24 +213,6 @@ operators or integrators to act when upgrading.
   (they self-no-op when no Soliplex server is reachable). Workspace-side
   gating is a follow-up.
 
-- **First-run config generation: a bare `klangkd` boots with no config
-  file (#1645).** When `klangkd` is invoked with no `--config` and no
-  `klangkd.yaml` exists at the resolved path (`$KLANGKD_CONFIG_DIR/klangkd.yaml`,
-  default `~/.config/klangkd/klangkd.yaml`), a near-empty template is generated
-  pointing at the solo docs (#1629) with commented examples for the mode
-  transitions. No admin identity or password is emitted — the admin row is
-  seeded at runtime: `default_user` defaults to `<unixuser>@example.com`
-  (derived from `getpass.getuser()`), with `password_hash=None` in `none`/`oidc`
-  mode (the row is load-bearing for `/auth/local` token minting but no
-  endpoint checks the hash). `password`/`both` mode requires
-  `KLANGKD_DEFAULT_PASSWORD` (fail-fast if unset — auto-generate-and-print was
-  removed as a lockout footgun for detached deployments). Combined with the
-  wheel publish (#1656), `pip install klangkd && klangkd` yields a usable
-  solo instance with no config file and no password. The `--config` default
-  changed from `/etc/klangkd.yaml` to the XDG config dir — the host container
-  and devenv both pass `--config=none` explicitly, so existing deployments are
-  unaffected. Existing `klangkd.yaml` files are never overwritten.
-
 - **The `klangk` wheel is now published to PyPI on tag push (#1656).**
   `release.yml` gains a parallel `build-wheel` job that builds the frontend
   (default plugin set from the checked-in `plugins.yaml`) and produces the
@@ -354,13 +343,6 @@ invitations send` stay email-only (a deliverable address is required);
   construction with a diagnostic directing the deployer to shorten
   `KLANGKD_SOCKET` or move `KLANGKD_STATE_DIR` shallower (#1531, #1542).
 
-- **Config-file keys accept `snake_case` _and_ `kebab-case`:** every
-  `klangkd` config-file key may now be written in either form (`jwt_secret`
-  or `jwt-secret`, `egress_port` or `egress-port`, etc.) and resolves to the
-  same setting. Generalizes the dual-form lookup the OIDC provider dicts
-  already had to the whole config file; `snake_case` remains the
-  preferred/documented form (#1538).
-
 - **Construction-time `file:`/`cmd:` resolution:** `KlangkSettings` now
   resolves all `file:`/`cmd:`-prefixed field values once, at construction.
   A dangling reference (e.g. `file:/nonexistent`) fails fast at boot with
@@ -379,11 +361,6 @@ invitations send` stay email-only (a deliverable address is required);
   path (e.g. `/tmp/klangk.sock`) in addition to `http(s)://` URLs. All HTTP
   and WebSocket connections route through a single transport resolver that
   picks UDS or TCP based on the server spec (#1399).
-- **Dev config file:** devenv now reads backend config from `klangkd.yaml`
-  (gitignored; copied from `klangkd.yaml.example` on first shell entry).
-  `.env` / `dotenv.enable` removed; `KLANGKD_LISTEN`, `KLANGKD_IMAGE_NAME`,
-  `KLANGKD_CUSTOMIZE_DIR`, `KLANGKD_PORT`, `KLANGKD_NGINX_PORT` no longer set
-  as env vars by devenv (#1399).
 - **UDS safe for no-auth mode:** `KLANGKD_AUTH_MODES=none` now accepts a UDS
   bind without `KLANGKD_ALLOW_INSECURE_NO_AUTH` — socket file permissions
   (0700 parent dir) provide the same trust boundary as loopback (#1399).
@@ -426,15 +403,6 @@ invitations send` stay email-only (a deliverable address is required);
   `KLANGKD_FEATURES_ENABLE=chat`. (Previously the chat tab was always present,
   permission-gated.) `klangk_plugin_api` bumped to v0.5.0 (adds
   `WorkspaceTabPlugin.badge` + `.setVisible`).
-
-- **`klangkd.yaml.example` renamed to `klangkd.yaml.devenv` (#1504).** The
-  repo-root template is devenv-only (its `state_dir`/`data_dir` are
-  `cmd:`-indirected to `$DEVENV_STATE`), not a deployment template. The new
-  name states that. Docs no longer tell operators to copy it: a real
-  deployment runs `klangkd` with no `--config` and it generates the config at
-  `$KLANGKD_CONFIG_DIR/klangkd.yaml` on first run (#1645). `devenv.nix` still
-  seeds `klangkd.yaml` from `klangkd.yaml.devenv` on first shell entry.
-  Integrators that referenced `klangkd.yaml.example` by name must update.
 
 - **`forward-agent` is on by default in generated `klangk.yaml` (#1923,
   #2000).** A freshly created config — written eagerly on any CLI invocation
