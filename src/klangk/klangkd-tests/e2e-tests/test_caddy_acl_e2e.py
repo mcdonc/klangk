@@ -886,7 +886,6 @@ class TestCaddySecretNotOnDisk:
             KLANGKD_TEST_MODE="1",
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             KLANGKD_PORT_RANGE_START=str(free_port()),
-            KLANGKD_LLM_BASE_URL="http://127.0.0.1:9999",
             KLANGKD_LLM_API_KEY=llm_key,
             _KLANGKD_DISABLE_PROXY="",
             LOGFIRE_TOKEN="",

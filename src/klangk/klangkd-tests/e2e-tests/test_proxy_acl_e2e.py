@@ -35,7 +35,7 @@ def _render_conf(env_overrides, tmpdir=None):
     Keys the renderer consults but that aren't in ``env_overrides`` are
     absent from the dict (unset) so each test starts from a known-clean
     state — without this, ``test_no_llm_block_*`` would see a
-    ``KLANGKD_LLM_BASE_URL`` leaked from ``test_llm_block_*``.
+    ambient env leaked from another test.
     """
     env = {
         "KLANGKD_PORT": "19998",
@@ -93,6 +93,7 @@ class TestProxyAclConfig:
     def test_auto_detect_host_ips(self, tmp_path):
         """Without override, host IPv4 addresses are auto-detected."""
         conf = _render_conf(
+            {},
             str(tmp_path),
         )
         # Scope to the container-endpoint ACL (see test_explicit_subnets for
@@ -110,69 +111,26 @@ class TestProxyAclConfig:
         assert "allow 10.0.0.0/8;" not in bd
         assert "allow 192.168.0.0/16;" not in bd
 
-    def test_no_llm_block_without_url(self, tmp_path):
-        """LLM proxy block is omitted when KLANGKD_LLM_BASE_URL is unset."""
+    def test_llm_block_always_present(self, tmp_path):
+        """LLM proxy block is always emitted (#2073)."""
         conf = _render_conf(
             {"KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24"},
-            str(tmp_path),
-        )
-        assert "llm-proxy" not in conf
-
-    def test_llm_block_present_with_url(self, tmp_path):
-        """LLM proxy block is included when KLANGKD_LLM_BASE_URL is set."""
-        conf = _render_conf(
-            {
-                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
-            },
             str(tmp_path),
         )
         assert "llm-proxy" in conf
         assert "allow 10.89.0.0/24;" in conf
 
-    def test_llm_api_key_cmd_prefix_resolved(self, tmp_path):
-        """A cmd:-prefixed KLANGKD_LLM_API_KEY is resolved (not emitted verbatim).
-
-        nginx.sh consumes KLANGKD_LLM_API_KEY via bash expansion, so it must
-        run it through klangk-resolve-value — otherwise the generated
-        conf would send `Bearer cmd:...` verbatim as the Authorization
-        header.
-        """
+    def test_llm_block_no_api_key_injection(self, tmp_path):
+        """The proxy does not inject API keys — the in-process Router
+        handles credentials (#2073)."""
         conf = _render_conf(
             {
                 "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGKD_LLM_API_KEY": "cmd:printf %s resolved-key",
+                "KLANGKD_LLM_API_KEY": "sekret",
             },
             str(tmp_path),
         )
-        # The resolved value appears; the literal prefix does not.
-        assert 'Authorization "Bearer resolved-key"' in conf
-        assert "cmd:" not in conf
-
-    def test_llm_api_key_file_prefix_resolved(self, tmp_path):
-        """A file:-prefixed KLANGKD_LLM_API_KEY is read from the file."""
-        key_file = tmp_path / "llm-key"
-        key_file.write_text("from-file-key\n")
-        conf = _render_conf(
-            {
-                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
-                "KLANGKD_LLM_API_KEY": f"file:{key_file}",
-            },
-            str(tmp_path),
-        )
-        assert 'Authorization "Bearer from-file-key"' in conf
-        assert "file:" not in conf
-
-    def test_llm_base_url_cmd_prefix_resolved(self, tmp_path):
-        """A cmd:-prefixed KLANGKD_LLM_BASE_URL is resolved to the real URL."""
-        conf = _render_conf(
-            {
-                "KLANGKD_CONTAINER_SUBNETS": "10.89.0.0/24",
-            },
-            str(tmp_path),
-        )
-        assert "llm-proxy" in conf
-        # The resolved URL is used; the literal prefix is not.
-        assert "cmd:" not in conf
+        assert "Authorization" not in conf
 
     def test_browser_delegate_has_acl(self, tmp_path):
         """browser-delegate endpoint always gets the ACL."""
