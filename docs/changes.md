@@ -103,22 +103,12 @@ operators or integrators to act when upgrading.
   and reverts it to the deploy default). Unknown setting names and
   malformed values are rejected at the API boundary (HTTP 400).
 
-- **Container resource limits (CPU / memory / PIDs) via deploy-wide
-  env vars (#34).** Three new env vars cap every workspace container at
-  `podman create` time, so a runaway workspace (fork bomb, memory leak,
-  tight CPU loop) can't starve or OOM the host or neighbouring
-  workspaces: `KLANGKD_CONTAINER_CPU_LIMIT` (float, → `--cpus`, e.g.
-  `1.5`), `KLANGKD_CONTAINER_MEMORY_LIMIT` (size string, → `--memory`,
-  e.g. `2g`/`512m`), and `KLANGKD_CONTAINER_PIDS_LIMIT` (int, →
-  `--pids-limit`, e.g. `512`). All three default to unset = no flag =
-  today's unbounded behavior (no regression). A malformed value
-  **aborts startup** rather than silently disabling the safety control,
-  and a malformed SIGHUP reload is denied (the runtime keeps running on
-  the last-good config). The change applies to containers started after
-  the change; an existing container keeps its original cgroup limits for
-  the rest of its life. Per-workspace overrides (creator may go larger
-  _or_ smaller than the deploy default, no clamping) are tracked as a
-  follow-up Phase 2.
+- **Container resource limits (CPU / memory / PIDs, #34).** Deploy-wide
+  limits cap every workspace container: `KLANGKD_CONTAINER_CPU_LIMIT`
+  (default `2.0`), `KLANGKD_CONTAINER_MEMORY_LIMIT` (default `8g`),
+  `KLANGKD_CONTAINER_PIDS_LIMIT` (default `512`). Per-workspace overrides
+  via the workspace `settings` bag. Set a field to empty to disable that
+  cap.
 - **Tmux status bar in workspace shells (#1880).** Shells display a status
   bar at the bottom showing the workspace name, current terminal name, and
   the `~.` disconnect hint. The workspace name updates live on rename.
@@ -474,17 +464,6 @@ invitations send` stay email-only (a deliverable address is required);
   experience, run klangk locally (devenv or the bare binary) instead of the
   published image. This replaces the previous "until #1391 lands"
   placeholder language in the Docker docs.
-- **Container resource limits now ship non-empty by default (#2030).**
-  `container_cpu_limit` / `container_memory_limit` / `container_pids_limit`
-  default to `2.0` / `8g` / `512` (env `KLANGKD_CONTAINER_CPU_LIMIT` /
-  `_MEMORY_LIMIT` / `_PIDS_LIMIT`) instead of unset, so a fresh `klangkd`
-  deployment caps every workspace container out of the box (podman
-  `--cpus` / `--memory` / `--pids-limit`) and a runaway workspace can no
-  longer starve or OOM the host. The first-run generated `klangkd.yaml`
-  emits these uncommented (matching the defaults) for discoverability. Set a
-  field to an empty value to disable that one cap and restore unbounded
-  behavior for it. Malformed values still abort startup. Operators with an
-  explicit config are unaffected.
 - **The clanker agent is now opt-in (off by default) (#1977).** The
   `pi --mode rpc` agent subprocess spawns only when the `chat` feature is
   active (`KLANGKD_FEATURES_ENABLE`) **and** the operator enables it via
