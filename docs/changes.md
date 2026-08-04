@@ -380,11 +380,6 @@ invitations send` stay email-only (a deliverable address is required);
   (no proxy) as loopback, so `klangk login /path/to/sock` works in
   no-auth mode (#1399).
 
-- **Per-test timeout for the Python test suites** — both backend and CLI
-  suites now run with `pytest-timeout` (`--timeout=60`). A hanging test
-  fails after 60s instead of burning the whole job budget. New
-  `pytest-timeout` dev dependency (#1513).
-
 ### Changed
 
 - **Bumped `@earendil-works/pi-coding-agent` in the workspace image from
@@ -634,34 +629,12 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   fake-`app.state` it needed to reproduce path resolution goes with it
   (#1565).
 
-- **In-container guards on container cleanup:** the
-  `/.dockerenv` / `/run/.containerenv` early-return checks in
-  `reap_instance_containers()` and `shutdown()` are gone. Both operations are
-  scoped by the `klangk.instance` label filter, which already excludes any
-  container this klangkd didn't create (unrelated host containers, or
-  containers created by an outer klangkd with a different instance ID), so
-  the guards protected against an impossible case. A side effect was that
-  8 container-cleanup logic tests failed whenever pytest ran inside a
-  container (distrobox, CI-in-docker, klangk-in-klangk); the suite is now
-  portable across host environments with no test-side patching (#1556).
-
-- **devenv `klangk:kill-containers` task and `scripts.kill-containers`:**
-  klangkd now reaps its own instance's leftover containers at startup
-  (in `reap_instance_containers`, immediately after `prewarm_podman`),
-  removing the need for devenv to shell out to `klangk-instance-id` +
-  `podman rm -f` before the backend process starts. The kill now happens
-  in every deployment shape (systemd, host-container, bare `klangkd`),
-  not just under devenv (#1554).
-
 - **`adopt_orphaned_containers` → `reap_instance_containers`:** the old
   method was effectively a startup reap already (the in-memory registry is
   empty at startup, so every leftover was "untracked" and removed). Renamed
   to reflect what it actually does and dropped the dead tracked-skip branch;
   added the in-container guard (skip when klangkd itself runs in a
   container) (#1554).
-
-- **`scripts/run-host-container.sh`:** retired; the `env | grep '^KLANGK_'`
-  env-passthrough mechanism is replaced by mounting a config file (#1417).
 
 - **`test-all` / `test-unit` devenv scripts and concurrency-safe test corpus**
   (#1393). The whole test corpus is now runnable concurrently: every E2E
@@ -831,52 +804,6 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
-- **Duplicate `klangkd` launch no longer spams the running instance's log
-  with ERROR "Another klangk instance is already running" lines (#2021).**
-  The _losing_ (second) process still reports why it exits, but now
-  de-duplicated against the live winner PID: the first collision logs once,
-  and a service supervisor's restart loop of the loser stays quiet for
-  retries against the same winner instead of emitting one ERROR per retry
-  into the shared log stream. A _different_ winner PID (a restart) is
-  reported fresh. The _winning_ (first) process never reaches the refusal
-  path, so it never logs this — independent of whether stderr is a TTY.
-
-- **`klangkd` no longer crash-loops when a second instance starts against
-  the same config (#1993).** The pre-flight guard that refuses a duplicate
-  instance tried to log via a nonexistent `logger` symbol
-  (`from klangk.logger import logger` — `klangk.logger` exposes only
-  `configure` / `configure_defaults`), raising `ImportError` before the
-  graceful `sys.exit(1)`. The process crashed and restarted under the
-  supervisor (and the already-running instance printed the same traceback)
-  instead of exiting cleanly. The launcher now uses a per-module
-  `logging.getLogger(__name__)` and logs + exits as intended.
-
-- **Chat read paths now require the `chat` permission (#1976).** When the
-  chat surface moved into the (deploy-wide) `chat` feature tab, the
-  per-user `_hasPerm('chat')` gate that hid the panel was lost. The send
-  path was already gated, but chat history (sent on connect) and
-  `chat_load_more` were not — so a user without `chat` could read full
-  history + paginate older messages. Both read paths now check `_has_perm
-("chat")` and deny without it (the frontend tab is still visible to such
-  a user but receives no data).
-
-- **Default builds skip the soliplex remote plugin (CI unblock, #1691).**
-  Every PR triggering `klangk:flutter-build` was failing during
-  `flutter pub get`: the soliplex plugin (#1683) pulls `soliplex_client` /
-  `soliplex_agent` from `soliplex/frontend.git`, one of which depends on the
-  **git** source of `ag_ui` (`ag-ui-protocol/ag-ui`) — and that repo has an
-  LFS-tracked fixture (`apps/dojo/e2e/fixtures/test-image.png`) whose object
-  went missing on the remote, breaking every clone's smudge filter.
-  Workaround: `scripts/flutterbuildweb.sh` and
-  `scripts/build-workspace-image.sh` now default to `update_plugins.py
---local-only`, which skips git-sourced plugins (records them in
-  `plugins.lock` with `sha: 'skipped'`). Soliplex is dormant by default
-  anyway (not in `DEFAULT_FEATURES`), so a default build produces a
-  pre-#1683-equivalent bundle with no ag-ui LFS dependency. Release /
-  single-client builds that need soliplex compiled in opt in with
-  `KLANGKBUILD_BUILD_INCLUDE_REMOTE=1`. Proper fix is upstream (consume the
-  hosted `ag_ui` from pub.dev instead of the git repo) — tracked in #1691.
-
 - **`pip install klangk` no longer warns `typer 0.27.0 does not provide the
 extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
   `all` extra was removed from typer (its constituents `rich`, `shellingham`,
@@ -942,12 +869,3 @@ extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
   `/api/v1/workspaces/post-chat-message`); every other path is refused
   with 403. Loopback (local browsers) and other IPs (remote browsers)
   are unaffected.
-
-- **Removed unused `adm-zip` devDependency from the frontend e2e-test
-  package (#2).** `adm-zip` and `@types/adm-zip` were declared in
-  `src/frontend/e2e-tests/package.json` but never imported anywhere in the
-  tree; dropping them eliminates the vulnerable `0.5.x` line
-  (CVE-2026-39244 / GHSA-xcpc-8h2w-3j85 — crafted ZIP triggers a 4 GB
-  memory allocation) flagged by Dependabot. `npm audit` now reports 0
-  vulnerabilities; Playwright still compiles all 202 tests. No production
-  code depended on the package.
