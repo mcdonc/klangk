@@ -283,34 +283,14 @@ klangk==<tag>` now yields a working `klangkd` with the UI served from the
   operators not setting it (the default reproduces the previous inline
   `$XDG_CONFIG_HOME/klangk` root exactly).
 
-- **`KLANGKD_CADDY_ADMIN_SOCKET` overrides the Caddy engine's admin-API
-  socket path (#1636).** The admin UDS was hardcoded to
-  `<state_dir>/caddy-admin.sock` with no override and no length check; a deep
-  `KLANGKD_STATE_DIR` could push it over the portable `AF_UNIX` `sun_path`
-  bound (≤104 chars) and make the Caddy engine unstartable (the admin UDS is
-  its only config-delivery path). The new setting mirrors the backend-UDS
-  `KLANGKD_SOCKET` escape hatch, and the existing length validator now covers
-  **both** socket paths — a too-long either one fails at construction with a
-  diagnostic naming the offending variable, regardless of engine. Unused by
-  the nginx engine.
-
-- **Caddy reverse-proxy engine behind `KLANGKD_PROXY_ENGINE=caddy` (#1559).**
-  A second, opt-in proxy engine joins the default nginx one: `klangkd`
-  renders a **Caddyfile** and pushes it to Caddy's **admin API** over a
-  `klangkd`-owned Unix domain socket (`<state_dir>/caddy-admin.sock`, mode
-  `0600`) via `POST /load` (`text/caddyfile`) — no on-disk config source of
-  truth. Caddy is bootstrapped with `CADDY_ADMIN=unix//…|0600` (empty config
-  pinned to `/dev/null`), so the admin endpoint is reachable only by
-  `klangkd`. A SIGHUP settings change re-pushes the Caddyfile over the admin
-  API (the nginx engine, by contrast, stays stale until a full restart).
-  Both engines cover the same surface (two listeners, token gate via
-  `forward_auth`/`auth_request`, container-source `remote_ip` matchers,
-  body-size limits, UDS upstream, injected LLM `Authorization`, exact-match
-  `/auth/local` + `/post-chat-message`, `/llm-proxy/` prefix strip). The
-  engine is selected once at process start (restart required to change it —
-  SIGHUP logs a non-reloadable warning); the default stays `nginx` until the
-  cutover. `caddy` is added to the devenv shell; stock Caddy (no plugins)
-  suffices — `caddy-l4` and `fastcaddy` are explicitly out of scope.
+- **Caddy replaces nginx as the reverse proxy (#1559, #1634, #1642).**
+  The reverse proxy is now Caddy (previously nginx). Config is delivered to
+  Caddy's admin API over a Unix domain socket — no on-disk config file, no
+  reload command. `KLANGKD_PROXY_BIN` overrides the Caddy binary.
+  `KLANGKD_CADDY_ADMIN_SOCKET` overrides the admin UDS path (default
+  `<state_dir>/caddy-admin.sock`). The proxy surface is unchanged: two
+  listeners (browser + container egress), workspace JWT validation,
+  container-source IP ACL, LLM proxy, hosted app proxy.
 
 - **Handles accepted at login and user-lookup surfaces (#616).** The
   `POST /auth/login` request body is renamed `email` → `identifier` and
@@ -363,15 +343,11 @@ invitations send` stay email-only (a deliverable address is required);
   When `false` (default), behavior is unchanged: acceptance is cached
   permanently against the banner text hash.
 
-- **`KLANGKD_EGRESS_LISTEN`** — the interface nginx binds for the container-
-  egress listener, rendered as `listen {egress_listen}:{egress_port};`.
-  Defaults to `0.0.0.0` (all interfaces), the only value portable across
-  podman network modes — `host.containers.internal` resolves to a netavark/
-  pasta virtual gateway that isn't bindable, and the real interface container
-  traffic lands on is environment-specific. The all-interfaces bind is gated
-  by `CONTAINER_ACL` (deny-all → 403 outside the container subnet) plus the
-  `auth_request` workspace-token gate (→ 401 without a valid JWT); pin to a
-  specific host IP to tighten further (#1542).
+- **`KLANGKD_EGRESS_LISTEN`** — the interface the proxy binds for the
+  container-egress listener. Defaults to `0.0.0.0` (all interfaces). The
+  all-interfaces bind is gated by the container-source IP ACL plus the
+  workspace-token gate; pin to a specific host IP to tighten further
+  (#1542).
 
 - **LLM proxy with multi-provider routing (#1396, #2046, #2070).**
   Workspace containers access LLMs via `/llm-proxy/`, backed by an in-process
@@ -383,10 +359,9 @@ invitations send` stay email-only (a deliverable address is required);
   don't specify their own. See
   [LLM Proxy](docs/architecture/llm-proxy.md).
 
-- **`KLANGKD_EGRESS_PORT`** — a dedicated container-egress port nginx listens
-  on for container→backend traffic (`/llm-proxy`, `/api/v1/browser-delegate`,
-  `/api/v1/workspaces/post-chat-message`). Default `8995`. Served in both
-  headless and full/browser modes (#1542).
+- **`KLANGKD_EGRESS_PORT`** — the container-egress port the proxy listens on
+  for container→backend traffic (`/llm-proxy`, `/api/v1/browser-delegate`,
+  `/api/v1/workspaces/post-chat-message`). Default `8995` (#1542).
 
 - **`KLANGKD_SOCKET`** — the backend UDS path `klangkd` binds. Defaults to
   `<state_dir>/klangk.sock`; override when the default overflows the
@@ -428,21 +403,12 @@ invitations send` stay email-only (a deliverable address is required);
   bind without `KLANGKD_ALLOW_INSECURE_NO_AUTH` — socket file permissions
   (0700 parent dir) provide the same trust boundary as loopback (#1399).
 - **Direct UDS login:** `client_is_loopback` treats direct UDS connections
-  (no nginx proxy) as loopback, so `klangk login /path/to/sock` works in
+  (no proxy) as loopback, so `klangk login /path/to/sock` works in
   no-auth mode (#1399).
 - **Per-test timeout for the Python test suites** — both backend and CLI
   suites now run with `pytest-timeout` (`--timeout=60`). A hanging test
   fails after 60s instead of burning the whole job budget. New
   `pytest-timeout` dev dependency (#1513).
-- **klangk nginx now rewrites `$remote_addr` to the real client IP** via the
-  realip module (`set_real_ip_from <each KLANGKD_TRUSTED_PROXY_CIDRS entry>` +
-  `real_ip_header X-Forwarded-For` + `real_ip_recursive on`). Without this,
-  `proxy_set_header X-Real-IP $remote_addr` clobbered the real client IP the
-  outer proxy forwarded with the proxy's own IP, so the backend's
-  `client_is_loopback` / `derive_hosting_info` resolved the proxy IP, not the
-  browser's — a regression from stable/1.0 where the customer proxy hit
-  uvicorn directly. Suppressed entirely when `KLANGKD_REJECT_PROXY_HEADERS` is
-  set (#1558).
 
 ### Changed
 
@@ -593,20 +559,6 @@ browser-fetch, celebrate, git-credential` (#1700).** `DEFAULT_FEATURES`
   intent. The cross-platform XDG fallback applies on macOS too (vars unset →
   `~/.local/state`).
 
-- **Proxy terminology replaces nginx in code, docs, and env vars (#1430).**
-  The reverse proxy klangkd owns and supervises is referred to as "the proxy"
-  throughout the codebase rather than by the underlying implementation
-  (currently nginx). Renames: the `klangk.nginx` module is now `klangk.proxy`
-  (`NginxRenderer`/`NginxWatchdog` → `ProxyRenderer`/`ProxyWatchdog`); the
-  settings fields `nginx_bin`/`nginx_port` → `proxy_bin`/`proxy_port` (env
-  `KLANGKD_NGINX_BIN`/`KLANGKD_NGINX_PORT` → `KLANGKD_PROXY_BIN`/`KLANGKD_PROXY_PORT`);
-  `app.state.nginx_watchdog` → `app.state.proxy_watchdog`; the internal
-  `_KLANGKD_DISABLE_NGINX` test kill switch → `_KLANGKBUILD_DISABLE_PROXY`; and the
-  `test_nginx*.py` suites → `test_proxy*.py`. The actual `nginx` binary,
-  rendered `nginx.conf`, and nginx packages are unchanged — the proxy is still
-  implemented with nginx. Operators using `KLANGKD_NGINX_BIN` or
-  `KLANGKD_NGINX_PORT` must rename them to `KLANGKD_PROXY_*`.
-
 - **CLI command renamed `klangkc` → `klangk` (#1615).** One `pip install
 klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   unified distribution name. The `klangkc` entrypoint is removed; the Typer
@@ -636,23 +588,14 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   `KLANGKD_FRONTEND_DIR` remounts the Flutter static-files directory
   without a process restart.
 
-- **`KLANGKD_PORT` is now the nginx browser port, not uvicorn's bind.** Under
-  `klangkd` uvicorn always binds the UDS (`KLANGKD_SOCKET`); `KLANGKD_PORT` is
-  the nginx listener for the browser UI + API + hosted apps. **Unset ⇒
-  headless mode** (no browser listener; only the container-egress listener on
-  `KLANGKD_EGRESS_PORT` is served). Set ⇒ full/browser mode. Suggested value
-  `8997` (#1542).
+- **`KLANGKD_PORT` is the proxy browser port.** Uvicorn binds the UDS
+  (`KLANGKD_SOCKET`); `KLANGKD_PORT` is the proxy listener for the browser
+  UI + API + hosted apps. **Unset ⇒ headless mode** (only the container-
+  egress listener on `KLANGKD_EGRESS_PORT`). Set ⇒ full/browser mode.
+  `KLANGKD_EGRESS_PORT` must differ from `KLANGKD_PORT` (#1542).
 
-- **`KLANGKD_LISTEN` is now a plain browser-interface address** (default
-  `127.0.0.1`), rendered as `listen {KLANGKD_LISTEN}:{KLANGKD_PORT};` only in
-  full/browser mode. The polymorphic socket-path meaning is retired (it never
-  shipped in a release); the UDS path is now `KLANGKD_SOCKET` (#1542).
-
-- **nginx now listens on two separate ports in full/browser mode** — the
-  browser listener (`KLANGKD_LISTEN`:`KLANGKD_PORT`) and the container-egress
-  listener (`KLANGKD_EGRESS_PORT`) — so ingress and egress traffic can be
-  firewalled independently. `KLANGKD_EGRESS_PORT` must differ from
-  `KLANGKD_PORT` (#1542).
+- **`KLANGKD_LISTEN`** — the browser-interface bind address (default
+  `127.0.0.1`). The UDS path is `KLANGKD_SOCKET` (#1542).
 
 - **`KLANGKD_FRONTEND_DIR` setting (#1456):** the built Flutter Web UI is
   served from `settings.frontend_dir` (defaults to the repo-relative
@@ -663,21 +606,9 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
 ### Deprecated
 
 - **`KLANGKD_PROXY_PORT`** is deprecated; rename to `KLANGKD_EGRESS_PORT`. If
-  `KLANGKD_EGRESS_PORT` is unset, the `KLANGKD_PROXY_PORT` value is used as the
-  egress port (with a deprecation warning); if both are set,
-  `KLANGKD_EGRESS_PORT` wins and `KLANGKD_PROXY_PORT` is ignored. A future
-  release will stop recognizing it (#1542, #1430). Renamed from
-  `KLANGKD_NGINX_PORT` in #1430; the old `KLANGKD_NGINX_PORT` name is no longer
-  recognized.
+  both are set, `KLANGKD_EGRESS_PORT` wins (#1542).
 
 ### Removed
-
-- **The nginx reverse-proxy engine is removed (#1642).** Caddy is the sole
-  engine in 2.X; the `KLANGKD_PROXY_ENGINE` selector and its deprecation
-  warning are gone (`KLANGKD_PROXY_ENGINE` is no longer recognized). The
-  removal is staged across #2080–#2088. **Breaking** for anyone who pinned
-  `KLANGKD_PROXY_ENGINE=nginx` as the Caddy-regression escape hatch — file
-  an issue if a Caddy regression bites.
 
 - **`KLANGKD_SSL_CERT_DIR` is removed (#1523).** Custom CA certificates now
   have a single canonical location: drop `.pem`/`.crt` files into
@@ -760,21 +691,6 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   container) (#1554).
 - **`scripts/run-host-container.sh`:** retired; the `env | grep '^KLANGK_'`
   env-passthrough mechanism is replaced by mounting a config file (#1417).
-- **Headless single-user profile: nginx minimal template on a socket bind**
-  (#1398, chunk 5 of #1392). When `KLANGKD_LISTEN` is a UNIX socket path,
-  the nginx renderer now emits a minimal (headless) template — only the
-  container-egress `/llm-proxy` location (with its workspace-token
-  `auth_request` gate + `CONTAINER_ACL`) on the single container-egress
-  listener, and nothing else: no `location /`, no `/api/v1/*`, no static
-  UI, no `/auth/local`. A browser can't reach a UDS and uvicorn exposes no
-  browser-facing TCP, so no browser surface is serviceable — the attack
-  surface is two channels (operator→UDS, container→llm-proxy) and nothing
-  else. Template selection keys off `KLANGKD_LISTEN`'s shape alone; the
-  `KLANGKD_AUTH_MODE` value does not participate (socket ⇒ minimal, TCP ⇒
-  full browser template, across all auth values). The TCP path is a strict
-  regression guard (byte-for-byte identical output). This makes the
-  UDS+none default posture's "eliminate the browser/TCP surface" a real
-  property rather than a claim; the default-flip itself is #1400.
 
 - **`test-all` / `test-unit` devenv scripts and concurrency-safe test corpus**
   (#1393). The whole test corpus is now runnable concurrently: every E2E
@@ -795,8 +711,8 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   named deployment profiles" strategy (`local-dev` / `customer-locked` /
   `team`). The server
   auto-creates the default user at startup; `POST /api/v1/auth/local` mints a
-  standard JWT for it. The loopback bind (`KLANGKD_LISTEN`, #1375) plus an
-  nginx per-location `allow 127.0.0.1/::1; deny all` ACL keep `/auth/local`
+  standard JWT for it. The loopback bind (`KLANGKD_LISTEN`, #1375) plus a
+  proxy per-location ACL keep `/auth/local`
   unreachable from workspace containers, and the server refuses to start in
   `none` mode on a non-loopback bind unless `KLANGKD_ALLOW_INSECURE_NO_AUTH=1`
   is set. The CLI (`klangk`) auto-logs in on first command run with no prior
@@ -900,32 +816,10 @@ set-password <email>` (set a known password for the default user — whose
   `<state_dir>/plugins` (as on main). Its tree placement is reworked
   separately in #1651.
 
-- **Caddy is the sole reverse-proxy engine (#1559, #1634, #1642).** The
-  nginx engine is removed in 2.X (see Removed); there is no engine
-  selector. klangkd renders a Caddyfile and delivers it to Caddy's admin
-  API over a `klangkd`-owned Unix domain socket (`POST /load`,
-  `text/caddyfile`) — no on-disk source of truth, no reload. `klangkd`
-  manages the proxy config entirely; operators never template proxy config
-  or run reloads. `KLANGKD_PROXY_BIN` overrides the Caddy binary (falls
-  back to `which caddy` → `/usr/bin/caddy`).
-
 - **One `klangk` distribution ships the renamed server package `klangkd` and the folded-in client `klangk` (#1606).** The backend package is renamed `klangk_backend` → `klangkd` and the standalone `klangkc` distribution is retired — the client is promoted to a sibling top-level package under the same source root. One `pip install klangk` yields both `klangkd` (server) and `klangk` (client); the entrypoint command names are unchanged. The distribution name (`klangk`) is distinct from the import packages (`klangkd` / `klangk`), like `python-dateutil` → `dateutil`.
   - **Integrators** who `import klangk_backend` (e.g. OIDC login hooks) must update to `import klangkd`.
   - **The `klangkc` PyPI distribution is retired** in favor of `klangk`; the `cli-v*` tag line and `cli-publish.yml` workflow are removed. Both binaries release together off the single `v*` tag line.
   - **Test layout**: tests are split into per-package suites — `src/klangk/klangkd-tests/{tests,e2e-tests}` (server) and `src/klangk/klangkc-tests/{tests,e2e-tests}` (client) — as hyphenated siblings of the package dirs so they don't ship in the wheel. Both unit suites share one `--cov=klangkd --cov=klangk` 100% gate (run together via `test-backend`).
-
-- **The listen/port settings model is restructured** (#1542):
-  - `KLANGKD_NGINX_PORT` → rename to `KLANGKD_EGRESS_PORT` (deprecated alias
-    accepted this release with a warning).
-  - `KLANGKD_PORT` changes meaning from uvicorn's bind to the nginx browser
-    port. Operators who set `KLANGKD_PORT` on the old assumption it was the
-    (dead) uvicorn bind should review: unset it for headless, or set it to
-    the desired browser port.
-  - `KLANGKD_LISTEN`'s default is `127.0.0.1` (was polymorphic/unused). The
-    socket-path meaning never shipped in a release.
-  - The host container (`Dockerfile`) now sets `KLANGKD_PORT=8997`,
-    `KLANGKD_EGRESS_PORT=8995`, and publishes both ports (was
-    `KLANGKD_NGINX_PORT` + one published port).
 
 - **Devenv default changed to browser-first.** `klangkd.yaml.example` now
   defaults to `listen: 127.0.0.1` + `auth_modes: password`. Delete your local
@@ -989,57 +883,6 @@ set-password <email>` (set a known password for the default user — whose
 ("chat")` and deny without it (the frontend tab is still visible to such
   a user but receives no data).
 
-- **The nginx proxy engine stays up under a plain `systemctl start` with no
-  operator log workaround (#1550).** nginx's `access_log` directive has no
-  `stdout` keyword, so it always `open(2)`s its destination by path; under
-  systemd fd 1 is a Unix socket to journald (`ls /proc/<pid>/fd/1` →
-  `socket:[N]`) that can't be re-opened, so the legacy `access_log
-/dev/stdout;` failed with `ENXIO` and nginx exited at config parse.
-  `ProxyRenderer` now probes fd 1: when it's reopenable (devenv, interactive,
-  pipe-to-file, containers without journald) it keeps `access_log
-/dev/stdout;`; when it's a socket (systemd journal) it emits `access_log
-syslog:server=unix:/dev/log;` — the converged journald route that works on
-  NixOS, Ubuntu 24.04+, and every other systemd host, since `/dev/log` is
-  created and serviced by the core `systemd-journald-dev-log.socket` unit (no
-  rsyslog needed), so access logs land in the journal next to klangkd's own.
-  A `state_dir` file is the last-resort fallback for the rare
-  socket-stdout-but-no-`/dev/log` case. `error_log stderr;` is unchanged
-  (nginx special-cases the bare `stderr` token to inherited fd 2). This
-  makes a default `StandardOutput=journal` unit work, retiring the
-  `StandardOutput=append:...` workaround from #1546.
-
-- **The Caddy proxy engine's child coexists with any other Caddy on the host
-  and binds its admin UDS from the first moment, on any Caddy version
-  (#1709).** Two version-robustness bugs were fixed. (1) The watchdog spawned
-  `caddy run --config /dev/null` relying on the `CADDY_ADMIN` env var to set
-  the admin address, but `CADDY_ADMIN` only lands in Caddy >= 2.7
-  (caddy#5317) and klangkd runs the host's system Caddy
-  (`shutil.which("caddy")`), so on older Caddy the env var was ignored, the
-  empty config fell back to the default `localhost:2019`, and klangkd
-  crash-looped polling a UDS that never appeared — failing on any host that
-  also runs Caddy (a system `caddy.service`, a sibling reverse proxy, another
-  klangkd). The spawn now passes a minimal initial Caddyfile (`{ admin
-unix//<sock> }`) via `--config`; the `admin` global option has been honored
-  since Caddy v2.0. (2) The admin address no longer carries a `|0600` mode
-  suffix — that syntax is only honored on Caddy >= 2.8 and on older Caddy is
-  folded into the socket _path_ (creating `caddy-admin.sock|0600` instead of
-  `caddy-admin.sock`), which broke the admin poll on the older system Caddy
-  the dist-smoke gate installs. The owner-only mode (#1559) is now enforced
-  by the watchdog via `os.chmod` after the bind (version-independent). (3)
-  The admin directive now sets `origins localhost` explicitly — older Caddy
-  (<2.11) defaults the unix-socket admin's allowed origins to empty and 403s
-  the `Host: localhost` klangkd sends, breaking `POST /load`. (4) The full
-  global block (`persist_config off` + the `servers { trusted_proxies ... }`
-  option + `trusted_proxies_strict`) is emitted only when the caddy binary
-  actually supports it — klangkd probes the binary at startup (`caddy adapt`
-  on a representative block) rather than trusting a version map. Ubuntu 24.04's
-  apt caddy (2.6.2) predates `persist_config` and `servers/trusted_proxies`
-  and would reject the whole config; on such older caddy klangkd falls back to
-  a minimal global block (admin + auto_https only — caddy autosaves harmlessly
-  and `{client_ip}` resolves the immediate peer, fine without an outer proxy).
-  klangkd now runs on both the devenv's current caddy and that older system
-  caddy.
-
 - **Default builds skip the soliplex remote plugin (CI unblock, #1691).**
   Every PR triggering `klangk:flutter-build` was failing during
   `flutter pub get`: the soliplex plugin (#1683) pulls `soliplex_client` /
@@ -1063,24 +906,6 @@ extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
   `colorama` are now unconditional typer runtime deps — `colorama` only on
   Windows). Changed to `typer>=0.12.0`; the deps `[all]` used to pull in are
   still installed transitively, so no functionality is lost.
-
-- **The browser-listener container-source deny no longer false-positives
-  behind a trusted proxy co-located on klangk's host** (#1546). The
-  `location /` deny (#1376) was an inline `deny <ip>; allow all;` list,
-  which nginx evaluates against `$remote_addr`. After #1560's realip
-  directives rewrite `$remote_addr` to the `X-Forwarded-For` client, a
-  trusted outer proxy running on the same host as klangk (whose forwarded
-  real client is a host interface IP, e.g. a `10.100.0.0/24` bridge) made
-  every proxied browser request land on a denied host IP → 403 for the whole
-  UI/API. The deny is now a `geo $realip_remote_addr $container_source { … }`
-  block + `if ($container_source) { return 403; }` on the catch-all, keyed on
-  the _immediate_ TCP peer (`$realip_remote_addr`, pre-realip) instead of the
-  rewritten real client. So: a container connecting directly via pasta NAT is
-  still denied (brute-force cap intact); a request through a trusted proxy is
-  let through (its peer is the proxy, not a container source) while
-  `X-Real-IP`/`X-Forwarded-For` still carry the real client to the backend.
-  An upstream proxy on the same host now works out of the box — no
-  `KLANGKD_CONTAINER_SUBNETS` escape hatch needed.
 
 ### Security
 
@@ -1134,18 +959,12 @@ extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
   password, LLM keys, JWT secret), but it is no longer a standing
   admin-minting credential.
 
-- **nginx now denies container source IPs by default on the catch-all
-  `location /`** (#1376). Previously the catch-all was open to container
-  source IPs (the host's own IP via pasta NAT), so safety relied on every
-  backend endpoint remembering its `Depends(auth)` — a single forgotten
-  dependency silently exposed that endpoint to a workspace container's API
-  brute-force sweep. nginx now denies the container source subnets on the
-  catch-all, so a container can reach only the three endpoints it is known to
-  need (`/llm-proxy/`, `/api/v1/browser-delegate`,
-  `/api/v1/workspaces/post-chat-message`); every other path is refused at
-  nginx with 403. Loopback (local browsers) and other IPs (remote browsers)
-  are unaffected. The three container endpoints keep their existing allowlist +
-  workspace-token `auth_request`.
+- **The proxy denies container source IPs by default on the catch-all**
+  (#1376). A container can reach only the three endpoints it needs
+  (`/llm-proxy/`, `/api/v1/browser-delegate`,
+  `/api/v1/workspaces/post-chat-message`); every other path is refused
+  with 403. Loopback (local browsers) and other IPs (remote browsers)
+  are unaffected.
 
 - **Removed unused `adm-zip` devDependency from the frontend e2e-test
   package (#2).** `adm-zip` and `@types/adm-zip` were declared in
