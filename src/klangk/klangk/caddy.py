@@ -39,26 +39,87 @@ Out of scope here (tracked in #1559): the ``caddy-l4`` layer-4 plugin
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import ctypes
+import ctypes.util
+import ipaddress
 import json
 import logging
-import contextlib
 import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 import httpx
 
-# Pure host-IP / loopback probes + fallback subnets shared by every proxy
-# engine (both auto-detect the pasta-NAT container source set the same way).
-from klangk.proxy_common import (
-    _FALLBACK_ACL_SUBNETS,
-    _FALLBACK_DENY_SUBNETS,
-    _is_loopback,
-    detect_host_ipv4s,
+# Pure host-IP / loopback probes + fallback subnets, folded into caddy (the
+# sole engine) from the former proxy_common.py (#2088). Both auto-detect the
+# pasta-NAT container source set the same way.
+_LOOPBACK_NETS = (
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
 )
+
+
+def _is_loopback(addr: str) -> bool:
+    """True for any address in 127.0.0.0/8 or ::1."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    return any(ip in net for net in _LOOPBACK_NETS)
+
+
+def detect_host_ipv4s() -> list[str]:
+    """Auto-detect this host's IPv4 addresses (the pasta-NAT container source set).
+
+    Podman rootless default (pasta) shares the host network via userspace NAT,
+    so container traffic to ``host.containers.internal`` arrives from the
+    host's own IPv4. ``ip -4 addr show`` lists them (including 127.0.0.1 from
+    ``lo`` — wanted for CONTAINER_ACL, filtered out of CONTAINER_DENY below).
+    Returns ``[]`` on failure (caller falls back to RFC1918 ranges).
+    """
+    try:
+        out = subprocess.check_output(
+            ["ip", "-4", "addr", "show"], text=True, stderr=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    addrs: list[str] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("inet "):
+            # "inet 192.168.1.5/24 ..."
+            token = line.split()[1]
+            ip = token.split("/")[0]
+            addrs.append(ip)
+    return addrs
+
+
+# Fallback subnets when auto-detection yields nothing:
+# 172.16/12 + 10/8 (common container ranges), explicitly NOT 192.168/16
+# (most common LAN range — allowing it would expose the LLM proxy to peers).
+_FALLBACK_ACL_SUBNETS = ["172.16.0.0/12", "10.0.0.0/8", "127.0.0.1"]
+_FALLBACK_DENY_SUBNETS = ["172.16.0.0/12", "10.0.0.0/8"]
+
+
+# Fork-time preexec for the Caddy child: new session (for killpg) +
+# PR_SET_PDEATHSIG (auto-SIGTERM if klangkd dies, #1533).
+_PR_SET_PDEATHSIG = 1
+_HAS_PDEATHSIG = sys.platform == "linux"
+if _HAS_PDEATHSIG:  # pragma: no cover  – linux-only
+    _libc = ctypes.CDLL(
+        ctypes.util.find_library("c") or "libc.so.6", use_errno=True
+    )
+
+
+def _proxy_preexec() -> None:  # pragma: no cover  – runs in forked child
+    os.setsid()
+    if _HAS_PDEATHSIG:
+        _libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
 
 
 logger = logging.getLogger(__name__)
@@ -623,11 +684,6 @@ class CaddyRenderer:
 # ---------------------------------------------------------------------------
 
 
-# The preexec body (new session for killpg + PR_SET_PDEATHSIG) is identical for
-# every proxy engine — import the shared impl rather than duplicate it.
-from klangk.proxy_common import _proxy_preexec as _caddy_preexec  # noqa: E402
-
-
 def _caddy_supports_full_global_block(bin_path: str) -> bool:
     """True if the caddy binary adapts klangkd's full global options block.
 
@@ -932,7 +988,7 @@ class CaddyWatchdog:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
-                preexec_fn=_caddy_preexec,
+                preexec_fn=_proxy_preexec,
             )
             stderr_task = asyncio.create_task(
                 self._relay_stderr(self._proc.stderr)
