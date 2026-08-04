@@ -5,9 +5,10 @@
   ...
 }:
 let
-  # klangkd binds a UDS and owns the proxy (nginx) as a child (#1396); the old
-  # two-process layout (uvicorn + scripts/nginx.sh) is collapsed into this
-  # single entry. Dev config lives in klangkd.yaml (gitignored);
+  # klangkd binds a UDS and owns the Caddy reverse proxy as a child
+  # (#1396, #1642); the old two-process layout (uvicorn + scripts/nginx.sh)
+  # is collapsed into this single entry. Dev config lives in klangkd.yaml
+  # (gitignored);
   # seeded from klangkd.yaml.devenv on first shell entry if missing.
   backendCmd = ''
     python3 -m klangk.launcher --config="$DEVENV_ROOT/klangkd.yaml"
@@ -52,8 +53,7 @@ in
       git # "error: Failed to find git" during devenv:git-hooks:install
       gzip
       gnutar
-      caddy # reverse-proxy engine behind KLANGKD_PROXY_ENGINE=caddy (#1559)
-      nginx
+      caddy # reverse-proxy engine (Caddy, sole engine in 2.X, #1559/#1642)
       podman
       ruff
       sqlite.bin
@@ -288,24 +288,6 @@ in
     cd $DEVENV_ROOT
     exec python -m pytest src/klangk/klangkd-tests/e2e-tests \
       -v --no-cov -n 2 --dist=loadscope "$@"
-  '';
-
-  # Systemd user-service nginx e2e (#1729): runs klangkd with the nginx
-  # engine under a real ``systemctl --user`` transient service and asserts
-  # the #1727 invariants — nginx stays up under the default
-  # StandardOutput=journal (no ``append:`` workaround) and routes access logs
-  # to the journal via ``syslog:server=unix:/dev/log``. The unit tests cover
-  # the renderer logic only (they monkeypatch stdout_is_reopenable); this is
-  # the end-to-end guard against the #1550 ENXIO crash-loop. It needs a real
-  # Linux host with a systemd user manager + ``/dev/log`` (the NixOS dev box,
-  # or a NixOS VM test) — it SKIPS on GitHub Actions runners (no PID-1
-  # systemd) and on macOS, so it is safe in the default e2e run but only
-  # actually exercises the path when run on such a host. Run it before each
-  # release.
-  scripts.test-systemd-nginx.exec = ''
-    cd $DEVENV_ROOT
-    exec python -m pytest src/klangk/klangkd-tests/e2e-tests/test_systemd_nginx_e2e.py \
-      -v --no-cov "$@"
   '';
 
   # Run the whole corpus as concurrently as is safe (#1393): the unit
