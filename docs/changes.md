@@ -64,11 +64,6 @@ operators or integrators to act when upgrading.
   `/usr/local/bin/process-compose` (arch-aware build, pinned to `v1.120.0`),
   so a managed set of processes can be run inside the container. The base
   image's `supervisor` (supervisord) is unaffected.
-- **Workspace tmux status bar shows the disconnect hint (#2006).** The
-  status bar now surfaces `Exit: Enter, then ~.` — the CLI's `~.` escape to
-  close a `klangk shell` session — so the escape is discoverable without
-  reading the docs.
-
 - **`chat` feature — workspace chat surface extracted into a compiled-in,
   opt-in feature (#1976).** The chat tab + clanker agent UI moved out of the
   host frontend into `features/chat/`, registered as a workspace tab via the
@@ -134,12 +129,9 @@ operators or integrators to act when upgrading.
   the rest of its life. Per-workspace overrides (creator may go larger
   _or_ smaller than the deploy default, no clamping) are tracked as a
   follow-up Phase 2.
-- **Tmux status bar in workspace shells (#1880).** Shells now display a
-  subtle status bar at the bottom showing the workspace name (left) and
-  current terminal name (right). The workspace name is set as a tmux
-  global user option (`@workspace_name`) on every terminal start, and is
-  also pushed live when a workspace is renamed, so open terminals update
-  without a reconnect.
+- **Tmux status bar in workspace shells (#1880).** Shells display a status
+  bar at the bottom showing the workspace name, current terminal name, and
+  the `~.` disconnect hint. The workspace name updates live on rename.
 
 - **Account self-service from the CLI (#1753).** A new
   `klangk account` group (`show`, `passwd`, `handle`, `email`) changes your
