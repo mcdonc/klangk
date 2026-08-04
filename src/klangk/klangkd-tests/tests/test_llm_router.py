@@ -304,9 +304,15 @@ class TestPassthrough:
         ml = [{"model_name": "*", "litellm_params": {}}]
         assert _is_passthrough(ml)
 
-    def test_is_passthrough_named_wildcard(self):
+    def test_not_passthrough_named_wildcard(self):
+        """Only model_name='*' triggers passthrough, not 'openai/*'."""
         ml = [{"model_name": "openai/*", "litellm_params": {}}]
-        assert _is_passthrough(ml)
+        assert not _is_passthrough(ml)
+
+    def test_not_passthrough_star_in_name(self):
+        """A name containing '*' but not exactly '*' is not passthrough."""
+        ml = [{"model_name": "my*model", "litellm_params": {}}]
+        assert not _is_passthrough(ml)
 
     def test_not_passthrough_no_wildcard(self):
         ml = [
@@ -384,25 +390,67 @@ class TestPassthrough:
             raise_for_status=lambda: None,
             json=lambda: {"choices": [{"message": {"content": "hello"}}]},
         )
-        with patch("klangk.llm_router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_resp
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+        router._http_client = mock_client
 
-            result = await router.acompletion(
-                model="any-model",
-                messages=[{"role": "user", "content": "hi"}],
-            )
-            assert result["choices"][0]["message"]["content"] == "hello"
-            mock_client.post.assert_called_once()
-            call_kwargs = mock_client.post.call_args
-            assert "any-model" in str(call_kwargs)
-            assert (
-                call_kwargs.kwargs["headers"]["Authorization"]
-                == "Bearer test-key"
-            )
+        result = await router.acompletion(
+            model="any-model",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        assert result["choices"][0]["message"]["content"] == "hello"
+        mock_client.post.assert_called_once()
+        call_kwargs = mock_client.post.call_args
+        assert "any-model" in str(call_kwargs)
+        assert (
+            call_kwargs.kwargs["headers"]["Authorization"] == "Bearer test-key"
+        )
+
+    async def test_passthrough_stream_delegates_to_httpx(self):
+        app = _app()
+        app.state.settings.llm_models = [
+            {
+                "model_name": "*",
+                "litellm_params": {
+                    "api_base": "http://fake:1234/v1",
+                    "api_key": "test-key",
+                },
+            }
+        ]
+        router = LLMRouter(app)
+        mock_resp = AsyncMock()
+        mock_resp.raise_for_status = lambda: None
+        mock_client = AsyncMock()
+        mock_client.build_request.return_value = "fake-request"
+        mock_client.send.return_value = mock_resp
+        router._http_client = mock_client
+
+        resp = await router.passthrough_completion_stream(
+            {"model": "test", "messages": [], "stream": True}
+        )
+        assert resp is mock_resp
+        mock_client.send.assert_called_once()
+
+    async def test_reconfigure_closes_old_client(self):
+        """Reconfiguring from passthrough to router closes the httpx client."""
+        import asyncio
+
+        app = _app()
+        app.state.settings.llm_models = [
+            {"model_name": "*", "litellm_params": {"api_base": "http://x:1"}}
+        ]
+        router = LLMRouter(app)
+        assert router.passthrough
+        old_client = AsyncMock()
+        router._http_client = old_client
+
+        new_app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router.reconfigure(new_app)
+        assert not router.passthrough
+        assert router._http_client is None
+        # Let the scheduled aclose task run.
+        await asyncio.sleep(0)
+        old_client.aclose.assert_called_once()
 
     async def test_list_upstream_models_passthrough(self):
         app = _app()
@@ -425,16 +473,13 @@ class TestPassthrough:
                 ]
             },
         )
-        with patch("klangk.llm_router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_resp
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_resp
+        router._http_client = mock_client
 
-            models = await router.list_upstream_models()
-            assert len(models) == 2
-            assert models[0]["id"] == "model-a"
+        models = await router.list_upstream_models()
+        assert len(models) == 2
+        assert models[0]["id"] == "model-a"
 
     async def test_list_upstream_models_passthrough_with_key(self):
         app = _app()
@@ -453,17 +498,14 @@ class TestPassthrough:
             raise_for_status=lambda: None,
             json=lambda: {"data": [{"id": "m1", "object": "model"}]},
         )
-        with patch("klangk.llm_router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get.return_value = mock_resp
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_resp
+        router._http_client = mock_client
 
-            models = await router.list_upstream_models()
-            assert len(models) == 1
-            headers = mock_client.get.call_args.kwargs.get("headers", {})
-            assert headers["Authorization"] == "Bearer secret"
+        models = await router.list_upstream_models()
+        assert len(models) == 1
+        headers = mock_client.get.call_args.kwargs.get("headers", {})
+        assert headers["Authorization"] == "Bearer secret"
 
     async def test_list_upstream_models_passthrough_error(self):
         app = _app()
@@ -476,15 +518,12 @@ class TestPassthrough:
             }
         ]
         router = LLMRouter(app)
-        with patch("klangk.llm_router.httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client.get.side_effect = httpx.ConnectError("refused")
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=False)
-            mock_client_cls.return_value = mock_client
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = httpx.ConnectError("refused")
+        router._http_client = mock_client
 
-            models = await router.list_upstream_models()
-            assert models == []
+        models = await router.list_upstream_models()
+        assert models == []
 
     async def test_list_upstream_models_router_mode(self):
         app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})

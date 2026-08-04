@@ -33,6 +33,7 @@ Public API:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -159,10 +160,14 @@ def _build_model_list(
 
 
 def _is_passthrough(model_list: list[dict[str, Any]]) -> bool:
-    """True when the config is a single wildcard entry (passthrough mode)."""
+    """True when the config is a single wildcard entry (passthrough mode).
+
+    Only ``model_name: "*"`` triggers passthrough — not a name that
+    happens to contain ``*`` (e.g. ``"my*model"``).
+    """
     if len(model_list) != 1:
         return False
-    return "*" in model_list[0].get("model_name", "")
+    return model_list[0].get("model_name", "") == "*"
 
 
 class LLMRouter:
@@ -183,6 +188,7 @@ class LLMRouter:
         self._passthrough_base: str | None = None
         self._passthrough_key: str = ""
         self._router: Router | None = None
+        self._http_client: httpx.AsyncClient | None = None
         self._configure_from_settings(app.state.settings)
 
     def _configure_from_settings(self, settings) -> None:
@@ -194,11 +200,22 @@ class LLMRouter:
 
         model_list = _build_model_list(models, settings.llm_api_key)
 
+        # Close any previous passthrough client before switching modes.
+        if self._http_client is not None:
+            try:
+                asyncio.get_event_loop().create_task(
+                    self._http_client.aclose()
+                )
+            except RuntimeError:  # pragma: no cover
+                pass
+            self._http_client = None
+
         if _is_passthrough(model_list):
             params = model_list[0].get("litellm_params", {})
             self._passthrough_base = params.get("api_base", "")
             self._passthrough_key = params.get("api_key", "")
             self._router = None
+            self._http_client = httpx.AsyncClient(timeout=300)
             logger.info(
                 "llm router: passthrough mode → %s",
                 self._passthrough_base,
@@ -249,16 +266,44 @@ class LLMRouter:
             kwargs["model"] = names[0]
         return await self._router.acompletion(**kwargs)
 
-    async def _passthrough_completion(self, **kwargs: Any) -> dict:
-        """Forward a completion request directly to the upstream."""
-        url = f"{self._passthrough_base}/chat/completions"
+    def _passthrough_headers(self) -> dict[str, str]:
+        """Build headers for passthrough requests."""
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._passthrough_key:
             headers["Authorization"] = f"Bearer {self._passthrough_key}"
-        async with httpx.AsyncClient(timeout=600) as client:
-            resp = await client.post(url, json=kwargs, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
+        return headers
+
+    async def _passthrough_completion(self, **kwargs: Any) -> dict:
+        """Forward a non-streaming completion request to the upstream."""
+        assert self._http_client is not None
+        url = f"{self._passthrough_base}/chat/completions"
+        resp = await self._http_client.post(
+            url, json=kwargs, headers=self._passthrough_headers()
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def passthrough_completion_stream(
+        self, body: dict[str, Any]
+    ) -> httpx.Response:
+        """Forward a streaming completion request; return the raw response.
+
+        The caller is responsible for streaming ``resp.aiter_lines()``
+        to the client (e.g. via ``StreamingResponse``).
+        """
+        assert self._http_client is not None
+        url = f"{self._passthrough_base}/chat/completions"
+        resp = await self._http_client.send(
+            self._http_client.build_request(
+                "POST",
+                url,
+                json=body,
+                headers=self._passthrough_headers(),
+            ),
+            stream=True,
+        )
+        resp.raise_for_status()
+        return resp
 
     async def list_upstream_models(self) -> list[dict[str, Any]]:
         """Query the upstream's /models endpoint (passthrough mode).
@@ -267,16 +312,14 @@ class LLMRouter:
         mode, returns the configured model names.
         """
         if self._passthrough_base is not None:
+            assert self._http_client is not None
             url = f"{self._passthrough_base}/models"
-            headers: dict[str, str] = {}
-            if self._passthrough_key:
-                headers["Authorization"] = f"Bearer {self._passthrough_key}"
+            headers = self._passthrough_headers()
             try:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.get(url, headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    return data.get("data", [])
+                resp = await self._http_client.get(url, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("data", [])
             except Exception:
                 logger.exception("Failed to query upstream models at %s", url)
                 return []
