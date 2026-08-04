@@ -103,16 +103,6 @@ operators or integrators to act when upgrading.
   and reverts it to the deploy default). Unknown setting names and
   malformed values are rejected at the API boundary (HTTP 400).
 
-- **`allowed_domains` now accepts IPv4 CIDR ranges (#1935).** A workspace
-  (or the deploy-wide `KLANGKD_NETFILTER_DEFAULT_DOMAINS`) may list an IP
-  subnet like `10.0.0.0/8`, optionally scoped to a port as
-  `10.0.0.0/8:443`, alongside the existing `host` / `host:port` specs.
-  A CIDR is installed as a single iptables `-d <ip>/<plen>` ACCEPT rule
-  with no DNS resolution, so it is the stable way to allow egress to an
-  entire private range (on-prem mirrors, VPC CIDRs, internal services
-  addressed by IP) without enumerating each host. IPv6 CIDRs remain
-  rejected (IPv6 is disabled inside filtered containers, #1936).
-
 - **Container resource limits (CPU / memory / PIDs) via deploy-wide
   env vars (#34).** Three new env vars cap every workspace container at
   `podman create` time, so a runaway workspace (fork bomb, memory leak,
@@ -151,22 +141,15 @@ operators or integrators to act when upgrading.
   that triggers the restart immediately (routed through the workspace page,
   which owns the in-flight indicator), rather than being informational only.
 
-- **Per-workspace network egress filtering via OCI hooks (#1365).**
-  Workspaces may now declare an `allowed_domains` allow-list (`host` or
-  `host:port` specs) to restrict outbound network to specific destinations.
-  Netfilter is armed by default: the backend injects an OCI `createContainer`
-  hook (materialized into `<state_dir>/oci-hooks` at startup) that installs a
-  default-deny iptables ruleset in the workspace's network namespace
-  (allowing loopback, DNS, the backend gateway, and the listed destinations)
-  before the container process starts — no proxy, no TLS interception, no
-  microVM. The hooks dir defaults to `<state_dir>/oci-hooks`; override
-  `KLANGKD_NETFILTER_HOOKS_DIR` for a split runtime, or disable entirely with
-  `KLANGKD_NETFILTER_ENABLED=false` (#1774). Workspaces without
-  `allowed_domains` keep unrestricted networking exactly as before; if a
-  workspace declares a list but netfilter isn't armed, it starts unrestricted
-  with a loud warning surfaced to the user who set it (fail-open, #1769).
-  Configurable via the workspace Settings panel or the `allowed_domains`
-  field on the workspace create/update API. See
+- **Per-workspace network egress filtering (#1365).** Workspaces can
+  declare an `allowed_domains` allow-list (`host`, `host:port`, or IPv4
+  CIDR specs) to restrict outbound network to specific destinations. An
+  OCI hook installs a default-deny iptables ruleset in the container's
+  network namespace before the process starts — no proxy, no TLS
+  interception. IPv6 is disabled inside filtered containers. Deploy-wide
+  defaults via `KLANGKD_NETFILTER_DEFAULT_DOMAINS`; disable entirely with
+  `KLANGKD_NETFILTER_ENABLED=false`. Configurable via the workspace
+  Settings panel or the `allowed_domains` API field. See
   [Egress Filtering](https://klangk.dev/features/egress-filtering).
 
 - **The `features_config:` block now accepts the stripped, lowercased key form
@@ -525,16 +508,6 @@ invitations send` stay email-only (a deliverable address is required);
   `$KLANGKD_CONFIG_DIR/klangkd.yaml` on first run (#1645). `devenv.nix` still
   seeds `klangkd.yaml` from `klangkd.yaml.devenv` on first shell entry.
   Integrators that referenced `klangkd.yaml.example` by name must update.
-
-- **A malformed `KLANGKD_NETFILTER_DEFAULT_DOMAINS` now refuses to start
-  (#1939).** A bad `host[:port]` spec or a non-list/non-string value used
-  to be logged at WARNING and silently ignored — the field fell back to
-  `None` and workspaces ran **unrestricted** with no operator-visible
-  failure (the warn-and-fallback posture from #1772). It now aborts
-  construction: the deploy refuses to boot until the value is fixed. A
-  SIGHUP reload with a bad value is denied and keeps the prior config
-  (the old config stays running; the operator sees the deny reason in the
-  log). `None` / empty and valid values are unchanged.
 
 - **`forward-agent` is on by default in generated `klangk.yaml` (#1923,
   #2000).** A freshly created config — written eagerly on any CLI invocation
@@ -1164,23 +1137,6 @@ extra 'all'`** (#1679). The declaration was `typer[all]>=0.12.0`, but the
   `KLANGKD_CONTAINER_SUBNETS` escape hatch needed.
 
 ### Security
-
-- **Filtered workspace containers now have IPv6 disabled, closing an
-  egress-filter bypass (#1936).** The netfilter hook previously installed
-  only `iptables` (IPv4) rules; `ip6tables`'s `OUTPUT` policy stayed at
-  its default `ACCEPT`, so any IPv6 egress bypassed the allow-list
-  whenever a container had IPv6 connectivity (and nearly every common
-  host publishes a AAAA record). The hook now sets
-  `net.ipv6.conf.all.disable_ipv6=1` (turns IPv6 off in the container
-  network namespace) **and** `ip6tables -P OUTPUT DROP` (a routing-level
-  default-deny that holds even if the sysctl write fails), and resolves
-  `allowed_domains` to IPv4 only (AAAA records returned by DNS are
-  ignored). **Breaking:** the `[ipv6]:port` literal grammar (e.g.
-  `[::1]`, `[2001:db8::1]:443`) is removed from both the server
-  (`parse_allowed_domains`) and the CLI/TUI (`validate_allowed_domain_spec`)
-  validators — such entries are now rejected; remove them from
-  `allowed_domains` / `KLANGKD_NETFILTER_DEFAULT_DOMAINS` (an IPv6
-  destination is no longer reachable from a filtered container anyway).
 
 - **`git-credential-klangk`: redact secrets from debug output (#1938).**
   When `GIT_CREDENTIAL_KLANGK_DEBUG` is set, the helper previously logged
