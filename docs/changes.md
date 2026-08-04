@@ -237,21 +237,6 @@ klangk==<tag>` now yields a working `klangkd` with the UI served from the
   trusted-publisher config on the `klangk` PyPI project bound to this repo /
   workflow / environment.
 
-- **Build-pipeline integration tests for the plugin build path (#1666).**
-  `scripts/tests/test_build_pipeline.py` runs the real
-  `update_plugins.py` + `import_dart_plugins.py` against the checked-in
-  `plugins.yaml` and real `plugins/` trees, then asserts on the outputs:
-  every declared plugin materializes, the generated Dart aggregator imports
-  the expected class names, `features.json` satisfies the runtime's
-  manifest contract (shape, scopes, `defaults` / `container_env_keys`
-  invariants), and the 7-on-disk / 4-Dart asymmetry is locked. The suite
-  runs in `test-backend` CI (broadened path-filter to include `scripts/`,
-  `plugins/`, `plugins.yaml`). A frontend e2e spec
-  (`src/frontend/e2e-tests/e2e/features.spec.ts`) also asserts the built
-  `features.json` is served at `/features.json` and `/api/v1/config`
-  surfaces the frontend-scope keys — proving the build → serve → API chain
-  end-to-end against a real booted `klangkd`.
-
 - **Feature manifest (`features.json`) + per-deploy activation
   (`KLANGKD_FEATURES_ENABLE`) (#1655).** The build emits a single
   `features.json` into the frontend bundle directory (next to `index.html`)
