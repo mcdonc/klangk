@@ -1007,14 +1007,6 @@ set-password <email>` (set a known password for the default user — whose
     `KLANGKD_EGRESS_PORT=8995`, and publishes both ports (was
     `KLANGKD_NGINX_PORT` + one published port).
 
-- **Direct TCP to uvicorn is gone.** uvicorn now binds only a UNIX socket
-  (`<state_dir>/klangk.sock`); nginx proxies to it. Point external proxies at
-  `KLANGKD_NGINX_PORT` (default 8995), not the old port 8997 (#1400).
-- **Default is now headless.** Bare `klangkd` (no `KLANGKD_LISTEN` set)
-  defaults to UDS + `none` auth — headless, CLI-only. Set
-  `KLANGKD_LISTEN=127.0.0.1` for the browser UI (#1400).
-- **`KLANGKD_PORT` is no longer used by klangkd.** uvicorn always binds a UDS;
-  the setting is retained only for bare-uvicorn test harnesses (#1400).
 - **Devenv default changed to browser-first.** `klangkd.yaml.example` now
   defaults to `listen: 127.0.0.1` + `auth_modes: password`. Delete your local
   `klangkd.yaml` and re-enter `devenv shell` to regenerate it (#1400).
@@ -1039,33 +1031,12 @@ set-password <email>` (set a known password for the default user — whose
   explicitly before redeploying** — otherwise your server will boot in `none`
   mode (no-login single-user, loopback-bound; safe by construction, but not
   your intended multi-user posture).
-- **uvicorn now binds `127.0.0.1` by default** instead of `0.0.0.0`
-  (`KLANGKD_LISTEN`, new). Workspace containers could previously reach the
-  backend directly via `host.containers.internal:$KLANGKD_PORT`, bypassing nginx
-  and therefore every per-location nginx ACL. nginx remains bound to `0.0.0.0`
-  (container-reachable, so hosted apps and remote browsers still work) and
-  proxies to uvicorn on the loopback address. Operators who reach the backend
-  directly —
-  bypassing nginx — must set `KLANGKD_LISTEN=0.0.0.0` to restore the old
-  behavior. Applies to both the devenv dev server and the host container.
-  (#1375)
 - **`klangk invite` moved under the `admin` group** (#1374). The top-level
   `klangk invite <email>` command is gone, with no backward-compat alias.
   Use `klangk admin invitations send <email>` (and list with
   `klangk admin invitations ls`). Site-wide administration — users and
   invitations — now has a dedicated `admin` CLI surface matching the
   `terminal`/`volumes` noun-subgroup convention.
-- **`klangkd` binds a UDS; `scripts/nginx.sh` retired** (#1396). uvicorn now
-  binds a UNIX domain socket (`$KLANGKD_STATE_DIR/klangk.sock`) instead of a
-  TCP port when launched via `klangkd` (dev and host container). nginx config
-  is rendered by Python (`klangk_backend.nginx`) and nginx is owned as a
-  child process of `klangkd`'s lifespan. uvicorn has **no TCP listener in any
-  mode** — it is reachable only via the socket, which only same-uid processes
-  can open. `scripts/nginx.sh`, the `klangk-resolve-value` console script,
-  and the `/home/klangk/bin/nginx` shim are removed. The host container no
-  longer publishes `KLANGKD_PORT` (8997) — only `KLANGKD_NGINX_PORT` (8995).
-  `KLANGKD_PORT`/`KLANGKD_LISTEN` are retained for tests that launch uvicorn
-  over TCP directly but are unused under `klangkd`.
 
 ### Fixed
 
