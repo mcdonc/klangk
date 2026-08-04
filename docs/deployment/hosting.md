@@ -34,6 +34,9 @@ outer nginx (443)
 - `KLANGKD_PROXY_PORT`: **Deprecated** alias for `KLANGKD_EGRESS_PORT`; rename it. (Renamed from `KLANGKD_NGINX_PORT`; the old name is no longer recognized.)
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
 
+For TLS termination or an outer reverse proxy, see
+[Behind a Reverse Proxy](behind-a-proxy.md).
+
 ## Tailscale and LLM Proxy
 
 If the LLM provider is on a Tailscale host (e.g., a self-hosted Ollama on another machine in the tailnet), the `api-base` in `KLANGKD_LLM_MODELS` **must use the Tailscale IP address**, not a hostname. The in-process litellm Router resolves DNS through the host's resolver stack; on a Tailscale host, bare hostnames and MagicDNS FQDNs may not resolve correctly from the backend process.
