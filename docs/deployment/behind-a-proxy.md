@@ -22,23 +22,26 @@ Caddy then forwards them to the backend over a Unix domain socket.
 
 ## Required settings
 
-Set these environment variables (or their equivalents in `klangkd.yaml`)
-on the klangk host.
+Add these to `klangkd.yaml` on the klangk host. Each setting also has
+an environment variable equivalent (shown in parentheses). Env vars
+override config-file values.
 
 ### Bind address
 
 klangk's browser listener defaults to `127.0.0.1`. If the outer proxy
 runs on a different host, change this to all interfaces:
 
-```bash
-KLANGKD_LISTEN=0.0.0.0
+```yaml
+listen: "0.0.0.0"
 ```
+
+(`KLANGKD_LISTEN`)
 
 This is safe. The proxy's workspace-token gate and container-source IP
 ACL protect all endpoints.
 
-If you want to restrict the bind to a specific interface, use that
-interface's IP address instead.
+To restrict the bind to a specific interface, use that interface's IP
+address instead.
 
 ### Trusted proxy CIDRs
 
@@ -48,9 +51,11 @@ default trust list is `127.0.0.1,::1` (loopback only).
 
 Add the outer proxy's IP or subnet:
 
-```bash
-KLANGKD_TRUSTED_PROXY_CIDRS=127.0.0.1,::1,10.0.0.0/24
+```yaml
+trusted-proxy-cidrs: "127.0.0.1,::1,10.0.0.0/24"
 ```
+
+(`KLANGKD_TRUSTED_PROXY_CIDRS`)
 
 Use a comma-separated list. Each entry is an IP address or a CIDR range.
 Only the immediate TCP peer is checked against this list.
@@ -63,28 +68,44 @@ If you do not set this correctly, three things break:
 
 ### Browser port
 
-Set `KLANGKD_PORT` to the port klangk's Caddy listens on:
+Set the port that klangk's Caddy listens on:
 
-```bash
-KLANGKD_PORT=8997
+```yaml
+port: 8997
 ```
+
+(`KLANGKD_PORT`)
 
 The outer proxy forwards traffic to this port.
 
 ### Public URL overrides (optional)
 
 klangk derives the public hostname, protocol, and base path from the
-forwarded headers that the outer proxy sends. If you prefer to pin these
-values explicitly, use:
+forwarded headers that the outer proxy sends. To pin these values
+explicitly:
 
-```bash
-KLANGKD_HOSTING_HOSTNAME=klangk.example.com
-KLANGKD_HOSTING_PROTO=https
-KLANGKD_HOSTING_BASE_PATH=/klangk
+```yaml
+hosting-hostname: "klangk.example.com"
+hosting-proto: "https"
+hosting-base-path: "/klangk"
 ```
+
+(`KLANGKD_HOSTING_HOSTNAME`, `KLANGKD_HOSTING_PROTO`,
+`KLANGKD_HOSTING_BASE_PATH`)
 
 These override the forwarded-header values. Set them when the outer
 proxy does not send `X-Forwarded-Host` or `X-Forwarded-Proto`.
+
+### Complete klangkd.yaml example
+
+A minimal config for a klangk instance behind an outer TLS proxy:
+
+```yaml
+listen: "0.0.0.0"
+port: 8997
+auth-modes: password
+trusted-proxy-cidrs: "127.0.0.1,::1,10.0.0.0/24"
+```
 
 ## Outer proxy configuration
 
@@ -183,11 +204,13 @@ to start unless you set `KLANGKD_ALLOW_INSECURE_NO_AUTH=1`. Do not use
 
 ## Reject all forwarded headers
 
-To ignore all forwarded headers unconditionally, set:
+To ignore all forwarded headers unconditionally:
 
-```bash
-KLANGKD_REJECT_PROXY_HEADERS=1
+```yaml
+reject-proxy-headers: true
 ```
+
+(`KLANGKD_REJECT_PROXY_HEADERS`)
 
 This disables the trusted-proxy logic entirely. klangk treats every
 request as if it came directly from the immediate TCP peer. Use this
