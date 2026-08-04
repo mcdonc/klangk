@@ -198,11 +198,11 @@ class LLMRouter:
     async def acompletion(self, **kwargs: Any) -> Any:
         """Proxy to ``litellm.Router.acompletion``.
 
-        When ``model`` is ``"default"``, empty, missing, or does not
-        match any configured ``model_name``, the first configured model
-        is used.  This preserves the pre-litellm contract where the
-        proxy was a dumb pipe and the model field was passed through
-        verbatim to a single upstream.
+        When ``model`` is empty, missing, or does not match any
+        configured ``model_name``, the first configured model is used.
+        This preserves the pre-litellm contract where the proxy was a
+        dumb pipe and the model field was passed through verbatim to a
+        single upstream.
         """
         if self._router is None:
             raise RuntimeError("LLM router not configured")
@@ -210,7 +210,7 @@ class LLMRouter:
         names = self.get_model_names()
         if not names:
             raise RuntimeError("LLM router has no models configured")
-        if not model or model == "default" or model not in names:
+        if not model or model not in names:
             kwargs["model"] = names[0]
         return await self._router.acompletion(**kwargs)
 

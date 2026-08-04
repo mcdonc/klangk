@@ -139,8 +139,9 @@ openclaw onboard --non-interactive \
 
 # Write openclaw config on top of onboard's output.
 # We preserve gateway.auth (written by onboard) and merge our settings.
-# KLANGKWS_LLM_MODEL may be empty (#2070); fall back to "default".
-_model="${KLANGKWS_LLM_MODEL:-default}"
+# KLANGKWS_LLM_MODEL may be empty (#2070); the Router falls back to
+# the first configured model for unrecognized names.
+_model="${KLANGKWS_LLM_MODEL:-unset}"
 python3 -c "
 import json, os
 cfg_path = '$INSTALL_DIR/.openclaw/openclaw.json'
