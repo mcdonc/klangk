@@ -382,6 +382,32 @@ class TestRunDoctor:
         assert "fuse-overlayfs" not in names
         assert "slirp4netns" not in names
 
+    def test_missing_ip_is_warning(self):
+        """A missing ip command is a warning — container subnet detection
+        falls back to RFC1918 ranges (#2089)."""
+        original_which = shutil.which
+
+        def which_hiding_ip(name):
+            if name == "ip":
+                return None
+            return original_which(name)
+
+        with (
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "klangk.doctor.shutil.which",
+                side_effect=which_hiding_ip,
+            ),
+        ):
+            report = run_doctor()
+
+        results = [r for r in report.results if r.name == "ip"]
+        assert len(results) == 1
+        r = results[0]
+        assert not r.ok
+        assert r.is_warning
+        assert "RFC1918" in r.message
+
     def test_missing_newuidmap_is_warning(self):
         """A missing newuidmap is a warning, not an error — the end-to-end
         rootless podman check is the definitive gate."""
