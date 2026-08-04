@@ -504,18 +504,6 @@ browser-fetch, celebrate, git-credential` (#1700).** `DEFAULT_FEATURES`
     `KLANGKD_STATE_DIR` explicitly and are unaffected).
     CI doesn't set either env var and runs hermetically, so it's unaffected.
 
-- **The pytest toolchain is now an optional `test` extra, not a runtime
-  dependency (#1673).** `src/klangk/pyproject.toml` moves `pytest`,
-  `pytest-asyncio`, `pytest-cov`, `pytest-xdist`, and `pytest-timeout` out
-  of `dependencies` into `[project.optional-dependencies] test`. A plain
-  `pip install klangk` (or `pip install klangk==<tag>` from PyPI) no longer
-  pulls in pytest + its transitive deps (pluggy, iniconfig, packaging,
-  coverage, execnet — ~a dozen packages / several MB with no runtime role).
-  Dev and CI installs opt in explicitly: `pip install klangk[test]`, or
-  `uv sync --extra test` (the path the devenv shell and `backend-tests.yml`
-  now use). **Integrator action:** if you install `klangk` into an env where
-  you also run the test suite, add the `[test]` extra.
-
 - **`KLANGKD_STATE_DIR` now defaults to `$XDG_STATE_HOME/klangk` (#1644).**
   The runtime-state directory (UDS socket, rendered proxy config, pid file,
   DB) defaults to `~/.local/state/klangk` when no explicit value is supplied,
