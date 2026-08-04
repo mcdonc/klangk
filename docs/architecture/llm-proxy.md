@@ -2,7 +2,7 @@
 
 Klangk runs a reverse proxy (caddy or nginx) in front of the FastAPI backend. The proxy serves the Flutter web UI, proxies API and WebSocket traffic to uvicorn, proxies hosted app URLs directly to container ports, and routes the `/llm-proxy/` path described below.
 
-Pi containers access LLMs via the **LLM proxy**, which routes `/llm-proxy/` requests to the klangkd backend. The backend uses an in-process `litellm.Router` to dispatch requests to the configured providers. This is required because:
+Pi containers access LLMs via the **LLM proxy**, which routes `/llm-proxy/` requests to the klangkd backend. The backend dispatches requests to the configured providers either via an in-process `litellm.Router` (multi-provider mode) or by forwarding directly to a single upstream (passthrough mode). This is required because:
 
 1. **Pi is inside a container, LLMs are on the host or remote**: Pi containers can't reach `localhost:11434` (self-hosted Ollama) directly. They use `host.containers.internal` to reach the host's reverse proxy, which forwards to the backend.
 2. **API key security**: API keys live only in the backend process memory (configured via `KLANGKD_LLM_MODELS`). The container's `models.json` contains only the proxy URL and a workspace JWT — no real API keys.
@@ -15,14 +15,64 @@ Pi container
   → host.containers.internal:8995/llm-proxy/chat/completions
     → reverse proxy (caddy/nginx) — workspace JWT validation + container ACL
       → klangkd FastAPI backend
-        → litellm.Router (in-process)
-          → routes by "model" field in request body:
-            → openai/gpt-4o    → https://api.openai.com/v1
-            → anthropic/...    → https://api.anthropic.com/v1
-            → ollama/llama3    → http://gpu:11434
+        → passthrough (single provider) or litellm.Router (multi-provider)
+          → upstream LLM provider(s)
 ```
 
-The reverse proxy's `/llm-proxy/` block validates the workspace JWT via `auth_request` (nginx) or `forward_auth` (caddy) and enforces the container-source IP ACL. It then forwards the request to the klangkd backend, which dispatches it via the `litellm.Router`.
+The reverse proxy's `/llm-proxy/` block validates the workspace JWT via `auth_request` (nginx) or `forward_auth` (caddy) and enforces the container-source IP ACL. It then forwards the request to the klangkd backend.
+
+## Operating modes
+
+### Passthrough mode (single provider)
+
+When `llm-models` has exactly one entry with a wildcard `model_name` (containing `*`), the Router bypasses litellm and forwards requests directly to the upstream. This is the simplest setup and preserves the old single-provider experience:
+
+- `GET /llm-proxy/models` queries the upstream's `/models` endpoint, so all models the upstream supports are automatically discovered by Pi.
+- `POST /llm-proxy/chat/completions` forwards the request body verbatim — the `model` field reaches the upstream unchanged.
+
+```yaml
+# Single provider — all its models are automatically available
+llm-models:
+  - model_name: "*"
+    params:
+      model: openai/*
+      api-base: http://bizon:11430
+      api-key: dummy
+```
+
+```bash
+# Equivalent env var
+KLANGKD_LLM_MODELS="openai/*:http://bizon:11430:dummy"
+```
+
+This is the right choice when you have a single LLM endpoint (Ollama, vLLM, OpenAI, etc.) and want all its models available without listing them individually.
+
+### Router mode (multiple providers)
+
+When `llm-models` has multiple entries or entries without wildcards, the in-process `litellm.Router` handles request routing by matching the `model` field in each request to a configured `model_name`:
+
+```yaml
+# Multiple providers — litellm routes by model name
+llm-models:
+  - model_name: gpt-4
+    params:
+      model: openai/gpt-4o
+      api-key: "cmd:pass show openai/api-key"
+  - model_name: claude
+    params:
+      model: anthropic/claude-sonnet-4
+      api-key: "file:/run/secrets/anthropic-key"
+  - model_name: local-llama
+    params:
+      model: ollama/llama3
+      api-base: "http://gpu:11434"
+```
+
+In this mode:
+
+- `GET /llm-proxy/models` returns the configured `model_name` values.
+- `POST /llm-proxy/chat/completions` routes by the `model` field in the request body to the matching provider.
+- If `model` is empty, missing, or doesn't match any configured name, the first model is used as a fallback (preserving backwards compatibility with the old proxy).
 
 ## Configuration
 
@@ -82,7 +132,7 @@ llm-models:
 
 ## Model discovery
 
-Pi's `llm-proxy-models.ts` extension calls `GET /llm-proxy/models` and discovers all configured models. The response matches the OpenAI `/v1/models` shape. Users pick any discovered model from Pi's model selector.
+Pi's `llm-proxy-models.ts` extension calls `GET /llm-proxy/models` and discovers available models. The response matches the OpenAI `/v1/models` shape. In passthrough mode, models are discovered from the upstream; in router mode, the configured `model_name` values are returned.
 
 ## Provider defaults
 
@@ -90,4 +140,4 @@ When `api_base` is empty, the following providers use their well-known API base 
 
 ## SIGHUP reconfiguration
 
-The `LLMRouter` is a subsystem that participates in SIGHUP-triggered reconfiguration. When `klangkd.yaml` changes and a SIGHUP is sent, the router's model list is replaced in-place — no process restart required.
+The `LLMRouter` is a subsystem that participates in SIGHUP-triggered reconfiguration. When `klangkd.yaml` changes and a SIGHUP is sent, the router's model list is replaced in-place — no process restart required. The mode (passthrough vs. router) is re-evaluated on each reconfigure.

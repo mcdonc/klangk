@@ -593,11 +593,13 @@ invitations send` stay email-only (a deliverable address is required);
 ### Changed
 
 - **Replace LiteLLM sidecar container with in-process litellm Router (#2070).**
-  LLM routing is now handled in-process by `litellm.Router` instead of a
-  separate podman container. Configure models via `KLANGKD_LLM_MODELS` (env)
-  or `llm-models` (klangkd.yaml) using colon-delimited strings or LiteLLM-native
-  dicts. The proxy's `/llm-proxy/` block forwards to the backend; no external
-  URL rewriting or API key injection. Retired settings: `KLANGKD_LLM_BASE_URL`,
+  LLM routing is now handled in-process instead of via a separate podman
+  container. Configure models via `KLANGKD_LLM_MODELS` (env) or `llm-models`
+  (klangkd.yaml). Two modes: **passthrough** (single wildcard entry like
+  `model_name: '*'`) forwards requests directly to the upstream and discovers
+  its models dynamically — preserving the old single-provider experience;
+  **router** (multiple entries) uses litellm.Router for model-based routing
+  across providers. Retired settings: `KLANGKD_LLM_BASE_URL`,
   `KLANGKD_LLM_MODEL`, `KLANGKD_LLM_AGGREGATOR_MODELS`,
   `KLANGKD_LLM_AGGREGATOR_MASTER_KEY`, `KLANGKD_LLM_AGGREGATOR_PORT`,
   `KLANGKD_LLM_AGGREGATOR_IMAGE`. `KLANGKD_LLM_API_KEY` is kept as the
