@@ -149,8 +149,6 @@ def _start_server(data_dir, extra_env=None):
     for _k in (
         "KLANGKD_PODMAN_BIN",
         "KLANGKD_LLM_API_KEY",
-        "KLANGKD_LLM_BASE_URL",
-        "KLANGKD_LLM_MODEL",
     ):
         _v = os.environ.get(_k)
         if _v is not None:
