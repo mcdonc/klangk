@@ -238,6 +238,64 @@ class TestLLMRouterCompletion:
                 messages=[{"role": "user", "content": "hi"}],
             )
 
+    async def test_acompletion_default_model(self):
+        """model="default" routes to the first configured model."""
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        mock_response = {"choices": [{"message": {"content": "hello"}}]}
+        with patch.object(
+            router._router, "acompletion", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = mock_response
+            await router.acompletion(
+                model="default",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            assert mock.call_args.kwargs["model"] == "gpt-4o"
+
+    async def test_acompletion_empty_model(self):
+        """Empty model string routes to the first configured model."""
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        mock_response = {"choices": [{"message": {"content": "hello"}}]}
+        with patch.object(
+            router._router, "acompletion", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = mock_response
+            await router.acompletion(
+                model="",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            assert mock.call_args.kwargs["model"] == "gpt-4o"
+
+    async def test_acompletion_default_raises_when_no_models(self):
+        """model="default" with an empty model list raises."""
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        # Force the router to have no models.
+        router._router.set_model_list([])
+        with __import__("pytest").raises(
+            RuntimeError, match="no models configured"
+        ):
+            await router.acompletion(
+                model="default",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+
+    async def test_acompletion_missing_model(self):
+        """No model kwarg routes to the first configured model."""
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        mock_response = {"choices": [{"message": {"content": "hello"}}]}
+        with patch.object(
+            router._router, "acompletion", new_callable=AsyncMock
+        ) as mock:
+            mock.return_value = mock_response
+            await router.acompletion(
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            assert mock.call_args.kwargs["model"] == "gpt-4o"
+
 
 class TestParseModelEntry:
     def test_full_entry(self):

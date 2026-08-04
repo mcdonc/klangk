@@ -196,9 +196,19 @@ class LLMRouter:
             self._router = None
 
     async def acompletion(self, **kwargs: Any) -> Any:
-        """Proxy to ``litellm.Router.acompletion``."""
+        """Proxy to ``litellm.Router.acompletion``.
+
+        When ``model`` is ``"default"``, empty, or absent, the first
+        configured model is used automatically.
+        """
         if self._router is None:
             raise RuntimeError("LLM router not configured")
+        model = kwargs.get("model", "")
+        if not model or model == "default":
+            names = self.get_model_names()
+            if not names:
+                raise RuntimeError("LLM router has no models configured")
+            kwargs["model"] = names[0]
         return await self._router.acompletion(**kwargs)
 
     def get_model_names(self) -> list[str]:
