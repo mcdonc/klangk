@@ -373,6 +373,16 @@ invitations send` stay email-only (a deliverable address is required);
   `auth_request` workspace-token gate (→ 401 without a valid JWT); pin to a
   specific host IP to tighten further (#1542).
 
+- **LLM proxy with multi-provider routing (#1396, #2046, #2070).**
+  Workspace containers access LLMs via `/llm-proxy/`, backed by an in-process
+  litellm Router that routes requests to one or more providers by model name.
+  Single-provider setups use passthrough mode (`model_name: '*'`) for automatic
+  model discovery; multi-provider setups list models explicitly with per-model
+  credentials. Configure via `KLANGKD_LLM_MODELS` (env) or `llm-models` in
+  `klangkd.yaml`. `KLANGKD_LLM_API_KEY` is the default key for models that
+  don't specify their own. See
+  [LLM Proxy](docs/architecture/llm-proxy.md).
+
 - **`KLANGKD_EGRESS_PORT`** — a dedicated container-egress port nginx listens
   on for container→backend traffic (`/llm-proxy`, `/api/v1/browser-delegate`,
   `/api/v1/workspaces/post-chat-message`). Default `8995`. Served in both
@@ -435,19 +445,6 @@ invitations send` stay email-only (a deliverable address is required);
   set (#1558).
 
 ### Changed
-
-- **Replace LiteLLM sidecar container with in-process litellm Router (#2070).**
-  LLM routing is now handled in-process instead of via a separate podman
-  container. Configure models via `KLANGKD_LLM_MODELS` (env) or `llm-models`
-  (klangkd.yaml). Two modes: **passthrough** (single wildcard entry like
-  `model_name: '*'`) forwards requests directly to the upstream and discovers
-  its models dynamically — preserving the old single-provider experience;
-  **router** (multiple entries) uses litellm.Router for model-based routing
-  across providers. Retired settings: `KLANGKD_LLM_BASE_URL`,
-  `KLANGKD_LLM_MODEL`, `KLANGKD_LLM_AGGREGATOR_MODELS`,
-  `KLANGKD_LLM_AGGREGATOR_MASTER_KEY`, `KLANGKD_LLM_AGGREGATOR_PORT`,
-  `KLANGKD_LLM_AGGREGATOR_IMAGE`. `KLANGKD_LLM_API_KEY` is kept as the
-  default key for models that don't specify their own.
 
 - **Bumped `@earendil-works/pi-coding-agent` in the workspace image from
   `0.79.9` to `0.83.0` (#2049).** The in-container coding agent is now the
@@ -963,19 +960,6 @@ set-password <email>` (set a known password for the default user — whose
 
 ### Fixed
 
-- **LiteLLM aggregator sidecar no longer flaps on startup (#2062).**
-  Three defects prevented the sidecar from ever serving: (1) the watchdog
-  passed `DATABASE_URL=` (empty), which LiteLLM treats as an invalid scheme
-  and exits on — now omitted entirely (config-only mode needs no DB);
-  (2) the watchdog never passed `--config`, so the mounted `config.yaml`
-  (the provider/model list) was never loaded — the container command now
-  passes `--config /app/config.yaml` (`Podman.create_container` gained a
-  `command` override for this); (3) the default host port changed from
-  `4000` to `8996`. The sidecar runs no-auth by default (protected by its
-  `127.0.0.1` bind + the proxy's IP filtering); `KLANGKD_LLM_AGGREGATOR_MASTER_KEY`
-  is optional and works DB-less — when set, set `KLANGKD_LLM_API_KEY` to the
-  same value so the proxy authenticates.
-
 - **Duplicate `klangkd` launch no longer spams the running instance's log
   with ERROR "Another klangk instance is already running" lines (#2021).**
   The _losing_ (second) process still reports why it exits, but now
@@ -1055,23 +1039,6 @@ unix//<sock> }`) via `--config`; the `admin` global option has been honored
   and `{client_ip}` resolves the immediate peer, fine without an outer proxy).
   klangkd now runs on both the devenv's current caddy and that older system
   caddy.
-
-- **The nginx proxy engine no longer returns 500 for `/llm-proxy/*`
-  requests (or the other container-egress POST endpoints) with a body
-  larger than the in-memory buffer (#1682).** With the default
-  `proxy_request_buffering on`, nginx spills an oversize request body to
-  `client_body_temp_path` — a directory that, under the keep-id user
-  namespace, is owned by a different uid than the nginx worker, so any
-  spill raised EACCES → 500. The container-egress locations
-  (`/llm-proxy/`, `/api/v1/browser-delegate`,
-  `/api/v1/workspaces/post-chat-message`) now set
-  `proxy_request_buffering off`, streaming the request body straight to
-  the upstream (sidestepping the temp dir entirely — matching caddy's
-  `reverse_proxy`, which is why only nginx was affected). The LLM
-  block's `resolver` now also sets `ipv6=off`, which changes upstream
-  resolution for `/llm-proxy/` to IPv4-only (AAAA records suppressed) so
-  hosts without IPv6 egress stop logging `Network is unreachable` per
-  request; IPv6-only LLM upstreams would need a future setting.
 
 - **Default builds skip the soliplex remote plugin (CI unblock, #1691).**
   Every PR triggering `klangk:flutter-build` was failing during
