@@ -22,7 +22,6 @@ from . import (
     emailsvc,
     files,
     model,
-    proxy as proxy_mod,
     caddy as caddy_mod,
     oidc,
     features,
@@ -63,10 +62,6 @@ _NON_RELOADABLE_SETTINGS: tuple[tuple[str, str], ...] = (
     ("listen", "the HTTP listener is already bound"),
     ("data_dir", "the DB engine is already open"),
     ("state_dir", "instance state is already on disk"),
-    # The proxy engine is selected once at process start (build_app picks
-    # ProxyWatchdog vs CaddyWatchdog); a SIGHUP can't swap the child binary
-    # or the render/delivery path in place (#1559).
-    ("proxy_engine", "the proxy child process is already spawned"),
 )
 
 
@@ -890,18 +885,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app)
-    # Slice 2b (#1463): proxy watchdog is an owned instance with start/stop
-    # lifecycle methods called by the lifespan. The engine is selected once
-    # here by KLANGKD_PROXY_ENGINE (#1559): ``caddy`` (default since #1634,
-    # Caddyfile rendered and pushed to Caddy's admin API over a UDS) or
-    # ``nginx`` (the long-standing Python-owned nginx renderer, deprecated
-    # since #1634 — the escape hatch for a Caddy regression; emits a settings
-    # warning and will be removed). Both expose the same
-    # start()/stop()/reconfigure() surface the lifespan + SIGHUP path use.
-    if settings.proxy_engine == "caddy":
-        app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
-    else:
-        app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
+    # Slice 2b (#1463): proxy watchdog is an owned CaddyWatchdog instance
+    # (Caddy is the sole reverse-proxy engine in 2.X, #1642) with
+    # start()/stop()/reconfigure() methods called by the lifespan + SIGHUP.
+    app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
     # #2070: In-process LLM router backed by litellm.Router (subsystem).
     app.state.llm_router = LLMRouter(app)
     # #1480: Terminal(app_state) groups the ~25 tmux-session

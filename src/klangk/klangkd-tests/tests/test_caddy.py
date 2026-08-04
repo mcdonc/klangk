@@ -1272,3 +1272,33 @@ class TestWatchdogBindFatal:
         app.state.settings.state_dir = "/tmp"
         wd = CaddyWatchdog(app)
         assert wd._bind_fatal is False
+
+
+class TestProxyCommonHelpers:
+    """detect_host_ipv4s moved to klangk.proxy_common (#2080); caddy's own
+    tests monkeypatch it, so exercise the real impl here for coverage."""
+
+    def test_detect_host_ipv4s_parses_inet_lines(self, monkeypatch):
+        from klangk import proxy_common
+
+        monkeypatch.setattr(
+            proxy_common.subprocess,
+            "check_output",
+            lambda *a, **k: (
+                "    inet 127.0.0.1/8 scope host lo\n"
+                "    inet 192.168.1.5/24 brd 192.168.1.255\n"
+            ),
+        )
+        assert proxy_common.detect_host_ipv4s() == [
+            "127.0.0.1",
+            "192.168.1.5",
+        ]
+
+    def test_detect_host_ipv4s_failure_returns_empty(self, monkeypatch):
+        from klangk import proxy_common
+
+        def _raise(*a, **k):
+            raise FileNotFoundError("no ip")
+
+        monkeypatch.setattr(proxy_common.subprocess, "check_output", _raise)
+        assert proxy_common.detect_host_ipv4s() == []

@@ -553,23 +553,11 @@ class KlangkSettings(BaseSettings):
     # neither ``$XDG_STATE_HOME`` nor ``$HOME`` is set, construction fails
     # fast (the #1461 intent preserved for the genuinely-unconfigured case).
     state_dir: str | None = None
-    # proxy_bin: the proxy executable the renderer spawns (currently nginx).
-    # Falls back to shutil.which("nginx") then /usr/sbin/nginx at render time.
-    # Renamed from ``nginx_bin``/``KLANGKD_NGINX_BIN`` (#1430); the old
-    # ``KLANGKD_NGINX_BIN`` name is no longer recognized.
+    # proxy_bin: the proxy executable the renderer spawns (Caddy in 2.X,
+    # #1642). Falls back to shutil.which("caddy") then /usr/bin/caddy at
+    # render time. Renamed from ``nginx_bin``/``KLANGKD_NGINX_BIN`` (#1430);
+    # the old ``KLANGKD_NGINX_BIN`` name is no longer recognized.
     proxy_bin: str | None = None
-    # proxy_engine: which reverse-proxy engine the watchdog owns
-    # (#1559). ``caddy`` (default since #1634) renders a Caddyfile and
-    # pushes it to Caddy's admin API over a klangkd-owned UDS (no on-disk
-    # config source of truth, no SIGHUP/reload). ``nginx`` keeps the
-    # long-standing Python-owned nginx renderer as a **deprecated** fallback
-    # for one release — a deprecation warning fires when it's explicitly
-    # selected, and it will be removed in a future release. Selecting
-    # ``nginx`` is the supported escape hatch if a Caddy regression bites on
-    # upgrade. The engine is selected once at process start (build_app);
-    # changing it requires a restart, not just a SIGHUP (it swaps the child
-    # binary and the whole render/delivery path).
-    proxy_engine: str = "caddy"
     # trust_outer_proxy: opt-in to surviving an outer trusted proxy's
     # X-Forwarded-* in the proxy's catch-all (see #1396 renderer). Mirrors the
     # KLANGKD_TRUST_OUTER_PROXY env var the old nginx.sh read.
@@ -1241,29 +1229,6 @@ class KlangkSettings(BaseSettings):
                     )
                 items.append(item)
         return items
-
-    @model_validator(mode="after")
-    def _warn_on_deprecated_proxy_engine(self) -> "KlangkSettings":
-        """Warn when ``KLANGKD_PROXY_ENGINE=nginx`` is selected.
-
-        Since #1634 the default is ``caddy``; ``nginx`` is a deprecated
-        fallback kept for one release as the escape hatch if a Caddy
-        regression bites on upgrade. Because ``caddy`` is the default, a
-        settings object whose ``proxy_engine`` reads ``nginx`` can only have
-        gotten there via explicit selection (env var or config file) — so the
-        value itself is the signal, no source-introspection needed. The
-        engine still works; this is purely a heads-up that nginx is going
-        away.
-        """
-        if self.proxy_engine == "nginx":
-            logger.warning(
-                "KLANGKD_PROXY_ENGINE=nginx is deprecated; the default is now "
-                "caddy. nginx remains selectable this release as the escape "
-                "hatch for a Caddy regression, but will be removed in a "
-                "future release. To silence this, switch to "
-                "KLANGKD_PROXY_ENGINE=caddy (the default — just unset the var)."
-            )
-        return self
 
 
 # ---------------------------------------------------------------------------
