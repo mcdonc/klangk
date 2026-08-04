@@ -45,12 +45,11 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          # Release body = GitHub's auto-generated notes, with this version's
-          # section from docs/changes.md prepended (when present).
-          # `gh release create --generate-notes --notes "..."` prepends the
-          # --notes content to the auto-generated notes (per `gh release create --help`).
-          # docs/changes.md is the source of truth; see it and
-          # docs/development/releasing.md.
+          # Release body = this version's section from docs/changes.md.
+          # When the section exists, use --notes only (no --generate-notes)
+          # so the release body is the hand-written changelog without
+          # auto-generated commit summaries (#2125).
+          # Fallback: no changelog section → pure auto-generated notes.
           VERSION="$GITHUB_REF_NAME"
           SECTION=""
           if [ -f docs/changes.md ]; then
@@ -66,7 +65,6 @@ jobs:
           if [ -n "$SECTION" ]; then
             gh release create "$VERSION" \
               --title "$VERSION" \
-              --generate-notes \
               --notes "$SECTION"
           else
             # No changelog section for this version — pure auto-generated notes.
