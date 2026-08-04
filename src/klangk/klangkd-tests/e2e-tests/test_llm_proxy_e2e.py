@@ -168,3 +168,57 @@ class TestLLMProxyE2E:
             assert resp.json()["data"] == []
         finally:
             stop_server(srv)
+
+
+class TestLLMProxyPassthroughE2E:
+    """Passthrough mode: single wildcard entry → discover + forward."""
+
+    @pytest.fixture(scope="class")
+    @staticmethod
+    def passthrough_stack(fake_llm, tmp_path_factory):
+        """Start klangkd with a wildcard model pointing at the fake LLM."""
+        cfg_dir = tmp_path_factory.mktemp("llm-pt")
+        cfg_file = cfg_dir / "klangkd.yaml"
+        cfg_file.write_text(
+            "llm-models:\n"
+            "  - model_name: '*'\n"
+            "    litellm_params:\n"
+            f"      model: 'openai/*'\n"
+            f"      api_base: '{fake_llm['url']}/v1'\n"
+            "      api_key: dummy-key\n"
+        )
+        srv = start_server(
+            config=str(cfg_file),
+            KLANGKD_JWT_SECRET="llm-pt-e2e",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="test@example.com",
+            KLANGKD_DEFAULT_PASSWORD="testpass",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+            LOGFIRE_TOKEN="",
+        )
+        yield srv
+        stop_server(srv)
+
+    def test_models_discovers_upstream(self, passthrough_stack):
+        """GET /llm-proxy/models queries the upstream and returns its models."""
+        resp = passthrough_stack["client"].get("/llm-proxy/models", timeout=10)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["object"] == "list"
+        ids = [m["id"] for m in data["data"]]
+        assert "fake-model" in ids
+
+    def test_chat_completions_forwards_verbatim(self, passthrough_stack):
+        """POST /llm-proxy/chat/completions forwards the model name as-is."""
+        resp = passthrough_stack["client"].post(
+            "/llm-proxy/chat/completions",
+            json={
+                "model": "fake-model",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+            timeout=30,
+        )
+        assert resp.status_code == 200
+        content = resp.json()["choices"][0]["message"]["content"]
+        assert "Hello from" in content

@@ -5,8 +5,11 @@ import tempfile
 import types
 from unittest.mock import AsyncMock, patch
 
+import httpx
+
 from klangk.llm_router import (
     LLMRouter,
+    _is_passthrough,
     _normalize_dict_entry,
     parse_model_entry,
 )
@@ -294,6 +297,209 @@ class TestLLMRouterCompletion:
                 model="unknown",
                 messages=[{"role": "user", "content": "hi"}],
             )
+
+
+class TestPassthrough:
+    def test_is_passthrough_single_wildcard(self):
+        ml = [{"model_name": "*", "litellm_params": {"model": "openai/*"}}]
+        assert _is_passthrough(ml)
+
+    def test_is_passthrough_named_wildcard(self):
+        ml = [
+            {"model_name": "openai/*", "litellm_params": {"model": "openai/*"}}
+        ]
+        assert _is_passthrough(ml)
+
+    def test_not_passthrough_no_wildcard(self):
+        ml = [
+            {
+                "model_name": "gpt-4o",
+                "litellm_params": {"model": "openai/gpt-4o"},
+            }
+        ]
+        assert not _is_passthrough(ml)
+
+    def test_not_passthrough_multiple_entries(self):
+        ml = [
+            {"model_name": "*", "litellm_params": {"model": "openai/*"}},
+            {
+                "model_name": "llama",
+                "litellm_params": {"model": "ollama/llama3"},
+            },
+        ]
+        assert not _is_passthrough(ml)
+
+    def test_passthrough_mode_active(self):
+        app = _app()
+        app.state.settings.llm_models = [
+            {
+                "model_name": "*",
+                "litellm_params": {
+                    "model": "openai/*",
+                    "api_base": "http://localhost:11434",
+                    "api_key": "dummy",
+                },
+            }
+        ]
+        router = LLMRouter(app)
+        assert router.active
+        assert router.passthrough
+        assert router._passthrough_base == "http://localhost:11434"
+        assert router._passthrough_key == "dummy"
+
+    def test_passthrough_mode_inactive_for_explicit_models(self):
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        assert router.active
+        assert not router.passthrough
+
+    def test_reconfigure_to_passthrough(self):
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        assert not router.passthrough
+
+        new_app = _app()
+        new_app.state.settings.llm_models = [
+            {
+                "model_name": "*",
+                "litellm_params": {
+                    "model": "openai/*",
+                    "api_base": "http://localhost:11434",
+                },
+            }
+        ]
+        router.reconfigure(new_app)
+        assert router.passthrough
+
+    async def test_passthrough_completion_delegates_to_httpx(self):
+        app = _app()
+        app.state.settings.llm_models = [
+            {
+                "model_name": "*",
+                "litellm_params": {
+                    "model": "openai/*",
+                    "api_base": "http://fake:1234/v1",
+                    "api_key": "test-key",
+                },
+            }
+        ]
+        router = LLMRouter(app)
+        mock_resp = types.SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {"choices": [{"message": {"content": "hello"}}]},
+        )
+        with patch("klangk.llm_router.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post.return_value = mock_resp
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            result = await router.acompletion(
+                model="any-model",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+            assert result["choices"][0]["message"]["content"] == "hello"
+            mock_client.post.assert_called_once()
+            call_kwargs = mock_client.post.call_args
+            assert "any-model" in str(call_kwargs)
+            assert (
+                call_kwargs.kwargs["headers"]["Authorization"]
+                == "Bearer test-key"
+            )
+
+    async def test_list_upstream_models_passthrough(self):
+        app = _app()
+        app.state.settings.llm_models = [
+            {
+                "model_name": "*",
+                "litellm_params": {
+                    "model": "openai/*",
+                    "api_base": "http://fake:1234/v1",
+                },
+            }
+        ]
+        router = LLMRouter(app)
+        mock_resp = types.SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "data": [
+                    {"id": "model-a", "object": "model"},
+                    {"id": "model-b", "object": "model"},
+                ]
+            },
+        )
+        with patch("klangk.llm_router.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_resp
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            models = await router.list_upstream_models()
+            assert len(models) == 2
+            assert models[0]["id"] == "model-a"
+
+    async def test_list_upstream_models_passthrough_with_key(self):
+        app = _app()
+        app.state.settings.llm_models = [
+            {
+                "model_name": "*",
+                "litellm_params": {
+                    "model": "openai/*",
+                    "api_base": "http://fake:1234/v1",
+                    "api_key": "secret",
+                },
+            }
+        ]
+        router = LLMRouter(app)
+        mock_resp = types.SimpleNamespace(
+            status_code=200,
+            raise_for_status=lambda: None,
+            json=lambda: {"data": [{"id": "m1", "object": "model"}]},
+        )
+        with patch("klangk.llm_router.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_resp
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            models = await router.list_upstream_models()
+            assert len(models) == 1
+            headers = mock_client.get.call_args.kwargs.get("headers", {})
+            assert headers["Authorization"] == "Bearer secret"
+
+    async def test_list_upstream_models_passthrough_error(self):
+        app = _app()
+        app.state.settings.llm_models = [
+            {
+                "model_name": "*",
+                "litellm_params": {
+                    "model": "openai/*",
+                    "api_base": "http://fake:1234/v1",
+                },
+            }
+        ]
+        router = LLMRouter(app)
+        with patch("klangk.llm_router.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.ConnectError("refused")
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            models = await router.list_upstream_models()
+            assert models == []
+
+    async def test_list_upstream_models_router_mode(self):
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        router = LLMRouter(app)
+        models = await router.list_upstream_models()
+        assert len(models) == 1
+        assert models[0]["id"] == "gpt-4o"
 
 
 class TestParseModelEntry:

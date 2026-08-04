@@ -19,17 +19,15 @@ router = APIRouter(prefix="/llm-proxy", tags=["llm-proxy"])
 async def list_models(request: Request):
     """Return the list of models the LLM router knows about.
 
-    Matches the OpenAI ``GET /v1/models`` response shape so Pi's
-    ``llm-proxy-models.ts`` model discovery works unchanged.
+    In passthrough mode, queries the upstream's ``/models`` endpoint
+    for dynamic discovery.  In router mode, returns the configured
+    model names.  Matches the OpenAI ``GET /v1/models`` response shape.
     """
     llm_router = request.app.state.llm_router
-    names = llm_router.get_model_names()
+    models = await llm_router.list_upstream_models()
     return {
         "object": "list",
-        "data": [
-            {"id": name, "object": "model", "owned_by": "klangk"}
-            for name in names
-        ],
+        "data": models,
     }
 
 

@@ -17,8 +17,18 @@ Accepts model entries in two formats:
    support ``file:`` and ``cmd:`` indirection so secrets stay out of
    the config file.
 
-Follows the subsystem pattern: ``__init__(app)``, ``reconfigure(app)``,
-stored on ``app.state.llm_router``.
+**Passthrough mode** (#2070): when the model list has exactly one entry
+and its ``model_name`` contains ``*`` (wildcard), the Router bypasses
+litellm and forwards requests directly to the upstream.  The
+``/models`` endpoint queries the upstream's ``/models`` for dynamic
+discovery, and ``/chat/completions`` forwards verbatim.  This preserves
+the pre-litellm single-provider experience where all upstream models
+were automatically available.
+
+Public API:
+
+- :class:`LLMRouter` — create from model entries, call
+  ``acompletion()``, list models, reconfigure on SIGHUP.
 """
 
 from __future__ import annotations
@@ -26,6 +36,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
 from litellm import Router
 
 from klangk.settings import _resolve_indirection
@@ -147,63 +158,87 @@ def _build_model_list(
     return items
 
 
+def _is_passthrough(model_list: list[dict[str, Any]]) -> bool:
+    """True when the config is a single wildcard entry (passthrough mode)."""
+    if len(model_list) != 1:
+        return False
+    return "*" in model_list[0].get("model_name", "")
+
+
 class LLMRouter:
     """In-process LLM router (subsystem).
 
     Constructed from ``app`` following the subsystem pattern.  Creates a
-    ``litellm.Router`` when ``llm_aggregator_models`` is configured;
-    otherwise the router is ``None`` and the endpoints return 503.
+    ``litellm.Router`` when ``llm_models`` is configured; otherwise the
+    router is ``None`` and the endpoints return 503.
+
+    **Passthrough mode**: when the config has exactly one wildcard entry
+    (``model_name`` contains ``*``), litellm is bypassed entirely.
+    Requests are forwarded to the upstream via httpx, and ``/models``
+    queries the upstream for dynamic model discovery.
     """
 
     def __init__(self, app) -> None:
         self._app = app
-        settings = app.state.settings
+        self._passthrough_base: str | None = None
+        self._passthrough_key: str = ""
+        self._router: Router | None = None
+        self._configure_from_settings(app.state.settings)
+
+    def _configure_from_settings(self, settings) -> None:
         models = settings.llm_models
-        if models:
-            model_list = _build_model_list(models, settings.llm_api_key)
-            self._router: Router | None = Router(
+        if not models:
+            self._router = None
+            self._passthrough_base = None
+            return
+
+        model_list = _build_model_list(models, settings.llm_api_key)
+
+        if _is_passthrough(model_list):
+            params = model_list[0].get("litellm_params", {})
+            self._passthrough_base = params.get("api_base", "")
+            self._passthrough_key = params.get("api_key", "")
+            self._router = None
+            logger.info(
+                "llm router: passthrough mode → %s",
+                self._passthrough_base,
+            )
+        else:
+            self._passthrough_base = None
+            self._passthrough_key = ""
+            self._router = Router(
                 model_list=model_list,
                 routing_strategy="simple-shuffle",
                 num_retries=2,
             )
-        else:
-            self._router = None
 
     @property
     def active(self) -> bool:
         """Whether the router has models configured."""
-        return self._router is not None
+        return self._router is not None or self._passthrough_base is not None
+
+    @property
+    def passthrough(self) -> bool:
+        """Whether passthrough mode is active."""
+        return self._passthrough_base is not None
 
     def reconfigure(self, app) -> None:
         """Reconfigure the router from new settings (called on SIGHUP)."""
         self._app = app
-        settings = app.state.settings
-        models = settings.llm_models
-        if models:
-            model_list = _build_model_list(models, settings.llm_api_key)
-            if self._router is not None:
-                self._router.set_model_list(model_list)
-            else:
-                self._router = Router(
-                    model_list=model_list,
-                    routing_strategy="simple-shuffle",
-                    num_retries=2,
-                )
-            logger.info(
-                "llm router reconfigured with %d model(s)", len(model_list)
-            )
-        else:
-            self._router = None
+        self._configure_from_settings(app.state.settings)
+        if self.active:
+            logger.info("llm router reconfigured")
 
     async def acompletion(self, **kwargs: Any) -> Any:
-        """Proxy to ``litellm.Router.acompletion``.
+        """Proxy to ``litellm.Router.acompletion`` or passthrough.
 
-        When ``model`` is empty, missing, or does not match any
-        configured ``model_name``, the first configured model is used.
-        This preserves the pre-litellm contract where the proxy was a
-        dumb pipe and the model field was passed through verbatim to a
-        single upstream.
+        In passthrough mode, forwards the request body to the upstream
+        via httpx.  In router mode, when ``model`` is empty, missing,
+        or does not match any configured ``model_name``, the first
+        configured model is used.
         """
+        if self._passthrough_base is not None:
+            return await self._passthrough_completion(**kwargs)
         if self._router is None:
             raise RuntimeError("LLM router not configured")
         model = kwargs.get("model", "")
@@ -213,6 +248,42 @@ class LLMRouter:
         if not model or model not in names:
             kwargs["model"] = names[0]
         return await self._router.acompletion(**kwargs)
+
+    async def _passthrough_completion(self, **kwargs: Any) -> dict:
+        """Forward a completion request directly to the upstream."""
+        url = f"{self._passthrough_base}/chat/completions"
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self._passthrough_key:
+            headers["Authorization"] = f"Bearer {self._passthrough_key}"
+        async with httpx.AsyncClient(timeout=600) as client:
+            resp = await client.post(url, json=kwargs, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def list_upstream_models(self) -> list[dict[str, Any]]:
+        """Query the upstream's /models endpoint (passthrough mode).
+
+        Returns the upstream's model list in OpenAI format.  In router
+        mode, returns the configured model names.
+        """
+        if self._passthrough_base is not None:
+            url = f"{self._passthrough_base}/models"
+            headers: dict[str, str] = {}
+            if self._passthrough_key:
+                headers["Authorization"] = f"Bearer {self._passthrough_key}"
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.get(url, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return data.get("data", [])
+            except Exception:
+                logger.exception("Failed to query upstream models at %s", url)
+                return []
+        return [
+            {"id": name, "object": "model", "owned_by": "klangk"}
+            for name in self.get_model_names()
+        ]
 
     def get_model_names(self) -> list[str]:
         """Return the list of logical model names the router knows about."""
