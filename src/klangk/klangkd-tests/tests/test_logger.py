@@ -191,6 +191,13 @@ class TestConfigure:
         logger_mod.configure(_make_settings("DEBUG"))
         assert len(_klangk_handlers(clean_root)) == 1
 
+    def test_litellm_loggers_do_not_propagate(self, clean_root):
+        """LiteLLM loggers have propagate=False so their records don't
+        reach klangk's root handler (double-logging, #2087)."""
+        logger_mod.configure(_make_settings())
+        for name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"):
+            assert logging.getLogger(name).propagate is False
+
     def test_reconfigure_reapplies_third_party_levels(self, clean_root):
         # Sabotage a third-party logger to prove configure resets it.
         logging.getLogger("httpx").setLevel(logging.DEBUG)
