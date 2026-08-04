@@ -27,6 +27,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`klangk` TUI (#1746).** Running `klangk` with no subcommand launches an
+  interactive terminal UI (built on Textual). Features: in-TUI login
+  (password and OIDC hand-off), live server switching, a workspace list with
+  filter/sort, workspace create/edit/duplicate/delete forms, workspace
+  import/export with progress, terminal management (list, rename, delete),
+  live container status via WebSocket, per-workspace quick actions (start,
+  stop, restart), a keyboard cheatsheet (`?`), and a custom dark theme
+  matching the web UI. `textual` is a runtime dependency.
+
 - **Configurable DNS search domains for workspace containers (#2055).**
   A new deploy setting `dns_search` (env `KLANGKD_DNS_SEARCH`, comma-separated)
   is passed to workspace containers via podman `--dns-search`, so short
@@ -55,21 +64,6 @@ operators or integrators to act when upgrading.
   `/usr/local/bin/process-compose` (arch-aware build, pinned to `v1.120.0`),
   so a managed set of processes can be run inside the container. The base
   image's `supervisor` (supervisord) is unaffected.
-- **TUI: rename a terminal from the terminals list (#2020).** Press `m`
-  on a highlighted terminal for an input prefilled with the current name
-  (typing appends; Enter renames, Escape cancels; the result shows as a
-  toast). Terminal-scoped keys are now letters — `n` new, `m` rename,
-  `t` delete (was the Delete key) — listed in the `?` cheatsheet. Uses
-  the existing `terminal_rename_window` backend (`tmux rename-window`).
-  Terminal create/delete feedback (`Creating…` / `Created` / `Deleting…` /
-  `Deleted`, and failures) now surfaces as a toast instead of inline text.
-
-- **TUI: `?` opens a keyboard cheatsheet modal (#1802).** Pressing `?`
-  on the workspace list or a workspace's detail screen opens a modal listing
-  that screen's keybindings grouped by context (navigation, workspaces /
-  terminals, highlighted-row actions). The modal is dismissed with Escape
-  or by pressing `?` again. Content adapts to the current screen.
-
 - **Workspace tmux status bar shows the disconnect hint (#2006).** The
   status bar now surfaces `Exit: Enter, then ~.` — the CLI's `~.` escape to
   close a `klangk shell` session — so the escape is discoverable without
@@ -140,59 +134,12 @@ operators or integrators to act when upgrading.
   the rest of its life. Per-workspace overrides (creator may go larger
   _or_ smaller than the deploy default, no clamping) are tracked as a
   follow-up Phase 2.
-- **TUI create form pre-fills the Netfilter list with the deploy default
-  (#1931).** When `KLANGKD_NETFILTER_DEFAULT_DOMAINS` is set, opening the
-  TUI create-workspace dialog now seeds its Netfilter (allowed-domains)
-  tab with those domains — matching the Flutter web UI, which already
-  pre-fills them. The seeded entries are a starting set the user can edit
-  or remove before creating; with no deploy default the list still starts
-  empty. The edit form is unaffected (it shows the workspace's persisted
-  allow-list).
-
-- **TUI workspaces-list filter now also matches the workspace id (#1911).**
-  Typing into the filter (`/`) narrows by name **or** id — so a workspace
-  matches whether you type part of its name or the short id prefix shown
-  on its row (#1899). Name matching is unchanged; the empty filter still
-  shows all workspaces.
-
-- **TUI workspace import/export with progress (#1758).** The workspace
-  detail screen gains `x` → Export (downloads a `.tar.gz` via
-  `GET /api/v1/workspaces/{id}/export`, admin-only) and the workspaces
-  list gains `i` → Import (uploads a `.tar.gz` via
-  `POST /api/v1/workspaces/import`). Both show a live progress bar with a
-  byte counter during the transfer, reusing the existing CLI transport
-  (`KlangkClient.export_workspace` / `import_workspace`). Import prompts
-  for the archive path; export prompts for an output path (default
-  `<name>.tar.gz`).
-
-- **TUI shows workspace id on the detail screen and a short id on each
-  workspaces-list row (#1899).** The full server-assigned `id` is now
-  shown on the workspace detail screen (top line, `id: <id>`), and the
-  first 8 chars of it are appended (muted) to each row on the Owned and
-  Shared workspaces lists. The short id is a prefix of the full id, so a
-  row can be matched to its detail screen and copied for `klangk` CLI /
-  server-log / support correlation without leaving the TUI.
-
-- **TUI keybinding + label change: Duplicate is now `u` / "Dup", Delete is
-  now `d` / "Del" (#1888).** On both the workspaces list and the workspace
-  detail screen, Duplicate moved from `d` to `u` and Delete moved from `x`
-  to `d` (the two screens stay consistent), and the displayed labels are
-  shortened to "Dup" / "Del". The inline hint bar reflects the new keys.
-
 - **Tmux status bar in workspace shells (#1880).** Shells now display a
   subtle status bar at the bottom showing the workspace name (left) and
   current terminal name (right). The workspace name is set as a tmux
   global user option (`@workspace_name`) on every terminal start, and is
   also pushed live when a workspace is renamed, so open terminals update
   without a reconnect.
-
-- **Per-workspace quick actions on the TUI workspaces list (#1878).** The
-  workspaces page now acts on the highlighted row: `r` restart, `s` stop /
-  start, `d` duplicate, `x` delete, `e` edit (Enter still opens the detail
-  screen). The keys mirror the detail screen, with an inline hint bar above
-  the list whose Stop/Start label tracks the highlighted workspace's state.
-  **`s` is now Stop/Start** (it was Switch server) — Switch server moved to
-  `c`.
 
 - **Account self-service from the CLI (#1753).** A new
   `klangk account` group (`show`, `passwd`, `handle`, `email`) changes your
@@ -212,53 +159,6 @@ operators or integrators to act when upgrading.
   that triggers the restart immediately (routed through the workspace page,
   which owns the in-flight indicator), rather than being informational only.
 
-- **`klangk stop` and `klangk start` commands** stop and (re)start a
-  workspace container (#1750), closing the CLI parity gap with the TUI and
-  Flutter app (which already reach shutdown via `POST /api/v1/workspaces/{id}/stop`).
-  Both are thin wrappers over the existing REST endpoints, mirroring
-  `klangk restart`.
-
-- **Bare `klangk` (no subcommand) launches an interactive textual TUI on a
-  real terminal (#1746).** The TUI is the foundation of the terminal client:
-  in-TUI login (local/password, with no-auth auto-login and OIDC hand-off to
-  `klangk login`), live server switching, and a
-  live workspace/container status feed over the existing WebSocket. Subcommands
-  are unchanged; in non-interactive contexts (pipes, CI) bare `klangk` still
-  prints help. `textual` is now a runtime dependency.
-
-- **The `klangk` TUI now lists workspaces and manages them in-app
-  (#1747).** The home screen is a two-page list (Owned by me / Shared to
-  me) that refreshes from the live WebSocket status feed. Selecting a
-  workspace opens a detail screen (running/health, image, command, mounts,
-  env, owner) with Restart, Duplicate, and Delete actions — each guarded by
-  a confirmation. The detail screen mirrors live status (running/health)
-  from `container_status`/`service_health` broadcasts; Duplicate prompts
-  for a new name (server requires one); Delete is a yes/no confirm that
-  returns to the list. All user-facing text is rendered as rich `Text`
-  (never markup-parsed) — list rows, detail body, confirm dialogs, the
-  duplicate prompt, the status bar, and login messages — so workspace
-  names or messages containing bracket characters can't crash the TUI.
-  Load errors degrade gracefully: an expired session is surfaced as a
-  distinct "session expired" state (not mistaken for an empty list), and
-  if the open workspace is deleted by another client the detail screen
-  returns to the list. Volume cleanup is deferred.
-
-- **The `klangk` TUI detail screen now lists the workspace's terminals and
-  lets you delete them (#1747).** The detail page enumerates the terminals
-  you own (fetched over the workspace WebSocket) and adds a Delete-key
-  binding to remove the selected one; the last terminal is protected by a
-  client-side guard (matching Flutter), and a failed close/refresh is
-  reported rather than silently emptying the list. Selecting a terminal is wired for a future `klangk shell`
-  step. The workspace-list page is now titled "Klangk: Workspaces".
-
-- **The `klangk` TUI workspace list supports filter and sort (#1764).**
-  Press `/` to open a single-line filter bar that narrows the visible
-  workspaces by name (applied locally over cached data, per tab); `Esc`
-  clears the text, then hides the bar. Press `o` (or click the sort button)
-  to cycle sort order — created ↓ → created ↑ → name ↑ → name ↓ (matching
-  Flutter defaults). Showing or hiding the filter bar does not resize the
-  workspace list.
-
 - **Per-workspace network egress filtering via OCI hooks (#1365).**
   Workspaces may now declare an `allowed_domains` allow-list (`host` or
   `host:port` specs) to restrict outbound network to specific destinations.
@@ -276,27 +176,6 @@ operators or integrators to act when upgrading.
   Configurable via the workspace Settings panel or the `allowed_domains`
   field on the workspace create/update API. See
   [Egress Filtering](https://klangk.dev/features/egress-filtering).
-
-- **The `klangk` TUI can create workspaces from a full create form (#1748).**
-  Press `n` on the workspace list to open a form mirroring the Flutter
-  `CreateWorkspaceDialog`: name, a container-image picker populated from
-  `/api/v1/images`, add/remove mounts and environment-variable editors, an
-  optional service shell command and health-check command, and an auto-start
-  checkbox (shown only when the server permits it, off by default). Mounts
-  (`source:/container[:opts]`) and env (`KEY=VALUE`) are validated client-side,
-  matching the Flutter create dialog (the CLI `create` is marginally looser
-  on env keys). All user-facing text — including the image-picker entries
-  (sourced from the server) and the create-result message — renders via rich
-  `Text`, so a name/image/message containing bracket characters can't crash
-  the TUI; a non-JSON server error body is handled gracefully instead of
-  crashing. If the image list can't be
-  fetched the form still works (the server applies its default image; if the
-  server's default isn't in the allowed list the picker starts unselected and
-  an untouched picker omits the image, matching the Flutter dialog). After a
-  successful create the list refreshes and the TUI offers to open the new
-  workspace's detail screen (where its terminals are listed); a live in-TUI
-  PTY shell session is a future step, so #1748's "open shell now" bullet is
-  satisfied as "open workspace" for now.
 
 - **The `features_config:` block now accepts the stripped, lowercased key form
   (`soliplex_url`) in addition to the full declared name
@@ -605,25 +484,6 @@ invitations send` stay email-only (a deliverable address is required);
   `KLANGKD_LLM_AGGREGATOR_IMAGE`. `KLANGKD_LLM_API_KEY` is kept as the
   default key for models that don't specify their own.
 
-- **TUI: backend reachability is now driven by the status WebSocket (#2052).**
-  The TUI previously ran two competing reachability signals — a REST
-  heartbeat poll and the status WS — which could disagree. The REST
-  heartbeat and its reconnect loop are removed; the status WS connection
-  lifecycle is now the single signal that drives the "server unreachable"
-  overlay and reconnect. The TUI client pings the server every 10 s (10 s
-  pong timeout) — tighter than the library default — so a wedged /
-  half-open connection is detected without REST polling; the server-side
-  ping interval is unchanged. A transient drop gets one silent grace retry
-  before the overlay appears; on (re)connect the overlay clears and the list
-  refreshes; after a bounded attempt cap the loop gives up and tells the
-  user to switch server. A transient REST list-fetch failure while the WS is
-  connected no longer falsely flags the server unreachable (the WS proves
-  reachability); the last good list is kept and refreshed on the next
-  broadcast / reconnect. Note the attempt cap is hit only by a backend that
-  can't establish a connection at all — a flapping backend that completes
-  the handshake then drops resets its counter on each connect and stays in
-  the silent grace retry.
-
 - **Bumped `@earendil-works/pi-coding-agent` in the workspace image from
   `0.79.9` to `0.83.0` (#2049).** The in-container coding agent is now the
   latest published release.
@@ -650,33 +510,6 @@ invitations send` stay email-only (a deliverable address is required);
   field to an empty value to disable that one cap and restore unbounded
   behavior for it. Malformed values still abort startup. Operators with an
   explicit config are unaffected.
-- **TUI: session expiry now shows a prominent app-wide overlay, not a
-  small inline label + fleeting toast (#2025).** When the access token is
-  irrecoverably dead (auth failure on a workspace fetch/detail load, a
-  create/edit save, the status WS, or the token-refresh loop), a centered
-  modal overlay appears over whatever page is active — mirroring the
-  server-down overlay — with a single "Log in again" action (`Enter` / `Esc`
-  / the button all proceed). This replaces the easy-to-miss one-line
-  `(session expired — re-login)` list label, the small `_msg`/`_load_error`
-  text on the detail/form pages, and the 8-second toast, giving one
-  consistent, unmissable UI for the expired-session state across every
-  page.
-
-- **TUI: workspace detail success/in-progress messages are now toasts, not
-  persistent in-page text (#2019).** `Starting container…`, `Container
-started.`, and the other operational feedback messages (`Restart/Stop/Start
-requested.`, terminal create/delete, `Duplicated …`) now appear as
-  auto-dismissing toast notifications instead of lingering on the page. The
-  terminals list (one selected) already signals container readiness, so the
-  status line no longer needs to stay. Errors still render inline (red) so
-  the reason for a failure stays readable.
-
-- **TUI now defaults to the `klangk` theme again (#2003).** Reverts the
-  #1904 default: the CLI TUI selects the custom `klangk` theme (GitHub-dark
-  palette matching the web UI) out of the box instead of Textual's built-in
-  `ansi-light`. Textual's built-in themes remain registered and selectable
-  for users who prefer a terminal-palette-aware look.
-
 - **The clanker agent is now opt-in (off by default) (#1977).** The
   `pi --mode rpc` agent subprocess spawns only when the `chat` feature is
   active (`KLANGKD_FEATURES_ENABLE`) **and** the operator enables it via
@@ -719,84 +552,6 @@ requested.`, terminal create/delete, `Duplicated …`) now appear as
   or per-server) to disable it for an untrusted workspace: while forwarded,
   anyone who can reach the agent socket on the remote host can authenticate
   as you for the session. Existing configs are unchanged.
-
-- **TUI export completion now toasts the full filesystem path (#1758).**
-  When a workspace export finishes, a toast notification shows the
-  resolved absolute path the archive was written to (e.g.
-  `/home/user/alpha.tar.gz`), so a relative input like `alpha.tar.gz` —
-  written under the TUI's CWD — is no longer ambiguous. Export failures
-  still report the error inline on the detail screen.
-
-- **TUI: workspace detail info now renders as a two-column table (#1910).**
-  Fields were previously a single left-aligned `"key: value"` text block, so
-  values started in different columns depending on label length (`id:` vs
-  `service command:`) and the multi-valued sections (mounts / environment /
-  allowed domains) were hand-indented. The detail body is now a Rich table
-  with an auto-sized label column and a value column, so every value lines
-  up vertically regardless of label length; long values fold to fit the pane
-  instead of running off the right edge. The live uptime counter keeps
-  refreshing in place.
-
-- **TUI now defaults to Textual's built-in `ansi-light` theme (#1904).**
-  The app default switched from the custom hard-coded `klangk` palette
-  (fixed RGB background `#0D1117`, `dark=True`) to Textual's built-in
-  `ansi-light`, which uses only the terminal's 16 ANSI colors — so it
-  respects the user's actual terminal palette / shell theme instead of
-  imposing fixed RGB values, and renders correctly on a light-background
-  terminal. The `klangk` theme is still registered and remains selectable
-  for users who want the original GitHub-dark-inspired palette.
-
-- **TUI: tabbed workspace create/edit forms (#1891).** The workspace
-  create and edit screens now group their fields under five tabs — General
-  (name / image / auto-start), Mounts, Environment, Netfilter (allowed
-  domains), and Advanced (service command / health check) — instead of one
-  long scroll. Save / Create / Cancel, the status line, and the
-  restart-needed prompt stay pinned outside the tab content so they remain
-  visible on every tab. Left/Right switch tabs, Up/Down move between the
-  tab strip and a pane's fields, and (edit only) Delete / `e` act on
-  whichever list is under the active tab.
-
-- **TUI login: the server-list delete key is hinted inline (#1890).**
-  The `d` (delete server) key no longer appears in the bottom Footer — its
-  hint now renders on the server picker header (`[d] delete`), next to the
-  list it acts on. Mirrors the switch-server (#1872) and workspace-detail
-  (#1863) screens, so all three server/workspace lists now group their
-  per-row actions the same way.
-
-- **TUI switch-server: server-scoped keybindings moved inline (#1872).**
-  The `e` (edit) and `d` (delete) keys no longer appear in the bottom Footer —
-  their hints now render on the servers list header (`[e] edit  [d] delete`),
-  next to the list they act on. The Footer is now screen-level only (`Back`).
-  Mirrors the term-header pattern shipped for workspace detail in #1863.
-
-- **TUI login: the server-input button is relabeled "Use server" →
-  "Add server" (#1871)** — clearer that typing a new server URL/alias and
-  pressing it adds the server (rather than just selecting an existing one).
-
-- **Workspace shutdown is now uniformly REST-backed across Flutter, TUI,
-  and CLI (#1858).** The redundant WebSocket `shutdown_container` handler
-  is retired; the Flutter settings panel's "Shut Down" button now calls
-  the existing `POST /api/v1/workspaces/{id}/stop` endpoint, matching the
-  TUI and CLI. **Permission change:** the Flutter button previously
-  required the workspace `admin` role (via the WS handler); it now requires
-  only `terminal` (matching the TUI/CLI REST path). Non-admin members with
-  `terminal` access can now shut down from the Flutter UI — they already
-  could from the TUI and CLI. Deployments that relied on the Flutter-only
-  `admin` gate as a safety net should take note. The REST endpoint also
-  broadcasts `container_stopped` to live viewers so the "stopped" overlay
-  still appears.
-
-- **TUI login headers recolored as accent + bold (#1865).** The
-  "Server: …" status line and the notice line beneath it (e.g.
-  "Cannot reach the server…") now render in the theme accent color, bold,
-  so they read as headers rather than body text.
-
-- **TUI workspace detail: terminal-scoped keybindings moved inline (#1860).**
-  The `n` (new terminal) and `delete` (delete terminal) keys no longer appear
-  in the bottom Footer — their hints now render on the Terminals list header
-  (`[n] new  [⌫] delete`), next to the list they act on. The Footer is now
-  workspace-scoped only. The workspace-delete key `x` is relabeled `Delete` →
-  `Del ws` to disambiguate it from deleting a terminal.
 
 - **Environment variables are now split into four prefixed families
   (#1653).** The single `KLANGK_` prefix is repointed at the component each
@@ -1012,10 +767,6 @@ klangk` now yields `klangk` (client) and `klangkd` (server), matching the
   `_EMAIL`, `_HANDLE`) — set via env or the `features_config:` block of
   `klangkd.yaml`. Operators who customized `KLANGKD_AGENT_*` should move those
   values to the feature-config keys. See [Chat](../features/chat.md).
-
-- **TUI account screen (#1919).** The `a` → Account keybinding and
-  `AccountScreen` (password, handle, email self-service) have been removed
-  from the TUI. Use `klangk account` (CLI) or the web UI instead.
 
 - **The `customize/build/` directory is gone — fork the repo to add custom
   plugins (#1663).** With the plugin declaration list now checked in as
@@ -1339,34 +1090,6 @@ set-password <email>` (set a known password for the default user — whose
   is optional and works DB-less — when set, set `KLANGKD_LLM_API_KEY` to the
   same value so the proxy authenticates.
 
-- **The TUI's live status feed no longer dies after 3 reconnect
-  failures (#2033).** `_status_loop` capped retries at 3, after which
-  live updates (container status, workspace changes, service health)
-  stopped for the whole session with no recovery short of re-login. It
-  now retries indefinitely with the same bounded backoff the workspace-list
-  reconnect uses (≤5s), resetting after a healthy connection, and exits
-  only on auth failure (session expiry).
-
-- **CLI TUI workspace list no longer briefly disagrees with the detail
-  screen after a start/stop (#2032).** A `container_status` broadcast
-  (start/stop) from the status WebSocket and a list refresh could race: the
-  refresh's snapshot, taken before the broadcast, would momentarily
-  overwrite the list's just-updated running dot. The latest observed running
-  state per workspace is now held in an overlay that every list refresh
-  re-applies, so a fetch returning stale data can't regress a start/stop the
-  TUI already saw.
-- **CLI TUI no longer crashes or misbehaves when tearing down its screen
-  stack on session expiry / server switch (#2034).** `confirm_session_expired`,
-  `server_changed`, and `server_changed_needs_login` popped screens one-by-one
-  in a `while top is not X: pop_screen()` loop, which raised `ScreenStackError`
-  when `MainScreen` wasn't in the stack (the loop popped textual's implicit
-  base screen, which is never a `MainScreen`, then tried to pop it). They now
-  remove a fixed snapshot of the screens above their target (never the target
-  itself), return early when the target is absent, and push a fresh
-  `MainScreen` (clearing the stack first) when none is reachable — so a late
-  server-switch worker can no longer strand the login screen after a
-  concurrent session-expiry teardown.
-
 - **Duplicate `klangkd` launch no longer spams the running instance's log
   with ERROR "Another klangk instance is already running" lines (#2021).**
   The _losing_ (second) process still reports why it exits, but now
@@ -1376,75 +1099,6 @@ set-password <email>` (set a known password for the default user — whose
   into the shared log stream. A _different_ winner PID (a restart) is
   reported fresh. The _winning_ (first) process never reaches the refusal
   path, so it never logs this — independent of whether stderr is a TTY.
-
-- **CLI TUI now shows a global "server down" overlay and auto-reconnects
-  instead of a misleading empty workspace list (#2012).** When the backend
-  was unreachable (but the CLI still held a valid JWT, e.g. `auth=none`),
-  the workspaces page rendered "(no workspaces)" like a healthy empty
-  account, and the only recovery was to log out and back in. A
-  transport-layer fetch failure now surfaces an app-wide dimmed overlay —
-  centered, with a live reconnect attempt counter — on **every** page
-  (workspaces list, workspace detail, create/edit form, …), not just the
-  workspaces page. A background reconnect loop (bounded exponential
-  backoff, mirroring the Flutter WS client) repopulates the list and dismisses
-  the overlay automatically once the backend returns; from the overlay, `c`
-  jumps to switch-server and `Esc` dismisses it for the outage. A single
-  always-on reachability heartbeat (independent of the status WS) drives one
-  uniform UI across every detection path — first display, mid-session, and
-  after navigating back from a detail page — so a drop never leaves a stale,
-  drill-into-able list, with no re-login required.
-
-- **Opening a terminal from the TUI no longer flashes the pre-TUI screen
-  (#2010).** `on_list_view_selected` clears the primary screen buffer
-  inside the `suspend()` block before spawning `klangk shell`, so the
-  stale content that briefly surfaced during the buffer swap is gone.
-- **Arrow keys now move between buttons in TUI dialogs (#2016).**
-  Confirm / Input / Duplicate dialogs (Cancel/OK, etc.) previously
-  required Tab to switch buttons — Left/Right now moves between sibling
-  buttons, Up/Down steps between the input field and the button row
-  where present, and Escape cancels. Per the spatial-navigation rule;
-  Tab remains a fallback.
-- **TUI workspace-detail terminal list is now focused with the first
-  terminal highlighted from the first frame (#1956).** Four intertwined
-  bugs on the workspace-detail screen left the initial terminal
-  unreachable or mis-selected via keyboard: the list was empty and
-  unfocused for the whole container auto-start window (Tab/arrows/Enter
-  were dead); the first terminal lost focus once the auto-start event
-  storm settled; setting the default highlight before the list items had
-  mounted left no row highlighted (both terminals grey, and Down then
-  highlighted the _second_); and adding/removing a terminal fired
-  `_render_terminals` from both the action handler and the backend's
-  `terminals_changed` broadcast, whose interleaved clear/extend/mount
-  cycles duplicated every row (two copies of the list). Fixed by
-  rendering a placeholder row on mount, re-asserting focus on `on_show`
-  and in `_display`/`_render_terminals` while the screen is active,
-  awaiting the items' mount before setting the default index so the
-  highlight applies, and serializing renders with a lock.
-
-- **SSH agent forwarding now works on reconnect and in the TUI (#2001).**
-  Two bugs, one symptom (`ssh-add -l` → _"Could not open a connection to
-  your authentication agent"_):
-  1. _No `SSH_AUTH_SOCK` in shells created before the relay._ It was only
-     injected when the relay was already active, so a base tmux session
-     created first — the TUI opens the session, then spawns `klangk shell
--A` which starts the relay; likewise reconnecting to an existing
-     session — never received it. Every interactive terminal and exec
-     session now wires `SSH_AUTH_SOCK` to the deterministic per-user socket
-     path (`/tmp/klangk-ssh-agent-<user_id>.sock`) at creation time,
-     regardless of whether a relay is active yet. The var is inert until a
-     relay binds that path (only when the client opts into forwarding),
-     then goes live — so it no longer matters how or when the terminal (or
-     its agent) was created.
-
-  2. _Relay leak on reconnect._ Each `klangk shell -A` is a fresh
-     connection whose forwarder can't see a prior connection's socat; if
-     the old relay didn't fully tear down, two socats ended up listening on
-     the same socket with `unlink-early`, unlinking each other's
-     accept-time socket file and making the path flicker in and out.
-     `ssh_agent_start` now reaps any competing relay on the deterministic
-     path (`pkill -f UNIX-LISTEN:<path>`) before binding its own, so
-     reconnects own the socket cleanly instead of racing a leaked
-     predecessor.
 
 - **`klangkd` no longer crash-loops when a second instance starts against
   the same config (#1993).** The pre-flight guard that refuses a duplicate
@@ -1464,84 +1118,6 @@ set-password <email>` (set a known password for the default user — whose
   history + paginate older messages. Both read paths now check `_has_perm
 ("chat")` and deny without it (the frontend tab is still visible to such
   a user but receives no data).
-
-- **TUI: closing/deleting a terminal in the workspace detail screen
-  now targets the window by its stable id (`@N`) instead of the row
-  index (#1965).** The close path sent `terminal_close_window` with the
-  list row's _index_, which is the same stale-selector class that #1954
-  fixed for selection: with tmux `renumber-windows` off, another surface
-  closing then creating a window reuses the freed index, so a stale TUI
-  list could send `kill-window` against the _wrong_ window. Closing now
-  resolves the row to its `@N` id (the way selection does) and never
-  closes by index; a row whose id can't be resolved, or a close that
-  fails server-side, refuses to close and refreshes the list instead.
-  The terminal client now surfaces server `error` frames promptly
-  (previously a failed close hung ~30s waiting for a window list that
-  never came), and the deleting/deleted status messages show the
-  window's name rather than its raw `@N` id.
-
-- **TUI: the workspace detail screen's Terminals list is now reachable via
-  the keyboard on entry (#1956).** The screen relied on an implicit focus
-  transfer that left the list mouse-only — Down/Tab could not reach it.
-  The list is now auto-focused on entry (with its first row highlighted
-  even when empty), and a background terminals refresh no longer yanks
-  focus out of an open confirm dialog onto the list.
-
-- **TUI: selecting a terminal in the workspace detail screen no
-  longer creates a phantom second window (#1954).** The detail list keyed
-  each row by the window's _index_, which `klangk shell` then matched as
-  a window _name_; the index (`0`) matched no window named `0`, so the
-  backend created a new tmux window named `0` and the status bar showed
-  both `0:bash` and `1:0`. Selecting now passes the window's stable id
-  (`@N`), which attaches to the existing window without creating a
-  duplicate. Selecting a row whose window can no longer be resolved by
-  id (stale list, or the window was deleted server-side between refresh
-  and selection) now refuses to spawn and refreshes the list, and a
-  shell that exits non-zero likewise triggers a refresh — so a dead row
-  self-heals instead of silently creating a duplicate or failing on
-  every re-select (#1955 review).
-
-- **TUI: workspace id and date are now separate, fixed-width columns with
-  clear spacing between them in the workspaces list (#1907).** Both were
-  `width: auto` and the date had no left padding, so a row's short id and
-  created date rendered flush against each other (`a1b2c3d42025-06-15`) and
-  didn't line up across rows of varying name length. The id is now a fixed
-  10-cell column and the date a fixed 12-cell column with `padding-left: 2`,
-  so ids/dates align vertically regardless of name length.
-
-- **TUI workspace form: Add/Remove buttons in the mounts / environment /
-  netfilter editors are now clickable (#1891).** The editor `Input`'s greedy
-  default width consumed the whole row, pushing the Add/Remove buttons past
-  the editor row's clip region (and, under the new tabbed layout, past the
-  tab pane's narrower clip) — so a mouse click on Add silently missed and
-  the entry was never added; typing a mount/env/domain and clicking Add then
-  Create/Save persisted nothing (Enter still worked). The Input is now
-  fractional width, leaving room for the buttons on every tab.
-
-- **TUI workspace detail now reflects terminal add/remove from other
-  surfaces in realtime (#1885).** The detail screen's terminal list now
-  updates when terminals are added, closed, or renamed from the Flutter web
-  UI (or any other client), without a navigate-away. The server broadcasts a
-  payload-free `terminals_changed` nudge to the user's `/ws` status
-  connections on those operations; the TUI re-fetches the list on receipt,
-  mirroring the existing `workspaces_changed` pattern.
-
-- **TUI login: no blank row between the server status line and the server
-  list (#1865).** Dropped a 1-row bottom margin on the "Server: …"
-  status line so the server picker renders directly beneath it.
-
-- **TUI workspace detail: terminal delete now shows in-flight feedback (#1863).**
-  Pressing `delete` on a selected terminal now shows a `Deleting terminal …`
-  status message while the close request is in flight (mirroring the existing
-  "Creating terminal …" feedback), instead of the screen appearing hung
-  until the list updates.
-
-- **The `klangk` TUI login screen only shows the "Log in via browser (SSO)"
-  button when the selected server actually offers OIDC (#1864).**
-  Previously the button was always rendered — disabled (greyed-out) for
-  `password`/`both` servers and still clickable for `none`/`unreachable` ones
-  with no SSO backend behind it. It now hides entirely (via `display`, not
-  just `disabled`) unless the server's auth mode is `oidc` or `both`.
 
 - **The nginx proxy engine stays up under a plain `systemctl start` with no
   operator log workaround (#1550).** nginx's `access_log` directive has no
