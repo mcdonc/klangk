@@ -1,6 +1,6 @@
 # Hosted Apps
 
-Workspace containers can run web applications (Jupyter, Marimo, Vite dev servers, etc.) on dynamically allocated ports. Klangk's reverse proxy (nginx) makes them accessible at predictable URLs without exposing raw container ports.
+Workspace containers can run web applications (Jupyter, Marimo, Vite dev servers, etc.) on dynamically allocated ports. Klangk's reverse proxy (Caddy) makes them accessible at predictable URLs without exposing raw container ports.
 
 !!! note
 Hosted apps are for **development and demonstration** — not permanent hosting. Port allocations and containers are ephemeral; use a dedicated hosting platform for production deployments.

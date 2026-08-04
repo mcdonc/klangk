@@ -1,6 +1,6 @@
 # Hosting & Proxy
 
-**The reverse proxy (nginx) is the primary access point** (port 8997 locally). It proxies API/WebSocket to uvicorn and proxies hosted app URLs directly to container ports (no Python in the hosted app path).
+**The reverse proxy (Caddy) is the primary access point** (port 8997 locally). It proxies API/WebSocket to uvicorn and proxies hosted app URLs directly to container ports (no Python in the hosted app path).
 
 - FastAPI serves API endpoints and Flutter frontend static files on port 8997 (not accessed directly by users).
 - Hosted app URLs (`/hosted/{workspace_id}/{port}/`) are handled by a proxy regex location that extracts the port and proxies to `127.0.0.1:{port}`.
