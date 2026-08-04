@@ -301,13 +301,11 @@ class TestLLMRouterCompletion:
 
 class TestPassthrough:
     def test_is_passthrough_single_wildcard(self):
-        ml = [{"model_name": "*", "litellm_params": {"model": "openai/*"}}]
+        ml = [{"model_name": "*", "litellm_params": {}}]
         assert _is_passthrough(ml)
 
     def test_is_passthrough_named_wildcard(self):
-        ml = [
-            {"model_name": "openai/*", "litellm_params": {"model": "openai/*"}}
-        ]
+        ml = [{"model_name": "openai/*", "litellm_params": {}}]
         assert _is_passthrough(ml)
 
     def test_not_passthrough_no_wildcard(self):
@@ -321,7 +319,7 @@ class TestPassthrough:
 
     def test_not_passthrough_multiple_entries(self):
         ml = [
-            {"model_name": "*", "litellm_params": {"model": "openai/*"}},
+            {"model_name": "*", "litellm_params": {}},
             {
                 "model_name": "llama",
                 "litellm_params": {"model": "ollama/llama3"},
@@ -335,7 +333,6 @@ class TestPassthrough:
             {
                 "model_name": "*",
                 "litellm_params": {
-                    "model": "openai/*",
                     "api_base": "http://localhost:11434",
                     "api_key": "dummy",
                 },
@@ -363,7 +360,6 @@ class TestPassthrough:
             {
                 "model_name": "*",
                 "litellm_params": {
-                    "model": "openai/*",
                     "api_base": "http://localhost:11434",
                 },
             }
@@ -377,7 +373,6 @@ class TestPassthrough:
             {
                 "model_name": "*",
                 "litellm_params": {
-                    "model": "openai/*",
                     "api_base": "http://fake:1234/v1",
                     "api_key": "test-key",
                 },
@@ -415,7 +410,6 @@ class TestPassthrough:
             {
                 "model_name": "*",
                 "litellm_params": {
-                    "model": "openai/*",
                     "api_base": "http://fake:1234/v1",
                 },
             }
@@ -448,7 +442,6 @@ class TestPassthrough:
             {
                 "model_name": "*",
                 "litellm_params": {
-                    "model": "openai/*",
                     "api_base": "http://fake:1234/v1",
                     "api_key": "secret",
                 },
@@ -478,7 +471,6 @@ class TestPassthrough:
             {
                 "model_name": "*",
                 "litellm_params": {
-                    "model": "openai/*",
                     "api_base": "http://fake:1234/v1",
                 },
             }

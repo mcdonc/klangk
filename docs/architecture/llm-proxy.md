@@ -35,13 +35,13 @@ When `llm-models` has exactly one entry with a wildcard `model_name` (containing
 llm-models:
   - model_name: "*"
     params:
-      model: openai/*
       api-base: http://bizon:11430
       api-key: dummy
 ```
 
 ```bash
-# Equivalent env var
+# Equivalent env var (the model field is ignored in passthrough mode
+# but must be present for the colon-delimited format to parse)
 KLANGKD_LLM_MODELS="openai/*:http://bizon:11430:dummy"
 ```
 

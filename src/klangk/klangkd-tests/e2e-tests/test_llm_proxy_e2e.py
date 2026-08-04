@@ -183,7 +183,6 @@ class TestLLMProxyPassthroughE2E:
             "llm-models:\n"
             "  - model_name: '*'\n"
             "    litellm_params:\n"
-            f"      model: 'openai/*'\n"
             f"      api_base: '{fake_llm['url']}/v1'\n"
             "      api_key: dummy-key\n"
         )
