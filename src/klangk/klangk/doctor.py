@@ -483,6 +483,19 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
     report.add(check_gnu_tar(manager))
     report.add(check_gnu_du(manager))
 
+    # 1b. Optional: ip command for container subnet auto-detection (#2089)
+    if platform.system() != "Darwin":
+        ip_result = check_binary("ip", ["ip", "-V"], manager)
+        if not ip_result.ok:
+            ip_result.is_warning = True
+            ip_result.message = (
+                "ip not found — container subnet auto-detection will fall "
+                "back to broad RFC1918 ranges (172.16/12 + 10/8). Install "
+                "iproute2 for precise detection, or set "
+                "KLANGKD_CONTAINER_SUBNETS explicitly."
+            )
+        report.add(ip_result)
+
     # 2. Rootless podman prereqs
     if platform.system() != "Darwin":
         # Linux: check newuidmap (suid helper for rootless user
