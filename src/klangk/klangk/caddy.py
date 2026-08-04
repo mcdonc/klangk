@@ -51,9 +51,9 @@ from pathlib import Path
 
 import httpx
 
-# Reuse the pure host-IP / loopback probes from the nginx renderer — both
-# engines auto-detect the pasta-NAT container source set the same way.
-from klangk.proxy import (
+# Pure host-IP / loopback probes + fallback subnets shared by every proxy
+# engine (both auto-detect the pasta-NAT container source set the same way).
+from klangk.proxy_common import (
     _FALLBACK_ACL_SUBNETS,
     _FALLBACK_DENY_SUBNETS,
     _is_loopback,
@@ -624,8 +624,8 @@ class CaddyRenderer:
 
 
 # The preexec body (new session for killpg + PR_SET_PDEATHSIG) is identical for
-# every proxy engine — reuse the nginx watchdog's rather than duplicate it.
-from klangk.proxy import _proxy_preexec as _caddy_preexec  # noqa: E402
+# every proxy engine — import the shared impl rather than duplicate it.
+from klangk.proxy_common import _proxy_preexec as _caddy_preexec  # noqa: E402
 
 
 def _caddy_supports_full_global_block(bin_path: str) -> bool:

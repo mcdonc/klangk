@@ -645,12 +645,13 @@ class TestFindProxyBin:
 class TestDetectHostIPv4s:
     def test_subprocess_failure_returns_empty(self, monkeypatch):
         """When the ip command fails, returns [] (caller uses fallback)."""
-        import klangk.proxy as proxy_mod
+        # detect_host_ipv4s lives in klangk.proxy_common (#1642).
+        import klangk.proxy_common as proxy_common
 
         def _raise(*a, **kw):
             raise FileNotFoundError("no ip")
 
-        monkeypatch.setattr(proxy_mod.subprocess, "check_output", _raise)
+        monkeypatch.setattr(proxy_common.subprocess, "check_output", _raise)
         assert detect_host_ipv4s() == []
 
 
