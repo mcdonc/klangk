@@ -7,7 +7,7 @@
       <stop offset="0%" stop-color="#4A90D9"/>
       <stop offset="100%" stop-color="#3B7DD8"/>
     </linearGradient>
-    <linearGradient id="nginxGrad" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="caddyGrad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#009639"/>
       <stop offset="100%" stop-color="#007A2F"/>
     </linearGradient>
@@ -48,23 +48,23 @@
   <text x="220" y="108" fill="#fff" font-size="18">👤</text>
   <text x="244" y="146" fill="#B8D4F0" font-size="10">WebSocket + REST</text>
 
-  <!-- Arrow: Browser → nginx -->
+  <!-- Arrow: Browser → Caddy -->
   <line x1="450" y1="158" x2="450" y2="188" stroke="#8B949E" stroke-width="2" marker-end="url(#arrowGrey)"/>
   <defs><marker id="arrowGrey" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#8B949E"/></marker></defs>
 
-  <!-- ════════ NGINX ════════ -->
-  <rect x="150" y="188" width="600" height="72" rx="10" fill="url(#nginxGrad)" filter="url(#shadow)"/>
-  <text x="450" y="214" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Reverse Proxy (nginx)</text>
+  <!-- ════════ CADDY ════════ -->
+  <rect x="150" y="188" width="600" height="72" rx="10" fill="url(#caddyGrad)" filter="url(#shadow)"/>
+  <text x="450" y="214" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Reverse Proxy (Caddy)</text>
   <text x="225" y="236" fill="#C8F7C5" font-size="10">UI + API</text>
   <text x="330" y="236" fill="#C8F7C5" font-size="10">WebSocket</text>
   <text x="435" y="236" fill="#C8F7C5" font-size="10">LLM Proxy</text>
   <text x="545" y="236" fill="#C8F7C5" font-size="10">Hosted Apps</text>
   <text x="660" y="236" fill="#C8F7C5" font-size="10">JWT Auth</text>
-  <text x="450" y="252" fill="#A8E6A1" font-size="10">Validates workspace tokens via auth_request</text>
+  <text x="450" y="252" fill="#A8E6A1" font-size="10">Validates workspace tokens via forward_auth</text>
 
-  <!-- Arrow: nginx → backend -->
+  <!-- Arrow: Caddy → backend -->
   <line x1="380" y1="260" x2="380" y2="296" stroke="#8B949E" stroke-width="2" marker-end="url(#arrowGrey)"/>
-  <!-- Arrow: nginx → LLM (right side) -->
+  <!-- Arrow: Caddy → LLM (right side) -->
   <line x1="780" y1="224" x2="830" y2="224" stroke="#FDCB6E" stroke-width="2" marker-end="url(#arrowYellow)"/>
   <defs><marker id="arrowYellow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#FDCB6E"/></marker></defs>
 
@@ -142,7 +142,7 @@
   <text x="770" y="654" fill="#8B949E" font-size="9">Extensible tools</text>
 
 
-  <!-- Container → nginx arrow (LLM proxy + chat API) -->
+  <!-- Container → Caddy arrow (LLM proxy + chat API) -->
   <path d="M 130,448 L 130,224 L 146,224" stroke="#FDCB6E" stroke-width="1.5" stroke-dasharray="5,3" fill="none" marker-end="url(#arrowYellow)"/>
   <text x="68" y="340" fill="#FDCB6E" font-size="9">LLM proxy</text>
   <text x="68" y="353" fill="#FDCB6E" font-size="9">+ chat API</text>

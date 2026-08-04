@@ -1,6 +1,6 @@
 # LLM Proxy
 
-Klangk runs a reverse proxy (caddy or nginx) in front of the FastAPI backend. The proxy serves the Flutter web UI, proxies API and WebSocket traffic to uvicorn, proxies hosted app URLs directly to container ports, and routes the `/llm-proxy/` path described below.
+Klangk runs a reverse proxy (Caddy) in front of the FastAPI backend. The proxy serves the Flutter web UI, proxies API and WebSocket traffic to uvicorn, proxies hosted app URLs directly to container ports, and routes the `/llm-proxy/` path described below.
 
 Pi containers access LLMs via the **LLM proxy**, which routes `/llm-proxy/` requests to the klangkd backend. The backend dispatches requests to the configured providers either via an in-process `litellm.Router` (multi-provider mode) or by forwarding directly to a single upstream (passthrough mode). This is required because:
 
@@ -13,13 +13,13 @@ Pi containers access LLMs via the **LLM proxy**, which routes `/llm-proxy/` requ
 ```text
 Pi container
   → host.containers.internal:8995/llm-proxy/chat/completions
-    → reverse proxy (caddy/nginx) — workspace JWT validation + container ACL
+    → reverse proxy (Caddy) — workspace JWT validation + container ACL
       → klangkd FastAPI backend
         → passthrough (single provider) or litellm.Router (multi-provider)
           → upstream LLM provider(s)
 ```
 
-The reverse proxy's `/llm-proxy/` block validates the workspace JWT via `auth_request` (nginx) or `forward_auth` (caddy) and enforces the container-source IP ACL. It then forwards the request to the klangkd backend.
+The reverse proxy's `/llm-proxy/` block validates the workspace JWT via `forward_auth` (Caddy) and enforces the container-source IP ACL. It then forwards the request to the klangkd backend.
 
 ## Operating modes
 

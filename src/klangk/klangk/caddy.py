@@ -1,16 +1,15 @@
 """Python-owned reverse-proxy: Caddy engine (#1559).
 
-This is the Caddy counterpart to :mod:`klangk.proxy` (the nginx engine). It
-implements the same two responsibilities — render the proxy config from the
-merged settings, and supervise the proxy child process — but for **Caddy**
-instead of nginx, selected by ``KLANGKD_PROXY_ENGINE=caddy``.
+This is klangkd's reverse-proxy engine (Caddy, the sole engine since
+#1642). It has two responsibilities — render the proxy config from the
+merged settings, and supervise the Caddy child process.
 
-The two design choices that distinguish this from the nginx renderer (see
+The two design choices behind this engine (see
 issue #1559):
 
 - **Config is delivered over Caddy's admin API, not rendered to a file on
   disk.** :class:`CaddyRenderer` produces a **Caddyfile string**
-  (eyeball-diffable with the nginx.conf), and :class:`CaddyWatchdog` pushes it
+  (human-readable), and :class:`CaddyWatchdog` pushes it
   to a running Caddy via ``POST /load`` with ``Content-Type: text/caddyfile``
   (Caddy adapts it to JSON internally). There is no on-disk source of truth,
   no SIGHUP, no reload dance — a settings change is a fresh ``POST /load``.
@@ -26,10 +25,10 @@ issue #1559):
   via ``os.chmod`` (Caddy's ``|0600`` address suffix is version-fragile, #1709).
 
 The renderer is a pure function of the merged config (settings + the same
-host-IP auto-detection probe the nginx renderer uses). It takes the upstream
+host-IP auto-detection probe). It takes the upstream
 dial target as a parameter so tests can pass a TCP address while production
-passes a ``unix//<socket>`` address. The pure host-IP / loopback helpers are
-imported from :mod:`klangk.proxy` rather than duplicated.
+passes a ``unix//<socket>`` address. The pure host-IP / loopback helpers
+live in this module (folded in from the former proxy_common.py, #2088).
 
 Out of scope here (tracked in #1559): the ``caddy-l4`` layer-4 plugin
 (everything klangk proxies is HTTP), and per-route live JSON mutations on
@@ -184,9 +183,7 @@ def uds_upstream(socket_path: str) -> str:
     """The Caddy ``reverse_proxy`` dial target for a UDS upstream (production).
 
     Caddy's UDS dial address is ``unix//path/to/sock`` — a literal ``unix//``
-    prefix (two slashes) followed by the absolute socket path. (nginx's form
-    is ``http://unix:/path:``; Caddy's is different, hence a separate helper
-    rather than reusing :func:`klangk.proxy.uds_upstream`.)
+    prefix (two slashes) followed by the absolute socket path.
     """
     return f"unix//{socket_path}"
 
@@ -243,20 +240,19 @@ async def post_load(
 
 
 # ---------------------------------------------------------------------------
-# Renderer (settings-driven — owned instance, parallel to ProxyRenderer)
+# Renderer (settings-driven — owned instance)
 # ---------------------------------------------------------------------------
 
 
 class CaddyRenderer:
     """Settings-driven Caddy **Caddyfile** renderer (#1559).
 
-    Parallel to :class:`klangk.proxy.ProxyRenderer`: constructed with
-    ``app`` per the composition-root pattern, settings read live via
+    Constructed with ``app`` per the composition-root pattern, settings
+    read live via
     ``self.app.state.settings`` (#1608). :meth:`render_config` returns a
-    Caddyfile string covering the same surface as the nginx renderer — two
+    Caddyfile string covering the full proxy surface — two
     listeners, ``forward_auth`` token gate, IP matchers, ``request_body``
-    max-size, UDS upstream, injected ``Authorization``. The Caddyfile maps
-    almost 1:1 onto the nginx.conf so the two can be eyeball-diffed.
+    max-size, UDS upstream, injected ``Authorization``.
     """
 
     def __init__(self, app) -> None:
@@ -265,13 +261,12 @@ class CaddyRenderer:
     def reconfigure(self, app) -> None:
         self.app = app
 
-    # -- shared computation (mirrors ProxyRenderer, Caddy-shaped output) ---
+    # -- shared computation (Caddy-shaped output) ---
 
     def _container_source_entries(self) -> tuple[list[str], list[str]]:
         """Resolve the container source IP/CIDR set → ``(acl_entries, deny_entries)``.
 
-        Identical policy to :meth:`klangk.proxy.ProxyRenderer._container_source_entries`
-        (both engines gate on the same set):
+        The container-source gate (the same set of sources regardless):
 
         - ``acl_entries``: every source, loopback included — drives the egress
           allowlist (containers connect from these IPs).
@@ -680,7 +675,7 @@ class CaddyRenderer:
 
 
 # ---------------------------------------------------------------------------
-# Process supervision (parallel to ProxyWatchdog)
+# Process supervision
 # ---------------------------------------------------------------------------
 
 
@@ -744,7 +739,7 @@ def _caddy_supports_full_global_block(bin_path: str) -> bool:
 class CaddyWatchdog:
     """Owns the Caddy child process and pushes config over its admin API (#1559).
 
-    Parallel to :class:`klangk.proxy.ProxyWatchdog` but for Caddy. Instead of
+    CaddyWatchdog supervises the Caddy child. Instead of
     rendering a config file and pointing Caddy at it with ``-c``, this:
 
     1. bootstraps Caddy with ``CADDY_ADMIN=unix//<sock>`` (empty config, no
@@ -756,8 +751,7 @@ class CaddyWatchdog:
     On every respawn the Caddyfile is re-applied (config lives only in memory
     until ``/load`` runs). Constructed with ``app``; settings read live via
     ``self.app.state.settings`` (#1608). Stored on ``app.state.proxy_watchdog``
-    (selected in :func:`klangk.main.build_app` when
-    ``KLANGKD_PROXY_ENGINE=caddy``); the lifespan calls ``.start()`` /
+    (constructed in :func:`klangk.main.build_app`); the lifespan calls ``.start()`` /
     ``.stop()``.
     """
 
@@ -946,7 +940,7 @@ class CaddyWatchdog:
     ) -> None:  # pragma: no cover  – covered by the e2e suite
         """Spawn Caddy, wait for its admin UDS, push config; respawn on exit.
 
-        Respawn-with-backoff mirrors :meth:`klangk.proxy.ProxyWatchdog._watch`;
+        Respawns with backoff;
         the only engine-specific step is re-pushing the Caddyfile over the
         admin API after each (re)start, since the in-memory config is lost
         when Caddy restarts.
@@ -1047,8 +1041,8 @@ class CaddyWatchdog:
     async def start(self) -> None:
         """Bootstrap Caddy (admin on a UDS, no config) and start the watchdog.
 
-        Gated only by ``_KLANGKD_DISABLE_PROXY`` — the same internal,
-        non-user-facing test kill switch the nginx watchdog uses.
+        Gated only by ``_KLANGKD_DISABLE_PROXY`` — the internal,
+        non-user-facing test kill switch.
         """
         if os.environ.get("_KLANGKD_DISABLE_PROXY"):
             return
