@@ -18,9 +18,9 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from klangk import (
     agent as agent_mod,
     auth as auth_mod,
+    caddy as caddy_mod,
     emailsvc as emailsvc_mod,
     files as files_mod,
-    proxy as proxy_mod,
     ssl_trust as ssl_trust_mod,
     util as util_mod,
     main,
@@ -77,7 +77,7 @@ def _make_app_state(settings=None):
 
     app_state.state.netfilter = NetFilter(app_state)
     app_state.state.auth = auth_mod.Auth(app_state)
-    app_state.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app_state)
+    app_state.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app_state)
     from klangk.llm_router import LLMRouter
 
     app_state.state.llm_router = LLMRouter(app_state)
@@ -804,7 +804,7 @@ class TestLifespan:
         app.state.ssl_trust = app_state.state.ssl_trust
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
-        app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
+        app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
@@ -852,7 +852,7 @@ class TestLifespan:
         app.state.ssl_trust = app_state.state.ssl_trust
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
-        app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
+        app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
@@ -1380,7 +1380,7 @@ class TestStartupShutdownRestart:
         app.state.ssl_trust = app_state.state.ssl_trust
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
-        app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
+        app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
@@ -2160,17 +2160,6 @@ class TestBuildApp:
 
         app = main.build_app(make_settings({}))
         assert isinstance(app.state.proxy_watchdog, CaddyWatchdog)
-
-    def test_build_app_nginx_engine_wires_nginx_watchdog(self):
-        """KLANGKD_PROXY_ENGINE=nginx → the (deprecated) nginx ProxyWatchdog.
-
-        Kept this release as the escape hatch for a Caddy regression; the
-        settings layer warns on selection (#1634).
-        """
-        from klangk.proxy import ProxyWatchdog
-
-        app = main.build_app(make_settings({"KLANGKD_PROXY_ENGINE": "nginx"}))
-        assert isinstance(app.state.proxy_watchdog, ProxyWatchdog)
 
     def test_build_app_warns_when_frontend_dir_absent(self, caplog):
         """build_app warns when frontend_dir doesn't exist (#1600).
