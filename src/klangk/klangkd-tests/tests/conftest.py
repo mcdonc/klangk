@@ -41,11 +41,10 @@ def _disable_proxy(monkeypatch):
     The lifespan's proxy watchdog is unconditional in real runs; tests boot
     the app (often via the lifespan) and never want a real proxy (nginx)
     process.
-    Sets the internal, non-user-facing ``_KLANGKD_DISABLE_PROXY`` and
-    ``_KLANGKD_DISABLE_LITELLM`` kill switches.
+    Sets the internal, non-user-facing ``_KLANGKD_DISABLE_PROXY``
+    kill switch.
     """
     monkeypatch.setenv("_KLANGKD_DISABLE_PROXY", "1")
-    monkeypatch.setenv("_KLANGKD_DISABLE_LITELLM", "1")
 
 
 @pytest.fixture(autouse=True)

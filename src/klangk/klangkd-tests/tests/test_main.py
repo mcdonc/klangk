@@ -20,7 +20,6 @@ from klangk import (
     auth as auth_mod,
     emailsvc as emailsvc_mod,
     files as files_mod,
-    litellm as litellm_mod,
     proxy as proxy_mod,
     ssl_trust as ssl_trust_mod,
     util as util_mod,
@@ -79,9 +78,6 @@ def _make_app_state(settings=None):
     app_state.state.netfilter = NetFilter(app_state)
     app_state.state.auth = auth_mod.Auth(app_state)
     app_state.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app_state)
-    from klangk.litellm import LiteLLMWatchdog
-
-    app_state.state.litellm_watchdog = LiteLLMWatchdog(app_state)
     from klangk.llm_router import LLMRouter
 
     app_state.state.llm_router = LLMRouter(app_state)
@@ -809,7 +805,6 @@ class TestLifespan:
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
-        app.state.litellm_watchdog = litellm_mod.LiteLLMWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
@@ -858,7 +853,6 @@ class TestLifespan:
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
-        app.state.litellm_watchdog = litellm_mod.LiteLLMWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
@@ -1387,7 +1381,6 @@ class TestStartupShutdownRestart:
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = proxy_mod.ProxyWatchdog(app)
-        app.state.litellm_watchdog = litellm_mod.LiteLLMWatchdog(app)
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)

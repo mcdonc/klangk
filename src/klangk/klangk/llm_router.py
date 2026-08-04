@@ -8,7 +8,7 @@ Accepts model entries in two formats:
 
 1. **Colon-delimited strings** (for env vars):
    ``provider/model:api_base:api_key`` — parsed via
-   :func:`~klangk.litellm.parse_model_entry`.
+   :func:`parse_model_entry`.
 
 2. **LiteLLM-native dicts** (for ``klangkd.yaml``): the same
    ``model_name`` / ``litellm_params`` shape documented by LiteLLM.
@@ -28,14 +28,73 @@ from typing import Any
 
 from litellm import Router
 
-from klangk.litellm import parse_model_entry
 from klangk.settings import _resolve_indirection
 
 logger = logging.getLogger(__name__)
 
+# Provider defaults: well-known providers whose api_base can be omitted.
+_PROVIDER_DEFAULTS: dict[str, str] = {
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "cohere": "https://api.cohere.ai/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "groq": "https://api.groq.com/openai/v1",
+    "together_ai": "https://api.together.xyz/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "fireworks_ai": "https://api.fireworks.ai/inference/v1",
+}
+
 # litellm_params keys whose values may contain secrets and should
 # support file:/cmd: indirection.
 _INDIRECT_KEYS = frozenset({"api_key", "api_base"})
+
+
+def parse_model_entry(entry: str) -> dict:
+    """Parse a ``provider/model:api_base:api_key`` string into a LiteLLM
+    ``model_list`` entry dict.
+
+    The format uses the **first** colon as the model/api_base boundary and
+    the **last** colon as the api_base/api_key boundary::
+
+        litellm_model:api_base:api_key
+
+    Returns a dict suitable for inclusion in LiteLLM's ``model_list``.
+    """
+    first_colon = entry.find(":")
+    if first_colon == -1:
+        litellm_model = entry
+        api_base = ""
+        api_key = ""
+    else:
+        litellm_model = entry[:first_colon]
+        rest = entry[first_colon + 1 :]
+        last_colon = rest.rfind(":")
+        if last_colon == -1:
+            api_base = rest
+            api_key = ""
+        else:
+            api_base = rest[:last_colon]
+            api_key = rest[last_colon + 1 :]
+
+    if "/" in litellm_model:
+        provider, model_name = litellm_model.split("/", 1)
+    else:
+        provider = ""
+        model_name = litellm_model
+
+    if not api_base and provider in _PROVIDER_DEFAULTS:
+        api_base = _PROVIDER_DEFAULTS[provider]
+
+    params: dict = {"model": litellm_model}
+    if api_base:
+        params["api_base"] = api_base
+    if api_key:
+        params["api_key"] = api_key
+
+    return {
+        "model_name": model_name,
+        "litellm_params": params,
+    }
 
 
 def _normalize_key(key: str) -> str:

@@ -5,7 +5,11 @@ import tempfile
 import types
 from unittest.mock import AsyncMock, patch
 
-from klangk.llm_router import LLMRouter, _normalize_dict_entry
+from klangk.llm_router import (
+    LLMRouter,
+    _normalize_dict_entry,
+    parse_model_entry,
+)
 from _helpers import make_settings
 
 
@@ -233,3 +237,37 @@ class TestLLMRouterCompletion:
                 model="gpt-4o",
                 messages=[{"role": "user", "content": "hi"}],
             )
+
+
+class TestParseModelEntry:
+    def test_full_entry(self):
+        result = parse_model_entry(
+            "openai/gpt-4o:https://api.openai.com/v1:sk-xxx"
+        )
+        assert result["model_name"] == "gpt-4o"
+        assert result["litellm_params"]["model"] == "openai/gpt-4o"
+        assert (
+            result["litellm_params"]["api_base"] == "https://api.openai.com/v1"
+        )
+        assert result["litellm_params"]["api_key"] == "sk-xxx"
+
+    def test_no_colons(self):
+        result = parse_model_entry("openai/gpt-4o")
+        assert result["model_name"] == "gpt-4o"
+        assert result["litellm_params"]["model"] == "openai/gpt-4o"
+
+    def test_single_colon_uses_rest_as_base(self):
+        result = parse_model_entry("openai/gpt-4o:somebase")
+        assert result["litellm_params"]["api_base"] == "somebase"
+
+    def test_no_provider_prefix(self):
+        result = parse_model_entry("llama3:http://localhost:11434:")
+        assert result["model_name"] == "llama3"
+        assert result["litellm_params"]["api_base"] == "http://localhost:11434"
+
+    def test_provider_default_base_url(self):
+        result = parse_model_entry("openai/gpt-4o::sk-xxx")
+        assert (
+            result["litellm_params"]["api_base"] == "https://api.openai.com/v1"
+        )
+        assert result["litellm_params"]["api_key"] == "sk-xxx"
