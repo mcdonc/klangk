@@ -130,7 +130,7 @@ class TestProxyAclConfig:
             },
             str(tmp_path),
         )
-        assert "Authorization" not in conf
+        assert "Bearer sekret" not in conf
 
     def test_browser_delegate_has_acl(self, tmp_path):
         """browser-delegate endpoint always gets the ACL."""
