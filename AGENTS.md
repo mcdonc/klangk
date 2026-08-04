@@ -183,8 +183,19 @@ Add a bullet under `## [Unreleased]` **in the same PR that introduces the change
 - **Breaking** — sub-section under any version for changes requiring operator/integrator
   action on upgrade. Call out the migration.
 
-Each entry: one line, reference the issue/PR (`(#1375)`), enough context that an
-operator skimming the changelog understands the impact.
+Each entry must be **2–4 sentences max**. Lead with the **bold setting or feature
+name**, then the issue number in parens. State what changed and what operators
+need to know. Link to docs if they exist. Do not include internal justification
+("because X was broken"), migration history, implementation notes (module names,
+internal APIs, code paths), or test infrastructure detail. Only explain old
+behavior if the operator must act (Breaking section).
+
+Example:
+
+```markdown
+- **`KLANGKD_DNS_SEARCH` (#2055).** Comma-separated DNS search domains
+  passed to workspace containers via `--dns-search`. Reloadable on SIGHUP.
+```
 
 Add an entry for anything an **operator, integrator, or end user** would notice:
 new/changed config or defaults, behavior changes, security fixes, notable fixes,
