@@ -1077,6 +1077,20 @@ class TestStartContainer:
         # host.containers.internal must be resolvable
         assert "host.containers.internal:host-gateway" in kwargs["add_hosts"]
 
+    async def test_user_logname_env_vars(self, workspace, monkeypatch):
+        """USER/LOGNAME are set so tools inside the container see the
+        correct UNIX user (#2153)."""
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        env_dict = dict(e.split("=", 1) for e in env)
+        assert env_dict["USER"] == "klangk"
+        assert env_dict["LOGNAME"] == "klangk"
+
     async def test_workspace_token_written_to_container(
         self, workspace, app_state
     ):

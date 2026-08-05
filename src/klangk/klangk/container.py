@@ -1297,6 +1297,11 @@ class ContainerRegistry:
         env_vars.append(
             f"KLANGKWS_BRIDGE_URL=http://host.containers.internal:{egress_port}"
         )
+        # #2153: Set USER/LOGNAME so tools inside the container (git,
+        # shell prompts, sudo audit, Pi agent identity) see the correct
+        # UNIX user — containers have no login process to set these.
+        env_vars.append("USER=klangk")
+        env_vars.append("LOGNAME=klangk")
         if self.terminal_banner:
             env_vars.append(f"KLANGKWS_TERMINAL_BANNER={self.terminal_banner}")
 
