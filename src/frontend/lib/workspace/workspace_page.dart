@@ -301,11 +301,20 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (wsClient.terminalWindows.isNotEmpty) {
         final ids =
             wsClient.terminalWindows.map((w) => w['id'] as String?).toSet();
-        if (_selectedOwnWindowId == null) {
-          // First load — select window 0 (grouped sessions start there).
-          _selectedOwnWindowId = wsClient.terminalWindows[0]['id'] as String?;
-        } else if (!ids.contains(_selectedOwnWindowId)) {
-          // Selected window was closed — fall back to first window.
+        // Follow tmux's active window so the Flutter tab matches the
+        // status-bar selection (#2171); else keep the current selection when
+        // it still exists, else default to window 0.
+        String? activeId;
+        for (final w in wsClient.terminalWindows) {
+          if (w['active'] == true) {
+            activeId = w['id'] as String?;
+            break;
+          }
+        }
+        if (activeId != null) {
+          _selectedOwnWindowId = activeId;
+        } else if (_selectedOwnWindowId == null ||
+            !ids.contains(_selectedOwnWindowId)) {
           _selectedOwnWindowId = wsClient.terminalWindows[0]['id'] as String?;
         }
       }
