@@ -86,6 +86,24 @@ void capturePageQuery() {
   }
 }
 
+/// RFC 4122 v4 UUID from `crypto.getRandomValues`.
+///
+/// `window.crypto.randomUUID()` is secure-context-only (HTTPS / `localhost`);
+/// over plain HTTP to a remote host it is `undefined`, which threw inside
+/// `getBrowserId` and prevented `terminal_start` from being sent (the blank
+/// browser terminal, #2162). `crypto.getRandomValues` is available in all
+/// contexts, so this works on plain-HTTP deployments too.
+String _randomUuidV4() {
+  final b =
+      (web.window.crypto.getRandomValues(Uint8List(16).toJS) as JSUint8Array)
+          .toDart;
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant (RFC 4122)
+  final h = b.map((e) => e.toRadixString(16).padLeft(2, '0')).join();
+  return '${h.substring(0, 8)}-${h.substring(8, 12)}-'
+      '${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}';
+}
+
 /// Return a stable browser tab ID from sessionStorage.
 ///
 /// Survives page refresh (same tab) but is unique per tab.
@@ -96,7 +114,7 @@ String getBrowserId(String instanceId) {
   final key = 'klangk.$instanceId.browser_id';
   var id = web.window.sessionStorage.getItem(key);
   if (id == null || id.isEmpty) {
-    id = web.window.crypto.randomUUID();
+    id = _randomUuidV4();
     web.window.sessionStorage.setItem(key, id);
   }
   return id;
