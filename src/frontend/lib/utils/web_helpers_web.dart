@@ -180,6 +180,47 @@ Future<String?> readClipboardText() async {
   }
 }
 
+/// Write [text] to the system clipboard.
+///
+/// Prefers the async Clipboard API (`navigator.clipboard.writeText`), which
+/// is secure-context-only (HTTPS / `localhost`). Over plain HTTP to a remote
+/// host `navigator.clipboard` is `undefined`, so `writeText` is unavailable
+/// and terminal copy via the bridge silently failed (#2166). Fall back to
+/// `document.execCommand('copy')` against a transient `<textarea>`, which
+/// works in all contexts. Returns whether the copy succeeded.
+Future<bool> setClipboardText(String text) async {
+  // Prefer the async Clipboard API. It is secure-context-only (HTTPS /
+  // localhost); over plain HTTP `navigator.clipboard` is `undefined`, so the
+  // access below throws and we fall back to execCommand (#2166). The static
+  // type is non-nullable, so it can't be null-checked — rely on try/catch.
+  try {
+    await web.window.navigator.clipboard.writeText(text).toDart;
+    return true;
+  } catch (e) {
+    debugPrint('[WebHelpers] clipboard.writeText failed, falling back: $e');
+  }
+  return _execCommandCopy(text);
+}
+
+// `document.execCommand('copy')` is deprecated but is the only clipboard-write
+// path available in an insecure context (plain HTTP). It needs the document
+// focused and (modern browsers) a user gesture; the bridge copy originates
+// from the user's selection, so activation is typically still valid.
+bool _execCommandCopy(String text) {
+  final doc = web.document;
+  final ta = doc.createElement('textarea') as web.HTMLTextAreaElement;
+  ta.value = text;
+  ta.style
+    ..position = 'fixed'
+    ..top = '-9999px'
+    ..left = '-9999px';
+  doc.body?.appendChild(ta);
+  ta.select();
+  final ok = doc.execCommand('copy');
+  ta.remove();
+  return ok;
+}
+
 /// Register a callback to run when the page is about to unload (reload,
 /// close tab, navigate away). Used to send a clean WebSocket close frame
 /// so Firefox's FailDelayManager doesn't throttle the next connection.

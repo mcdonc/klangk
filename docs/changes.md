@@ -286,6 +286,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   worked over HTTPS or localhost. Fixed; terminals now start over plain HTTP
   too.
 
+- **Terminal copy over plain HTTP (#2166).** Copying text from a browser
+  workspace terminal did nothing on plain-HTTP deployments (the async
+  Clipboard API is secure-context-only). Copy now falls back to
+  `document.execCommand('copy')` in insecure contexts.
+
 ### Security
 
 - **`git-credential-klangk`: secrets redacted from debug output (#1938).**

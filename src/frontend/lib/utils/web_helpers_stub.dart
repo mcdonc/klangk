@@ -44,6 +44,10 @@ void Function() installPageKeyListener(bool Function() shouldSuppress) => () {};
 /// Stub — no system clipboard outside the browser.
 Future<String?> readClipboardText() async => null;
 
+/// Stub — no system clipboard write outside the browser; signal "not handled"
+/// so the caller falls back to Flutter's `Clipboard.setData` (desktop/mobile).
+Future<bool> setClipboardText(String text) async => false;
+
 /// Stub — no beforeunload outside the browser.
 void Function() onBeforeUnload(void Function() callback) => () {};
 
