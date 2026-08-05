@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
+import '../utils/web_helpers_stub.dart'
+    if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../ws/ws_client.dart';
 
 /// Handles browser_request messages from the backend bridge.
@@ -79,6 +81,13 @@ class BrowserDelegate {
       return {'error': 'missing text'};
     }
     try {
+      // Route through the web helper so copy works in an insecure context
+      // (plain HTTP) too: it falls back to execCommand('copy') when
+      // navigator.clipboard is unavailable (#2166). Non-web returns false and
+      // falls through to Clipboard.setData below.
+      if (await setClipboardText(text)) {
+        return {'status': 'ok'};
+      }
       await Clipboard.setData(ClipboardData(text: text));
       return {'status': 'ok'};
     } catch (e) {
