@@ -303,6 +303,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   switching the active tmux window switches the active Flutter tab. Driven by
   a persistent per-workspace tmux control-mode watcher (no per-tick polling).
 
+- **Flutter "+" no longer steals focus (#2176).** Creating a terminal from
+  the Flutter tab-bar "+" keeps focus on the currently-selected tab instead
+  of switching to the new one. The active-window follow now ignores a
+  brand-new window becoming active (only switches to an existing window).
+
 ### Security
 
 - **`git-credential-klangk`: secrets redacted from debug output (#1938).**

@@ -294,6 +294,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // Rebuild only when terminal/shared tab lists actually change.
     if (!identical(wsClient.terminalWindows, _prevTerminalWindows) ||
         !identical(wsClient.sharedTerminals, _prevSharedTerminals)) {
+      // Snapshot the previous window ids BEFORE reassigning, so we can tell a
+      // switch to an existing window apart from a brand-new window becoming
+      // active.
+      final prevWindowIds =
+          _prevTerminalWindows.map((w) => w['id'] as String?).toSet();
       _prevTerminalWindows = wsClient.terminalWindows;
       _prevSharedTerminals = wsClient.sharedTerminals;
       // Track selected own-window: initialize on first message, or
@@ -301,9 +306,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
       if (wsClient.terminalWindows.isNotEmpty) {
         final ids =
             wsClient.terminalWindows.map((w) => w['id'] as String?).toSet();
-        // Follow tmux's active window so the Flutter tab matches the
-        // status-bar selection (#2171); else keep the current selection when
-        // it still exists, else default to window 0.
+        // Follow tmux's active window on a switch to an EXISTING window (or
+        // the first load) so the Flutter tab matches the status-bar selection
+        // (#2171) — but NOT when a brand-new window just became active. The
+        // Flutter "+" creates a window that tmux selects; keep focus where the
+        // user had it instead of stealing it to the new tab (#2176).
         String? activeId;
         for (final w in wsClient.terminalWindows) {
           if (w['active'] == true) {
@@ -311,7 +318,9 @@ class _WorkspacePageState extends State<WorkspacePage> {
             break;
           }
         }
-        if (activeId != null) {
+        final followActive = activeId != null &&
+            (prevWindowIds.isEmpty || prevWindowIds.contains(activeId));
+        if (followActive) {
           _selectedOwnWindowId = activeId;
         } else if (_selectedOwnWindowId == null ||
             !ids.contains(_selectedOwnWindowId)) {
