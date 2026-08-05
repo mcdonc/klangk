@@ -32,6 +32,12 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **New terminal from the tmux status bar (#2161).** A clickable "+ new"
+  item in the workspace terminal's tmux status bar opens another terminal
+  via a native `tmux new-window`, working the same in `klangk shell` and the
+  browser. (The new terminal appearing as a Flutter tab is tracked in
+  #2171.)
+
 - **`klangkd.yaml` config file (#1645, #1649).** `klangkd` reads configuration
   from `$KLANGKD_CONFIG_DIR/klangkd.yaml` (default
   `~/.config/klangkd/klangkd.yaml`). A template is generated on first run.
