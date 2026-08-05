@@ -908,6 +908,10 @@ class TerminalController:
             conn = self._conn.app.state.sockets.connections.get(sock)
             if conn and conn.user.get("id") == user_id:
                 sock.send_json(msg)
+        # Keep the control-mode watcher's diff baseline current so it doesn't
+        # re-broadcast the state we just pushed (a duplicate debounced frame
+        # raced the e2e terminal-tabs tests, #2174).
+        ws_session._last_windows[user_id] = windows
 
     def _notify_terminals_changed(
         self, windows: list[dict] | None = None

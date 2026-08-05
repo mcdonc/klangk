@@ -11,6 +11,7 @@ from klangk.window_watcher import WindowEventWatcher, is_window_event
 def test_is_window_event_matches_relevant_events():
     assert is_window_event("%unlinked-window-add @10")
     assert is_window_event("%unlinked-window-close @10")
+    assert is_window_event("%unlinked-window-renamed @10 newname")
     assert is_window_event("%window-close @10")
     assert is_window_event("%session-window-changed $0 @10")
 
@@ -34,6 +35,7 @@ async def test_read_loop_dispatches_only_relevant_events():
         b"%output %9 noise\n",
         b"%window-add @9\n",  # control client's own window — ignored
         b"%unlinked-window-add @10\n",  # relevant
+        b"%unlinked-window-renamed @10 newname\n",  # relevant (rename)
         b"%session-window-changed $0 @10\n",  # relevant
         b"%begin 1 1 0\n",
         b"",  # EOF
@@ -42,7 +44,7 @@ async def test_read_loop_dispatches_only_relevant_events():
     stdout.readline = AsyncMock(side_effect=lines)
     watcher._proc = MagicMock(stdout=stdout, returncode=None)
     await watcher._read_loop()
-    assert calls == [1, 1]
+    assert calls == [1, 1, 1]
 
 
 async def test_read_loop_ignores_dead_socket():
