@@ -297,6 +297,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   Clipboard API is secure-context-only). Copy now falls back to
   `document.execCommand('copy')` in insecure contexts.
 
+- **Terminal tab strip stays in sync with tmux (#2171, #2161).** A new
+  terminal added from the tmux status bar now appears as a tab on every
+  connected Flutter client, a closed terminal's tab closes everywhere, and
+  switching the active tmux window switches the active Flutter tab. Driven by
+  a persistent per-workspace tmux control-mode watcher (no per-tick polling).
+
 ### Security
 
 - **`git-credential-klangk`: secrets redacted from debug output (#1938).**

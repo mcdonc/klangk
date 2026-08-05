@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from .. import model
+from ..window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
 from .constants import (
     agent_conversations,
@@ -104,6 +105,12 @@ class WorkspaceSession:
         # Workspace token renewal tracking.
         self.workspace_token_expiry: datetime | None = None
         self._token_renewal_task: asyncio.Task | None = None
+        # Window-sync via a persistent tmux control-mode client: last
+        # list_windows snapshot per user_id, so we re-broadcast only on a
+        # real change (#2161 / #2171).
+        self._last_windows: dict[str, list] = {}
+        self._window_watcher: WindowEventWatcher | None = None
+        self._window_sync_handle: asyncio.TimerHandle | None = None
 
     async def reset(self) -> None:
         self.subscribers.clear()
@@ -121,6 +128,14 @@ class WorkspaceSession:
                 pass
         self._token_renewal_task = None
         self.workspace_token_expiry = None
+        if self._window_sync_handle is not None:
+            self._window_sync_handle.cancel()
+            self._window_sync_handle = None
+        watcher = self._window_watcher
+        self._window_watcher = None
+        if watcher is not None:
+            asyncio.create_task(watcher.stop())  # pragma: no cover
+        self._last_windows.clear()
 
     async def add_subscriber(
         self,
@@ -144,6 +159,7 @@ class WorkspaceSession:
                 and self.workspace_token_expiry is None
             ):
                 self.start_token_renewal(token_expiry)
+            self.start_window_sync()
 
     async def remove_subscriber(self, sock: SafeWebSocket) -> bool:
         """Unregister a connection (acquires lock).
@@ -169,6 +185,64 @@ class WorkspaceSession:
         self._token_renewal_task = asyncio.create_task(
             self._token_renewal_loop()
         )
+
+    def start_window_sync(self) -> None:
+        """Start (once) the tmux control-mode window-change watcher so every
+        client's tab strip stays in sync with tmux (#2161 / #2171)."""
+        if self._window_watcher is not None or self.app is None:
+            return
+        if self.container_id is None:
+            return
+        self._window_watcher = WindowEventWatcher(
+            self.app.state.podman,
+            self.container_id,
+            self._schedule_window_sync,
+        )
+        asyncio.create_task(self._window_watcher.start())  # pragma: no cover
+
+    def _schedule_window_sync(self) -> None:
+        """Debounce a burst of control-mode events into one re-sync."""
+        if self._window_sync_handle is not None:
+            self._window_sync_handle.cancel()
+        loop = asyncio.get_running_loop()
+        self._window_sync_handle = loop.call_later(
+            0.15, self._dispatch_window_sync
+        )
+
+    def _dispatch_window_sync(self) -> None:
+        self._window_sync_handle = None
+        asyncio.create_task(self._sync_windows_once())  # pragma: no cover
+
+    async def _sync_windows_once(self) -> None:
+        """Re-broadcast ``terminal_windows`` to each connected user when tmux's
+        windows changed (add/close/active) so every client's tab strip updates.
+        """
+        if self.app is None or not self.container_id or not self.subscribers:
+            return
+        sockets = self.app.state.sockets
+        terminal = self.app.state.terminal
+        user_ids: set[str] = set()
+        for sock in list(self.subscribers):
+            conn = sockets.connections.get(sock)
+            uid = conn.user.get("id") if conn else None
+            if uid and uid != model.AGENT_USER_ID:
+                user_ids.add(uid)
+        for uid in user_ids:
+            try:
+                windows = await terminal.list_windows(self.container_id, uid)
+            except Exception:  # pragma: no cover - container mid-restart
+                continue
+            if self._last_windows.get(uid) == windows:
+                continue
+            self._last_windows[uid] = windows
+            msg = {"type": "terminal_windows", "windows": windows}
+            for sock in list(self.subscribers):
+                conn = sockets.connections.get(sock)
+                if conn and conn.user.get("id") == uid:
+                    try:
+                        sock.send_json(msg)
+                    except WS_ERRORS:
+                        pass
 
     async def _token_renewal_loop(self) -> None:
         """Periodically renew the workspace token before it expires."""

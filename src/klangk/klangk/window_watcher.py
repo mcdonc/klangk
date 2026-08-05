@@ -1,0 +1,127 @@
+"""Persistent tmux control-mode client that reports workspace window changes.
+
+One :class:`WindowEventWatcher` per workspace keeps every connected client's
+terminal tab strip in sync with tmux. A detached ``tmux -C`` control client
+emits ``%unlinked-window-add`` / ``%window-close`` / ``%session-window-changed``
+events whenever a window is added, closed, or the active window switches —
+and (verified empirically) these fire for any session on the tmux server, not
+just the control client's own. The watcher hands each event to a callback so
+the caller can debounce the burst into a single ``terminal_windows`` re-broadcast
+— meaning podman execs happen only on real changes, not on a per-tick poll
+(#2161 / #2171).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+
+from .podman import Podman, subprocess_env
+
+logger = logging.getLogger(__name__)
+
+# Control-mode events that mean "the window set or the active window may have
+# changed". %output (pane bytes), %begin/%end (command framing), and the
+# control client's own %window-add / %session-changed are deliberately ignored
+# so its idle pane never trips a re-sync.
+_WINDOW_EVENT_PREFIXES = (
+    "%unlinked-window-add",
+    "%unlinked-window-close",
+    "%window-close",
+    "%session-window-changed",
+)
+
+
+def is_window_event(line: str) -> bool:
+    """True if a control-mode ``line`` indicates a window/active change."""
+    return line.startswith(_WINDOW_EVENT_PREFIXES)
+
+
+class WindowEventWatcher:
+    """A long-lived ``tmux -C`` control client for one container.
+
+    :meth:`start` spawns it (idempotent); :meth:`stop` tears it down.
+    ``on_change`` is called synchronously from the reader task once per
+    relevant event; callers debounce.
+    """
+
+    def __init__(self, podman: Podman, container_id: str, on_change) -> None:
+        self._podman = podman
+        self._container_id = container_id
+        self._on_change = on_change
+        self._proc: asyncio.subprocess.Process | None = None
+        self._task: asyncio.Task | None = None
+        # Unique per-watcher session name so a stale client from a prior
+        # instance (e.g. across a container restart) never collides.
+        self._ctrl_session = f"__klangk_ctrl-{uuid.uuid4().hex[:8]}"
+
+    async def start(
+        self,
+    ) -> None:  # pragma: no cover - subprocess; integration
+        if self._task is not None and not self._task.done():
+            return
+        self._proc = await asyncio.create_subprocess_exec(
+            self._podman.bin,
+            "exec",
+            "-i",
+            self._container_id,
+            "tmux",
+            "-C",
+            "new-session",
+            "-s",
+            self._ctrl_session,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+            env=subprocess_env(),
+        )
+        self._task = asyncio.create_task(self._read_loop())
+
+    async def _read_loop(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stdout is None:
+            return
+        try:
+            while True:
+                raw = await proc.stdout.readline()
+                if not raw:
+                    return  # pragma: no cover - subprocess exited
+                if is_window_event(raw.decode(errors="replace").strip()):
+                    self._on_change()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover
+            logger.exception("WindowEventWatcher read loop error")
+
+    async def stop(self) -> None:  # pragma: no cover - subprocess; integration
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        self._task = None
+        proc = self._proc
+        self._proc = None
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=3)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+        if proc is not None:
+            try:
+                await self._podman.exec_container(
+                    self._container_id,
+                    ["tmux", "kill-session", "-t", self._ctrl_session],
+                )
+            except Exception:  # pragma: no cover
+                pass
