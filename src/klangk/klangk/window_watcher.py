@@ -24,10 +24,12 @@ logger = logging.getLogger(__name__)
 # Control-mode events that mean "the window set or the active window may have
 # changed". %output (pane bytes), %begin/%end (command framing), and the
 # control client's own %window-add / %session-changed are deliberately ignored
-# so its idle pane never trips a re-sync.
+# so its idle pane never trips a re-sync. %unlinked-window-renamed covers
+# tmux-side window renames (#2175).
 _WINDOW_EVENT_PREFIXES = (
     "%unlinked-window-add",
     "%unlinked-window-close",
+    "%unlinked-window-renamed",
     "%window-close",
     "%session-window-changed",
 )
