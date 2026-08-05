@@ -278,6 +278,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 - **`klangk invite` → `klangk admin invitations send` (#1374).**
 
+### Fixed
+
+- **Browser terminals over plain HTTP (#2162).** In the browser UI,
+  workspace terminals never started (the pane stayed blank, no shell prompt)
+  on deployments served over plain HTTP to a non-localhost host — they only
+  worked over HTTPS or localhost. Fixed; terminals now start over plain HTTP
+  too.
+
 ### Security
 
 - **`git-credential-klangk`: secrets redacted from debug output (#1938).**
