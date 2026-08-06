@@ -857,22 +857,37 @@ class TestNewWindow:
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
-            return_value=(0, "@0|||0|||1|||1\n", ""),
+            return_value=(0, "@0|||0|||bash|||1\n", ""),
         ) as mock_exec:
             result = await _terminal.new_window("cid", "sess")
         assert len(result) == 1
-        assert result[0]["name"] == "1"
-        assert mock_exec.call_args.args[1][:2] == ["bash", "-c"]
+        # No name -> defaults to "bash" (matching window 0), not a number (#2179).
+        assert result[0]["name"] == "bash"
+        argv = mock_exec.call_args.args[1]
+        assert argv[:2] == ["bash", "-c"]
+        assert "-n bash" in argv[2]
+        # The default-name path skips the duplicate guard (only explicit
+        # user-chosen names are checked for duplicates).
+        assert "DUPLICATE" not in argv[2]
+        assert "grep" not in argv[2]
 
-    async def test_auto_name_skips_existing(self):
+    async def test_auto_name_allows_existing_bash(self):
+        # The default "bash" is created even when a "bash" window already
+        # exists — multiple shells all named "bash" is the intended UX (#2179).
         with patch.object(
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
-            return_value=(0, "@0|||0|||1|||0\n@1|||1|||2|||1\n", ""),
-        ):
+            return_value=(
+                0,
+                "@0|||0|||bash|||0\n@1|||1|||bash|||1\n",
+                "",
+            ),
+        ) as mock_exec:
             result = await _terminal.new_window("cid", "sess")
-        assert len(result) == 2
+        assert [w["name"] for w in result] == ["bash", "bash"]
+        # No duplicate check ran (would have rejected the second "bash").
+        assert "DUPLICATE" not in mock_exec.call_args.args[1][2]
 
     async def test_creates_named_window(self):
         with patch.object(

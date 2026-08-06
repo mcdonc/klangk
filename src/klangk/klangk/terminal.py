@@ -607,8 +607,11 @@ class Terminal:
     ) -> list[dict]:
         """Create a new tmux window and return the updated window list.
 
-        If *name* is not provided, auto-generates a unique name.
-        Raises ``ValueError`` if *name* duplicates an existing window name.
+        If *name* is not provided, the window is named ``bash`` (matching
+        window 0) instead of a consecutive number (#2179). Raises
+        ``ValueError`` if an explicit *name* duplicates an existing window
+        name — the duplicate guard applies only to user-chosen names; the
+        default ``bash`` is generic and tmux permits duplicate window names.
 
         Uses a single podman exec with a shell script to minimize
         round-trips (list + create + list in one call).
@@ -631,13 +634,14 @@ class Terminal:
             )
             argv = ["bash", "-c", script, "bash", name, session_name]
         else:
-            # Auto-name — find next number, create, list. session_name is $1.
+            # Default name for auto-created windows (the Flutter "+" sends
+            # no name). Window 0 is "bash"; new windows match instead of
+            # being numbered 1, 2, 3… (#2179). The duplicate-name guard above
+            # is skipped: tmux permits duplicate window names, and "bash" is
+            # a generic default, not a user-chosen label.
             script = (
                 'sn="$1";'
-                ' names=$(tmux list-windows -t "$sn"'
-                " -F '#{window_name}' 2>/dev/null);"
-                ' n=1; while echo "$names" | grep -qx "$n"; do n=$((n+1)); done;'
-                ' tmux new-window -t "$sn" -n "$n";'
+                ' tmux new-window -t "$sn" -n bash;'
                 ' tmux list-windows -t "$sn"'
                 " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
             )

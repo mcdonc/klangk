@@ -308,6 +308,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **New terminals from the Flutter "+" are named "bash" (#2179).** A
+  terminal created from the browser tab-bar "+" was named with a
+  consecutive number ("1", "2", …), inconsistent with window 0 ("bash")
+  and the tmux status-bar "+". The server's no-name default is now
+  "bash" (tmux permits duplicate window names, so the duplicate guard
+  that protects explicit names is skipped for the default).
+
 - **TUI workspace detail: long values no longer wrap into the label
   column (#2190).** The detail table was rendered at the screen width,
   but the value panel is narrower (screen chrome), so the panel re-wrapped
