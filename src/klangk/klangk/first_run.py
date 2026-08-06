@@ -106,14 +106,14 @@ def _render_config() -> str:
 #                          # secret for any non-local deployment
 #
 # --- Container resource limits (defaults shown; #34 / #2030) ---
-# Every workspace container is capped at 2 CPUs / 8g RAM / 512 PIDs so a
+# Every workspace container is capped at 2 CPUs / 8g RAM / 16384 PIDs so a
 # runaway workspace can't starve the host. These match the built-in
 # defaults, so editing or removing a line keeps that cap unless you set it
 # to empty (container_cpu_limit: "") to disable just that one. Podman
 # receives them as --cpus / --memory / --pids-limit.
 container_cpu_limit: 2.0
 container_memory_limit: 8g
-container_pids_limit: 512
+container_pids_limit: 16384
 #
 # Full settings reference:
 #   https://mcdonc.github.io/klangk/reference/klangkd-config/

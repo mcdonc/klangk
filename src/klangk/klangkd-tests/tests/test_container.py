@@ -685,7 +685,7 @@ class TestStartContainer:
 
     async def test_resource_limits_defaults_emit_flags(self, workspace):
         # #2030: with no deploy limits configured, the built-in protective
-        # defaults (2 CPUs / 8g / 512 PIDs) still flow through to podman as
+        # defaults (2 CPUs / 8g / 16384 PIDs) still flow through to podman as
         # --cpus / --memory / --pids-limit — a fresh install is bounded out
         # of the box. (Setting an env var to "" disables one cap -> None ->
         # no flag; see test_settings.py.)
@@ -696,7 +696,7 @@ class TestStartContainer:
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["cpus"] == 2.0
         assert kwargs["memory"] == "8g"
-        assert kwargs["pids_limit"] == 512
+        assert kwargs["pids_limit"] == 16384
 
     async def test_ping_cap_add_emitted_by_default(self, workspace):
         # #2045: enable_ping defaults to True, so the workspace container
