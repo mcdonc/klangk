@@ -83,12 +83,12 @@ class BrowserDelegate {
     try {
       // Route through the web helper so copy works in an insecure context
       // (plain HTTP) too: it falls back to execCommand('copy') when
-      // navigator.clipboard is unavailable (#2166). Non-web returns false and
-      // falls through to Clipboard.setData below.
-      if (await setClipboardText(text)) {
-        return {'status': 'ok'};
+      // navigator.clipboard is unavailable (#2166). When it returns false
+      // (non-web, or the copy genuinely failed) fall through to
+      // Clipboard.setData.
+      if (!await setClipboardText(text)) {
+        await Clipboard.setData(ClipboardData(text: text));
       }
-      await Clipboard.setData(ClipboardData(text: text));
       return {'status': 'ok'};
     } catch (e) {
       return {'error': 'clipboard write failed: $e'};
