@@ -938,7 +938,10 @@ test.describe("shared terminal visibility", () => {
         const allWindows = newWindowsMsg.windows as Array<
           Record<string, unknown>
         >;
-        const newWindow = allWindows.find((w) => w.name !== firstWindowName);
+        // Identify the newly-created window by id, not name: new windows
+        // default to "bash" (#2179), the same name as window 0, so name is
+        // no longer unique.
+        const newWindow = allWindows.find((w) => w.id !== firstWindow.id);
         expect(newWindow).toBeDefined();
 
         // Admin types in the new window
