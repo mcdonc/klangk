@@ -105,7 +105,7 @@ devenv shell -- playwright test \
 
 > **Run from the worktree root** (where `devenv.nix` lives), wrapped in
 > `devenv shell --`. Use the **`playwright`** command defined in `devenv.nix`
-> — it resolves to the local binary pinned to `@playwright/test@1.59.1`.
+> — it resolves to the local binary pinned to `@playwright/test@1.60.0`.
 > Do **not** use `npx playwright`, which grabs a newer cached version (1.61.x)
 > and fails with "two different versions of @playwright/test".
 

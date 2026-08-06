@@ -73,10 +73,18 @@ in
         ]
     );
 
-  # Point Playwright at the nix-provided browsers. The playwright.config.ts
-  # hardcodes the nix revision numbers (e.g. chromium-1223) so no remapping
-  # is needed — just set the path directly.
+  # Point Playwright at the nix-provided browsers. @playwright/test
+  # (src/frontend/e2e-tests/package.json) is pinned to the version whose browser
+  # revisions match these builds, so Playwright resolves each browser under
+  # PLAYWRIGHT_BROWSERS_PATH on its own — playwright.config.ts no longer hardcodes
+  # the revision numbers (#2182). SKIP_BROWSER_DOWNLOAD keeps `npm install` from
+  # fetching its own (mismatched) copy; the nix build is the source of truth.
+  # The enterShell block below fails fast if the @playwright/test chromium
+  # revision ever drifts from the nix build (e.g. a nixpkgs playwright-driver
+  # bump) — the symptom otherwise is a confusing "Executable doesn't exist" at
+  # test time.
   env.PLAYWRIGHT_BROWSERS_PATH = pkgs.playwright-driver.browsers;
+  env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";
   env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
 
   tasks = {
@@ -316,11 +324,24 @@ in
     devenv tasks run klangk:flutter-build klangk:build-workspace-image
     cd src/frontend/e2e-tests
     npm install --silent
+
+    # Fail fast if @playwright/test's browser revisions don't match the nix
+    # playwright-driver.browsers (PLAYWRIGHT_BROWSERS_PATH) — otherwise the
+    # suite fails per-test with "Executable doesn't exist". See #2182.
+    if [ -n "''${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+      _pwrev=$(python3 -c "import json;print(next(b['revision'] for b in json.load(open('node_modules/playwright-core/browsers.json'))['browsers'] if b['name']=='chromium'))" 2>/dev/null || true)
+      if [ -n "$_pwrev" ] && [ ! -d "$PLAYWRIGHT_BROWSERS_PATH/chromium-$_pwrev" ]; then
+        echo "ERROR: @playwright/test expects chromium-$_pwrev, which is not under PLAYWRIGHT_BROWSERS_PATH ($PLAYWRIGHT_BROWSERS_PATH)." >&2
+        echo "Bump @playwright/test in package.json to the version matching nixpkgs playwright-driver.browsers, then 'npm install'. See #2182." >&2
+        exit 1
+      fi
+    fi
+
     exec npx playwright test --reporter=list "$@"
   '';
 
   # Bare `playwright` command that always uses the LOCAL binary pinned in
-  # src/frontend/e2e-tests/package.json (@playwright/test 1.59.1). Use this
+  # src/frontend/e2e-tests/package.json (@playwright/test 1.60.0). Use this
   # instead of `npx playwright`, which resolves to a newer cached version
   # (1.61.x) and fails with "two different versions of @playwright/test".
   # All extra args are forwarded. e.g.
@@ -563,6 +584,21 @@ in
     MD034: false
     MD060: false
     MDLINT
+
+    # Playwright browser drift guard (#2182): @playwright/test's expected
+    # chromium revision must exist under the nix PLAYWRIGHT_BROWSERS_PATH, or
+    # every browser-launching test fails with "Executable doesn't exist". Only
+    # checked once node_modules is present, so a first shell entry is unaffected.
+    # test-frontend-e2e hard-fails on the same drift; this is the early warning.
+    if [ -n "''${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+      _pwbj="$DEVENV_ROOT/src/frontend/e2e-tests/node_modules/playwright-core/browsers.json"
+      if [ -f "$_pwbj" ]; then
+        _pwrev=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(next(b['revision'] for b in d['browsers'] if b['name']=='chromium'))" "$_pwbj" 2>/dev/null || true)
+        if [ -n "$_pwrev" ] && [ ! -d "$PLAYWRIGHT_BROWSERS_PATH/chromium-$_pwrev" ]; then
+          echo "WARNING (@playwright/test vs nix browsers): @playwright/test expects chromium-$_pwrev, which is not under PLAYWRIGHT_BROWSERS_PATH ($PLAYWRIGHT_BROWSERS_PATH). Bump @playwright/test in src/frontend/e2e-tests/package.json to the version matching nixpkgs playwright-driver.browsers, then 'cd src/frontend/e2e-tests && npm install'. See #2182." >&2
+        fi
+      fi
+    fi
   '';
 
   claude.code.mcpServers = { };
