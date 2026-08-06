@@ -658,6 +658,29 @@ class KlangkClient:
         """
         return await self._terminals(name)
 
+    async def list_shared_terminals(self, name: str) -> list[dict]:
+        """Return shared terminals visible in workspace *name*.
+
+        Other users' shared windows plus the agent's ``service`` window —
+        the same set the browser renders as shared tabs. Drives the
+        workspace WebSocket and issues the ``list_shared_terminals``
+        command (no terminal session needed). Returns ``[]`` on any
+        failure (including the ``spectate-on-shared-terminals`` permission
+        being absent) so the TUI degrades to an empty shared list.
+        """
+        try:
+            ws = self.resolve_workspace(name)
+            async with ws_connect(
+                self.server_url, token=self.token or ""
+            ) as conn:
+                await wait_container_ready(conn, ws.id)
+                await conn.send(json.dumps({"cmd": "ui_ready"}))
+                await self._drain_until_ready(conn)
+                await conn.send(json.dumps({"cmd": "list_shared_terminals"}))
+                return await self._recv_shared_terminals(conn)
+        except Exception:
+            return []
+
     async def close_terminal(self, name: str, window_id: str) -> list[dict]:
         """Close terminal window *window_id* (@N) in *name*; return list."""
         return await self._terminals(name, close_window_id=window_id)
@@ -772,6 +795,24 @@ class KlangkClient:
             if msg.get("type") == "error":
                 # Surface server errors immediately instead of looping
                 # until the 30s timeout (#1966 review).
+                raise ConnectionError(msg.get("message", "terminal error"))
+
+    @staticmethod
+    async def _recv_shared_terminals(
+        conn, timeout: float = 30.0
+    ) -> list[dict]:
+        """Read frames until a ``shared_terminals`` frame arrives."""
+        loop = asyncio.get_event_loop()
+        end = loop.time() + timeout
+        while True:
+            remaining = end - loop.time()
+            if remaining <= 0:  # pragma: no cover
+                raise asyncio.TimeoutError
+            raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+            msg = json.loads(raw)
+            if msg.get("type") == "shared_terminals":
+                return msg.get("terminals") or []
+            if msg.get("type") == "error":
                 raise ConnectionError(msg.get("message", "terminal error"))
 
     def export_workspace(

@@ -1233,6 +1233,83 @@ class TestKlangkClient:
         client.resolve_workspace = MagicMock(side_effect=RuntimeError("nope"))
         assert asyncio.run(client.list_terminals("alpha")) == []
 
+    def test_list_shared_terminals(self):
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        shared = [
+            {
+                "user_id": "agent",
+                "handle": "clanker",
+                "window_name": "service-cmd",
+                "window_id": "@0",
+                "is_service": True,
+            },
+            {
+                "user_id": "alice",
+                "handle": "alice",
+                "window_name": "build",
+                "window_id": "@1",
+                "is_service": False,
+            },
+        ]
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "shared_terminals", "terminals": shared}),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            result = asyncio.run(client.list_shared_terminals("alpha"))
+        assert result == shared
+        # The client issued the list_shared_terminals command (not a
+        # terminal_start) — it doesn't open a session to enumerate.
+        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
+        cmds = {m.get("cmd") for m in sent}
+        # The client issued the list_shared_terminals command (not a
+        # terminal_start) — it doesn't open a session to enumerate.
+        assert "list_shared_terminals" in cmds
+        assert "terminal_start" not in cmds
+
+    def test_list_shared_terminals_failure(self):
+        # resolve_workspace raising -> graceful empty list
+        client = KlangkClient("http://test:8995", "token")
+        client.resolve_workspace = MagicMock(side_effect=RuntimeError("nope"))
+        assert asyncio.run(client.list_shared_terminals("alpha")) == []
+
+    def test_list_shared_terminals_error_frame(self):
+        # A server ``error`` frame (e.g. spectate permission denied) ->
+        # graceful empty list, not a hang until timeout.
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "error", "message": "Permission denied"}),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            assert asyncio.run(client.list_shared_terminals("alpha")) == []
+
     def test_close_terminal(self):
         client = KlangkClient("http://test:8995", "token")
         ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")

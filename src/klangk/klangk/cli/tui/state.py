@@ -59,6 +59,11 @@ class TuiState:
     def __init__(self, server_url: str | None = None) -> None:
         # ``--server`` override; otherwise the active server from state.
         self._server_override = server_url
+        # Cached /auth/me user id for the active server, so the detail
+        # screen can filter a user's own shared windows out of the shared
+        # list without a /me hit on every render. Refetched on server switch.
+        self._user_id: str | None = None
+        self._user_id_url: str | None = None
 
     # --- fresh config / state each call ---
 
@@ -104,6 +109,41 @@ class TuiState:
         if url is None:
             return None
         return self.state().get_email(url)
+
+    def current_user_id(self) -> str | None:
+        """The authenticated user's id for the active server (cached).
+
+        Fetched once via /auth/me; refetched if the active server changes.
+        Returns None if it can't be resolved (no token, unreachable) so
+        callers can degrade (e.g. skip filtering).
+        """
+        url = self.current_url()
+        if url is None:
+            return None
+        if self._user_id is not None and self._user_id_url == url:
+            return self._user_id
+        token = self.token()
+        if token is None:
+            return None
+        try:
+            resp = http_request(
+                url,
+                "GET",
+                "/api/v1/auth/me",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5.0,
+            )
+        except httpx.HTTPError:
+            return None
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        uid = data.get("id") if isinstance(data, dict) else None
+        if isinstance(uid, str):
+            self._user_id = uid
+            self._user_id_url = url
+            return uid
+        return None
 
     def is_authenticated(self) -> bool:
         url = self.current_url()
@@ -218,6 +258,9 @@ class TuiState:
 
     async def list_terminals(self, name: str) -> list[dict]:
         return await self.client().list_terminals(name)
+
+    async def list_shared_terminals(self, name: str) -> list[dict]:
+        return await self.client().list_shared_terminals(name)
 
     async def close_terminal(self, name: str, window_id: str) -> list[dict]:
         return await self.client().close_terminal(name, window_id)

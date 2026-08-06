@@ -78,6 +78,20 @@ class WorkspaceDetailScreen(Screen):
         height: auto;
         max-height: 14;
     }
+    WorkspaceDetailScreen #shared_header {
+        height: 1;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+    WorkspaceDetailScreen #shared_label {
+        text-style: bold;
+        width: auto;
+        color: $accent;
+    }
+    WorkspaceDetailScreen #shared_term_list {
+        height: auto;
+        max-height: 10;
+    }
     WorkspaceDetailScreen #detail_body {
         margin-top: 1;
     }
@@ -88,6 +102,10 @@ class WorkspaceDetailScreen(Screen):
         self._name = name
         self._ws = None
         self._terminals: list[dict] = []
+        # Shared terminals visible to this user in the workspace (others'
+        # shared windows + the agent's service window). Loaded alongside
+        # own terminals so the detail page can list + launch them (#2164).
+        self._shared_terminals: list[dict] = []
         self._missing = False
         self._load_error: str | None = None
         # Serializes terminal-list renders. Adding/removing a terminal fires
@@ -99,6 +117,13 @@ class WorkspaceDetailScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
+        # Spatial nav (#1781): Down off the last own-terminal row enters
+        # the shared-terminal list; Up off its first row returns to the
+        # own-terminal list. Tab remains a fallback.
+        term_list = SpatialListView(id="term_list")
+        term_list.SPATIAL_DOWN_TARGET = "#shared_term_list"
+        shared_list = SpatialListView(id="shared_term_list")
+        shared_list.SPATIAL_UP_TARGET = "#term_list"
         yield Vertical(
             Horizontal(
                 Static("Terminals", id="term_label"),
@@ -109,7 +134,17 @@ class WorkspaceDetailScreen(Screen):
                 ),
                 id="term_header",
             ),
-            SpatialListView(id="term_list"),
+            term_list,
+            Horizontal(
+                Static("Shared terminals", id="shared_label"),
+                Static(
+                    "Enter to visit",
+                    id="shared_hints",
+                    markup=False,
+                ),
+                id="shared_header",
+            ),
+            shared_list,
             Static("", id="detail_body"),
             Static("", id="detail_msg"),
             id="detail_box",
@@ -129,6 +164,12 @@ class WorkspaceDetailScreen(Screen):
         lv.append(ListItem(Label(Text("(loading terminals…)")), name=""))
         if lv.index is None:
             lv.index = 0  # highlight the placeholder so the list is selected by default
+        # Seed the shared-terminal list too, so spatial Down off the last
+        # own-terminal row always lands on a real row (#2164).
+        slv = self.query_one("#shared_term_list", ListView)
+        slv.append(ListItem(Label(Text("(loading shared…)")), name=""))
+        if slv.index is None:
+            slv.index = 0
         self.call_after_refresh(self._focus_term_list)
 
     def on_show(self) -> None:
@@ -145,10 +186,18 @@ class WorkspaceDetailScreen(Screen):
 
         Skipped while a modal sits on top (app.screen is not self) so a
         background terminals_changed reload never yanks focus out of the
-        foreground dialog. The list is the screen's primary interactive
-        widget, so always prefer it when this screen is active.
+        foreground dialog. Also skipped when the shared-terminal list
+        already has focus, so the 5s uptime tick / a reload doesn't pull
+        the user off it (#2164). The list is the screen's primary
+        interactive widget, so default to it otherwise.
         """
         if self.app.screen is not self:
+            return
+        focused = self.focused
+        if focused is not None and getattr(focused, "id", None) in (
+            "term_list",
+            "shared_term_list",
+        ):
             return
         self.query_one("#term_list", ListView).focus()
 
@@ -157,6 +206,7 @@ class WorkspaceDetailScreen(Screen):
         if self._ws is not None and not self._ws.running:
             await self._start_if_stopped()
         self.run_worker(self._load_terminals, exit_on_error=False)
+        self.run_worker(self._load_shared_terminals, exit_on_error=False)
 
     async def _load(self) -> None:
         try:
@@ -530,8 +580,75 @@ class WorkspaceDetailScreen(Screen):
             if lv.index is None:
                 lv.index = 0
 
+    async def _load_shared_terminals(self) -> None:
+        """Fetch the workspace's shared terminals (others' shared windows +
+        the agent's service window) and render them (#2164)."""
+        try:
+            terminals = await self.app.tui_state.list_shared_terminals(
+                self._name
+            )
+        except AuthError:
+            self.app.session_expired()
+            return
+        except Exception:
+            terminals = []
+        # Exclude my own shared windows — they're already in the own-terminals
+        # list above; showing them again here would be noise. The service
+        # window and other users' shared windows stay.
+        my_id = self._current_user_id()
+        self._shared_terminals = [
+            t for t in (terminals or []) if t.get("user_id") != my_id
+        ]
+        await self._render_shared_terminals()
+
+    async def _render_shared_terminals(self) -> None:
+        async with self._render_lock:
+            lv = self.query_one("#shared_term_list", ListView)
+            await lv.clear()
+            if not self._shared_terminals:
+                items = [ListItem(Label(Text("(none)")), name="")]
+            else:
+                items = [
+                    ListItem(
+                        Label(Text(self._shared_terminal_label(t))),
+                        # Key by the join target the shell expects:
+                        # ``handle:window_name``.
+                        name=self._shared_terminal_key(t),
+                    )
+                    for t in self._shared_terminals
+                ]
+            mount = lv.extend(items)
+            await mount
+            if lv.index is None:
+                lv.index = 0
+
+    @staticmethod
+    def _shared_terminal_label(t: dict) -> str:
+        # The agent's service window is presented distinctly, mirroring the
+        # browser's "Service" tab (#1159).
+        if t.get("is_service"):
+            return f"Service  ({t.get('window_name') or '?'})"
+        handle = t.get("handle") or "?"
+        win = t.get("window_name") or "?"
+        return f"{handle}: {win}"
+
+    @staticmethod
+    def _shared_terminal_key(t: dict) -> str:
+        return f"{t.get('handle') or '?'}:{t.get('window_name') or '?'}"
+
+    def _current_user_id(self) -> str | None:
+        """The authenticated user's id, for filtering own shared windows.
+
+        Cached on the app's tui_state (fetched once via /auth/me). Returns
+        None if it can't be resolved, in which case nothing is filtered.
+        """
+        return self.app.tui_state.current_user_id()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Suspend the TUI and spawn ``klangk shell`` for the selected terminal."""
+        if event.control.id == "shared_term_list":
+            self._launch_shared_terminal(event)
+            return
         terminal = getattr(event.item, "name", "") or ""
         if not terminal or self._ws is None:
             return
@@ -570,6 +687,36 @@ class WorkspaceDetailScreen(Screen):
             # identically on every re-select (#1955 review).
             self.run_worker(self._load_terminals, exit_on_error=False)
 
+    def _launch_shared_terminal(self, event: ListView.Selected) -> None:
+        """Join the selected shared terminal via ``klangk shell <ws> <handle>:<win>``.
+
+        Reuses the existing ``join_shared_terminal`` server path (the same
+        one the browser uses) — no new server code (#2164). The list item
+        is keyed by the join target, so it's passed straight through.
+        """
+        target = getattr(event.item, "name", "") or ""
+        if not target or self._ws is None:
+            return
+        # A shared window named with a colon would confuse the
+        # ``handle:window`` parser; refuse rather than mis-target.
+        if ":" not in target or target.count(":") != 1:
+            self._msg("Invalid shared terminal — refreshing.", error=True)
+            self.run_worker(self._load_shared_terminals, exit_on_error=False)
+            return
+        cmd = [sys.executable, "-m", "klangk.cli.main"]
+        server = self.app.tui_state.current_url()
+        if server:
+            cmd += ["--server", server]
+        cmd += ["shell", self._name, target]
+        with self.app.suspend():
+            sys.stdout.write("\033[2J\033[H")
+            sys.stdout.flush()
+            completed = subprocess.run(cmd)
+        if completed.returncode != 0:
+            # The shared window may have been unshared/closed server-side
+            # between refresh and selection — refresh the shared list.
+            self.run_worker(self._load_shared_terminals, exit_on_error=False)
+
     def _window_id_for(self, key: str) -> str | None:
         """Resolve a list-item key (window index) to the window's id (@N).
 
@@ -599,7 +746,22 @@ class WorkspaceDetailScreen(Screen):
                 return None
         return None
 
+    def _own_list_focused(self) -> bool:
+        """True when #term_list (not the shared list) has focus.
+
+        The [n]/[m]/[t] bindings are own-terminal actions; they must not
+        fire while the shared-terminal list is focused, or they'd act on
+        the own list's stale highlighted row (e.g. delete the wrong
+        terminal) — a footgun once two lists share the screen (#2164).
+        """
+        focused = self.focused
+        return focused is not None and getattr(focused, "id", None) == (
+            "term_list"
+        )
+
     def action_delete_terminal(self) -> None:
+        if not self._own_list_focused():
+            return
         lv = self.query_one("#term_list", ListView)
         child = lv.highlighted_child
         if child is None:
@@ -668,6 +830,8 @@ class WorkspaceDetailScreen(Screen):
         return key
 
     def action_rename_terminal(self) -> None:
+        if not self._own_list_focused():
+            return
         lv = self.query_one("#term_list", ListView)
         child = lv.highlighted_child
         if child is None or not child.name:
