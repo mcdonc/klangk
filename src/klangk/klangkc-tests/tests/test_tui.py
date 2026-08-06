@@ -10935,3 +10935,79 @@ async def test_detail_screen_cheatsheet_modal():
         await pilot.press("escape")
         await pilot.pause()
         assert isinstance(app.screen, WorkspaceDetailScreen)
+
+
+def test_render_detail_indents_wrapped_values_to_value_column():
+    """A long value folds onto continuation lines aligned under the value
+    column (a hanging indent), not back at column 0 under the label (#2190)."""
+    rows = [
+        (
+            "service command",
+            "cd /app/meetmin && devenv shell -- meetmin-ingest-multi "
+            "--root /app/custrag/ --watch --workers 4",
+        )
+    ]
+    out = WorkspaceDetailScreen._render_detail(rows, 60)
+    lines = out.splitlines()
+    # First line: label, then the start of the value.
+    assert lines[0].startswith("service command  cd /app/meetmin")
+    # The value wrapped onto further lines...
+    assert len(lines) > 1
+    # ...and each continuation line is indented into the value column
+    # (past the label column + padding), never back at column 0.
+    indent = len(lines[0]) - len(lines[0].lstrip(" "))
+    for cont in lines[1:]:
+        assert cont.startswith(" " * indent), (
+            f"continuation not aligned to value column: {cont!r}"
+        )
+        assert cont == cont.rstrip(), (
+            f"trailing whitespace would risk a re-wrap: {cont!r}"
+        )
+
+
+async def test_detail_display_renders_at_body_width_not_screen_width(
+    monkeypatch,
+):
+    """#detail_body is narrower than the screen (horizontal chrome); _display
+    must render the detail table at the body's content width, or the Static
+    re-wraps the pre-folded lines and drops the value-column indent (#2190)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj(
+        "alpha",
+        running=True,
+        service_command=(
+            "cd /app/meetmin && devenv shell -- meetmin-ingest-multi "
+            "--root /app/custrag/ --watch --workers 4"
+        ),
+    )
+    st = _ws()
+    st.find_workspace = lambda n: a
+    captured = {}
+    real = WorkspaceDetailScreen._render_detail
+
+    def spy(rows, width):
+        captured["width"] = width
+        return real(rows, width)
+
+    monkeypatch.setattr(
+        WorkspaceDetailScreen, "_render_detail", staticmethod(spy)
+    )
+    app = KlangkApp(st)
+    async with app.run_test(size=(130, 40)) as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load()
+        await pilot.pause()
+        app.screen._display()
+        await pilot.pause()
+        body = app.screen.query_one("#detail_body", Static)
+        screen_w = app.screen.size.width
+        body_w = body.container_size.width
+    # Rendered at the body's width, and the body is narrower than the screen
+    # (otherwise this regression can't occur and the test is meaningless).
+    assert captured["width"] == body_w
+    assert body_w < screen_w

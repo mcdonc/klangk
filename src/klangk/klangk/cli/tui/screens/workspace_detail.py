@@ -290,7 +290,20 @@ class WorkspaceDetailScreen(Screen):
         # the same column regardless of label length (#1910). Wrapped in Text()
         # so values that look like markup (e.g. an image named "[img]") render
         # literally instead of being parsed as Textual markup.
-        width = self.size.width or 80
+        #
+        # Render at the body widget's *actual* content width, not the screen
+        # width: the screen has horizontal chrome (borders/margins/scroll
+        # gutter), so #detail_body is markedly narrower than self.size.width.
+        # Rendering at the wider screen width produces full-width lines that
+        # the narrower Static then re-wraps, which destroys the value column's
+        # hanging indent — wrapped continuation lines fall back to the left
+        # margin under the labels (#2190).
+        width = (
+            body.container_size.width
+            or body.size.width
+            or self.size.width
+            or 80
+        )
         body.update(Text(self._render_detail(self._detail_rows(ws), width)))
 
     @staticmethod
@@ -370,7 +383,11 @@ class WorkspaceDetailScreen(Screen):
             highlight=False,
             markup=False,
         ).print(table, end="")
-        return buf.getvalue()
+        # Strip trailing whitespace per line: Rich pads each row to the full
+        # table width, and a line exactly at the Static's width can still get
+        # re-wrapped by a 1-char gutter, which would drop the hanging indent.
+        # Content-width lines never trigger that re-wrap (#2190).
+        return "\n".join(line.rstrip() for line in buf.getvalue().splitlines())
 
     def _tick_uptime(self) -> None:
         """Refresh the display periodically to update the uptime counter."""

@@ -302,6 +302,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **TUI workspace detail: long values no longer wrap into the label
+  column (#2190).** The detail table was rendered at the screen width,
+  but the value panel is narrower (screen chrome), so the panel re-wrapped
+  the pre-folded lines and dropped the value column's hanging indent —
+  wrapped continuation lines fell back under the labels. The table is now
+  rendered at the panel's actual content width (and trailing padding is
+  stripped), so every wrapped line stays aligned in the value column.
+
 - **Recycled-container race on terminal start (#2178).** When the
   workspace container was recycled between terminal start and the
   initial window sync, the server logged a full `TerminalError`
