@@ -11011,3 +11011,30 @@ async def test_detail_display_renders_at_body_width_not_screen_width(
     # (otherwise this regression can't occur and the test is meaningless).
     assert captured["width"] == body_w
     assert body_w < screen_w
+
+
+def test_render_detail_zebra_stripes():
+    """The workspace-detail table zebra-stripes alternating rows; a
+    multi-line value inherits its row's stripe on every wrapped line; and
+    markup-like values (e.g. "[img]") stay literal through the ANSI
+    round-trip into the Static (#2193)."""
+    rows = [
+        ("id", "abc"),  # even -> base
+        ("running", "yes"),  # odd  -> stripe
+        ("image", "[img]"),  # even -> base (markup-like value)
+        ("mounts", "/a\n/b"),  # odd  -> stripe (multi-line)
+    ]
+    out = WorkspaceDetailScreen._render_detail(rows, width=40)
+    # #161B22 == rgb(22, 27, 34); the truecolor background params, robust to
+    # how Rich groups the escape sequence.
+    bg = "48;2;22;27;34"
+    lines = out.splitlines()
+    striped = [ln for ln in lines if bg in ln]
+    plain = [ln for ln in lines if bg not in ln]
+    # "running" (1 line) + "mounts" (2 wrapped lines) are striped = 3;
+    # "id" (1) + "image" (1) are base = 2. The multi-line value shares the
+    # row's stripe on both wrapped lines.
+    assert len(striped) == 3
+    assert len(plain) == 2
+    # markup safety: "[img]" is not eaten as Textual/Rich markup by from_ansi
+    assert "[img]" in Text.from_ansi(out).plain
