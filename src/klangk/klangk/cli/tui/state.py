@@ -373,6 +373,11 @@ class TuiState:
         if url is not None:
             state.clear_credentials(url)
             state.save()
+        # Drop the cached /auth/me id so a re-login as a different identity
+        # on the same server isn't served the previous user's id (#2164
+        # review: the cache is keyed by URL, not identity).
+        self._user_id = None
+        self._user_id_url = None
 
     # --- server switching / adding ---
 

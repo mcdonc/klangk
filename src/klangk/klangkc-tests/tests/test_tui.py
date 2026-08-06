@@ -543,6 +543,36 @@ def test_current_user_id_refetch_on_server_switch(monkeypatch, redirect_xdg):
     assert len(seen) == 2
 
 
+def test_current_user_id_cleared_on_logout(monkeypatch, redirect_xdg):
+    from unittest.mock import MagicMock
+
+    add_server_to_config("srv", "https://srv.example")
+    st = CLIState()
+    st.set_credentials("https://srv.example", "me@x", "tok123")
+    st.active_server = "https://srv.example"
+    st.save()
+    t = TuiState()
+    seen = []
+    ids = iter(["user-A", "user-B"])
+
+    def fake_req(url, method, path, **k):
+        seen.append(url)
+        r = MagicMock()
+        r.status_code = 200
+        r.json.return_value = {"id": next(ids)}
+        return r
+
+    monkeypatch.setattr(tui_state_mod, "http_request", fake_req)
+    assert t.current_user_id() == "user-A"
+    # User A logs out, then user B logs in on the SAME server (same URL).
+    # logout must drop the cached id so B isn't served A's id (#2164 review).
+    t.logout()
+    st.set_credentials("https://srv.example", "b@x", "tokB")
+    st.save()
+    assert t.current_user_id() == "user-B"
+    assert len(seen) == 2
+
+
 def test_list_shared_terminals_delegates(monkeypatch):
     """TuiState.list_shared_terminals delegates to the client."""
 
@@ -6657,22 +6687,26 @@ async def test_detail_term_modify_actions_noop_when_shared_focused(
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     a = _wsobj("alpha", running=True)
     closed = []
+    created = []
     st = _ws(list_terminals=_async_terms)
     st.find_workspace = lambda n: a
     st.close_terminal = lambda *a, **k: closed.append(1)
+    st.create_terminal = lambda *a, **k: created.append(1)
     app = KlangkApp(st)
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
         await app.screen._load_terminals()
         await pilot.pause()
-        # Focus the shared list — the modify actions must no-op.
+        # Focus the shared list — all three modify actions must no-op.
         app.screen.query_one("#shared_term_list", ListView).focus()
         await pilot.pause()
         app.screen.action_delete_terminal()
         app.screen.action_rename_terminal()
+        app.screen.action_new_terminal()
         await pilot.pause()
         assert closed == []
+        assert created == []
 
 
 async def test_detail_focus_defaults_to_own_list(monkeypatch):
@@ -6690,9 +6724,11 @@ async def test_detail_focus_defaults_to_own_list(monkeypatch):
     async with app.run_test() as pilot:
         app.push_screen(WorkspaceDetailScreen("alpha"))
         await pilot.pause()
-        # Move focus off both lists, then reclaim.
-        app.screen.query_one("Footer").focus()
+        # Move focus off both lists, then reclaim. (Footer.focus() is a no-op
+        # in textual, so clear focus directly to reach the reclaim branch.)
+        app.screen.set_focus(None)
         await pilot.pause()
+        assert app.screen.focused is None
         app.screen._focus_term_list()
         await pilot.pause()
         assert app.focused is not None

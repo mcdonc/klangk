@@ -137,11 +137,6 @@ class WorkspaceDetailScreen(Screen):
             term_list,
             Horizontal(
                 Static("Shared terminals", id="shared_label"),
-                Static(
-                    "Enter to visit",
-                    id="shared_hints",
-                    markup=False,
-                ),
                 id="shared_header",
             ),
             shared_list,
@@ -594,8 +589,12 @@ class WorkspaceDetailScreen(Screen):
             terminals = []
         # Exclude my own shared windows — they're already in the own-terminals
         # list above; showing them again here would be noise. The service
-        # window and other users' shared windows stay.
-        my_id = self._current_user_id()
+        # window and other users' shared windows stay. ``current_user_id``
+        # does a synchronous /auth/me fetch, so run it off the event loop
+        # (run_worker runs the coroutine on the loop, thread=False) to
+        # avoid freezing the TUI on the first detail-page open (#2164
+        # review).
+        my_id = await asyncio.to_thread(self._current_user_id)
         self._shared_terminals = [
             t for t in (terminals or []) if t.get("user_id") != my_id
         ]
@@ -887,6 +886,8 @@ class WorkspaceDetailScreen(Screen):
         self.app.notify(f"Renamed terminal to '{new_name}'.")
 
     def action_new_terminal(self) -> None:
+        if not self._own_list_focused():
+            return
         if self._ws is None:
             return
         self.run_worker(self._do_new_terminal, exit_on_error=False)
