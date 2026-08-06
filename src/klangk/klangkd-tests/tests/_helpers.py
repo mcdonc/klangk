@@ -54,10 +54,18 @@ def make_settings(
     value in ``env`` to override.
     """
     env = dict(env or {})
+    # Fall back to os.environ (set by the autouse temp_data_dir fixture) before
+    # creating orphan mkdtemp dirs that are never cleaned up.
     env.setdefault(
-        "KLANGKD_STATE_DIR", tempfile.mkdtemp(prefix="klangk-state-")
+        "KLANGKD_STATE_DIR",
+        os.environ.get("KLANGKD_STATE_DIR")
+        or tempfile.mkdtemp(prefix="klangk-state-"),
     )
-    env.setdefault("KLANGKD_DATA_DIR", tempfile.mkdtemp(prefix="klangk-data-"))
+    env.setdefault(
+        "KLANGKD_DATA_DIR",
+        os.environ.get("KLANGKD_DATA_DIR")
+        or tempfile.mkdtemp(prefix="klangk-data-"),
+    )
     # On macOS the default socket paths derived from state_dir may exceed the
     # 104-char AF_UNIX sun_path limit because tempfile paths resolve through
     # /private/var/folders/... Set short socket paths so the settings
