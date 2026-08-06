@@ -10,6 +10,7 @@ Run with: devenv shell -- test-cli-e2e -k TestTuiE2E
 import os
 import sys
 import tempfile
+import time
 
 import asyncio
 
@@ -141,6 +142,29 @@ def _api_get_workspace(base_url, token, ws_id):
         if ws["id"] == ws_id:
             return ws
     raise ValueError(f"Workspace {ws_id} not found")
+
+
+def _api_wait_for_workspace_name(base_url, token, ws_id, name, timeout=15.0):
+    """Poll the API until workspace ``ws_id``'s name becomes ``name``.
+
+    The TUI edit form persists in a background worker (``_save`` ->
+    ``run_worker(_do_save)``), so a rename lands asynchronously and reading
+    the API immediately after ``_save()`` races the worker's PUT (#2185).
+    Poll until it lands instead of asserting on a single read.
+    """
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = _api_get_workspace(base_url, token, ws_id)
+        if last["name"] == name:
+            return last
+        time.sleep(0.1)
+    assert last is not None
+    assert last["name"] == name, (
+        f"workspace {ws_id} name never became {name!r} within {timeout}s "
+        f"(last={last['name']!r})"
+    )
+    return last
 
 
 # ── tests ───────────────────────────────────────────────────────────────
@@ -500,8 +524,10 @@ class TestTuiE2E:
                 await _settle(app, pilot)
                 await pilot.pause()
 
-            # Verify via API.
-            ws = _api_get_workspace(base_url, token, ws_id)
+            # The edit form persists via a background worker (_save ->
+            # run_worker(_do_save)), so a rename lands asynchronously; poll
+            # until it shows up rather than racing the worker's PUT (#2185).
+            ws = _api_wait_for_workspace_name(base_url, token, ws_id, new_name)
             assert ws["name"] == new_name
         finally:
             _api_delete_workspace(base_url, token, ws_id)
