@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from fastapi import WebSocketDisconnect
 
 from .. import model
-from ..exceptions import TerminalError
+from ..exceptions import ContainerGoneError, TerminalError
 from ..podman import ExecSession
 from ..terminal import (
     TerminalSession,
@@ -727,6 +727,31 @@ class TerminalController:
                 conn.sock.send_json({"type": "terminal_started"})
                 try:
                     await ctrl._sync_windows()
+                except ContainerGoneError as e:
+                    # The container was recycled between session start and
+                    # the window sync — an expected race, not a tmux
+                    # failure. Don't traceback it: log a clean warning,
+                    # stop the now-dead session, and tell the client so it
+                    # can re-trigger workspace open against the fresh
+                    # container (#2178).
+                    logger.warning(
+                        "_start_terminal: container gone before window "
+                        "sync (user=%s container=%s): %s",
+                        conn.user.get("email"),
+                        conn.container_id,
+                        e,
+                    )
+                    await session.stop()
+                    conn.app.state.container_registry.revoke_browser(conn.sock)
+                    conn.browser_id = None
+                    try:
+                        send_error(
+                            conn.sock,
+                            "Container was recycled; reopening terminal",
+                        )
+                    except WS_ERRORS:
+                        pass
+                    return
                 except (TerminalError, OSError):
                     logger.exception("_start_terminal: window list failed")
                 ctrl._send_shared_terminals()

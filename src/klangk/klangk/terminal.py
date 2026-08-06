@@ -21,8 +21,8 @@ import termios
 import tty
 from collections.abc import AsyncGenerator
 
-from .podman import Podman, subprocess_env
-from .exceptions import TerminalError
+from .podman import Podman, classify, subprocess_env
+from .exceptions import ContainerGoneError, TerminalError
 from .model.workspaces import SETUP_STATE_COMPLETE
 from .util import BoundedOutputQueue
 
@@ -559,6 +559,14 @@ class Terminal:
             if "No such file or directory" in stderr and attempt < 2:
                 await asyncio.sleep(0.5)
                 continue
+            # "container gone" is a recoverable condition (the container
+            # was recycled between terminal start and this call), not a
+            # tmux/server failure — surface it distinctly so callers can
+            # avoid tracebacking an expected race (#2178).
+            if classify(stderr) == 404:
+                raise ContainerGoneError(
+                    f"container {container_id!r} is gone: {stderr.strip()}"
+                )
             raise TerminalError(f"tmux command failed: {stderr.strip()}")
         return ""  # pragma: no cover
 
