@@ -383,7 +383,9 @@ class WorkspaceDetailScreen(Screen):
             expand=True,
             row_styles=("", "on #161B22"),
         )
-        table.add_column("label", no_wrap=True)
+        # Key names (left column) are right-aligned and bold so each
+        # label's right edge lines up just before its value (#2193).
+        table.add_column("label", no_wrap=True, justify="right", style="bold")
         table.add_column("value", overflow="fold", ratio=1)
         for label, value in rows:
             table.add_row(label, value)

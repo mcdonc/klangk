@@ -7,6 +7,7 @@ and the ``add_server_to_config`` helper — under the 100% coverage gate.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import httpx
@@ -216,28 +217,38 @@ def _detail_value(body: str, label: str) -> str | None:
     """Return the value-column text for ``label``'s row in the workspace
     detail table, or None if no such row.
 
-    The detail body renders as a two-column table (#1910): a label at the
-    start of a line, then a column of padding (>=2 spaces), then the value.
-    A label is matched only when it's followed by that padding gap, so
-    ``health`` doesn't match the ``health note`` / ``health check`` rows.
-    Multi-line value cells (mounts / environment / allowed domains) are
-    rejoined with newlines."""
-    lines = body.splitlines()
+    The detail body renders as a two-column table (#1910): a label, then a
+    column of padding (>=2 spaces), then the value. Labels are bold and
+    right-aligned, and rows carry zebra-stripe ANSI, so both are normalized
+    away before parsing (#2193). A label is matched only when it's followed
+    by that padding gap, so ``health`` doesn't match the ``health note`` /
+    ``health check`` rows. Multi-line value cells (mounts / environment /
+    allowed domains) are rejoined with newlines; a continuation is indented
+    past its label's right edge, which also stops right-aligned label rows
+    from being read as continuations."""
+    lines = [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in body.splitlines()]
     for i, line in enumerate(lines):
-        if not line.startswith(label):
+        stripped = line.lstrip()
+        if not stripped.startswith(label):
             continue
-        rest = line[len(label) :]
+        rest = stripped[len(label) :]
         # "health" must not match "health note" (rest starts with a word,
         # not the column gap). The gap is always >=2 spaces.
         if rest.strip() and not rest[:2].isspace():
             continue
+        label_leading = len(line) - len(line.lstrip(" "))
         parts = [rest.strip()] if rest.strip() else []
         for cont in lines[i + 1 :]:
-            if not cont[:1].isspace():
+            cont_leading = len(cont) - len(cont.lstrip(" "))
+            # A continuation is indented past the label's right edge
+            # (label_leading + len(label)); the next row's right-aligned
+            # label sits at or before that edge, so it ends the scan.
+            if cont_leading <= label_leading + len(label):
                 break
             if cont.strip():
                 parts.append(cont.strip())
         return "\n".join(parts)
+    return None
     return None
 
 
@@ -4671,12 +4682,16 @@ async def test_detail_renders_aligned_two_column_table(monkeypatch):
             assert _detail_value(body, label) is not None, label
             line = next(
                 ln
-                for ln in body.splitlines()
-                if ln.startswith(label)
-                and ln[len(label) : len(label) + 2].isspace()
+                for ln in (
+                    re.sub(r"\x1b\[[0-9;]*m", "", x) for x in body.splitlines()
+                )
+                if ln.lstrip().startswith(label)
+                and ln.lstrip()[len(label) : len(label) + 2].isspace()
             )
-            rest = line[len(label) :]
-            starts.add(len(label) + len(rest) - len(rest.lstrip()))
+            lead = len(line) - len(line.lstrip())
+            after_label = line.lstrip()[len(label) :]
+            gap = len(after_label) - len(after_label.lstrip())
+            starts.add(lead + len(label) + gap)
         assert len(starts) == 1, f"detail values don't align: {starts}"
 
 
@@ -10948,7 +10963,9 @@ def test_render_detail_indents_wrapped_values_to_value_column():
         )
     ]
     out = WorkspaceDetailScreen._render_detail(rows, 60)
-    lines = out.splitlines()
+    # _render_detail emits ANSI (zebra row backgrounds + bold labels, #2193);
+    # strip it so these assertions check column layout, not styling.
+    lines = [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in out.splitlines()]
     # First line: label, then the start of the value.
     assert lines[0].startswith("service command  cd /app/meetmin")
     # The value wrapped onto further lines...
@@ -11038,3 +11055,34 @@ def test_render_detail_zebra_stripes():
     assert len(plain) == 2
     # markup safety: "[img]" is not eaten as Textual/Rich markup by from_ansi
     assert "[img]" in Text.from_ansi(out).plain
+
+
+def test_render_detail_label_column_bold_and_right_aligned():
+    """Key names are bold and right-aligned; values are neither (#2193)."""
+    rows = [("id", "abc"), ("running", "yes"), ("uptime", "2h 0m")]
+    out = WorkspaceDetailScreen._render_detail(rows, width=40)
+    t = Text.from_ansi(out)
+
+    def is_bold_at(substr: str) -> bool:
+        idx = t.plain.index(substr)
+        end = idx + len(substr)
+        return any(
+            s.style and s.style.bold and not (end <= s.start or idx >= s.end)
+            for s in t.spans
+        )
+
+    # labels are bold, values are not
+    assert is_bold_at("id")
+    assert is_bold_at("running")
+    assert is_bold_at("uptime")
+    assert not is_bold_at("abc")
+    assert not is_bold_at("yes")
+
+    # right-aligned: every label's right edge sits at the same column
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
+    end_cols = set()
+    for lab in ("id", "running", "uptime"):
+        pos = plain.index(lab)
+        line_start = plain.rfind("\n", 0, pos) + 1
+        end_cols.add(pos + len(lab) - line_start)
+    assert len(end_cols) == 1
