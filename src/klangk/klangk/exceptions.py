@@ -9,5 +9,16 @@ class TerminalError(RuntimeError):
     """A tmux or terminal operation failed."""
 
 
+class ContainerGoneError(TerminalError):
+    """The container a terminal/tmux operation targeted no longer exists.
+
+    Raised when ``podman exec`` reports the container is gone (e.g.
+    "no container with name or ID ... found"). Distinct from a plain
+    tmux failure so callers can treat a recycled container as an
+    expected, recoverable condition instead of logging a traceback
+    (#2178).
+    """
+
+
 class SendmailError(RuntimeError):
     """The sendmail subprocess exited with a non-zero status."""

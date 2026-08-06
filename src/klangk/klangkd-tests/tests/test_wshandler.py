@@ -26,7 +26,7 @@ from klangk import (
     container,
     workspaces as ws_mod,
 )
-from klangk.exceptions import TerminalError
+from klangk.exceptions import ContainerGoneError, TerminalError
 from klangk.model.chat import ChatModel
 from _helpers import make_settings
 from klangk.wshandler import (
@@ -1064,6 +1064,139 @@ class TestHandleTerminalStart:
             isinstance(m, dict) and m.get("type") == "terminal_started"
             for m in sent
         )
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
+        registry.revoke_workspace_browsers("ws")
+        registry.states.pop("ws", None)
+
+    async def test_start_container_gone_recovers_cleanly(self, app_state):
+        """A recycled container during window sync is handled cleanly (#2178).
+
+        When the container vanishes between terminal start and the window
+        sync, the handler must NOT traceback an expected race: it logs a
+        warning, stops the dead session, revokes the browser, and sends the
+        client a user-visible error (no terminal_windows frame, no
+        traceback in the log).
+        """
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        registry.track_activity("cid", "ws")
+
+        with (
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
+            patch.object(
+                _mock_term,
+                "list_windows",
+                side_effect=ContainerGoneError("container gone"),
+            ),
+            patch.object(_ws_controllers, "logger") as mock_logger,
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        # terminal_started went out before the sync attempt
+        assert any(
+            isinstance(m, dict) and m.get("type") == "terminal_started"
+            for m in sent
+        )
+        # a user-visible error was sent (clean recovery, not a silent drop)
+        assert any(
+            isinstance(m, dict)
+            and m.get("type") == "error"
+            and "recycled" in m.get("message", "")
+            for m in sent
+        )
+        # no window/shared-terminal frames after the dead sync
+        assert not any(
+            isinstance(m, dict) and m.get("type") == "terminal_windows"
+            for m in sent
+        )
+        # clean warning, never a traceback
+        mock_logger.warning.assert_called()
+        mock_logger.exception.assert_not_called()
+        # dead session torn down and browser unregistered
+        mock_session.stop.assert_awaited()
+        assert conn.browser_id is None
+        conn.terminal_task.cancel()
+        try:
+            await conn.terminal_task
+        except asyncio.CancelledError:
+            pass
+        registry.revoke_workspace_browsers("ws")
+        registry.states.pop("ws", None)
+
+    async def test_start_container_gone_send_error_fails(self, app_state):
+        """A send_error failure during container-gone recovery is swallowed (#2178).
+
+        The client socket may already be closed by the time we report the
+        recycled-container error; that must not escape the recovery path.
+        """
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        registry.track_activity("cid", "ws")
+
+        # terminal_started send must succeed; only the recovery error send
+        # raises (the socket is gone by then).
+        def _send_json(msg):
+            if isinstance(msg, dict) and msg.get("type") == "error":
+                raise WebSocketDisconnect
+
+        sock.send_json.side_effect = _send_json
+
+        with (
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
+            patch.object(
+                _mock_term,
+                "list_windows",
+                side_effect=ContainerGoneError("container gone"),
+            ),
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+            await conn.handle_terminal_start({"cols": 80, "rows": 24})
+            await asyncio.sleep(0)
+
+        # recovery completed despite the closed socket
+        mock_session.stop.assert_awaited()
+        assert conn.browser_id is None
         conn.terminal_task.cancel()
         try:
             await conn.terminal_task

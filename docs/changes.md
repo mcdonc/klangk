@@ -286,6 +286,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Recycled-container race on terminal start (#2178).** When the
+  workspace container was recycled between terminal start and the
+  initial window sync, the server logged a full `TerminalError`
+  traceback on every occurrence and the client got no initial terminal
+  tab list. The "container gone" condition is now detected and handled
+  cleanly: a single warning line, the dead session is torn down, and the
+  client gets a user-visible error so it can reopen the terminal.
+
 - **Browser terminals over plain HTTP (#2162).** In the browser UI,
   workspace terminals never started (the pane stayed blank, no shell prompt)
   on deployments served over plain HTTP to a non-localhost host — they only

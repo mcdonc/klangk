@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from klangk.exceptions import TerminalError
+from klangk.exceptions import ContainerGoneError, TerminalError
 from klangk.terminal import (
     CONTAINER_USER,
     SERVICE_SESSION,
@@ -773,6 +773,23 @@ class TestTmuxCommand:
             with pytest.raises(TerminalError, match="error msg"):
                 await _terminal.tmux_command("cid", "sess", ["bad-cmd"])
         assert mock_exec.await_count == 1  # no retry on non-socket errors
+
+    async def test_raises_container_gone_on_missing_container(self):
+        # podman reports the container no longer exists — a recoverable
+        # recycle race, surfaced as a distinct exception (#2178).
+        stderr = (
+            'Error: no container with name or ID "abc" found: '
+            "no such container"
+        )
+        with patch.object(
+            _mock_pod,
+            "exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "", stderr),
+        ) as mock_exec:
+            with pytest.raises(ContainerGoneError, match="is gone"):
+                await _terminal.tmux_command("cid", "sess", ["list-windows"])
+        assert mock_exec.await_count == 1  # no retry for a gone container
 
     async def test_retries_on_socket_not_found(self):
         with (
