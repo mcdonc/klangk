@@ -105,10 +105,11 @@ class FakeOptionSelected:
 
 
 class FakeSelected:
-    """Stand-in for ListView.Selected carrying an item name."""
+    """Stand-in for ListView.Selected carrying an item name + source list."""
 
-    def __init__(self, name):
+    def __init__(self, name, control_id="term_list"):
         self.item = type("Item", (), {"name": name})()
+        self.control = type("Ctrl", (), {"id": control_id})()
 
 
 def _lv_texts(list_view):
@@ -153,6 +154,8 @@ def _authed_state(**extra):
         list_owned_workspaces=lambda: [],
         list_shared_workspaces=lambda: [],
         list_terminals=_async_empty,
+        list_shared_terminals=_async_empty,
+        current_user_id=lambda: None,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
         # Stubbed so MainScreen._do_create doesn't make a real (timing-out)
@@ -174,6 +177,8 @@ def _ws(owned=None, shared=None, **extra):
         list_owned_workspaces=lambda: owned or [],
         list_shared_workspaces=lambda: shared or [],
         list_terminals=_async_empty,
+        list_shared_terminals=_async_empty,
+        current_user_id=lambda: None,
         close_terminal=_async_empty,
         restart_workspace=lambda n: None,
         # Stubbed so MainScreen._do_create doesn't make a real (timing-out)
@@ -427,6 +432,165 @@ def test_reentry_auth_persists(redirect_xdg):
     assert t2.is_authenticated()
     assert t2.current_url() == "https://srv.example"
     assert t2.token() == "tok123"
+
+
+def test_current_user_id_cached(monkeypatch, redirect_xdg):
+    from unittest.mock import MagicMock
+
+    add_server_to_config("srv", "https://srv.example")
+    st = CLIState()
+    st.set_credentials("https://srv.example", "me@x", "tok123")
+    st.save()
+    t = TuiState()
+    calls = []
+
+    def fake_req(url, method, path, **k):
+        calls.append(url)
+        r = MagicMock()
+        r.status_code = 200
+        r.json.return_value = {"id": "user-123", "email": "me@x"}
+        return r
+
+    monkeypatch.setattr(tui_state_mod, "http_request", fake_req)
+    assert t.current_user_id() == "user-123"
+    # Cached — a second call must not refetch.
+    assert t.current_user_id() == "user-123"
+    assert len(calls) == 1
+
+
+def test_current_user_id_no_server(redirect_xdg):
+    # Nothing configured -> current_url() is None -> None.
+    assert TuiState().current_user_id() is None
+
+
+def test_current_user_id_no_token(redirect_xdg):
+    # Server configured + active, but no credentials -> token() is None.
+    add_server_to_config("srv", "https://srv.example")
+    st = CLIState()
+    st.active_server = "https://srv.example"
+    st.save()
+    assert TuiState().current_user_id() is None
+
+
+def test_current_user_id_failures(monkeypatch, redirect_xdg):
+    import httpx
+    from unittest.mock import MagicMock
+
+    add_server_to_config("srv", "https://srv.example")
+    st = CLIState()
+    st.set_credentials("https://srv.example", "me@x", "tok123")
+    st.save()
+
+    def mk(*, status=200, body=None, exc=None):
+        def fake_req(url, method, path, **k):
+            if exc is not None:
+                raise exc
+            r = MagicMock()
+            r.status_code = status
+            r.json.return_value = body if body is not None else {}
+            return r
+
+        return fake_req
+
+    # HTTP error -> None.
+    t = TuiState()
+    monkeypatch.setattr(
+        tui_state_mod, "http_request", mk(exc=httpx.HTTPError("x"))
+    )
+    assert t.current_user_id() is None
+    # Non-200 -> None.
+    monkeypatch.setattr(tui_state_mod, "http_request", mk(status=401))
+    assert TuiState().current_user_id() is None
+    # 200 but id not a string -> None.
+    monkeypatch.setattr(
+        tui_state_mod, "http_request", mk(status=200, body={"id": 123})
+    )
+    assert TuiState().current_user_id() is None
+    # 200 but body not a dict -> None.
+    monkeypatch.setattr(
+        tui_state_mod, "http_request", mk(status=200, body=["nope"])
+    )
+    assert TuiState().current_user_id() is None
+
+
+def test_current_user_id_refetch_on_server_switch(monkeypatch, redirect_xdg):
+    from unittest.mock import MagicMock
+
+    add_server_to_config("a", "https://a.example")
+    add_server_to_config("b", "https://b.example")
+    st = CLIState()
+    st.set_credentials("https://a.example", "me@x", "tok1")
+    st.set_credentials("https://b.example", "me@x", "tok2")
+    st.save()
+    t = TuiState()
+    seen = []
+
+    def fake_req(url, method, path, **k):
+        seen.append(url)
+        r = MagicMock()
+        r.status_code = 200
+        r.json.return_value = {"id": "id-" + url}
+        return r
+
+    monkeypatch.setattr(tui_state_mod, "http_request", fake_req)
+    st.active_server = "https://a.example"
+    st.save()
+    assert t.current_user_id() == "id-https://a.example"
+    st.active_server = "https://b.example"
+    st.save()
+    # Different active server -> cache miss -> refetch.
+    assert t.current_user_id() == "id-https://b.example"
+    assert len(seen) == 2
+
+
+def test_current_user_id_cleared_on_logout(monkeypatch, redirect_xdg):
+    from unittest.mock import MagicMock
+
+    add_server_to_config("srv", "https://srv.example")
+    st = CLIState()
+    st.set_credentials("https://srv.example", "me@x", "tok123")
+    st.active_server = "https://srv.example"
+    st.save()
+    t = TuiState()
+    seen = []
+    ids = iter(["user-A", "user-B"])
+
+    def fake_req(url, method, path, **k):
+        seen.append(url)
+        r = MagicMock()
+        r.status_code = 200
+        r.json.return_value = {"id": next(ids)}
+        return r
+
+    monkeypatch.setattr(tui_state_mod, "http_request", fake_req)
+    assert t.current_user_id() == "user-A"
+    # User A logs out, then user B logs in on the SAME server (same URL).
+    # logout must drop the cached id so B isn't served A's id (#2164 review).
+    t.logout()
+    st.set_credentials("https://srv.example", "b@x", "tokB")
+    st.save()
+    assert t.current_user_id() == "user-B"
+    assert len(seen) == 2
+
+
+def test_list_shared_terminals_delegates(monkeypatch):
+    """TuiState.list_shared_terminals delegates to the client."""
+
+    t = TuiState("https://x.example")
+    captured = []
+
+    class FakeClient:
+        async def list_shared_terminals(self, name):
+            captured.append(name)
+            return [{"handle": "a", "window_name": "w"}]
+
+    monkeypatch.setattr(t, "client", lambda: FakeClient())
+    import asyncio
+
+    assert asyncio.run(t.list_shared_terminals("alpha")) == [
+        {"handle": "a", "window_name": "w"}
+    ]
+    assert captured == ["alpha"]
 
 
 def test_known_servers_roundtrip(redirect_xdg):
@@ -6250,6 +6414,325 @@ async def test_detail_terminal_select_empty_name_ignored(monkeypatch):
         await pilot.pause()
         app.screen.on_list_view_selected(FakeSelected(""))
         assert spawned == []
+
+
+async def _async_shared(*a, **k):
+    """Async stub returning a mixed shared-terminal list (service + other
+    user + the caller's own shared window)."""
+    return [
+        {
+            "user_id": "agent",
+            "handle": "clanker",
+            "window_name": "service-cmd",
+            "window_id": "@0",
+            "is_service": True,
+        },
+        {
+            "user_id": "alice-id",
+            "handle": "alice",
+            "window_name": "build",
+            "window_id": "@1",
+            "is_service": False,
+        },
+        {
+            "user_id": "me",
+            "handle": "me",
+            "window_name": "notes",
+            "window_id": "@2",
+            "is_service": False,
+        },
+    ]
+
+
+async def test_detail_shared_terminals_listed_and_filtered(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(
+        list_shared_terminals=_async_shared,
+        current_user_id=lambda: "me",
+    )
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_shared_terminals()
+        await pilot.pause()
+        rows = _lv_texts(app.screen.query_one("#shared_term_list", ListView))
+    # Service window is labelled distinctly; alice's window is shown by
+    # handle:window; my own shared window ("me: notes") is filtered out.
+    assert any("Service" in r for r in rows)
+    assert any("alice: build" in r for r in rows)
+    assert not any("notes" in r for r in rows)
+
+
+async def test_detail_shared_terminal_select_joins(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_shared_terminals=_async_shared)
+    st.find_workspace = lambda n: a
+    st.current_url = lambda: "https://x.example"
+    spawned = []
+    monkeypatch.setattr(
+        scr_detail.subprocess,
+        "run",
+        lambda cmd, **k: (
+            spawned.append(cmd)
+            or scr_detail.subprocess.CompletedProcess(cmd, 0)
+        ),
+    )
+    import io
+    import sys
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend():
+        saved = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            yield
+        finally:
+            sys.stdout = saved
+
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        monkeypatch.setattr(app, "suspend", fake_suspend)
+        # Selecting a shared row issues ``klangk shell <ws> <handle>:<win>``
+        # — the same join_shared_terminal path the browser uses (#2164).
+        app.screen.on_list_view_selected(
+            FakeSelected("alice:build", control_id="shared_term_list")
+        )
+        assert len(spawned) == 1
+        assert spawned[0][-3:] == ["shell", "alpha", "alice:build"]
+
+
+async def test_detail_shared_terminal_select_bad_key_refreshes(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    refreshed = []
+    st = _ws(list_shared_terminals=_async_shared)
+    st.find_workspace = lambda n: a
+    spawned = []
+    monkeypatch.setattr(
+        scr_detail.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        orig = app.screen._load_shared_terminals
+
+        async def _refresh():
+            refreshed.append(1)
+
+        app.screen._load_shared_terminals = _refresh
+        # A row keyed without a ``handle:window`` colon must not spawn a
+        # shell — refresh the shared list instead.
+        app.screen.on_list_view_selected(
+            FakeSelected("bogus", control_id="shared_term_list")
+        )
+        await pilot.pause()
+        assert spawned == []
+        assert refreshed == [1]
+        app.screen._load_shared_terminals = orig
+
+
+async def _async_boom(*a, **k):
+    raise RuntimeError("boom")
+
+
+async def test_detail_load_shared_terminals_auth_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()
+    st.find_workspace = lambda n: a
+
+    async def _auth_err(*a, **k):
+        raise scr_detail.AuthError
+
+    st.list_shared_terminals = _auth_err
+    app = KlangkApp(st)
+    expired = []
+    async with app.run_test() as pilot:
+        # Patch session_expired BEFORE push: the mount worker also calls
+        # _load_shared_terminals (and would hit the AuthError), so it must
+        # not push the real SessionExpiredScreen out from under us.
+        monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_shared_terminals()
+        await pilot.pause()
+    assert expired  # AuthError -> session_expired invoked
+
+
+async def test_detail_load_shared_terminals_generic_error(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_shared_terminals=_async_boom)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        # A generic exception degrades to an empty shared list.
+        await app.screen._load_shared_terminals()
+        await pilot.pause()
+        assert app.screen._shared_terminals == []
+
+
+async def test_detail_shared_terminal_select_no_ws_ignored(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    st = _ws()
+    # No workspace -> _ws stays None -> shared launch is a no-op.
+    spawned = []
+    monkeypatch.setattr(
+        scr_detail.subprocess, "run", lambda cmd, **k: spawned.append(cmd)
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen._ws = None
+        app.screen.on_list_view_selected(
+            FakeSelected("alice:build", control_id="shared_term_list")
+        )
+        # Empty target is also ignored.
+        app.screen.on_list_view_selected(
+            FakeSelected("", control_id="shared_term_list")
+        )
+        assert spawned == []
+
+
+async def test_detail_shared_terminal_failed_spawn_refreshes(monkeypatch):
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_shared_terminals=_async_shared)
+    st.find_workspace = lambda n: a
+    spawned = []
+    monkeypatch.setattr(
+        scr_detail.subprocess,
+        "run",
+        lambda cmd, **k: (
+            spawned.append(cmd)
+            or scr_detail.subprocess.CompletedProcess(cmd, 1)
+        ),
+    )
+    import io
+    import sys
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend():
+        saved = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            yield
+        finally:
+            sys.stdout = saved
+
+    refreshed = []
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        monkeypatch.setattr(app, "suspend", fake_suspend)
+
+        async def _refresh():
+            refreshed.append(1)
+
+        app.screen._load_shared_terminals = _refresh
+        # A non-zero shell exit refreshes the shared list (the window may
+        # have been unshared server-side).
+        app.screen.on_list_view_selected(
+            FakeSelected("alice:build", control_id="shared_term_list")
+        )
+        await pilot.pause()
+        assert len(spawned) == 1
+        assert refreshed == [1]
+
+
+async def test_detail_term_modify_actions_noop_when_shared_focused(
+    monkeypatch,
+):
+    """[n]/[m]/[t] must not act on the own-terminal list while the shared
+    list is focused (#2164) — otherwise they'd delete/rename the wrong
+    terminal."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    closed = []
+    created = []
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    st.close_terminal = lambda *a, **k: closed.append(1)
+    st.create_terminal = lambda *a, **k: created.append(1)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        # Focus the shared list — all three modify actions must no-op.
+        app.screen.query_one("#shared_term_list", ListView).focus()
+        await pilot.pause()
+        app.screen.action_delete_terminal()
+        app.screen.action_rename_terminal()
+        app.screen.action_new_terminal()
+        await pilot.pause()
+        assert closed == []
+        assert created == []
+
+
+async def test_detail_focus_defaults_to_own_list(monkeypatch):
+    """When neither list has focus, _focus_term_list reclaims it for the
+    own-terminal list (the screen's primary widget)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        # Move focus off both lists, then reclaim. (Footer.focus() is a no-op
+        # in textual, so clear focus directly to reach the reclaim branch.)
+        app.screen.set_focus(None)
+        await pilot.pause()
+        assert app.screen.focused is None
+        app.screen._focus_term_list()
+        await pilot.pause()
+        assert app.focused is not None
+        assert app.focused.id == "term_list"
 
 
 async def test_main_screen_title(monkeypatch):

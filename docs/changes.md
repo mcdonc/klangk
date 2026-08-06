@@ -32,6 +32,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Shared terminals in the TUI (#2164).** The workspace detail screen
+  now lists shared terminals visible to you (other users' shared windows
+  and the agent's `service` window), below your own terminals. Selecting
+  one runs `klangk shell <ws> <handle>:<window>`, joining it via the same
+  `join_shared_terminal` path the browser uses. Arrow down from your own
+  terminals into the shared list; the `[n]`/`[m]`/`[t]` own-terminal
+  keys no-op while the shared list is focused.
+
 - **New terminal from the tmux status bar (#2161).** A clickable "+ new"
   item in the workspace terminal's tmux status bar opens another terminal
   via a native `tmux new-window`, working the same in `klangk shell` and the
