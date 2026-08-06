@@ -691,7 +691,7 @@ class KlangkSettings(BaseSettings):
     netfilter_default_domains: list[str] | None = None
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
-    # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 512 PIDs,
+    # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 16384 PIDs,
     # #2030) so a fresh install is bounded out of the box — a workspace
     # exceeding a limit is throttled / OOM-killed / fork-bomb-contained
     # rather than taking down the host or its neighbours. Set a field to an
@@ -707,7 +707,7 @@ class KlangkSettings(BaseSettings):
     # deploy default, no clamping) are a follow-up (Phase 2).
     container_cpu_limit: float | None = 2.0
     container_memory_limit: str | None = "8g"
-    container_pids_limit: int | None = 512
+    container_pids_limit: int | None = 16384
     test_mode: str | None = None
     version_file: str | None = None
 

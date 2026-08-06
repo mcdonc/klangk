@@ -135,7 +135,7 @@ class TestGenerateDefaultConfig:
         body = Path(path).read_text()
         assert "container_cpu_limit: 2.0" in body
         assert "container_memory_limit: 8g" in body
-        assert "container_pids_limit: 512" in body
+        assert "container_pids_limit: 16384" in body
         # They must be active config lines, not commented examples.
         active = {
             line.strip()
@@ -144,7 +144,7 @@ class TestGenerateDefaultConfig:
         }
         assert "container_cpu_limit: 2.0" in active
         assert "container_memory_limit: 8g" in active
-        assert "container_pids_limit: 512" in active
+        assert "container_pids_limit: 16384" in active
 
 
 class TestLauncherIntegration:

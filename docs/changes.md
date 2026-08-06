@@ -167,6 +167,14 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`container_pids_limit` default raised to 16384 (#2160).** The
+  deploy-wide workspace process-count cap shipped at 512 (#2030), which
+  build-heavy workloads (nix/devenv flake evaluation, libgit2 threaded
+  packfile/git-cache unpacking) exceed on multi-core hosts, failing with
+  `pthread_create` EAGAIN. The default is now 16384; still bounded and
+  overridable per-deploy (`klangkd.yaml` / `KLANGKD_CONTAINER_PIDS_LIMIT`)
+  or per-workspace (`pids_limit`, #864).
+
 - **Bumped `@earendil-works/pi-coding-agent` to `0.83.0` (#2049).**
 
 - **`none` auth mode unsupported with Docker host image (#1391).** The Docker

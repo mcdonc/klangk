@@ -295,7 +295,7 @@ port: "8997"
 | `netfilter_default_domains`  | _(unset)_                       | `KLANGKD_NETFILTER_DEFAULT_DOMAINS`  |
 | `container_cpu_limit`        | `2.0`                           | `KLANGKD_CONTAINER_CPU_LIMIT`        |
 | `container_memory_limit`     | `8g`                            | `KLANGKD_CONTAINER_MEMORY_LIMIT`     |
-| `container_pids_limit`       | `512`                           | `KLANGKD_CONTAINER_PIDS_LIMIT`       |
+| `container_pids_limit`       | `16384`                         | `KLANGKD_CONTAINER_PIDS_LIMIT`       |
 | `health_check_interval`      |                                 | `KLANGKD_HEALTH_CHECK_INTERVAL`      |
 | `health_check_startup_grace` |                                 | `KLANGKD_HEALTH_CHECK_STARTUP_GRACE` |
 | `health_check_timeout`       |                                 | `KLANGKD_HEALTH_CHECK_TIMEOUT`       |
