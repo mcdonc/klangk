@@ -4,23 +4,18 @@ import { defineConfig } from "@playwright/test";
 const BACKEND_PORT = process.env.KLANGKBUILD_E2E_PORT || "18997";
 const BASE_URL =
   process.env.KLANGKBUILD_TEST_URL || `http://localhost:${BACKEND_PORT}`;
-const BROWSERS = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
-
+// @playwright/test (package.json) is pinned to the version whose browser
+// revisions match the nix playwright-driver.browsers exposed via
+// PLAYWRIGHT_BROWSERS_PATH, so Playwright resolves each browser under PWP on
+// its own — no hardcoded build pin (the chromium-1223/firefox-1522/webkit-2287
+// pins this replaced broke on any nix driver bump, #2182). devenv.nix asserts
+// the @playwright/test chromium revision exists under PWP and fails fast if the
+// two drift. CHROME_PATH / FIREFOX_PATH / WEBKIT_PATH still override the path
+// for non-devenv runs (e.g. macOS, or the dist-smoke which `npx playwright
+// install`s its own browser with PWP unset).
 const chromiumUse = {
   launchOptions: {
-    // In devenv/NixOS, PLAYWRIGHT_BROWSERS_PATH points at the nix-bundled
-    // browsers and we pin the exact nix build (chromium-1223) — @playwright/test
-    // 1.59.1's default revision differs, so the pin is required there (#1193).
-    // When PLAYWRIGHT_BROWSERS_PATH is UNSET (e.g. the dist-smoke, which
-    // `npx playwright install`s its own browser on a stock runner), fall back
-    // to undefined so Playwright uses its default (the just-installed) browser
-    // instead of a non-existent /chromium-1223/... path. CHROME_PATH overrides
-    // both for local runs.
-    executablePath:
-      process.env.CHROME_PATH ||
-      (BROWSERS
-        ? `${BROWSERS}/chromium-1223/chrome-linux64/chrome`
-        : undefined),
+    executablePath: process.env.CHROME_PATH || undefined,
     args: ["--enable-unsafe-swiftshader"],
   },
 };
@@ -28,12 +23,7 @@ const chromiumUse = {
 const firefoxUse = {
   browserName: "firefox" as const,
   launchOptions: {
-    // CI (Linux) uses the default path; FIREFOX_PATH overrides it for local
-    // runs (e.g. macOS, where the binary is firefox/Nightly.app/...), mirroring
-    // CHROME_PATH above.
-    executablePath:
-      process.env.FIREFOX_PATH ||
-      (BROWSERS ? `${BROWSERS}/firefox-1522/firefox/firefox` : undefined),
+    executablePath: process.env.FIREFOX_PATH || undefined,
     // Allow navigator.clipboard read/write in automation without a prompt, so
     // the paste e2e can seed the clipboard. (The fix's own read path uses the
     // native `paste` event and needs no permission.)
@@ -47,15 +37,7 @@ const firefoxUse = {
 const webkitUse = {
   browserName: "webkit" as const,
   launchOptions: {
-    // The nix playwright-driver bundles webkit build 2287, but @playwright/test
-    // 1.59.1 looks for build 2272 by default ("Executable doesn't exist at
-    // .../webkit-2272/pw_run.sh"). Like chromium/firefox above, pin the path to
-    // the nix-provided build so Playwright uses it directly instead of its
-    // npm-version-derived revision. WEBKIT_PATH mirrors CHROME/FIREFOX_PATH
-    // for local overrides. See #1193.
-    executablePath:
-      process.env.WEBKIT_PATH ||
-      (BROWSERS ? `${BROWSERS}/webkit-2287/pw_run.sh` : undefined),
+    executablePath: process.env.WEBKIT_PATH || undefined,
   },
 };
 

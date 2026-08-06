@@ -17,7 +17,6 @@
 import { defineConfig } from "@playwright/test";
 
 const DEMO_URL = process.env.KLANGKBUILD_TEST_URL || "http://localhost:8996";
-const BROWSERS = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
 // Logical viewport = the size Flutter lays out for = the Xvfb capture size in
 // record-demo.sh. Default native 1920x1080 (crisp, desktop-sized widgets). For
 // a 2x-bigger (but softer) render, set KLANGKBUILD_DEMO_VW=960 KLANGKBUILD_DEMO_VH=540
@@ -76,9 +75,11 @@ export default defineConfig({
     // quick dry check. A modest slowMo makes clicks read as deliberate on camera.
     launchOptions: {
       slowMo: Number(process.env.KLANGKBUILD_DEMO_SLOWMO || 50),
-      executablePath:
-        process.env.CHROME_PATH ||
-        `${BROWSERS}/chromium-1223/chrome-linux64/chrome`,
+      // @playwright/test is pinned (package.json) to the version matching the
+      // nix playwright-driver.browsers, so Playwright resolves chromium under
+      // PLAYWRIGHT_BROWSERS_PATH on its own — no hardcoded build pin (#2182).
+      // CHROME_PATH overrides for non-devenv runs.
+      executablePath: process.env.CHROME_PATH || undefined,
       // The recorder runs matchbox-window-manager under Xvfb, which force-
       // fullscreens the single app window to the exact screen size with no
       // decoration. --start-maximized hints matchbox to treat the browser as
