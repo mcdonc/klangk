@@ -21,6 +21,7 @@ source "$SCRIPT_DIR/_podman_common.sh"
 
 IMAGE="klangk-nix-seed:latest"
 OUT="${1:-${KLANGKD_NIX_SEED_DIR:-$PWD/nix-base}}"
+shift # remaining args (e.g. --no-cache) pass through to podman build
 
 echo "==> Building nix-seed sandbox image"
 "$PODMAN" build \
@@ -28,7 +29,7 @@ echo "==> Building nix-seed sandbox image"
   --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
   -f src/containers/nix-seed/Dockerfile \
   -t "$IMAGE" \
-  src/containers/nix-seed/
+  "$@" src/containers/nix-seed/
 
 echo "==> Extracting /nix + nix.conf -> $OUT"
 # Clear any prior output first (store files are read-only, so +w before rm).
