@@ -175,6 +175,12 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **TUI workspace-detail rows are zebra-striped (#2193).** The
+  `id / running / uptime / mounts / …` property block on
+  `WorkspaceDetailScreen` now alternates row backgrounds (theme `surface`
+  over `background`) for readability; key names are bold and right-aligned,
+  and a multi-line value keeps one background across its wrapped lines.
+
 - **`container_pids_limit` default raised to 16384 (#2160).** The
   deploy-wide workspace process-count cap shipped at 512 (#2030), which
   build-heavy workloads (nix/devenv flake evaluation, libgit2 threaded

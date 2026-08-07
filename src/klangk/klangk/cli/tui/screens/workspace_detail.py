@@ -287,9 +287,11 @@ class WorkspaceDetailScreen(Screen):
         self.BINDINGS = self._bindings_list("Stop" if ws.running else "Start")
         self.refresh_bindings()
         # Render the detail as a two-column table so every value lines up in
-        # the same column regardless of label length (#1910). Wrapped in Text()
-        # so values that look like markup (e.g. an image named "[img]") render
-        # literally instead of being parsed as Textual markup.
+        # the same column regardless of label length (#1910). Parsed with
+        # Text.from_ansi (not Text()) so the zebra row backgrounds (#2193)
+        # survive; from_ansi reads ANSI escapes only, so values that look like
+        # markup (e.g. an image named "[img]") still render literally rather
+        # than being parsed as Textual markup.
         #
         # Render at the body widget's *actual* content width, not the screen
         # width: the screen has horizontal chrome (borders/margins/scroll
@@ -304,7 +306,9 @@ class WorkspaceDetailScreen(Screen):
             or self.size.width
             or 80
         )
-        body.update(Text(self._render_detail(self._detail_rows(ws), width)))
+        body.update(
+            Text.from_ansi(self._render_detail(self._detail_rows(ws), width))
+        )
 
     @staticmethod
     def _detail_rows(ws) -> list[tuple[str, str]]:
@@ -362,24 +366,38 @@ class WorkspaceDetailScreen(Screen):
 
         The label column auto-sizes to the longest label, so every value
         starts at the same column; the value column folds long values to fit
-        ``width`` instead of running off the right edge."""
+        ``width`` instead of running off the right edge. Rows are
+        zebra-striped (alternating ``surface`` background) for readability
+        (#2193); the caller must parse the result with ``Text.from_ansi``
+        so the row backgrounds survive into the ``Static``."""
+        # row_styles cycles once per add_row, so a multi-line value (service
+        # command, mounts) keeps one background for the whole logical row
+        # rather than striping per wrapped line (#2193). The stripe is the
+        # theme `surface` (#161B22) over the screen `background` (#0D1117);
+        # see KLANGK_THEME in app.py.
         table = Table(
             show_header=False,
             box=None,
             pad_edge=False,
             padding=(0, 1),
             expand=True,
+            row_styles=("", "on #161B22"),
         )
-        table.add_column("label", no_wrap=True)
+        # Key names (left column) are right-aligned and bold so each
+        # label's right edge lines up just before its value (#2193).
+        table.add_column("label", no_wrap=True, justify="right", style="bold")
         table.add_column("value", overflow="fold", ratio=1)
         for label, value in rows:
             table.add_row(label, value)
         buf = StringIO()
+        # Emit truecolor ANSI so the row backgrounds survive into the
+        # Static via Text.from_ansi (#2193); markup=False keeps values like
+        # "[img]" literal, highlight=False disables Rich auto-highlighting.
         Console(
             file=buf,
             width=width,
-            force_terminal=False,
-            no_color=True,
+            force_terminal=True,
+            color_system="truecolor",
             highlight=False,
             markup=False,
         ).print(table, end="")
