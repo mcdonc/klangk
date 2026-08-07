@@ -32,6 +32,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Nix-enabled workspace image (`Dockerfile-nix`) (#2199).** A variant of
+  the workspace image that layers single-user nix and devenv on top of the
+  full workspace image (Pi agent, features, `klangk-*` tooling) so a
+  nix-enabled workspace has everything it needs to run under `klangk`.
+  nix is off `$PATH` by default; source `/opt/klangk/bin/nix-activate.sh` to
+  put nix, devenv, and nix-installed programs on `$PATH`. Consumed by the
+  nix workspace feature (#2198); build locally with `scripts/build-nix-image.sh`.
+
 - **Shared terminals in the TUI (#2164).** The workspace detail screen
   now lists shared terminals visible to you (other users' shared windows
   and the agent's `service` window), below your own terminals. Selecting
