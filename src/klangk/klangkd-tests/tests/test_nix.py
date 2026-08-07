@@ -1,9 +1,9 @@
-"""Unit tests for ``klangk.nix`` — the per-workspace zfs-clone lifecycle (#2201).
+"""Unit tests for ``klangk.nix`` — the per-workspace btrfs-snapshot lifecycle (#2201).
 
-The zfs subprocess calls are faked (no real zfs/pool needed); these cover the
-zfs-configured gating, clone/destroy idempotency, and error paths. The
-per-workspace ``nix`` flag is the caller's gate (container.py), not the
-module's — the module only cares whether zfs is configured.
+The btrfs subprocess calls and filesystem existence checks are faked (no real
+btrfs needed); these cover the btrfs-configured gating, snapshot/delete
+idempotency, and error paths. The per-workspace ``nix`` flag is the caller's
+gate (container.py) — the module only cares whether btrfs is configured.
 """
 
 from types import SimpleNamespace
@@ -14,6 +14,9 @@ from klangk import nix
 from klangk.nix import Nix, NixError
 
 from _helpers import make_settings
+
+SEED = "/steam2/btrfs/klangk-nix/seed"
+WS = "/steam2/btrfs/klangk-nix/ws-ws1"
 
 
 class _Proc:
@@ -26,39 +29,40 @@ class _Proc:
         return self._out, self._err
 
 
-def _app(nix_zfs_dataset=None):
-    env = (
-        {"KLANGKD_NIX_ZFS_DATASET": nix_zfs_dataset} if nix_zfs_dataset else {}
-    )
+def _app(subvol=None):
+    env = {"KLANGKD_NIX_BTRFS_SUBVOLUME": subvol} if subvol else {}
     settings = make_settings(env=env)
     return SimpleNamespace(state=SimpleNamespace(settings=settings))
 
 
-def _patch_zfs(monkeypatch, resolver):
-    """Patch ``asyncio.create_subprocess_exec``; resolver(args) -> (rc, out, err).
-
-    *args* excludes the leading ``zfs``. Returns the recorded call list.
-    """
-
+def _patch(
+    monkeypatch,
+    *,
+    seed_exists=True,
+    ws_exists=False,
+    btrfs_rc=0,
+    btrfs_err=b"",
+):
+    """Fake the btrfs subprocess + os.path existence checks. Returns call list."""
     calls = []
 
     async def fake_exec(*args, **kwargs):
         calls.append(args)
-        rc, out, err = resolver(args[1:])
-        return _Proc(rc, out, err)
+        return _Proc(btrfs_rc, b"", btrfs_err)
 
     monkeypatch.setattr(nix.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(nix.os.path, "isdir", lambda p: seed_exists)
+    monkeypatch.setattr(nix.os.path, "exists", lambda p: ws_exists)
     return calls
 
 
 # --- gating -----------------------------------------------------------------
 
 
-async def test_no_op_when_zfs_not_configured(monkeypatch):
-    """No zfs dataset configured -> ensure returns None, destroy is a no-op."""
-    calls = _patch_zfs(monkeypatch, lambda a: (1, b"", b""))
+async def test_no_op_when_btrfs_not_configured(monkeypatch):
+    calls = _patch(monkeypatch)
     n = Nix(_app())
-    assert n.zfs_configured is False
+    assert n.btrfs_configured is False
     assert await n.ensure_workspace_nix("ws1") is None
     await n.destroy_workspace_nix("ws1")
     assert calls == []
@@ -67,122 +71,61 @@ async def test_no_op_when_zfs_not_configured(monkeypatch):
 # --- ensure_workspace_nix ---------------------------------------------------
 
 
-def _resolver(seed_snap_exists, ws_exists, mountpoint="/tank/nix/ws-ws1"):
-    def resolve(args):
-        if args[0] == "list":
-            field, target = args[3], args[4]
-            if field == "name":
-                if target.endswith("@base"):
-                    return (0 if seed_snap_exists else 1, b"", b"nope")
-                # ws dataset existence probe
-                return (0 if ws_exists else 1, b"", b"does not exist")
-            if field == "mountpoint":
-                return 0, mountpoint.encode() + b"\n", b""
-        if args[0] == "clone":
-            return 0, b"", b""
-        return 0, b"", b""
-
-    return resolve
+async def test_ensure_snapshots_when_missing(monkeypatch):
+    calls = _patch(monkeypatch, seed_exists=True, ws_exists=False)
+    n = Nix(_app(SEED))
+    assert n.btrfs_configured is True
+    assert await n.ensure_workspace_nix("ws1") == WS
+    assert any(a[1:3] == ("subvolume", "snapshot") for a in calls)
 
 
-async def test_ensure_clones_when_missing(monkeypatch):
-    calls = _patch_zfs(
-        monkeypatch, _resolver(seed_snap_exists=True, ws_exists=False)
-    )
-    n = Nix(_app("tank/nix"))
-    assert n.zfs_configured is True
-    mp = await n.ensure_workspace_nix("ws1")
-    assert mp == "/tank/nix/ws-ws1"
-    assert any(c[1:][0] == "clone" for c in calls)
+async def test_ensure_reuses_existing(monkeypatch):
+    calls = _patch(monkeypatch, seed_exists=True, ws_exists=True)
+    n = Nix(_app(SEED))
+    assert await n.ensure_workspace_nix("ws1") == WS
+    assert not any(a[1:3] == ("subvolume", "snapshot") for a in calls)
 
 
-async def test_ensure_reuses_existing_clone(monkeypatch):
-    calls = _patch_zfs(
-        monkeypatch, _resolver(seed_snap_exists=True, ws_exists=True)
-    )
-    n = Nix(_app("tank/nix"))
-    mp = await n.ensure_workspace_nix("ws1")
-    assert mp == "/tank/nix/ws-ws1"
-    assert not any(c[1:][0] == "clone" for c in calls)  # no clone call
-
-
-async def test_ensure_raises_when_seed_snapshot_missing(monkeypatch):
-    _patch_zfs(monkeypatch, _resolver(seed_snap_exists=False, ws_exists=False))
-    n = Nix(_app("tank/nix"))
-    with pytest.raises(NixError, match="seed snapshot"):
+async def test_ensure_raises_when_seed_missing(monkeypatch):
+    _patch(monkeypatch, seed_exists=False)
+    n = Nix(_app(SEED))
+    with pytest.raises(NixError, match="seed subvolume"):
         await n.ensure_workspace_nix("ws1")
 
 
-async def test_ensure_raises_when_mountpoint_none(monkeypatch):
-    _patch_zfs(
+async def test_ensure_raises_when_snapshot_fails(monkeypatch):
+    _patch(
         monkeypatch,
-        _resolver(seed_snap_exists=True, ws_exists=True, mountpoint="none"),
+        seed_exists=True,
+        ws_exists=False,
+        btrfs_rc=1,
+        btrfs_err=b"read-only filesystem",
     )
-    n = Nix(_app("tank/nix"))
-    with pytest.raises(NixError, match="mountpoint"):
-        await n.ensure_workspace_nix("ws1")
-
-
-async def test_ensure_raises_when_clone_fails(monkeypatch):
-    def resolve(args):
-        if args[0] == "list":
-            if args[4].endswith("@base"):
-                return 0, b"", b""
-            return 1, b"", b"does not exist"  # ws missing
-        if args[0] == "clone":
-            return 1, b"", b"permission denied"
-        return 0, b"", b""
-
-    _patch_zfs(monkeypatch, resolve)
-    n = Nix(_app("tank/nix"))
-    with pytest.raises(NixError, match="permission denied"):
+    n = Nix(_app(SEED))
+    with pytest.raises(NixError, match="read-only filesystem"):
         await n.ensure_workspace_nix("ws1")
 
 
 # --- destroy_workspace_nix --------------------------------------------------
 
 
-def _destroy_resolver(ws_dataset, destroy_rc=0, destroy_err=b""):
-    def resolve(args):
-        if args[0] == "destroy":
-            assert args[2] == ws_dataset
-            return destroy_rc, b"", destroy_err
-        return 0, b"", b""
-
-    return resolve
-
-
 async def test_destroy_succeeds(monkeypatch):
-    calls = _patch_zfs(
-        monkeypatch, _destroy_resolver("tank/nix/ws-ws1", destroy_rc=0)
-    )
-    n = Nix(_app("tank/nix"))
+    calls = _patch(monkeypatch, ws_exists=True, btrfs_rc=0)
+    n = Nix(_app(SEED))
     await n.destroy_workspace_nix("ws1")
-    assert any(c[1:][0] == "destroy" for c in calls)
+    assert any(a[1:3] == ("subvolume", "delete") for a in calls)
 
 
-async def test_destroy_ignores_missing(monkeypatch):
-    calls = _patch_zfs(
-        monkeypatch,
-        _destroy_resolver(
-            "tank/nix/ws-ws1",
-            destroy_rc=1,
-            destroy_err=b"dataset does not exist",
-        ),
-    )
-    n = Nix(_app("tank/nix"))
-    await n.destroy_workspace_nix("ws1")  # no warning, no raise
-    assert any(c[1:][0] == "destroy" for c in calls)
+async def test_destroy_noop_when_missing(monkeypatch):
+    calls = _patch(monkeypatch, ws_exists=False)
+    n = Nix(_app(SEED))
+    await n.destroy_workspace_nix("ws1")
+    assert calls == []  # no btrfs call
 
 
-async def test_destroy_warns_on_other_error(monkeypatch, caplog):
-    _patch_zfs(
-        monkeypatch,
-        _destroy_resolver(
-            "tank/nix/ws-ws1", destroy_rc=1, destroy_err=b"busy"
-        ),
-    )
-    n = Nix(_app("tank/nix"))
+async def test_destroy_warns_on_error(monkeypatch, caplog):
+    _patch(monkeypatch, ws_exists=True, btrfs_rc=1, btrfs_err=b"busy")
+    n = Nix(_app(SEED))
     with caplog.at_level("WARNING", logger="klangk.nix"):
         await n.destroy_workspace_nix("ws1")
-    assert any("zfs destroy" in r.message for r in caplog.records)
+    assert any("btrfs subvolume delete" in r.message for r in caplog.records)

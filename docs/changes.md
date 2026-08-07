@@ -37,18 +37,17 @@ operators or integrators to act when upgrading.
   store, the nix DB, and a base profile with nix and devenv) and an
   `/etc/nix/nix.conf` (flakes, nix-command, and pre-configured binary caches),
   deployed alongside klangk as a host-side tree rather than baked into a
-  workspace image. Run via `devenv run build-nix-seed`. Consumed by #2201.
+  workspace image. Run via `devenv shell -- build-nix-seed`. Consumed by #2201.
 
-- **Per-workspace `/nix` via zfs clones (#2201, #2202).** When
-  `nix_zfs_dataset` names a seed dataset, a workspace with the per-workspace
-  `nix` setting enabled gets a writable, isolated `/nix` as a zfs clone of the
-  shared seed snapshot: cloned on first start, reused across restarts,
-  destroyed on delete; the clone's `/nix` and `nix.conf` are bind-mounted into
-  the container (plain bind, no extra caps). Requires a zfs pool + a one-time
-  `zfs allow` delegation. The per-workspace `nix` flag is independent of image
-  selection — image choice is always respected; without zfs, pick the nix
-  image for baked `/nix` (the non-zfs fallback; btrfs snapshot support is
-  #2208).
+- **Per-workspace `/nix` via btrfs snapshots (#2201, #2202, #2208).** When
+  `nix_btrfs_subvolume` names a seed btrfs subvolume, a workspace with the
+  per-workspace `nix` setting enabled gets a writable, isolated `/nix` as a
+  btrfs snapshot of the seed: snapshotted on first start, reused across
+  restarts, deleted on workspace delete; the snapshot's `/nix` and `nix.conf`
+  are bind-mounted into the container. btrfs needs no privileged helper (a
+  non-root user can snapshot a writable subvolume, and the snapshot is reachable
+  via the parent mount) — unlike zfs, whose non-root mount is impossible on
+  Linux. Requires a btrfs filesystem mounted with `user_subvol_rm_allowed`.
 
 - **Per-workspace nix feature flag (#2202).** A workspace `nix` setting
   (boolean) gates the zfs-clone `/nix` mount, settable at create time via a

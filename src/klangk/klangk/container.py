@@ -1365,7 +1365,7 @@ class ContainerRegistry:
         """Bind specs for the workspace's per-workspace /nix (#2201), or [].
 
         Only when the workspace has its per-workspace ``nix`` setting enabled
-        (#2202) AND zfs is configured (nix_zfs_dataset) does ensure_workspace_nix
+        (#2202) AND btrfs is configured (nix_btrfs_subvolume) does ensure_workspace_nix
         clone the seed and return a mountpoint; the clone's /nix + nix.conf are
         bind-mounted into the container. Image selection is untouched — this is
         orthogonal to which image the workspace runs.

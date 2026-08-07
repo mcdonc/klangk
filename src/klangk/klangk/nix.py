@@ -1,82 +1,70 @@
-"""Per-workspace nix store via zfs clones (#2201).
+"""Per-workspace nix store via btrfs snapshots (#2201, #2208).
 
 When a workspace has the per-workspace ``nix`` setting enabled and
-``KLANGKD_NIX_ZFS_DATASET`` names a zfs dataset holding the seed, the workspace
-gets a writable, isolated ``/nix`` as a **zfs clone** of a shared, snapshotted
-seed dataset. The seed is built by #2200 (``scripts/build-nix-seed.sh``) and
-loaded into a zfs dataset + snapshotted at ``@base`` by
-``scripts/load-nix-seed-zfs.sh``. ``ContainerRegistry`` binds the clone's
-``/nix`` (and ``nix.conf``) into the workspace container; on workspace
-delete, ``Workspaces`` destroys the clone.
+``KLANGKD_NIX_BTRFS_SUBVOLUME`` names a seed btrfs subvolume, the workspace
+gets a writable, isolated ``/nix`` as a **btrfs snapshot** of the seed. The
+seed is built by #2200 (``build-nix-seed``) and loaded into a btrfs subvolume
+by ``scripts/load-nix-seed-btrfs.sh``. ``ContainerRegistry`` binds the
+snapshot's ``/nix`` (and ``nix.conf``) into the workspace container; on
+workspace delete, ``Workspaces`` removes the snapshot.
 
-zfs clone/destroy/mount need privilege. Delegate just those operations to the
-klangkd user — no full root — with::
-
-    zfs allow <klangkd-user> create,destroy,clone,mount,list <dataset>
-
-Why zfs clones (not the overlayfs the #2201 issue body describes): the #2201
-spike (PR #2205) found rootless podman rejects ``--mount type=overlay``, and
-in-container overlay needs single-bind + ``--cap-add SYS_ADMIN``; a zfs clone
-is instant (~0.5 s), block-shared, plain-bind (no extra caps), and fully
-isolated — and the nix DB copy-up gotcha doesn't apply (a clone is a real
-filesystem copy, not an overlay). Where no zfs pool is available, leave the workspace's ``nix`` setting unset and the
-workspace uses the nix image's baked /nix (no clone).
+btrfs (unlike zfs) lets a non-root user snapshot a subvolume it can write to,
+and a snapshot is reachable through the parent mount (no separate mount), so
+this needs **no privileged helper** — unlike the zfs-clone path, which would
+need a ``cap_sys_admin`` mount helper (see #2210 and openzfs/zfs#10648: non-root
+zfs mount is impossible on Linux). Requires the btrfs filesystem be mounted
+with ``user_subvol_rm_allowed`` so the same non-root user can delete snapshots.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 
 class NixError(RuntimeError):
-    """A zfs operation or configuration problem in the nix subsystem."""
+    """A btrfs operation or configuration problem in the nix subsystem."""
 
 
 class Nix:
-    """Owns the per-workspace zfs-clone lifecycle for ``/nix``.
+    """Owns the per-workspace btrfs-snapshot lifecycle for ``/nix``.
 
-    Constructed once in ``main.build_app`` as ``app.state.nix`` (#1426
-    ownership: takes ``app``, reads settings live). All zfs calls go through
-    ``asyncio.create_subprocess_exec`` so they don't block the event loop.
+    Constructed once in ``main.build_app`` as ``app.state.nix``. btrfs calls go
+    through ``asyncio.create_subprocess_exec``; existence checks are plain
+    ``os.path`` queries (a snapshot is a directory reachable through the parent
+    btrfs mount, so there is no mount step and no separate mountpoint lookup).
     """
 
     def __init__(self, app):
         self.app = app
 
     @property
-    def zfs_configured(self) -> bool:
-        """Whether the zfs-clone path is available (a seed dataset is configured).
+    def btrfs_configured(self) -> bool:
+        """Whether the btrfs-snapshot path is available (a seed subvolume is set).
 
-        The per-workspace ``nix`` flag (checked by the caller) decides whether
-        a *given* workspace opts into the clone; this only says the deploy can
-        serve it.
+        The per-workspace ``nix`` flag (checked by the caller) decides whether a
+        *given* workspace opts in; this only says the deploy can serve it.
         """
-        return bool(self.app.state.settings.nix_zfs_dataset)
+        return bool(self.app.state.settings.nix_btrfs_subvolume)
 
     @property
-    def dataset(self) -> str:
-        # ``enabled`` already requires this to be set, so callers reach here only
-        # with a real value; return it directly (no defensive raise to keep
-        # coverage honest).
-        return self.app.state.settings.nix_zfs_dataset or ""
+    def seed(self) -> str:
+        # Path to the seed btrfs subvolume, e.g. /steam2/btrfs/klangk-nix/seed.
+        # ``btrfs_configured`` already requires this set.
+        return self.app.state.settings.nix_btrfs_subvolume or ""
 
-    def _seed(self) -> str:
-        return f"{self.dataset}/seed"
+    def _ws_path(self, workspace_id: str) -> str:
+        # Sibling of the seed: <seed's parent>/ws-<workspace_id>.
+        return os.path.join(os.path.dirname(self.seed), f"ws-{workspace_id}")
 
-    def _seed_snapshot(self) -> str:
-        return f"{self._seed()}@base"
-
-    def _ws(self, workspace_id: str) -> str:
-        return f"{self.dataset}/ws-{workspace_id}"
-
-    async def _zfs(
+    async def _btrfs(
         self, args: list[str], *, check: bool = True
     ) -> tuple[int, str, str]:
         proc = await asyncio.create_subprocess_exec(
-            "zfs",
+            "btrfs",
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -86,55 +74,49 @@ class Nix:
         out_s, err_s = out.decode(), err.decode()
         if check and rc != 0:
             raise NixError(
-                f"zfs {' '.join(args)} failed (rc={rc}): {err_s.strip()}"
+                f"btrfs {' '.join(args)} failed (rc={rc}): {err_s.strip()}"
             )
         return rc, out_s, err_s
 
-    async def _exists(self, name: str) -> bool:
-        rc, _, _ = await self._zfs(
-            ["list", "-H", "-o", "name", name], check=False
-        )
-        return rc == 0
-
     async def ensure_workspace_nix(self, workspace_id: str) -> str | None:
-        """Ensure a writable ``/nix`` clone for *workspace_id*.
+        """Ensure a writable ``/nix`` btrfs snapshot for *workspace_id*.
 
-        Returns the clone's mountpoint (to be bind-mounted into the container),
-        or ``None`` when nix is disabled (so callers can call unconditionally).
-        Idempotent: reuses an existing clone across container restarts.
+        Returns the snapshot's path (bind-mounted into the container as /nix),
+        or ``None`` when btrfs is not configured. Idempotent: reuses an existing
+        snapshot across restarts (it lives at the path, reachable via the parent
+        mount — no separate mount needed).
         """
-        if not self.zfs_configured:
+        if not self.btrfs_configured:
             return None
-        if not await self._exists(self._seed_snapshot()):
+        if not os.path.isdir(self.seed):
             raise NixError(
-                f"seed snapshot {self._seed_snapshot()} not found — build the "
-                f"seed (devenv run build-nix-seed) and load it "
-                f"(scripts/load-nix-seed-zfs.sh {self.dataset}) first"
+                f"seed subvolume {self.seed} not found — build the seed "
+                f"(devenv shell -- build-nix-seed) and load it "
+                f"(scripts/load-nix-seed-btrfs.sh) first"
             )
-        ws = self._ws(workspace_id)
-        if not await self._exists(ws):
+        ws = self._ws_path(workspace_id)
+        if not os.path.exists(ws):
             logger.info(
-                "nix: cloning seed for workspace %s -> %s", workspace_id, ws
+                "nix: snapshotting seed for workspace %s -> %s",
+                workspace_id,
+                ws,
             )
-            await self._zfs(["clone", self._seed_snapshot(), ws])
-        _, out, _ = await self._zfs(["list", "-H", "-o", "mountpoint", ws])
-        mountpoint = out.strip()
-        if not mountpoint or mountpoint == "none":
-            raise NixError(
-                f"workspace nix clone {ws} has no mountpoint "
-                f"(set canmount=on on the seed dataset)"
-            )
-        return mountpoint
+            await self._btrfs(["subvolume", "snapshot", self.seed, ws])
+        return ws
 
     async def destroy_workspace_nix(self, workspace_id: str) -> None:
-        """Destroy the per-workspace clone (on workspace delete). No-op if absent."""
-        if not self.zfs_configured:
+        """Delete the per-workspace snapshot (on workspace delete). No-op if absent."""
+        if not self.btrfs_configured:
             return
-        ws = self._ws(workspace_id)
-        rc, _, err = await self._zfs(["destroy", "-r", ws], check=False)
-        if rc != 0 and "does not exist" not in err:
+        ws = self._ws_path(workspace_id)
+        if not os.path.exists(ws):
+            return
+        rc, _, err = await self._btrfs(
+            ["subvolume", "delete", ws], check=False
+        )
+        if rc != 0:
             logger.warning(
-                "nix: zfs destroy %s failed (rc=%s): %s",
+                "nix: btrfs subvolume delete %s failed (rc=%s): %s",
                 ws,
                 rc,
                 err.strip(),
