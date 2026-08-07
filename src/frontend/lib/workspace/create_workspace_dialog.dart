@@ -32,6 +32,11 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// knows the list won't take effect until an operator enables netfilter.
   final bool netfilterEnabled;
 
+  /// #2202: whether the server can serve the per-workspace nix /nix clone
+  /// (zfs seed configured). When false the nix toggle is hidden; nix is then
+  /// image-only (the user picks the nix image themselves).
+  final bool nixAvailable;
+
   const CreateWorkspaceDialog({
     super.key,
     required this.auth,
@@ -40,6 +45,7 @@ class CreateWorkspaceDialog extends StatefulWidget {
     this.allowAutostart = false,
     this.defaultAllowedDomains = const [],
     this.netfilterEnabled = false,
+    this.nixAvailable = false,
   });
 
   @override
@@ -58,6 +64,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _envVars = <String, String>{};
   final _allowedDomains = <String>[];
   bool _autoStart = false;
+  bool _nixEnabled = false;
   String? _errorMessage;
   String? _mountError;
   String? _envError;
@@ -163,6 +170,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     }
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
+    }
+    if (widget.nixAvailable && _nixEnabled) {
+      body['settings'] = {'nix': true};
     }
 
     try {
@@ -275,6 +285,22 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                   title: const Text('Auto start'),
                   subtitle: const Text(
                     'Start this workspace when the server starts',
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ],
+              // #2202: per-workspace nix flag (only when the server has a zfs
+              // seed dataset). Independent of the image choice — it mounts a
+              // shared /nix clone into whatever image the user selected.
+              if (widget.nixAvailable) ...[
+                const SizedBox(height: 8),
+                CheckboxListTile(
+                  value: _nixEnabled,
+                  onChanged: (v) => setState(() => _nixEnabled = v ?? false),
+                  title: const Text('Nix'),
+                  subtitle: const Text(
+                    'Mount a shared, writable /nix (zfs clone) into this workspace',
                   ),
                   controlAffinity: ListTileControlAffinity.leading,
                   contentPadding: EdgeInsets.zero,

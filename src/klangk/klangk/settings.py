@@ -633,13 +633,12 @@ class KlangkSettings(BaseSettings):
     allow_autostart: str = ""
     allow_sudo: str = ""
     container_subnets: str | None = None
-    # Nix workspace feature (#2198): when nix_enabled is truthy and
-    # nix_zfs_dataset names a zfs dataset holding the seed (built by #2200,
-    # loaded by scripts/load-nix-seed-zfs.sh), each workspace gets a writable,
-    # isolated /nix as a zfs clone of the seed snapshot (Nix module, #2201).
-    # Off by default; non-nix workspaces are untouched. Per-workspace selection
-    # is #2202.
-    nix_enabled: str = ""
+    # Nix workspace feature (#2198): nix_zfs_dataset names a zfs dataset
+    # holding the seed (built by #2200, loaded by scripts/load-nix-seed-zfs.sh).
+    # When set, a workspace with the per-workspace `nix` setting enabled gets a
+    # writable, isolated /nix as a zfs clone of the seed snapshot (#2201,#2202).
+    # Unset -> nix is image-only (the nix image's baked /nix, no clone). Image
+    # selection is always the user's; this never overrides it.
     nix_zfs_dataset: str | None = None
     userns: str = "keep-id:uid=1000,gid=1000"
     # enable_ping: allow unprivileged ICMP echo (``ping``) inside workspace

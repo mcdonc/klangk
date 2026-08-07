@@ -81,17 +81,26 @@ variant is future work for non-zfs hosts).
 3. Point klangkd at the dataset (in `klangkd.yaml` or env):
 
    ```yaml
-   nix_enabled: "true"
    nix_zfs_dataset: d/klangk-nix
    ```
 
-With both set, every workspace gets a `/nix` clone on start; with either
-unset, workspaces are unaffected (the default). Per-workspace selection (the
-feature flag + UI) is #2202 — for now it's all-or-none per deploy.
+   This advertises nix availability (the create-workspace dialog shows a
+   "Nix" checkbox). It does **not** force any image — image selection stays
+   the user's.
+
+4. Per workspace, tick **Nix** when creating it (or set `nix: true` in its
+   settings via the API). That workspace then gets a `/nix` clone on start.
+
+Workspaces without the `nix` setting are untouched (no `/nix` clone). On a
+host without `nix_zfs_dataset`, the checkbox is hidden and nix is
+image-only: pick the nix image (`klangk-workspace-nix`) for its baked `/nix`
+— the non-zfs fallback (tracked: btrfs snapshot support is #2208).
 
 nix/devenv are off `$PATH` by default; the workspace image (#2199) ships
 `/opt/klangk/bin/nix-activate.sh`, which a user sources to put nix and
-nix-installed programs on `$PATH`.
+nix-installed programs on `$PATH`. (A custom image + the nix flag + zfs also
+works — `/nix` comes from the clone; the user activates it themselves if
+their image lacks the script.)
 
 ### Restart persistence
 

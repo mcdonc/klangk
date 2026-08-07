@@ -33,6 +33,20 @@ def test_validate_settings_coerces_numeric_strings():
     assert out == {"idle_timeout": 300, "pids_limit": 512, "cpu_limit": 1.5}
 
 
+def test_validate_settings_nix_boolean():
+    # Truthy forms coerce to True.
+    for v in (True, "true", "True", 1, "1", "yes", "on"):
+        assert ws.validate_settings({"nix": v}) == {"nix": True}
+    # Falsy forms (incl. empty string) coerce to False.
+    for v in (False, "false", 0, "0", "no", "off", ""):
+        assert ws.validate_settings({"nix": v}) == {"nix": False}
+    # Garbage is rejected.
+    import pytest
+
+    with pytest.raises(ValueError, match="settings.nix="):
+        ws.validate_settings({"nix": "maybe"})
+
+
 def test_validate_settings_preserves_memory_string():
     out = ws.validate_settings({"memory_limit": "2g"})
     assert out == {"memory_limit": "2g"}
@@ -241,6 +255,7 @@ def test_known_settings_has_all_documented_keys():
             "cpu_limit",
             "memory_limit",
             "pids_limit",
+            "nix",
         }
     )
 
