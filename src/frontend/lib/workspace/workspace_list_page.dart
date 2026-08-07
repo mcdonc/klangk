@@ -419,6 +419,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     final defaultImage = imageData?['default'] as String? ?? 'klangk-pi';
     final allowedImages =
         (imageData?['allowed'] as List?)?.cast<String>() ?? [defaultImage];
+    // #2202: the per-workspace nix toggle is only meaningful when the server
+    // has a zfs seed dataset configured (nix_available); otherwise nix is
+    // image-only and the toggle would do nothing.
+    final nixAvailable = imageData?['nix_available'] == true;
 
     if (!mounted) return;
 
@@ -431,6 +435,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         allowAutostart: _auth.allowAutostart,
         defaultAllowedDomains: _auth.netfilterDefaultDomains,
         netfilterEnabled: _auth.netfilterEnabled,
+        nixAvailable: nixAvailable,
       ),
     );
 

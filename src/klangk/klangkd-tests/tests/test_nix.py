@@ -1,7 +1,9 @@
 """Unit tests for ``klangk.nix`` — the per-workspace zfs-clone lifecycle (#2201).
 
 The zfs subprocess calls are faked (no real zfs/pool needed); these cover the
-gating, clone/destroy idempotency, and error paths.
+zfs-configured gating, clone/destroy idempotency, and error paths. The
+per-workspace ``nix`` flag is the caller's gate (container.py), not the
+module's — the module only cares whether zfs is configured.
 """
 
 from types import SimpleNamespace
@@ -24,12 +26,10 @@ class _Proc:
         return self._out, self._err
 
 
-def _app(nix_enabled="", nix_zfs_dataset=None):
-    env = {}
-    if nix_enabled:
-        env["KLANGKD_NIX_ENABLED"] = nix_enabled
-    if nix_zfs_dataset:
-        env["KLANGKD_NIX_ZFS_DATASET"] = nix_zfs_dataset
+def _app(nix_zfs_dataset=None):
+    env = (
+        {"KLANGKD_NIX_ZFS_DATASET": nix_zfs_dataset} if nix_zfs_dataset else {}
+    )
     settings = make_settings(env=env)
     return SimpleNamespace(state=SimpleNamespace(settings=settings))
 
@@ -54,20 +54,14 @@ def _patch_zfs(monkeypatch, resolver):
 # --- gating -----------------------------------------------------------------
 
 
-async def test_disabled_when_flag_unset(monkeypatch):
+async def test_no_op_when_zfs_not_configured(monkeypatch):
+    """No zfs dataset configured -> ensure returns None, destroy is a no-op."""
     calls = _patch_zfs(monkeypatch, lambda a: (1, b"", b""))
     n = Nix(_app())
-    assert n.enabled is False
+    assert n.zfs_configured is False
     assert await n.ensure_workspace_nix("ws1") is None
-    await n.destroy_workspace_nix("ws1")  # no-op
+    await n.destroy_workspace_nix("ws1")
     assert calls == []
-
-
-async def test_disabled_when_dataset_missing(monkeypatch):
-    _patch_zfs(monkeypatch, lambda a: (1, b"", b""))
-    n = Nix(_app(nix_enabled="true"))
-    assert n.enabled is False
-    assert await n.ensure_workspace_nix("ws1") is None
 
 
 # --- ensure_workspace_nix ---------------------------------------------------
@@ -95,8 +89,8 @@ async def test_ensure_clones_when_missing(monkeypatch):
     calls = _patch_zfs(
         monkeypatch, _resolver(seed_snap_exists=True, ws_exists=False)
     )
-    n = Nix(_app("true", "tank/nix"))
-    assert n.enabled is True
+    n = Nix(_app("tank/nix"))
+    assert n.zfs_configured is True
     mp = await n.ensure_workspace_nix("ws1")
     assert mp == "/tank/nix/ws-ws1"
     assert any(c[1:][0] == "clone" for c in calls)
@@ -106,7 +100,7 @@ async def test_ensure_reuses_existing_clone(monkeypatch):
     calls = _patch_zfs(
         monkeypatch, _resolver(seed_snap_exists=True, ws_exists=True)
     )
-    n = Nix(_app("true", "tank/nix"))
+    n = Nix(_app("tank/nix"))
     mp = await n.ensure_workspace_nix("ws1")
     assert mp == "/tank/nix/ws-ws1"
     assert not any(c[1:][0] == "clone" for c in calls)  # no clone call
@@ -114,7 +108,7 @@ async def test_ensure_reuses_existing_clone(monkeypatch):
 
 async def test_ensure_raises_when_seed_snapshot_missing(monkeypatch):
     _patch_zfs(monkeypatch, _resolver(seed_snap_exists=False, ws_exists=False))
-    n = Nix(_app("true", "tank/nix"))
+    n = Nix(_app("tank/nix"))
     with pytest.raises(NixError, match="seed snapshot"):
         await n.ensure_workspace_nix("ws1")
 
@@ -124,7 +118,7 @@ async def test_ensure_raises_when_mountpoint_none(monkeypatch):
         monkeypatch,
         _resolver(seed_snap_exists=True, ws_exists=True, mountpoint="none"),
     )
-    n = Nix(_app("true", "tank/nix"))
+    n = Nix(_app("tank/nix"))
     with pytest.raises(NixError, match="mountpoint"):
         await n.ensure_workspace_nix("ws1")
 
@@ -140,7 +134,7 @@ async def test_ensure_raises_when_clone_fails(monkeypatch):
         return 0, b"", b""
 
     _patch_zfs(monkeypatch, resolve)
-    n = Nix(_app("true", "tank/nix"))
+    n = Nix(_app("tank/nix"))
     with pytest.raises(NixError, match="permission denied"):
         await n.ensure_workspace_nix("ws1")
 
@@ -162,7 +156,7 @@ async def test_destroy_succeeds(monkeypatch):
     calls = _patch_zfs(
         monkeypatch, _destroy_resolver("tank/nix/ws-ws1", destroy_rc=0)
     )
-    n = Nix(_app("true", "tank/nix"))
+    n = Nix(_app("tank/nix"))
     await n.destroy_workspace_nix("ws1")
     assert any(c[1:][0] == "destroy" for c in calls)
 
@@ -176,7 +170,7 @@ async def test_destroy_ignores_missing(monkeypatch):
             destroy_err=b"dataset does not exist",
         ),
     )
-    n = Nix(_app("true", "tank/nix"))
+    n = Nix(_app("tank/nix"))
     await n.destroy_workspace_nix("ws1")  # no warning, no raise
     assert any(c[1:][0] == "destroy" for c in calls)
 
@@ -188,7 +182,7 @@ async def test_destroy_warns_on_other_error(monkeypatch, caplog):
             "tank/nix/ws-ws1", destroy_rc=1, destroy_err=b"busy"
         ),
     )
-    n = Nix(_app("true", "tank/nix"))
+    n = Nix(_app("tank/nix"))
     with caplog.at_level("WARNING", logger="klangk.nix"):
         await n.destroy_workspace_nix("ws1")
     assert any("zfs destroy" in r.message for r in caplog.records)

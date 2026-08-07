@@ -1,11 +1,12 @@
 """Per-workspace nix store via zfs clones (#2201).
 
-When nix is enabled (``KLANGKD_NIX_ENABLED`` + ``KLANGKD_NIX_ZFS_DATASET``),
-each workspace gets a writable, isolated ``/nix`` as a **zfs clone** of a
-shared, snapshotted seed dataset. The seed is built by #2200
-(``scripts/build-nix-seed.sh``) and loaded into a zfs dataset + snapshotted at
-``@base`` by ``scripts/load-nix-seed-zfs.sh``. ``ContainerRegistry`` binds the
-clone's ``/nix`` (and ``nix.conf``) into the workspace container; on workspace
+When a workspace has the per-workspace ``nix`` setting enabled and
+``KLANGKD_NIX_ZFS_DATASET`` names a zfs dataset holding the seed, the workspace
+gets a writable, isolated ``/nix`` as a **zfs clone** of a shared, snapshotted
+seed dataset. The seed is built by #2200 (``scripts/build-nix-seed.sh``) and
+loaded into a zfs dataset + snapshotted at ``@base`` by
+``scripts/load-nix-seed-zfs.sh``. ``ContainerRegistry`` binds the clone's
+``/nix`` (and ``nix.conf``) into the workspace container; on workspace
 delete, ``Workspaces`` destroys the clone.
 
 zfs clone/destroy/mount need privilege. Delegate just those operations to the
@@ -18,8 +19,8 @@ spike (PR #2205) found rootless podman rejects ``--mount type=overlay``, and
 in-container overlay needs single-bind + ``--cap-add SYS_ADMIN``; a zfs clone
 is instant (~0.5 s), block-shared, plain-bind (no extra caps), and fully
 isolated — and the nix DB copy-up gotcha doesn't apply (a clone is a real
-filesystem copy, not an overlay). Where no zfs pool is available, leave
-``nix_enabled`` unset and the seed is consumed some other way (future work).
+filesystem copy, not an overlay). Where no zfs pool is available, leave the workspace's ``nix`` setting unset and the
+workspace uses the nix image's baked /nix (no clone).
 """
 
 from __future__ import annotations
@@ -46,9 +47,14 @@ class Nix:
         self.app = app
 
     @property
-    def enabled(self) -> bool:
-        s = self.app.state.settings
-        return bool((s.nix_enabled or "").strip()) and bool(s.nix_zfs_dataset)
+    def zfs_configured(self) -> bool:
+        """Whether the zfs-clone path is available (a seed dataset is configured).
+
+        The per-workspace ``nix`` flag (checked by the caller) decides whether
+        a *given* workspace opts into the clone; this only says the deploy can
+        serve it.
+        """
+        return bool(self.app.state.settings.nix_zfs_dataset)
 
     @property
     def dataset(self) -> str:
@@ -97,7 +103,7 @@ class Nix:
         or ``None`` when nix is disabled (so callers can call unconditionally).
         Idempotent: reuses an existing clone across container restarts.
         """
-        if not self.enabled:
+        if not self.zfs_configured:
             return None
         if not await self._exists(self._seed_snapshot()):
             raise NixError(
@@ -122,7 +128,7 @@ class Nix:
 
     async def destroy_workspace_nix(self, workspace_id: str) -> None:
         """Destroy the per-workspace clone (on workspace delete). No-op if absent."""
-        if not self.enabled:
+        if not self.zfs_configured:
             return
         ws = self._ws(workspace_id)
         rc, _, err = await self._zfs(["destroy", "-r", ws], check=False)
