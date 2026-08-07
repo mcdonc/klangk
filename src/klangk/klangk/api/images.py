@@ -31,7 +31,7 @@ async def list_images(
         # #2202: whether the per-workspace nix flag can trigger the zfs-clone
         # /nix mount. The create UI shows the "nix" toggle only when true; the
         # flag is inert otherwise (workspaces use the nix image's baked /nix).
-        "nix_available": app.state.nix.zfs_configured,
+        "nix_available": app.state.nix.btrfs_configured,
     }
 
 
