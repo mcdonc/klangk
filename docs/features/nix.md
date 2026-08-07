@@ -47,10 +47,58 @@ the build and redeploy the tree. See the [overlay architecture note](../architec
 for how #2201 consumes an updated seed (re-clone for the zfs path; the DB is
 per-clone, so existing workspaces keep their view until re-cloned).
 
-## How workspaces consume it
+## How workspaces consume it (#2201)
 
-The per-workspace mount (#2201) layers a writable, isolated view of the seed
-on top of each nix-enabled workspace (overlay lowerdir, or — where a zfs pool
-is available — a clone of a seed snapshot). nix/devenv are off `$PATH` by
-default; the workspace image ships `/opt/klangk/bin/nix-activate.sh`, which a
-user sources to put nix and nix-installed programs on `$PATH`.
+Each nix-enabled workspace gets a writable, isolated `/nix` as a **zfs clone**
+of the seed snapshot — instant (~0.5 s), block-shared (only the workspace's
+changes consume space), and fully isolated from other workspaces. klangkd
+clones the seed on first start, reuses the clone across restarts, and destroys
+it on workspace delete. The clone's `/nix` and `nix.conf` are bind-mounted
+into the container.
+
+This replaces the overlayfs approach the issue body described — the #2201
+spike (PR #2205) found rootless podman rejects `--mount type=overlay`, and
+in-container overlay needs single-bind + `--cap-add SYS_ADMIN`; a zfs clone is
+plain-bind (no extra caps), faster, and the nix-DB copy-up gotcha doesn't
+apply (a clone is a real filesystem copy). zfs is required (a btrfs-snapshot
+variant is future work for non-zfs hosts).
+
+### Enable it
+
+1. Build the seed (#2200) and load it into a zfs dataset:
+
+   ```sh
+   devenv run build-nix-seed /tmp/nix-base
+   scripts/load-nix-seed-zfs.sh /tmp/nix-base d/klangk-nix
+   ```
+
+2. Delegate zfs clone/destroy to the klangkd user (no full root):
+
+   ```sh
+   sudo zfs allow <klangkd-user> create,clone,destroy,mount d/klangk-nix
+   ```
+
+3. Point klangkd at the dataset (in `klangkd.yaml` or env):
+
+   ```yaml
+   nix_enabled: "true"
+   nix_zfs_dataset: d/klangk-nix
+   ```
+
+With both set, every workspace gets a `/nix` clone on start; with either
+unset, workspaces are unaffected (the default). Per-workspace selection (the
+feature flag + UI) is #2202 — for now it's all-or-none per deploy.
+
+nix/devenv are off `$PATH` by default; the workspace image (#2199) ships
+`/opt/klangk/bin/nix-activate.sh`, which a user sources to put nix and
+nix-installed programs on `$PATH`.
+
+### Restart persistence
+
+The clone is a zfs dataset, so it survives container stop/start — packages a
+user installs persist across restarts. Destroying the workspace (delete, not
+stop) destroys the clone. Updating the seed (re-run `build-nix-seed` +
+`load-nix-seed-zfs.sh`) does not affect existing clones; new workspaces get
+the new seed. (The seed snapshot is immutable; reseeding requires `zfs destroy
+-r <parent>/seed` first, which orphans existing clones — re-create workspaces
+or point them at the new seed.)

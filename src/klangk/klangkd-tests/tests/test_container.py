@@ -14,6 +14,7 @@ from klangk import (
     auth as auth_mod,
     container,
     files as files_mod,
+    nix as nix_mod,
     podman,
     ssl_trust,
     util as util_mod,
@@ -61,6 +62,8 @@ def _make_app_state(registry=None, sockets=None):
     from klangk import netfilter as netfilter_mod
 
     app_state.state.netfilter = netfilter_mod.NetFilter(app_state)
+    # #2201: container start reaches app_state.state.nix for the /nix bind.
+    app_state.state.nix = nix_mod.Nix(app_state)
 
     app_state.state.auth = auth_mod.Auth(app_state)
     # #1572: ContainerRegistry reaches app_state.state.model.ports; Auth reaches
@@ -3870,3 +3873,27 @@ class TestRegistrySettingsDerived:
         reg.set_idle_timeout(120)
         assert reg.idle_timeout_seconds == 120
         assert reg.check_interval_seconds == max(10, min(60, 120 // 3))
+
+
+# --- nix /nix bind (#2201) --------------------------------------------------
+
+
+async def test_nix_binds_empty_when_disabled():
+    """No /nix bind when nix is disabled (the default)."""
+    app_state = _make_app_state()
+    binds = await app_state.state.container_registry._nix_binds("ws1")
+    assert binds == []
+
+
+async def test_nix_binds_mounts_clone_when_enabled():
+    """When nix is enabled, the clone's /nix + nix.conf are bind-mounted."""
+    app_state = _make_app_state()
+    app_state.state.nix.ensure_workspace_nix = AsyncMock(
+        return_value="/mnt/nix-ws1"
+    )
+    binds = await app_state.state.container_registry._nix_binds("ws1")
+    assert binds == [
+        "/mnt/nix-ws1/nix:/nix",
+        "/mnt/nix-ws1/nix.conf:/etc/nix/nix.conf:ro",
+    ]
+    app_state.state.nix.ensure_workspace_nix.assert_awaited_once_with("ws1")
