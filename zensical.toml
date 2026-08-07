@@ -73,6 +73,7 @@ nav = [
     { "LLM Proxy" = "architecture/llm-proxy.md" },
     { "Browser Bridge" = "architecture/browser-bridge.md" },
     { "Workspace JWT" = "architecture/workspace-jwt.md" },
+    { "Nix workspace store" = "architecture/nix-workspace-overlay.md" },
   ]},
 ]
 
