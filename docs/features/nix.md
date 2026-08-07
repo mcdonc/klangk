@@ -41,8 +41,33 @@ reporting success.
 
 The seed only ever **grows** — nix store paths are content-addressed, so
 adding packages to a new seed never conflicts with existing per-workspace
-layers built on an older seed. To update (new nix, new devenv), re-run the
-build and reload the seed. See the [overlay architecture note](../architecture/nix-workspace-overlay.md)
+snapshots built on an older seed. To update (new nix/devenv, or extra base
+packages):
+
+1. _(Optional)_ edit `src/containers/nix-seed/Dockerfile` to add base packages
+   (another `nix profile install nixpkgs#<pkg>`), or rely on its `latest`
+   devenv/nix.
+2. Rebuild the seed tree. Pass `--no-cache` to force fresh nix/devenv
+   (otherwise cached layers reproduce the previous versions):
+
+   ```sh
+   devenv shell -- build-nix-seed /tmp/nix-base --no-cache
+   ```
+
+3. Reload it into the btrfs subvolume (the loader refuses to clobber, so delete
+   the old seed first):
+
+   ```sh
+   btrfs subvolume delete /steam2/btrfs/klangk-nix/seed
+   scripts/load-nix-seed-btrfs.sh /tmp/nix-base /steam2/btrfs/klangk-nix
+   ```
+
+New workspaces pick up the new seed on next start. **Existing workspaces keep
+their snapshot** — btrfs snapshots are independent CoW copies, so they're
+unaffected by the seed change; delete + recreate a workspace to give it the new
+seed.
+
+See the [overlay architecture note](../architecture/nix-workspace-overlay.md)
 for the design history (the #2201 spike compared overlay / hardlinks / zfs /
 btrfs and settled on btrfs).
 
