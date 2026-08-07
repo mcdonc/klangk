@@ -1359,6 +1359,23 @@ class ContainerRegistry:
             elif not os.path.exists(source):
                 raise ValueError(f"Bind mount source does not exist: {source}")
 
+    async def _nix_binds(self, workspace_id: str) -> list[str]:
+        """Bind specs for the workspace's per-workspace /nix (#2201), or [].
+
+        ensure_workspace_nix clones the seed snapshot on first start (and
+        reuses the clone across restarts); the clone's /nix + nix.conf are
+        bind-mounted into the container. Empty (no bind) when nix is disabled.
+        """
+        mountpoint = await self.app.state.nix.ensure_workspace_nix(
+            workspace_id
+        )
+        if not mountpoint:
+            return []
+        return [
+            f"{mountpoint}/nix:/nix",
+            f"{mountpoint}/nix.conf:/etc/nix/nix.conf:ro",
+        ]
+
     @staticmethod
     def _build_mounts(
         home_path: str,
@@ -1604,6 +1621,9 @@ class ContainerRegistry:
         binds = self._build_mounts(
             home_path, config_path, extra_mounts, ssl_dir
         )
+        # #2201: when nix is enabled, bind the workspace's zfs-clone /nix (and
+        # the seed's nix.conf) into the container.
+        binds += await self._nix_binds(workspace_id)
 
         publish = [
             (host_port, CONTAINER_PORT_START + i)

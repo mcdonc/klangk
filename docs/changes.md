@@ -39,6 +39,15 @@ operators or integrators to act when upgrading.
   deployed alongside klangk as a host-side tree rather than baked into a
   workspace image. Run via `devenv run build-nix-seed`. Consumed by #2201.
 
+- **Per-workspace `/nix` via zfs clones (#2201).** When `nix_enabled` and
+  `nix_zfs_dataset` are set, each workspace gets a writable, isolated `/nix`
+  as a zfs clone of a shared, snapshotted seed dataset (from #2200): cloned on
+  first start, reused across restarts, destroyed on delete. The clone's `/nix`
+  and `nix.conf` are bind-mounted into the container (plain bind, no extra
+  caps). Requires a zfs pool + a one-time `zfs allow` delegation; off by
+  default so non-nix workspaces are unaffected. `scripts/load-nix-seed-zfs.sh`
+  loads the seed into a dataset. Per-workspace selection is #2202.
+
 - **Shared terminals in the TUI (#2164).** The workspace detail screen
   now lists shared terminals visible to you (other users' shared windows
   and the agent's `service` window), below your own terminals. Selecting

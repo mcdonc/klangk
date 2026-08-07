@@ -18,6 +18,7 @@ from klangk import (
     auth as auth_mod,
     files as files_mod,
     model,
+    nix as nix_mod,
     podman,
     terminal as terminal_mod,
     workspaces as ws_mod,
@@ -84,6 +85,8 @@ async def app(db, temp_data_dir):
     # #1365: create/update workspace validation reaches the netfilter
     # hooks-dir resolver.
     app.state.netfilter = netfilter_mod.NetFilter(app)
+    # #2201: Workspaces.delete_workspace reaches state.nix (no-op when disabled).
+    app.state.nix = nix_mod.Nix(app)
 
     app.state.auth = auth_mod.Auth(app)
     app.state.terminal = terminal_mod.Terminal(app)

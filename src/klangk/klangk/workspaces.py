@@ -440,6 +440,9 @@ class Workspaces:
             workspace_id, user_id
         )
         if deleted:
+            # #2201: drop the per-workspace nix clone if nix is enabled
+            # (no-op otherwise).
+            await self.app.state.nix.destroy_workspace_nix(workspace_id)
             ws_dir = self.safe_path(workspace_id)
             await _async_rmtree(ws_dir, f"workspace {workspace_id}")
         return deleted
