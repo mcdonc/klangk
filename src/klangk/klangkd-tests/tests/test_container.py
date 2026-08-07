@@ -3879,31 +3879,32 @@ class TestRegistrySettingsDerived:
 
 
 async def test_nix_binds_empty_without_flag():
-    """No /nix bind when the workspace hasn't enabled the nix setting."""
+    """No /nix bind or env when the workspace hasn't enabled nix."""
     app_state = _make_app_state()
     reg = app_state.state.container_registry
-    assert await reg._nix_binds("ws1", None) == []
-    assert await reg._nix_binds("ws1", {}) == []
-    assert await reg._nix_binds("ws1", {"nix": False}) == []
+    assert await reg._nix_binds("ws1", None) == ([], [])
+    assert await reg._nix_binds("ws1", {}) == ([], [])
+    assert await reg._nix_binds("ws1", {"nix": False}) == ([], [])
 
 
-async def test_nix_binds_empty_when_zfs_not_configured():
-    """Flag on but zfs not configured -> ensure returns None -> no bind."""
-    app_state = _make_app_state()  # no nix_zfs_dataset -> zfs_configured False
+async def test_nix_binds_empty_when_btrfs_not_configured():
+    """Flag on but btrfs not configured -> ensure returns None -> no bind/env."""
+    app_state = _make_app_state()  # no nix_btrfs_subvolume -> not configured
     reg = app_state.state.container_registry
-    assert await reg._nix_binds("ws1", {"nix": True}) == []
+    assert await reg._nix_binds("ws1", {"nix": True}) == ([], [])
 
 
-async def test_nix_binds_mounts_clone_when_enabled():
-    """With the nix setting on, the clone's /nix + nix.conf are bind-mounted."""
+async def test_nix_binds_mounts_snapshot_when_enabled():
+    """nix on + configured: snapshot /nix + nix.conf binds AND KLANGKWS_NIX=1."""
     app_state = _make_app_state()
     app_state.state.nix.ensure_workspace_nix = AsyncMock(
         return_value="/mnt/nix-ws1"
     )
     reg = app_state.state.container_registry
-    binds = await reg._nix_binds("ws1", {"nix": True})
+    binds, env = await reg._nix_binds("ws1", {"nix": True})
     assert binds == [
         "/mnt/nix-ws1/nix:/nix",
         "/mnt/nix-ws1/nix.conf:/etc/nix/nix.conf:ro",
     ]
+    assert env == ["KLANGKWS_NIX=1"]
     app_state.state.nix.ensure_workspace_nix.assert_awaited_once_with("ws1")

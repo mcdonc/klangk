@@ -1361,26 +1361,34 @@ class ContainerRegistry:
 
     async def _nix_binds(
         self, workspace_id: str, workspace_settings: dict | None
-    ) -> list[str]:
-        """Bind specs for the workspace's per-workspace /nix (#2201), or [].
+    ) -> tuple[list[str], list[str]]:
+        """Bind specs + env for the workspace's per-workspace /nix (#2201), or ([], []).
 
         Only when the workspace has its per-workspace ``nix`` setting enabled
-        (#2202) AND btrfs is configured (nix_btrfs_subvolume) does ensure_workspace_nix
-        clone the seed and return a mountpoint; the clone's /nix + nix.conf are
-        bind-mounted into the container. Image selection is untouched — this is
-        orthogonal to which image the workspace runs.
+        (#2202) AND zfs is configured (nix_btrfs_subvolume) does ensure_workspace_nix
+        snapshot the seed and return a mountpoint; the snapshot's /nix + nix.conf
+        are bind-mounted into the container, and KLANGKWS_NIX=1 is set so the
+        baked /etc/profile.d activation (see src/containers/workspace/Dockerfile)
+        puts nix on PATH by default. Image selection is untouched.
+
+        Returns ``(binds, env_extras)``.
         """
         if not (workspace_settings or {}).get("nix"):
-            return []
+            return [], []
         mountpoint = await self.app.state.nix.ensure_workspace_nix(
             workspace_id
         )
         if not mountpoint:
-            return []
-        return [
-            f"{mountpoint}/nix:/nix",
-            f"{mountpoint}/nix.conf:/etc/nix/nix.conf:ro",
-        ]
+            return [], []
+        return (
+            [
+                f"{mountpoint}/nix:/nix",
+                f"{mountpoint}/nix.conf:/etc/nix/nix.conf:ro",
+            ],
+            # Signal the baked profile.d activation that the feature mounted
+            # /nix (checked alongside /nix/nix-profile presence).
+            ["KLANGKWS_NIX=1"],
+        )
 
     @staticmethod
     def _build_mounts(
@@ -1627,9 +1635,14 @@ class ContainerRegistry:
         binds = self._build_mounts(
             home_path, config_path, extra_mounts, ssl_dir
         )
-        # #2201: when nix is enabled, bind the workspace's zfs-clone /nix (and
-        # the seed's nix.conf) into the container.
-        binds += await self._nix_binds(workspace_id, workspace_settings)
+        # #2201: when nix is enabled, bind the workspace's btrfs-snapshot /nix
+        # (and the seed's nix.conf) into the container, and signal the baked
+        # /etc/profile.d activation (KLANGKWS_NIX) so nix is on PATH by default.
+        nix_binds, nix_env = await self._nix_binds(
+            workspace_id, workspace_settings
+        )
+        binds += nix_binds
+        env_vars += nix_env
 
         publish = [
             (host_port, CONTAINER_PORT_START + i)
