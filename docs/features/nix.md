@@ -67,9 +67,9 @@ their snapshot** — btrfs snapshots are independent CoW copies, so they're
 unaffected by the seed change; delete + recreate a workspace to give it the new
 seed.
 
-See the [overlay architecture note](../architecture/nix-workspace-overlay.md)
-for the design history (the #2201 spike compared overlay / hardlinks / zfs /
-btrfs and settled on btrfs).
+See [#2198](https://github.com/mcdonc/klangk/issues/2198) (Design section) for the
+investigation that compared overlay / hardlinks / zfs / btrfs and settled on
+btrfs.
 
 ## How workspaces consume it (#2201, #2208)
 
