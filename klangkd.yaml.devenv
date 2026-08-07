@@ -57,7 +57,7 @@ image_name: klangk-workspace
 # life). Set a field to empty ("" ) to disable just that one cap.
 container_cpu_limit: 2.0
 container_memory_limit: 8g
-container_pids_limit: 512
+container_pids_limit: 16384
 
 # --- Per-workspace egress filtering (#1365) ---
 # Set to a directory the OCI runtime can read to enable opt-in per-workspace
