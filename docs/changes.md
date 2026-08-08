@@ -63,6 +63,15 @@ operators or integrators to act when upgrading.
   static filtering plus NFLOG observability — no prompts occur and unmatched
   traffic is dropped. See `docs/features/egress-filtering.md`.
 
+- **FQDN egress sidecar image + DNS proxy (#2250, #2253).** New
+  `klangk-egress-sidecar` image (`src/containers/egress-sidecar/`) that runs a
+  FQDN DNS proxy in a `NET_ADMIN` container sharing a filtered workspace's netns.
+  It intercepts the workspace's DNS (nat REDIRECT of its configured resolvers),
+  applies an allow-list, forwards allowed queries to a distinct upstream, and
+  allow-lists the resolved IPs at runtime — solving DNS round-robin (a filtered
+  workspace reaches an allowed domain on whatever IP it actually resolves). Part
+  of the FQDN egress build (#2250); klangk lifecycle wiring is #2254.
+
 - **`nix_seed` — per-workspace `/nix` with two backends (#2219, #2220).** The
   per-workspace `/nix` config is now one block — `nix_seed: {type, path}` —
   selecting a backend: `btrfs-snapshot` (a CoW snapshot of a seed btrfs
