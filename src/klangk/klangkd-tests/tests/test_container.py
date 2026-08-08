@@ -615,7 +615,7 @@ class TestStartContainer:
             )
         assert cid == "new-cid"
         assert status == "created"
-        p.start_container.assert_awaited_once_with("new-cid")
+        p.start_container.assert_awaited_once_with("new-cid", hooks_dir=None)
         assert workspace["id"] in self.registry.states
 
     async def test_egress_filter_no_domains_is_noop(self, workspace):
@@ -655,6 +655,9 @@ class TestStartContainer:
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(_nf_mod.platform, "system", lambda: "Linux")
+        # create_kwargs() detects the host's DNS resolvers; neutralize so the
+        # exact annotation dict assertion is host-independent (#1365).
+        monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
         # #1771: create_kwargs only trusts a dir whose hook is actually
         # installed, so arm it before starting the container.
         self.registry.app.state.netfilter.install_hooks()
@@ -684,7 +687,7 @@ class TestStartContainer:
             state=types.SimpleNamespace(settings=make_settings({}))
         )
         reg = container.ContainerRegistry(app_state)
-        assert reg._egress_filter(["github.com"]) == (None, None, None)
+        assert reg._egress_filter(["github.com"]) == (None, None, None, None)
 
     async def test_resource_limits_defaults_emit_flags(self, workspace):
         # #2030: with no deploy limits configured, the built-in protective
@@ -975,7 +978,7 @@ class TestStartContainer:
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def slow_start(_cid):
+        async def slow_start(_cid, **kwargs):
             started.set()
             await release.wait()
 
@@ -998,7 +1001,7 @@ class TestStartContainer:
             workspace["id"], user["id"]
         )
         assert ws["container_id"] == "new-cid"
-        p.start_container.assert_awaited_once_with("new-cid")
+        p.start_container.assert_awaited_once_with("new-cid", hooks_dir=None)
         assert workspace["id"] in self.registry.states
 
     async def test_reuse_running_container(self, workspace):
@@ -1473,7 +1476,7 @@ class TestStartContainerPortConflict:
 
         start_calls = []
 
-        async def start_side_effect(cid):
+        async def start_side_effect(cid, **kwargs):
             start_calls.append(cid)
             if len(start_calls) == 1:
                 raise podman.PodmanError(
@@ -1516,7 +1519,7 @@ class TestStartContainerPortConflict:
 
         start_calls = []
 
-        async def start_side_effect(cid):
+        async def start_side_effect(cid, **kwargs):
             start_calls.append(cid)
             if len(start_calls) == 1:
                 raise podman.PodmanError(500, "port is already allocated")
@@ -1547,7 +1550,7 @@ class TestStartContainerPortConflict:
     async def test_port_conflict_skips_non_overlapping(self, workspace):
         start_calls = []
 
-        async def start_side_effect(cid):
+        async def start_side_effect(cid, **kwargs):
             start_calls.append(cid)
             if len(start_calls) == 1:
                 raise podman.PodmanError(500, "port is already allocated")
@@ -1578,7 +1581,7 @@ class TestStartContainerPortConflict:
         )
         start_calls = []
 
-        async def start_side_effect(cid):
+        async def start_side_effect(cid, **kwargs):
             start_calls.append(cid)
             if len(start_calls) == 1:
                 raise podman.PodmanError(500, "port is already allocated")
@@ -1606,7 +1609,7 @@ class TestStartContainerPortConflict:
         )
         start_calls = []
 
-        async def start_side_effect(cid):
+        async def start_side_effect(cid, **kwargs):
             start_calls.append(cid)
             if len(start_calls) == 1:
                 raise podman.PodmanError(500, "port is already allocated")
@@ -1643,7 +1646,7 @@ class TestStartContainerPortConflict:
         conflict_port = allocated[0]
         start_calls = []
 
-        async def start_side_effect(cid):
+        async def start_side_effect(cid, **kwargs):
             start_calls.append(cid)
             if len(start_calls) == 1:
                 raise podman.PodmanError(500, "port is already allocated")
@@ -1694,7 +1697,7 @@ class TestStartContainerPortConflict:
 
         start_calls = []
 
-        async def start_side_effect(cid):
+        async def start_side_effect(cid, **kwargs):
             start_calls.append(cid)
             if len(start_calls) == 1:
                 raise podman.PodmanError(
@@ -1722,7 +1725,7 @@ class TestStartContainerPortConflict:
         )
         conflict_port = allocated[0]
 
-        async def always_fail(cid):
+        async def always_fail(cid, **kwargs):
             raise podman.PodmanError(
                 409,
                 f"Failed to bind port {conflict_port} "
@@ -1753,7 +1756,7 @@ class TestStartContainerPortConflict:
 
         start_calls = []
 
-        async def start_side_effect(cid):
+        async def start_side_effect(cid, **kwargs):
             start_calls.append(cid)
             if len(start_calls) == 1:
                 raise podman.PodmanError(

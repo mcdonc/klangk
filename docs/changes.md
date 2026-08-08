@@ -406,6 +406,25 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   timestamps don't reflect storage-layer caching / layer reuse) and always
   re-evaluated to "rebuild", defeating the stamp cache. Removed: when the
   stamp hash matches, the build is now skipped and the stamp trusted.
+- **Per-workspace egress filtering now actually fires on rootless podman
+  (#1365).** The OCI hook ran at the `createContainer` stage but drove
+  iptables through `nsenter` on the init pid — at that stage the hook is
+  _already_ inside the container network namespace (and pid is 0), so no
+  rules were installed and filtered workspaces ran unrestricted. The hook
+  now calls `iptables`/`ip6tables` directly. (The former
+  `sysctl net.ipv6.conf.*.disable_ipv6=1` was dropped — at createContainer
+  it runs before pasta configures the netns and makes pasta's IPv6 address
+  setup fail; `ip6tables -P OUTPUT DROP` alone carries the v6 default-deny.)
+  DNS resolvers can no
+  longer be read from the container's `/etc/resolv.conf` (netavark writes
+  it only after the create hooks, and the hook runs in the host mount
+  namespace), so the server detects the host's upstream resolvers, passes
+  them to the container via `--dns`, and mirrors them in a
+  `klangk.netfilter.resolvers` annotation the hook allows on `:53`.
+  `--hooks-dir` is also passed to `podman start` (podman 5.x reads it only
+  at start). Known follow-ups: the backend gateway
+  (`host.containers.internal`) and DNS round-robin domains need their IPs
+  mirrored via annotations too.
 - **Workspace: no more overlapping "Server unreachable" and
   "Session expired" overlays (#2227).** When the WebSocket closed with
   an auth-failure code (4001/4002, session expired), the client also
