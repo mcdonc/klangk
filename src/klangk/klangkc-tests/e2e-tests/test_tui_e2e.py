@@ -490,10 +490,14 @@ class TestTuiE2E:
                 await pilot.pause()
                 await _settle(app, pilot)
                 assert isinstance(app.screen, WorkspaceDetailScreen)
-                # Open edit form.
+                # Open edit form.  action_edit spawns async workers
+                # (images + autostart fetch) before pushing the screen,
+                # so poll until the edit screen appears (#2223).
                 app.screen.action_edit()
-                await _settle(app, pilot)
-                await pilot.pause()
+                for _ in range(20):
+                    await pilot.pause()
+                    if isinstance(app.screen, EditWorkspaceScreen):
+                        break
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Name should be pre-populated.
                 name_val = app.screen.query_one("#name", Input).value
@@ -517,8 +521,10 @@ class TestTuiE2E:
                 await _settle(app, pilot)
                 # Open edit form.
                 app.screen.action_edit()
-                await _settle(app, pilot)
-                await pilot.pause()
+                for _ in range(20):
+                    await pilot.pause()
+                    if isinstance(app.screen, EditWorkspaceScreen):
+                        break
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Change the name.
                 app.screen.query_one("#name", Input).value = new_name
@@ -549,8 +555,10 @@ class TestTuiE2E:
                 await pilot.pause()
                 await _settle(app, pilot)
                 app.screen.action_edit()
-                await _settle(app, pilot)
-                await pilot.pause()
+                for _ in range(20):
+                    await pilot.pause()
+                    if isinstance(app.screen, EditWorkspaceScreen):
+                        break
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Change the name but cancel.
                 app.screen.query_one("#name", Input).value = "should-not-save"
@@ -577,8 +585,10 @@ class TestTuiE2E:
                 await pilot.pause()
                 await _settle(app, pilot)
                 app.screen.action_edit()
-                await _settle(app, pilot)
-                await pilot.pause()
+                for _ in range(20):
+                    await pilot.pause()
+                    if isinstance(app.screen, EditWorkspaceScreen):
+                        break
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Clear name and submit.
                 app.screen.query_one("#name", Input).value = ""
