@@ -53,6 +53,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _mountController = TextEditingController();
   final _envController = TextEditingController();
   final _allowedDomainsController = TextEditingController();
+  final _idleTimeoutController = TextEditingController();
+  final _cpuLimitController = TextEditingController();
+  final _memoryLimitController = TextEditingController();
+  final _pidsLimitController = TextEditingController();
   late String _selectedImage;
   final _mounts = <String>[];
   final _envVars = <String, String>{};
@@ -86,6 +90,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     _mountController.dispose();
     _envController.dispose();
     _allowedDomainsController.dispose();
+    _idleTimeoutController.dispose();
+    _cpuLimitController.dispose();
+    _memoryLimitController.dispose();
+    _pidsLimitController.dispose();
     super.dispose();
   }
 
@@ -143,6 +151,19 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     return null;
   }
 
+  Map<String, dynamic> _collectSettings() {
+    final s = <String, dynamic>{};
+    final idle = _idleTimeoutController.text.trim();
+    if (idle.isNotEmpty) s['idle_timeout'] = int.parse(idle);
+    final cpu = _cpuLimitController.text.trim();
+    if (cpu.isNotEmpty) s['cpu_limit'] = double.parse(cpu);
+    final mem = _memoryLimitController.text.trim();
+    if (mem.isNotEmpty) s['memory_limit'] = mem;
+    final pids = _pidsLimitController.text.trim();
+    if (pids.isNotEmpty) s['pids_limit'] = int.parse(pids);
+    return s;
+  }
+
   Future<void> _submit() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) return;
@@ -164,6 +185,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
     }
+    final settings = _collectSettings();
+    if (settings.isNotEmpty) body['settings'] = settings;
 
     try {
       final response = await widget.auth.authPost(
@@ -280,6 +303,81 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                   contentPadding: EdgeInsets.zero,
                 ),
               ],
+              const SizedBox(height: 16),
+              const Text(
+                'Resource Limits',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _idleTimeoutController,
+                      decoration: InputDecoration(
+                        labelText: 'Idle Timeout (s)',
+                        labelStyle: _labelStyle,
+                        floatingLabelStyle: _labelStyle,
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        border: const OutlineInputBorder(),
+                        hintText: '0 = never',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _cpuLimitController,
+                      decoration: InputDecoration(
+                        labelText: 'CPU Limit',
+                        labelStyle: _labelStyle,
+                        floatingLabelStyle: _labelStyle,
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        border: const OutlineInputBorder(),
+                        hintText: 'e.g. 2.0',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _memoryLimitController,
+                      decoration: InputDecoration(
+                        labelText: 'Memory Limit',
+                        labelStyle: _labelStyle,
+                        floatingLabelStyle: _labelStyle,
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        border: const OutlineInputBorder(),
+                        hintText: 'e.g. 4g',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _pidsLimitController,
+                      decoration: InputDecoration(
+                        labelText: 'PIDs Limit',
+                        labelStyle: _labelStyle,
+                        floatingLabelStyle: _labelStyle,
+                        floatingLabelBehavior: FloatingLabelBehavior.always,
+                        border: const OutlineInputBorder(),
+                        hintText: 'e.g. 512',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),

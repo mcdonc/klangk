@@ -104,7 +104,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(6));
+      expect(find.byType(TextField), findsNWidgets(10));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -557,7 +557,9 @@ void main() {
 
       // The only close icon on screen is this chip's remove button
       // (no mounts/env chips were added).
-      await tester.tap(find.byIcon(Icons.close));
+      final closeIcon = find.byIcon(Icons.close);
+      await tester.ensureVisible(closeIcon);
+      await tester.tap(closeIcon);
       await tester.pump();
       expect(find.text('example.com:443'), findsNothing);
     });
@@ -577,7 +579,9 @@ void main() {
       await tester.pump();
 
       // The only copy icon on screen is this chip's copy button.
-      await tester.tap(find.byIcon(Icons.copy));
+      final copyIcon = find.byIcon(Icons.copy);
+      await tester.ensureVisible(copyIcon);
+      await tester.tap(copyIcon);
       await tester.pump();
       // Tapping copy fired the chip's onPressed (Clipboard.setData) —
       // the chip is otherwise unchanged.
@@ -750,6 +754,61 @@ void main() {
 
       expect(postedBody, isNotNull);
       expect(postedBody!.containsKey('auto_start'), isFalse);
+    });
+
+    testWidgets('submits settings via resource field Enter key',
+        (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'R', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump();
+      await tester.pump();
+
+      await tester.enterText(_nameField(), 'R');
+
+      final idleField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'Idle Timeout (s)',
+      );
+      final cpuField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'CPU Limit',
+      );
+      final memField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'Memory Limit',
+      );
+      final pidsField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == 'PIDs Limit',
+      );
+
+      await tester.ensureVisible(idleField);
+      await tester.enterText(idleField, '600');
+      await tester.ensureVisible(cpuField);
+      await tester.enterText(cpuField, '1.5');
+      await tester.ensureVisible(memField);
+      await tester.enterText(memField, '4g');
+      await tester.ensureVisible(pidsField);
+      await tester.enterText(pidsField, '256');
+
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      expect(postedBody!['settings'], {
+        'idle_timeout': 600,
+        'cpu_limit': 1.5,
+        'memory_limit': '4g',
+        'pids_limit': 256,
+      });
     });
   });
 }

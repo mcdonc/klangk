@@ -277,6 +277,10 @@ class _SettingsFormState extends State<_SettingsForm> {
   final _mountCtrl = TextEditingController();
   final _envCtrl = TextEditingController();
   final _allowedDomainsCtrl = TextEditingController();
+  late TextEditingController _idleTimeoutCtrl;
+  late TextEditingController _cpuLimitCtrl;
+  late TextEditingController _memoryLimitCtrl;
+  late TextEditingController _pidsLimitCtrl;
   late String _selectedImage;
   late List<String> _mounts;
   late Map<String, String> _envVars;
@@ -317,6 +321,20 @@ class _SettingsFormState extends State<_SettingsForm> {
           <String>[],
     );
     _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
+    final settings =
+        (widget.workspace['settings'] as Map<String, dynamic>?) ?? {};
+    _idleTimeoutCtrl = TextEditingController(
+      text: settings['idle_timeout']?.toString() ?? '',
+    );
+    _cpuLimitCtrl = TextEditingController(
+      text: settings['cpu_limit']?.toString() ?? '',
+    );
+    _memoryLimitCtrl = TextEditingController(
+      text: (settings['memory_limit'] as String?) ?? '',
+    );
+    _pidsLimitCtrl = TextEditingController(
+      text: settings['pids_limit']?.toString() ?? '',
+    );
   }
 
   @override
@@ -375,11 +393,29 @@ class _SettingsFormState extends State<_SettingsForm> {
     _mountCtrl.dispose();
     _envCtrl.dispose();
     _allowedDomainsCtrl.dispose();
+    _idleTimeoutCtrl.dispose();
+    _cpuLimitCtrl.dispose();
+    _memoryLimitCtrl.dispose();
+    _pidsLimitCtrl.dispose();
     super.dispose();
+  }
+
+  Map<String, dynamic> _collectSettings() {
+    final s = <String, dynamic>{};
+    final idle = _idleTimeoutCtrl.text.trim();
+    if (idle.isNotEmpty) s['idle_timeout'] = int.parse(idle);
+    final cpu = _cpuLimitCtrl.text.trim();
+    if (cpu.isNotEmpty) s['cpu_limit'] = double.parse(cpu);
+    final mem = _memoryLimitCtrl.text.trim();
+    if (mem.isNotEmpty) s['memory_limit'] = mem;
+    final pids = _pidsLimitCtrl.text.trim();
+    if (pids.isNotEmpty) s['pids_limit'] = int.parse(pids);
+    return s;
   }
 
   Future<void> _save() async {
     setState(() => _saving = true);
+    final settings = _collectSettings();
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
@@ -392,6 +428,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       'env': _envVars.isNotEmpty ? _envVars : null,
       'allowed_domains': _allowedDomains.isNotEmpty ? _allowedDomains : null,
       if (widget.allowAutostart) 'auto_start': _autoStart,
+      if (settings.isNotEmpty) 'settings': settings,
     });
     if (mounted) setState(() => _saving = false);
   }
@@ -641,6 +678,74 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
           ),
         ],
+        const SizedBox(height: 16),
+        const Text(
+          'Resource Limits',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _idleTimeoutCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Idle Timeout (s)',
+                  labelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: '0 = never',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _cpuLimitCtrl,
+                decoration: InputDecoration(
+                  labelText: 'CPU Limit',
+                  labelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'e.g. 2.0',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _memoryLimitCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Memory Limit',
+                  labelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'e.g. 4g',
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _pidsLimitCtrl,
+                decoration: InputDecoration(
+                  labelText: 'PIDs Limit',
+                  labelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'e.g. 512',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 16),
         Align(
           alignment: Alignment.centerRight,
