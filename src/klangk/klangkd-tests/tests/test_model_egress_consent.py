@@ -1,0 +1,246 @@
+"""Tests for ``EgressConsentModel`` and the ``egress_mode`` workspace field (#2239)."""
+
+import pytest
+
+from klangk.model.egress_consent import (
+    DECISION_ALLOWED,
+    DECISION_DENIED,
+    DECISION_PENDING,
+    SCOPE_ONCE,
+    SCOPE_WORKSPACE,
+)
+from klangk.model.workspaces import (
+    EGRESS_MODE_INTERACTIVE,
+    EGRESS_MODE_STATIC,
+)
+
+
+@pytest.fixture
+async def ec(app_state, db):
+    """``app_state.state.model.egress_consent`` with schema initialized."""
+    return app_state.state.model.egress_consent
+
+
+@pytest.fixture
+async def ws(app_state, db):
+    return app_state.state.model.workspaces
+
+
+# -- egress_mode on workspaces --
+
+
+async def test_workspace_default_egress_mode(ws, user):
+    row = await ws.create_workspace(user["id"], "default-mode")
+    assert row["egress_mode"] == EGRESS_MODE_STATIC
+
+
+async def test_workspace_create_interactive_mode(ws, user):
+    row = await ws.create_workspace(
+        user["id"], "interactive", egress_mode=EGRESS_MODE_INTERACTIVE
+    )
+    assert row["egress_mode"] == EGRESS_MODE_INTERACTIVE
+    got = await ws.get_workspace(row["id"])
+    assert got["egress_mode"] == EGRESS_MODE_INTERACTIVE
+
+
+async def test_workspace_create_invalid_egress_mode(ws, user):
+    with pytest.raises(ValueError, match="Invalid egress_mode"):
+        await ws.create_workspace(user["id"], "bad-mode", egress_mode="bogus")
+
+
+async def test_workspace_create_with_acl_invalid_egress_mode(ws, user):
+    with pytest.raises(ValueError, match="Invalid egress_mode"):
+        await ws.create_workspace_with_acl(
+            user["id"], "bad-mode", egress_mode="bogus"
+        )
+
+
+async def test_workspace_update_egress_mode(ws, user):
+    row = await ws.create_workspace(user["id"], "update-mode")
+    assert row["egress_mode"] == EGRESS_MODE_STATIC
+    updated = await ws.update_workspace(
+        row["id"], user["id"], egress_mode=EGRESS_MODE_INTERACTIVE
+    )
+    assert updated
+    got = await ws.get_workspace(row["id"])
+    assert got["egress_mode"] == EGRESS_MODE_INTERACTIVE
+
+
+async def test_workspace_update_invalid_egress_mode(ws, user):
+    row = await ws.create_workspace(user["id"], "bad-update")
+    with pytest.raises(ValueError, match="Invalid egress_mode"):
+        await ws.update_workspace(row["id"], user["id"], egress_mode="nope")
+
+
+async def test_egress_mode_in_list_workspaces(ws, user):
+    await ws.create_workspace(
+        user["id"], "listed", egress_mode=EGRESS_MODE_INTERACTIVE
+    )
+    result = await ws.list_workspaces(user["id"])
+    item = result["items"][0]
+    assert item["egress_mode"] == EGRESS_MODE_INTERACTIVE
+
+
+async def test_egress_mode_in_get_workspace_by_id(ws, user):
+    row = await ws.create_workspace(
+        user["id"], "by-id", egress_mode=EGRESS_MODE_INTERACTIVE
+    )
+    got = await ws.get_workspace_by_id(row["id"])
+    assert got["egress_mode"] == EGRESS_MODE_INTERACTIVE
+
+
+# -- egress_consent CRUD --
+
+
+async def test_create_request(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "consent-ws")
+    req = await ec.create_request(w["id"], "api.example.com", 443)
+    assert req["workspace_id"] == w["id"]
+    assert req["dest_host"] == "api.example.com"
+    assert req["dest_port"] == 443
+    assert req["decision"] == DECISION_PENDING
+    assert req["decided_by"] is None
+    assert req["pid"] is None
+    assert req["process_name"] is None
+
+
+async def test_create_request_with_process_info(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "proc-ws")
+    req = await ec.create_request(
+        w["id"], "example.com", 80, pid=1234, process_name="curl"
+    )
+    assert req["pid"] == 1234
+    assert req["process_name"] == "curl"
+
+
+async def test_create_request_no_port(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "noport-ws")
+    req = await ec.create_request(w["id"], "example.com")
+    assert req["dest_port"] is None
+
+
+async def test_get_request(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "get-ws")
+    req = await ec.create_request(w["id"], "example.com", 443)
+    got = await ec.get_request(req["id"])
+    assert got["id"] == req["id"]
+    assert got["dest_host"] == "example.com"
+
+
+async def test_get_request_missing(ec):
+    assert await ec.get_request("nonexistent") is None
+
+
+async def test_list_requests(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "list-ws")
+    await ec.create_request(w["id"], "a.com", 443)
+    await ec.create_request(w["id"], "b.com", 80)
+    items = await ec.list_requests(w["id"])
+    assert len(items) == 2
+    # Most recent first
+    assert items[0]["dest_host"] == "b.com"
+
+
+async def test_list_requests_filtered(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "filter-ws")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"])
+    await ec.create_request(w["id"], "b.com", 80)
+
+    pending = await ec.list_requests(w["id"], decision=DECISION_PENDING)
+    assert len(pending) == 1
+    assert pending[0]["dest_host"] == "b.com"
+
+    allowed = await ec.list_requests(w["id"], decision=DECISION_ALLOWED)
+    assert len(allowed) == 1
+    assert allowed[0]["dest_host"] == "a.com"
+
+
+async def test_count_pending(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "count-ws")
+    assert await ec.count_pending(w["id"]) == 0
+    await ec.create_request(w["id"], "a.com", 443)
+    await ec.create_request(w["id"], "b.com", 80)
+    assert await ec.count_pending(w["id"]) == 2
+
+
+async def test_has_pending(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "has-ws")
+    assert not await ec.has_pending(w["id"], "a.com", 443)
+    await ec.create_request(w["id"], "a.com", 443)
+    assert await ec.has_pending(w["id"], "a.com", 443)
+    assert not await ec.has_pending(w["id"], "a.com", 80)
+
+
+async def test_has_pending_no_port(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "has-noport")
+    await ec.create_request(w["id"], "a.com")
+    assert await ec.has_pending(w["id"], "a.com", None)
+    assert not await ec.has_pending(w["id"], "a.com", 443)
+
+
+async def test_decide_allow(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "decide-ws")
+    req = await ec.create_request(w["id"], "api.com", 443)
+    result = await ec.decide(
+        req["id"], DECISION_ALLOWED, SCOPE_WORKSPACE, user["id"]
+    )
+    assert result["decision"] == DECISION_ALLOWED
+    assert result["scope"] == SCOPE_WORKSPACE
+    assert result["decided_by"] == user["id"]
+    assert result["decided_at"] is not None
+
+
+async def test_decide_deny(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "deny-ws")
+    req = await ec.create_request(w["id"], "bad.com", 443)
+    result = await ec.decide(req["id"], DECISION_DENIED, None, user["id"])
+    assert result["decision"] == DECISION_DENIED
+
+
+async def test_decide_already_decided(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "double-ws")
+    req = await ec.create_request(w["id"], "api.com", 443)
+    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"])
+    # Second decide on same request returns None (no longer pending)
+    result = await ec.decide(req["id"], DECISION_DENIED, None, user["id"])
+    assert result is None
+
+
+async def test_decide_missing(ec, user):
+    result = await ec.decide(
+        "no-such-id", DECISION_ALLOWED, SCOPE_ONCE, user["id"]
+    )
+    assert result is None
+
+
+async def test_expire_pending(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "expire-ws")
+    req = await ec.create_request(w["id"], "slow.com", 443)
+    assert await ec.expire_pending(req["id"])
+    got = await ec.get_request(req["id"])
+    assert got["decision"] == DECISION_DENIED
+    assert got["decided_by"] is None  # auto-expired, no user
+
+
+async def test_expire_already_decided(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "expire2-ws")
+    req = await ec.create_request(w["id"], "fast.com", 443)
+    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"])
+    assert not await ec.expire_pending(req["id"])
+
+
+async def test_delete_for_workspace(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "del-ws")
+    await ec.create_request(w["id"], "a.com", 443)
+    await ec.create_request(w["id"], "b.com", 80)
+    count = await ec.delete_for_workspace(w["id"])
+    assert count == 2
+    assert await ec.list_requests(w["id"]) == []
+
+
+async def test_cascade_delete_on_workspace_delete(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "cascade-ws")
+    await ec.create_request(w["id"], "a.com", 443)
+    await ws.delete_workspace(w["id"], user["id"])
+    assert await ec.list_requests(w["id"]) == []
