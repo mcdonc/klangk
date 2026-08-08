@@ -26,7 +26,7 @@ devenv shell -- build-nix-seed [out-dir]
 `scripts/build-nix-seed.sh` builds a throwaway sandbox image that performs a
 single-user nix install + devenv, then extracts `/nix` and `/etc/nix/nix.conf`
 into a deployable tree at `out-dir` (default `./nix-base`, or
-`$KLANGKD_NIX_SEED_DIR`). Output layout:
+`$KLANGK_NIX_SEED_OUT`). Output layout:
 
 ```text
 <out>/

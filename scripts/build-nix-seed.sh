@@ -4,7 +4,7 @@
 # or loaded into a zfs dataset for per-workspace cloning.
 #
 # Output layout at $OUT (default ./nix-base, overridable via $1 or
-# $KLANGKD_NIX_SEED_DIR):
+# $KLANGK_NIX_SEED_OUT):
 #   $OUT/nix/        store + var/db + the base profile (nix, devenv, cachix)
 #   $OUT/nix.conf    flakes/nix-command + pre-configured binary caches
 #
@@ -20,7 +20,7 @@ PODMAN="${KLANGKD_PODMAN_BIN:-podman}"
 source "$SCRIPT_DIR/_podman_common.sh"
 
 IMAGE="klangk-nix-seed:latest"
-OUT="${1:-${KLANGKD_NIX_SEED_DIR:-$PWD/nix-base}}"
+OUT="${1:-${KLANGK_NIX_SEED_OUT:-$PWD/nix-base}}"
 shift # remaining args (e.g. --no-cache) pass through to podman build
 
 echo "==> Building nix-seed sandbox image"

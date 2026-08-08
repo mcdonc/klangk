@@ -1271,3 +1271,28 @@ class TestLLMModelsValidator:
     def test_invalid_string_entry_raises(self):
         with pytest.raises(Exception, match="two colons"):
             make_settings({"KLANGKD_LLM_MODELS": "openai/gpt-4o"})
+
+
+class TestNixSeedConfig:
+    """nix_seed: {type, path} — the repo's first nested settings model (#2220)."""
+
+    def test_bogus_type_rejected(self):
+        """An invalid nix_seed.type aborts construction (the Literal enum)."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            make_settings({"KLANGKD_NIX_SEED__TYPE": "zfs"})
+
+    def test_yaml_block_form(self, tmp_path):
+        """The nix_seed: {type, path} YAML block parses (nested model)."""
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("nix_seed:\n  type: btrfs-snapshot\n  path: /seed\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.nix_seed.type == "btrfs-snapshot"
+        assert s.nix_seed.path == "/seed"
+
+    def test_disabled_when_omitted(self):
+        """Omitting nix_seed entirely -> not configured (image-only)."""
+        s = make_settings({})
+        assert s.nix_seed.path is None
+        assert s.nix_seed.type == "fuse-overlayfs"  # the default

@@ -148,6 +148,8 @@ _PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "dnf": "coreutils",
         "apt": "coreutils",
         "brew": "coreutils",
+        "zypper": "coreutils",
+        "pacman": "coreutils",
     },
     # Rootless podman prereqs
     "newuidmap": {

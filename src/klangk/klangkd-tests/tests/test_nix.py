@@ -335,11 +335,61 @@ async def test_fuse_destroy_warns_on_unmount_error(
     ws = tmp_path / "ws-ws1"
     (ws / "nix").mkdir(parents=True)
     (ws / "nix.conf").write_text("x")
-    _patch_fuse(monkeypatch, mounted=True, rc=1, err=b"mount busy")
+    calls = _patch_fuse(monkeypatch, mounted=True, rc=1, err=b"mount busy")
     n = Nix(_app(str(seed)))
     with caplog.at_level("WARNING", logger="klangk.nix"):
         await n.destroy_workspace_nix("ws1")
     assert any("fusermount3 -u" in r.message for r in caplog.records)
+    # A failed unmount falls back to a lazy one so a busy mount doesn't pin
+    # the ws dir (#2220 review).
+    assert any(a[:3] == ("fusermount3", "-u", "-z") for a in calls)
+
+
+class _SlowProc:
+    """A proc whose communicate() never resolves — for the _run timeout test."""
+
+    def __init__(self):
+        self.killed = False
+        self.returncode = None
+
+    async def communicate(self):
+        await nix.asyncio.sleep(999)  # cancelled by wait_for on timeout
+
+    def kill(self):
+        self.killed = True
+
+    async def wait(self):
+        return 0
+
+
+async def test_run_raises_nixerror_when_binary_missing(monkeypatch, tmp_path):
+    """A missing fuse-overlayfs/btrfs/fusermount3 surfaces as NixError, not a
+    raw FileNotFoundError out of container start (#2220 review)."""
+    seed = _fuse_seed(tmp_path)
+
+    async def boom(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", args[0])
+
+    monkeypatch.setattr(nix.asyncio, "create_subprocess_exec", boom)
+    monkeypatch.setattr(nix.os.path, "ismount", lambda p: False)
+    n = Nix(_app(str(seed), type="fuse-overlayfs"))
+    with pytest.raises(NixError, match="fuse-overlayfs not found"):
+        await n.ensure_workspace_nix("ws1")
+
+
+async def test_run_timeout_raises_nixerror_and_kills(monkeypatch):
+    """A wedged fuse-overlayfs/fusermount3 times out + is killed, not hung
+    (#2220 review)."""
+    proc = _SlowProc()
+
+    async def fake_exec(*args, **kwargs):
+        return proc
+
+    monkeypatch.setattr(nix.asyncio, "create_subprocess_exec", fake_exec)
+    n = Nix(_app("/seed", type="fuse-overlayfs"))
+    with pytest.raises(NixError, match="timed out"):
+        await n._run(["fuse-overlayfs"], timeout=0.05)
+    assert proc.killed
 
 
 async def test_rmtree_rw_logs_when_retry_fails(monkeypatch, tmp_path, caplog):

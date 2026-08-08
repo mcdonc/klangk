@@ -886,8 +886,8 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app)
-    # #2201: per-workspace nix store via btrfs snapshots (off unless
-    # KLANGKD_NIX_BTRFS_SUBVOLUME names a seed subvolume).
+    # #2201: per-workspace nix store via a btrfs snapshot or fuse overlay
+    # (off unless KLANGKD_NIX_SEED__PATH names a seed; see nix.Nix).
     app.state.nix = nix.Nix(app)
     # Slice 2b (#1463): proxy watchdog is an owned CaddyWatchdog instance
     # (Caddy is the sole reverse-proxy engine in 2.X, #1642) with

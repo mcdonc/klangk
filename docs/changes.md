@@ -67,8 +67,8 @@ operators or integrators to act when upgrading.
 - **Per-workspace nix feature flag (#2202).** A workspace `nix` setting
   (boolean) gates the per-workspace `/nix` mount, settable at create time via a
   "Nix" checkbox in the create-workspace dialog (shown only when the server
-  has `nix_btrfs_subvolume` configured) or via the API. Workspaces without it
-  are unaffected; with no `nix_btrfs_subvolume`, nix is image-only.
+  has `nix_seed` configured) or via the API. Workspaces without it are
+  unaffected; with no `nix_seed`, nix is image-only.
 
 - **Shared terminals in the TUI (#2164).** The workspace detail screen
   now lists shared terminals visible to you (other users' shared windows

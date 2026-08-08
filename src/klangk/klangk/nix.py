@@ -56,7 +56,11 @@ def _rmtree_rw(path: str) -> None:
 
     def _onerror(func, p: str, _exc) -> None:
         try:
-            os.chmod(os.path.dirname(p), stat.S_IRWXU)
+            # chmod the failing entry's parent so unlink/rmdir can proceed.
+            # Skip when p is the rmtree root: its parent is the shared seed
+            # parent dir (sibling to every ws-*), which is not ours to chmod.
+            if p != path:
+                os.chmod(os.path.dirname(p), stat.S_IRWXU)
             os.chmod(p, stat.S_IRWXU)
             func(p)
         except OSError as exc:
@@ -125,14 +129,27 @@ class Nix:
     # --- subprocess helper ---------------------------------------------------
 
     async def _run(
-        self, args: list[str], *, check: bool = True
+        self, args: list[str], *, check: bool = True, timeout: float = 30.0
     ) -> tuple[int, str, str]:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out, err = await proc.communicate()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            # Missing fuse-overlayfs / fusermount3 / btrfs / stat — surface a
+            # clear NixError, not a raw FileNotFoundError out of container start.
+            raise NixError(
+                f"{args[0]} not found on PATH — install the nix backend "
+                f"tooling and re-run `klangkd doctor`"
+            ) from exc
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise NixError(f"{' '.join(args)} timed out after {timeout}s")
         rc = proc.returncode if proc.returncode is not None else 1
         out_s, err_s = out.decode(), err.decode()
         if check and rc != 0:
@@ -243,10 +260,25 @@ class Nix:
             )
             if rc != 0:
                 logger.warning(
-                    "nix: fusermount3 -u %s failed (rc=%s): %s",
+                    "nix: fusermount3 -u %s failed (rc=%s): %s; trying lazy",
                     merged,
                     rc,
                     err.strip(),
                 )
-        # upper holds read-only store paths; _rmtree_rw chmods them away.
+                # Lazy unmount so a busy mount doesn't pin the ws dir.
+                rc2, _, err2 = await self._run(
+                    ["fusermount3", "-u", "-z", merged], check=False
+                )
+                if rc2 != 0:
+                    logger.warning(
+                        "nix: lazy fusermount3 -u %s failed (rc=%s): %s; "
+                        "ws dir left as an orphan for the operator",
+                        merged,
+                        rc2,
+                        err2.strip(),
+                    )
+        # upper holds read-only store paths; _rmtree_rw chmods them away. If
+        # the mount is still live (both unmounts failed), rmtree best-effort-
+        # skips the busy mountpoint (logged via _onerror) — the ws dir is then
+        # an orphan the operator must clean up (umount + rm).
         _rmtree_rw(ws)
