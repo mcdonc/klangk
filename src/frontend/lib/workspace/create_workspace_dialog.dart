@@ -301,15 +301,22 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                   ),
                   if (widget.allowAutostart) ...[
                     const SizedBox(height: 8),
-                    CheckboxListTile(
-                      value: _autoStart,
-                      onChanged: (v) => setState(() => _autoStart = v ?? false),
-                      title: const Text('Auto start'),
-                      subtitle: const Text(
-                        'Start this workspace when the server starts',
+                    // Wrap in a transparent Material so the
+                    // CheckboxListTile's ink splash paints above the pane's
+                    // opaque background surface.
+                    Material(
+                      type: MaterialType.transparency,
+                      child: CheckboxListTile(
+                        value: _autoStart,
+                        onChanged: (v) =>
+                            setState(() => _autoStart = v ?? false),
+                        title: const Text('Auto start'),
+                        subtitle: const Text(
+                          'Start this workspace when the server starts',
+                        ),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
                       ),
-                      controlAffinity: ListTileControlAffinity.leading,
-                      contentPadding: EdgeInsets.zero,
                     ),
                   ],
                 ],
