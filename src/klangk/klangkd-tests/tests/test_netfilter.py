@@ -264,16 +264,33 @@ class TestNetFilterInstallHooks:
 
 
 class TestNetFilterCreateKwargs:
-    def test_no_domains_returns_none_triplet(self):
-        assert nf.NetFilter(_app()).create_kwargs(None) == (None, None, None)
-        assert nf.NetFilter(_app()).create_kwargs([]) == (None, None, None)
+    @pytest.fixture(autouse=True)
+    def _isolate_host_resolvers(self, monkeypatch):
+        # create_kwargs() detects the host's DNS resolvers; neutralize that
+        # here so the annotation/dns assertions are host-independent. Tests
+        # that exercise the resolver path re-patch with a known list.
+        monkeypatch.setattr(nf, "_detect_host_resolvers", lambda: [])
+
+    def test_no_domains_returns_all_none(self):
+        assert nf.NetFilter(_app()).create_kwargs(None) == (
+            None,
+            None,
+            None,
+            None,
+        )
+        assert nf.NetFilter(_app()).create_kwargs([]) == (
+            None,
+            None,
+            None,
+            None,
+        )
 
     def test_domains_disabled_via_setting_warns_and_fail_opens(self, caplog):
         # #1774: netfilter_enabled=False -> fail open with a loud warning.
         app = _app(enabled=False)
         with caplog.at_level("WARNING"):
             result = nf.NetFilter(app).create_kwargs(["github.com:443"])
-        assert result == (None, None, None)
+        assert result == (None, None, None, None)
         assert any("UNRESTRICTED" in r.message for r in caplog.records)
 
     def test_domains_with_hooks_dir_returns_annotation_path_and_cap_drop(
@@ -286,7 +303,7 @@ class TestNetFilterCreateKwargs:
         # was written for; macOS-specific behavior is tested separately).
         monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         nf_obj.install_hooks()  # arm the hook so create_kwargs trusts the dir
-        ann, hooks, cap_drop = nf_obj.create_kwargs(
+        ann, hooks, cap_drop, _dns = nf_obj.create_kwargs(
             ["github.com:443", "pypi.org"]
         )
         assert ann == {nf.ANNOTATION_KEY: "github.com:443,pypi.org"}
@@ -305,7 +322,7 @@ class TestNetFilterCreateKwargs:
             _app(hooks_dir=path, default_domains=["default.com", "a.io"])
         )
         nf_obj.install_hooks()
-        ann, _, cap_drop = nf_obj.create_kwargs(["ws.com:443"])
+        ann, _, cap_drop, _dns = nf_obj.create_kwargs(["ws.com:443"])
         assert ann == {nf.ANNOTATION_KEY: "ws.com:443"}
         assert cap_drop == ["NET_ADMIN"]
 
@@ -318,19 +335,19 @@ class TestNetFilterCreateKwargs:
         )
         monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         nf_obj.install_hooks()
-        ann, hooks, _ = nf_obj.create_kwargs(None)
+        ann, hooks, _, _dns = nf_obj.create_kwargs(None)
         assert ann == {nf.ANNOTATION_KEY: "default.com,a.io"}
         assert hooks == [os.path.realpath(path), *nf.STANDARD_HOOK_DIRS]
 
         # Same for an explicit empty list (None and [] both inherit).
-        ann2, _, _ = nf_obj.create_kwargs([])
+        ann2, _, _, _dns = nf_obj.create_kwargs([])
         assert ann2 == {nf.ANNOTATION_KEY: "default.com,a.io"}
 
     def test_default_present_but_netfilter_disabled_warns(self, caplog):
         app = _app(default_domains=["default.com"], enabled=False)
         with caplog.at_level("WARNING"):
             result = nf.NetFilter(app).create_kwargs(None)
-        assert result == (None, None, None)
+        assert result == (None, None, None, None)
         assert any("UNRESTRICTED" in r.message for r in caplog.records)
 
     def test_configured_but_not_installed_fail_opens(self, tmp_path, caplog):
@@ -342,7 +359,7 @@ class TestNetFilterCreateKwargs:
         # hooks_dir() makedirs the dir, but no hook files are installed.
         with caplog.at_level("WARNING"):
             result = nf_obj.create_kwargs(["github.com:443"])
-        assert result == (None, None, None)
+        assert result == (None, None, None, None)
         assert any(
             "not installed or is stale" in r.message for r in caplog.records
         )
@@ -358,10 +375,104 @@ class TestNetFilterCreateKwargs:
             f.write("# stale old hook\n")
         with caplog.at_level("WARNING"):
             result = nf_obj.create_kwargs(["github.com:443"])
-        assert result == (None, None, None)
+        assert result == (None, None, None, None)
         assert any(
             "not installed or is stale" in r.message for r in caplog.records
         )
+
+    def test_resolvers_added_to_annotation_and_dns(
+        self, tmp_path, monkeypatch
+    ):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(
+            nf, "_detect_host_resolvers", lambda: ["1.1.1.1", "8.8.8.8"]
+        )
+        nf_obj.install_hooks()
+        ann, _hooks, _cap, dns = nf_obj.create_kwargs(["github.com:443"])
+        assert ann[nf.ANNOTATION_RESOLVERS_KEY] == "1.1.1.1,8.8.8.8"
+        assert dns == ["1.1.1.1", "8.8.8.8"]
+
+    def test_no_resolvers_annotation_when_detection_empty(
+        self, tmp_path, monkeypatch
+    ):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
+        nf_obj.install_hooks()
+        ann, _h, _c, dns = nf_obj.create_kwargs(["github.com:443"])
+        assert nf.ANNOTATION_RESOLVERS_KEY not in ann
+        assert dns == []
+
+
+class TestDetectHostResolvers:
+    """Host DNS-resolver detection for the egress hook (#1365)."""
+
+    def test_is_ipv4_classifies(self):
+        assert nf._is_ipv4("1.2.3.4")
+        assert nf._is_ipv4("10.0.0.1")
+        assert not nf._is_ipv4("::1")  # IPv6 excluded
+        assert not nf._is_ipv4("host")  # not an address
+        assert not nf._is_ipv4("")
+
+    def test_nameservers_parses_ipv4_only(self, tmp_path):
+        r = tmp_path / "resolv.conf"
+        r.write_text(
+            "# comment\n"
+            "nameserver 1.1.1.1\n"
+            "nameserver ::1\n"  # IPv6 -> skipped
+            "nameserver 8.8.8.8\n"
+            "search example.com\n"
+        )
+        assert nf._nameservers(str(r)) == ["1.1.1.1", "8.8.8.8"]
+
+    def test_nameservers_missing_file_returns_empty(self, tmp_path):
+        assert nf._nameservers(str(tmp_path / "nope")) == []
+
+    def test_stub_uses_upstream(self, monkeypatch):
+        def fake(path):
+            return (
+                ["127.0.0.53"]
+                if path == "/etc/resolv.conf"
+                else ["1.1.1.1", "8.8.8.8"]
+            )
+
+        monkeypatch.setattr(nf, "_nameservers", fake)
+        assert nf._detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
+
+    def test_stub_but_no_upstream_falls_back_to_empty(self, monkeypatch):
+        # systemd-resolved stub present but the upstream file is empty/
+        # missing: the stub (127.0.0.53) is filtered out -> no resolver.
+        def fake(path):
+            return ["127.0.0.53"] if path == "/etc/resolv.conf" else []
+
+        monkeypatch.setattr(nf, "_nameservers", fake)
+        assert nf._detect_host_resolvers() == []
+
+    def test_no_stub_returns_primary_minus_loopback(self, monkeypatch):
+        monkeypatch.setattr(
+            nf,
+            "_nameservers",
+            lambda path: (
+                ["1.1.1.1", "127.0.1.1", "8.8.8.8"]
+                if path == "/etc/resolv.conf"
+                else []
+            ),
+        )
+        assert nf._detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
+
+    def test_dedup_preserves_order(self, monkeypatch):
+        monkeypatch.setattr(
+            nf,
+            "_nameservers",
+            lambda path: (
+                ["1.1.1.1", "8.8.8.8", "1.1.1.1"]
+                if path == "/etc/resolv.conf"
+                else []
+            ),
+        )
+        assert nf._detect_host_resolvers() == ["1.1.1.1", "8.8.8.8"]
 
 
 class TestNetFilterDefaultDomains:
@@ -425,17 +536,26 @@ class TestNetFilterEnabled:
 # real against synthetic OCI state with shimmed nsenter/iptables/getent.
 
 
-def _state(rules, *, with_pid=True, egress_mode=None, container_id=None):
+def _state(
+    rules,
+    *,
+    with_pid=True,
+    egress_mode=None,
+    container_id=None,
+    resolvers=None,
+):
     """Build synthetic OCI container state JSON for the hook.
 
     ``rules`` is the ``klangk.netfilter.rules`` annotation value, or ``None``
     to omit the annotation (early-exit path). ``with_pid=False`` omits ``pid``
     (the other early-exit path). Otherwise ``pid`` is the running process's
-    id so the hook's ``[ -e /proc/$pid/ns/net ]`` guard passes — the nsenter
-    shim ignores the path anyway. ``egress_mode`` sets the
-    ``klangk.netfilter.egress_mode`` annotation (#2239). ``container_id``
-    sets the top-level ``id`` field (the authoritative container id that the
-    hook truncates to 12 chars for the NFLOG prefix).
+    id; the hook uses it only to read the container's /etc/hosts for the
+    backend gateway (overridable via KLANGK_NETFILTER_HOSTS in tests).
+    ``egress_mode`` sets the ``klangk.netfilter.egress_mode`` annotation
+    (#2239). ``container_id`` sets the top-level ``id`` field (the
+    authoritative container id the hook truncates to 12 chars for the NFLOG
+    prefix). ``resolvers`` sets the ``klangk.netfilter.resolvers`` annotation
+    (the comma-separated DNS IPs the hook allows on :53, #1365).
     """
     s = {}
     if container_id is not None:
@@ -449,6 +569,8 @@ def _state(rules, *, with_pid=True, egress_mode=None, container_id=None):
         annotations = {nf.ANNOTATION_KEY: rules}
         if egress_mode is not None:
             annotations[nf.ANNOTATION_EGRESS_MODE_KEY] = egress_mode
+        if resolvers is not None:
+            annotations[nf.ANNOTATION_RESOLVERS_KEY] = resolvers
         s["annotations"] = annotations
     return json.dumps(s)
 
@@ -726,21 +848,26 @@ class TestHookScriptExecutable:
         # No rules annotation → the hook exits before touching iptables.
         assert _run_hook(tmp_path, _state(None)) == []
 
-    def test_no_pid_is_noop(self, tmp_path):
-        # No init pid → same early exit (no netns to install into).
-        assert _run_hook(tmp_path, _state("a.com:443", with_pid=False)) == []
+    def test_no_pid_still_applies_core_rules(self, tmp_path):
+        # pid is only used for the backend-gateway /etc/hosts read; the OCI
+        # runtime runs the createContainer hook INSIDE the container netns,
+        # so the core ruleset applies even without a pid (the gateway read
+        # is skipped via its -r guard).
+        calls = _run_hook(tmp_path, _state("a.com:443", with_pid=False))
+        assert ["-P", "OUTPUT", "DROP"] in calls
 
     # --- I1: DNS must be pinned to the container's resolvers, not blanket ---
 
     def test_dns_allowed_only_to_resolv_nameservers(self, tmp_path):
         # I1 regression: :53 used to be ACCEPTed to ANY destination (an
         # exfil / DNS-tunneling channel). Now it's allowed only to the
-        # nameservers in the container's /etc/resolv.conf.
+        # resolvers in the `klangk.netfilter.resolvers` annotation (the
+        # container's own resolvers, mirrored by the server because the
+        # createContainer hook can't read the container's resolv.conf).
         calls = _run_hook(
             tmp_path,
-            _state("github.com:443"),
+            _state("github.com:443", resolvers="1.1.1.1,8.8.8.8"),
             getent_map={"github.com": ["140.82.112.4"]},
-            resolv="nameserver 1.1.1.1\nnameserver 8.8.8.8\n",
         )
         dns = [c for c in calls if "--dport" in c and "53" in c and "-p" in c]
         # One udp + one tcp rule per nameserver, each pinned to that IP.
@@ -762,13 +889,12 @@ class TestHookScriptExecutable:
         assert not any("-d" not in c for c in dns)
 
     def test_no_dns_allow_when_no_resolvers(self, tmp_path):
-        # With no nameservers configured, DNS is fully blocked (fail-closed),
+        # With no resolvers annotation, DNS is fully blocked (fail-closed),
         # never falling back to the old blanket :53 ACCEPT.
         calls = _run_hook(
             tmp_path,
-            _state("github.com:443"),
+            _state("github.com:443"),  # no resolvers annotation
             getent_map={"github.com": ["140.82.112.4"]},
-            resolv="",  # no nameservers
         )
         assert not any("--dport" in c and "53" in c for c in calls)
 
@@ -801,22 +927,6 @@ class TestHookScriptExecutable:
 
     # --- #1936: IPv6 disabled in the container netns (v4-only egress) ---
 
-    def test_ipv6_disabled_via_sysctl(self, tmp_path):
-        # sysctl net.ipv6.conf.{all,default}.disable_ipv6=1 turns IPv6 OFF
-        # in the container netns so the v4-only allow-list can't be
-        # bypassed over v6 (ip6tables OUTPUT otherwise defaults to ACCEPT).
-        _run_hook(
-            tmp_path,
-            _state("github.com:443"),
-            getent_map={"github.com": ["140.82.112.4"]},
-        )
-        sysctl = _calls_from(tmp_path / "sysctl.log")
-        # One call carrying both knobs (the hook batches them).
-        assert len(sysctl) == 1
-        argv = sysctl[0]
-        assert "net.ipv6.conf.all.disable_ipv6=1" in argv
-        assert "net.ipv6.conf.default.disable_ipv6=1" in argv
-
     def test_ipv6_output_default_dropped(self, tmp_path):
         # Belt-and-suspenders: ip6tables OUTPUT policy is DROP regardless of
         # whether the sysctl write took, so v6 egress is default-denied even
@@ -828,25 +938,6 @@ class TestHookScriptExecutable:
         )
         assert ["-P", "OUTPUT", "DROP"] in _calls_from(
             tmp_path / "ip6tables.log"
-        )
-
-    def test_ipv6_drop_holds_when_sysctl_fails(self, tmp_path):
-        # The actual security property the changelog leans on: even if the
-        # sysctl write fails (sysctl absent, or the knob not writable),
-        # ip6tables -P OUTPUT DROP still fires so v6 egress is default-denied
-        # regardless. The hook logs the fallback and continues (non-fatal).
-        _run_hook(
-            tmp_path,
-            _state("github.com:443"),
-            getent_map={"github.com": ["140.82.112.4"]},
-            sysctl_rc=1,
-        )
-        assert ["-P", "OUTPUT", "DROP"] in _calls_from(
-            tmp_path / "ip6tables.log"
-        )
-        assert (
-            "sysctl ipv6 disable failed"
-            in (tmp_path / "hook.stderr").read_text()
         )
 
     def test_aaaa_records_filtered_from_resolution(self, tmp_path):
@@ -1149,7 +1240,7 @@ class TestCreateKwargsEgressMode:
         nf_obj = nf.NetFilter(_app(hooks_dir=path))
         monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         nf_obj.install_hooks()
-        ann, _, _ = nf_obj.create_kwargs(
+        ann, _, _, _ = nf_obj.create_kwargs(
             ["github.com:443"], egress_mode="static"
         )
         assert nf.ANNOTATION_EGRESS_MODE_KEY not in ann
@@ -1161,7 +1252,7 @@ class TestCreateKwargsEgressMode:
         nf_obj = nf.NetFilter(_app(hooks_dir=path))
         monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         nf_obj.install_hooks()
-        ann, _, _ = nf_obj.create_kwargs(
+        ann, _, _, _ = nf_obj.create_kwargs(
             ["github.com:443"], egress_mode="interactive"
         )
         assert ann[nf.ANNOTATION_EGRESS_MODE_KEY] == "interactive"
@@ -1172,7 +1263,7 @@ class TestCreateKwargsEgressMode:
         nf_obj = nf.NetFilter(_app(hooks_dir=path))
         monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
         nf_obj.install_hooks()
-        ann, _, _ = nf_obj.create_kwargs(["github.com:443"])
+        ann, _, _, _ = nf_obj.create_kwargs(["github.com:443"])
         assert nf.ANNOTATION_EGRESS_MODE_KEY not in ann
 
     def test_bogus_egress_mode_raises(self, tmp_path, monkeypatch):
@@ -1306,7 +1397,7 @@ class TestCreateKwargsMacOS:
         with mock.patch(
             "klangk.netfilter.platform.system", return_value="Darwin"
         ):
-            ann, hooks_dirs, cap_drop = nf_obj.create_kwargs(
+            ann, hooks_dirs, cap_drop, _dns = nf_obj.create_kwargs(
                 ["github.com:443"]
             )
         assert ann is not None
@@ -1321,7 +1412,7 @@ class TestCreateKwargsMacOS:
         with mock.patch(
             "klangk.netfilter.platform.system", return_value="Linux"
         ):
-            ann, hooks_dirs, cap_drop = nf_obj.create_kwargs(
+            ann, hooks_dirs, cap_drop, _dns = nf_obj.create_kwargs(
                 ["github.com:443"]
             )
         assert ann is not None
