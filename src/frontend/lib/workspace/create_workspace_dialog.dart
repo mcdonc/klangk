@@ -473,7 +473,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                                   setState(() => _nixEnabled = v ?? false),
                               title: const Text('Mount /nix dir'),
                               subtitle: const Text(
-                                'Mount a shared, writable /nix (btrfs snapshot) into this workspace',
+                                'Mount a shared, writable /nix into this workspace',
                               ),
                               controlAffinity: ListTileControlAffinity.leading,
                               contentPadding: EdgeInsets.zero,

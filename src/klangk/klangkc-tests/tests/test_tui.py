@@ -8260,6 +8260,35 @@ async def test_edit_screen_nix_prepopulated_and_sent(monkeypatch):
         assert captured["settings"] == {"nix": True}
 
 
+async def test_edit_screen_nix_off_clears_setting(monkeypatch):
+    """#2233: unchecking nix emits an explicit settings.nix=False so the
+    full-replace PUT actually clears the mount — omitting the key would
+    leave the stale bag (a silent no-op)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj("alpha", settings={"nix": True})
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws, nix_available=True)
+        await pilot.pause()
+        es = app.screen
+        nix = es.query_one("#nix", Checkbox)
+        assert nix.value is True  # pre-populated from settings.nix
+        nix.value = False  # turn it off
+        es._save()
+        await app.workers.wait_for_complete()
+        assert captured["settings"] == {"nix": False}
+
+
 async def test_edit_screen_nix_change_prompts_restart(monkeypatch):
     """#2233: toggling nix on a running workspace prompts a restart (the
     /nix mount is set up at container create time)."""

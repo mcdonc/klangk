@@ -226,12 +226,17 @@ bool _hasCreateTimeFieldChanged(
     return true;
   }
   // nix — the per-workspace /nix mount is set up at container create
-  // time, so toggling it won't take effect until restart (#2233).
-  final prevSettings = (prev['settings'] as Map?) ?? const {};
+  // time, so toggling it won't take effect until restart (#2233). Only
+  // compare when this save actually emitted a nix value (the toggle was
+  // shown); when nix isn't available we never emit nix, so a stale bag
+  // value must not trigger a spurious restart.
   final newSettings = (fields['settings'] as Map?) ?? const {};
-  final prevNix = (prevSettings['nix'] as bool?) ?? false;
-  final newNix = (newSettings['nix'] as bool?) ?? false;
-  if (prevNix != newNix) return true;
+  if (newSettings.containsKey('nix')) {
+    final prevSettings = (prev['settings'] as Map?) ?? const {};
+    final prevNix = (prevSettings['nix'] as bool?) ?? false;
+    final newNix = (newSettings['nix'] as bool?) ?? false;
+    if (prevNix != newNix) return true;
+  }
   return false;
 }
 
@@ -463,9 +468,12 @@ class _SettingsFormState extends State<_SettingsForm> {
   Future<void> _save() async {
     setState(() => _saving = true);
     final settings = _collectSettings();
-    // #2233: only emit the per-workspace nix flag when a backend is
-    // configured and the user opted in (mirrors the create dialog).
-    if (widget.nixAvailable && _nixEnabled) settings['nix'] = true;
+    // #2233: emit an explicit nix value (true or false) whenever the
+    // toggle is shown. PUT settings is a full-replace bag, so we must
+    // carry the current checkbox state — including false — to actually
+    // turn the mount off; omitting the key would leave the stale bag
+    // untouched (a silent no-op).
+    if (widget.nixAvailable) settings['nix'] = _nixEnabled;
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,

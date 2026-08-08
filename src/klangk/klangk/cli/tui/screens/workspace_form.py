@@ -1055,8 +1055,16 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
         settings = _collect_settings(self)
-        if self._nix_available and self.query_one("#nix", Checkbox).value:
-            settings = {**(settings or {}), "nix": True}
+        # #2233: emit an explicit nix value (True/False) whenever the
+        # toggle is shown. PUT settings is a full-replace bag, so we must
+        # carry the checkbox state — including False — to actually turn
+        # the mount off; omitting the key would leave the stale bag
+        # untouched (a silent no-op).
+        if self._nix_available:
+            settings = {
+                **(settings or {}),
+                "nix": bool(self.query_one("#nix", Checkbox).value),
+            }
         body = {
             "name": name,
             "image": image,
