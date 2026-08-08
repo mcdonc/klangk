@@ -198,6 +198,15 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Workspace create/edit forms grouped into sections (#2229).** The
+  browser's "New workspace" dialog and the workspace settings panel now
+  group fields into the same logical sections the TUI form uses — General,
+  Mounts, Environment, Netfilter, Resources, Advanced — in that order, each
+  under its own titled pane. A section-nav strip above the fields jumps to a
+  section (the edit panel's strip is pinned; the create dialog's scrolls at
+  the top). The settings panel's config area is also wider. Field set and
+  validation are unchanged.
+
 - **Duplicate terminal tab names allowed (#2192).** Renaming a
   terminal tab to a name another tab already uses is no longer rejected.
   Tab names are display-only; window identity is the tmux window id (`@N`),

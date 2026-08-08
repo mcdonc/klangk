@@ -238,6 +238,7 @@ void main() {
       await tester.pump(); // dialog renders
 
       await tester.enterText(_mountInput(), 'invalid');
+      await tester.ensureVisible(find.byIcon(Icons.add).first);
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
 
@@ -253,10 +254,12 @@ void main() {
       await tester.pump(); // dialog renders
 
       await tester.enterText(_mountInput(), '/a:/b');
+      await tester.ensureVisible(find.byIcon(Icons.add).first);
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.text('/a:/b'), findsOneWidget);
 
+      await tester.ensureVisible(find.byIcon(Icons.close).first);
       await tester.tap(find.byIcon(Icons.close).first);
       await tester.pump();
       expect(find.text('/a:/b'), findsNothing);
@@ -496,6 +499,7 @@ void main() {
       await tester.pump();
 
       // Remove pypi.org (the second chip's close button).
+      await tester.ensureVisible(find.byIcon(Icons.close).at(1));
       await tester.tap(find.byIcon(Icons.close).at(1));
       await tester.pump();
       expect(find.text('pypi.org'), findsNothing);
@@ -647,12 +651,14 @@ void main() {
 
       // First: invalid mount to trigger error
       await tester.enterText(_mountInput(), 'bad');
+      await tester.ensureVisible(find.byIcon(Icons.add).first);
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.textContaining('Expected'), findsOneWidget);
 
       // Then: valid mount clears error
       await tester.enterText(_mountInput(), '/a:/b');
+      await tester.ensureVisible(find.byIcon(Icons.add).first);
       await tester.tap(find.byIcon(Icons.add).first);
       await tester.pump();
       expect(find.textContaining('Expected'), findsNothing);

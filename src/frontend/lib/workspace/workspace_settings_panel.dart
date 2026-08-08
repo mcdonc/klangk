@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import 'workspace_section_nav.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import 'workspace_list_page.dart' show validateAllowedDomainSpec;
@@ -292,6 +293,24 @@ class _SettingsFormState extends State<_SettingsForm> {
   bool _saving = false;
   bool _exporting = false;
 
+  // Section anchors for the config section-nav strip (#2229): each key is
+  // attached to the pane that opens the section so a nav-label tap scrolls
+  // it into view.
+  final _generalKey = GlobalKey();
+  final _mountsKey = GlobalKey();
+  final _envKey = GlobalKey();
+  final _netfilterKey = GlobalKey();
+  final _resourcesKey = GlobalKey();
+  final _advancedKey = GlobalKey();
+  late final List<WorkspaceSection> _sections = [
+    WorkspaceSection('General', _generalKey),
+    WorkspaceSection('Mounts', _mountsKey),
+    WorkspaceSection('Environment', _envKey),
+    WorkspaceSection('Netfilter', _netfilterKey),
+    WorkspaceSection('Resources', _resourcesKey),
+    WorkspaceSection('Advanced', _advancedKey),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -489,33 +508,65 @@ class _SettingsFormState extends State<_SettingsForm> {
       fontWeight: FontWeight.bold,
     );
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 500),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (widget.saveMessage != null) ...[
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.saveMessage != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 _buildSaveMessage(),
                 if (widget.pendingRestart) ...[
                   const SizedBox(height: 8),
                   _buildRestartNotice(),
                 ],
-                const SizedBox(height: 16),
               ],
-              _buildConfigCard(labelStyle),
-              const SizedBox(height: 16),
-              _buildExportCard(),
-              const SizedBox(height: 16),
-              _buildTransferCard(),
-              const SizedBox(height: 16),
-              _buildDangerZoneCard(),
-            ],
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: WorkspaceSectionNav(sections: _sections),
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1500),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildGeneralPane(labelStyle),
+                    const SizedBox(height: 16),
+                    _buildMountsPane(labelStyle),
+                    const SizedBox(height: 16),
+                    _buildEnvPane(labelStyle),
+                    const SizedBox(height: 16),
+                    _buildNetfilterPane(labelStyle),
+                    const SizedBox(height: 16),
+                    _buildResourcesPane(labelStyle),
+                    const SizedBox(height: 16),
+                    _buildAdvancedPane(labelStyle),
+                    const SizedBox(height: 16),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _buildSaveButton(),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildExportCard(),
+                    const SizedBox(height: 16),
+                    _buildTransferCard(),
+                    const SizedBox(height: 16),
+                    _buildDangerZoneCard(),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 
@@ -569,42 +620,19 @@ class _SettingsFormState extends State<_SettingsForm> {
     required String title,
     Color? titleColor,
     required List<Widget> children,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border.all(color: KColors.borderDefault),
-        borderRadius: BorderRadius.circular(8),
-        color: KColors.bgSurface,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 18, color: titleColor ?? KColors.textSecondary),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: titleColor,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          ...children,
-        ],
-      ),
-    );
-  }
+  }) =>
+      WorkspaceSectionPane(
+        icon: icon,
+        title: title,
+        titleColor: titleColor,
+        children: children,
+      );
 
-  Widget _buildConfigCard(TextStyle labelStyle) {
-    return _card(
-      icon: Icons.settings,
-      title: 'Workspace Configuration',
+  Widget _buildGeneralPane(TextStyle labelStyle) {
+    return WorkspaceSectionPane(
+      key: _generalKey,
+      icon: Icons.tune,
+      title: 'General',
       children: [
         TextField(
           controller: _nameCtrl,
@@ -613,34 +641,6 @@ class _SettingsFormState extends State<_SettingsForm> {
             labelStyle: labelStyle,
             floatingLabelBehavior: FloatingLabelBehavior.always,
             border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildMountsEditor(labelStyle),
-        const SizedBox(height: 16),
-        _buildEnvVarsEditor(labelStyle),
-        const SizedBox(height: 16),
-        _buildAllowedDomainsEditor(labelStyle),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _cmdCtrl,
-          decoration: InputDecoration(
-            labelText: 'Service Shell Command',
-            labelStyle: labelStyle,
-            floatingLabelBehavior: FloatingLabelBehavior.always,
-            border: const OutlineInputBorder(),
-            hintText: 'Optional — runs on terminal open',
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _healthCheckCtrl,
-          decoration: InputDecoration(
-            labelText: 'Health Check Command',
-            labelStyle: labelStyle,
-            floatingLabelBehavior: FloatingLabelBehavior.always,
-            border: const OutlineInputBorder(),
-            hintText: 'Optional — polled to gauge service health',
           ),
         ),
         const SizedBox(height: 16),
@@ -662,8 +662,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         if (widget.allowAutostart) ...[
           const SizedBox(height: 8),
           // Wrap in a transparent Material so the CheckboxListTile's ink
-          // splash paints above this card's opaque background surface
-          // (the _card() Container would otherwise hide it).
+          // splash paints above the pane's opaque background surface.
           Material(
             type: MaterialType.transparency,
             child: CheckboxListTile(
@@ -678,12 +677,43 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
           ),
         ],
-        const SizedBox(height: 16),
-        const Text(
-          'Resource Limits',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-        ),
-        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _buildMountsPane(TextStyle labelStyle) {
+    return WorkspaceSectionPane(
+      key: _mountsKey,
+      icon: Icons.folder_open,
+      title: 'Mounts',
+      children: [_buildMountsEditor(labelStyle)],
+    );
+  }
+
+  Widget _buildEnvPane(TextStyle labelStyle) {
+    return WorkspaceSectionPane(
+      key: _envKey,
+      icon: Icons.code,
+      title: 'Environment',
+      children: [_buildEnvVarsEditor(labelStyle)],
+    );
+  }
+
+  Widget _buildNetfilterPane(TextStyle labelStyle) {
+    return WorkspaceSectionPane(
+      key: _netfilterKey,
+      icon: Icons.shield,
+      title: 'Netfilter',
+      children: [_buildAllowedDomainsEditor(labelStyle)],
+    );
+  }
+
+  Widget _buildResourcesPane(TextStyle labelStyle) {
+    return WorkspaceSectionPane(
+      key: _resourcesKey,
+      icon: Icons.speed,
+      title: 'Resources',
+      children: [
         Row(
           children: [
             Expanded(
@@ -746,31 +776,60 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
           ],
         ),
+      ],
+    );
+  }
+
+  Widget _buildAdvancedPane(TextStyle labelStyle) {
+    return WorkspaceSectionPane(
+      key: _advancedKey,
+      icon: Icons.build,
+      title: 'Advanced',
+      children: [
+        TextField(
+          controller: _cmdCtrl,
+          decoration: InputDecoration(
+            labelText: 'Service Shell Command',
+            labelStyle: labelStyle,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            border: const OutlineInputBorder(),
+            hintText: 'Optional — runs on terminal open',
+          ),
+        ),
         const SizedBox(height: 16),
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.icon(
-            onPressed: _saving ? null : _save,
-            icon: _saving
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.save, size: 18),
-            label: const Text('Save'),
+        TextField(
+          controller: _healthCheckCtrl,
+          decoration: InputDecoration(
+            labelText: 'Health Check Command',
+            labelStyle: labelStyle,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            border: const OutlineInputBorder(),
+            hintText: 'Optional — polled to gauge service health',
           ),
         ),
       ],
     );
   }
 
+  Widget _buildSaveButton() {
+    return FilledButton.icon(
+      onPressed: _saving ? null : _save,
+      icon: _saving
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Icon(Icons.save, size: 18),
+      label: const Text('Save'),
+    );
+  }
+
   Widget _buildMountsEditor(TextStyle labelStyle) {
     return _buildEditableList(
-      label: 'Mounts',
       labelStyle: labelStyle,
       hint: '/host/path:/container/path',
       controller: _mountCtrl,
@@ -788,7 +847,6 @@ class _SettingsFormState extends State<_SettingsForm> {
 
   Widget _buildEnvVarsEditor(TextStyle labelStyle) {
     return _buildEditableList(
-      label: 'Environment Variables',
       labelStyle: labelStyle,
       hint: 'KEY=VALUE',
       controller: _envCtrl,
@@ -809,7 +867,6 @@ class _SettingsFormState extends State<_SettingsForm> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildEditableList(
-          label: 'Allowed Domains',
           labelStyle: labelStyle,
           hint: 'github.com:443',
           controller: _allowedDomainsCtrl,
@@ -876,7 +933,6 @@ class _SettingsFormState extends State<_SettingsForm> {
   /// inline error. The two editors only differ in label, hint, and the
   /// item text/remove callback.
   Widget _buildEditableList({
-    required String label,
     required TextStyle labelStyle,
     required String hint,
     required TextEditingController controller,
@@ -887,8 +943,6 @@ class _SettingsFormState extends State<_SettingsForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: labelStyle),
-        const SizedBox(height: 8),
         ...items,
         if (error != null) ...[
           Text(
