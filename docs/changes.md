@@ -32,6 +32,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Per-workspace "Mount /nix dir" toggle in all create/edit surfaces
+  (#2233).** The per-workspace nix toggle is now exposed in the workspace
+  edit panel (Flutter) and in the TUI create and edit screens, and is
+  labeled "Mount /nix dir" everywhere (the Flutter create dialog's "Nix"
+  checkbox is renamed to match). The toggle stays hidden when the server
+  has no `nix_seed` backend configured; the underlying setting remains the
+  boolean `nix`.
+
 - **`nix_seed` — per-workspace `/nix` with two backends (#2219, #2220).** The
   per-workspace `/nix` config is now one block — `nix_seed: {type, path}` —
   selecting a backend: `btrfs-snapshot` (a CoW snapshot of a seed btrfs

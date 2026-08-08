@@ -827,7 +827,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      expect(find.text('Nix'), findsNothing);
+      expect(find.text('Mount /nix dir'), findsNothing);
     });
 
     testWidgets('shows Nix checkbox when nixAvailable', (tester) async {
@@ -838,7 +838,8 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      expect(find.widgetWithText(CheckboxListTile, 'Nix'), findsOneWidget);
+      expect(find.widgetWithText(CheckboxListTile, 'Mount /nix dir'),
+          findsOneWidget);
     });
 
     testWidgets('sends settings.nix when Nix toggled on', (tester) async {
@@ -858,7 +859,7 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      final nix = find.widgetWithText(CheckboxListTile, 'Nix');
+      final nix = find.widgetWithText(CheckboxListTile, 'Mount /nix dir');
       await tester.ensureVisible(nix);
       await tester.tap(nix);
       await tester.pump();
