@@ -249,7 +249,7 @@ test.describe("documentation screenshots", () => {
       await ownerWs.recvUntil((m) => m.type === "terminal_windows");
       await page.waitForTimeout(500);
 
-      // Screenshot 6: Two tabs — "build" (shared) and "1" (isolated)
+      // Screenshot 6: Two tabs — "build" (shared) and "bash" (isolated)
       await screenshotTerminalArea(page, "06-two-tabs");
 
       // --- Collaborator joins ---

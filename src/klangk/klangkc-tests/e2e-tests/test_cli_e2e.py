@@ -1704,22 +1704,24 @@ class TestTerminalSharing:
             timeout=120,
         )
         assert list_result.returncode == 0
-        # Parse the Rich table to find the first "own" terminal name
-        terminal_name = None
+        # Parse the Rich table to find the first "own" terminal's id.
+        # Columns are ID, Name, Type, Owner, so an own-terminal row yields
+        # filtered parts like ['@1', 'bash', 'own']. Target the window by
+        # its @N id since names may duplicate (#2192).
+        terminal_id = None
         for line in list_result.stderr.splitlines():
             if "│" in line and "own" in line:
                 parts = [p.strip() for p in line.split("│")]
-                # parts: ['', 'name', 'own', '', ...]
                 parts = [p for p in parts if p]
-                if len(parts) >= 2 and parts[1] == "own":
-                    terminal_name = parts[0]
+                if len(parts) >= 3 and parts[2] == "own":
+                    terminal_id = parts[0]
                     break
-        assert terminal_name is not None, (
+        assert terminal_id is not None, (
             f"Could not find terminal in output: {list_result.stderr}"
         )
 
         result = _run(
-            ["klangk", "terminal", "share", "e2e-share", terminal_name],
+            ["klangk", "terminal", "share", "e2e-share", terminal_id],
             env=env,
             timeout=120,
         )
@@ -1727,7 +1729,7 @@ class TestTerminalSharing:
         assert "shared" in result.stderr.lower()
 
         result = _run(
-            ["klangk", "terminal", "unshare", "e2e-share", terminal_name],
+            ["klangk", "terminal", "unshare", "e2e-share", terminal_id],
             env=env,
             timeout=120,
         )

@@ -928,20 +928,12 @@ class WorkspaceDetailScreen(Screen):
         self.run_worker(self._do_new_terminal, exit_on_error=False)
 
     async def _do_new_terminal(self) -> None:
-        # Pick a name that doesn't collide with existing terminal names.
-        existing = {w.get("name", "") for w in self._terminals}
-        for i in range(len(self._terminals), 100):
-            candidate = f"term-{i}"
-            if candidate not in existing:
-                break
-        else:
-            candidate = f"term-{len(self._terminals)}"  # pragma: no cover
-
-        self.app.notify(f"Creating terminal '{candidate}'…")
+        # No name → the server names the window "bash", matching window 0
+        # and the tmux status-bar "+". Names are display-only, so there's
+        # no need to invent a unique sequential label (#2192).
+        self.app.notify("Creating terminal…")
         try:
-            windows = await self.app.tui_state.create_terminal(
-                self._name, candidate
-            )
+            windows = await self.app.tui_state.create_terminal(self._name)
         except Exception as exc:
             self.app.notify(
                 f"Create failed: {exc}", severity="error", timeout=8
@@ -956,7 +948,7 @@ class WorkspaceDetailScreen(Screen):
             return
         self._terminals = windows
         await self._render_terminals()
-        self.app.notify(f"Created terminal '{candidate}'.")
+        self.app.notify("Created terminal.")
 
     # --- actions ---
 

@@ -7008,12 +7008,12 @@ async def test_detail_new_terminal(monkeypatch):
 
     created = {}
 
-    async def _create(name, window_name):
+    async def _create(name, window_name=None):
         created["name"] = window_name
         return [
             {"index": 0, "name": "main", "id": "@0"},
             {"index": 1, "name": "build", "id": "@1"},
-            {"index": 2, "name": window_name, "id": "@2"},
+            {"index": 2, "name": "bash", "id": "@2"},
         ]
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
@@ -7040,7 +7040,7 @@ async def test_detail_new_terminal(monkeypatch):
         for _ in range(5):
             await pilot.pause()
         await app.workers.wait_for_complete()
-        assert created["name"] == "term-2"
+        assert created["name"] is None
         assert len(d.query_one("#term_list", ListView).query(ListItem)) == 3
         assert any("Created terminal" in m for m in notified)
 
@@ -7049,7 +7049,7 @@ async def test_detail_new_terminal_failure(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    async def _create(name, window_name):
+    async def _create(name, window_name=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
@@ -7080,7 +7080,7 @@ async def test_detail_new_terminal_empty_result(monkeypatch):
     async def noop(*a, **k):
         return None
 
-    async def _create(name, window_name):
+    async def _create(name, window_name=None):
         return []
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)

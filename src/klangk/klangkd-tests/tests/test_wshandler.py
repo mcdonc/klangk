@@ -6992,6 +6992,51 @@ class TestShareWindowHandlers:
             orig = next(w for w in windows if w["name"] == "1")
             assert orig["shared"] is False
 
+    async def test_create_shared_terminal_marks_new_window_not_namesake(
+        self, user, temp_data_dir, app_state
+    ):
+        """When a same-named window already exists, the just-created (active)
+        window is the one marked shared — identified by id, not name (#2192)."""
+        async with _conn_in_workspace(
+            user, "ws-1", user_home="/home/admin"
+        ) as (sock, conn, session, app_state):
+            # A pre-existing window already named "dev" (not shared).
+            session.terminal_windows[user["id"]] = [
+                {"name": "dev", "index": 0, "id": "@0", "shared": False}
+            ]
+            with (
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch.object(
+                    _mock_term,
+                    "new_window",
+                    return_value=[
+                        # Two "dev" windows after create; the new one is active.
+                        {
+                            "id": "@0",
+                            "index": 0,
+                            "name": "dev",
+                            "active": False,
+                        },
+                        {
+                            "id": "@1",
+                            "index": 1,
+                            "name": "dev",
+                            "active": True,
+                        },
+                    ],
+                ),
+            ):
+                await conn.handle_create_shared_terminal({"name": "dev"})
+            windows = session.terminal_windows[user["id"]]
+            by_id = {w["id"]: w for w in windows}
+            # The newly created window (@1) is shared; the namesake (@0) is not.
+            assert by_id["@1"]["shared"] is True
+            assert by_id["@0"]["shared"] is False
+
     async def test_share_window_no_container(self, user):
         conn = _base_conn(user=user)
         await conn.handle_share_window({"window_id": "@0"})

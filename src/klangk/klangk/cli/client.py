@@ -690,9 +690,18 @@ class KlangkClient:
         """Close terminal window *window_id* (@N) in *name*; return list."""
         return await self._terminals(name, close_window_id=window_id)
 
-    async def create_terminal(self, name: str, window_name: str) -> list[dict]:
-        """Create a new terminal window in workspace *name*; return updated list."""
-        return await self._terminals(name, new_window=window_name)
+    async def create_terminal(
+        self, name: str, window_name: str | None = None
+    ) -> list[dict]:
+        """Create a new terminal window in workspace *name*; return updated list.
+
+        With no *window_name* the server names the window ``bash`` (matching
+        window 0); names are display-only, so callers need not invent a
+        unique label (#2192).
+        """
+        return await self._terminals(
+            name, create_window=True, window_name=window_name
+        )
 
     async def rename_terminal(
         self, name: str, index: int, new_name: str
@@ -705,7 +714,8 @@ class KlangkClient:
         name: str,
         *,
         close_window_id: str | None = None,
-        new_window: str | None = None,
+        create_window: bool = False,
+        window_name: str | None = None,
         rename: tuple[int, str] | None = None,
     ) -> list[dict]:
         try:
@@ -737,15 +747,12 @@ class KlangkClient:
                         )
                     )
                     windows = await self._recv_windows(conn)
-                if new_window is not None:
-                    await conn.send(
-                        json.dumps(
-                            {
-                                "cmd": "terminal_new_window",
-                                "name": new_window,
-                            }
-                        )
-                    )
+                if create_window:
+                    cmd = {"cmd": "terminal_new_window"}
+                    # No name → server names the window "bash" (#2192).
+                    if window_name:
+                        cmd["name"] = window_name
+                    await conn.send(json.dumps(cmd))
                     windows = await self._recv_windows(conn)
                 if rename is not None and windows:
                     idx, new_name = rename
@@ -1146,17 +1153,42 @@ async def ws_shell(
         # 3b. Select window if requested.
         if window is not None:
             if ":" in window:
-                # Shared terminal: "handle:window_name"
-                owner_handle, win_name = window.split(":", 1)
-                match = next(
-                    (
+                # Shared terminal: "handle:window_name" (or "handle:@N" for
+                # an exact id). Names are not unique — dups are allowed
+                # (#2192) — so a name matching several windows under one
+                # owner is an error, not a silent first match.
+                owner_handle, win_ref = window.split(":", 1)
+                if win_ref.startswith("@"):
+                    match = next(
+                        (
+                            t
+                            for t in shared_terminals
+                            if t.get("handle") == owner_handle
+                            and t.get("window_id") == win_ref
+                        ),
+                        None,
+                    )
+                else:
+                    matches = [
                         t
                         for t in shared_terminals
                         if t.get("handle") == owner_handle
-                        and t.get("window_name") == win_name
-                    ),
-                    None,
-                )
+                        and t.get("window_name") == win_ref
+                    ]
+                    if len(matches) > 1:
+                        ids = ", ".join(
+                            t["window_id"]
+                            for t in matches
+                            if t.get("window_id")
+                        )
+                        raise ConnectionError(
+                            f"Multiple shared terminals named "
+                            f"'{win_ref}' under '{owner_handle}'; "
+                            f"specify one by id (e.g. "
+                            f"{owner_handle}:{matches[0].get('window_id')}): "
+                            f"{ids}"
+                        )
+                    match = matches[0] if matches else None
                 if match is None:
                     raise ConnectionError(
                         f"Shared terminal '{window}' not found"
@@ -1191,7 +1223,9 @@ async def ws_shell(
                 # Own window: by id (@N) or by name. An id targets the
                 # exact tmux window and must never create a new one
                 # (#1954); a name selects an existing window or creates
-                # one with that name.
+                # one with that name. Names are not unique (dups allowed,
+                # #2192), so a name matching several windows is an error
+                # rather than a silent first match — disambiguate with @N.
                 if window.startswith("@"):
                     match = next(
                         (w for w in own_windows if w.get("id") == window),
@@ -1202,10 +1236,18 @@ async def ws_shell(
                             f"Window '{window}' no longer exists"
                         )
                 else:
-                    match = next(
-                        (w for w in own_windows if w.get("name") == window),
-                        None,
-                    )
+                    name_matches = [
+                        w for w in own_windows if w.get("name") == window
+                    ]
+                    if len(name_matches) > 1:
+                        ids = ", ".join(
+                            w["id"] for w in name_matches if w.get("id")
+                        )
+                        raise ConnectionError(
+                            f"Multiple terminals named '{window}'; "
+                            f"specify one by id: {ids}"
+                        )
+                    match = name_matches[0] if name_matches else None
                 if match is None:
                     # Name with no match — create the window.
                     await ws.send(

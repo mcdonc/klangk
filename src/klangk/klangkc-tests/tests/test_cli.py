@@ -1495,6 +1495,51 @@ class TestKlangkClient:
         assert len(new_cmds) == 1
         assert new_cmds[0]["name"] == "term-1"
 
+    def test_create_terminal_unnamed(self):
+        # No window_name → terminal_new_window is sent with no name field,
+        # so the server names the window "bash" (#2192).
+        client = KlangkClient("http://test:8995", "token")
+        ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
+        client.resolve_workspace = MagicMock(return_value=ws)
+        messages = [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "bash", "id": "@0"},
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "terminal_windows",
+                    "windows": [
+                        {"index": 0, "name": "bash", "id": "@0"},
+                        {"index": 1, "name": "bash", "id": "@1"},
+                    ],
+                }
+            ),
+        ]
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(side_effect=messages)
+        mock_ws.send = AsyncMock()
+        mock_ws.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_ws.__aexit__ = AsyncMock(return_value=False)
+        with patch(
+            "klangk.cli.transport.websockets.connect",
+            return_value=mock_ws,
+        ):
+            windows = asyncio.run(client.create_terminal("alpha"))
+        assert len(windows) == 2
+        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
+        new_cmds = [s for s in sent if s.get("cmd") == "terminal_new_window"]
+        assert len(new_cmds) == 1
+        assert "name" not in new_cmds[0]
+
     def test_rename_terminal(self):
         client = KlangkClient("http://test:8995", "token")
         ws = Workspace(id="ws" + "0" * 60, name="alpha", created_at="x")
@@ -2649,6 +2694,37 @@ class TestTerminalSize:
 # --- run_shell / ws_shell ---
 
 
+def _scripted_ws_for_shell(msgs):
+    """Fake WS for ``ws_shell``: ``recv()`` yields *msgs* (as JSON) then closes.
+
+    Returns ``(ws_mock, sent_payloads)`` where *sent_payloads* is the list of
+    decoded JSON dicts passed to ``send``.
+    """
+    import websockets
+
+    ws_mock = MagicMock()
+    ws_mock.__aenter__ = AsyncMock(return_value=ws_mock)
+    ws_mock.__aexit__ = AsyncMock(return_value=False)
+    sent = []
+
+    async def capture_send(payload, *a, **kw):
+        sent.append(json.loads(payload))
+
+    ws_mock.send = capture_send
+    ws_mock.close = AsyncMock()
+    idx = {"i": 0}
+
+    async def fake_recv(*a, **kw):
+        i = idx["i"]
+        idx["i"] += 1
+        if i < len(msgs):
+            return json.dumps(msgs[i])
+        raise websockets.ConnectionClosed(None, None)
+
+    ws_mock.recv = fake_recv
+    return ws_mock, sent
+
+
 class TestRunShell:
     @pytest.mark.asyncio
     async def test_stdin_loop_sends_terminal_input(self):
@@ -2988,6 +3064,169 @@ class TestRunShell:
                     window="clanker:service-cmd",
                 )
             assert "not found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_own_window_ambiguous_name_raises(self):
+        """Two own windows sharing a name can't be selected by name (#2192)."""
+        from klangk.cli.client import ws_shell
+
+        msgs = [
+            {"type": "container_ready"},
+            {"type": "terminal_started"},
+            {
+                "type": "terminal_windows",
+                "windows": [
+                    {"id": "@3", "index": 1, "name": "build", "active": False},
+                    {"id": "@5", "index": 2, "name": "build", "active": True},
+                ],
+            },
+        ]
+        ws_mock, _ = _scripted_ws_for_shell(msgs)
+        with patch(
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
+        ):
+            with pytest.raises(ConnectionError) as exc_info:
+                await ws_shell(
+                    "http://localhost",
+                    "token",
+                    "ws1",
+                    raw_mode=False,
+                    window="build",
+                )
+        msg = str(exc_info.value)
+        assert "Multiple terminals named 'build'" in msg
+        assert "@3" in msg and "@5" in msg
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_own_window_unique_name_selects_by_id(self):
+        """A unique name resolves to its window id for selection (#2192)."""
+        from klangk.cli.client import ws_shell
+
+        msgs = [
+            {"type": "container_ready"},
+            {"type": "terminal_started"},
+            {
+                "type": "terminal_windows",
+                "windows": [
+                    {"id": "@0", "index": 0, "name": "bash", "active": False},
+                    {"id": "@3", "index": 1, "name": "build", "active": True},
+                ],
+            },
+        ]
+        ws_mock, sent = _scripted_ws_for_shell(msgs)
+        with (
+            patch(
+                "klangk.cli.transport.websockets.connect",
+                return_value=ws_mock,
+            ),
+            patch("klangk.cli.client.run_shell", new=AsyncMock()),
+        ):
+            await ws_shell(
+                "http://localhost",
+                "token",
+                "ws1",
+                raw_mode=False,
+                window="build",
+            )
+        select = next(
+            (c for c in sent if c.get("cmd") == "terminal_select_window"),
+            None,
+        )
+        assert select is not None
+        assert select["window_id"] == "@3"
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_shared_ambiguous_name_raises(self):
+        """Two shared windows, same name, one owner → error listing ids (#2192)."""
+        from klangk.cli.client import ws_shell
+
+        msgs = [
+            {"type": "container_ready"},
+            {"type": "terminal_started"},
+            {"type": "terminal_windows", "windows": []},
+            {
+                "type": "shared_terminals",
+                "terminals": [
+                    {
+                        "user_id": "u1",
+                        "handle": "alice",
+                        "window_name": "build",
+                        "window_id": "@3",
+                    },
+                    {
+                        "user_id": "u1",
+                        "handle": "alice",
+                        "window_name": "build",
+                        "window_id": "@5",
+                    },
+                ],
+            },
+        ]
+        ws_mock, _ = _scripted_ws_for_shell(msgs)
+        with patch(
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
+        ):
+            with pytest.raises(ConnectionError) as exc_info:
+                await ws_shell(
+                    "http://localhost",
+                    "token",
+                    "ws1",
+                    raw_mode=False,
+                    window="alice:build",
+                )
+        msg = str(exc_info.value)
+        assert "Multiple shared terminals named 'build'" in msg
+        assert "@3" in msg and "@5" in msg
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_shared_by_id_disambiguates(self):
+        """handle:@N targets the exact shared window among same-named (#2192)."""
+        from klangk.cli.client import ws_shell
+
+        msgs = [
+            {"type": "container_ready"},
+            {"type": "terminal_started"},
+            {"type": "terminal_windows", "windows": []},
+            {
+                "type": "shared_terminals",
+                "terminals": [
+                    {
+                        "user_id": "u1",
+                        "handle": "alice",
+                        "window_name": "build",
+                        "window_id": "@3",
+                    },
+                    {
+                        "user_id": "u1",
+                        "handle": "alice",
+                        "window_name": "build",
+                        "window_id": "@5",
+                    },
+                ],
+            },
+            {"type": "terminal_started"},  # join confirmation
+        ]
+        ws_mock, sent = _scripted_ws_for_shell(msgs)
+        with (
+            patch(
+                "klangk.cli.transport.websockets.connect",
+                return_value=ws_mock,
+            ),
+            patch("klangk.cli.client.run_shell", new=AsyncMock()),
+        ):
+            await ws_shell(
+                "http://localhost",
+                "token",
+                "ws1",
+                raw_mode=False,
+                window="alice:@5",
+            )
+        join = next(
+            (c for c in sent if c.get("cmd") == "join_shared_terminal"),
+            None,
+        )
+        assert join is not None
+        assert join["window_id"] == "@5"
 
     @pytest.mark.asyncio
     async def test_tilde_dot_disconnects(self):

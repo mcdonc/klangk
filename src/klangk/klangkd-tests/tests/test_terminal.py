@@ -857,22 +857,41 @@ class TestNewWindow:
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
-            return_value=(0, "@0|||0|||1|||1\n", ""),
+            return_value=(0, "@0|||0|||bash|||1\n", ""),
         ) as mock_exec:
             result = await _terminal.new_window("cid", "sess")
         assert len(result) == 1
-        assert result[0]["name"] == "1"
-        assert mock_exec.call_args.args[1][:2] == ["bash", "-c"]
+        # No name -> defaults to "bash" (matching window 0), not a number (#2179).
+        assert result[0]["name"] == "bash"
+        argv = mock_exec.call_args.args[1]
+        assert argv[:2] == ["bash", "-c"]
+        # The label is passed as positional argv ($2), never interpolated
+        # into the script (injection-safe); "bash" is the default label.
+        assert argv[4] == "sess"  # $1 = session name
+        assert argv[5] == "bash"  # $2 = window label
+        # No duplicate guard: names are display-only, dups allowed (#2192).
+        assert "DUPLICATE" not in argv[2]
+        assert "grep" not in argv[2]
 
-    async def test_auto_name_skips_existing(self):
+    async def test_auto_name_allows_existing_bash(self):
+        # The default "bash" is created even when a "bash" window already
+        # exists — multiple shells all named "bash" is the intended UX (#2179).
         with patch.object(
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
-            return_value=(0, "@0|||0|||1|||0\n@1|||1|||2|||1\n", ""),
-        ):
+            return_value=(
+                0,
+                "@0|||0|||bash|||0\n@1|||1|||bash|||1\n",
+                "",
+            ),
+        ) as mock_exec:
             result = await _terminal.new_window("cid", "sess")
-        assert len(result) == 2
+        assert [w["name"] for w in result] == ["bash", "bash"]
+        # Duplicate names are permitted — no guard runs (#2192).
+        argv = mock_exec.call_args.args[1]
+        assert "DUPLICATE" not in argv[2]
+        assert argv[5] == "bash"  # default label
 
     async def test_creates_named_window(self):
         with patch.object(
@@ -894,21 +913,31 @@ class TestNewWindow:
         assert argv[:2] == ["bash", "-c"]
         assert "build" not in argv[2]  # not in the script
         assert argv[3] == "bash"  # $0
-        assert argv[4] == "build"  # $1 = name
+        assert argv[4] == "sess"  # $1 = session name
+        assert argv[5] == "build"  # $2 = window label
 
     async def test_rejects_shell_injection(self):
         with pytest.raises(ValueError, match="only contain"):
             await _terminal.new_window("cid", "sess", name="';rm -rf /;'")
 
-    async def test_rejects_duplicate_name(self):
+    async def test_allows_duplicate_name(self):
+        # Duplicate window names are permitted — names are display-only
+        # and window identity is keyed on the @N id, not the name (#2192).
+        # tmux accepts the duplicate; new_window returns the full list.
         with patch.object(
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
-            return_value=(1, "DUPLICATE\n", ""),
-        ):
-            with pytest.raises(ValueError, match="already exists"):
-                await _terminal.new_window("cid", "sess", name="build")
+            return_value=(
+                0,
+                "@0|||0|||build|||0\n@1|||1|||build|||1\n",
+                "",
+            ),
+        ) as mock_exec:
+            result = await _terminal.new_window("cid", "sess", name="build")
+        assert [w["name"] for w in result] == ["build", "build"]
+        # No duplicate guard ran in the script.
+        assert "DUPLICATE" not in mock_exec.call_args.args[1][2]
 
     async def test_raises_on_tmux_error(self):
         with patch.object(
@@ -987,20 +1016,11 @@ class TestCloseWindow:
 
 class TestRenameWindow:
     async def test_renames_window(self):
-        with (
-            patch.object(
-                _terminal,
-                "list_windows",
-                return_value=[
-                    {"index": 0, "name": "bash", "active": True},
-                ],
-            ),
-            patch.object(
-                _terminal,
-                "tmux_command",
-                return_value="",
-            ) as mock_cmd,
-        ):
+        with patch.object(
+            _terminal,
+            "tmux_command",
+            return_value="",
+        ) as mock_cmd:
             await _terminal.rename_window("cid", "sess", 0, "build")
         mock_cmd.assert_called_once_with(
             "cid",
@@ -1012,17 +1032,29 @@ class TestRenameWindow:
         with pytest.raises(ValueError, match="only contain"):
             await _terminal.rename_window("cid", "sess", 0, "';rm -rf /;'")
 
-    async def test_rejects_duplicate_name(self):
-        with patch.object(
-            _terminal,
-            "list_windows",
-            return_value=[
-                {"index": 0, "name": "bash", "active": True},
-                {"index": 1, "name": "build", "active": False},
-            ],
+    async def test_allows_duplicate_name(self):
+        # Renaming to a name another window already has is permitted —
+        # names are display-only and window identity is keyed on the @N id,
+        # not the name (#2192). No list_windows call is made to check.
+        with (
+            patch.object(
+                _terminal,
+                "list_windows",
+            ) as mock_list,
+            patch.object(
+                _terminal,
+                "tmux_command",
+                return_value="",
+            ) as mock_cmd,
         ):
-            with pytest.raises(ValueError, match="already exists"):
-                await _terminal.rename_window("cid", "sess", 0, "build")
+            await _terminal.rename_window("cid", "sess", 0, "build")
+        # rename does not consult list_windows anymore.
+        mock_list.assert_not_called()
+        mock_cmd.assert_called_once_with(
+            "cid",
+            "sess",
+            ["rename-window", "-t", "sess:0", "build"],
+        )
 
 
 class TestBuildEnvironment:

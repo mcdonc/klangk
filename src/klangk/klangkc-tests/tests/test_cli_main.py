@@ -5119,3 +5119,53 @@ class TestAccountCommands:
         result = CliRunner().invoke(main.app, ["account", "email"])
         assert result.exit_code == 1
         client.change_email.assert_not_called()
+
+
+class TestResolveOwnWindow:
+    """Unit tests for the @N/name resolution shared by share & unshare (#2192)."""
+
+    @staticmethod
+    def _w(wid: str, name: str) -> dict:
+        return {"id": wid, "index": 0, "name": name, "active": False}
+
+    def test_id_exact(self):
+        from klangk.cli import main
+
+        match, err = main._resolve_own_window(
+            [self._w("@0", "bash"), self._w("@3", "build")], "@3"
+        )
+        assert err is None
+        assert match["id"] == "@3"
+
+    def test_id_missing(self):
+        from klangk.cli import main
+
+        match, err = main._resolve_own_window([self._w("@0", "bash")], "@9")
+        assert match is None
+        assert "no longer exists" in err
+
+    def test_unique_name(self):
+        from klangk.cli import main
+
+        match, err = main._resolve_own_window(
+            [self._w("@0", "bash"), self._w("@3", "build")], "build"
+        )
+        assert err is None
+        assert match["id"] == "@3"
+
+    def test_ambiguous_name(self):
+        from klangk.cli import main
+
+        match, err = main._resolve_own_window(
+            [self._w("@3", "build"), self._w("@5", "build")], "build"
+        )
+        assert match is None
+        assert "Multiple terminals named 'build'" in err
+        assert "@3" in err and "@5" in err
+
+    def test_name_not_found(self):
+        from klangk.cli import main
+
+        match, err = main._resolve_own_window([self._w("@0", "bash")], "nope")
+        assert match is None
+        assert "not found" in err
