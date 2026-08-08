@@ -180,6 +180,7 @@ class Workspace:
     health: str | None = None
     health_message: str | None = None
     service_started_at: float | None = None
+    settings: dict | None = None
 
 
 def get_terminal_size() -> tuple[int, int]:
@@ -482,6 +483,7 @@ class KlangkClient:
             health_message=w.get("health_message"),
             allowed_domains=w.get("allowed_domains"),
             service_started_at=w.get("service_started_at"),
+            settings=w.get("settings"),
         )
 
     def create_workspace(
@@ -495,6 +497,7 @@ class KlangkClient:
         setup_state: str | None = None,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        settings: dict | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
         if image:
@@ -513,6 +516,8 @@ class KlangkClient:
             body["health_check"] = health_check
         if allowed_domains:
             body["allowed_domains"] = allowed_domains
+        if settings:
+            body["settings"] = settings
         resp = self.post("/api/v1/workspaces", json=body)
         self.check_auth(resp)
         self._raise_for_status(resp)
