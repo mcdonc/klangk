@@ -407,38 +407,41 @@ class TestTuiE2E:
                 await pilot.pause()
                 await pilot.pause()
 
-                # Wait for the async create to complete.
-                for _ in range(10):
-                    await pilot.pause()
-
-                # After creation the TUI may navigate to the detail screen
-                # or show a confirm dialog. Handle both.
+                # Give the async create a moment to dispatch, then dismiss
+                # any confirm dialog that may block navigation.
+                await pilot.pause()
+                await pilot.pause()
                 if isinstance(app.screen, ConfirmScreen):
                     app.screen.dismiss(True)
-                    for _ in range(5):
-                        await pilot.pause()
+                    await pilot.pause()
 
-                # Workspace was created — verify via API.
-                r = httpx.get(
-                    f"{base_url}/api/v1/workspaces",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=30,
-                )
-                r.raise_for_status()
-                ws_names = [w["name"] for w in r.json()]
-                assert ws_name in ws_names
-
-                # Find the workspace ID for cleanup.
-                r = httpx.get(
-                    f"{base_url}/api/v1/workspaces",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=30,
-                )
-                r.raise_for_status()
-                for w in r.json():
-                    if w["name"] == ws_name:
-                        ws_id = w["id"]
+                # Workspace creation is async; poll the API until the workspace
+                # appears rather than guessing a fixed wait window (CI runners
+                # vary in load). The poll also captures the workspace id for
+                # cleanup, replacing the separate follow-up GET.
+                deadline = time.monotonic() + 30.0
+                last_names: list[str] = []
+                while True:
+                    await pilot.pause()
+                    r = httpx.get(
+                        f"{base_url}/api/v1/workspaces",
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=30,
+                    )
+                    r.raise_for_status()
+                    for w in r.json():
+                        if w["name"] == ws_name:
+                            ws_id = w["id"]
+                            break
+                    if ws_id is not None:
                         break
+                    if time.monotonic() >= deadline:
+                        raise AssertionError(
+                            f"workspace {ws_name!r} not created within 30s; "
+                            f"current workspaces: {last_names!r}"
+                        )
+                    last_names = [w["name"] for w in r.json()]
+                    await asyncio.sleep(0.25)
         finally:
             if ws_id:
                 _api_delete_workspace(base_url, token, ws_id)
