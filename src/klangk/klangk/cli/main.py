@@ -2010,10 +2010,38 @@ def unshare_workspace(
     typer.echo(f"Removed {email} from workspace {workspace}")
 
 
+def _resolve_own_window(
+    own_windows: list[dict], terminal: str
+) -> tuple[dict | None, str | None]:
+    """Resolve a terminal reference to one own window.
+
+    *terminal* is an ``@N`` window id (exact) or a name. Names are not
+    unique (#2192): a name matching several windows is an error rather
+    than a silent first match. Returns ``(match, error)`` — exactly one
+    is set.
+    """
+    if terminal.startswith("@"):
+        match = next((w for w in own_windows if w.get("id") == terminal), None)
+        if match is None:
+            return None, f"Window '{terminal}' no longer exists"
+        return match, None
+    name_matches = [w for w in own_windows if w.get("name") == terminal]
+    if len(name_matches) > 1:
+        ids = ", ".join(w["id"] for w in name_matches if w.get("id"))
+        return None, (
+            f"Multiple terminals named '{terminal}'; specify one by id: {ids}"
+        )
+    if not name_matches:
+        return None, f"Terminal '{terminal}' not found"
+    return name_matches[0], None
+
+
 @terminal_app.command("share")
 def share_terminal(
     workspace: str = typer.Argument(help="Workspace name"),
-    terminal: str = typer.Argument(help="Terminal name to share"),
+    terminal: str = typer.Argument(
+        help="Terminal to share: @N (exact id) or name (see `klangk terminal ls`)"
+    ),
 ) -> None:
     """Share a terminal with other workspace members."""
     ws, sspec, token = _resolve_workspace_and_url(workspace)
@@ -2058,11 +2086,9 @@ def share_terminal(
                 if msg.get("type") == "terminal_windows":
                     own_windows = msg.get("windows", [])
                     break
-            match = next(
-                (w for w in own_windows if w["name"] == terminal), None
-            )
-            if match is None:
-                _err.print(f"[red]Terminal '{terminal}' not found[/red]")
+            match, err = _resolve_own_window(own_windows, terminal)
+            if err is not None:
+                _err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
 
             await conn.send(
@@ -2092,7 +2118,9 @@ def share_terminal(
 @terminal_app.command("unshare")
 def unshare_terminal(
     workspace: str = typer.Argument(help="Workspace name"),
-    terminal: str = typer.Argument(help="Terminal name to unshare"),
+    terminal: str = typer.Argument(
+        help="Terminal to unshare: @N (exact id) or name (see `klangk terminal ls`)"
+    ),
 ) -> None:
     """Stop sharing a terminal."""
     ws, sspec, token = _resolve_workspace_and_url(workspace)
@@ -2138,11 +2166,9 @@ def unshare_terminal(
                     own_windows = msg.get("windows", [])
                     break
 
-            match = next(
-                (w for w in own_windows if w["name"] == terminal), None
-            )
-            if match is None:
-                _err.print(f"[red]Terminal '{terminal}' not found[/red]")
+            match, err = _resolve_own_window(own_windows, terminal)
+            if err is not None:
+                _err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
 
             await conn.send(
