@@ -857,41 +857,41 @@ class TestNewWindow:
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
-            return_value=(0, "@0|||0|||bash|||1\n", ""),
+            return_value=(0, "@0|||0|||term|||1\n", ""),
         ) as mock_exec:
             result = await _terminal.new_window("cid", "sess")
         assert len(result) == 1
-        # No name -> defaults to "bash" (matching window 0), not a number (#2179).
-        assert result[0]["name"] == "bash"
+        # No name -> defaults to "term" (#2223), not a number (#2179).
+        assert result[0]["name"] == "term"
         argv = mock_exec.call_args.args[1]
         assert argv[:2] == ["bash", "-c"]
         # The label is passed as positional argv ($2), never interpolated
-        # into the script (injection-safe); "bash" is the default label.
+        # into the script (injection-safe); "term" is the default label.
         assert argv[4] == "sess"  # $1 = session name
-        assert argv[5] == "bash"  # $2 = window label
+        assert argv[5] == "term"  # $2 = window label
         # No duplicate guard: names are display-only, dups allowed (#2192).
         assert "DUPLICATE" not in argv[2]
         assert "grep" not in argv[2]
 
-    async def test_auto_name_allows_existing_bash(self):
-        # The default "bash" is created even when a "bash" window already
-        # exists — multiple shells all named "bash" is the intended UX (#2179).
+    async def test_auto_name_allows_existing_term(self):
+        # The default "term" is created even when a "term" window already
+        # exists — multiple shells all named "term" is the intended UX (#2179).
         with patch.object(
             _mock_pod,
             "exec_container",
             new_callable=AsyncMock,
             return_value=(
                 0,
-                "@0|||0|||bash|||0\n@1|||1|||bash|||1\n",
+                "@0|||0|||term|||0\n@1|||1|||term|||1\n",
                 "",
             ),
         ) as mock_exec:
             result = await _terminal.new_window("cid", "sess")
-        assert [w["name"] for w in result] == ["bash", "bash"]
+        assert [w["name"] for w in result] == ["term", "term"]
         # Duplicate names are permitted — no guard runs (#2192).
         argv = mock_exec.call_args.args[1]
         assert "DUPLICATE" not in argv[2]
-        assert argv[5] == "bash"  # default label
+        assert argv[5] == "term"  # default label
 
     async def test_creates_named_window(self):
         with patch.object(

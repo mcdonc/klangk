@@ -620,7 +620,7 @@ class Terminal:
         interpolated into the script, so shell metacharacters in either
         are harmless (the label is validated above regardless).
         """
-        label = name if name is not None else "bash"
+        label = name if name is not None else "term"
         if name is not None:
             validate_window_name(name)
         script = (
