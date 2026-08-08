@@ -11122,6 +11122,32 @@ async def test_create_screen_collects_settings(monkeypatch):
         }
 
 
+async def test_edit_screen_save_includes_settings(monkeypatch):
+    """Edit form includes settings dict in update body when filled (#2217)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj("alpha", image="base", running=False)
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#cpu_limit", Input).value = "2.0"
+        es.query_one("#pids_limit", Input).value = "512"
+        es._save()
+        await app.workers.wait_for_complete()
+        assert captured["settings"] == {"cpu_limit": 2.0, "pids_limit": 512}
+
+
 async def test_edit_screen_prepopulates_settings(monkeypatch):
     """Edit form pre-populates resource fields from workspace settings (#2217)."""
 
