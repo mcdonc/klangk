@@ -425,25 +425,35 @@ class TestNetFilterEnabled:
 # real against synthetic OCI state with shimmed nsenter/iptables/getent.
 
 
-def _state(rules, *, with_pid=True):
+def _state(rules, *, with_pid=True, egress_mode=None):
     """Build synthetic OCI container state JSON for the hook.
 
     ``rules`` is the ``klangk.netfilter.rules`` annotation value, or ``None``
     to omit the annotation (early-exit path). ``with_pid=False`` omits ``pid``
     (the other early-exit path). Otherwise ``pid`` is the running process's
     id so the hook's ``[ -e /proc/$pid/ns/net ]`` guard passes — the nsenter
-    shim ignores the path anyway.
+    shim ignores the path anyway. ``egress_mode`` sets the
+    ``klangk.netfilter.egress_mode`` annotation (#2239).
     """
     s = {}
     if with_pid:
         s["pid"] = os.getpid()
     if rules is not None:
-        s["annotations"] = {nf.ANNOTATION_KEY: rules}
+        annotations = {nf.ANNOTATION_KEY: rules}
+        if egress_mode is not None:
+            annotations[nf.ANNOTATION_EGRESS_MODE_KEY] = egress_mode
+        s["annotations"] = annotations
     return json.dumps(s)
 
 
 def _run_hook(
-    tmp_path, state, getent_map=None, resolv=None, hosts=None, sysctl_rc=0
+    tmp_path,
+    state,
+    getent_map=None,
+    resolv=None,
+    hosts=None,
+    sysctl_rc=0,
+    hostname=None,
 ):
     """Execute ``nf.HOOK_SCRIPT`` against ``state``; return recorded iptables
     invocations (each a ``list[str]`` of argv).
@@ -471,6 +481,9 @@ def _run_hook(
     )
     resolv_file.write_text(resolv or "")
     hosts_file.write_text(hosts or "")
+    hostname_file = tmp_path / "hostname"
+    if hostname is not False:
+        hostname_file.write_text(hostname or "abcdef123456")
     # getent ahosts <host> shim: emit realistic `IP STREAM host` rows (real
     # getent prints "<ip> STREAM <host>" / DGRAM / RAW, NOT a bare IP), so a
     # resolve()-regex anchored to end-of-line gets caught here instead of in
@@ -561,9 +574,11 @@ def _run_hook(
 
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
-    # Point the hook at our temp resolv.conf/hosts instead of /proc/$pid/root.
+    # Point the hook at our temp resolv.conf/hosts/hostname instead of
+    # /proc/$pid/root.
     env["KLANGK_NETFILTER_RESOLV"] = str(resolv_file)
     env["KLANGK_NETFILTER_HOSTS"] = str(hosts_file)
+    env["KLANGK_NETFILTER_HOSTNAME"] = str(hostname_file)
     sh = shutil.which("sh") or "/bin/sh"
     proc = subprocess.run(
         [sh, str(hook)],
@@ -945,6 +960,146 @@ class TestHookScriptExecutable:
         assert _accept_rules(calls) == [
             ["-A", "OUTPUT", "-d", "10.5.0.0/8", "-j", "ACCEPT"],
         ]
+
+
+# --- interactive egress consent mode (#2239) ---
+
+
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="Hook script requires /proc and iptables/nsenter (Linux-only)",
+)
+class TestHookScriptInteractiveMode:
+    """Tests for the interactive egress mode LOG rule (#2239)."""
+
+    def test_static_mode_no_log_rule(self, tmp_path):
+        # Static mode (default) must NOT add a LOG rule — identical to
+        # pre-#2239 behavior.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443", egress_mode="static"),
+            getent_map={"github.com": ["140.82.112.4"]},
+        )
+        log_calls = [c for c in calls if "LOG" in c]
+        assert log_calls == []
+
+    def test_no_egress_mode_annotation_no_log_rule(self, tmp_path):
+        # Missing annotation (old containers) must not add LOG.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443"),
+            getent_map={"github.com": ["140.82.112.4"]},
+        )
+        log_calls = [c for c in calls if "LOG" in c]
+        assert log_calls == []
+
+    def test_interactive_mode_adds_log_and_drop(self, tmp_path):
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443", egress_mode="interactive"),
+            getent_map={"github.com": ["140.82.112.4"]},
+            hostname="abc123def456",
+        )
+        # The LOG rule should be present with rate limiting and the
+        # container-id-based prefix.
+        log_calls = [c for c in calls if "LOG" in c]
+        assert len(log_calls) == 1
+        log_call = log_calls[0]
+        assert "-A" in log_call
+        assert "OUTPUT" in log_call
+        assert "--limit" in log_call
+        assert "5/sec" in log_call
+        assert "--limit-burst" in log_call
+        assert "20" in log_call
+        assert "--log-prefix" in log_call
+        # Prefix includes the container hostname
+        prefix_idx = log_call.index("--log-prefix") + 1
+        assert log_call[prefix_idx] == "klangk-egress:abc123def456:"
+        assert "--log-uid" in log_call
+        # An explicit DROP should follow the LOG
+        drop_calls = [c for c in calls if c == ["-A", "OUTPUT", "-j", "DROP"]]
+        assert len(drop_calls) == 1
+
+    def test_interactive_mode_drop_after_log(self, tmp_path):
+        # The explicit DROP must come AFTER the LOG rule in the chain.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443", egress_mode="interactive"),
+            getent_map={"github.com": ["140.82.112.4"]},
+        )
+        log_idx = next(i for i, c in enumerate(calls) if "LOG" in c)
+        drop_idx = next(
+            i
+            for i, c in enumerate(calls)
+            if c == ["-A", "OUTPUT", "-j", "DROP"]
+        )
+        assert drop_idx > log_idx
+
+    def test_interactive_mode_seed_rules_still_applied(self, tmp_path):
+        # Pre-approved allowed_domains are still installed as ACCEPT rules
+        # even in interactive mode.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443,pypi.org", egress_mode="interactive"),
+            getent_map={
+                "github.com": ["140.82.112.4"],
+                "pypi.org": ["151.101.0.0"],
+            },
+        )
+        accept = _accept_rules(calls)
+        dests = [c[3] for c in accept]
+        assert "140.82.112.4" in dests
+        assert "151.101.0.0" in dests
+
+    def test_interactive_mode_hostname_fallback(self, tmp_path):
+        # If hostname file is missing, fall back to "unknown".
+        calls = _run_hook(
+            tmp_path,
+            _state("a.example:443", egress_mode="interactive"),
+            getent_map={"a.example": ["1.2.3.4"]},
+            hostname=False,
+        )
+        log_calls = [c for c in calls if "LOG" in c]
+        assert len(log_calls) == 1
+        prefix_idx = log_calls[0].index("--log-prefix") + 1
+        assert log_calls[0][prefix_idx] == "klangk-egress:unknown:"
+
+
+class TestCreateKwargsEgressMode:
+    """Tests for create_kwargs with egress_mode parameter (#2239)."""
+
+    def test_static_mode_no_egress_mode_annotation(
+        self, tmp_path, monkeypatch
+    ):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
+        nf_obj.install_hooks()
+        ann, _, _ = nf_obj.create_kwargs(
+            ["github.com:443"], egress_mode="static"
+        )
+        assert nf.ANNOTATION_EGRESS_MODE_KEY not in ann
+
+    def test_interactive_mode_adds_egress_mode_annotation(
+        self, tmp_path, monkeypatch
+    ):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
+        nf_obj.install_hooks()
+        ann, _, _ = nf_obj.create_kwargs(
+            ["github.com:443"], egress_mode="interactive"
+        )
+        assert ann[nf.ANNOTATION_EGRESS_MODE_KEY] == "interactive"
+        assert ann[nf.ANNOTATION_KEY] == "github.com:443"
+
+    def test_default_egress_mode_is_static(self, tmp_path, monkeypatch):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
+        nf_obj.install_hooks()
+        ann, _, _ = nf_obj.create_kwargs(["github.com:443"])
+        assert nf.ANNOTATION_EGRESS_MODE_KEY not in ann
 
 
 # --- macOS / podman machine support (#1959) ---

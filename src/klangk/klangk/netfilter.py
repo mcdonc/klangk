@@ -54,6 +54,13 @@ logger = logging.getLogger(__name__)
 # presence, so a workspace without it is never filtered.
 ANNOTATION_KEY = "klangk.netfilter.rules"
 
+# OCI annotation carrying the egress mode (``static`` or ``interactive``).
+# When ``interactive``, the hook adds a rate-limited LOG rule before the
+# final DROP so the consent daemon can observe blocked destinations and
+# prompt a human (#2239). When absent or ``static``, no LOG rule is added
+# and the ruleset is fully immutable.
+ANNOTATION_EGRESS_MODE_KEY = "klangk.netfilter.egress_mode"
+
 # Filenames written into the configured hooks dir.
 HOOK_JSON_NAME = "klangk-netfilter.json"
 HOOK_SCRIPT_NAME = "klangk-netfilter.sh"
@@ -280,9 +287,11 @@ set -u
 
 state=$(cat)
 
-# Extract the annotation value + the init pid with sed (no jq dependency).
+# Extract the annotation values + the init pid with sed (no jq dependency).
 rules=$(printf '%s' "$state" \
     | sed -n 's/.*"klangk.netfilter.rules"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+egress_mode=$(printf '%s' "$state" \
+    | sed -n 's/.*"klangk.netfilter.egress_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 pid=$(printf '%s' "$state" \
     | sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
 
@@ -459,6 +468,37 @@ for _spec in "$@"; do
         ipt -A OUTPUT $_rule
     done
 done
+
+# Interactive egress consent mode (#2239). When egress_mode is
+# "interactive", add a rate-limited LOG rule so blocked destinations are
+# visible to the consent daemon (which tails /dev/kmsg or NFLOG). The
+# log prefix includes a workspace-specific tag extracted from the
+# klangk.netfilter.egress_mode annotation — the consent daemon parses
+# this prefix to correlate log lines to workspaces without maintaining
+# an IP→workspace map. The rate limit (5/sec, burst 20) caps log
+# flooding from adversarial containers — the DROP still fires for
+# every packet, only the LOG is throttled. An explicit final DROP
+# follows (redundant given the OUTPUT policy, but makes the chain
+# self-documenting and ensures LOG precedes DROP regardless of future
+# chain additions). In static mode (the default), no LOG rule is added
+# — the ruleset is fully immutable and identical to the pre-#2239
+# behavior.
+#
+# The log prefix uses the container ID (first 12 chars of the hostname,
+# which podman sets to the container's short ID by default) for
+# workspace correlation. klangk's container registry already knows
+# each container's ID, so the consent daemon maps
+# log-prefix → container_id → workspace_id.
+if [ "$egress_mode" = "interactive" ]; then
+    # Use the container's hostname (podman sets it to the short container
+    # ID) as the tag in the log prefix for workspace correlation.
+    # KLANGK_NETFILTER_HOSTNAME overrides the path (for tests).
+    _hostname_file=${KLANGK_NETFILTER_HOSTNAME:-/proc/$pid/root/etc/hostname}
+    _cid=$(cat "$_hostname_file" 2>/dev/null || echo "unknown")
+    ipt -A OUTPUT -m limit --limit 5/sec --limit-burst 20 \
+        -j LOG --log-prefix "klangk-egress:${_cid}:" --log-uid
+    ipt -A OUTPUT -j DROP
+fi
 
 exit 0
 """
@@ -691,7 +731,9 @@ class NetFilter:
         return True
 
     def create_kwargs(
-        self, allowed_domains: list[str] | None
+        self,
+        allowed_domains: list[str] | None,
+        egress_mode: str = "static",
     ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
         """Build ``(annotations, hooks_dirs, cap_drop)`` for a container.
 
@@ -711,7 +753,12 @@ class NetFilter:
 
         ``cap_drop`` is :data:`DROPPED_CAPABILITIES` (``NET_ADMIN``) for a
         filtered container, so the entrypoint cannot flush the iptables
-        ruleset (#1773)."""
+        ruleset (#1773).
+
+        When ``egress_mode`` is ``"interactive"`` (#2239), the
+        :data:`ANNOTATION_EGRESS_MODE_KEY` annotation is added so the OCI
+        hook installs a rate-limited LOG rule before the final DROP,
+        enabling the consent daemon to observe blocked destinations."""
         # Workspace overrides the deploy default; empty/None inherits it.
         domains = (
             list(allowed_domains)
@@ -750,6 +797,8 @@ class NetFilter:
             )
             return None, None, None
         annotation = {ANNOTATION_KEY: render_rules_annotation(domains)}
+        if egress_mode == "interactive":
+            annotation[ANNOTATION_EGRESS_MODE_KEY] = egress_mode
         # macOS: ``--hooks-dir`` is silently ignored in remote mode.
         # Hooks are in the standard dir inside the VM (installed by
         # ``_install_hooks_in_vm``), discovered automatically by podman.
