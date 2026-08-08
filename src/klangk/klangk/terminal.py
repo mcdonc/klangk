@@ -123,6 +123,8 @@ def build_shell_command(
     read_only: bool = False,
     tmux_enabled: bool = True,
     ssh_agent_socket: str | None = None,
+    user_id: str | None = None,
+    user_handle: str | None = None,
 ) -> tuple[list[str], str | None]:
     """Build the shell command for a terminal session.
 
@@ -162,6 +164,10 @@ def build_shell_command(
         tmux_env = ["-e", f"HOME={user_home}"]
     if ssh_agent_socket is not None:
         tmux_env += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+    if user_id is not None:
+        tmux_env += ["-e", f"KLANGKWS_USER_ID={user_id}"]
+    if user_handle is not None:
+        tmux_env += ["-e", f"KLANGKWS_USER_HANDLE={user_handle}"]
     if session_name is not None:
         if join_session is not None:
             # Join an existing session group.  Use a unique session name
@@ -947,6 +953,8 @@ class TerminalSession:
             read_only=self.read_only,
             tmux_enabled=self._terminal.tmux_enabled(),
             ssh_agent_socket=self.ssh_agent_socket,
+            user_id=self.user_id,
+            user_handle=self.user_handle,
         )
         work_dir = "/home"
         argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)

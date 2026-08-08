@@ -256,11 +256,14 @@ class TestStart:
         assert "KLANGKWS_USER_HANDLE=alice" in fake.argv
         # Work dir is always /home (bash cd's to $HOME on login)
         assert fake.argv[fake.argv.index("-w") + 1] == "/home"
-        # HOME is also passed to tmux via -e so child shells inherit it
+        # HOME + user identity are also passed to tmux via -e so child
+        # shells inherit them (#2259).
         tmux_idx = fake.argv.index("tmux")
         tmux_tail = fake.argv[tmux_idx:]
         assert "-e" in tmux_tail
         assert "HOME=/home/alice" in tmux_tail
+        assert "KLANGKWS_USER_ID=uid-123" in tmux_tail
+        assert "KLANGKWS_USER_HANDLE=alice" in tmux_tail
         # Grouped session: -t targets the base session, -s is a unique name
         assert "-t" in tmux_tail
         assert tmux_tail[tmux_tail.index("-t") + 1] == "uid-123"
