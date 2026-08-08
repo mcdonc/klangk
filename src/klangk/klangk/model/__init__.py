@@ -61,6 +61,9 @@ from .workspaces import (
     SETUP_STATE_FAILED,
     SETUP_STATE_PENDING,
     SETUP_STATES,
+    EGRESS_MODE_STATIC,
+    EGRESS_MODE_INTERACTIVE,
+    EGRESS_MODES,
 )
 from .ports import (
     MAX_PORT,
@@ -73,6 +76,17 @@ from .chat import (
     MSG_SYSTEM,
     MSG_USER,
     MENTION_RE,
+)
+from .egress_consent import (
+    DECISION_ALLOWED,
+    DECISION_DENIED,
+    DECISION_EXPIRED,
+    DECISION_PENDING,
+    DECISIONS,
+    SCOPE_DEPLOY,
+    SCOPE_ONCE,
+    SCOPE_WORKSPACE,
+    SCOPES,
 )
 from .invitations import ADMIN_INVITATION_SORT_COLUMNS
 
@@ -118,6 +132,9 @@ __all__ = (
     "SETUP_STATE_FAILED",
     "SETUP_STATE_PENDING",
     "SETUP_STATES",
+    "EGRESS_MODE_STATIC",
+    "EGRESS_MODE_INTERACTIVE",
+    "EGRESS_MODES",
     # ports — constants + pure socket probe (re-exported via util too)
     "MAX_PORT",
     "port_in_use",
@@ -128,6 +145,16 @@ __all__ = (
     "MSG_SYSTEM",
     "MSG_USER",
     "MENTION_RE",
+    # egress consent — decision/scope constants
+    "DECISION_ALLOWED",
+    "DECISION_DENIED",
+    "DECISION_EXPIRED",
+    "DECISION_PENDING",
+    "DECISIONS",
+    "SCOPE_DEPLOY",
+    "SCOPE_ONCE",
+    "SCOPE_WORKSPACE",
+    "SCOPES",
     # invitations — sort columns
     "ADMIN_INVITATION_SORT_COLUMNS",
 )

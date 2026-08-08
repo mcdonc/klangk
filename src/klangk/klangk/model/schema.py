@@ -148,6 +148,10 @@ async def init_db(db) -> None:
                 -- comma-joined host[:port] specs; NULL = unrestricted
                 -- egress (see KLANGKD_NETFILTER_HOOKS_DIR, #1365)
                 allowed_domains TEXT,
+                -- egress filtering mode: 'static' (immutable allow-list
+                -- at create time, the default) or 'interactive'
+                -- (prompt on first connection to unknown host, #2239).
+                egress_mode TEXT NOT NULL DEFAULT 'static',
                 -- JSON dict of per-workspace behavioral overrides
                 -- (idle_timeout, bridge_timeout, cpu_limit,
                 -- memory_limit, pids_limit, ...). NULL = no overrides;
@@ -217,6 +221,14 @@ async def init_db(db) -> None:
         # column/migration. Structural fields stay as dedicated columns.
         if "settings" not in ws_cols:
             await db.execute("ALTER TABLE workspaces ADD COLUMN settings TEXT")
+        # Migration: add egress_mode column (#2239). 'static' = immutable
+        # allow-list at create time (today's behavior); 'interactive' =
+        # prompt on first connection to unknown host.
+        if "egress_mode" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces"
+                " ADD COLUMN egress_mode TEXT NOT NULL DEFAULT 'static'"
+            )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,
@@ -322,6 +334,41 @@ async def init_db(db) -> None:
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 accepted_at TEXT
             )
+        """)
+        # Interactive egress consent (#2239). Tracks blocked outbound
+        # connections that need human approval. CHECK constraints enforce
+        # the decision/scope state machine at the storage layer — the same
+        # DB-backstop philosophy as the agent-user triggers above.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS egress_consent (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                dest_host TEXT NOT NULL,
+                dest_port INTEGER,
+                pid INTEGER,
+                process_name TEXT,
+                decision TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (decision IN ('pending', 'allowed', 'denied', 'expired')),
+                scope TEXT
+                    CHECK (scope IS NULL OR scope IN ('once', 'workspace', 'deploy')),
+                requested_at REAL NOT NULL,
+                decided_at REAL,
+                decided_by TEXT REFERENCES users(id) ON DELETE SET NULL
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_egress_consent_workspace
+            ON egress_consent(workspace_id, decision)
+        """)
+        # At most one pending request per (workspace, host, port). The
+        # partial index makes INSERT OR IGNORE the atomic dedup path,
+        # eliminating the TOCTOU between has_pending() and create_request().
+        # COALESCE maps NULL port to -1 because SQLite treats NULLs as
+        # distinct in unique indexes.
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_egress_consent_pending_dedup
+            ON egress_consent(workspace_id, dest_host, COALESCE(dest_port, -1))
+            WHERE decision = 'pending'
         """)
         # Migration: drop legacy role and workspace_access tables
         for table in ("user_roles", "roles", "workspace_access"):
