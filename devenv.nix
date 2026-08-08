@@ -46,7 +46,7 @@ in
     with pkgs;
     [
       bash # explicit bash for shell scripts (CI /bin/sh may be dash)
-      coreutils # GNU du (macOS BSD du lacks -b)
+      coreutils # GNU du -b + stat -f -c %T (macOS BSD lacks both)
       docker-client
       expect
       flutter
@@ -70,6 +70,7 @@ in
           su
           util-linux
           matchbox # kiosk WM for the demo video recorder (record-demo.sh)
+          fuse-overlayfs # rootless per-workspace /nix via the plain-dir seed backend (#2219)
         ]
     );
 

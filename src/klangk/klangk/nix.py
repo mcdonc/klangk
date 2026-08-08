@@ -1,19 +1,32 @@
-"""Per-workspace nix store via btrfs snapshots (#2201, #2208).
+"""Per-workspace nix store (#2201, #2208, #2220).
 
-When a workspace has the per-workspace ``nix`` setting enabled and
-``KLANGKD_NIX_BTRFS_SUBVOLUME`` names a seed btrfs subvolume, the workspace
-gets a writable, isolated ``/nix`` as a **btrfs snapshot** of the seed. The
-seed is built by #2200 (``build-nix-seed``) and loaded into a btrfs subvolume
-by ``scripts/load-nix-seed-btrfs.sh``. ``ContainerRegistry`` binds the
-snapshot's ``/nix`` (and ``nix.conf``) into the workspace container; on
-workspace delete, ``Workspaces`` removes the snapshot.
+A workspace with the per-workspace ``nix`` setting gets a writable, isolated
+``/nix`` derived from a shared seed, via one of two interchangeable backends
+selected by ``nix_seed.type`` (see :class:`klangk.settings.NixSeedConfig`):
 
-btrfs (unlike zfs) lets a non-root user snapshot a subvolume it can write to,
-and a snapshot is reachable through the parent mount (no separate mount), so
-this needs **no privileged helper** — unlike the zfs-clone path, which would
-need a ``cap_sys_admin`` mount helper (see #2210 and openzfs/zfs#10648: non-root
-zfs mount is impossible on Linux). Requires the btrfs filesystem be mounted
-with ``user_subvol_rm_allowed`` so the same non-root user can delete snapshots.
+- **btrfs-snapshot** — the seed is a btrfs subvolume; each workspace gets a CoW
+  snapshot. A snapshot is reachable through the parent mount and btrfs lets a
+  non-root user snapshot a subvolume it can write to, so this needs **no
+  privileged helper** (unlike zfs, whose non-root mount is impossible on Linux
+  — openzfs/zfs#10648). Requires a btrfs filesystem mounted with
+  ``user_subvol_rm_allowed``. The CoW-optimised choice.
+- **fuse-overlayfs** (the default) — the seed is a plain directory overlaid per
+  workspace via ``fuse-overlayfs`` (seed = read-only lower, per-workspace upper
+  captures writes). Works on **any** filesystem, no privileged helper (needs
+  ``fuse-overlayfs`` + ``fusermount3`` + ``/dev/fuse``).
+
+Both return a *mountpoint* — a directory holding ``nix/`` and ``nix.conf`` —
+that ``ContainerRegistry`` binds into the container as ``/nix`` (+
+``/etc/nix/nix.conf``). On workspace delete, ``Workspaces`` tears it down. The
+per-workspace ``nix`` flag (checked by the caller) opts a given workspace in;
+this module only decides whether a backend is configured (``nix_seed.path``
+set). Omit ``nix_seed`` entirely to disable the feature (nix is then image-only).
+
+Caveat: the fuse backend suits a bare-metal Linux host (podman runs on the host,
+no userns nesting between the FUSE mount and the workspace container). It does
+**not** work where podman is nested — the rootless runtime can't bind a
+process-owned FUSE mount into a workspace container's userns (host-container and
+macOS deployments; see #2221). There, fall back to the nix image's baked ``/nix``.
 """
 
 from __future__ import annotations
@@ -21,50 +34,100 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
+import stat
 
 logger = logging.getLogger(__name__)
 
 
 class NixError(RuntimeError):
-    """A btrfs operation or configuration problem in the nix subsystem."""
+    """A btrfs/fuse operation or configuration problem in the nix subsystem."""
+
+
+def _rmtree_rw(path: str) -> None:
+    """``shutil.rmtree`` that survives read-only store files/dirs.
+
+    nix store paths are 0444 files inside 0555 dirs; a plain ``rmtree`` aborts
+    because unlinking a file needs write on its parent dir. The ``onerror``
+    makes the failing entry's parent (and the entry) user-writable, then retries
+    the failed op. If it still can't (genuinely stuck), it logs and moves on so
+    cleanup of a half-deleted workspace is best-effort.
+    """
+
+    def _onerror(func, p: str, _exc) -> None:
+        try:
+            os.chmod(os.path.dirname(p), stat.S_IRWXU)
+            os.chmod(p, stat.S_IRWXU)
+            func(p)
+        except OSError as exc:
+            logger.warning(
+                "nix: could not remove %s during cleanup: %s", p, exc
+            )
+
+    shutil.rmtree(path, onerror=_onerror)
 
 
 class Nix:
-    """Owns the per-workspace btrfs-snapshot lifecycle for ``/nix``.
+    """Owns the per-workspace ``/nix`` lifecycle.
 
-    Constructed once in ``main.build_app`` as ``app.state.nix``. btrfs calls go
-    through ``asyncio.create_subprocess_exec``; existence checks are plain
-    ``os.path`` queries (a snapshot is a directory reachable through the parent
-    btrfs mount, so there is no mount step and no separate mountpoint lookup).
+    Constructed once in ``main.build_app`` as ``app.state.nix``. Subprocess
+    calls (``btrfs`` / ``fuse-overlayfs`` / ``fusermount3`` / ``stat``) go
+    through ``asyncio.create_subprocess_exec``; existence/mount checks are plain
+    ``os.path`` queries. ``ensure_workspace_nix`` / ``destroy_workspace_nix``
+    dispatch to the configured backend (``nix_seed.type``).
     """
 
     def __init__(self, app):
         self.app = app
 
-    @property
-    def btrfs_configured(self) -> bool:
-        """Whether the btrfs-snapshot path is available (a seed subvolume is set).
-
-        The per-workspace ``nix`` flag (checked by the caller) decides whether a
-        *given* workspace opts in; this only says the deploy can serve it.
-        """
-        return bool(self.app.state.settings.nix_btrfs_subvolume)
+    # --- configuration / dispatch -------------------------------------------
 
     @property
-    def seed(self) -> str:
-        # Path to the seed btrfs subvolume, e.g. /steam2/btrfs/klangk-nix/seed.
-        # ``btrfs_configured`` already requires this set.
-        return self.app.state.settings.nix_btrfs_subvolume or ""
+    def configured(self) -> bool:
+        """Whether a nix backend is configured (``nix_seed.path`` is set)."""
+        return bool(self.app.state.settings.nix_seed.path)
+
+    @property
+    def _seed(self) -> str:
+        return self.app.state.settings.nix_seed.path or ""
+
+    @property
+    def _type(self) -> str:
+        return self.app.state.settings.nix_seed.type
 
     def _ws_path(self, workspace_id: str) -> str:
-        # Sibling of the seed: <seed's parent>/ws-<workspace_id>.
-        return os.path.join(os.path.dirname(self.seed), f"ws-{workspace_id}")
+        # Sibling of the seed: <seed's parent>/ws-<workspace_id>. Same layout
+        # for both backends (a btrfs snapshot or a fuse overlay work-dir).
+        return os.path.join(os.path.dirname(self._seed), f"ws-{workspace_id}")
 
-    async def _btrfs(
+    async def ensure_workspace_nix(self, workspace_id: str) -> str | None:
+        """Ensure a writable ``/nix`` for *workspace_id*; return its mountpoint.
+
+        The mountpoint holds ``nix/`` (bind-mounted into the container as
+        ``/nix``) and ``nix.conf``. Returns ``None`` when no backend is
+        configured. Idempotent: reuses an existing snapshot/fuse mount.
+        """
+        if not self.configured:
+            return None
+        if self._type == "btrfs-snapshot":
+            return await self._ensure_btrfs(workspace_id)
+        return await self._ensure_fuse(workspace_id)
+
+    async def destroy_workspace_nix(self, workspace_id: str) -> None:
+        """Tear down the per-workspace ``/nix``. No-op if absent/unconfigured."""
+        if not self.configured:
+            return
+        if self._type == "btrfs-snapshot":
+            await self._destroy_btrfs(workspace_id)
+        else:
+            await self._destroy_fuse(workspace_id)
+
+    # --- subprocess helper ---------------------------------------------------
+
+    async def _run(
         self, args: list[str], *, check: bool = True
     ) -> tuple[int, str, str]:
         proc = await asyncio.create_subprocess_exec(
-            "btrfs",
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -74,25 +137,27 @@ class Nix:
         out_s, err_s = out.decode(), err.decode()
         if check and rc != 0:
             raise NixError(
-                f"btrfs {' '.join(args)} failed (rc={rc}): {err_s.strip()}"
+                f"{' '.join(args)} failed (rc={rc}): {err_s.strip()}"
             )
         return rc, out_s, err_s
 
-    async def ensure_workspace_nix(self, workspace_id: str) -> str | None:
-        """Ensure a writable ``/nix`` btrfs snapshot for *workspace_id*.
+    # --- btrfs-snapshot backend ---------------------------------------------
 
-        Returns the snapshot's path (bind-mounted into the container as /nix),
-        or ``None`` when btrfs is not configured. Idempotent: reuses an existing
-        snapshot across restarts (it lives at the path, reachable via the parent
-        mount — no separate mount needed).
-        """
-        if not self.btrfs_configured:
-            return None
-        if not os.path.isdir(self.seed):
+    async def _ensure_btrfs(self, workspace_id: str) -> str:
+        seed = self._seed
+        if not os.path.isdir(seed):
             raise NixError(
-                f"seed subvolume {self.seed} not found — build the seed "
+                f"seed subvolume {seed} not found — build the seed "
                 f"(devenv shell -- build-nix-seed) and load it "
                 f"(scripts/load-nix-seed-btrfs.sh) first"
+            )
+        fstype = (await self._run(["stat", "-f", "-c", "%T", seed]))[1].strip()
+        if fstype != "btrfs":
+            raise NixError(
+                f"nix_seed.type is btrfs-snapshot but the seed {seed} is on "
+                f"{fstype}, not btrfs — either load the seed into a btrfs "
+                f"subvolume (scripts/load-nix-seed-btrfs.sh) or switch to "
+                f"type: fuse-overlayfs"
             )
         ws = self._ws_path(workspace_id)
         if not os.path.exists(ws):
@@ -101,18 +166,15 @@ class Nix:
                 workspace_id,
                 ws,
             )
-            await self._btrfs(["subvolume", "snapshot", self.seed, ws])
+            await self._run(["btrfs", "subvolume", "snapshot", seed, ws])
         return ws
 
-    async def destroy_workspace_nix(self, workspace_id: str) -> None:
-        """Delete the per-workspace snapshot (on workspace delete). No-op if absent."""
-        if not self.btrfs_configured:
-            return
+    async def _destroy_btrfs(self, workspace_id: str) -> str | None:
         ws = self._ws_path(workspace_id)
         if not os.path.exists(ws):
-            return
-        rc, _, err = await self._btrfs(
-            ["subvolume", "delete", ws], check=False
+            return None
+        rc, _, err = await self._run(
+            ["btrfs", "subvolume", "delete", ws], check=False
         )
         if rc != 0:
             logger.warning(
@@ -121,3 +183,70 @@ class Nix:
                 rc,
                 err.strip(),
             )
+        return None
+
+    # --- fuse-overlayfs backend ---------------------------------------------
+
+    async def _ensure_fuse(self, workspace_id: str) -> str:
+        seed = self._seed
+        if not os.path.isdir(os.path.join(seed, "nix")):
+            raise NixError(
+                f"seed directory {seed}/nix not found — build the seed "
+                f"(devenv shell -- build-nix-seed) and point nix_seed.path "
+                f"at its output first"
+            )
+        ws = self._ws_path(workspace_id)
+        merged = os.path.join(ws, "nix")
+        if os.path.ismount(merged):
+            # A live fuse mount is reused — but a prior klangkd crash can leave
+            # a stale mount that's still "mounted" yet unusable. Probe it and
+            # re-mount if the probe fails.
+            try:
+                os.listdir(merged)
+            except OSError:
+                logger.warning(
+                    "nix: stale fuse mount at %s; re-mounting", merged
+                )
+                await self._run(["fusermount3", "-u", merged], check=False)
+                await self._mount_fuse(seed, ws, merged)
+        else:
+            await self._mount_fuse(seed, ws, merged)
+        return ws
+
+    async def _mount_fuse(self, seed: str, ws: str, merged: str) -> None:
+        os.makedirs(os.path.join(ws, "upper"), exist_ok=True)
+        os.makedirs(os.path.join(ws, "work"), exist_ok=True)
+        os.makedirs(merged, exist_ok=True)
+        await self._run(
+            [
+                "fuse-overlayfs",
+                merged,
+                "-o",
+                f"lowerdir={seed}/nix,upperdir={ws}/upper,workdir={ws}/work",
+            ]
+        )
+        # The container binds <mountpoint>/nix.conf; seed provides it. Copy so
+        # the mountpoint is self-contained (a symlink would resolve through the
+        # seed path, which need not be visible inside the container's view).
+        shutil.copyfile(
+            os.path.join(seed, "nix.conf"), os.path.join(ws, "nix.conf")
+        )
+
+    async def _destroy_fuse(self, workspace_id: str) -> None:
+        ws = self._ws_path(workspace_id)
+        if not os.path.exists(ws):
+            return
+        merged = os.path.join(ws, "nix")
+        if os.path.ismount(merged):
+            rc, _, err = await self._run(
+                ["fusermount3", "-u", merged], check=False
+            )
+            if rc != 0:
+                logger.warning(
+                    "nix: fusermount3 -u %s failed (rc=%s): %s",
+                    merged,
+                    rc,
+                    err.strip(),
+                )
+        # upper holds read-only store paths; _rmtree_rw chmods them away.
+        _rmtree_rw(ws)

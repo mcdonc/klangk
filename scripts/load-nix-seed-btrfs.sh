@@ -43,4 +43,7 @@ echo "==> Populating from $SEED_TREE"
 chmod -R u+w "$SEED_TREE" 2>/dev/null || true
 cp -a "$SEED_TREE/nix" "$SEED_TREE/nix.conf" "$SEED"/
 
-echo "==> Done. Set: nix_btrfs_subvolume: $SEED"
+echo "==> Done. Set in klangkd.yaml:"
+echo "  nix_seed:"
+echo "    type: btrfs-snapshot"
+echo "    path: $SEED"

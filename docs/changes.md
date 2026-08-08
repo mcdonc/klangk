@@ -32,6 +32,20 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`nix_seed` — per-workspace `/nix` with two backends (#2219, #2220).** The
+  per-workspace `/nix` config is now one block — `nix_seed: {type, path}` —
+  selecting a backend: `btrfs-snapshot` (a CoW snapshot of a seed btrfs
+  subvolume) or `fuse-overlayfs` (the default; a `fuse-overlayfs` overlay of a
+  plain-directory seed — works on any filesystem, no privileged helper; needs
+  `fuse-overlayfs` + `fusermount3` + `/dev/fuse`). Omit `nix_seed` to disable
+  (nix is image-only). The fuse backend suits a bare-metal Linux host; it does
+  not work where podman is nested (host-container, macOS — see #2221). See
+  `docs/features/nix.md`.
+- **`klangkd doctor` verifies GNU `stat` (#2220).** The nix btrfs-snapshot
+  backend validates the seed is on btrfs via `stat -f -c %T`; doctor now checks
+  GNU coreutils `stat` is on PATH (Linux) so a missing or BSD `stat` surfaces at
+  pre-flight. `coreutils` (which provides `stat`) is explicit in `devenv.nix`.
+
 - **Shared base `/nix` store seed (`scripts/build-nix-seed.sh`) (#2200).**
   A reproducible build step that produces a self-consistent `/nix` tree (the
   store, the nix DB, and a base profile with nix and devenv) and an
@@ -39,8 +53,9 @@ operators or integrators to act when upgrading.
   deployed alongside klangk as a host-side tree rather than baked into a
   workspace image. Run via `devenv shell -- build-nix-seed`. Consumed by #2201.
 
-- **Per-workspace `/nix` via btrfs snapshots (#2201, #2202, #2208).** When
-  `nix_btrfs_subvolume` names a seed btrfs subvolume, a workspace with the
+- **Per-workspace `/nix` via btrfs snapshots (#2201, #2202, #2208).** With
+  `nix_seed.type: btrfs-snapshot` and a seed btrfs subvolume at `nix_seed.path`,
+  a workspace with the
   per-workspace `nix` setting enabled gets a writable, isolated `/nix` as a
   btrfs snapshot of the seed: snapshotted on first start, reused across
   restarts, deleted on workspace delete; the snapshot's `/nix` and `nix.conf`

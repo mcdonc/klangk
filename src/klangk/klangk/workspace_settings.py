@@ -201,7 +201,8 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     "memory_limit": _coerce_memory,
     "pids_limit": _coerce_positive_int,
     # #2202: per-workspace nix flag — triggers the per-workspace /nix mount
-    # (Nix.ensure_workspace_nix) when nix_btrfs_subvolume is configured.
+    # (Nix.ensure_workspace_nix) when a backend is configured (``nix_seed``,
+    # #2219/#2220).
     "nix": _coerce_bool,
 }
 

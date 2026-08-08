@@ -71,52 +71,100 @@ See [#2198](https://github.com/mcdonc/klangk/issues/2198) (Design section) for t
 investigation that compared overlay / hardlinks / zfs / btrfs and settled on
 btrfs.
 
-## How workspaces consume it (#2201, #2208)
+## How workspaces consume it (#2201, #2208, #2219, #2220)
 
-Each nix-enabled workspace gets a writable, isolated `/nix` as a **btrfs
-snapshot** of the seed subvolume — instant, copy-on-write (only the
-workspace's changes consume space), and fully isolated. klangkd snapshots the
-seed on first start, reuses the snapshot across restarts, and deletes it on
-workspace delete. The snapshot's `/nix` and `nix.conf` are bind-mounted into
-the container.
+Each nix-enabled workspace gets a writable, isolated `/nix` derived from the
+shared seed. klangkd provisions it on first start, reuses it across restarts,
+and deletes it on workspace delete; the `/nix` and `nix.conf` are bind-mounted
+into the container. Configure it with one block — `nix_seed` — grouping the
+seed path and the backend that consumes it:
 
-A btrfs snapshot is reachable through the parent mount (no separate mount),
-and btrfs lets a non-root user snapshot a subvolume it can write to — so this
-needs **no privileged helper**. That's the deciding advantage over zfs, whose
+```yaml
+nix_seed:
+  type: btrfs-snapshot # or fuse-overlayfs (the default)
+  path: /path/to/seed
+```
+
+Omit `nix_seed` entirely (or leave `path` unset) to disable the feature — nix
+is then image-only (pick the nix image `klangk-workspace-nix` for its baked
+`/nix`). The two backends:
+
+- **`btrfs-snapshot`** — the seed is a btrfs subvolume; each workspace gets a
+  CoW snapshot (instant, only the workspace's changes consume space). A
+  snapshot is reachable through the parent mount and btrfs lets a non-root
+  user snapshot a subvolume it can write to, so this needs **no privileged
+  helper**. Requires a btrfs filesystem mounted with `user_subvol_rm_allowed`.
+  The CoW-optimised choice where btrfs is available.
+- **`fuse-overlayfs`** (the default) — the seed is a plain directory (the
+  `build-nix-seed` output, on any filesystem); each workspace gets a
+  `fuse-overlayfs` overlay with the seed as the read-only lower layer and a
+  per-workspace upper layer that captures writes (new store paths, profile/db
+  updates). Also **no privileged helper** — needs `fuse-overlayfs` +
+  `fusermount3` + `/dev/fuse`.
+
+Both need no privileged helper — that's the deciding advantage over zfs, whose
 non-root mount is impossible on Linux ([openzfs/zfs#10648](https://github.com/openzfs/zfs/discussions/10648))
 and would force a `cap_sys_admin` helper (#2210). (The #2201 spike, PR #2205,
-compared the options; #2210 is closed as not-needed for the btrfs path.)
+compared the options; #2210 is closed as not-needed.)
+
+> **Where the fuse backend works.** `fuse-overlayfs` suits a bare-metal Linux
+> host (podman runs on the host — no userns nesting between klangkd's FUSE
+> mount and the workspace container). It does **not** work where podman is
+> nested — the rootless runtime can't bind a process-owned FUSE mount into a
+> workspace container's userns (host-container and macOS deployments; see
+> #2221). Use `btrfs-snapshot` there if you have btrfs, otherwise the nix
+> image.
 
 ### Enable it
 
-1. Build the seed (#2200) and load it into a btrfs subvolume:
+1. Build the seed (#2200):
 
    ```sh
    devenv shell -- build-nix-seed /tmp/nix-base
-   scripts/load-nix-seed-btrfs.sh /tmp/nix-base /steam2/btrfs/klangk-nix
    ```
 
-   `/steam2/btrfs` must be a btrfs filesystem **mounted with
-   `user_subvol_rm_allowed`** and writable by the klangkd user (so the same
-   non-root user can snapshot _and_ delete). On NixOS, set
-   `fileSystems."/steam2/btrfs".options = [ "user_subvol_rm_allowed" ];`.
+2. Pick a backend, prepare the seed for it, and set `nix_seed` (in
+   `klangkd.yaml`, or env `KLANGKD_NIX_SEED__TYPE` / `KLANGKD_NIX_SEED__PATH`):
+   - **`btrfs-snapshot`** — load the seed into a subvolume:
 
-2. Point klangkd at the seed subvolume (in `klangkd.yaml` or env):
+     ```sh
+     scripts/load-nix-seed-btrfs.sh /tmp/nix-base /steam2/btrfs/klangk-nix
+     ```
 
-   ```yaml
-   nix_btrfs_subvolume: /steam2/btrfs/klangk-nix/seed
-   ```
+     `/steam2/btrfs` must be a btrfs filesystem **mounted with
+     `user_subvol_rm_allowed`** and writable by the klangkd user (so the same
+     non-root user can snapshot _and_ delete). On NixOS:
+     `fileSystems."/steam2/btrfs".options = [ "user_subvol_rm_allowed" ];`.
 
-   This advertises nix availability (the create-workspace dialog shows a
-   "Nix" checkbox). It does **not** force any image — image selection stays
-   the user's.
+     ```yaml
+     nix_seed:
+       type: btrfs-snapshot
+       path: /steam2/btrfs/klangk-nix/seed
+     ```
+
+   - **`fuse-overlayfs`** (no btrfs) — use the seed directory directly (no
+     loader step):
+
+     ```yaml
+     nix_seed:
+       path: /var/lib/klangk/nix-base # type defaults to fuse-overlayfs
+     ```
+
+     The host needs `fuse-overlayfs`, `fusermount3`, and a writable
+     `/dev/fuse` (on NixOS, `fuse-overlayfs` is in the dev shell; `fusermount3`
+     ships as a setuid wrapper; `/dev/fuse` is world-rw by default). Per-workspace
+     overlays land as siblings of the seed dir (`<seed parent>/ws-<id>`).
+
+   Either backend advertises nix availability (the create-workspace dialog
+   shows a "Nix" checkbox). It does **not** force any image — image selection
+   stays the user's. A `btrfs-snapshot` seed whose path isn't on a btrfs
+   filesystem fails fast at startup with a clear error.
 
 3. Per workspace, tick **Nix** when creating it (or set `nix: true` in its
-   settings via the API). That workspace then gets a `/nix` snapshot on start.
+   settings via the API). That workspace then gets a `/nix` on start.
 
-Workspaces without the `nix` setting are untouched. Without
-`nix_btrfs_subvolume`, the checkbox is hidden and nix is image-only: pick the
-nix image (`klangk-workspace-nix`) for its baked `/nix` (the non-btrfs fallback).
+Workspaces without the `nix` setting are untouched. With `nix_seed` unset, the
+checkbox is hidden and nix is image-only.
 
 nix/devenv are on `$PATH` by default: klangkd sets `KLANGKWS_NIX=1`, and the
 default workspace image's `/etc/profile.d/z-klangk-nix.sh` (baked in #2199)
@@ -125,9 +173,17 @@ image with no manual step. (The flag is orthogonal to image selection.)
 
 ### Restart persistence
 
-The snapshot is a btrfs subvolume, so it survives container stop/start —
-packages a user installs persist across restarts. Deleting the workspace (not
-just stopping it) deletes the snapshot. Updating the seed (re-run
-`build-nix-seed` + `load-nix-seed-btrfs.sh`) does not affect existing
-snapshots — btrfs snapshots are independent CoW copies, so they keep their
-data; new workspaces get the new seed.
+The per-workspace `/nix` survives container stop/start — packages a user
+installs persist across restarts. Deleting the workspace (not just stopping
+it) tears it down (btrfs subvolume delete, or `fusermount3 -u` + remove the
+overlay). Updating the seed does not affect existing per-workspace `/nix` —
+btrfs snapshots are independent CoW copies, and fuse-overlayfs uppers carry
+their own copy-up of anything changed — so they keep their data; new
+workspaces get the new seed.
+
+One difference across backends on a **klangkd restart**: a btrfs snapshot is
+just a directory reachable through the parent mount, so it is still there;
+a fuse-overlayfs mount is a FUSE handle owned by the klangkd process, so it
+does not survive the process — klangkd re-mounts it on the workspace's next
+start (the upper dir + installed packages persist, only the mount is
+re-created).

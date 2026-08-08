@@ -3888,8 +3888,8 @@ async def test_nix_binds_empty_without_flag():
 
 
 async def test_nix_binds_empty_when_btrfs_not_configured():
-    """Flag on but btrfs not configured -> ensure returns None -> no bind/env."""
-    app_state = _make_app_state()  # no nix_btrfs_subvolume -> not configured
+    """Flag on but nix not configured -> ensure returns None -> no bind/env."""
+    app_state = _make_app_state()  # no nix_seed -> not configured
     reg = app_state.state.container_registry
     assert await reg._nix_binds("ws1", {"nix": True}) == ([], [])
 
