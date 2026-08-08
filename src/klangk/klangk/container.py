@@ -1490,6 +1490,16 @@ class ContainerRegistry:
             time.monotonic() - t_podman_start,
         )
 
+        # Backend gateway: the createContainer OCI hook can't read the
+        # container's /etc/hosts (pid=0 there), so host.containers.internal
+        # — whose IP the network backend picks at start — isn't allow-listed
+        # by the hook. Allow it post-start so a filtered workspace can reach
+        # its backend (#1365).
+        if create_kwargs.get("annotations"):
+            _nf = getattr(self.app.state, "netfilter", None)
+            if _nf is not None:
+                await _nf.allow_backend_gateway(cid)
+
         # Configure sudo inside the container.
         if allow_sudo:
             sudoers_rule = "klangk ALL=(ALL) NOPASSWD:ALL"

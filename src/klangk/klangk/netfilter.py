@@ -47,6 +47,8 @@ import platform
 import re
 import subprocess
 
+from .podman import PodmanError
+
 logger = logging.getLogger(__name__)
 
 # OCI annotation carrying the comma-separated ``host[:port]`` spec list.
@@ -509,10 +511,11 @@ fi
 # NOTE: at the createContainer stage podman delivers pid=0 in the OCI state
 # (the container process isn't started yet), so /proc/$pid/root/etc/hosts is
 # unreadable on a real deploy — this read succeeds only under the test
-# harness (KLANGK_NETFILTER_HOSTS). Allowing the gateway IP therefore needs
-# it mirrored via an annotation (like the DNS resolvers) — a #1365 follow-up.
-# Until then a filtered workspace must reach its backend via an allowed
-# domain/IP rather than host.containers.internal.
+# harness (KLANGK_NETFILTER_HOSTS). The backend gateway IP is therefore
+# allow-listed POST-START by NetFilter.allow_backend_gateway() (it resolves
+# host.containers.internal in the running container and inserts an ACCEPT
+# rule atop this OUTPUT chain); this read is kept for the test harness and
+# as a defense-in-depth no-op on deploys without the post-start step.
 _hosts=${KLANGK_NETFILTER_HOSTS:-/proc/$pid/root/etc/hosts}
 if [ -r "$_hosts" ]; then
     while read -r _gip _grest; do
@@ -911,3 +914,80 @@ class NetFilter:
             else [path, *STANDARD_HOOK_DIRS]
         )
         return (annotation, hooks_dirs, list(DROPPED_CAPABILITIES), _resolvers)
+
+    async def allow_backend_gateway(self, container_id: str) -> bool:
+        """Allow the workspace backend gateway in the container's egress filter.
+
+        The ``createContainer`` OCI hook can't read the container's
+        ``/etc/hosts`` (the OCI state carries ``pid=0`` there), so
+        ``host.containers.internal`` — whose IP the network backend
+        (pasta/slirp/netavark) selects at *start*, after the hook — is not
+        allow-listed by the hook's ruleset. After start, resolve that IP from
+        the running container and insert an ``ACCEPT`` rule at the top of its
+        ``OUTPUT`` chain (before the hook's final ``DROP``) so a filtered
+        workspace can reach its backend (#1365).
+
+        Best-effort + idempotent: returns False (and logs) if the gateway
+        can't be resolved or the rule can't be inserted — the workspace still
+        starts, only its backend reachability is affected.
+        """
+        pod = self.app.state.podman
+        try:
+            rc, out, _err = await pod.exec_container(
+                container_id,
+                ["getent", "hosts", "host.containers.internal"],
+                timeout=15.0,
+            )
+        except PodmanError as exc:
+            logger.warning(
+                "backend-gateway: getent failed in %s: %s", container_id, exc
+            )
+            return False
+        if rc != 0 or not out.strip():
+            logger.info(
+                "backend-gateway: host.containers.internal did not resolve "
+                "in %s (no --add-host?); not allow-listing",
+                container_id,
+            )
+            return False
+        gateway_ip = out.split()[0]
+        info = await pod.inspect_container(container_id)
+        if not info:
+            return False
+        pid = (info.get("State") or {}).get("Pid") or 0
+        if not pid:
+            return False
+        try:
+            await pod.run(
+                [
+                    "unshare",
+                    "--",
+                    "nsenter",
+                    "-t",
+                    str(pid),
+                    "-n",
+                    "iptables",
+                    "-I",
+                    "OUTPUT",
+                    "1",
+                    "-d",
+                    gateway_ip,
+                    "-j",
+                    "ACCEPT",
+                ],
+                timeout=15.0,
+            )
+        except PodmanError as exc:
+            logger.warning(
+                "backend-gateway: could not insert allow-rule for %s in %s: %s",
+                gateway_ip,
+                container_id,
+                exc,
+            )
+            return False
+        logger.info(
+            "backend-gateway: allowed %s for workspace container %s",
+            gateway_ip,
+            container_id,
+        )
+        return True

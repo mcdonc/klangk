@@ -1418,3 +1418,98 @@ class TestCreateKwargsMacOS:
         assert ann is not None
         assert hooks_dirs == [os.path.realpath(path), *nf.STANDARD_HOOK_DIRS]
         assert cap_drop == ["NET_ADMIN"]
+
+
+class TestAllowBackendGateway:
+    """Post-start backend-gateway allow-rule for filtered containers (#1365)."""
+
+    def _nf(self, pod):
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(podman=pod, settings=make_settings({}))
+        )
+        return nf.NetFilter(app)
+
+    async def test_inserts_accept_rule_for_resolved_gateway(self):
+        pod = types.SimpleNamespace(
+            exec_container=mock.AsyncMock(
+                return_value=(0, "169.254.1.2 host.containers.internal\n", "")
+            ),
+            inspect_container=mock.AsyncMock(
+                return_value={"State": {"Pid": 12345}}
+            ),
+            run=mock.AsyncMock(return_value=(0, "", "")),
+        )
+        assert await self._nf(pod).allow_backend_gateway("cid") is True
+        pod.run.assert_awaited_once()
+        args = pod.run.call_args.args[0]
+        assert args[:3] == ["unshare", "--", "nsenter"]
+        assert "-t" in args and "12345" in args
+        assert "169.254.1.2" in args
+        assert "iptables" in args and "-I" in args and "ACCEPT" in args
+
+    async def test_no_resolve_returns_false(self):
+        pod = types.SimpleNamespace(
+            exec_container=mock.AsyncMock(return_value=(1, "", "no host")),
+            inspect_container=mock.AsyncMock(),
+            run=mock.AsyncMock(),
+        )
+        assert await self._nf(pod).allow_backend_gateway("cid") is False
+        pod.run.assert_not_awaited()
+
+    async def test_empty_output_returns_false(self):
+        pod = types.SimpleNamespace(
+            exec_container=mock.AsyncMock(return_value=(0, "", "")),
+            inspect_container=mock.AsyncMock(),
+            run=mock.AsyncMock(),
+        )
+        assert await self._nf(pod).allow_backend_gateway("cid") is False
+        pod.run.assert_not_awaited()
+
+    async def test_exec_failure_returns_false(self):
+        pod = types.SimpleNamespace(
+            exec_container=mock.AsyncMock(
+                side_effect=nf.PodmanError(500, "boom")
+            ),
+            inspect_container=mock.AsyncMock(),
+            run=mock.AsyncMock(),
+        )
+        assert await self._nf(pod).allow_backend_gateway("cid") is False
+        pod.run.assert_not_awaited()
+
+    async def test_insert_failure_returns_false(self):
+        pod = types.SimpleNamespace(
+            exec_container=mock.AsyncMock(
+                return_value=(0, "10.0.0.1 host.containers.internal\n", "")
+            ),
+            inspect_container=mock.AsyncMock(
+                return_value={"State": {"Pid": 99}}
+            ),
+            run=mock.AsyncMock(
+                side_effect=nf.PodmanError(500, "insert failed")
+            ),
+        )
+        assert await self._nf(pod).allow_backend_gateway("cid") is False
+
+    async def test_zero_pid_returns_false(self):
+        pod = types.SimpleNamespace(
+            exec_container=mock.AsyncMock(
+                return_value=(0, "10.0.0.1 host.containers.internal\n", "")
+            ),
+            inspect_container=mock.AsyncMock(
+                return_value={"State": {"Pid": 0}}
+            ),
+            run=mock.AsyncMock(),
+        )
+        assert await self._nf(pod).allow_backend_gateway("cid") is False
+        pod.run.assert_not_awaited()
+
+    async def test_missing_container_returns_false(self):
+        pod = types.SimpleNamespace(
+            exec_container=mock.AsyncMock(
+                return_value=(0, "10.0.0.1 host.containers.internal\n", "")
+            ),
+            inspect_container=mock.AsyncMock(return_value=None),
+            run=mock.AsyncMock(),
+        )
+        assert await self._nf(pod).allow_backend_gateway("cid") is False
+        pod.run.assert_not_awaited()
