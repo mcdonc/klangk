@@ -104,7 +104,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(6));
+      expect(find.byType(TextField), findsNWidgets(10));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -557,7 +557,9 @@ void main() {
 
       // The only close icon on screen is this chip's remove button
       // (no mounts/env chips were added).
-      await tester.tap(find.byIcon(Icons.close));
+      final closeIcon = find.byIcon(Icons.close);
+      await tester.ensureVisible(closeIcon);
+      await tester.tap(closeIcon);
       await tester.pump();
       expect(find.text('example.com:443'), findsNothing);
     });
