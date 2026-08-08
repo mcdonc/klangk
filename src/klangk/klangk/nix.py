@@ -165,15 +165,15 @@ class Nix:
         if not os.path.isdir(seed):
             raise NixError(
                 f"seed subvolume {seed} not found — build the seed "
-                f"(devenv shell -- build-nix-seed) and load it "
-                f"(scripts/load-nix-seed-btrfs.sh) first"
+                f"(klangk-build-nix-seed) and load it "
+                f"(klangk-load-nix-seed-btrfs) first"
             )
         fstype = (await self._run(["stat", "-f", "-c", "%T", seed]))[1].strip()
         if fstype != "btrfs":
             raise NixError(
                 f"nix_seed.type is btrfs-snapshot but the seed {seed} is on "
                 f"{fstype}, not btrfs — either load the seed into a btrfs "
-                f"subvolume (scripts/load-nix-seed-btrfs.sh) or switch to "
+                f"subvolume (klangk-load-nix-seed-btrfs) or switch to "
                 f"type: fuse-overlayfs"
             )
         ws = self._ws_path(workspace_id)
@@ -209,7 +209,7 @@ class Nix:
         if not os.path.isdir(os.path.join(seed, "nix")):
             raise NixError(
                 f"seed directory {seed}/nix not found — build the seed "
-                f"(devenv shell -- build-nix-seed) and point nix_seed.path "
+                f"(klangk-build-nix-seed) and point nix_seed.path "
                 f"at its output first"
             )
         ws = self._ws_path(workspace_id)
