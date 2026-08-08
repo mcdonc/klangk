@@ -445,11 +445,13 @@ class WorkspaceDetailScreen(Screen):
             data = await asyncio.to_thread(state.list_images)
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
+            nix_available = data.get("nix_available") is True
         except AuthError:
             self.app.session_expired()
             return
         except Exception:
             default, allowed = "", []
+            nix_available = False
         try:
             allow_autostart = await asyncio.to_thread(state.allow_autostart)
         except AuthError:
@@ -463,6 +465,7 @@ class WorkspaceDetailScreen(Screen):
                 allowed=allowed,
                 default=default,
                 allow_autostart=allow_autostart,
+                nix_available=nix_available,
             ),
             self._on_edited,
         )

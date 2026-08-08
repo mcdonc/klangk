@@ -7957,6 +7957,62 @@ async def test_create_screen_default_not_in_allowed(monkeypatch):
         assert captured["k"]["image"] is None
 
 
+async def test_create_screen_nix_hidden_when_not_available(monkeypatch):
+    """#2233: the Mount /nix dir toggle is hidden unless the server reports
+    nix_available (a nix_seed backend is configured)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())  # list_images omits nix_available
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cb = app.screen.query_one("#nix", Checkbox)
+        assert cb.display is False
+        assert cb.disabled is True
+
+
+async def test_create_screen_nix_shown_and_sent_when_checked(monkeypatch):
+    """#2233: when nix is available the toggle shows; checking it sends
+    settings.nix=True on create."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(
+        _create_state(
+            create=create,
+            list_images=lambda: {
+                "default": "base",
+                "allowed": ["base", "py:3"],
+                "nix_available": True,
+            },
+        )
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        nix = cs.query_one("#nix", Checkbox)
+        assert nix.display is True
+        nix.value = True
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        await app.workers.wait_for_complete()
+        assert captured["k"]["settings"] == {"nix": True}
+
+
 # ---------------------------------------------------------------------------
 # Edit workspace form (#1778) + allowed_domains (#1745)
 # ---------------------------------------------------------------------------
@@ -7981,6 +8037,7 @@ def _edit_screen(app, ws, **kw):
             allowed=kw.get("allowed", ["base", "py:3"]),
             default=kw.get("default", "base"),
             allow_autostart=kw.get("allow_autostart", True),
+            nix_available=kw.get("nix_available", False),
         )
     )
 
@@ -8156,6 +8213,71 @@ async def test_edit_screen_no_restart_when_create_field_unchanged(monkeypatch):
         await app.workers.wait_for_complete()
         assert not isinstance(app.screen, ConfirmScreen)
         assert not isinstance(app.screen, EditWorkspaceScreen)
+
+
+async def test_edit_screen_nix_hidden_when_not_available(monkeypatch):
+    """#2233: the Mount /nix dir toggle is hidden in edit unless the server
+    reports nix_available."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha")
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)  # nix_available defaults False
+        await pilot.pause()
+        cb = app.screen.query_one("#nix", Checkbox)
+        assert cb.display is False
+        assert cb.disabled is True
+
+
+async def test_edit_screen_nix_prepopulated_and_sent(monkeypatch):
+    """#2233: the edit toggle reflects settings.nix and sends it on save."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj("alpha", settings={"nix": True})
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws, nix_available=True)
+        await pilot.pause()
+        es = app.screen
+        nix = es.query_one("#nix", Checkbox)
+        assert nix.display is True
+        assert nix.value is True  # pre-populated from settings.nix
+        es._save()
+        await app.workers.wait_for_complete()
+        assert captured["settings"] == {"nix": True}
+
+
+async def test_edit_screen_nix_change_prompts_restart(monkeypatch):
+    """#2233: toggling nix on a running workspace prompts a restart (the
+    /nix mount is set up at container create time)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", image="base", running=True)  # nix off in stored bag
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws, nix_available=True)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#nix", Checkbox).value = True  # turn nix on
+        es._save()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
 
 async def test_edit_screen_name_required(monkeypatch):

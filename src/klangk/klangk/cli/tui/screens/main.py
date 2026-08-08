@@ -626,11 +626,13 @@ class MainScreen(Screen):
             data = await asyncio.to_thread(state.list_images)
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
+            nix_available = data.get("nix_available") is True
         except AuthError:
             self.app.session_expired()
             return
         except Exception:
             default, allowed = "", []
+            nix_available = False
         try:
             allow_autostart = await asyncio.to_thread(state.allow_autostart)
         except AuthError:
@@ -644,6 +646,7 @@ class MainScreen(Screen):
                 allowed=allowed,
                 default=default,
                 allow_autostart=allow_autostart,
+                nix_available=nix_available,
             ),
             self._on_edited,
         )
@@ -748,9 +751,11 @@ class MainScreen(Screen):
             data = await asyncio.to_thread(state.list_images)
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
+            nix_available = data.get("nix_available") is True
         except (httpx.HTTPError, OSError, ValueError) as exc:
             logger.debug("Could not fetch image list: %s", exc)
             default, allowed = "", []
+            nix_available = False
         try:
             allow_autostart = await asyncio.to_thread(state.allow_autostart)
         except (httpx.HTTPError, OSError, ValueError) as exc:
@@ -769,6 +774,7 @@ class MainScreen(Screen):
                 default=default,
                 allow_autostart=allow_autostart,
                 default_allowed_domains=default_domains,
+                nix_available=nix_available,
             ),
             self._on_created,
         )
