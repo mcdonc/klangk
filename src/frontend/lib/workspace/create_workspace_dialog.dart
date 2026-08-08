@@ -237,7 +237,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
         style: TextStyle(color: KColors.textPrimary),
       ),
       content: SizedBox(
-        width: 520,
+        width: 1040,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
