@@ -1915,6 +1915,44 @@ class TestCheckPidPreflight:
         assert _check_pid_preflight(settings) is None
 
 
+class TestCheckPortPreflight:
+    """Tests for launcher._check_port_preflight (#2211)."""
+
+    def test_no_listener_returns_false(self):
+        from klangk.launcher import _check_port_preflight
+
+        # Pick a high port unlikely to be in use.
+        assert _check_port_preflight("127.0.0.1", 59123) is False
+
+    def test_live_listener_returns_true(self):
+        import socket as _socket
+
+        from klangk.launcher import _check_port_preflight
+
+        srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        try:
+            assert _check_port_preflight("127.0.0.1", port) is True
+        finally:
+            srv.close()
+
+    def test_connection_refused_returns_false(self):
+        import socket as _socket
+
+        from klangk.launcher import _check_port_preflight
+
+        # Bind then close — port is free but was recently used.
+        srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        port = srv.getsockname()[1]
+        srv.close()
+        assert _check_port_preflight("127.0.0.1", port) is False
+
+
 class TestLauncherPidPreflightGracefulExit:
     """The launcher's ``main()`` must log and ``sys.exit(1)`` — not crash with
     ``ImportError`` — when a second instance collides with a running one (#1993).

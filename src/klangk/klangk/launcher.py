@@ -36,6 +36,7 @@ import logging
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -201,6 +202,24 @@ def _mark_refusal_reported(marker: Path, winner_pid: int) -> None:
         pass
 
 
+def _check_port_preflight(host: str, port: int) -> bool:
+    """Return True if *host*:*port* already has a listener.
+
+    A connect-probe catches cross-deploy collisions that the PID-file
+    check cannot see (different ``state_dir`` → different instance-id →
+    separate PID files, so neither klangkd knows about the other).
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    try:
+        sock.connect((host, port))
+        return True
+    except (ConnectionRefusedError, OSError):
+        return False
+    finally:
+        sock.close()
+
+
 def _prepend_gnubin_paths() -> None:  # pragma: no cover
     """On macOS, prepend Homebrew gnubin dirs to ``PATH`` (#1947).
 
@@ -308,6 +327,34 @@ def main(  # pragma: no cover
             if marker is not None:
                 _mark_refusal_reported(marker, existing)
         sys.exit(1)
+
+    # Port-probe check: catch cross-deploy collisions the PID-file
+    # guard misses (#2211). Two klangkd instances from different
+    # checkouts (different $DEVENV_STATE → different state_dir →
+    # separate instance-id / PID files) never see each other's PID
+    # file. But they share the same TCP ports (browser + egress)
+    # through Caddy — probe those before starting. The proxy hasn't
+    # started yet, so a live listener on our configured port means
+    # another klangkd (or its proxy) already owns it.
+    for port_str, label in (
+        (settings.port, "browser"),
+        (settings.egress_port, "egress"),
+    ):
+        if port_str is None:
+            continue
+        port_int = int(port_str)
+        listen_host = (
+            settings.listen if label == "browser" else settings.egress_listen
+        )
+        if _check_port_preflight(listen_host, port_int):
+            logger.error(
+                "Another process is already listening on %s:%d (%s port) "
+                "— refusing to start. Is another klangkd running?",
+                listen_host,
+                port_int,
+                label,
+            )
+            sys.exit(1)
 
     # Bind the UDS. A stale socket from a kill -9'd process makes the
     # bind fail with EADDRINUSE — unlink first (the pidfile guard in the
