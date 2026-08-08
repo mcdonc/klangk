@@ -35,6 +35,24 @@ from ...mount import (
 from ._base import ConfirmScreen, NonFocusableVerticalScroll, TabSkipMixin
 
 
+def _collect_settings(screen: Screen) -> dict | None:
+    """Read the resource-limit inputs and return a settings dict, or None."""
+    settings: dict = {}
+    raw = screen.query_one("#idle_timeout", Input).value.strip()
+    if raw:
+        settings["idle_timeout"] = int(raw)
+    raw = screen.query_one("#cpu_limit", Input).value.strip()
+    if raw:
+        settings["cpu_limit"] = float(raw)
+    raw = screen.query_one("#memory_limit", Input).value.strip()
+    if raw:
+        settings["memory_limit"] = raw
+    raw = screen.query_one("#pids_limit", Input).value.strip()
+    if raw:
+        settings["pids_limit"] = int(raw)
+    return settings or None
+
+
 class CreateWorkspaceScreen(TabSkipMixin, Screen):
     """Full-screen workspace create form (parity with Flutter
     ``CreateWorkspaceDialog``).
@@ -65,6 +83,10 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "mount_input",
         "env_input",
         "allow_input",
+        "idle_timeout",
+        "cpu_limit",
+        "memory_limit",
+        "pids_limit",
         "command",
         "health_check",
         "cancel",
@@ -82,6 +104,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "mounts_pane": "mount_input",
         "env_pane": "env_input",
         "netfilter_pane": "allow_input",
+        "resources_pane": "idle_timeout",
         "advanced_pane": "command",
     }
 
@@ -176,6 +199,33 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                         Button("Remove", id="rm_allow"),
                     )
                     yield OptionList(id="allow_list", classes="editor-list")
+                with TabPane("Resources", id="resources_pane"):
+                    yield Horizontal(
+                        Static("Idle timeout (s)"),
+                        Input(
+                            id="idle_timeout",
+                            placeholder="seconds (0 = never)",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("CPU limit"),
+                        Input(id="cpu_limit", placeholder="e.g. 2.0"),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("Memory limit"),
+                        Input(
+                            id="memory_limit",
+                            placeholder="e.g. 4g, 512m",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("PIDs limit"),
+                        Input(id="pids_limit", placeholder="e.g. 512"),
+                        classes="field-row",
+                    )
                 with TabPane("Advanced", id="advanced_pane"):
                     yield Horizontal(
                         Static("Command"),
@@ -394,6 +444,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         mounts = list(self._mounts) or None
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
+        settings = _collect_settings(self)
         self.run_worker(
             self._do_create_workspace(
                 name,
@@ -404,6 +455,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                 env,
                 health_check,
                 allowed_domains,
+                settings,
             ),
             exit_on_error=False,
         )
@@ -418,6 +470,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         env,
         health_check,
         allowed_domains,
+        settings,
     ) -> None:
         try:
             ws = await asyncio.to_thread(
@@ -430,6 +483,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                 env=env,
                 health_check=health_check,
                 allowed_domains=allowed_domains,
+                settings=settings,
             )
         except AuthError:
             self.app.session_expired()
@@ -475,7 +529,15 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             self._add_env()
         elif eid == "allow_input":
             self._add_allowed_domain()
-        elif eid in ("name", "command", "health_check"):
+        elif eid in (
+            "name",
+            "command",
+            "health_check",
+            "idle_timeout",
+            "cpu_limit",
+            "memory_limit",
+            "pids_limit",
+        ):
             self._create()
 
 
@@ -511,6 +573,10 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "mount_input",
         "env_input",
         "allow_input",
+        "idle_timeout",
+        "cpu_limit",
+        "memory_limit",
+        "pids_limit",
         "command",
         "health_check",
         "cancel",
@@ -528,6 +594,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "mounts_pane": "mount_input",
         "env_pane": "env_input",
         "netfilter_pane": "allow_input",
+        "resources_pane": "idle_timeout",
         "advanced_pane": "command",
     }
     # Delete/'e' act on the list under the active tab (#1891).
@@ -642,6 +709,50 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
                         Button("Remove", id="rm_allow"),
                     )
                     yield OptionList(id="allow_list", classes="editor-list")
+                with TabPane("Resources", id="resources_pane"):
+                    _s = self._ws.settings or {}
+                    yield Horizontal(
+                        Static("Idle timeout (s)"),
+                        Input(
+                            value=str(_s["idle_timeout"])
+                            if "idle_timeout" in _s
+                            else "",
+                            id="idle_timeout",
+                            placeholder="seconds (0 = never)",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("CPU limit"),
+                        Input(
+                            value=str(_s["cpu_limit"])
+                            if "cpu_limit" in _s
+                            else "",
+                            id="cpu_limit",
+                            placeholder="e.g. 2.0",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("Memory limit"),
+                        Input(
+                            value=str(_s.get("memory_limit", "")),
+                            id="memory_limit",
+                            placeholder="e.g. 4g, 512m",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("PIDs limit"),
+                        Input(
+                            value=str(_s["pids_limit"])
+                            if "pids_limit" in _s
+                            else "",
+                            id="pids_limit",
+                            placeholder="e.g. 512",
+                        ),
+                        classes="field-row",
+                    )
                 with TabPane("Advanced", id="advanced_pane"):
                     yield Horizontal(
                         Static("Command"),
@@ -915,6 +1026,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         mounts = list(self._mounts) or None
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
+        settings = _collect_settings(self)
         body = {
             "name": name,
             "image": image,
@@ -925,6 +1037,8 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             "env": env,
             "allowed_domains": allowed_domains,
         }
+        if settings is not None:
+            body["settings"] = settings
         ws = self._ws
         orig_mounts = list(ws.mounts or []) or None
         orig_env = dict(ws.env or {}) or None
@@ -1022,5 +1136,13 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             self._add_env()
         elif eid == "allow_input":
             self._add_allowed_domain()
-        elif eid in ("name", "command", "health_check"):
+        elif eid in (
+            "name",
+            "command",
+            "health_check",
+            "idle_timeout",
+            "cpu_limit",
+            "memory_limit",
+            "pids_limit",
+        ):
             self._save()

@@ -223,6 +223,7 @@ class TuiState:
         env: dict[str, str] | None = None,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        settings: dict | None = None,
     ) -> Workspace:
         return self.client().create_workspace(
             name,
@@ -233,6 +234,7 @@ class TuiState:
             env=env,
             health_check=health_check,
             allowed_domains=allowed_domains,
+            settings=settings,
         )
 
     def update_workspace(self, workspace_id: str, **fields) -> None:

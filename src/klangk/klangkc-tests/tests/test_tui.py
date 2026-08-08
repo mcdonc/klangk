@@ -2103,6 +2103,7 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
         env=None,
         health_check=None,
         allowed_domains=None,
+        settings=None,
     )
     fake.list_images.assert_called_once_with()
 
@@ -11086,3 +11087,91 @@ def test_render_detail_label_column_bold_and_right_aligned():
         line_start = plain.rfind("\n", 0, pos) + 1
         end_cols.add(pos + len(lab) - line_start)
     assert len(end_cols) == 1
+
+
+async def test_create_screen_collects_settings(monkeypatch):
+    """Resource fields on the create form populate the settings dict (#2217)."""
+    from klangk.cli.tui.screens.workspace_form import _collect_settings
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_create_state())
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.push_screen(
+            CreateWorkspaceScreen(
+                allowed=["base"], default="base", allow_autostart=True
+            )
+        )
+        await pilot.pause()
+        cs = app.screen
+        # Empty fields → None
+        assert _collect_settings(cs) is None
+        # Fill in resource fields
+        cs.query_one("#idle_timeout", Input).value = "600"
+        cs.query_one("#cpu_limit", Input).value = "1.5"
+        cs.query_one("#memory_limit", Input).value = "4g"
+        cs.query_one("#pids_limit", Input).value = "256"
+        result = _collect_settings(cs)
+        assert result == {
+            "idle_timeout": 600,
+            "cpu_limit": 1.5,
+            "memory_limit": "4g",
+            "pids_limit": 256,
+        }
+
+
+async def test_edit_screen_save_includes_settings(monkeypatch):
+    """Edit form includes settings dict in update body when filled (#2217)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj("alpha", image="base", running=False)
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#cpu_limit", Input).value = "2.0"
+        es.query_one("#pids_limit", Input).value = "512"
+        es._save()
+        await app.workers.wait_for_complete()
+        assert captured["settings"] == {"cpu_limit": 2.0, "pids_limit": 512}
+
+
+async def test_edit_screen_prepopulates_settings(monkeypatch):
+    """Edit form pre-populates resource fields from workspace settings (#2217)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj(
+        "test-ws",
+        settings={"cpu_limit": 2.0, "idle_timeout": 300},
+    )
+    app = KlangkApp(_create_state())
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.push_screen(
+            EditWorkspaceScreen(
+                workspace=ws,
+                allowed=["base"],
+                default="base",
+                allow_autostart=True,
+            )
+        )
+        await pilot.pause()
+        es = app.screen
+        assert es.query_one("#cpu_limit", Input).value == "2.0"
+        assert es.query_one("#idle_timeout", Input).value == "300"
+        assert es.query_one("#memory_limit", Input).value == ""
+        assert es.query_one("#pids_limit", Input).value == ""
