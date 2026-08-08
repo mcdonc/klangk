@@ -632,6 +632,20 @@ def create(
         "--allow",
         help="Allowed egress domain, repeatable (e.g. github.com:443, pypi.org)",
     ),
+    idle_timeout: int | None = typer.Option(
+        None,
+        "--idle-timeout",
+        help="Idle timeout in seconds (0 = never idle out)",
+    ),
+    cpu_limit: float | None = typer.Option(
+        None, "--cpu-limit", help="CPU limit (e.g. 2.0)"
+    ),
+    memory_limit: str | None = typer.Option(
+        None, "--memory-limit", help="Memory limit (e.g. 4g, 512m)"
+    ),
+    pids_limit: int | None = typer.Option(
+        None, "--pids-limit", help="PIDs limit (e.g. 512)"
+    ),
 ) -> None:
     """Create a new workspace."""
     require_auth()
@@ -648,6 +662,9 @@ def create(
                 _err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
     env_dict = _parse_env_list(env) if isinstance(env, list) else None
+    settings = _build_settings(
+        idle_timeout, cpu_limit, memory_limit, pids_limit
+    )
     try:
         ws = _client().create_workspace(
             name,
@@ -658,6 +675,7 @@ def create(
             env=env_dict,
             health_check=health_check,
             allowed_domains=allow or None,
+            settings=settings,
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)
@@ -911,6 +929,25 @@ def _parse_env_list(env_list: list[str]) -> dict[str, str]:
     return result
 
 
+def _build_settings(
+    idle_timeout: int | None,
+    cpu_limit: float | None,
+    memory_limit: str | None,
+    pids_limit: int | None,
+) -> dict | None:
+    """Build a workspace settings dict from CLI flags, or None if all unset."""
+    settings: dict = {}
+    if idle_timeout is not None:
+        settings["idle_timeout"] = idle_timeout
+    if cpu_limit is not None:
+        settings["cpu_limit"] = cpu_limit
+    if memory_limit is not None:
+        settings["memory_limit"] = memory_limit
+    if pids_limit is not None:
+        settings["pids_limit"] = pids_limit
+    return settings or None
+
+
 def _prompt(label: str, current: str | None) -> str | _SENTINEL.__class__:
     """Prompt for a value, showing the current default.
 
@@ -960,6 +997,20 @@ def edit(
         "--allow",
         help="Allowed egress domain, repeatable (e.g. github.com:443, pypi.org)",
     ),
+    idle_timeout: int | None = typer.Option(
+        None,
+        "--idle-timeout",
+        help="Idle timeout in seconds (0 = never idle out)",
+    ),
+    cpu_limit: float | None = typer.Option(
+        None, "--cpu-limit", help="CPU limit (e.g. 2.0)"
+    ),
+    memory_limit: str | None = typer.Option(
+        None, "--memory-limit", help="Memory limit (e.g. 4g, 512m)"
+    ),
+    pids_limit: int | None = typer.Option(
+        None, "--pids-limit", help="PIDs limit (e.g. 512)"
+    ),
 ) -> None:
     """Edit workspace settings.
 
@@ -983,6 +1034,10 @@ def edit(
         or isinstance(mount, list)
         or isinstance(env, list)
         or isinstance(allow, list)
+        or idle_timeout is not None
+        or cpu_limit is not None
+        or memory_limit is not None
+        or pids_limit is not None
     )
     if not has_flags:
         # Interactive mode
@@ -1166,6 +1221,14 @@ def edit(
                     _err.print(f"[red]{err}[/red]")
                     raise typer.Exit(code=1)
             body["allowed_domains"] = allow or None
+        edit_settings = _build_settings(
+            idle_timeout, cpu_limit, memory_limit, pids_limit
+        )
+        if edit_settings:
+            # Merge with existing settings so unspecified keys are preserved.
+            merged = dict(ws.settings or {})
+            merged.update(edit_settings)
+            body["settings"] = merged
 
     if not body:
         typer.echo("No changes.")

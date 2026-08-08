@@ -3534,6 +3534,23 @@ class TestCreateWorkspaceClient:
         body = mock_post.call_args.kwargs.get("json")
         assert body["setup_state"] == "pending"
 
+    def test_create_workspace_with_settings(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "ws-s",
+            "name": "s-ws",
+            "created_at": "2025-01-01",
+        }
+        with patch.object(client, "post", return_value=mock_resp) as mock_post:
+            client.create_workspace(
+                "s-ws",
+                settings={"cpu_limit": 1.5, "pids_limit": 256},
+            )
+        body = mock_post.call_args.kwargs.get("json")
+        assert body["settings"] == {"cpu_limit": 1.5, "pids_limit": 256}
+
     def test_set_setup_state(self):
         """set_setup_state PUTs the lifecycle field (#1033)."""
         client = KlangkClient("http://test:8995", "token")
