@@ -35,7 +35,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, ClassVar, Mapping
+from typing import Any, ClassVar, Literal, Mapping
 
 
 import getpass
@@ -47,7 +47,13 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
-from pydantic import PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 # netfilter.py is pure-stdlib (no settings import), so this top-level import
 # is cycle-safe. Used by the netfilter_default_domains field validator below.
@@ -318,6 +324,27 @@ class _KebabYamlConfigSettingsSource(YamlConfigSettingsSource):
         }
 
 
+class NixSeedConfig(BaseModel):
+    """Per-workspace ``/nix`` seed config (#2198, #2201, #2220).
+
+    One seed path consumed by one of two backends (selected by ``type``).
+    Omit ``nix_seed`` entirely — or leave ``path`` unset — to disable the
+    feature; nix is then image-only (pick the nix image ``klangk-workspace-nix``
+    for its baked ``/nix``). Image selection is always the user's; this never
+    forces an image.
+    """
+
+    # How to consume the seed. "btrfs-snapshot": a CoW btrfs-subvolume snapshot
+    # per workspace (needs a btrfs filesystem mounted with
+    # user_subvol_rm_allowed). "fuse-overlayfs": a fuse-overlayfs overlay per
+    # workspace (any filesystem; the default).
+    type: Literal["btrfs-snapshot", "fuse-overlayfs"] = "fuse-overlayfs"
+    # Path to the seed tree (build-nix-seed output: holds nix/ + nix.conf). For
+    # "btrfs-snapshot" it must be a btrfs subvolume (loaded by
+    # scripts/load-nix-seed-btrfs.sh); for "fuse-overlayfs", a plain directory.
+    path: str | None = None
+
+
 class KlangkSettings(BaseSettings):
     """Typed configuration for all ``KLANGKD_*`` environment variables.
 
@@ -360,8 +387,11 @@ class KlangkSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="KLANGKD_",
         extra="ignore",
-        # Do NOT set env_nested_delimiter — KLANGKD_ACCESS_TOKEN_HOURS is a
-        # flat field (access_token_hours), not a nested table.
+        # env_nested_delimiter="__" lets the nix_seed sub-model read
+        # KLANGKD_NIX_SEED__TYPE / KLANGKD_NIX_SEED__PATH. Safe for the flat
+        # fields: every field name is single-underscore snake_case, so no flat
+        # env var contains "__" and none is misparsed as a nested table.
+        env_nested_delimiter="__",
     )
 
     def __init__(
@@ -633,14 +663,13 @@ class KlangkSettings(BaseSettings):
     allow_autostart: str = ""
     allow_sudo: str = ""
     container_subnets: str | None = None
-    # Nix workspace feature (#2198): nix_btrfs_subvolume is the path to a seed
-    # btrfs subvolume (built by #2200, loaded by scripts/load-nix-seed-btrfs.sh)
-    # on a btrfs filesystem mounted with user_subvol_rm_allowed. When set, a
-    # workspace with the per-workspace `nix` setting enabled gets a writable,
-    # isolated /nix as a btrfs snapshot of the seed (#2201, #2208, #2202).
-    # Unset -> nix is image-only (the nix image's baked /nix, no snapshot).
-    # Image selection is always the user's; this never overrides it.
-    nix_btrfs_subvolume: str | None = None
+    # Nix workspace feature (#2198, #2201, #2220): per-workspace /nix from a
+    # shared seed. ``nix_seed`` groups the seed path + the backend that
+    # consumes it (see NixSeedConfig). Omit ``nix_seed`` entirely — or leave
+    # its ``path`` unset — to disable the feature; nix is then image-only (pick
+    # the nix image ``klangk-workspace-nix`` for its baked ``/nix``). Image
+    # selection is always the user's; this never overrides it.
+    nix_seed: NixSeedConfig = Field(default_factory=NixSeedConfig)
     userns: str = "keep-id:uid=1000,gid=1000"
     # enable_ping: allow unprivileged ICMP echo (``ping``) inside workspace
     # containers (#2045) by granting the container CAP_NET_RAW; a setuid

@@ -144,6 +144,13 @@ _PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "apt": "coreutils",
         "brew": "coreutils",
     },
+    "stat": {
+        "dnf": "coreutils",
+        "apt": "coreutils",
+        "brew": "coreutils",
+        "zypper": "coreutils",
+        "pacman": "coreutils",
+    },
     # Rootless podman prereqs
     "newuidmap": {
         "dnf": "shadow-utils",
@@ -269,6 +276,35 @@ def check_gnu_du(manager: str | None) -> CheckResult:
             hint=hint,
         )
     return CheckResult(name="du (GNU)", ok=True, message=f"GNU du ok ({path})")
+
+
+def check_gnu_stat(manager: str | None) -> CheckResult:
+    """Check that stat is GNU coreutils (supports ``-f -c %T`` for fstype).
+
+    The nix btrfs-snapshot backend uses ``stat -f -c %T <seed>`` to verify the
+    seed path is on btrfs (``Nix._ensure_btrfs``). GNU coreutils only — BSD
+    ``stat`` parses ``-f`` differently. Linux-only in ``run_doctor`` (the btrfs
+    backend doesn't apply on macOS).
+    """
+    path = shutil.which("stat")
+    if not path:  # pragma: no cover
+        return CheckResult(
+            name="stat (GNU)",
+            ok=False,
+            message="stat not found on PATH",
+            hint=install_hint("stat", manager),
+        )
+    rc, out, _err = _run(["stat", "-f", "-c", "%T", "/"])
+    if rc != 0 or not out.strip():
+        return CheckResult(
+            name="stat (GNU)",
+            ok=False,
+            message="stat does not support -f -c %T (need GNU coreutils)",
+            hint=install_hint("stat", manager),
+        )
+    return CheckResult(
+        name="stat (GNU)", ok=True, message=f"GNU stat ok ({path})"
+    )
 
 
 def check_subuid(user: str) -> CheckResult:
@@ -482,6 +518,10 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
     # GNU tar and GNU du (special: must verify GNU, not just present)
     report.add(check_gnu_tar(manager))
     report.add(check_gnu_du(manager))
+    # GNU stat: only the nix btrfs-snapshot backend needs `stat -f -c %T`
+    # (Linux-only); not required on macOS.
+    if platform.system() != "Darwin":
+        report.add(check_gnu_stat(manager))
 
     # 1b. Optional: ip command for container subnet auto-detection (#2089)
     if platform.system() != "Darwin":

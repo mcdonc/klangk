@@ -7,7 +7,7 @@
 #   <btrfs-parent>  a directory on a btrfs filesystem mounted with
 #                   `user_subvol_rm_allowed`, writable by the caller, e.g.
 #                   /steam2/btrfs/klangk-nix. The seed subvolume lands at
-#                   <btrfs-parent>/seed; set KLANGKD_NIX_BTRFS_SUBVOLUME to it.
+#                   <btrfs-parent>/seed; set nix_seed to it (type: btrfs-snapshot, path: <btrfs-parent>/seed).
 #
 # No root needed — btrfs lets a user create/snapshot subvolumes it can write to,
 # and `user_subvol_rm_allowed` lets it delete them. (Contrast zfs: non-root mount
@@ -43,4 +43,7 @@ echo "==> Populating from $SEED_TREE"
 chmod -R u+w "$SEED_TREE" 2>/dev/null || true
 cp -a "$SEED_TREE/nix" "$SEED_TREE/nix.conf" "$SEED"/
 
-echo "==> Done. Set: nix_btrfs_subvolume: $SEED"
+echo "==> Done. Set in klangkd.yaml:"
+echo "  nix_seed:"
+echo "    type: btrfs-snapshot"
+echo "    path: $SEED"

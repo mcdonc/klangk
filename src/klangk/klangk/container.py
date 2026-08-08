@@ -1365,10 +1365,10 @@ class ContainerRegistry:
         """Bind specs + env for the workspace's per-workspace /nix (#2201), or ([], []).
 
         Only when the workspace has its per-workspace ``nix`` setting enabled
-        (#2202) AND a nix backend is configured (``nix_btrfs_subvolume``) does
-        ensure_workspace_nix snapshot the seed and return a mountpoint; the
-        snapshot's /nix + nix.conf
-        are bind-mounted into the container, and KLANGKWS_NIX=1 is set so the
+        (#2202) AND a nix backend is configured (``nix_seed``, #2219/#2220) does
+        ensure_workspace_nix provision the per-workspace
+        /nix and return a mountpoint; the mountpoint's /nix + nix.conf are
+        bind-mounted into the container, and KLANGKWS_NIX=1 is set so the
         baked /etc/profile.d activation (see src/containers/workspace/Dockerfile)
         puts nix on PATH by default. Image selection is untouched.
 

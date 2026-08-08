@@ -11,6 +11,7 @@ from klangk.doctor import (
     DoctorReport,
     check_binary,
     check_gnu_du,
+    check_gnu_stat,
     check_gnu_tar,
     check_podman_policy,
     check_subuid,
@@ -208,6 +209,34 @@ class TestCheckGnuDu:
     def test_missing_du(self):
         with patch("klangk.doctor.shutil.which", return_value=None):
             r = check_gnu_du("apt")
+            assert not r.ok
+            assert "not found" in r.message
+
+
+class TestCheckGnuStat:
+    def test_gnu_stat(self):
+        with (
+            patch("shutil.which", return_value="/usr/bin/stat"),
+            patch("klangk.doctor._run", return_value=(0, "ext4\n", "")),
+        ):
+            r = check_gnu_stat("apt")
+            assert r.ok
+
+    def test_bsd_stat(self):
+        with (
+            patch("shutil.which", return_value="/usr/bin/stat"),
+            patch(
+                "klangk.doctor._run",
+                return_value=(1, "", "stat: illegal option -- f"),
+            ),
+        ):
+            r = check_gnu_stat("brew")
+            assert not r.ok
+            assert "coreutils" in r.hint
+
+    def test_missing_stat(self):
+        with patch("klangk.doctor.shutil.which", return_value=None):
+            r = check_gnu_stat("apt")
             assert not r.ok
             assert "not found" in r.message
 
