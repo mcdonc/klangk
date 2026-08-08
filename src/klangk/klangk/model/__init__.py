@@ -61,6 +61,9 @@ from .workspaces import (
     SETUP_STATE_FAILED,
     SETUP_STATE_PENDING,
     SETUP_STATES,
+    EGRESS_MODE_STATIC,
+    EGRESS_MODE_INTERACTIVE,
+    EGRESS_MODES,
 )
 from .ports import (
     MAX_PORT,
@@ -118,6 +121,9 @@ __all__ = (
     "SETUP_STATE_FAILED",
     "SETUP_STATE_PENDING",
     "SETUP_STATES",
+    "EGRESS_MODE_STATIC",
+    "EGRESS_MODE_INTERACTIVE",
+    "EGRESS_MODES",
     # ports — constants + pure socket probe (re-exported via util too)
     "MAX_PORT",
     "port_in_use",

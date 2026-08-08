@@ -56,6 +56,13 @@ SETUP_STATES = frozenset(
     {SETUP_STATE_PENDING, SETUP_STATE_COMPLETE, SETUP_STATE_FAILED}
 )
 
+# egress_mode values (#2239). 'static' = immutable allow-list at
+# container create time; 'interactive' = prompt on first connection
+# to an unlisted host.
+EGRESS_MODE_STATIC = "static"
+EGRESS_MODE_INTERACTIVE = "interactive"
+EGRESS_MODES = frozenset({EGRESS_MODE_STATIC, EGRESS_MODE_INTERACTIVE})
+
 # Whitelisted sort columns for workspace list queries. Values are the
 # real column names; the prefix (e.g. "w.") is applied by the caller.
 SORT_COLUMNS = {"created": "created_at", "name": "name"}
@@ -109,6 +116,7 @@ class WorkspacesModel:
         health_check: str | None,
         allowed_domains: list[str] | None = None,
         settings: dict | None = None,
+        egress_mode: str = EGRESS_MODE_STATIC,
     ) -> dict:
         """INSERT a workspace row on ``db`` and return the new workspace dict.
 
@@ -127,8 +135,8 @@ class WorkspacesModel:
             "INSERT INTO workspaces"
             " (id, user_id, name, image, service_command, auto_start,"
             " setup_state, health_check, mounts, env, allowed_domains,"
-            " settings, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " settings, egress_mode, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 workspace_id,
                 user_id,
@@ -142,6 +150,7 @@ class WorkspacesModel:
                 env_json,
                 allowed_domains_json,
                 settings_json,
+                egress_mode,
                 created_at,
             ),
         )
@@ -158,6 +167,7 @@ class WorkspacesModel:
             "env": env,
             "allowed_domains": allowed_domains,
             "settings": settings,
+            "egress_mode": egress_mode,
             "num_ports": DEFAULT_PORTS_PER_WORKSPACE,
             "created_at": created_at,
         }
@@ -239,6 +249,7 @@ class WorkspacesModel:
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
         settings: dict | None = None,
+        egress_mode: str = EGRESS_MODE_STATIC,
     ) -> dict:
         """Create a workspace row AND seed its owner ACE + role groups.
 
@@ -258,6 +269,8 @@ class WorkspacesModel:
             )
         if setup_state not in SETUP_STATES:
             raise ValueError(f"Invalid setup_state: {setup_state!r}")
+        if egress_mode not in EGRESS_MODES:
+            raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
         async with self.app.state.db.transaction() as db:
             ws = await self._insert_workspace_row(
                 db,
@@ -272,6 +285,7 @@ class WorkspacesModel:
                 health_check=health_check,
                 allowed_domains=allowed_domains,
                 settings=settings,
+                egress_mode=egress_mode,
             )
             await self._seed_workspace_acl(db, ws, user_id)
             return ws
@@ -289,6 +303,7 @@ class WorkspacesModel:
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
         settings: dict | None = None,
+        egress_mode: str = EGRESS_MODE_STATIC,
     ) -> dict:
         """Insert a workspace row only (no ACL seeding).
 
@@ -299,6 +314,8 @@ class WorkspacesModel:
         """
         if setup_state not in SETUP_STATES:
             raise ValueError(f"Invalid setup_state: {setup_state!r}")
+        if egress_mode not in EGRESS_MODES:
+            raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
         async with self.app.state.db.transaction() as db:
             return await self._insert_workspace_row(
                 db,
@@ -313,6 +330,7 @@ class WorkspacesModel:
                 health_check=health_check,
                 allowed_domains=allowed_domains,
                 settings=settings,
+                egress_mode=egress_mode,
             )
 
     async def list_workspaces(
@@ -343,7 +361,7 @@ class WorkspacesModel:
             cursor = await db.execute(
                 "SELECT id, name, container_id, image, service_command,"
                 " auto_start, setup_state, health_check, mounts, env,"
-                " allowed_domains, settings, created_at"
+                " allowed_domains, settings, egress_mode, created_at"
                 " FROM workspaces"
                 f" {where} {order_by} LIMIT ? OFFSET ?",
                 tuple(params),
@@ -369,6 +387,7 @@ class WorkspacesModel:
                     "settings": json.loads(row["settings"])
                     if row["settings"]
                     else None,
+                    "egress_mode": row["egress_mode"],
                     "created_at": row["created_at"],
                 }
                 for row in rows
@@ -414,7 +433,7 @@ class WorkspacesModel:
                 "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
                 " w.service_command, w.auto_start, w.setup_state,"
                 " w.health_check, w.mounts, w.env, w.allowed_domains,"
-                " w.settings, w.created_at,"
+                " w.settings, w.egress_mode, w.created_at,"
                 " u.email AS owner_email"
                 " FROM workspaces w"
                 " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
@@ -457,6 +476,7 @@ class WorkspacesModel:
                     "settings": json.loads(row["settings"])
                     if row["settings"]
                     else None,
+                    "egress_mode": row["egress_mode"],
                     "created_at": row["created_at"],
                     "owner_email": row["owner_email"],
                 }
@@ -483,7 +503,7 @@ class WorkspacesModel:
                 cursor = await db.execute(
                     "SELECT id, user_id, name, container_id, num_ports, image,"
                     " service_command, auto_start, setup_state, health_check,"
-                    " mounts, env, allowed_domains, settings"
+                    " mounts, env, allowed_domains, settings, egress_mode"
                     " FROM workspaces WHERE id = ? AND user_id = ?",
                     (workspace_id, user_id),
                 )
@@ -491,7 +511,7 @@ class WorkspacesModel:
                 cursor = await db.execute(
                     "SELECT id, user_id, name, container_id, num_ports, image,"
                     " service_command, auto_start, setup_state, health_check,"
-                    " mounts, env, allowed_domains, settings"
+                    " mounts, env, allowed_domains, settings, egress_mode"
                     " FROM workspaces WHERE id = ?",
                     (workspace_id,),
                 )
@@ -517,6 +537,7 @@ class WorkspacesModel:
                 "settings": json.loads(row["settings"])
                 if row["settings"]
                 else None,
+                "egress_mode": row["egress_mode"],
             }
 
     async def get_workspace_by_id(self, workspace_id: str) -> dict | None:
@@ -524,7 +545,7 @@ class WorkspacesModel:
         row = await self.app.state.db.fetchone(
             "SELECT id, user_id, name, container_id, num_ports, image,"
             " service_command, setup_state, health_check, mounts, env,"
-            " allowed_domains, settings"
+            " allowed_domains, settings, egress_mode"
             " FROM workspaces WHERE id = ?",
             (workspace_id,),
         )
@@ -548,6 +569,7 @@ class WorkspacesModel:
             "settings": json.loads(row["settings"])
             if row["settings"]
             else None,
+            "egress_mode": row["egress_mode"],
         }
 
     async def get_workspace_members(self, workspace_id: str) -> list[dict]:
@@ -711,6 +733,7 @@ class WorkspacesModel:
             "env",
             "allowed_domains",
             "settings",
+            "egress_mode",
         }
         to_set = {}
         for k, v in fields.items():
@@ -719,6 +742,10 @@ class WorkspacesModel:
             if k == "setup_state":
                 if v not in SETUP_STATES:
                     raise ValueError(f"Invalid setup_state: {v!r}")
+                to_set[k] = v
+            elif k == "egress_mode":
+                if v not in EGRESS_MODES:
+                    raise ValueError(f"Invalid egress_mode: {v!r}")
                 to_set[k] = v
             elif k in ("mounts", "env", "allowed_domains", "settings"):
                 to_set[k] = json.dumps(v) if v is not None else None
@@ -840,7 +867,7 @@ class WorkspacesModel:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
                 " service_command, auto_start, setup_state, health_check,"
-                " mounts, env, allowed_domains, settings"
+                " mounts, env, allowed_domains, settings, egress_mode"
                 " FROM workspaces WHERE auto_start = 1",
             )
             rows = await cursor.fetchall()
@@ -866,6 +893,7 @@ class WorkspacesModel:
                     "settings": json.loads(row["settings"])
                     if row["settings"]
                     else None,
+                    "egress_mode": row["egress_mode"],
                 }
                 for row in rows
             ]
