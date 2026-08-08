@@ -54,6 +54,15 @@ operators or integrators to act when upgrading.
   has no `nix_seed` backend configured; the underlying setting remains the
   boolean `nix`.
 
+- **Interactive egress consent mode (#2239, #2240, #2241).** Workspaces can now
+  set `egress_mode: "interactive"` (API/CLI). In this mode the OCI hook installs
+  an NFLOG rule that delivers blocked-connection metadata to userspace via a
+  netlink socket (group 5139), alongside the existing allow-list ACCEPT rules.
+  A future consent daemon will consume this feed to prompt a human for
+  allow/deny decisions; until the daemon ships, interactive mode behaves as
+  static filtering plus NFLOG observability — no prompts occur and unmatched
+  traffic is dropped. See `docs/features/egress-filtering.md`.
+
 - **`nix_seed` — per-workspace `/nix` with two backends (#2219, #2220).** The
   per-workspace `/nix` config is now one block — `nix_seed: {type, path}` —
   selecting a backend: `btrfs-snapshot` (a CoW snapshot of a seed btrfs
