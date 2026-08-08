@@ -607,45 +607,29 @@ class Terminal:
     ) -> list[dict]:
         """Create a new tmux window and return the updated window list.
 
-        If *name* is not provided, the window is named ``bash`` (matching
-        window 0) instead of a consecutive number (#2179). Raises
-        ``ValueError`` if an explicit *name* duplicates an existing window
-        name — the duplicate guard applies only to user-chosen names; the
-        default ``bash`` is generic and tmux permits duplicate window names.
+        The window is named *name* when given, else ``bash`` (matching
+        window 0) instead of a consecutive number (#2179). Window names are
+        display-only: tmux permits duplicate names, so duplicates are
+        allowed — a user may rename a tab to match another — and nothing in
+        klangk keys window identity on the name (#2192). The stable
+        identity is the tmux window id (``@N``).
 
         Uses a single podman exec with a shell script to minimize
-        round-trips (list + create + list in one call).
+        round-trips (create + list in one call). The session name and
+        window label are passed as positional argv ($1/$2), never
+        interpolated into the script, so shell metacharacters in either
+        are harmless (the label is validated above regardless).
         """
+        label = name if name is not None else "bash"
         if name is not None:
             validate_window_name(name)
-            # Explicit name — check + create + list in one exec. The window
-            # name and session name are passed as positional argv ($1/$2),
-            # never interpolated into the script, so shell metacharacters in
-            # either are harmless (name is validated above regardless).
-            script = (
-                'name="$1"; sn="$2";'
-                ' existing=$(tmux list-windows -t "$sn"'
-                " -F '#{window_name}' 2>/dev/null);"
-                ' echo "$existing" | grep -qx "$name"'
-                " && echo 'DUPLICATE' && exit 1;"
-                ' tmux new-window -t "$sn" -n "$name";'
-                ' tmux list-windows -t "$sn"'
-                " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
-            )
-            argv = ["bash", "-c", script, "bash", name, session_name]
-        else:
-            # Default name for auto-created windows (the Flutter "+" sends
-            # no name). Window 0 is "bash"; new windows match instead of
-            # being numbered 1, 2, 3… (#2179). The duplicate-name guard above
-            # is skipped: tmux permits duplicate window names, and "bash" is
-            # a generic default, not a user-chosen label.
-            script = (
-                'sn="$1";'
-                ' tmux new-window -t "$sn" -n bash;'
-                ' tmux list-windows -t "$sn"'
-                " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
-            )
-            argv = ["bash", "-c", script, "bash", session_name]
+        script = (
+            'sn="$1"; lbl="$2";'
+            ' tmux new-window -t "$sn" -n "$lbl";'
+            ' tmux list-windows -t "$sn"'
+            " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
+        )
+        argv = ["bash", "-c", script, "bash", session_name, label]
         rc, output, stderr = await self.podman.exec_container(
             container_id,
             argv,
@@ -653,8 +637,6 @@ class Terminal:
             timeout=10,
         )
         if rc != 0:
-            if "DUPLICATE" in output:
-                raise ValueError(f"Window name '{name}' already exists")
             raise TerminalError(f"new_window failed: {stderr.strip()}")
         windows = []
         for line in output.strip().splitlines():
@@ -679,13 +661,12 @@ class Terminal:
     ) -> None:
         """Rename a tmux window.
 
-        Raises ``ValueError`` if *name* contains unsafe characters or
-        duplicates another window's name.
+        Raises ``ValueError`` if *name* contains unsafe characters.
+        Window names are display-only, so duplicate names are permitted —
+        a tab may be renamed to match another — and window identity is
+        never keyed on the name (#2192).
         """
         validate_window_name(name)
-        existing = await self.list_windows(container_id, session_name)
-        if any(w["name"] == name and w["index"] != index for w in existing):
-            raise ValueError(f"Window name '{name}' already exists")
         await self.tmux_command(
             container_id,
             session_name,

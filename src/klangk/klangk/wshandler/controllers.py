@@ -859,15 +859,15 @@ class TerminalController:
         # Match old entries to new tmux entries by window_id (@N) —
         # a tmux-assigned unique identifier that is never reused within
         # a server's lifetime.  This is stable across renames and
-        # index reuse.
+        # index reuse. Window names are display-only and may duplicate,
+        # so they are never used to match identity (#2192); after a
+        # container restart the in-container tmux server is gone and all
+        # custom tabs are lost anyway, so there is nothing to match by.
         old_by_id = {w["id"]: w for w in old if "id" in w}
-        # Name-based fallback for matching after container restart where
-        # window_ids change but names are restored.
-        old_by_name = {w["name"]: w for w in old if "name" in w}
         old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
         new_entries = []
         for w in windows:
-            prev = old_by_id.get(w["id"]) or old_by_name.get(w["name"])
+            prev = old_by_id.get(w["id"])
             prev_shared = prev.get("shared", False) if prev else False
             new_entries.append(
                 {
@@ -901,10 +901,9 @@ class TerminalController:
         """
         old = ws_session.terminal_windows.get(model.AGENT_USER_ID, [])
         old_by_id = {w["id"]: w for w in old if "id" in w}
-        old_by_name = {w["name"]: w for w in old if "name" in w}
         new_entries = []
         for w in windows:
-            prev = old_by_id.get(w["id"]) or old_by_name.get(w["name"])
+            prev = old_by_id.get(w["id"])
             prev_shared = prev.get("shared", False) if prev else False
             new_entries.append(
                 {
@@ -1512,6 +1511,13 @@ class SharedTerminalController:
                 self._conn.sock, f"Failed to create shared terminal: {e}"
             )
             return
+        # The newly created window is the active one. Identify it by its
+        # window id (@N), not its name — names are display-only and may
+        # duplicate, so a name match could hit the wrong window (#2192).
+        new_id = next(
+            (w["id"] for w in windows if w.get("active") and "id" in w),
+            None,
+        )
         # Sync with tmux to get proper window_id, then mark the new
         # window as shared.
         self._conn.sync_terminal_windows(windows)
@@ -1521,10 +1527,11 @@ class SharedTerminalController:
         if not ws_session:
             return
         user_id = self._conn.user["id"]
-        for w in ws_session.terminal_windows.get(user_id, []):
-            if w["name"] == name:
-                w["shared"] = True
-                break
+        if new_id is not None:
+            for w in ws_session.terminal_windows.get(user_id, []):
+                if w.get("id") == new_id:
+                    w["shared"] = True
+                    break
         self.broadcast_shared_terminals(ws_session)
 
     async def delete_shared_terminal(self, msg: dict) -> None:

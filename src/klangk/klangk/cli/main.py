@@ -1228,7 +1228,11 @@ def shell(
     ),
     terminal: str | None = typer.Argument(
         None,
-        help="Terminal name to select (or handle:name for shared)",
+        help=(
+            "Terminal to select: @N (exact window id), a name, or "
+            "handle:@N / handle:name for a shared terminal. Names may "
+            "duplicate; use @N to disambiguate (see `klangk terminal ls`)."
+        ),
     ),
     forward_agent: bool | None = typer.Option(
         None,
@@ -1931,13 +1935,15 @@ def terminals(
 
             # Print results
             table = Table(title=f"Terminals in {ws.name}")
+            table.add_column("ID")
             table.add_column("Name")
             table.add_column("Type")
             table.add_column("Owner")
             for w in own_windows:
-                table.add_row(w["name"], "own", "")
+                table.add_row(w.get("id", ""), w["name"], "own", "")
             for t in shared:
                 table.add_row(
+                    t.get("window_id", ""),
                     t["window_name"],
                     "shared",
                     t.get("handle", ""),

@@ -175,6 +175,19 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Duplicate terminal tab names allowed (#2192).** Renaming a
+  terminal tab to a name another tab already uses is no longer rejected.
+  Tab names are display-only; window identity is the tmux window id (`@N`),
+  so nothing in klangk relies on names being unique. The same-named shared
+  terminal created via the legacy `create_shared_terminal` command is now
+  identified by its window id rather than matched by name. `klangk shell`
+  now errors on an ambiguous name (listing the candidate `@N` ids) instead
+  of silently picking the first, accepts `@N` and `handle:@N` for exact
+  targeting, and `klangk terminal ls` shows an `ID` column. The TUI's
+  `[n]` new-terminal action no longer invents a sequential `term-N` label;
+  it creates the window unnamed, so the server names it `bash` like every
+  other new terminal.
+
 - **TUI workspace-detail rows are zebra-striped (#2193).** The
   `id / running / uptime / mounts / …` property block on
   `WorkspaceDetailScreen` now alternates row backgrounds (theme `surface`
