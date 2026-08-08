@@ -48,6 +48,7 @@ test = [
 klangkd = "klangk.launcher:app"
 klangk = "klangk.cli.main:main"
 klangk-build-nix-seed = "klangk.seed:main"
+klangk-load-nix-seed-btrfs = "klangk.seed:load_main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -32,15 +32,19 @@ operators or integrators to act when upgrading.
 
 ### Added
 
-- **`klangk-build-nix-seed` — build the `/nix` seed (#2225).** A console
-  script (shipped with `pip install klangk`) that builds the shared nix seed
-  dir from the wheel — no source tree, no devenv: it bundles the seed
-  Dockerfile in the wheel, drives the **configured** podman
-  (`KLANGKD_PODMAN_BIN`), and writes `<dir>/nix` + `<dir>/nix.conf` — then
-  `nix_seed.path` points at it. `--update` rebuilds in place, `--no-cache`
-  forces fresh nix/devenv. It supersedes the former `scripts/build-nix-seed.sh`
-  (the tool works in dev too via a source-tree Dockerfile fallback + resolving
-  podman from the devenv PATH).
+- **`klangk-build-nix-seed` + `klangk-load-nix-seed-btrfs` — build/load the
+  `/nix` seed from a wheel install (#2225).** Two console scripts (shipped with
+  `pip install klangk`) replace the former devenv-only shell scripts.
+  `klangk-build-nix-seed` builds the shared nix seed dir — no source tree, no
+  devenv: it bundles the seed Dockerfile in the wheel, drives the **configured**
+  podman (`KLANGKD_PODMAN_BIN`), and writes `<dir>/nix` + `<dir>/nix.conf`
+  (`--update` rebuilds in place, `--no-cache` forces fresh nix/devenv).
+  `klangk-load-nix-seed-btrfs <seed-tree> <btrfs-parent>` loads the output into
+  a btrfs subvolume for the `btrfs-snapshot` backend (the fuse backend points
+  `nix_seed.path` at the dir directly). Both supersede
+  `scripts/build-nix-seed.sh` + `scripts/load-nix-seed-btrfs.sh` (the tools
+  work in dev too — the console scripts are in the devenv venv, with a
+  source-tree Dockerfile fallback + podman resolved from the devenv PATH).
 
 - **`nix_seed` — per-workspace `/nix` with two backends (#2219, #2220).** The
   per-workspace `/nix` config is now one block — `nix_seed: {type, path}` —

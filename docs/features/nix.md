@@ -63,7 +63,7 @@ packages):
 
    ```sh
    btrfs subvolume delete /steam2/btrfs/klangk-nix/seed
-   scripts/load-nix-seed-btrfs.sh /tmp/nix-base /steam2/btrfs/klangk-nix
+   klangk-load-nix-seed-btrfs /tmp/nix-base /steam2/btrfs/klangk-nix
    ```
 
 New workspaces pick up the new seed on next start. **Existing workspaces keep
@@ -132,7 +132,7 @@ compared the options; #2210 is closed as not-needed.)
    - **`btrfs-snapshot`** — load the seed into a subvolume:
 
      ```sh
-     scripts/load-nix-seed-btrfs.sh /tmp/nix-base /steam2/btrfs/klangk-nix
+     klangk-load-nix-seed-btrfs /tmp/nix-base /steam2/btrfs/klangk-nix
      ```
 
      `/steam2/btrfs` must be a btrfs filesystem **mounted with

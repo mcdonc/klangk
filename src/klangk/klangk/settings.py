@@ -341,7 +341,7 @@ class NixSeedConfig(BaseModel):
     type: Literal["btrfs-snapshot", "fuse-overlayfs"] = "fuse-overlayfs"
     # Path to the seed tree (klangk-build-nix-seed output: holds nix/ +
     # nix.conf). For "btrfs-snapshot" it must be a btrfs subvolume (loaded by
-    # scripts/load-nix-seed-btrfs.sh); for "fuse-overlayfs", a plain directory.
+    # klangk-load-nix-seed-btrfs); for "fuse-overlayfs", a plain directory.
     path: str | None = None
 
 

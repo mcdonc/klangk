@@ -82,45 +82,43 @@ def _sig_policy_args() -> list[str]:
 
 
 async def _run(
-    podman_bin: str,
+    binary: str,
     args: list[str],
     *,
     timeout: float = 1800.0,
     check: bool = True,
 ) -> tuple[int, str, str]:
-    """Run ``<podman_bin> <args>`` → ``(rc, stdout, stderr)``.
+    """Run ``<binary> <args>`` → ``(rc, stdout, stderr)``.
 
-    Standalone sibling of ``Podman.run`` (the seed tool isn't on a request path
-    and doesn't need an app). Long default timeout — the build installs nix +
+    Standalone sibling of ``Podman.run`` (the seed tools aren't on a request
+    path and don't need an app). Used for both podman (the build) and the btrfs
+    CLI (the subvolume loader). Long default timeout — the build installs nix +
     devenv. A missing binary surfaces as ``SeedError`` (not a raw
     ``FileNotFoundError``), and a wedged call times out + is killed.
     """
     try:
         proc = await asyncio.create_subprocess_exec(
-            podman_bin,
+            binary,
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=subprocess_env(),
         )
     except FileNotFoundError as exc:
-        raise SeedError(
-            f"podman not found at {podman_bin!r} — set KLANGKD_PODMAN_BIN or "
-            f"install podman"
-        ) from exc
+        raise SeedError(f"{binary} not found on PATH") from exc
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        label = args[0] if args else "podman"
-        raise SeedError(f"podman {label} timed out after {timeout}s")
+        label = args[0] if args else binary
+        raise SeedError(f"{binary} {label} timed out after {timeout}s")
     rc = proc.returncode or 0
     out_s = out.decode("utf-8", "replace")
     err_s = err.decode("utf-8", "replace")
     if check and rc != 0:
         raise SeedError(
-            f"podman {' '.join(args[:2])} failed (rc={rc}): {err_s.strip()}"
+            f"{binary} {' '.join(args[:2])} failed (rc={rc}): {err_s.strip()}"
         )
     return rc, out_s, err_s
 
@@ -276,6 +274,15 @@ def _chmod_w(path: Path) -> None:
                 pass
 
 
+def _cp_a(src: Path, dst: Path) -> None:
+    """``cp -a`` semantics: recursive copy preserving mode/time/symlinks (used
+    to populate the seed subvolume from the build output)."""
+    if src.is_dir():
+        shutil.copytree(src, dst, symlinks=True)
+    else:
+        shutil.copy2(src, dst)
+
+
 def _clear_seed_dir(out: Path) -> None:
     """Remove an existing ``nix/`` + ``nix.conf`` + ``etc/`` (chmod read-only
     store files first so rmdir/unlink can proceed)."""
@@ -330,6 +337,47 @@ async def build_nix_seed(
         _chmod_w(out / "nix")
     await _verify(podman_bin, _IMAGE, out)
     logger.info("seed written to %s", out)
+
+
+# --- btrfs subvolume loader ------------------------------------------------
+
+
+async def load_nix_seed_btrfs(
+    seed_tree: str | os.PathLike[str],
+    btrfs_parent: str | os.PathLike[str],
+    *,
+    btrfs_bin: str = "btrfs",
+) -> Path:
+    """Load a seed tree into a btrfs subvolume for the btrfs-snapshot backend.
+
+    Creates ``<btrfs_parent>/seed`` via ``btrfs subvolume create`` and copies
+    the seed's ``nix/`` + ``nix.conf`` into it. Refuses to clobber an existing
+    subvolume (reseed by deleting it first). The seed store files are made
+    writable beforehand so the copy can update paths in a shared tree.
+    """
+    tree = Path(seed_tree)
+    parent = Path(btrfs_parent)
+    if not (tree / "nix").is_dir():
+        raise SeedError(
+            f"{tree}/nix not found — build the seed first "
+            "(klangk-build-nix-seed)"
+        )
+    if not (tree / "nix.conf").is_file():
+        raise SeedError(f"{tree}/nix.conf not found")
+    parent.mkdir(parents=True, exist_ok=True)
+    seed = parent / "seed"
+    if seed.exists():
+        raise SeedError(
+            f"{seed} already exists — remove it first: "
+            f"{btrfs_bin} subvolume delete {seed}"
+        )
+    logger.info("creating seed subvolume %s", seed)
+    await _run(btrfs_bin, ["subvolume", "create", str(seed)], timeout=60.0)
+    _chmod_w(tree)
+    _cp_a(tree / "nix", seed / "nix")
+    _cp_a(tree / "nix.conf", seed / "nix.conf")
+    logger.info("loaded seed into %s", seed)
+    return seed
 
 
 # --- bundled Dockerfile location ------------------------------------------
@@ -426,6 +474,52 @@ def main(argv: list[str] | None = None) -> int:
     except SeedError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    return 0
+
+
+def _build_load_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="klangk-load-nix-seed-btrfs",
+        description=(
+            "Load the nix seed tree into a btrfs subvolume (for "
+            "nix_seed.type: btrfs-snapshot). The seed subvolume lands at "
+            "<btrfs-parent>/seed."
+        ),
+    )
+    parser.add_argument(
+        "seed_tree",
+        help="klangk-build-nix-seed output (holds nix/ + nix.conf)",
+    )
+    parser.add_argument(
+        "btrfs_parent",
+        help="dir on a btrfs fs mounted with user_subvol_rm_allowed; "
+        "the seed subvolume lands at <btrfs-parent>/seed",
+    )
+    return parser
+
+
+def load_main(argv: list[str] | None = None) -> int:
+    args = _build_load_parser().parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if not shutil.which("btrfs"):
+        print(
+            "ERROR: btrfs not found on PATH (install btrfs-progs)",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        seed = asyncio.run(
+            load_nix_seed_btrfs(args.seed_tree, args.btrfs_parent)
+        )
+    except SeedError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print("Set in klangkd.yaml:")
+    print("  nix_seed:")
+    print("    type: btrfs-snapshot")
+    print(f"    path: {seed}")
     return 0
 
 

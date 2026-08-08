@@ -7,6 +7,7 @@ import importlib.resources as _ires
 import io
 import os
 import tarfile
+from pathlib import Path
 
 import pytest
 
@@ -672,3 +673,109 @@ def test_main_passes_update_and_nocache(tmp_path, monkeypatch):
     seed.main([str(tmp_path / "out"), "--update", "--no-cache"])
     assert seen["update"] is True
     assert seen["no_cache"] is True
+
+
+# --- btrfs loader (_cp_a, load_nix_seed_btrfs, load_main) ------------------
+
+
+def test_cp_a_dir_preserves_symlinks(tmp_path):
+    src = tmp_path / "nix"
+    src.mkdir()
+    (src / "f").write_text("x")
+    (src / "link").symlink_to("f")
+    dst = tmp_path / "out" / "nix"
+    seed._cp_a(src, dst)
+    assert (dst / "f").read_text() == "x"
+    assert (dst / "link").is_symlink()
+
+
+def test_cp_a_file(tmp_path):
+    src = tmp_path / "nix.conf"
+    src.write_text("experimental = ")
+    (tmp_path / "out").mkdir()
+    dst = tmp_path / "out" / "nix.conf"
+    seed._cp_a(src, dst)
+    assert dst.read_text() == "experimental = "
+
+
+async def test_load_btrfs_happy(tmp_path, monkeypatch):
+    tree = tmp_path / "seed-tree"
+    (tree / "nix" / "store").mkdir(parents=True)
+    f = tree / "nix" / "store" / "x"
+    f.write_text("x")
+    f.chmod(0o444)  # read-only store file
+    (tree / "nix.conf").write_text("experimental = ")
+    calls = []
+
+    async def fake_run(binary, args, **kw):
+        calls.append(args)
+        if args[:2] == ["subvolume", "create"]:
+            Path(args[2]).mkdir(parents=True, exist_ok=True)
+            return (0, "", "")
+        raise AssertionError(f"unexpected _run: {args}")
+
+    monkeypatch.setattr(seed, "_run", fake_run)
+    parent = tmp_path / "btrfs"
+    result = await seed.load_nix_seed_btrfs(tree, parent)
+    assert result == parent / "seed"
+    assert calls[0][:2] == ["subvolume", "create"]
+    assert str(parent / "seed") in calls[0][2]
+    assert (parent / "seed" / "nix" / "store" / "x").is_file()
+    assert (parent / "seed" / "nix.conf").read_text() == "experimental = "
+
+
+async def test_load_btrfs_missing_nix(tmp_path):
+    tree = tmp_path / "seed-tree"
+    tree.mkdir()
+    (tree / "nix.conf").write_text("x")  # but no nix/
+    with pytest.raises(seed.SeedError, match="/nix not found"):
+        await seed.load_nix_seed_btrfs(tree, tmp_path / "btrfs")
+
+
+async def test_load_btrfs_missing_conf(tmp_path):
+    tree = tmp_path / "seed-tree"
+    (tree / "nix").mkdir(parents=True)  # but no nix.conf
+    with pytest.raises(seed.SeedError, match="nix.conf not found"):
+        await seed.load_nix_seed_btrfs(tree, tmp_path / "btrfs")
+
+
+async def test_load_btrfs_seed_exists(tmp_path):
+    tree = tmp_path / "seed-tree"
+    (tree / "nix").mkdir(parents=True)
+    (tree / "nix.conf").write_text("x")
+    parent = tmp_path / "btrfs"
+    (parent / "seed").mkdir(parents=True)  # already there
+    with pytest.raises(seed.SeedError, match="already exists"):
+        await seed.load_nix_seed_btrfs(tree, parent)
+
+
+def test_load_main_missing_btrfs(monkeypatch):
+    monkeypatch.setattr(
+        seed.shutil, "which", lambda b: None if b == "btrfs" else "/usr/bin/x"
+    )
+    assert seed.load_main(["/seed-tree", "/btrfs-parent"]) == 2
+
+
+def test_load_main_happy(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(seed.shutil, "which", lambda b: f"/usr/bin/{b}")
+
+    async def fake_load(tree, parent, **kw):
+        return Path(str(parent)) / "seed"
+
+    monkeypatch.setattr(seed, "load_nix_seed_btrfs", fake_load)
+    rc = seed.load_main([str(tmp_path / "tree"), str(tmp_path / "parent")])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "nix_seed:" in out
+    assert "btrfs-snapshot" in out
+    assert str(tmp_path / "parent" / "seed") in out
+
+
+def test_load_main_seed_error(monkeypatch):
+    monkeypatch.setattr(seed.shutil, "which", lambda b: f"/usr/bin/{b}")
+
+    async def boom(tree, parent, **kw):
+        raise seed.SeedError("nope")
+
+    monkeypatch.setattr(seed, "load_nix_seed_btrfs", boom)
+    assert seed.load_main(["/tree", "/parent"]) == 1
