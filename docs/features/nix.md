@@ -52,8 +52,8 @@ nix_seed:
   path: /path/to/seed
 ```
 
-Omit `nix_seed` (or leave `path` unset) to disable the feature — nix is then
-image-only (pick the `klangk-workspace-nix` image for its baked `/nix`).
+Omit `nix_seed` (or leave `path` unset) to disable the feature — no
+per-workspace `/nix` is provisioned.
 
 ### `fuse-overlayfs` (the default — no btrfs)
 
@@ -80,7 +80,7 @@ nix_seed:
 > the workspace container). It does **not** work where podman is nested — the
 > rootless runtime can't bind a process-owned FUSE mount into a workspace
 > container's userns (host-container and macOS deployments). Use
-> `btrfs-snapshot` there if you have btrfs, otherwise the nix image.
+> `btrfs-snapshot` there if you have btrfs.
 
 ### `btrfs-snapshot` (CoW — needs btrfs)
 
@@ -114,7 +114,7 @@ Per workspace, tick **Nix** when creating it (or set `nix: true` via the API).
 That workspace then gets a `/nix` on start. Image selection stays the user's
 choice — the flag never forces an image. With `nix_seed` configured, the
 create-workspace dialog shows a "Nix" checkbox; without it the checkbox is
-hidden and nix is image-only.
+hidden.
 
 nix/devenv are on `$PATH` by default: klangkd sets `KLANGKWS_NIX=1`, and the
 default workspace image's `/etc/profile.d/z-klangk-nix.sh` sources
