@@ -1083,16 +1083,21 @@ class ContainerRegistry:
         self,
         allowed_domains: list[str] | None,
         egress_mode: str = "static",
-    ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
-        """Build ``(annotations, hooks_dirs, cap_drop)`` for egress (#1365).
+    ) -> tuple[
+        dict[str, str] | None,
+        list[str] | None,
+        list[str] | None,
+        list[str] | None,
+    ]:
+        """Build ``(annotations, hooks_dirs, cap_drop, dns)`` for egress (#1365).
 
-        ``(None, None, None)`` when unrestricted (no domains, or netfilter
-        disabled). Delegates to ``app.state.netfilter``; defensive for
-        test app-states that may not wire it.
+        ``(None, None, None, None)`` when unrestricted (no domains, or
+        netfilter disabled). Delegates to ``app.state.netfilter``; defensive
+        for test app-states that may not wire it.
         """
         nf = getattr(self.app.state, "netfilter", None)
         if nf is None:
-            return None, None, None
+            return None, None, None, None
         return nf.create_kwargs(allowed_domains, egress_mode=egress_mode)
 
     async def start_container(
@@ -1448,9 +1453,15 @@ class ContainerRegistry:
             owner_id=owner_id,
             setup_state=setup_state,
         )
+        # --hooks-dir is a podman global flag that must be present on the
+        # start invocation — podman does not persist it from create. OCI
+        # hooks (netfilter egress) fire at start time.
+        _hooks_dirs = create_kwargs.get("hooks_dir")
         t_podman_start = time.monotonic()
         try:
-            await self.app.state.podman.start_container(cid)
+            await self.app.state.podman.start_container(
+                cid, hooks_dir=_hooks_dirs
+            )
         except podman.PodmanError as exc:
             if not self._is_port_conflict(exc):
                 raise
@@ -1463,7 +1474,9 @@ class ContainerRegistry:
             for delay in (0.5, 1.5):
                 await asyncio.sleep(delay)
                 try:
-                    await self.app.state.podman.start_container(cid)
+                    await self.app.state.podman.start_container(
+                        cid, hooks_dir=_hooks_dirs
+                    )
                     last_exc = None
                     break
                 except podman.PodmanError as retry_exc:
@@ -1697,13 +1710,18 @@ class ContainerRegistry:
         # standard dirs are repeated to keep operator createContainer
         # hooks running). The filtered container also drops NET_ADMIN
         # (#1773) so the entrypoint can't flush the ruleset.
-        annotations, hooks_dirs, cap_drop = self._egress_filter(
+        annotations, hooks_dirs, cap_drop, dns = self._egress_filter(
             allowed_domains, egress_mode=egress_mode
         )
         if annotations is not None:
             create_kwargs["annotations"] = annotations
             create_kwargs["hooks_dir"] = hooks_dirs
             create_kwargs["cap_drop"] = cap_drop
+            # The hook allows :53 only to these resolvers; pass them via
+            # --dns so the container actually queries them (a deterministic
+            # match between what the hook allows and what the container
+            # uses) (#1365).
+            create_kwargs["dns"] = dns
 
         # #2045: grant the container CAP_NET_RAW so unprivileged ``ping``
         # works (a setuid ping binary in the base image bridges the cap to

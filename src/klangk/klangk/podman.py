@@ -302,11 +302,15 @@ class Podman:
         non-None**, so an unset limit = no flag = no behavior change — the
         same omit-when-unset posture as ``cap_drop``/``userns``.
         """
-        args = ["create", f"--pull={pull}", "--name", name]
-        if replace:
-            args.append("--replace")
+        # --hooks-dir is a podman global flag (before the subcommand), not a
+        # create flag. Placing it after "create" causes podman to silently
+        # ignore it. Global flags must precede the subcommand.
+        args: list[str] = []
         for d in hooks_dir or []:
             args += ["--hooks-dir", d]
+        args += ["create", f"--pull={pull}", "--name", name]
+        if replace:
+            args.append("--replace")
         if init:
             args.append("--init")
         if interactive:
@@ -351,9 +355,25 @@ class Podman:
         _rc, out, _err = await self.run(args, timeout=120.0)
         return out.strip()
 
-    async def start_container(self, container_id: str) -> None:
-        """Start a created container."""
-        await self.run(["start", container_id], timeout=120.0)
+    async def start_container(
+        self,
+        container_id: str,
+        hooks_dir: list[str] | None = None,
+    ) -> None:
+        """Start a created container.
+
+        ``hooks_dir`` is the same list passed to ``create_container``:
+        ``--hooks-dir`` is a podman **global** flag that must be present on
+        the ``start`` invocation too — podman does not persist it from
+        ``create``.  OCI hooks (e.g. the netfilter egress hook) are
+        discovered and executed at ``start`` time, so omitting the flag
+        here silently skips all hooks.
+        """
+        args: list[str] = []
+        for d in hooks_dir or []:
+            args += ["--hooks-dir", d]
+        args += ["start", container_id]
+        await self.run(args, timeout=120.0)
 
     async def wait_for_container_ready(
         self, container_id: str, *, timeout: float = 60.0

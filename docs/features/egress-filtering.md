@@ -16,28 +16,41 @@ injected into its network namespace before its process starts.
    or IPv4 CIDR specs — see the [API](#api) section for the full grammar).
 2. On container start, if the deploy has enabled netfilter, the backend
    passes `--annotation klangk.netfilter.rules=<host:port,...>` to
-   `podman create`. On Linux it also passes `--hooks-dir <dir>` (see the
-   caveat below on `--hooks-dir` overriding default hook dirs); on macOS
+   `podman create`, plus a `klangk.netfilter.resolvers` annotation and
+   matching `--dns` flags carrying the host's upstream DNS resolvers (see
+   step 4). On Linux it also passes `--hooks-dir <dir>` to **both**
+   `podman create` and `podman start` — podman 5.x only reads `--hooks-dir`
+   at start, so the flag must be present on the start invocation too (see
+   the caveat below on `--hooks-dir` overriding default hook dirs). On macOS
    the hook is installed inside the podman machine VM and discovered
    automatically.
 3. The OCI hook (`klangk-netfilter.sh`, materialized by the backend into the
-   hooks dir) fires at container-creation time, reads the annotation from
-   the container state, resolves each host to IPs, and installs an iptables
-   ruleset in the container's network namespace (via `nsenter` on the init
-   pid).
+   hooks dir) fires at the `createContainer` stage — inside the container's
+   network namespace, before `CAP_NET_ADMIN` is dropped, with its binaries
+   resolved on the host (so a tampered in-container `iptables` cannot
+   subvert it). It reads the annotations from the container state, resolves
+   each host to IPs, and installs an iptables ruleset in the container's
+   network namespace **directly** (no `nsenter` — the hook is already in
+   that netns).
 4. The default `OUTPUT` policy is `DROP`; loopback, established
    connections, **DNS to the container's configured resolvers only**
-   (read from its `/etc/resolv.conf`, not a blanket `udp/tcp 53` allow),
+   (read from the `klangk.netfilter.resolvers` annotation — the
+   `createContainer` hook runs in the host mount namespace and can't read
+   the container's `/etc/resolv.conf`, which netavark writes only after
+   the create hooks; the server detects the host's upstream resolvers and
+   mirrors them both here and via `--dns`, so the allow-rules match what
+   the container actually queries — not a blanket `udp/tcp 53` allow),
    the backend gateway (`host.containers.internal`, resolved from the
    container's `/etc/hosts`), and the resolved allowed destinations are
    `ACCEPT`ed. Everything else is dropped.
-5. **IPv6 is disabled** in the container's network namespace — the hook
-   sets `net.ipv6.conf.all.disable_ipv6=1` (turns the protocol off) and
-   `ip6tables -P OUTPUT DROP` (a routing-level default-deny that holds
-   even if the sysctl write fails). Only IPv4 egress is possible, so the
-   allow-list cannot be bypassed over IPv6 (#1936). `allowed_domains`
-   therefore accepts only hostnames and IPv4 addresses (no `[ipv6]`
-   literals), and AAAA records returned by DNS are ignored.
+5. **IPv6 egress is default-denied** — the hook sets
+   `ip6tables -P OUTPUT DROP`, so the v4 allow-list cannot be bypassed over
+   IPv6 (#1936). (An earlier `sysctl net.ipv6.conf.*.disable_ipv6=1` was
+   dropped: it fires at `createContainer`, before pasta configures the
+   netns, and the disabled knob makes pasta's IPv6 address setup fail.
+   `ip6tables` is the sole v6 default-deny and is verified at startup.)
+   `allowed_domains` therefore accepts only hostnames and IPv4 addresses
+   (no `[ipv6]` literals), and AAAA records returned by DNS are ignored.
 
 The hook runs **before** the container process starts, so the ruleset is in
 place and immutable before any user code runs — `CAP_NET_ADMIN` is dropped
@@ -79,14 +92,14 @@ script (`klangk-netfilter.sh`) and its config (`klangk-netfilter.json`)
 into a hooks directory and registers the OCI `createContainer` hook — no
 configuration is required for the common case.
 
-1. Ensure `iptables`, `ip6tables`, `sysctl`, `getent`, and `nsenter` are
-   available where the OCI runtime executes (the host, or the
-   Docker-in-Docker outer container — _not_ the workspace image). The
-   documented DinD deployment already has `CAP_SYS_ADMIN` +
-   `seccomp=unconfined`, which provides the necessary privileges.
-   (`ip6tables` + `sysctl` disable IPv6 in the container netns, #1936;
-   if either is absent the hook logs a warning and falls back to the
-   other mechanism, but both should be present for defense-in-depth.)
+1. Ensure `iptables`, `ip6tables`, and `getent` are available where the
+   OCI runtime executes the hook (the host — _not_ the workspace image;
+   `createContainer` hooks resolve their binaries on the host). The hook
+   runs inside the container's network namespace at `createContainer` with
+   `CAP_NET_ADMIN` still held, so no `nsenter`/`sudo` is needed and no
+   host-level privilege is required. (`ip6tables` carries the IPv6
+   default-deny, #1936; if it is absent the hook logs a warning and v6
+   egress is not blocked, so the deploy must provide it.)
 2. The hooks dir defaults to `<state_dir>/oci-hooks`
    (`KLANGKD_STATE_DIR`/`oci-hooks`). On macOS the backend automatically
    copies the hooks into the podman machine VM at startup — no manual
@@ -186,9 +199,9 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
   it is the stable choice for a private range whose individual hosts you
   don't want to enumerate (#1935).
 - IPv6 literals and IPv6 CIDRs (e.g. `[::1]`, `[2001:db8::1]:443`,
-  `2001:db8::/32`) are **not** accepted — IPv6 is disabled inside
-  filtered containers, so a v6 destination is neither reachable nor
-  enforceable (#1936).
+  `2001:db8::/32`) are **not** accepted — IPv6 egress is default-denied
+  inside filtered containers, so a v6 destination is neither reachable
+  nor enforceable (#1936).
 - Each entry is validated server-side; malformed entries are rejected with
   HTTP 400.
 - An empty list (or `null`) **inherits the deploy-wide default**
@@ -541,12 +554,13 @@ netfilter_default_domains:
 
 ## Caveats
 
-- **IPv6 is disabled — IPv4 egress only.** The hook turns IPv6 off in the
-  container's network namespace (`net.ipv6.conf.all.disable_ipv6=1`) and
-  default-denies IPv6 `OUTPUT` via `ip6tables`, so the allow-list can't
-  be bypassed over v6 (#1936). Hostnames resolve to IPv4 only (AAAA
-  records are ignored), and `[ipv6]:port` literals are rejected by the
-  validator. Trade-off: a workspace that genuinely needs IPv6 egress
+- **IPv6 egress is default-denied — IPv4 egress only.** The hook sets
+  `ip6tables -P OUTPUT DROP`, so the allow-list can't be bypassed over v6
+  (#1936). (An earlier `sysctl disable_ipv6=1` was dropped — it fired
+  before pasta configured the netns and broke pasta's IPv6 setup.)
+  Hostnames resolve to IPv4 only (AAAA records are ignored), and
+  `[ipv6]:port` literals are rejected by the validator. Trade-off: a
+  workspace that genuinely needs IPv6 egress
   cannot use the filter — clear `allowed_domains` (and the deploy-wide
   default) to run it unrestricted.
 - **`0.0.0.0/0` matches all IPv4 — don't use it to "disable" the
