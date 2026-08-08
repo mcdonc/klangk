@@ -148,6 +148,10 @@ async def init_db(db) -> None:
                 -- comma-joined host[:port] specs; NULL = unrestricted
                 -- egress (see KLANGKD_NETFILTER_HOOKS_DIR, #1365)
                 allowed_domains TEXT,
+                -- egress filtering mode: 'static' (immutable allow-list
+                -- at create time, the default) or 'interactive'
+                -- (prompt on first connection to unknown host, #2239).
+                egress_mode TEXT NOT NULL DEFAULT 'static',
                 -- JSON dict of per-workspace behavioral overrides
                 -- (idle_timeout, bridge_timeout, cpu_limit,
                 -- memory_limit, pids_limit, ...). NULL = no overrides;
@@ -217,6 +221,33 @@ async def init_db(db) -> None:
         # column/migration. Structural fields stay as dedicated columns.
         if "settings" not in ws_cols:
             await db.execute("ALTER TABLE workspaces ADD COLUMN settings TEXT")
+        # Migration: add egress_mode column (#2239). 'static' = immutable
+        # allow-list at create time (today's behavior); 'interactive' =
+        # prompt on first connection to unknown host.
+        if "egress_mode" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces"
+                " ADD COLUMN egress_mode TEXT NOT NULL DEFAULT 'static'"
+            )
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS egress_consent (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                dest_host TEXT NOT NULL,
+                dest_port INTEGER,
+                pid INTEGER,
+                process_name TEXT,
+                decision TEXT NOT NULL DEFAULT 'pending',
+                scope TEXT,
+                requested_at REAL NOT NULL,
+                decided_at REAL,
+                decided_by TEXT REFERENCES users(id) ON DELETE SET NULL
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_egress_consent_workspace
+            ON egress_consent(workspace_id, decision)
+        """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
                 port INTEGER PRIMARY KEY,
