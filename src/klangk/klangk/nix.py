@@ -165,7 +165,7 @@ class Nix:
         if not os.path.isdir(seed):
             raise NixError(
                 f"seed subvolume {seed} not found — build the seed "
-                f"(devenv shell -- build-nix-seed) and load it "
+                f"(klangk-build-nix-seed) and load it "
                 f"(scripts/load-nix-seed-btrfs.sh) first"
             )
         fstype = (await self._run(["stat", "-f", "-c", "%T", seed]))[1].strip()
@@ -209,7 +209,7 @@ class Nix:
         if not os.path.isdir(os.path.join(seed, "nix")):
             raise NixError(
                 f"seed directory {seed}/nix not found — build the seed "
-                f"(devenv shell -- build-nix-seed) and point nix_seed.path "
+                f"(klangk-build-nix-seed) and point nix_seed.path "
                 f"at its output first"
             )
         ws = self._ws_path(workspace_id)

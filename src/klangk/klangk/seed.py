@@ -1,14 +1,14 @@
-"""Build / update the shared nix seed dir from a wheel install (#2225).
+"""Build / update the shared nix seed dir (#2225).
 
-``scripts/build-nix-seed.sh`` does this from a source tree + a devenv shell
-(devenv's podman, ``DEVENV_ROOT``, ``_podman_common.sh``). A ``pip install
-klangk`` deployment — the host container, a bare pip install — has neither, so
-an operator can't build a seed without checking out the repo. This module ships
-as the ``klangk-build-nix-seed`` console script: it locates the seed Dockerfile
-bundled in the wheel via ``importlib.resources``, drives the *configured*
-podman (``KLANGKD_PODMAN_BIN``), and writes ``<out-dir>/nix`` +
-``<out-dir>/nix.conf``. The operator then points ``nix_seed.path`` at the
-output (fuse: directly; btrfs: load it into a subvolume first).
+Ships as the ``klangk-build-nix-seed`` console script: it locates the seed
+Dockerfile bundled in the wheel via ``importlib.resources`` (with a
+source-tree fallback for dev), drives the *configured* podman
+(``KLANGKD_PODMAN_BIN``, the same binary the server uses), and writes
+``<out-dir>/nix`` + ``<out-dir>/nix.conf``. The operator then points
+``nix_seed.path`` at the output (fuse: directly; btrfs: load it into a
+subvolume first). Works the same from a ``pip install klangk`` deployment
+(host container, bare pip) and from a devenv shell — no separate source-tree
+script.
 
 Server-side tool (uses klangk's settings + podman subprocess env); not part of
 the standalone ``klangk.cli`` client, which must not import the server package.
@@ -35,8 +35,8 @@ from .settings import KlangkSettings
 
 logger = logging.getLogger("klangk.seed")
 
-# Throwaway build image tag (matches scripts/build-nix-seed.sh). The image is a
-# build sandbox only — its /nix is extracted, the image is not shipped.
+# Throwaway build image tag. The image is a build sandbox only — its /nix is
+# extracted, the image is not shipped.
 _IMAGE = "klangk-nix-seed:latest"
 # Bundled-data dir inside the wheel: site-packages/klangk/nix-seed/Dockerfile.
 _BUNDLE_DIR = "nix-seed"
@@ -201,8 +201,7 @@ def _export_to_dir_sync(podman_bin: str, cid: str, out: str) -> None:
 
 async def _export_and_extract(podman_bin: str, image: str, out: Path) -> None:
     """Create a throwaway container from *image*, stream its ``/nix`` +
-    ``/etc/nix/nix.conf`` out into *out* (matching ``build-nix-seed.sh``), then
-    remove the container.
+    ``/etc/nix/nix.conf`` out into *out*, then remove the container.
     """
     rc, cid_out, _ = await _run(
         podman_bin, ["create", "--entrypoint", "/bin/true", image]
@@ -233,7 +232,7 @@ async def _export_and_extract(podman_bin: str, image: str, out: Path) -> None:
 async def _verify(podman_bin: str, image: str, out: Path) -> None:
     """Run ``nix --version`` (and ``devenv --version``) against the extracted
     store, mounted read-only into a plain base — proves the seed is self-
-    contained (parity with scripts/build-nix-seed.sh)."""
+    contained."""
     script = (
         "export PATH=/nix/nix-profile/bin:$PATH "
         "NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt; "

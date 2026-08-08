@@ -3,7 +3,7 @@
 # per-workspace snapshots (klangk.nix.Nix) are created from.
 #
 # Usage: load-nix-seed-btrfs.sh <seed-tree> <btrfs-parent>
-#   <seed-tree>     output of `devenv shell -- build-nix-seed` (holds nix/ + nix.conf)
+#   <seed-tree>     output of `klangk-build-nix-seed` (holds nix/ + nix.conf)
 #   <btrfs-parent>  a directory on a btrfs filesystem mounted with
 #                   `user_subvol_rm_allowed`, writable by the caller, e.g.
 #                   /steam2/btrfs/klangk-nix. The seed subvolume lands at
@@ -22,7 +22,7 @@ SEED_TREE="${1:?usage: load-nix-seed-btrfs.sh <seed-tree> <btrfs-parent>}"
 PARENT="${2:?usage: load-nix-seed-btrfs.sh <seed-tree> <btrfs-parent>}"
 
 require() { [ -e "$1" ] || {
-  echo "ERROR: $1 not found (run 'devenv shell -- build-nix-seed' first)" >&2
+  echo "ERROR: $1 not found (run 'klangk-build-nix-seed' first)" >&2
   exit 1
 }; }
 require "$SEED_TREE/nix"

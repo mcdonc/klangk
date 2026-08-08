@@ -32,13 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
-- **`klangk-build-nix-seed` — build the `/nix` seed from a wheel install
-  (#2225).** A new console script (shipped with `pip install klangk`) builds
-  the shared nix seed dir without a source tree or devenv: it bundles the
-  seed Dockerfile in the wheel, drives the **configured** podman
+- **`klangk-build-nix-seed` — build the `/nix` seed (#2225).** A console
+  script (shipped with `pip install klangk`) that builds the shared nix seed
+  dir from the wheel — no source tree, no devenv: it bundles the seed
+  Dockerfile in the wheel, drives the **configured** podman
   (`KLANGKD_PODMAN_BIN`), and writes `<dir>/nix` + `<dir>/nix.conf` — then
   `nix_seed.path` points at it. `--update` rebuilds in place, `--no-cache`
-  forces fresh nix/devenv. `scripts/build-nix-seed.sh` remains the devenv path.
+  forces fresh nix/devenv. It supersedes the former `scripts/build-nix-seed.sh`
+  (the tool works in dev too via a source-tree Dockerfile fallback + resolving
+  podman from the devenv PATH).
 
 - **`nix_seed` — per-workspace `/nix` with two backends (#2219, #2220).** The
   per-workspace `/nix` config is now one block — `nix_seed: {type, path}` —
@@ -54,12 +56,12 @@ operators or integrators to act when upgrading.
   GNU coreutils `stat` is on PATH (Linux) so a missing or BSD `stat` surfaces at
   pre-flight. `coreutils` (which provides `stat`) is explicit in `devenv.nix`.
 
-- **Shared base `/nix` store seed (`scripts/build-nix-seed.sh`) (#2200).**
-  A reproducible build step that produces a self-consistent `/nix` tree (the
-  store, the nix DB, and a base profile with nix and devenv) and an
+- **Shared base `/nix` store seed (the `klangk-build-nix-seed` command)
+  (#2200).** A reproducible build step that produces a self-consistent `/nix`
+  tree (the store, the nix DB, and a base profile with nix and devenv) and an
   `/etc/nix/nix.conf` (flakes, nix-command, and pre-configured binary caches),
   deployed alongside klangk as a host-side tree rather than baked into a
-  workspace image. Run via `devenv shell -- build-nix-seed`. Consumed by #2201.
+  workspace image. Run via `klangk-build-nix-seed`. Consumed by #2201.
 
 - **Per-workspace `/nix` via btrfs snapshots (#2201, #2202, #2208).** With
   `nix_seed.type: btrfs-snapshot` and a seed btrfs subvolume at `nix_seed.path`,

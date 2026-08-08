@@ -339,8 +339,8 @@ class NixSeedConfig(BaseModel):
     # user_subvol_rm_allowed). "fuse-overlayfs": a fuse-overlayfs overlay per
     # workspace (any filesystem; the default).
     type: Literal["btrfs-snapshot", "fuse-overlayfs"] = "fuse-overlayfs"
-    # Path to the seed tree (build-nix-seed output: holds nix/ + nix.conf). For
-    # "btrfs-snapshot" it must be a btrfs subvolume (loaded by
+    # Path to the seed tree (klangk-build-nix-seed output: holds nix/ +
+    # nix.conf). For "btrfs-snapshot" it must be a btrfs subvolume (loaded by
     # scripts/load-nix-seed-btrfs.sh); for "fuse-overlayfs", a plain directory.
     path: str | None = None
 

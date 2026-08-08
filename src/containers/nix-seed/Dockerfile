@@ -3,7 +3,7 @@
 # This image ONLY exists to produce a self-consistent /nix tree (store +
 # var/db + a base profile with nix and devenv) and an /etc/nix/nix.conf
 # (flakes/nix-command + the devenv binary cache pre-configured).
-# scripts/build-nix-seed.sh builds it and extracts both into a deployable
+# klangk-build-nix-seed builds it and extracts both into a deployable
 # host-side tree that #2201 consumes — as an overlayfs lowerdir, or loaded
 # into a zfs dataset for cloning.
 #
