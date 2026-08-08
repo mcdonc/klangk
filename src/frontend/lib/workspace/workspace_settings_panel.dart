@@ -534,7 +534,7 @@ class _SettingsFormState extends State<_SettingsForm> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 760),
+                constraints: const BoxConstraints(maxWidth: 1500),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
