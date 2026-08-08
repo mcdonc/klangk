@@ -32,8 +32,8 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// knows the list won't take effect until an operator enables netfilter.
   final bool netfilterEnabled;
 
-  /// #2202: whether the server can serve the per-workspace nix /nix clone
-  /// (zfs seed configured). When false the nix toggle is hidden; nix is then
+  /// #2202: whether the server can serve the per-workspace nix /nix snapshot
+  /// (btrfs seed configured). When false the nix toggle is hidden; nix is then
   /// image-only (the user picks the nix image themselves).
   final bool nixAvailable;
 

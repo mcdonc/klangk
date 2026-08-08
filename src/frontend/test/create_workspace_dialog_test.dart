@@ -65,6 +65,7 @@ void main() {
     bool allowAutostart = false,
     List<String> defaultAllowedDomains = const [],
     bool netfilterEnabled = false,
+    bool nixAvailable = false,
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -82,6 +83,7 @@ void main() {
                   allowAutostart: allowAutostart,
                   defaultAllowedDomains: defaultAllowedDomains,
                   netfilterEnabled: netfilterEnabled,
+                  nixAvailable: nixAvailable,
                 ),
               );
             });
@@ -809,6 +811,58 @@ void main() {
         'memory_limit': '4g',
         'pids_limit': 256,
       });
+    });
+
+    testWidgets('hides Nix checkbox when not available', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog()); // nixAvailable defaults false
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      expect(find.text('Nix'), findsNothing);
+    });
+
+    testWidgets('shows Nix checkbox when nixAvailable', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog(nixAvailable: true));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      expect(find.widgetWithText(CheckboxListTile, 'Nix'), findsOneWidget);
+    });
+
+    testWidgets('sends settings.nix when Nix toggled on', (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'Nix', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(nixAvailable: true));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final nix = find.widgetWithText(CheckboxListTile, 'Nix');
+      await tester.ensureVisible(nix);
+      await tester.tap(nix);
+      await tester.pump();
+      await tester.enterText(_nameField(), 'Nix');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      expect(postedBody!['settings'], {'nix': true});
     });
   });
 }
