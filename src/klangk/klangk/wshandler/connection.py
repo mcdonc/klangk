@@ -299,6 +299,7 @@ class Connection:
             service_command=workspace.get("service_command"),
             allowed_domains=workspace.get("allowed_domains"),
             workspace_settings=workspace.get("settings"),
+            egress_mode=workspace.get("egress_mode", "static"),
         )
         self.container_status = container_status
         self.workspace_id = workspace_id
