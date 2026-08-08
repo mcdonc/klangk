@@ -32,6 +32,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Shared base `/nix` store seed (`scripts/build-nix-seed.sh`) (#2200).**
+  A reproducible build step that produces a self-consistent `/nix` tree (the
+  store, the nix DB, and a base profile with nix and devenv) and an
+  `/etc/nix/nix.conf` (flakes, nix-command, and pre-configured binary caches),
+  deployed alongside klangk as a host-side tree rather than baked into a
+  workspace image. Run via `devenv run build-nix-seed`. Consumed by #2201.
+
 - **Shared terminals in the TUI (#2164).** The workspace detail screen
   now lists shared terminals visible to you (other users' shared windows
   and the agent's `service` window), below your own terminals. Selecting
