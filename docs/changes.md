@@ -32,6 +32,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`klangk-build-nix-seed` — build the `/nix` seed from a wheel install
+  (#2225).** A new console script (shipped with `pip install klangk`) builds
+  the shared nix seed dir without a source tree or devenv: it bundles the
+  seed Dockerfile in the wheel, drives the **configured** podman
+  (`KLANGKD_PODMAN_BIN`), and writes `<dir>/nix` + `<dir>/nix.conf` — then
+  `nix_seed.path` points at it. `--update` rebuilds in place, `--no-cache`
+  forces fresh nix/devenv. `scripts/build-nix-seed.sh` remains the devenv path.
+
 - **`nix_seed` — per-workspace `/nix` with two backends (#2219, #2220).** The
   per-workspace `/nix` config is now one block — `nix_seed: {type, path}` —
   selecting a backend: `btrfs-snapshot` (a CoW snapshot of a seed btrfs

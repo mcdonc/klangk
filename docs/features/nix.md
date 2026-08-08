@@ -20,13 +20,20 @@ store is built/populated as part of the devenv setup, not baked into an image).
 ### Build it
 
 ```sh
+# from a source checkout + devenv:
 devenv shell -- build-nix-seed [out-dir]
+
+# from a wheel install (pip / host container) — no devenv, no source tree:
+klangk-build-nix-seed [out-dir]
 ```
 
 `scripts/build-nix-seed.sh` builds a throwaway sandbox image that performs a
 single-user nix install + devenv, then extracts `/nix` and `/etc/nix/nix.conf`
 into a deployable tree at `out-dir` (default `./nix-base`, or
-`$KLANGKBUILD_NIX_SEED_DIR`). Output layout:
+`$KLANGKBUILD_NIX_SEED_DIR`). `klangk-build-nix-seed` is the same build for a
+wheel-only deployment (#2225): it ships the seed Dockerfile inside the wheel,
+drives the **configured** podman (`KLANGKD_PODMAN_BIN`, the same binary the
+server uses), and writes the same output layout. Output layout:
 
 ```text
 <out>/
@@ -51,7 +58,10 @@ packages):
    (otherwise cached layers reproduce the previous versions):
 
    ```sh
+   # devenv / source:
    devenv shell -- build-nix-seed /tmp/nix-base --no-cache
+   # wheel install (rebuild in place):
+   klangk-build-nix-seed --update --no-cache /tmp/nix-base
    ```
 
 3. Reload it into the btrfs subvolume (the loader refuses to clobber, so delete

@@ -3,6 +3,11 @@
 # host-side tree. The tree is consumed by #2201 — used as an overlayfs lowerdir
 # or loaded into a zfs dataset for per-workspace cloning.
 #
+# This is the devenv / source-tree path. A `pip install klangk` deployment
+# (no source tree, no devenv) uses the bundled `klangk-build-nix-seed` console
+# script instead (#2225) — it ships the same Dockerfile in the wheel and drives
+# the configured podman (KLANGKD_PODMAN_BIN). Same output layout.
+#
 # Output layout at $OUT (default ./nix-base, overridable via $1 or
 # $KLANGKBUILD_NIX_SEED_DIR):
 #   $OUT/nix/        store + var/db + the base profile (nix, devenv, cachix)
