@@ -50,6 +50,13 @@ class WsClient extends ChangeNotifier implements ChatServices {
   int _reconnectAttempt = 0;
   int get reconnectAttempt => _reconnectAttempt;
 
+  /// Whether the last disconnect was caused by an auth failure (WebSocket
+  /// close codes 4001/4002). The UI reads this to suppress the "Server
+  /// unreachable" reconnect overlay and surface only the re-login path, so
+  /// the two never overlap (#2227). Reset on a successful connect.
+  bool _authFailed = false;
+  bool get authFailed => _authFailed;
+
   Timer? _reconnectTimer;
 
   /// Whether auto-reconnect should be attempted on disconnect.
@@ -303,6 +310,7 @@ class WsClient extends ChangeNotifier implements ChatServices {
       debugPrint('[WsClient] channel.ready failed: $e ${DateTime.now()}');
       final code = _channel?.closeCode;
       if (code == 4001 || code == 4002) {
+        _authFailed = true;
         _errorController.add('Session expired, please log in again');
         _auth?.logout();
       } else {
@@ -312,6 +320,9 @@ class WsClient extends ChangeNotifier implements ChatServices {
       return;
     }
 
+    // A fresh successful connection clears any prior auth-failure flag
+    // (#2227); reconnect overlays may show again if this connection drops.
+    _authFailed = false;
     _connected = true;
     // Close cleanly on page unload so Firefox's FailDelayManager doesn't
     // treat it as a failure and throttle the next connection by up to 60s.
@@ -388,8 +399,17 @@ class WsClient extends ChangeNotifier implements ChatServices {
         terminalWindows = [];
         sharedTerminals = [];
         final code = _channel?.closeCode;
+        final authFailure = code == 4001 || code == 4002;
+        // Set the auth-failure flag BEFORE notifyListeners so the UI (which
+        // rebuilds on this notification) suppresses the reconnect overlay
+        // immediately and shows only the re-login path (#2227).
+        if (authFailure) {
+          _authFailed = true;
+          _reconnecting = false;
+          _reconnectAttempt = 0;
+        }
         notifyListeners();
-        if (code == 4001 || code == 4002) {
+        if (authFailure) {
           _errorController.add('Session expired, please log in again');
           _auth?.logout();
         } else {
@@ -405,9 +425,15 @@ class WsClient extends ChangeNotifier implements ChatServices {
         presenceUsers = [];
         terminalWindows = [];
         sharedTerminals = [];
-        notifyListeners();
         final code = _channel?.closeCode;
-        if (code == 4001 || code == 4002) {
+        final authFailure = code == 4001 || code == 4002;
+        if (authFailure) {
+          _authFailed = true;
+          _reconnecting = false;
+          _reconnectAttempt = 0;
+        }
+        notifyListeners();
+        if (authFailure) {
           _auth?.logout();
         } else {
           _scheduleReconnect();
