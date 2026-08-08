@@ -349,8 +349,12 @@ class Workspaces:
                 break
             offset = page["next_offset"]
 
-        # Remove each archived workspace's data directory.
+        # Remove each archived workspace's data directory + per-workspace
+        # nix snapshot (#2201 — no-op when nix isn't configured or the snapshot
+        # is absent; matches delete_workspace, so account deletion doesn't
+        # orphan snapshots outside the workspace data dir).
         for ws_id in archived_ws_ids:
+            await self.app.state.nix.destroy_workspace_nix(ws_id)
             ws_dir = self.safe_path(ws_id)
             if ws_dir.exists():
                 await _async_rmtree(ws_dir, f"workspace data {ws_id}")
@@ -440,6 +444,9 @@ class Workspaces:
             workspace_id, user_id
         )
         if deleted:
+            # #2201: drop the per-workspace nix clone if nix is enabled
+            # (no-op otherwise).
+            await self.app.state.nix.destroy_workspace_nix(workspace_id)
             ws_dir = self.safe_path(workspace_id)
             await _async_rmtree(ws_dir, f"workspace {workspace_id}")
         return deleted

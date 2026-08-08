@@ -216,6 +216,7 @@ async def app_state(temp_data_dir):
     from klangk.auth import Auth
     from klangk.container import ContainerRegistry
     from klangk.emailsvc import EmailService
+    from klangk.nix import Nix
     from klangk.util import Util
     from klangk.workspaces import Workspaces
 
@@ -235,6 +236,8 @@ async def app_state(temp_data_dir):
     state.workspaces = Workspaces(app)
     state.email = EmailService(app)
     state.util = Util(app)
+    # #2201: Workspaces.delete_workspace reaches state.nix (no-op when disabled).
+    state.nix = Nix(app)
     # Wire DB + Model so every domain reached via
     # app.state.model.* resolves the per-test DB (#1578). With the
     # _current_db ContextVar gone, app.state.db is the single owner.

@@ -28,6 +28,10 @@ async def list_images(
     return {
         "default": app.state.container_registry.image_name,
         "allowed": sorted(app.state.container_registry.allowed_images),
+        # #2202: whether the per-workspace nix flag can trigger the per-workspace
+        # /nix mount. The create UI shows the "nix" toggle only when true; the
+        # flag is inert otherwise (workspaces use the nix image's baked /nix).
+        "nix_available": app.state.nix.btrfs_configured,
     }
 
 

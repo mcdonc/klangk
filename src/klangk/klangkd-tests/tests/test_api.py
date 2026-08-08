@@ -18,6 +18,7 @@ from klangk import (
     auth as auth_mod,
     files as files_mod,
     model,
+    nix as nix_mod,
     podman,
     terminal as terminal_mod,
     workspaces as ws_mod,
@@ -84,6 +85,8 @@ async def app(db, temp_data_dir):
     # #1365: create/update workspace validation reaches the netfilter
     # hooks-dir resolver.
     app.state.netfilter = netfilter_mod.NetFilter(app)
+    # #2201: Workspaces.delete_workspace reaches state.nix (no-op when disabled).
+    app.state.nix = nix_mod.Nix(app)
 
     app.state.auth = auth_mod.Auth(app)
     app.state.terminal = terminal_mod.Terminal(app)
@@ -7092,6 +7095,26 @@ class TestArchiveUserData:
         )
         members = listing.stdout.strip().split("\n")
         assert any(m.startswith("home/") or m == "home" for m in members)
+
+    async def test_archive_destroys_per_workspace_nix(
+        self, user, workspace, app, monkeypatch
+    ):
+        """#2201: account deletion tears down each workspace's nix snapshot
+        (no orphan) — destroy_workspace_nix is called per archived workspace,
+        matching delete_workspace."""
+        destroyed: list[str] = []
+
+        async def _spy(ws_id):
+            destroyed.append(ws_id)
+
+        monkeypatch.setattr(app.state.nix, "destroy_workspace_nix", _spy)
+        # A workspace home dir so archive_user_data has work to do.
+        home_dir = app.state.workspaces.home_path(workspace["id"])
+        home_dir.mkdir(parents=True, exist_ok=True)
+
+        await app.state.workspaces.archive_user_data(user["id"], user["email"])
+
+        assert destroyed == [workspace["id"]]
 
     async def test_archive_multiple_workspaces(self, user, app, app_state):
         """Creates separate archives for each workspace."""

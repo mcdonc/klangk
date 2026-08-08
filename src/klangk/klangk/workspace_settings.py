@@ -171,6 +171,25 @@ def _coerce_memory(key: str, value: Any) -> str:
     return value
 
 
+def _coerce_bool(key: str, value: Any) -> bool:
+    """Coerce a settings value to a bool.
+
+    Accepts a real bool, 0/1, or the strings true/false/yes/no/on/off
+    (case-insensitive). Used by the per-workspace ``nix`` flag (#2202).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "yes", "on"):
+            return True
+        if v in ("false", "0", "no", "off", ""):
+            return False
+    raise ValueError(f"settings.{key}={value!r} is not a boolean")
+
+
 # Schema: each known settings key maps to a normalizer that validates +
 # coerces the value (raising ``ValueError`` on a bad value) and returns the
 # normalized form to store. Keys not in this dict are rejected by
@@ -181,6 +200,9 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     "cpu_limit": _coerce_float,
     "memory_limit": _coerce_memory,
     "pids_limit": _coerce_positive_int,
+    # #2202: per-workspace nix flag — triggers the per-workspace /nix mount
+    # (Nix.ensure_workspace_nix) when nix_btrfs_subvolume is configured.
+    "nix": _coerce_bool,
 }
 
 # The known setting keys, exported for callers that want to enumerate the
