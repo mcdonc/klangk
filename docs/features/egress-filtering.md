@@ -40,9 +40,12 @@ injected into its network namespace before its process starts.
    the create hooks; the server detects the host's upstream resolvers and
    mirrors them both here and via `--dns`, so the allow-rules match what
    the container actually queries — not a blanket `udp/tcp 53` allow),
-   the backend gateway (`host.containers.internal`, resolved from the
-   container's `/etc/hosts`), and the resolved allowed destinations are
-   `ACCEPT`ed. Everything else is dropped.
+   the backend gateway (`host.containers.internal` — allow-listed
+   _post-start_: the createContainer hook can't read the container's
+   `/etc/hosts` at pid=0, so after start the server resolves the gateway
+   IP and inserts an `ACCEPT` rule atop the `OUTPUT` chain), and the
+   resolved allowed destinations are `ACCEPT`ed. Everything else is
+   dropped.
 5. **IPv6 egress is default-denied** — the hook sets
    `ip6tables -P OUTPUT DROP`, so the v4 allow-list cannot be bypassed over
    IPv6 (#1936). (An earlier `sysctl net.ipv6.conf.*.disable_ipv6=1` was
