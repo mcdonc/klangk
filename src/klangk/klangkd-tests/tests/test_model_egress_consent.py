@@ -5,6 +5,7 @@ import pytest
 from klangk.model.egress_consent import (
     DECISION_ALLOWED,
     DECISION_DENIED,
+    DECISION_EXPIRED,
     DECISION_PENDING,
     SCOPE_ONCE,
     SCOPE_WORKSPACE,
@@ -119,6 +120,43 @@ async def test_create_request_no_port(ec, ws, user):
     assert req["dest_port"] is None
 
 
+async def test_create_request_dedup_returns_none(ec, ws, user):
+    """Duplicate pending request for same (workspace, host, port) returns None."""
+    w = await ws.create_workspace(user["id"], "dedup-ws")
+    first = await ec.create_request(w["id"], "api.com", 443)
+    assert first is not None
+    second = await ec.create_request(w["id"], "api.com", 443)
+    assert second is None
+    # Only one row exists
+    assert await ec.count_pending(w["id"]) == 1
+
+
+async def test_create_request_dedup_no_port(ec, ws, user):
+    """Dedup works for portless requests too."""
+    w = await ws.create_workspace(user["id"], "dedup-noport")
+    assert await ec.create_request(w["id"], "a.com") is not None
+    assert await ec.create_request(w["id"], "a.com") is None
+
+
+async def test_create_request_dedup_different_port_allowed(ec, ws, user):
+    """Same host but different port is a distinct request."""
+    w = await ws.create_workspace(user["id"], "dedup-diffport")
+    assert await ec.create_request(w["id"], "a.com", 443) is not None
+    assert await ec.create_request(w["id"], "a.com", 80) is not None
+    assert await ec.count_pending(w["id"]) == 2
+
+
+async def test_create_request_after_decision_allows_new_pending(ec, ws, user):
+    """After a request is decided, a new pending for the same dest is allowed."""
+    w = await ws.create_workspace(user["id"], "re-request")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    await ec.decide(req["id"], DECISION_DENIED, None, user["id"])
+    # The old one is no longer pending, so a new one should succeed
+    new = await ec.create_request(w["id"], "a.com", 443)
+    assert new is not None
+    assert new["id"] != req["id"]
+
+
 async def test_get_request(ec, ws, user):
     w = await ws.create_workspace(user["id"], "get-ws")
     req = await ec.create_request(w["id"], "example.com", 443)
@@ -198,6 +236,36 @@ async def test_decide_deny(ec, ws, user):
     assert result["decision"] == DECISION_DENIED
 
 
+async def test_decide_invalid_decision_raises(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "bad-decision")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    with pytest.raises(ValueError, match="Invalid decision"):
+        await ec.decide(req["id"], "bogus", SCOPE_ONCE, user["id"])
+
+
+async def test_decide_pending_not_allowed_as_decision(ec, ws, user):
+    """Can't 'decide' to set decision back to pending."""
+    w = await ws.create_workspace(user["id"], "pend-decide")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    with pytest.raises(ValueError, match="Invalid decision"):
+        await ec.decide(req["id"], DECISION_PENDING, None, user["id"])
+
+
+async def test_decide_expired_not_allowed_as_decision(ec, ws, user):
+    """expired is for expire_pending(), not decide()."""
+    w = await ws.create_workspace(user["id"], "exp-decide")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    with pytest.raises(ValueError, match="Invalid decision"):
+        await ec.decide(req["id"], DECISION_EXPIRED, None, user["id"])
+
+
+async def test_decide_invalid_scope_raises(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "bad-scope")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    with pytest.raises(ValueError, match="Invalid scope"):
+        await ec.decide(req["id"], DECISION_ALLOWED, "nonsense", user["id"])
+
+
 async def test_decide_already_decided(ec, ws, user):
     w = await ws.create_workspace(user["id"], "double-ws")
     req = await ec.create_request(w["id"], "api.com", 443)
@@ -219,8 +287,24 @@ async def test_expire_pending(ec, ws, user):
     req = await ec.create_request(w["id"], "slow.com", 443)
     assert await ec.expire_pending(req["id"])
     got = await ec.get_request(req["id"])
-    assert got["decision"] == DECISION_DENIED
+    assert got["decision"] == DECISION_EXPIRED
     assert got["decided_by"] is None  # auto-expired, no user
+
+
+async def test_expire_distinct_from_deny(ec, ws, user):
+    """Expired and denied are distinguishable in the audit trail."""
+    w = await ws.create_workspace(user["id"], "exp-vs-deny")
+    r1 = await ec.create_request(w["id"], "a.com", 443)
+    r2 = await ec.create_request(w["id"], "b.com", 80)
+    await ec.expire_pending(r1["id"])
+    await ec.decide(r2["id"], DECISION_DENIED, None, user["id"])
+
+    g1 = await ec.get_request(r1["id"])
+    g2 = await ec.get_request(r2["id"])
+    assert g1["decision"] == DECISION_EXPIRED
+    assert g2["decision"] == DECISION_DENIED
+    assert g1["decided_by"] is None
+    assert g2["decided_by"] == user["id"]
 
 
 async def test_expire_already_decided(ec, ws, user):
