@@ -43,6 +43,35 @@ The hook runs **before** the container process starts, so the ruleset is in
 place and immutable before any user code runs — `CAP_NET_ADMIN` is dropped
 by the runtime before the container entrypoint executes.
 
+## Interactive egress mode (#2239)
+
+A workspace can set `egress_mode` to `"interactive"` (default is `"static"`)
+via the API or CLI. In interactive mode the OCI hook installs the same
+allow-list ACCEPT rules as static mode, but adds two additional rules at the
+end of the OUTPUT chain:
+
+1. A rate-limited **NFLOG** rule (`-j NFLOG --nflog-group 5139`) that
+   delivers blocked-packet metadata to userspace via a netlink socket.
+   The `--nflog-prefix` is `klangk-egress:<id>:` where `<id>` is the
+   first 12 characters of the OCI container id (the same short id shown
+   by `podman ps`). The consent daemon uses this prefix to correlate
+   packets with workspaces.
+2. An explicit **DROP** rule — redundant given the OUTPUT policy, but makes
+   the chain self-documenting and ensures NFLOG precedes DROP regardless
+   of future chain additions.
+
+Rate limiting (`--limit 5/sec --limit-burst 20`) prevents an adversarial
+container from flooding the NFLOG queue. Only the NFLOG notification is
+throttled — the DROP fires for every packet.
+
+> **Current status:** interactive mode today is **static filtering plus NFLOG
+> observability**. The consent daemon that would consume the NFLOG feed and
+> prompt a human to allow or deny blocked destinations **does not exist yet**
+> (#2242). Enabling interactive mode on a workspace will silently drop
+> unmatched traffic (exactly like static mode) while emitting NFLOG packets
+> that nothing is listening to. Do not enable interactive mode expecting
+> consent prompts — it is a building block for the upcoming consent system.
+
 ## Enabling it (operator)
 
 Netfilter is **armed by default**. At startup klangkd materializes the hook

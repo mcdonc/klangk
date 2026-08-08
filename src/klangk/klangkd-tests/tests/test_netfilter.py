@@ -425,7 +425,7 @@ class TestNetFilterEnabled:
 # real against synthetic OCI state with shimmed nsenter/iptables/getent.
 
 
-def _state(rules, *, with_pid=True, egress_mode=None):
+def _state(rules, *, with_pid=True, egress_mode=None, container_id=None):
     """Build synthetic OCI container state JSON for the hook.
 
     ``rules`` is the ``klangk.netfilter.rules`` annotation value, or ``None``
@@ -433,9 +433,16 @@ def _state(rules, *, with_pid=True, egress_mode=None):
     (the other early-exit path). Otherwise ``pid`` is the running process's
     id so the hook's ``[ -e /proc/$pid/ns/net ]`` guard passes — the nsenter
     shim ignores the path anyway. ``egress_mode`` sets the
-    ``klangk.netfilter.egress_mode`` annotation (#2239).
+    ``klangk.netfilter.egress_mode`` annotation (#2239). ``container_id``
+    sets the top-level ``id`` field (the authoritative container id that the
+    hook truncates to 12 chars for the NFLOG prefix).
     """
     s = {}
+    if container_id is not None:
+        s["id"] = container_id
+    else:
+        # Default: a 64-char hex id (realistic podman container id).
+        s["id"] = "abc123def456" + "0" * 52
     if with_pid:
         s["pid"] = os.getpid()
     if rules is not None:
@@ -453,7 +460,6 @@ def _run_hook(
     resolv=None,
     hosts=None,
     sysctl_rc=0,
-    hostname=None,
 ):
     """Execute ``nf.HOOK_SCRIPT`` against ``state``; return recorded iptables
     invocations (each a ``list[str]`` of argv).
@@ -481,9 +487,6 @@ def _run_hook(
     )
     resolv_file.write_text(resolv or "")
     hosts_file.write_text(hosts or "")
-    hostname_file = tmp_path / "hostname"
-    if hostname is not False:
-        hostname_file.write_text(hostname or "abcdef123456")
     # getent ahosts <host> shim: emit realistic `IP STREAM host` rows (real
     # getent prints "<ip> STREAM <host>" / DGRAM / RAW, NOT a bare IP), so a
     # resolve()-regex anchored to end-of-line gets caught here instead of in
@@ -578,7 +581,6 @@ def _run_hook(
     # /proc/$pid/root.
     env["KLANGK_NETFILTER_RESOLV"] = str(resolv_file)
     env["KLANGK_NETFILTER_HOSTS"] = str(hosts_file)
-    env["KLANGK_NETFILTER_HOSTNAME"] = str(hostname_file)
     sh = shutil.which("sh") or "/bin/sh"
     proc = subprocess.run(
         [sh, str(hook)],
@@ -970,70 +972,105 @@ class TestHookScriptExecutable:
     reason="Hook script requires /proc and iptables/nsenter (Linux-only)",
 )
 class TestHookScriptInteractiveMode:
-    """Tests for the interactive egress mode LOG rule (#2239)."""
+    """Tests for the interactive egress mode NFLOG rule (#2239)."""
 
-    def test_static_mode_no_log_rule(self, tmp_path):
-        # Static mode (default) must NOT add a LOG rule — identical to
+    def test_static_mode_no_nflog_rule(self, tmp_path):
+        # Static mode (default) must NOT add an NFLOG rule — identical to
         # pre-#2239 behavior.
         calls = _run_hook(
             tmp_path,
             _state("github.com:443", egress_mode="static"),
             getent_map={"github.com": ["140.82.112.4"]},
         )
-        log_calls = [c for c in calls if "LOG" in c]
-        assert log_calls == []
+        nflog_calls = [c for c in calls if "NFLOG" in c]
+        assert nflog_calls == []
 
-    def test_no_egress_mode_annotation_no_log_rule(self, tmp_path):
-        # Missing annotation (old containers) must not add LOG.
+    def test_static_mode_no_explicit_drop(self, tmp_path):
+        # Static mode must NOT add an explicit -A OUTPUT -j DROP — the
+        # default OUTPUT policy handles it. An explicit DROP would be
+        # redundant and misleading.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443", egress_mode="static"),
+            getent_map={"github.com": ["140.82.112.4"]},
+        )
+        explicit_drops = [
+            c for c in calls if c == ["-A", "OUTPUT", "-j", "DROP"]
+        ]
+        assert explicit_drops == []
+
+    def test_no_egress_mode_annotation_no_nflog_rule(self, tmp_path):
+        # Missing annotation (old containers) must not add NFLOG.
         calls = _run_hook(
             tmp_path,
             _state("github.com:443"),
             getent_map={"github.com": ["140.82.112.4"]},
         )
-        log_calls = [c for c in calls if "LOG" in c]
-        assert log_calls == []
+        nflog_calls = [c for c in calls if "NFLOG" in c]
+        assert nflog_calls == []
 
-    def test_interactive_mode_adds_log_and_drop(self, tmp_path):
+    def test_interactive_mode_adds_nflog_and_drop(self, tmp_path):
+        cid = "abc123def456" + "0" * 52
         calls = _run_hook(
             tmp_path,
-            _state("github.com:443", egress_mode="interactive"),
+            _state(
+                "github.com:443",
+                egress_mode="interactive",
+                container_id=cid,
+            ),
             getent_map={"github.com": ["140.82.112.4"]},
-            hostname="abc123def456",
         )
-        # The LOG rule should be present with rate limiting and the
-        # container-id-based prefix.
-        log_calls = [c for c in calls if "LOG" in c]
-        assert len(log_calls) == 1
-        log_call = log_calls[0]
-        assert "-A" in log_call
-        assert "OUTPUT" in log_call
-        assert "--limit" in log_call
-        assert "5/sec" in log_call
-        assert "--limit-burst" in log_call
-        assert "20" in log_call
-        assert "--log-prefix" in log_call
-        # Prefix includes the container hostname
-        prefix_idx = log_call.index("--log-prefix") + 1
-        assert log_call[prefix_idx] == "klangk-egress:abc123def456:"
-        assert "--log-uid" in log_call
-        # An explicit DROP should follow the LOG
+        # The NFLOG rule should be present with rate limiting and the
+        # container-id-based prefix (first 12 chars).
+        nflog_calls = [c for c in calls if "NFLOG" in c]
+        assert len(nflog_calls) == 1
+        nf_call = nflog_calls[0]
+        assert "-A" in nf_call
+        assert "OUTPUT" in nf_call
+        assert "--limit" in nf_call
+        assert "5/sec" in nf_call
+        assert "--limit-burst" in nf_call
+        assert "20" in nf_call
+        assert "--nflog-prefix" in nf_call
+        # Prefix uses first 12 chars of the container id
+        prefix_idx = nf_call.index("--nflog-prefix") + 1
+        assert nf_call[prefix_idx] == "klangk-egress:abc123def456:"
+        assert "--nflog-group" in nf_call
+        assert str(nf.NFLOG_GROUP) in nf_call
+        # An explicit DROP should follow the NFLOG
         drop_calls = [c for c in calls if c == ["-A", "OUTPUT", "-j", "DROP"]]
         assert len(drop_calls) == 1
 
-    def test_interactive_mode_drop_after_log(self, tmp_path):
-        # The explicit DROP must come AFTER the LOG rule in the chain.
+    def test_interactive_mode_drop_after_nflog(self, tmp_path):
+        # The explicit DROP must come AFTER the NFLOG rule in the chain.
         calls = _run_hook(
             tmp_path,
             _state("github.com:443", egress_mode="interactive"),
             getent_map={"github.com": ["140.82.112.4"]},
         )
-        log_idx = next(i for i, c in enumerate(calls) if "LOG" in c)
+        nflog_idx = next(i for i, c in enumerate(calls) if "NFLOG" in c)
         drop_idx = next(
             i
             for i, c in enumerate(calls)
             if c == ["-A", "OUTPUT", "-j", "DROP"]
         )
-        assert drop_idx > log_idx
+        assert drop_idx > nflog_idx
+
+    def test_interactive_mode_accept_before_nflog(self, tmp_path):
+        # ACCEPT rules for seed domains must come BEFORE the NFLOG rule
+        # so permitted traffic is never logged as blocked.
+        calls = _run_hook(
+            tmp_path,
+            _state("github.com:443", egress_mode="interactive"),
+            getent_map={"github.com": ["140.82.112.4"]},
+        )
+        accept_indices = [
+            i for i, c in enumerate(calls) if "-A" in c and "ACCEPT" in c
+        ]
+        nflog_idx = next(i for i, c in enumerate(calls) if "NFLOG" in c)
+        assert all(a < nflog_idx for a in accept_indices), (
+            "All ACCEPT rules must precede the NFLOG rule"
+        )
 
     def test_interactive_mode_seed_rules_still_applied(self, tmp_path):
         # Pre-approved allowed_domains are still installed as ACCEPT rules
@@ -1051,18 +1088,55 @@ class TestHookScriptInteractiveMode:
         assert "140.82.112.4" in dests
         assert "151.101.0.0" in dests
 
-    def test_interactive_mode_hostname_fallback(self, tmp_path):
-        # If hostname file is missing, fall back to "unknown".
+    def test_interactive_mode_truncates_long_container_id(self, tmp_path):
+        # A full 64-char container id is truncated to 12 chars in the
+        # NFLOG prefix.
+        long_id = "a1b2c3d4e5f6" + "9" * 52
         calls = _run_hook(
             tmp_path,
-            _state("a.example:443", egress_mode="interactive"),
+            _state(
+                "a.example:443",
+                egress_mode="interactive",
+                container_id=long_id,
+            ),
             getent_map={"a.example": ["1.2.3.4"]},
-            hostname=False,
         )
-        log_calls = [c for c in calls if "LOG" in c]
-        assert len(log_calls) == 1
-        prefix_idx = log_calls[0].index("--log-prefix") + 1
-        assert log_calls[0][prefix_idx] == "klangk-egress:unknown:"
+        nflog_calls = [c for c in calls if "NFLOG" in c]
+        assert len(nflog_calls) == 1
+        prefix_idx = nflog_calls[0].index("--nflog-prefix") + 1
+        assert nflog_calls[0][prefix_idx] == "klangk-egress:a1b2c3d4e5f6:"
+
+    def test_interactive_mode_missing_container_id(self, tmp_path):
+        # If the OCI state has no "id" field, the prefix falls back to
+        # "unknown".
+        calls = _run_hook(
+            tmp_path,
+            _state(
+                "a.example:443",
+                egress_mode="interactive",
+                container_id="",
+            ),
+            getent_map={"a.example": ["1.2.3.4"]},
+        )
+        nflog_calls = [c for c in calls if "NFLOG" in c]
+        assert len(nflog_calls) == 1
+        prefix_idx = nflog_calls[0].index("--nflog-prefix") + 1
+        assert nflog_calls[0][prefix_idx] == "klangk-egress:unknown:"
+
+    def test_bogus_egress_mode_no_nflog(self, tmp_path):
+        # A typo like "intreactive" must NOT install NFLOG — the hook
+        # fails closed (no observability, just drop via policy).
+        calls = _run_hook(
+            tmp_path,
+            _state("a.example:443", egress_mode="intreactive"),
+            getent_map={"a.example": ["1.2.3.4"]},
+        )
+        nflog_calls = [c for c in calls if "NFLOG" in c]
+        assert nflog_calls == []
+        explicit_drops = [
+            c for c in calls if c == ["-A", "OUTPUT", "-j", "DROP"]
+        ]
+        assert explicit_drops == []
 
 
 class TestCreateKwargsEgressMode:
@@ -1100,6 +1174,14 @@ class TestCreateKwargsEgressMode:
         nf_obj.install_hooks()
         ann, _, _ = nf_obj.create_kwargs(["github.com:443"])
         assert nf.ANNOTATION_EGRESS_MODE_KEY not in ann
+
+    def test_bogus_egress_mode_raises(self, tmp_path, monkeypatch):
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
+        nf_obj.install_hooks()
+        with pytest.raises(ValueError, match="intreactive"):
+            nf_obj.create_kwargs(["github.com:443"], egress_mode="intreactive")
 
 
 # --- macOS / podman machine support (#1959) ---

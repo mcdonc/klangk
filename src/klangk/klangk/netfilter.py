@@ -55,11 +55,25 @@ logger = logging.getLogger(__name__)
 ANNOTATION_KEY = "klangk.netfilter.rules"
 
 # OCI annotation carrying the egress mode (``static`` or ``interactive``).
-# When ``interactive``, the hook adds a rate-limited LOG rule before the
-# final DROP so the consent daemon can observe blocked destinations and
-# prompt a human (#2239). When absent or ``static``, no LOG rule is added
-# and the ruleset is fully immutable.
+# When ``interactive``, the hook adds a rate-limited NFLOG rule before the
+# final DROP so the consent daemon can observe blocked destinations via a
+# netlink queue and prompt a human (#2239). When absent or ``static``, no
+# NFLOG rule is added and the ruleset is fully immutable.
 ANNOTATION_EGRESS_MODE_KEY = "klangk.netfilter.egress_mode"
+
+# NFLOG group number used by the interactive-mode rule. The consent daemon
+# listens on this group via a netlink socket (no dmesg/journal parsing).
+# Picked to avoid the default 0 and common sniffing groups.
+NFLOG_GROUP = 5139
+
+# Log prefix format for NFLOG packets. The consent daemon parses this
+# prefix to correlate blocked packets with a container (and thus a
+# workspace). The tag is the first 12 characters of the OCI container id
+# (the authoritative id from the runtime state JSON, not the hostname).
+# iptables --nflog-prefix has a 64-byte cap; "klangk-egress:" (14) + 12 +
+# ":" (1) = 27 bytes — well within the limit.
+LOG_PREFIX_FMT = "klangk-egress:{tag}:"
+LOG_PREFIX_TAG_LEN = 12
 
 # Filenames written into the configured hooks dir.
 HOOK_JSON_NAME = "klangk-netfilter.json"
@@ -294,6 +308,12 @@ egress_mode=$(printf '%s' "$state" \
     | sed -n 's/.*"klangk.netfilter.egress_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 pid=$(printf '%s' "$state" \
     | sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+# The authoritative container id from the OCI runtime state JSON — used as
+# the NFLOG prefix tag so the consent daemon can correlate blocked packets
+# with a workspace. Truncated to 12 chars (podman short-id convention).
+_cid=$(printf '%s' "$state" \
+    | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | cut -c1-12)
 
 # Nothing to filter without a rules annotation or an init pid.
 [ -n "$rules" ] || exit 0
@@ -470,33 +490,32 @@ for _spec in "$@"; do
 done
 
 # Interactive egress consent mode (#2239). When egress_mode is
-# "interactive", add a rate-limited LOG rule so blocked destinations are
-# visible to the consent daemon (which tails /dev/kmsg or NFLOG). The
-# log prefix includes a workspace-specific tag extracted from the
-# klangk.netfilter.egress_mode annotation — the consent daemon parses
-# this prefix to correlate log lines to workspaces without maintaining
-# an IP→workspace map. The rate limit (5/sec, burst 20) caps log
-# flooding from adversarial containers — the DROP still fires for
-# every packet, only the LOG is throttled. An explicit final DROP
-# follows (redundant given the OUTPUT policy, but makes the chain
-# self-documenting and ensures LOG precedes DROP regardless of future
-# chain additions). In static mode (the default), no LOG rule is added
-# — the ruleset is fully immutable and identical to the pre-#2239
-# behavior.
+# "interactive", add a rate-limited NFLOG rule so blocked destinations
+# are delivered to the consent daemon via a netlink socket (group 5139).
+# NFLOG is the purpose-built iptables-to-userspace channel: it avoids
+# kernel ring-buffer noise (dmesg/journal), supports group multiplexing,
+# and the daemon needs only a netlink socket — no privileged journal
+# access or prefix-regex parsing.
 #
-# The log prefix uses the container ID (first 12 chars of the hostname,
-# which podman sets to the container's short ID by default) for
-# workspace correlation. klangk's container registry already knows
-# each container's ID, so the consent daemon maps
-# log-prefix → container_id → workspace_id.
+# The NFLOG prefix uses the first 12 chars of the OCI container id
+# (extracted from the runtime state JSON above, same as podman's short
+# id) for workspace correlation. klangk's container registry already
+# knows each container's ID, so the consent daemon maps
+# nflog-prefix → container_id → workspace_id.
+# Format: "klangk-egress:<12-char-id>:" (27 bytes, well within the
+# 64-byte --nflog-prefix cap).
+#
+# The rate limit (5/sec, burst 20) caps NFLOG flooding from adversarial
+# containers — the DROP still fires for every packet, only the NFLOG
+# notification is throttled. An explicit final DROP follows (redundant
+# given the OUTPUT policy, but makes the chain self-documenting and
+# ensures NFLOG precedes DROP regardless of future chain additions).
+# In static mode (the default), no NFLOG rule is added — the ruleset
+# is fully immutable and identical to the pre-#2239 behavior.
 if [ "$egress_mode" = "interactive" ]; then
-    # Use the container's hostname (podman sets it to the short container
-    # ID) as the tag in the log prefix for workspace correlation.
-    # KLANGK_NETFILTER_HOSTNAME overrides the path (for tests).
-    _hostname_file=${KLANGK_NETFILTER_HOSTNAME:-/proc/$pid/root/etc/hostname}
-    _cid=$(cat "$_hostname_file" 2>/dev/null || echo "unknown")
+    _tag=${_cid:-unknown}
     ipt -A OUTPUT -m limit --limit 5/sec --limit-burst 20 \
-        -j LOG --log-prefix "klangk-egress:${_cid}:" --log-uid
+        -j NFLOG --nflog-group 5139 --nflog-prefix "klangk-egress:${_tag}:"
     ipt -A OUTPUT -j DROP
 fi
 
@@ -757,8 +776,14 @@ class NetFilter:
 
         When ``egress_mode`` is ``"interactive"`` (#2239), the
         :data:`ANNOTATION_EGRESS_MODE_KEY` annotation is added so the OCI
-        hook installs a rate-limited LOG rule before the final DROP,
-        enabling the consent daemon to observe blocked destinations."""
+        hook installs a rate-limited NFLOG rule (group
+        :data:`NFLOG_GROUP`) before the final DROP, enabling the consent
+        daemon to observe blocked destinations via a netlink socket."""
+        _valid = ("static", "interactive")
+        if egress_mode not in _valid:
+            raise ValueError(
+                f"egress_mode must be one of {_valid!r}, got {egress_mode!r}"
+            )
         # Workspace overrides the deploy default; empty/None inherits it.
         domains = (
             list(allowed_domains)
