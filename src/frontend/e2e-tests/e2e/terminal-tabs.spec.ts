@@ -184,7 +184,7 @@ test.describe("terminal tabs", () => {
     }
   });
 
-  test("create named window rejects duplicate names", async ({
+  test("create named window allows duplicate names", async ({
     page,
     request,
   }) => {
@@ -203,12 +203,18 @@ test.describe("terminal tabs", () => {
         client.send({ cmd: "terminal_new_window", name: "test" });
         await client.recvUntil((m) => m.type === "terminal_windows");
 
-        // Try to create another with the same name
+        // A second window with the same name is permitted — names are
+        // display-only and window identity is the @N id (#2192).
         client.send({ cmd: "terminal_new_window", name: "test" });
-        const msg = await client.recvUntil((m) => m.type === "error");
-        expect((msg.message as string).toLowerCase()).toContain(
-          "already exists",
+        const msg = await client.recvUntil(
+          (m) => m.type === "terminal_windows",
         );
+        const named = (msg.windows as WindowInfo[]).filter(
+          (w) => w.name === "test",
+        );
+        expect(named.length).toBe(2);
+        // Distinct ids — identity is the id, not the name.
+        expect(named[0].id).not.toBe(named[1].id);
       } finally {
         client.close();
       }
@@ -290,7 +296,7 @@ test.describe("terminal tabs", () => {
     }
   });
 
-  test("rename rejects duplicate names", async ({ page, request }) => {
+  test("rename allows duplicate names", async ({ page, request }) => {
     const { workspaceId, token, cleanup } = await createAndOpenWorkspace(
       page,
       request,
@@ -306,16 +312,21 @@ test.describe("terminal tabs", () => {
         client.send({ cmd: "terminal_new_window", name: "build" });
         await client.recvUntil((m) => m.type === "terminal_windows");
 
-        // Try to rename window 0 to "build"
+        // Renaming window 0 to "build" is permitted — names are
+        // display-only and window identity is the @N id (#2192).
         client.send({
           cmd: "terminal_rename_window",
           index: 0,
           name: "build",
         });
-        const msg = await client.recvUntil((m) => m.type === "error");
-        expect((msg.message as string).toLowerCase()).toContain(
-          "already exists",
+        const msg = await client.recvUntil(
+          (m) => m.type === "terminal_windows",
         );
+        const named = (msg.windows as WindowInfo[]).filter(
+          (w) => w.name === "build",
+        );
+        expect(named.length).toBe(2);
+        expect(named[0].id).not.toBe(named[1].id);
       } finally {
         client.close();
       }
