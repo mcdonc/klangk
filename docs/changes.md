@@ -422,9 +422,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   them to the container via `--dns`, and mirrors them in a
   `klangk.netfilter.resolvers` annotation the hook allows on `:53`.
   `--hooks-dir` is also passed to `podman start` (podman 5.x reads it only
-  at start). Known follow-ups: the backend gateway
-  (`host.containers.internal`) and DNS round-robin domains need their IPs
-  mirrored via annotations too.
+  at start). The backend gateway (`host.containers.internal`) is
+  allow-listed post-start — the createContainer hook can't read the
+  container's `/etc/hosts` (pid=0), so after start the server resolves the
+  gateway IP and inserts an `ACCEPT` rule atop the container's `OUTPUT`
+  chain. DNS round-robin domains (create-time vs runtime resolution) remain
+  a known limitation of IP-pinning.
 - **Workspace: no more overlapping "Server unreachable" and
   "Session expired" overlays (#2227).** When the WebSocket closed with
   an auth-failure code (4001/4002, session expired), the client also
