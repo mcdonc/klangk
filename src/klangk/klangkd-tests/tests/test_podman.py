@@ -412,6 +412,22 @@ class TestStartContainer:
             await _p.start_container("cid")
         assert _args(m) == ["start", "cid"]
 
+    async def test_start_forwards_hooks_dir(self):
+        # podman 5.x only reads --hooks-dir at start time, so the OCI
+        # egress hook fires there — start_container must forward the same
+        # hooks dirs create_container got (#1365).
+        dirs = ["/klangk/hooks", "/usr/share/containers/oci/hooks.d"]
+        with patch(EXEC, _exec(("", "", 0))) as m:
+            await _p.start_container("cid", hooks_dir=dirs)
+        args = _args(m)
+        assert args[:4] == [
+            "--hooks-dir",
+            "/klangk/hooks",
+            "--hooks-dir",
+            "/usr/share/containers/oci/hooks.d",
+        ]
+        assert args[-2:] == ["start", "cid"]
+
 
 class TestExecContainer:
     async def test_basic(self):

@@ -61,6 +61,15 @@ ANNOTATION_KEY = "klangk.netfilter.rules"
 # NFLOG rule is added and the ruleset is fully immutable.
 ANNOTATION_EGRESS_MODE_KEY = "klangk.netfilter.egress_mode"
 
+# OCI annotation carrying the comma-separated DNS resolver IPs the hook
+# must allow on :53. At the createContainer stage the hook executes in the
+# container *network* namespace but the host *mount* namespace, so it
+# cannot read the container's /etc/resolv.conf — netavark writes that only
+# after the create hooks. The server detects the host's upstream resolvers,
+# passes them to the container via ``--dns`` (so they are the ones actually
+# used) and mirrors them here so the hook's DNS-allow rules match (#1365).
+ANNOTATION_RESOLVERS_KEY = "klangk.netfilter.resolvers"
+
 # NFLOG group number used by the interactive-mode rule. The consent daemon
 # listens on this group via a netlink socket (no dmesg/journal parsing).
 # Picked to avoid the default 0 and common sniffing groups.
@@ -251,6 +260,50 @@ def render_rules_annotation(domains: list[str]) -> str:
     return ",".join(domains)
 
 
+def _is_ipv4(s: str) -> bool:
+    """True if ``s`` is a literal IPv4 address."""
+    try:
+        return isinstance(ipaddress.ip_address(s), ipaddress.IPv4Address)
+    except ValueError:
+        return False
+
+
+def _nameservers(path: str) -> list[str]:
+    """IPv4 ``nameserver`` IPs from a resolv.conf file (best-effort)."""
+    out: list[str] = []
+    try:
+        with open(path) as f:
+            for line in f:
+                parts = line.split()
+                if (
+                    len(parts) >= 2
+                    and parts[0] == "nameserver"
+                    and _is_ipv4(parts[1])
+                ):
+                    out.append(parts[1])
+    except OSError:
+        pass
+    return out
+
+
+def _detect_host_resolvers() -> list[str]:
+    """Best-effort detection of the host's upstream IPv4 DNS resolvers.
+
+    On systemd-resolved hosts ``/etc/resolv.conf`` is the ``127.0.0.53``
+    stub; the real upstreams live in
+    ``/run/systemd/resolve/resolv.conf``. IPv6 nameservers are excluded
+    (IPv6 egress is disabled in the container netns). Returns ``[]`` when
+    no usable resolver is found (#1365)."""
+    primary = _nameservers("/etc/resolv.conf")
+    if any(ns == "127.0.0.53" for ns in primary):
+        upstream = _nameservers("/run/systemd/resolve/resolv.conf")
+        if upstream:
+            return list(dict.fromkeys(upstream))
+    return list(
+        dict.fromkeys(ns for ns in primary if not ns.startswith("127."))
+    )
+
+
 def render_hook_json(
     script_path: str, *, stage: str = "createContainer"
 ) -> str:
@@ -289,14 +342,19 @@ HOOK_SCRIPT = r"""#!/bin/sh
 # Fires only for containers that carry the `klangk.netfilter.rules`
 # annotation (the hook JSON's `annotations` filter gates this). Reads the
 # host[:port] specs from that annotation, resolves each host to IPs, and
-# installs iptables rules in the container's network namespace (via
-# nsenter on the init pid from the OCI state) that allow only loopback,
-# DNS, the backend gateway, and the listed destinations — default-dropping
-# everything else. Runs before the container process starts, so the
-# ruleset is in place before any user code runs. It is immutable only if
-# the runtime does not grant NET_ADMIN (filtered containers also get
-# NET_ADMIN dropped, but --privileged / --cap-add NET_ADMIN / a permissive
-# seccomp profile defeat the filter). See issues #1365 and #1773.
+# installs iptables rules that allow only loopback, DNS, the backend
+# gateway, and the listed destinations — default-dropping everything else.
+#
+# createContainer is the one OCI stage with all three properties needed
+# for a host-enforced, container-immutable filter: it runs BEFORE NET_ADMIN
+# is dropped (so the hook can set rules the started container — which has
+# NET_ADMIN dropped — cannot undo), the hook path resolves on the HOST so
+# a tampered in-container iptables cannot subvert it, and it executes IN
+# the container network namespace so iptables targets the right netns —
+# with NO nsenter (we are already in it). The hook runs in the host mount
+# namespace, so it cannot read the container's /etc/resolv.conf (netavark
+# writes it only after the create hooks); DNS resolvers come from the
+# `klangk.netfilter.resolvers` annotation instead (#1365). See #1773.
 set -u
 
 state=$(cat)
@@ -306,6 +364,8 @@ rules=$(printf '%s' "$state" \
     | sed -n 's/.*"klangk.netfilter.rules"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 egress_mode=$(printf '%s' "$state" \
     | sed -n 's/.*"klangk.netfilter.egress_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+resolvers=$(printf '%s' "$state" \
+    | sed -n 's/.*"klangk.netfilter.resolvers"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 pid=$(printf '%s' "$state" \
     | sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
 # The authoritative container id from the OCI runtime state JSON — used as
@@ -315,31 +375,25 @@ _cid=$(printf '%s' "$state" \
     | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
     | cut -c1-12)
 
-# Nothing to filter without a rules annotation or an init pid.
+# Nothing to filter without a rules annotation. (pid is only needed for
+# the backend-gateway /etc/hosts read below; the netns need not be
+# nsenter'd — at the createContainer stage the OCI runtime executes this
+# hook INSIDE the container's network namespace already, so iptables /
+# ip6tables / sysctl apply to it directly. The hook's binaries resolve on
+# the host (createContainer hooks' paths resolve in the runtime namespace),
+# so a tampered in-container iptables cannot subvert the filter.)
 [ -n "$rules" ] || exit 0
-[ -n "$pid" ] || exit 0
-[ -e "/proc/$pid/ns/net" ] || exit 0
 
-# Rootless podman (macOS podman machine): nsenter into another user's
-# network namespace requires root.  The core user on Fedora CoreOS has
-# passwordless sudo; on a rootful deploy (Linux host) we're already root
-# and SUDO is empty — no behavioral change.
-SUDO=
-if [ "$(id -u)" != "0" ]; then
-    SUDO="sudo"
-fi
-
-# iptables / ip6tables inside the container's network namespace. Failures
-# are logged to stderr (captured by the OCI runtime) but do not abort the
-# hook — the default-DROP policy below is the fail-closed posture for a
-# misconfigured deploy, and a partial ruleset is still better than none.
+# iptables / ip6tables act on the container's network namespace directly
+# (we are already in it). Failures are logged to stderr (captured by the
+# OCI runtime) but do not abort the hook — the default-DROP policy below
+# is the fail-closed posture for a misconfigured deploy, and a partial
+# ruleset is still better than none.
 ipt() {
-    $SUDO nsenter --net="/proc/$pid/ns/net" iptables "$@" || \
-        echo "klangk-netfilter: iptables $* failed" >&2
+    iptables "$@" || echo "klangk-netfilter: iptables $* failed" >&2
 }
 ipt6() {
-    $SUDO nsenter --net="/proc/$pid/ns/net" ip6tables "$@" || \
-        echo "klangk-netfilter: ip6tables $* failed" >&2
+    ip6tables "$@" || echo "klangk-netfilter: ip6tables $* failed" >&2
 }
 
 # Resolve a hostname to unique IPv4 A records, one per line. AAAA (IPv6)
@@ -413,40 +467,36 @@ ipt -P OUTPUT DROP
 ipt -A OUTPUT -o lo -j ACCEPT
 ipt -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-# Disable IPv6 egress entirely (#1936). The v4 ruleset above is the real
-# filter, but ip6tables' OUTPUT policy defaults to ACCEPT — without this,
-# any IPv6 egress bypasses the allow-list whenever the container has IPv6
-# connectivity (and nearly every common host publishes a AAAA record).
-# Two mechanisms, defense-in-depth:
-#   1. sysctl net.ipv6.conf.{all,default}.disable_ipv6=1 turns IPv6 OFF in
-#      this netns (removes v6 addresses; the container cannot speak v6).
-#   2. ip6tables -P OUTPUT DROP is a routing-level default-deny that holds
-#      even if the sysctl write fails (ip6tables missing, or the knob not
-#      writable). Each failure is logged, not fatal — together they close
-#      the v6 bypass; neither alone is fully trustworthy on every deploy.
-$SUDO nsenter --net="/proc/$pid/ns/net" sysctl -qw \
-    net.ipv6.conf.all.disable_ipv6=1 \
-    net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || \
-    echo "klangk-netfilter: sysctl ipv6 disable failed (relying on ip6tables DROP)" >&2
+# IPv6 egress is default-denied via ip6tables — klangk does not support
+# IPv6 egress (#1936); without this an IPv6 path would bypass the v4
+# allow-list (nearly every host publishes a AAAA record). (The hook formerly
+# also ran `sysctl net.ipv6.conf.*.disable_ipv6=1`, but that fires at
+# createContainer, before pasta configures the netns, and the disabled knob
+# makes pasta's IPv6 address setup fail with EPERM — so the sysctl is dropped
+# and ip6tables DROP alone carries the v6 default-deny. ip6tables is verified
+# at startup; a deploy without it gets a warning and no v6 default-deny.)
 ipt6 -P OUTPUT DROP
 
-# DNS: allow :53 ONLY to the container's configured resolvers (read from
-# its /etc/resolv.conf via /proc/$pid/root — the OCI runtime has set up the
-# container's mount namespace by createContainer time), not to any
-# destination. A blanket :53 ACCEPT is an exfil / DNS-tunneling channel that
-# defeats an anti-exfiltration filter. KLANGK_NETFILTER_RESOLV overrides the
-# path (for tests); if the file is absent/unreadable DNS is blocked and the
-# gap is logged (#1365).
-_resolv=${KLANGK_NETFILTER_RESOLV:-/proc/$pid/root/etc/resolv.conf}
-if [ -r "$_resolv" ]; then
-    while read -r _kw _ns _rest; do
-        [ "$_kw" = "nameserver" ] || continue
+# DNS: allow :53 ONLY to the container's configured resolvers — NOT to any
+# destination (a blanket :53 ACCEPT is an exfil / DNS-tunneling channel that
+# defeats an anti-exfiltration filter). At the createContainer stage the
+# hook runs in the host mount namespace, so it cannot read the container's
+# own /etc/resolv.conf (netavark writes it only after the create hooks).
+# The server therefore detects the host's upstream resolvers, passes them
+# to the container via --dns, and mirrors the same IPs in the
+# `klangk.netfilter.resolvers` annotation so the allow-rules match what the
+# container actually queries (#1365).
+if [ -n "$resolvers" ]; then
+    _save_ifs=$IFS; IFS=,
+    set -- $resolvers
+    IFS=$_save_ifs
+    for _ns in "$@"; do
         [ -n "$_ns" ] || continue
         ipt -A OUTPUT -p udp --dport 53 -d "$_ns" -j ACCEPT
         ipt -A OUTPUT -p tcp --dport 53 -d "$_ns" -j ACCEPT
-    done < "$_resolv"
+    done
 else
-    echo "klangk-netfilter: cannot read $_resolv; DNS will be blocked" >&2
+    echo "klangk-netfilter: no resolvers annotation; DNS will be blocked" >&2
 fi
 
 # Backend gateway (LLM proxy, browser delegate, chat bridge). The backend
@@ -455,6 +505,14 @@ fi
 # know the name (it is a podman-injected container-side alias), and resolving
 # it via the host's getent silently yields no IP, leaving the workspace cut
 # off from its own backend. KLANGK_NETFILTER_HOSTS overrides the path (tests).
+#
+# NOTE: at the createContainer stage podman delivers pid=0 in the OCI state
+# (the container process isn't started yet), so /proc/$pid/root/etc/hosts is
+# unreadable on a real deploy — this read succeeds only under the test
+# harness (KLANGK_NETFILTER_HOSTS). Allowing the gateway IP therefore needs
+# it mirrored via an annotation (like the DNS resolvers) — a #1365 follow-up.
+# Until then a filtered workspace must reach its backend via an allowed
+# domain/IP rather than host.containers.internal.
 _hosts=${KLANGK_NETFILTER_HOSTS:-/proc/$pid/root/etc/hosts}
 if [ -r "$_hosts" ]; then
     while read -r _gip _grest; do
@@ -749,12 +807,24 @@ class NetFilter:
         )
         return True
 
+    def resolvers(self) -> list[str]:
+        """Host upstream DNS resolvers (IPv4) to allow on :53 and pass to the
+        container via ``--dns``. Re-detected each call (cheap file read) so a
+        SIGHUP settings reload or a host resolver change takes effect for
+        the next workspace without per-instance caching (#1365)."""
+        return _detect_host_resolvers()
+
     def create_kwargs(
         self,
         allowed_domains: list[str] | None,
         egress_mode: str = "static",
-    ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
-        """Build ``(annotations, hooks_dirs, cap_drop)`` for a container.
+    ) -> tuple[
+        dict[str, str] | None,
+        list[str] | None,
+        list[str] | None,
+        list[str] | None,
+    ]:
+        """Build ``(annotations, hooks_dirs, cap_drop, dns)`` for a container.
 
         Resolution (#1365): a workspace's non-empty ``allowed_domains``
         **overrides** the deploy-wide default; otherwise the default applies.
@@ -791,7 +861,7 @@ class NetFilter:
             else self.default_domains()
         )
         if not domains:
-            return None, None, None
+            return None, None, None, None
         path = self.hooks_dir()
         if path is None:
             logger.warning(
@@ -803,7 +873,7 @@ class NetFilter:
                 "enforce the filter (#1365).",
                 domains,
             )
-            return None, None, None
+            return None, None, None, None
         if not self._hook_files_current(path):
             # Configured but the OCI hook isn't installed / current: a
             # partial install_hooks() failure or a stale hook from an old
@@ -820,10 +890,18 @@ class NetFilter:
                 HOOK_SCRIPT_NAME,
                 HOOK_JSON_NAME,
             )
-            return None, None, None
+            return None, None, None, None
         annotation = {ANNOTATION_KEY: render_rules_annotation(domains)}
         if egress_mode == "interactive":
             annotation[ANNOTATION_EGRESS_MODE_KEY] = egress_mode
+        # DNS resolvers the hook must allow on :53. The hook runs in the
+        # host mount ns at createContainer and cannot read the container's
+        # resolv.conf (netavark writes it later), so the same IPs are
+        # mirrored here AND returned as ``dns`` for ``--dns`` — making the
+        # container's actual resolvers match what the hook allows (#1365).
+        _resolvers = self.resolvers()
+        if _resolvers:
+            annotation[ANNOTATION_RESOLVERS_KEY] = ",".join(_resolvers)
         # macOS: ``--hooks-dir`` is silently ignored in remote mode.
         # Hooks are in the standard dir inside the VM (installed by
         # ``_install_hooks_in_vm``), discovered automatically by podman.
@@ -832,4 +910,4 @@ class NetFilter:
             if platform.system() == "Darwin"
             else [path, *STANDARD_HOOK_DIRS]
         )
-        return (annotation, hooks_dirs, list(DROPPED_CAPABILITIES))
+        return (annotation, hooks_dirs, list(DROPPED_CAPABILITIES), _resolvers)
