@@ -80,6 +80,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "name",
         "image",
         "auto_start",
+        "nix",
         "mount_input",
         "env_input",
         "allow_input",
@@ -115,11 +116,15 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         default: str,
         allow_autostart: bool,
         default_allowed_domains: list[str] | None = None,
+        nix_available: bool = False,
     ) -> None:
         super().__init__()
         self._allowed = list(allowed)
         self._default = default or ""
         self._allow_autostart = bool(allow_autostart)
+        # #2233: per-workspace nix toggle (Mount /nix dir). Shown only when
+        # the server has a nix backend, matching the create dialog.
+        self._nix_available = bool(nix_available)
         self._mounts: list[str] = []
         self._env: dict[str, str] = {}
         # Seed the Netfilter list with the deploy default
@@ -163,6 +168,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                         Static("Image"), image_select, classes="field-row"
                     )
                     yield Checkbox("Auto start", id="auto_start")
+                    yield Checkbox("Mount /nix dir", id="nix")
                 with TabPane("Mounts", id="mounts_pane"):
                     yield Static(
                         "Mounts  (source:/container/path[:opts])",
@@ -249,6 +255,11 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         cb = self.query_one("#auto_start", Checkbox)
         cb.display = shown
         cb.disabled = not shown
+        # The nix toggle is shown only when the server has a nix backend
+        # (#2233); otherwise hidden + disabled so Tab skips it.
+        nix_cb = self.query_one("#nix", Checkbox)
+        nix_cb.display = self._nix_available
+        nix_cb.disabled = not self._nix_available
         self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
@@ -445,6 +456,8 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
         settings = _collect_settings(self)
+        if self._nix_available and self.query_one("#nix", Checkbox).value:
+            settings = {**(settings or {}), "nix": True}
         self.run_worker(
             self._do_create_workspace(
                 name,
@@ -570,6 +583,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "name",
         "image",
         "auto_start",
+        "nix",
         "mount_input",
         "env_input",
         "allow_input",
@@ -614,11 +628,15 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         allowed: list[str],
         default: str,
         allow_autostart: bool,
+        nix_available: bool = False,
     ) -> None:
         super().__init__()
         self._ws = workspace
         self._allow_autostart = bool(allow_autostart)
         self._default = default or ""
+        # #2233: per-workspace nix toggle (Mount /nix dir). Shown only when
+        # the server has a nix backend, matching the edit panel / create dialog.
+        self._nix_available = bool(nix_available)
         self._mounts: list[str] = list(workspace.mounts or [])
         self._env: dict[str, str] = dict(workspace.env or {})
         self._allowed_domains: list[str] = list(
@@ -672,6 +690,11 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
                         "Auto start",
                         value=self._ws.auto_start,
                         id="auto_start",
+                    )
+                    yield Checkbox(
+                        "Mount /nix dir",
+                        value=bool((self._ws.settings or {}).get("nix")),
+                        id="nix",
                     )
                 with TabPane("Mounts", id="mounts_pane"):
                     yield Static(
@@ -781,6 +804,11 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         cb = self.query_one("#auto_start", Checkbox)
         cb.display = shown
         cb.disabled = not shown
+        # The nix toggle is shown only when the server has a nix backend
+        # (#2233); otherwise hidden + disabled so Tab skips it.
+        nix_cb = self.query_one("#nix", Checkbox)
+        nix_cb.display = self._nix_available
+        nix_cb.disabled = not self._nix_available
         self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
@@ -1027,6 +1055,19 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
         settings = _collect_settings(self)
+        # #2233: emit an explicit nix value (True/False) whenever the
+        # toggle is shown. PUT settings is a full-replace bag, so we must
+        # carry the checkbox state — including False — to actually turn
+        # the mount off (omitting the key leaves the stale bag untouched).
+        # Seed from the existing bag first so API-only keys the form does
+        # not represent (e.g. bridge_timeout) survive the full-replace
+        # instead of being silently wiped.
+        if self._nix_available:
+            settings = {
+                **(self._ws.settings or {}),
+                **(settings or {}),
+                "nix": bool(self.query_one("#nix", Checkbox).value),
+            }
         body = {
             "name": name,
             "image": image,
@@ -1049,6 +1090,13 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             or env != orig_env
             or (command or None) != (ws.service_command or None)
             or allowed_domains != orig_domains
+            # #2233: the per-workspace /nix mount is set up at create
+            # time, so toggling it on a running workspace needs a restart.
+            or (
+                self._nix_available
+                and (settings or {}).get("nix", False)
+                != bool((ws.settings or {}).get("nix"))
+            )
         )
         self.run_worker(
             self._do_save(name, body, ws, restart_needed),

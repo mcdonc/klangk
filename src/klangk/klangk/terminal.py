@@ -325,7 +325,16 @@ class Terminal:
         try:
             await self.podman.exec_container(
                 container_id,
-                ["tmux", "new-session", "-d", "-s", session_name, *env_args],
+                [
+                    "tmux",
+                    "new-session",
+                    "-d",
+                    "-s",
+                    session_name,
+                    "-n",
+                    "term",
+                    *env_args,
+                ],
                 user=CONTAINER_USER,
                 timeout=10,
             )
@@ -620,7 +629,7 @@ class Terminal:
         interpolated into the script, so shell metacharacters in either
         are harmless (the label is validated above regardless).
         """
-        label = name if name is not None else "bash"
+        label = name if name is not None else "term"
         if name is not None:
             validate_window_name(name)
         script = (

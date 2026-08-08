@@ -63,6 +63,7 @@ http.Client _client({
   Map<String, dynamic>? transferResponse,
   List<Map<String, dynamic>>? searchResults,
   bool netfilterEnabled = false,
+  bool nixAvailable = false,
   List<String>? stopRecorder,
   int stopStatus = 200,
   bool stopThrows = false,
@@ -88,6 +89,7 @@ http.Client _client({
         jsonEncode({
           'default': 'klangk-pi',
           'allowed': ['klangk-pi', 'other:latest'],
+          'nix_available': nixAvailable,
         }),
         200,
       );
@@ -218,6 +220,266 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(domainInput.hitTestable(), findsOneWidget);
+    });
+  });
+
+  group('nix toggle', () {
+    // #2233: the per-workspace "Mount /nix dir" toggle mirrors the create
+    // dialog. It is shown only when the server reports nix_available, is
+    // pre-populated from settings.nix, sends settings.nix when opted in,
+    // and (because the /nix mount is set up at create time) prompts a
+    // restart when toggled on a running workspace.
+    testWidgets('hides the toggle when nix is not available', (tester) async {
+      testAuthHttpClientOverride = _client(); // nixAvailable defaults false
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Mount /nix dir'), findsNothing);
+    });
+
+    testWidgets('shows the toggle labeled "Mount /nix dir" when available',
+        (tester) async {
+      testAuthHttpClientOverride = _client(nixAvailable: true);
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(CheckboxListTile, 'Mount /nix dir'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('pre-populates the toggle from settings.nix', (tester) async {
+      testAuthHttpClientOverride = _client(
+        nixAvailable: true,
+        workspace: {
+          ..._workspace,
+          'settings': {'nix': true},
+        },
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final cb = tester.widget<CheckboxListTile>(
+        find.widgetWithText(CheckboxListTile, 'Mount /nix dir'),
+      );
+      expect(cb.value, isTrue);
+    });
+
+    testWidgets('sends settings.nix when toggled on', (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({}), 200);
+        }
+        if (p == '/api/v1/workspaces') {
+          return http.Response(jsonEncode([_workspace]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+              'nix_available': true,
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final nix = find.widgetWithText(CheckboxListTile, 'Mount /nix dir');
+      await tester.ensureVisible(nix);
+      await tester.tap(nix);
+      await tester.pump();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['settings'], {'nix': true});
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('toggling nix on a running container shows the restart notice',
+        (tester) async {
+      testAuthHttpClientOverride = _client(
+        nixAvailable: true,
+        workspace: {
+          ..._workspace,
+          'running': true,
+          // nix off in the stored bag — turning it on is a create-time change.
+        },
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final nix = find.widgetWithText(CheckboxListTile, 'Mount /nix dir');
+      await tester.ensureVisible(nix);
+      await tester.tap(nix);
+      await tester.pump();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
+  group('nix toggle (off direction)', () {
+    // #2233: PUT settings is a full-replace bag, so the off direction must
+    // emit an explicit nix=false — omitting the key would leave the stale
+    // bag (the mount would survive a restart).
+    testWidgets('clears settings.nix when toggled off', (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                ..._workspace,
+                'settings': {'nix': true}
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+              'nix_available': true,
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Pre-populated on; uncheck it.
+      final nix = find.widgetWithText(CheckboxListTile, 'Mount /nix dir');
+      expect((tester.widget(nix) as CheckboxListTile).value, isTrue);
+      await tester.ensureVisible(nix);
+      await tester.tap(nix);
+      await tester.pump();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['settings'], {'nix': false});
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'no restart notice when nix backend is gone but the bag has nix',
+        (tester) async {
+      // nix_available is false (no backend) but the stored bag still has
+      // nix=true. Saving without touching the (hidden) toggle must not fire
+      // a spurious restart notice — nix isn't emitted or compared.
+      testAuthHttpClientOverride = _client(
+        workspace: {
+          ..._workspace,
+          'running': true,
+          'settings': {'nix': true},
+        },
+      ); // nixAvailable defaults false
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(
+          find.textContaining('Restart the workspace to apply'), findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
+  group('nix toggle (settings preservation)', () {
+    // #2234 re-review: PUT settings is a full-replace bag. With a nix
+    // backend configured the save now always emits settings, so it must
+    // seed from the existing bag to preserve API-only keys the form does
+    // not represent (e.g. bridge_timeout) instead of wiping them.
+    testWidgets('preserves API-only settings keys across save', (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                ..._workspace,
+                'settings': {'bridge_timeout': 60, 'nix': true},
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+              'nix_available': true,
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Leave the nix toggle untouched (pre-populated on) and save.
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['settings']['bridge_timeout'], 60);
+      expect(savedBody!['settings']['nix'], true);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
     });
   });
 

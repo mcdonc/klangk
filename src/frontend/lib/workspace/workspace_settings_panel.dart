@@ -34,6 +34,10 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   Map<String, dynamic>? _workspace;
   List<String> _allowedImages = [];
   String _defaultImage = 'klangk-pi';
+  // #2233: whether the server has a nix backend configured (the create
+  // dialog reads the same /api/v1/images field). Gates the "Mount /nix
+  // dir" toggle in the General pane.
+  bool _nixAvailable = false;
   bool _loading = true;
   String? _error;
   String? _saveMessage;
@@ -109,6 +113,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
         _defaultImage = imgData['default'] as String? ?? 'klangk-pi';
         _allowedImages =
             (imgData['allowed'] as List?)?.cast<String>() ?? [_defaultImage];
+        _nixAvailable = imgData['nix_available'] == true;
       }
     } catch (e) {
       // coverage:ignore-start
@@ -173,6 +178,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       workspace: _workspace!,
       allowedImages: _allowedImages,
       defaultImage: _defaultImage,
+      nixAvailable: _nixAvailable,
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
@@ -219,6 +225,18 @@ bool _hasCreateTimeFieldChanged(
   if (!_domainListsEqual(prev['allowed_domains'], fields['allowed_domains'])) {
     return true;
   }
+  // nix — the per-workspace /nix mount is set up at container create
+  // time, so toggling it won't take effect until restart (#2233). Only
+  // compare when this save actually emitted a nix value (the toggle was
+  // shown); when nix isn't available we never emit nix, so a stale bag
+  // value must not trigger a spurious restart.
+  final newSettings = (fields['settings'] as Map?) ?? const {};
+  if (newSettings.containsKey('nix')) {
+    final prevSettings = (prev['settings'] as Map?) ?? const {};
+    final prevNix = (prevSettings['nix'] as bool?) ?? false;
+    final newNix = (newSettings['nix'] as bool?) ?? false;
+    if (prevNix != newNix) return true;
+  }
   return false;
 }
 
@@ -247,6 +265,7 @@ class _SettingsForm extends StatefulWidget {
   final Map<String, dynamic> workspace;
   final List<String> allowedImages;
   final String defaultImage;
+  final bool nixAvailable;
   final bool allowAutostart;
   final String? saveMessage;
   final bool pendingRestart;
@@ -259,6 +278,7 @@ class _SettingsForm extends StatefulWidget {
     required this.workspace,
     required this.allowedImages,
     required this.defaultImage,
+    required this.nixAvailable,
     required this.allowAutostart,
     required this.saveMessage,
     required this.pendingRestart,
@@ -287,6 +307,9 @@ class _SettingsFormState extends State<_SettingsForm> {
   late Map<String, String> _envVars;
   late List<String> _allowedDomains;
   bool _autoStart = false;
+  // #2233: per-workspace nix toggle (Mount /nix dir). Only meaningful
+  // when the server has a nix backend (widget.nixAvailable).
+  bool _nixEnabled = false;
   String? _mountError;
   String? _envError;
   String? _allowedDomainsError;
@@ -345,6 +368,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     _idleTimeoutCtrl = TextEditingController(
       text: settings['idle_timeout']?.toString() ?? '',
     );
+    _nixEnabled = (settings['nix'] as bool?) ?? false;
     _cpuLimitCtrl = TextEditingController(
       text: settings['cpu_limit']?.toString() ?? '',
     );
@@ -376,6 +400,15 @@ class _SettingsFormState extends State<_SettingsForm> {
     if (old.workspace['auto_start'] != widget.workspace['auto_start']) {
       // coverage:ignore-start
       _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
+    } // coverage:ignore-end
+    final oldSettings = (old.workspace['settings'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
+    final newSettings =
+        (widget.workspace['settings'] as Map<String, dynamic>?) ??
+            const <String, dynamic>{};
+    if (oldSettings['nix'] != newSettings['nix']) {
+      // coverage:ignore-start
+      _nixEnabled = (newSettings['nix'] as bool?) ?? false;
     } // coverage:ignore-end
     if (old.workspace['image'] != widget.workspace['image']) {
       _selectedImage =
@@ -434,7 +467,22 @@ class _SettingsFormState extends State<_SettingsForm> {
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    final settings = _collectSettings();
+    final formSettings = _collectSettings();
+    final Map<String, dynamic> settings;
+    // #2233: emit an explicit nix value (true or false) whenever the
+    // toggle is shown. PUT settings is a full-replace bag, so we must
+    // carry the current checkbox state — including false — to actually
+    // turn the mount off (omitting the key leaves the stale bag
+    // untouched). Seed from the existing bag first so API-only keys the
+    // form does not represent (e.g. bridge_timeout) survive the
+    // full-replace instead of being silently wiped.
+    if (widget.nixAvailable) {
+      final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
+          const <String, dynamic>{};
+      settings = {...bag, ...formSettings, 'nix': _nixEnabled};
+    } else {
+      settings = formSettings;
+    }
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
@@ -671,6 +719,26 @@ class _SettingsFormState extends State<_SettingsForm> {
               title: const Text('Auto start'),
               subtitle: const Text(
                 'Start this workspace when the server starts',
+              ),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+        // #2233: per-workspace nix toggle. Gated on the server having a
+        // nix backend (nix_seed), matching the create dialog. The /nix
+        // mount is set up at container create time, so toggling it on a
+        // running workspace fires the restart-needed notice below.
+        if (widget.nixAvailable) ...[
+          const SizedBox(height: 8),
+          Material(
+            type: MaterialType.transparency,
+            child: CheckboxListTile(
+              value: _nixEnabled,
+              onChanged: (v) => setState(() => _nixEnabled = v ?? false),
+              title: const Text('Mount /nix dir'),
+              subtitle: const Text(
+                'Mount a shared, writable /nix into this workspace',
               ),
               controlAffinity: ListTileControlAffinity.leading,
               contentPadding: EdgeInsets.zero,

@@ -25,16 +25,50 @@ CURRENT_HASH=$(find \
   sha256sum | cut -d' ' -f1)
 
 # Skip rebuild if the image exists and the hash hasn't changed.
-# --no-cache and --force bypass the hash check.
+# --no-cache and --force bypass the hash check.  --force is consumed
+# here and stripped from the passthrough args so it doesn't leak to
+# podman build (which doesn't recognise it).
 FORCE_BUILD=false
+PASSTHROUGH_ARGS=()
 for arg in "$@"; do
-  case "$arg" in --no-cache | --force) FORCE_BUILD=true ;; esac
+  case "$arg" in
+  --force) FORCE_BUILD=true ;;
+  --no-cache)
+    FORCE_BUILD=true
+    PASSTHROUGH_ARGS+=("$arg")
+    ;;
+  *) PASSTHROUGH_ARGS+=("$arg") ;;
+  esac
 done
 if ! $FORCE_BUILD && "$PODMAN" image exists "${KLANGKD_IMAGE_NAME}" 2>/dev/null && [ -f "$STAMP" ]; then
   OLD_HASH=$(cat "$STAMP" 2>/dev/null || true)
   if [ "$CURRENT_HASH" = "$OLD_HASH" ]; then
-    echo "Image ${KLANGKD_IMAGE_NAME} is up to date, skipping build."
-    exit 0
+    # Stamp matches source, but verify the image is actually newer than
+    # every source file.  A previous build may have written the stamp
+    # from matching source while the image lacked a later COPY target
+    # (e.g. a file added to profile.d/ before the Dockerfile's COPY
+    # line existed).  Compare the image creation time against the
+    # newest source file; rebuild if any source is newer.
+    IMAGE_CREATED=$("$PODMAN" inspect --format '{{.Created}}' "${KLANGKD_IMAGE_NAME}:latest" 2>/dev/null || true)
+    if [ -n "$IMAGE_CREATED" ]; then
+      IMAGE_EPOCH=$(date -d "$IMAGE_CREATED" +%s 2>/dev/null || echo 0)
+      NEWEST_SOURCE=$(find \
+        src/containers/workspace/ \
+        features.yaml \
+        features/ \
+        -type f -printf '%T@\n' 2>/dev/null |
+        sort -rn | head -1 | cut -d. -f1)
+      NEWEST_SOURCE=${NEWEST_SOURCE:-0}
+      if [ "$NEWEST_SOURCE" -gt "$IMAGE_EPOCH" ]; then
+        echo "Source files are newer than image — rebuilding."
+      else
+        echo "Image ${KLANGKD_IMAGE_NAME} is up to date, skipping build."
+        exit 0
+      fi
+    else
+      echo "Image ${KLANGKD_IMAGE_NAME} is up to date, skipping build."
+      exit 0
+    fi
   fi
 fi
 
@@ -86,6 +120,6 @@ done
   --build-context features="$STAGING/features" \
   -t "${KLANGKD_IMAGE_NAME}:latest" \
   -t "${KLANGKD_IMAGE_NAME}:${VERSION}" \
-  "$@" src/containers/workspace/
+  "${PASSTHROUGH_ARGS[@]}" src/containers/workspace/
 
 echo "$CURRENT_HASH" >"$STAMP"
