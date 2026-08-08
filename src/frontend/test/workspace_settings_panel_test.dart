@@ -427,6 +427,62 @@ void main() {
     });
   });
 
+  group('nix toggle (settings preservation)', () {
+    // #2234 re-review: PUT settings is a full-replace bag. With a nix
+    // backend configured the save now always emits settings, so it must
+    // seed from the existing bag to preserve API-only keys the form does
+    // not represent (e.g. bridge_timeout) instead of wiping them.
+    testWidgets('preserves API-only settings keys across save', (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                ..._workspace,
+                'settings': {'bridge_timeout': 60, 'nix': true},
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+              'nix_available': true,
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Leave the nix toggle untouched (pre-populated on) and save.
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['settings']['bridge_timeout'], 60);
+      expect(savedBody!['settings']['nix'], true);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
   group('mounts editor', () {
     testWidgets('adds a valid mount', (tester) async {
       await tester.pumpWidget(_buildPanel());

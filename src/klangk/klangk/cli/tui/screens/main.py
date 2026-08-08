@@ -752,6 +752,9 @@ class MainScreen(Screen):
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
             nix_available = data.get("nix_available") is True
+        except AuthError:
+            self.app.session_expired()
+            return
         except (httpx.HTTPError, OSError, ValueError) as exc:
             logger.debug("Could not fetch image list: %s", exc)
             default, allowed = "", []

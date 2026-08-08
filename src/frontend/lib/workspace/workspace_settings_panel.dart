@@ -467,13 +467,22 @@ class _SettingsFormState extends State<_SettingsForm> {
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    final settings = _collectSettings();
+    final formSettings = _collectSettings();
+    final Map<String, dynamic> settings;
     // #2233: emit an explicit nix value (true or false) whenever the
     // toggle is shown. PUT settings is a full-replace bag, so we must
     // carry the current checkbox state — including false — to actually
-    // turn the mount off; omitting the key would leave the stale bag
-    // untouched (a silent no-op).
-    if (widget.nixAvailable) settings['nix'] = _nixEnabled;
+    // turn the mount off (omitting the key leaves the stale bag
+    // untouched). Seed from the existing bag first so API-only keys the
+    // form does not represent (e.g. bridge_timeout) survive the
+    // full-replace instead of being silently wiped.
+    if (widget.nixAvailable) {
+      final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
+          const <String, dynamic>{};
+      settings = {...bag, ...formSettings, 'nix': _nixEnabled};
+    } else {
+      settings = formSettings;
+    }
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,

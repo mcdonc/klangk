@@ -1058,10 +1058,13 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         # #2233: emit an explicit nix value (True/False) whenever the
         # toggle is shown. PUT settings is a full-replace bag, so we must
         # carry the checkbox state — including False — to actually turn
-        # the mount off; omitting the key would leave the stale bag
-        # untouched (a silent no-op).
+        # the mount off (omitting the key leaves the stale bag untouched).
+        # Seed from the existing bag first so API-only keys the form does
+        # not represent (e.g. bridge_timeout) survive the full-replace
+        # instead of being silently wiped.
         if self._nix_available:
             settings = {
+                **(self._ws.settings or {}),
                 **(settings or {}),
                 "nix": bool(self.query_one("#nix", Checkbox).value),
             }
