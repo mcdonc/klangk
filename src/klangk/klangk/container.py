@@ -1080,7 +1080,9 @@ class ContainerRegistry:
         )
 
     def _egress_filter(
-        self, allowed_domains: list[str] | None
+        self,
+        allowed_domains: list[str] | None,
+        egress_mode: str = "static",
     ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
         """Build ``(annotations, hooks_dirs, cap_drop)`` for egress (#1365).
 
@@ -1091,7 +1093,7 @@ class ContainerRegistry:
         nf = getattr(self.app.state, "netfilter", None)
         if nf is None:
             return None, None, None
-        return nf.create_kwargs(allowed_domains)
+        return nf.create_kwargs(allowed_domains, egress_mode=egress_mode)
 
     async def start_container(
         self,
@@ -1113,6 +1115,7 @@ class ContainerRegistry:
         service_command: str | None = None,
         allowed_domains: list[str] | None = None,
         workspace_settings: dict | None = None,
+        egress_mode: str = "static",
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -1142,6 +1145,7 @@ class ContainerRegistry:
                 service_command=service_command,
                 allowed_domains=allowed_domains,
                 workspace_settings=workspace_settings,
+                egress_mode=egress_mode,
             )
 
     async def _handle_existing_container(
@@ -1577,6 +1581,7 @@ class ContainerRegistry:
         service_command: str | None = None,
         allowed_domains: list[str] | None = None,
         workspace_settings: dict | None = None,
+        egress_mode: str = "static",
     ) -> tuple[str, str]:
         """Inner implementation of start_container (called under lock)."""
         t_start = time.monotonic()
@@ -1693,7 +1698,7 @@ class ContainerRegistry:
         # hooks running). The filtered container also drops NET_ADMIN
         # (#1773) so the entrypoint can't flush the ruleset.
         annotations, hooks_dirs, cap_drop = self._egress_filter(
-            allowed_domains
+            allowed_domains, egress_mode=egress_mode
         )
         if annotations is not None:
             create_kwargs["annotations"] = annotations
