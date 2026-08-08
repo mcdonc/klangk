@@ -200,6 +200,7 @@ class CreateWorkspaceRequest(BaseModel):
     health_check: str | None = None
     allowed_domains: list[str] | None = None
     settings: dict | None = None
+    egress_mode: Literal["static", "interactive"] = "static"
 
 
 @router.post("/workspaces")
@@ -245,6 +246,7 @@ async def create_workspace(
             health_check=body.health_check,
             allowed_domains=allowed_domains,
             settings=settings,
+            egress_mode=body.egress_mode,
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -285,6 +287,7 @@ class UpdateWorkspaceRequest(BaseModel):
     health_check: str | None = None
     allowed_domains: list[str] | None = None
     settings: dict | None = None
+    egress_mode: Literal["static", "interactive"] | None = None
 
 
 @router.put("/workspaces/{workspace_id}")

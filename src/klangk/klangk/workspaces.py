@@ -375,6 +375,7 @@ class Workspaces:
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
         settings: dict | None = None,
+        egress_mode: str = model.EGRESS_MODE_STATIC,
     ) -> dict:
         workspace = (
             await self.app.state.model.workspaces.create_workspace_with_acl(
@@ -389,6 +390,7 @@ class Workspaces:
                 health_check=health_check,
                 allowed_domains=allowed_domains,
                 settings=settings,
+                egress_mode=egress_mode,
             )
         )
         home = self.home_path(workspace["id"])

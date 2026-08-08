@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 
 from .acl import ACLModel
 from .chat import ChatModel
+from .egress_consent import EgressConsentModel
 from .ports import PortsModel
 from .tokens import TokensModel
 from .login_attempts import LoginAttemptsModel
@@ -48,6 +49,7 @@ class Model:
         self.acl = ACLModel(app)
         self.workspaces = WorkspacesModel(app)
         self.chat = ChatModel(app)
+        self.egress_consent = EgressConsentModel(app)
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -60,6 +62,7 @@ class Model:
             self.acl,
             self.workspaces,
             self.chat,
+            self.egress_consent,
         ):
             sub.reconfigure(app)
 
