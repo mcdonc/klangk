@@ -7096,6 +7096,26 @@ class TestArchiveUserData:
         members = listing.stdout.strip().split("\n")
         assert any(m.startswith("home/") or m == "home" for m in members)
 
+    async def test_archive_destroys_per_workspace_nix(
+        self, user, workspace, app, monkeypatch
+    ):
+        """#2201: account deletion tears down each workspace's nix snapshot
+        (no orphan) — destroy_workspace_nix is called per archived workspace,
+        matching delete_workspace."""
+        destroyed: list[str] = []
+
+        async def _spy(ws_id):
+            destroyed.append(ws_id)
+
+        monkeypatch.setattr(app.state.nix, "destroy_workspace_nix", _spy)
+        # A workspace home dir so archive_user_data has work to do.
+        home_dir = app.state.workspaces.home_path(workspace["id"])
+        home_dir.mkdir(parents=True, exist_ok=True)
+
+        await app.state.workspaces.archive_user_data(user["id"], user["email"])
+
+        assert destroyed == [workspace["id"]]
+
     async def test_archive_multiple_workspaces(self, user, app, app_state):
         """Creates separate archives for each workspace."""
         ws1 = await app_state.state.model.workspaces.create_workspace(

@@ -76,7 +76,9 @@ async def test_ensure_snapshots_when_missing(monkeypatch):
     n = Nix(_app(SEED))
     assert n.btrfs_configured is True
     assert await n.ensure_workspace_nix("ws1") == WS
-    assert any(a[1:3] == ("subvolume", "snapshot") for a in calls)
+    snap = [a for a in calls if a[1:3] == ("subvolume", "snapshot")]
+    # source=seed, dest=ws — a swap would overwrite the shared seed.
+    assert snap and snap[0][3] == SEED and snap[0][4] == WS
 
 
 async def test_ensure_reuses_existing(monkeypatch):
@@ -113,7 +115,10 @@ async def test_destroy_succeeds(monkeypatch):
     calls = _patch(monkeypatch, ws_exists=True, btrfs_rc=0)
     n = Nix(_app(SEED))
     await n.destroy_workspace_nix("ws1")
-    assert any(a[1:3] == ("subvolume", "delete") for a in calls)
+    delete = [a for a in calls if a[1:3] == ("subvolume", "delete")]
+    assert (
+        delete and delete[0][3] == WS
+    )  # deletes the ws snapshot, never the seed
 
 
 async def test_destroy_noop_when_missing(monkeypatch):

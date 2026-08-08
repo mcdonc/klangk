@@ -118,11 +118,10 @@ Workspaces without the `nix` setting are untouched. Without
 `nix_btrfs_subvolume`, the checkbox is hidden and nix is image-only: pick the
 nix image (`klangk-workspace-nix`) for its baked `/nix` (the non-btrfs fallback).
 
-nix/devenv are off `$PATH` by default; the workspace image (#2199) ships
-`/opt/klangk/bin/nix-activate.sh`, which a user sources to put nix and
-nix-installed programs on `$PATH`. (A custom image + the nix flag also works —
-`/nix` comes from the snapshot; the user activates it themselves if their image
-lacks the script.)
+nix/devenv are on `$PATH` by default: klangkd sets `KLANGKWS_NIX=1`, and the
+default workspace image's `/etc/profile.d/z-klangk-nix.sh` (baked in #2199)
+sources nix's activation in any login shell — so `nix`/`devenv` work in any
+image with no manual step. (The flag is orthogonal to image selection.)
 
 ### Restart persistence
 

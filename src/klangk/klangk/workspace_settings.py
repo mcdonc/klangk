@@ -200,7 +200,7 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     "cpu_limit": _coerce_float,
     "memory_limit": _coerce_memory,
     "pids_limit": _coerce_positive_int,
-    # #2202: per-workspace nix flag — triggers the zfs-clone /nix mount
+    # #2202: per-workspace nix flag — triggers the per-workspace /nix mount
     # (Nix.ensure_workspace_nix) when nix_btrfs_subvolume is configured.
     "nix": _coerce_bool,
 }

@@ -60,6 +60,9 @@ echo "==> Verifying: nix runs against the extracted store"
   -v "$OUT/nix.conf:/etc/nix/nix.conf:ro" \
   debian:trixie-slim -c '
     export PATH="/nix/nix-profile/bin:$PATH" NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+    # The baked activation snippet sources this; fail the build early if a
+    # future nix reshuffles the profile layout (#2202 auto-activation).
+    test -f /nix/nix-profile/etc/profile.d/nix.sh
     nix --version && devenv --version
   '
 
