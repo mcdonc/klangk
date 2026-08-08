@@ -449,7 +449,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
               onRestart: _restartContainer,
               onBack: () => context.go('/workspaces'),
             ),
-          if (_disconnected && !_containerStopped)
+          if (_disconnected && !_containerStopped && !wsClient.authFailed)
             buildDisconnectedOverlay(
               reconnecting: wsClient.reconnecting,
               reconnectAttempt: wsClient.reconnectAttempt,

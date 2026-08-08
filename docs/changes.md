@@ -322,6 +322,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace: no more overlapping "Server unreachable" and
+  "Session expired" overlays (#2227).** When the WebSocket closed with
+  an auth-failure code (4001/4002, session expired), the client also
+  flagged itself disconnected, so the workspace's reconnect overlay
+  painted on top of the re-login surface. The client now marks the
+  disconnect as auth-caused and the workspace suppresses the reconnect
+  overlay in that case, leaving only the re-login path.
+
 - **New terminals from the Flutter "+" are named "bash" (#2179).** A
   terminal created from the browser tab-bar "+" was named with a
   consecutive number ("1", "2", …), inconsistent with window 0 ("bash")

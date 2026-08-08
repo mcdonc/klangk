@@ -341,6 +341,7 @@ void main() {
       expect(client.connected, isFalse);
       expect(errors.length, 1);
       expect(errors[0], 'Session expired, please log in again');
+      expect(client.authFailed, isTrue);
       client.dispose();
     });
 
@@ -591,6 +592,7 @@ void main() {
 
       expect(client.reconnecting, isFalse);
       expect(client.reconnectAttempt, 0);
+      expect(client.authFailed, isTrue);
 
       client.disconnect();
       client.dispose();
@@ -996,6 +998,7 @@ void main() {
       expect(client.reconnecting, isFalse);
       expect(client.reconnectAttempt, 0);
       expect(errors, contains('Session expired, please log in again'));
+      expect(client.authFailed, isTrue);
 
       client.disconnect();
       client.dispose();
@@ -1023,6 +1026,7 @@ void main() {
       expect(client.reconnecting, isFalse);
       expect(client.reconnectAttempt, 0);
       expect(errors, contains('Session expired, please log in again'));
+      expect(client.authFailed, isTrue);
 
       client.disconnect();
       client.dispose();
