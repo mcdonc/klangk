@@ -5,6 +5,7 @@ import '../auth/auth_service.dart';
 import '../theme/colors.dart';
 import 'workspace_list_page.dart'
     show validateMountSpec, validateAllowedDomainSpec;
+import 'workspace_section_nav.dart';
 
 /// Dialog for creating a new workspace. Fields, top to bottom:
 /// Name, Mounts, Environment Variables, Service shell command, Health
@@ -73,6 +74,16 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   String? _mountError;
   String? _envError;
   String? _allowedDomainsError;
+
+  // Section anchors for the section-nav strip (#2229): each key is attached
+  // to the pane that opens the section so tapping a nav label scrolls it
+  // into view via Scrollable.ensureVisible.
+  final _generalKey = GlobalKey();
+  final _mountsKey = GlobalKey();
+  final _envKey = GlobalKey();
+  final _netfilterKey = GlobalKey();
+  final _resourcesKey = GlobalKey();
+  final _advancedKey = GlobalKey();
 
   final _labelStyle = TextStyle(
     color: KColors.textPrimary,
@@ -226,10 +237,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
         style: TextStyle(color: KColors.textPrimary),
       ),
       content: SizedBox(
-        width: 400,
+        width: 520,
         child: SingleChildScrollView(
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_errorMessage != null) ...[
@@ -239,150 +249,196 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                 ),
                 const SizedBox(height: 12),
               ],
-              TextField(
-                controller: _nameController,
-                decoration: InputDecoration(
-                  labelText: 'Name',
-                  labelStyle: _labelStyle,
-                  floatingLabelStyle: _labelStyle,
-                  floatingLabelBehavior: FloatingLabelBehavior.always,
-                  border: const OutlineInputBorder(),
-                ),
-                autofocus: true,
-                onSubmitted: (_) => _submit(),
-              ),
-              ..._buildMountsEditor(),
-              ..._buildEnvVarsEditor(),
-              ..._buildAllowedDomainsEditor(),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _cmdController,
-                decoration: InputDecoration(
-                  labelText: 'Service Shell Command',
-                  labelStyle: _labelStyle,
-                  floatingLabelStyle: _labelStyle,
-                  floatingLabelBehavior: FloatingLabelBehavior.always,
-                  border: const OutlineInputBorder(),
-                  hintText: 'Optional — runs on terminal open',
-                ),
-                onSubmitted: (_) => _submit(),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _healthCheckController,
-                decoration: InputDecoration(
-                  labelText: 'Health Check Command',
-                  labelStyle: _labelStyle,
-                  floatingLabelStyle: _labelStyle,
-                  floatingLabelBehavior: FloatingLabelBehavior.always,
-                  border: const OutlineInputBorder(),
-                  hintText: 'Optional — polled to gauge service health',
-                ),
-                onSubmitted: (_) => _submit(),
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedImage,
-                decoration: InputDecoration(
-                  labelText: 'Container Image',
-                  labelStyle: _labelStyle,
-                  floatingLabelStyle: _labelStyle,
-                  floatingLabelBehavior: FloatingLabelBehavior.always,
-                  border: const OutlineInputBorder(),
-                ),
-                items: widget.allowedImages
-                    .map(
-                      (img) => DropdownMenuItem(value: img, child: Text(img)),
-                    )
-                    .toList(),
-                onChanged: (v) =>
-                    setState(() => _selectedImage = v ?? widget.defaultImage),
-              ),
-              if (widget.allowAutostart) ...[
-                const SizedBox(height: 8),
-                CheckboxListTile(
-                  value: _autoStart,
-                  onChanged: (v) => setState(() => _autoStart = v ?? false),
-                  title: const Text('Auto start'),
-                  subtitle: const Text(
-                    'Start this workspace when the server starts',
-                  ),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ],
-              const SizedBox(height: 16),
-              const Text(
-                'Resource Limits',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
+              WorkspaceSectionNav(
+                sections: [
+                  WorkspaceSection('General', _generalKey),
+                  WorkspaceSection('Mounts', _mountsKey),
+                  WorkspaceSection('Environment', _envKey),
+                  WorkspaceSection('Netfilter', _netfilterKey),
+                  WorkspaceSection('Resources', _resourcesKey),
+                  WorkspaceSection('Advanced', _advancedKey),
+                ],
               ),
               const SizedBox(height: 8),
-              Row(
+              WorkspaceSectionPane(
+                key: _generalKey,
+                icon: Icons.tune,
+                title: 'General',
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _idleTimeoutController,
-                      decoration: InputDecoration(
-                        labelText: 'Idle Timeout (s)',
-                        labelStyle: _labelStyle,
-                        floatingLabelStyle: _labelStyle,
-                        floatingLabelBehavior: FloatingLabelBehavior.always,
-                        border: const OutlineInputBorder(),
-                        hintText: '0 = never',
-                      ),
-                      keyboardType: TextInputType.number,
+                  TextField(
+                    controller: _nameController,
+                    decoration: InputDecoration(
+                      labelText: 'Name',
+                      labelStyle: _labelStyle,
+                      floatingLabelStyle: _labelStyle,
+                      floatingLabelBehavior: FloatingLabelBehavior.always,
+                      border: const OutlineInputBorder(),
+                    ),
+                    autofocus: true,
+                    onSubmitted: (_) => _submit(),
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: _selectedImage,
+                    decoration: InputDecoration(
+                      labelText: 'Container Image',
+                      labelStyle: _labelStyle,
+                      floatingLabelStyle: _labelStyle,
+                      floatingLabelBehavior: FloatingLabelBehavior.always,
+                      border: const OutlineInputBorder(),
+                    ),
+                    items: widget.allowedImages
+                        .map(
+                          (img) => DropdownMenuItem(
+                            value: img,
+                            child: Text(img),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(
+                      () => _selectedImage = v ?? widget.defaultImage,
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _cpuLimitController,
-                      decoration: InputDecoration(
-                        labelText: 'CPU Limit',
-                        labelStyle: _labelStyle,
-                        floatingLabelStyle: _labelStyle,
-                        floatingLabelBehavior: FloatingLabelBehavior.always,
-                        border: const OutlineInputBorder(),
-                        hintText: 'e.g. 2.0',
+                  if (widget.allowAutostart) ...[
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      value: _autoStart,
+                      onChanged: (v) => setState(() => _autoStart = v ?? false),
+                      title: const Text('Auto start'),
+                      subtitle: const Text(
+                        'Start this workspace when the server starts',
                       ),
-                      keyboardType: TextInputType.number,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
                     ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 16),
+              WorkspaceSectionPane(
+                key: _mountsKey,
+                icon: Icons.folder_open,
+                title: 'Mounts',
+                children: _buildMountsEditor(),
+              ),
+              const SizedBox(height: 16),
+              WorkspaceSectionPane(
+                key: _envKey,
+                icon: Icons.code,
+                title: 'Environment',
+                children: _buildEnvVarsEditor(),
+              ),
+              const SizedBox(height: 16),
+              WorkspaceSectionPane(
+                key: _netfilterKey,
+                icon: Icons.shield,
+                title: 'Netfilter',
+                children: _buildAllowedDomainsEditor(),
+              ),
+              const SizedBox(height: 16),
+              WorkspaceSectionPane(
+                key: _resourcesKey,
+                icon: Icons.speed,
+                title: 'Resources',
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _idleTimeoutController,
+                          decoration: InputDecoration(
+                            labelText: 'Idle Timeout (s)',
+                            labelStyle: _labelStyle,
+                            floatingLabelStyle: _labelStyle,
+                            floatingLabelBehavior: FloatingLabelBehavior.always,
+                            border: const OutlineInputBorder(),
+                            hintText: '0 = never',
+                          ),
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _cpuLimitController,
+                          decoration: InputDecoration(
+                            labelText: 'CPU Limit',
+                            labelStyle: _labelStyle,
+                            floatingLabelStyle: _labelStyle,
+                            floatingLabelBehavior: FloatingLabelBehavior.always,
+                            border: const OutlineInputBorder(),
+                            hintText: 'e.g. 2.0',
+                          ),
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _memoryLimitController,
+                          decoration: InputDecoration(
+                            labelText: 'Memory Limit',
+                            labelStyle: _labelStyle,
+                            floatingLabelStyle: _labelStyle,
+                            floatingLabelBehavior: FloatingLabelBehavior.always,
+                            border: const OutlineInputBorder(),
+                            hintText: 'e.g. 4g',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _pidsLimitController,
+                          decoration: InputDecoration(
+                            labelText: 'PIDs Limit',
+                            labelStyle: _labelStyle,
+                            floatingLabelStyle: _labelStyle,
+                            floatingLabelBehavior: FloatingLabelBehavior.always,
+                            border: const OutlineInputBorder(),
+                            hintText: 'e.g. 512',
+                          ),
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Row(
+              const SizedBox(height: 16),
+              WorkspaceSectionPane(
+                key: _advancedKey,
+                icon: Icons.build,
+                title: 'Advanced',
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _memoryLimitController,
-                      decoration: InputDecoration(
-                        labelText: 'Memory Limit',
-                        labelStyle: _labelStyle,
-                        floatingLabelStyle: _labelStyle,
-                        floatingLabelBehavior: FloatingLabelBehavior.always,
-                        border: const OutlineInputBorder(),
-                        hintText: 'e.g. 4g',
-                      ),
+                  TextField(
+                    controller: _cmdController,
+                    decoration: InputDecoration(
+                      labelText: 'Service Shell Command',
+                      labelStyle: _labelStyle,
+                      floatingLabelStyle: _labelStyle,
+                      floatingLabelBehavior: FloatingLabelBehavior.always,
+                      border: const OutlineInputBorder(),
+                      hintText: 'Optional — runs on terminal open',
                     ),
+                    onSubmitted: (_) => _submit(),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _pidsLimitController,
-                      decoration: InputDecoration(
-                        labelText: 'PIDs Limit',
-                        labelStyle: _labelStyle,
-                        floatingLabelStyle: _labelStyle,
-                        floatingLabelBehavior: FloatingLabelBehavior.always,
-                        border: const OutlineInputBorder(),
-                        hintText: 'e.g. 512',
-                      ),
-                      keyboardType: TextInputType.number,
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _healthCheckController,
+                    decoration: InputDecoration(
+                      labelText: 'Health Check Command',
+                      labelStyle: _labelStyle,
+                      floatingLabelStyle: _labelStyle,
+                      floatingLabelBehavior: FloatingLabelBehavior.always,
+                      border: const OutlineInputBorder(),
+                      hintText: 'Optional — polled to gauge service health',
                     ),
+                    onSubmitted: (_) => _submit(),
                   ),
                 ],
               ),
@@ -420,9 +476,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
 
   List<Widget> _buildMountsEditor() {
     return [
-      const SizedBox(height: 16),
-      Text('Mounts', style: _labelStyle),
-      const SizedBox(height: 8),
       ..._mounts.asMap().entries.map(
             (e) => Padding(
               padding: const EdgeInsets.only(bottom: 4),
@@ -486,9 +539,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
 
   List<Widget> _buildEnvVarsEditor() {
     return [
-      const SizedBox(height: 16),
-      Text('Environment Variables', style: _labelStyle),
-      const SizedBox(height: 8),
       ..._envVars.entries.toList().asMap().entries.map(
             (e) => Padding(
               padding: const EdgeInsets.only(bottom: 4),
@@ -554,9 +604,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
 
   List<Widget> _buildAllowedDomainsEditor() {
     return [
-      const SizedBox(height: 16),
-      Text('Allowed Domains', style: _labelStyle),
-      const SizedBox(height: 8),
       ..._allowedDomains.asMap().entries.map(
             (e) => Padding(
               padding: const EdgeInsets.only(bottom: 4),

@@ -2018,6 +2018,7 @@ void main() {
       // The FAB also has an add icon, so find the one inside the dialog
       final addIcons = find.byIcon(Icons.add);
       // The mount add icon is at index 1 (after FAB at 0, before env at 2)
+      await tester.ensureVisible(addIcons.at(1));
       await tester.tap(addIcons.at(1));
       await tester.pumpAndSettle();
 
@@ -2026,11 +2027,13 @@ void main() {
 
       // Add a second mount
       await tester.enterText(_dialogMountInput(), 'nix-vol:/nix');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
       expect(find.text('nix-vol:/nix'), findsOneWidget);
 
       // Remove the first mount via its X button
+      await tester.ensureVisible(find.byIcon(Icons.close).first);
       await tester.tap(find.byIcon(Icons.close).first);
       await tester.pumpAndSettle();
       expect(find.text('/host/src:/work/src'), findsNothing);
@@ -2214,18 +2217,21 @@ void main() {
 
       // Try adding env var without = sign
       await tester.enterText(_dialogEnvInput(), 'NOEQ');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Expected KEY=VALUE'), findsOneWidget);
 
       // Try adding env var with empty key
       await tester.enterText(_dialogEnvInput(), '=value');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Key cannot be empty'), findsOneWidget);
 
       // Valid env var clears error
       await tester.enterText(_dialogEnvInput(), 'A=1');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
       expect(find.textContaining('Key cannot'), findsNothing);
@@ -2280,6 +2286,7 @@ void main() {
 
       // Add an env var
       await tester.enterText(_dialogEnvInput(), 'FOO=bar');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(2));
       await tester.tap(find.byIcon(Icons.add).at(2));
       await tester.pumpAndSettle();
 

@@ -170,7 +170,9 @@ void main() {
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
-      expect(find.text('Workspace Configuration'), findsOneWidget);
+      // Config area renders as sectioned panes (#2229); the General pane
+      // icon is present when the config loaded.
+      expect(find.byIcon(Icons.tune), findsOneWidget);
       // Name field is pre-filled.
       expect(find.text('my-ws'), findsOneWidget);
       // Service command is pre-filled.
@@ -197,8 +199,25 @@ void main() {
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
-      // Falls back to default image; panel still renders.
-      expect(find.text('Workspace Configuration'), findsOneWidget);
+      // Falls back to default image; panel still renders its sections.
+      expect(find.byIcon(Icons.tune), findsOneWidget);
+    });
+
+    testWidgets('section nav jumps to the chosen section', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // The Netfilter section's domain input starts below the fold.
+      final domainInput = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'github.com:443',
+      );
+      expect(domainInput.hitTestable(), findsNothing);
+
+      // Tapping the nav pill scrolls the section into view (#2229).
+      await tester.tap(find.text('Netfilter').first);
+      await tester.pumpAndSettle();
+
+      expect(domainInput.hitTestable(), findsOneWidget);
     });
   });
 
@@ -357,6 +376,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('example.com:443'), findsOneWidget);
+      await tester.ensureVisible(find.byIcon(Icons.close));
       await tester.tap(find.byIcon(Icons.close));
       await tester.pump();
 
@@ -583,6 +603,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Remove the existing domain so the save differs from the loaded ws.
+      await tester.ensureVisible(find.byIcon(Icons.close).first);
       await tester.tap(find.byIcon(Icons.close).first);
       await tester.pump();
 
@@ -778,6 +799,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Trigger the notice by removing the existing domain.
+      await tester.ensureVisible(find.byIcon(Icons.close).first);
       await tester.tap(find.byIcon(Icons.close).first);
       await tester.pump();
 
