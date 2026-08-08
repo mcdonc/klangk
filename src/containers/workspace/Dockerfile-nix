@@ -1,0 +1,71 @@
+# Nix-enabled workspace image.
+#
+# Extends the FULL workspace image (Dockerfile — Pi agent, feature repos, and
+# the klangk-* tooling: entrypoint, klangk-setup-pi, klangk-workspace-token,
+# klangk-setup-home, ...) with single-user nix and devenv. A nix-enabled
+# workspace needs that tooling to run under klangk, so this layers on top of
+# the workspace image, not the bare base.
+#
+# nix is NOT on PATH by default — users enter `nix shell` or `devenv shell`
+# to activate it. The /nix directory is expected to be overlay-mounted at
+# runtime (see #2198), but this image pre-populates it so the image works
+# standalone for testing.
+#
+# HOME caveat (klangk's per-user home scheme): every terminal runs as the
+# klangk unix user with $HOME = /home/.users/<user_id> (agent:
+# /home/<agent_handle>) — a SUBDIR of the /home bind-mount. The nix
+# single-user installer puts its profile at ~/.local/state/nix/profiles/profile
+# (under /home), which the runtime /home overlay hides. So after installing we
+# COPY the profile to /nix/nix-profile (part of the image rootfs, NOT overlaid
+# → visible/shared in every workspace) and /etc/profile.d/z-nix.sh recreates
+# the per-user ~/.nix-profile symlink at login.
+
+ARG WORKSPACE_IMAGE=klangk-workspace:latest
+FROM $WORKSPACE_IMAGE
+
+# Install nix in single-user mode as the klangk user.
+# Single-user means the klangk user owns /nix directly — no nix-daemon needed.
+# The --no-daemon flag skips systemd/launchd service setup.
+USER root
+RUN mkdir -p /nix && chown klangk:klangk /nix
+
+USER klangk
+# Install nix. The single-user installer puts the profile at
+# ~/.local/state/nix/profiles/profile (XDG default); we move it under /nix
+# below so it survives klangk's runtime /home overlay.
+RUN curl -fsSL https://nixos.org/nix/install | sh -s -- --no-daemon
+
+# Enable flakes + nix-command system-wide BEFORE the profile installs below
+# need them. /etc/nix is not under /home, so it survives the runtime overlay
+# (a per-user ~/.config/nix/nix.conf would be hidden).
+USER root
+RUN mkdir -p /etc/nix \
+    && printf 'experimental-features = nix-command flakes\n' > /etc/nix/nix.conf
+
+# Install devenv via nix (USER must be set for cachix). These land in the
+# (still under-/home) profile; the move below carries them along.
+ENV USER=klangk
+USER klangk
+RUN export PATH="/home/.local/state/nix/profiles/profile/bin:$PATH" \
+    && nix profile install nixpkgs#cachix \
+    && cachix use devenv \
+    && nix profile install --accept-flake-config github:cachix/devenv/latest
+
+# Point /nix/nix-profile at the profile's STORE path so it survives the
+# runtime /home overlay. The profile chain is ~/.local/state/nix/profiles/
+# profile -> profile-1-link -> /nix/store/<hash>-profile (the real content);
+# the first two links live under /home (overlaid away at runtime), but the
+# store path is under /nix (not overlaid). Symlinking to the resolved store
+# path keeps the profile's inner symlinks (bin/nix -> /nix/store/...) valid.
+USER root
+RUN ln -s "$(readlink -f /home/.local/state/nix/profiles/profile)" /nix/nix-profile
+
+# Activation script at a well-known path. Source
+# `. /opt/klangk/bin/nix-activate.sh` to put nix + nix-installed programs on
+# PATH (nix is NOT on PATH by default, #2199). The script points
+# ~/.nix-profile at the shared /nix/nix-profile base (which nix follows, so
+# `nix profile install`-ed programs land there too) and prepends its bin to
+# PATH, ahead of every other bindir. Works for any user since $HOME is
+# klangk's per-user subdir.
+COPY nix-activate.sh /opt/klangk/bin/nix-activate.sh
+RUN chmod +x /opt/klangk/bin/nix-activate.sh
