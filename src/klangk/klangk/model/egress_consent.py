@@ -14,6 +14,10 @@ import uuid
 DECISION_PENDING = "pending"
 DECISION_ALLOWED = "allowed"
 DECISION_DENIED = "denied"
+DECISION_EXPIRED = "expired"  # auto-denied on timeout, distinct from user deny
+DECISIONS = frozenset(
+    {DECISION_PENDING, DECISION_ALLOWED, DECISION_DENIED, DECISION_EXPIRED}
+)
 
 # Scope values for an allow/deny decision.
 SCOPE_ONCE = (
@@ -21,6 +25,7 @@ SCOPE_ONCE = (
 )
 SCOPE_WORKSPACE = "workspace"  # persisted to workspace's allowed_domains
 SCOPE_DEPLOY = "deploy"  # promoted to deploy-wide default
+SCOPES = frozenset({SCOPE_ONCE, SCOPE_WORKSPACE, SCOPE_DEPLOY})
 
 
 class EgressConsentModel:
@@ -39,13 +44,19 @@ class EgressConsentModel:
         dest_port: int | None = None,
         pid: int | None = None,
         process_name: str | None = None,
-    ) -> dict:
-        """Insert a pending consent request. Returns the new row dict."""
+    ) -> dict | None:
+        """Insert a pending consent request, or return None if one already
+        exists for this (workspace, host, port).
+
+        Uses ``INSERT OR IGNORE`` against the partial unique index
+        ``idx_egress_consent_pending_dedup`` to atomically deduplicate —
+        no TOCTOU between a separate has_pending() check and the insert.
+        """
         request_id = str(uuid.uuid4())
         requested_at = time.time()
         async with self.app.state.db.transaction() as db:
-            await db.execute(
-                "INSERT INTO egress_consent"
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO egress_consent"
                 " (id, workspace_id, dest_host, dest_port,"
                 "  pid, process_name, decision, requested_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -60,6 +71,8 @@ class EgressConsentModel:
                     requested_at,
                 ),
             )
+            if cursor.rowcount == 0:
+                return None
         return {
             "id": request_id,
             "workspace_id": workspace_id,
@@ -160,8 +173,16 @@ class EgressConsentModel:
         """Record a decision on a pending request.
 
         Returns the updated row dict, or ``None`` if the request doesn't
-        exist or is no longer pending.
+        exist or is no longer pending. Raises ``ValueError`` for invalid
+        decision/scope values.
         """
+        if decision not in (DECISION_ALLOWED, DECISION_DENIED):
+            raise ValueError(
+                f"Invalid decision: {decision!r}"
+                f" (must be {DECISION_ALLOWED!r} or {DECISION_DENIED!r})"
+            )
+        if scope is not None and scope not in SCOPES:
+            raise ValueError(f"Invalid scope: {scope!r}")
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
@@ -179,20 +200,34 @@ class EgressConsentModel:
             )
             if cursor.rowcount == 0:
                 return None
-        return await self.get_request(request_id)
+            # Re-read inside the same transaction so the result is
+            # consistent even if the row is deleted concurrently.
+            cursor = await db.execute(
+                "SELECT id, workspace_id, dest_host, dest_port,"
+                " pid, process_name,"
+                " decision, scope, requested_at, decided_at, decided_by"
+                " FROM egress_consent WHERE id = ?",
+                (request_id,),
+            )
+            row = await cursor.fetchone()
+            return _row_to_dict(row) if row else None
 
     async def expire_pending(
         self,
         request_id: str,
     ) -> bool:
-        """Auto-deny a pending request (timeout). Returns True if updated."""
+        """Auto-expire a pending request (timeout). Returns True if updated.
+
+        Uses ``DECISION_EXPIRED`` so the audit trail distinguishes a
+        human deny from an unattended timeout.
+        """
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "UPDATE egress_consent"
                 " SET decision = ?, decided_at = ?"
                 " WHERE id = ? AND decision = ?",
-                (DECISION_DENIED, decided_at, request_id, DECISION_PENDING),
+                (DECISION_EXPIRED, decided_at, request_id, DECISION_PENDING),
             )
             return cursor.rowcount > 0
 
