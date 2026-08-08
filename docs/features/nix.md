@@ -2,12 +2,10 @@
 
 Opt-in per-workspace [nix](https://nixos.org/) + [devenv](https://devenv.sh/),
 shared across workspaces without baking the ~1–2 GB nix store into every
-workspace image. Tracked under [#2198](https://github.com/mcdonc/klangk/issues/2198).
+workspace image.
 
-A single shared **base `/nix` store** (the _seed_,
-[#2200](https://github.com/mcdonc/klangk/issues/2200)) is built once and layered
-per-workspace ([#2201](https://github.com/mcdonc/klangk/issues/2201),
-[#2220](https://github.com/mcdonc/klangk/issues/2220)) by one of two backends:
+A single shared **base `/nix` store** (the _seed_) is built once and layered
+per-workspace by one of two backends:
 
 - **`fuse-overlayfs`** (the default) — a `fuse-overlayfs` overlay of a plain
   directory seed; works on any filesystem.
@@ -22,7 +20,7 @@ Neither needs a privileged helper.
 klangk-build-nix-seed [out-dir]   # default ./nix-base, or $KLANGKBUILD_NIX_SEED_DIR
 ```
 
-`klangk-build-nix-seed` (#2225) builds a throwaway sandbox image that performs
+`klangk-build-nix-seed` builds a throwaway sandbox image that performs
 a single-user nix install + devenv, then extracts `/nix` and `/etc/nix/nix.conf`
 into a deployable tree. It ships the seed Dockerfile inside the wheel
 (`importlib.resources`, with a source-tree fallback in dev) and drives the
@@ -81,9 +79,8 @@ nix_seed:
 > (podman runs on the host — no userns nesting between klangkd's FUSE mount and
 > the workspace container). It does **not** work where podman is nested — the
 > rootless runtime can't bind a process-owned FUSE mount into a workspace
-> container's userns (host-container and macOS deployments; see
-> [#2221](https://github.com/mcdonc/klangk/issues/2221)). Use `btrfs-snapshot`
-> there if you have btrfs, otherwise the nix image.
+> container's userns (host-container and macOS deployments). Use
+> `btrfs-snapshot` there if you have btrfs, otherwise the nix image.
 
 ### `btrfs-snapshot` (CoW — needs btrfs)
 
@@ -120,7 +117,7 @@ create-workspace dialog shows a "Nix" checkbox; without it the checkbox is
 hidden and nix is image-only.
 
 nix/devenv are on `$PATH` by default: klangkd sets `KLANGKWS_NIX=1`, and the
-default workspace image's `/etc/profile.d/z-klangk-nix.sh` (#2199) sources
+default workspace image's `/etc/profile.d/z-klangk-nix.sh` sources
 nix's activation in any login shell — so `nix`/`devenv` work in any image with
 no manual step.
 
@@ -172,9 +169,5 @@ installed packages persist, only the mount is re-created).
 ---
 
 Neither backend needs a privileged helper — the deciding advantage over zfs,
-whose non-root mount is impossible on Linux
-([openzfs/zfs#10648](https://github.com/openzfs/zfs/discussions/10648)) and
-would force a `cap_sys_admin` helper
-([#2210](https://github.com/mcdonc/klangk/issues/2210)). See
-[#2198](https://github.com/mcdonc/klangk/issues/2198) (Design) for the
-investigation that compared overlay / hardlinks / zfs / btrfs.
+whose non-root mount is impossible on Linux and would force a
+`cap_sys_admin` helper.
