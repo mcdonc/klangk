@@ -682,6 +682,49 @@ class TestStartContainer:
         assert kwargs["labels"]["klangk.network-sidecar"] == ws_id
         p.start_container.assert_awaited_once_with("new-cid")
 
+    async def test_start_network_sidecar_publishes_host_ports(
+        self, monkeypatch
+    ):
+        # #2267: the sidecar owns the netns the workspace shares, so the
+        # workspace's host ports are published on the sidecar (--publish is
+        # inert on the workspace under --network container:).
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        with patch_podman(self.registry) as p:
+            cid = await self.registry._start_network_sidecar(
+                ws_id, ["github.com:443"], publish=[(18080, 8000)]
+            )
+        assert cid == "new-cid"
+        assert p.create_container.call_args.kwargs["publish"] == [
+            (18080, 8000)
+        ]
+
+    async def test_start_network_sidecar_default_publish_is_none(
+        self, monkeypatch
+    ):
+        # A filtered workspace with no host ports publishes nothing.
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        with patch_podman(self.registry) as p:
+            await self.registry._start_network_sidecar(
+                ws_id, ["github.com:443"]
+            )
+        assert p.create_container.call_args.kwargs["publish"] is None
+
     async def test_start_network_sidecar_clears_lingering_same_named(
         self, monkeypatch
     ):
@@ -875,6 +918,53 @@ class TestStartContainer:
         assert "publish" not in creates[1]
         assert "dns" not in creates[1]
         assert "dns_search" not in creates[1]
+
+    async def test_filtered_workspace_publishes_host_ports_on_sidecar(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2267: a filtered workspace's host ports are published on the network
+        # sidecar (the netns owner), not the workspace. The workspace shares the
+        # sidecar's netns, so the sidecar's --publish forwards into it and reaches
+        # the workspace's listener -- letting filtered workspaces host apps.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        # Deterministic host ports (the workspace requests two).
+        async def _fake_reconcile(workspace_id, num_ports):
+            return [18080, 18081]
+
+        monkeypatch.setattr(self.registry, "_reconcile_ports", _fake_reconcile)
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                allowed_domains=["github.com:443"],
+                num_ports=2,
+            )
+        assert len(creates) == 2
+        # Host ports land on the SIDECAR (container-side ports are
+        # CONTAINER_PORT_START+i = 8000/8001).
+        assert creates[0]["publish"] == [(18080, 8000), (18081, 8001)]
+        # The workspace still publishes nothing under --network container:.
+        assert "publish" not in creates[1]
 
     async def test_filtered_workspace_userns_isolates_netns(
         self, workspace, tmp_path, monkeypatch
