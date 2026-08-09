@@ -682,9 +682,10 @@ class TestStartContainer:
         assert kwargs["labels"]["klangk.egress-sidecar"] == ws_id
         p.start_container.assert_awaited_once_with("new-cid")
 
-    async def test_start_egress_sidecar_failure_returns_empty(
-        self, monkeypatch
-    ):
+    async def test_start_egress_sidecar_failure_raises(self, monkeypatch):
+        # #2254 review B2: a sidecar that can't start must surface the failure
+        # (raise), not return "" — the caller fail-closes rather than starting
+        # the workspace unrestricted.
         ws_id = "abcdef1234567890"
         monkeypatch.setattr(
             self.registry.app.state.settings,
@@ -697,21 +698,21 @@ class TestStartContainer:
                 side_effect=podman.PodmanError(500, "no image")
             ),
         ):
-            cid = await self.registry._start_egress_sidecar(
-                ws_id, ["github.com:443"]
-            )
-        assert cid == ""
+            with pytest.raises(podman.PodmanError):
+                await self.registry._start_egress_sidecar(
+                    ws_id, ["github.com:443"]
+                )
 
-    async def test_start_egress_sidecar_returns_empty_without_image(
+    async def test_start_egress_sidecar_raises_without_image(
         self, monkeypatch
     ):
         monkeypatch.setattr(
             self.registry.app.state.settings, "egress_sidecar_image", ""
         )
-        cid = await self.registry._start_egress_sidecar(
-            "abcd1234", ["github.com:443"]
-        )
-        assert cid == ""
+        with pytest.raises(podman.PodmanError):
+            await self.registry._start_egress_sidecar(
+                "abcd1234", ["github.com:443"]
+            )
 
     async def test_stop_egress_sidecar_removes_by_name(self, monkeypatch):
         monkeypatch.setattr(
@@ -800,15 +801,26 @@ class TestStartContainer:
         assert creates[0]["name"].startswith("klangk-egress-")
         assert creates[0]["cap_add"] == ["NET_ADMIN"]
         assert "KLANGKEGRESS_ALLOW=github.com:443" in creates[0]["env"]
+        assert any(
+            e.startswith("KLANGKEGRESS_BACKEND_PORT=")
+            for e in creates[0]["env"]
+        )
         assert creates[1]["network"] == "container:sidecar-cid"
         assert "annotations" not in creates[1]
+        # #2254 B1: --add-host is rejected and --publish is discarded under
+        # --network container:, so both (plus dns/dns-search) are popped from
+        # the workspace kwargs.
+        assert "add_hosts" not in creates[1]
+        assert "publish" not in creates[1]
+        assert "dns" not in creates[1]
+        assert "dns_search" not in creates[1]
 
-    async def test_sidecar_failure_runs_unrestricted(
+    async def test_sidecar_failure_refuses_to_start(
         self, workspace, tmp_path, monkeypatch
     ):
-        # #2254 review: the OCI-hook "static" model is gone, so a sidecar
-        # failure no longer falls back to the hook — the workspace just
-        # starts unrestricted (fail-open, the historical no-filter posture).
+        # #2254 review B2: fail-CLOSED. A workspace that declared an allow-list
+        # must never start unrestricted — a sidecar that fails to start raises
+        # rather than letting the workspace run unfiltered.
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "egress_sidecar_image",
@@ -819,28 +831,38 @@ class TestStartContainer:
         monkeypatch.setattr(_nf_mod.platform, "system", lambda: "Linux")
         monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
 
-        ws_kwargs = {}
-
         async def _fake_create(name, image, **kw):
             if "egress" in name:
                 raise podman.PodmanError(500, "no image")
-            ws_kwargs.update(kw)
             return "ws-cid"
 
         with patch_podman(
             self.registry, create_container=AsyncMock(side_effect=_fake_create)
         ):
-            await self.registry.start_container(
-                workspace["id"],
-                "/tmp/ws",
-                "/tmp/home",
-                allowed_domains=["github.com:443"],
-            )
-        # No sidecar (it failed) and no hook fallback -> unrestricted.
-        assert "network" not in ws_kwargs
-        assert "annotations" not in ws_kwargs
-        assert "hooks_dir" not in ws_kwargs
-        assert "cap_drop" not in ws_kwargs
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+
+    async def test_allowed_domains_without_sidecar_refuses_to_start(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2254 review B2: allowed_domains declared but the sidecar image is
+        # not configured -> refuse to start (fail-closed), never unrestricted.
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "egress_sidecar_image", ""
+        )
+        with patch_podman(self.registry):
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
 
     async def test_resource_limits_defaults_emit_flags(self, workspace):
         # #2030: with no deploy limits configured, the built-in protective

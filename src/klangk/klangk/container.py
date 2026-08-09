@@ -1099,15 +1099,19 @@ class ContainerRegistry:
     ) -> str:
         """Create + start the FQDN egress sidecar for a filtered workspace (#2254).
 
-        Returns the sidecar's container ID (for ``--network container:<id>``),
-        or ``""` on failure (the workspace starts unfiltered — fail-open). The
-        sidecar gets ``--cap-add NET_ADMIN`` + ``--dns 1.1.1.1`` (the REDIRECT
-        target the workspace inherits); the proxy forwards to a *different*
-        detected upstream (loop avoidance). The allow-list is passed via env.
+        Returns the sidecar's container ID (for ``--network container:<id>``).
+        Raises ``podman.PodmanError`` on failure — the caller fail-closes (a
+        workspace that declared an allow-list never starts unrestricted; #2254
+        review B2). The sidecar gets ``--cap-add NET_ADMIN`` + ``--dns 1.1.1.1``
+        (the REDIRECT target the workspace inherits); the proxy forwards to a
+        *different* detected upstream (loop avoidance). The allow-list + the
+        klangkd backend port are passed via env.
         """
         image = self.app.state.settings.egress_sidecar_image
         if not image:
-            return ""
+            raise podman.PodmanError(
+                500, "egress_sidecar_image is not configured"
+            )
         name = self._egress_sidecar_name(workspace_id)
         # Pick an upstream that differs from the REDIRECT target (1.1.1.1).
         nf = getattr(self.app.state, "netfilter", None)
@@ -1116,6 +1120,10 @@ class ContainerRegistry:
         env = [
             f"KLANGKEGRESS_ALLOW={','.join(allowed_domains)}",
             f"KLANGKEGRESS_UPSTREAM={upstream}",
+            # The klangkd backend port (LLM proxy + bridge on
+            # host.containers.internal). The sidecar allow-lists it statically
+            # — it's a /etc/hosts entry the FQDN proxy can't learn (#2254 B1).
+            f"KLANGKEGRESS_BACKEND_PORT={self.app.state.settings.egress_port}",
         ]
         if egress_mode == "interactive":
             env.append("KLANGKEGRESS_MODE=interactive")
@@ -1147,11 +1155,11 @@ class ContainerRegistry:
             return cid
         except podman.PodmanError as exc:
             logger.warning(
-                "egress sidecar failed for %s: %s — workspace starts unfiltered",
+                "egress sidecar failed for %s: %s — fail-closed at caller",
                 workspace_id[:8],
                 exc,
             )
-            return ""
+            raise
 
     async def _stop_egress_sidecar(self, workspace_id: str) -> None:
         """Best-effort remove the egress sidecar for a workspace (#2254)."""
@@ -1773,25 +1781,44 @@ class ContainerRegistry:
         # Egress filtering (#1365): the FQDN sidecar is the only egress
         # model. The OCI-hook "static" model was dropped (#2254 review) —
         # maintaining two complete models was more complexity than value. A
-        # filtered workspace (allowed_domains + a configured sidecar image)
-        # runs --network container:<sidecar> (the sidecar's proxy owns the
-        # rules; the workspace is unprivileged; --dns/--dns-search are
-        # incompatible with --network container:, so drop them). On sidecar
-        # failure, or with no allowed_domains, the workspace starts
-        # unrestricted (fail-open — the historical no-filter posture). The
-        # hook model's netfilter machinery remains imported + unit-tested,
-        # pending a dedicated cleanup.
-        if self._egress_sidecar_enabled() and allowed_domains:
+        # filtered workspace (allowed_domains set) runs
+        # --network container:<sidecar> (the sidecar's proxy owns the rules;
+        # the workspace is unprivileged). Fail-CLOSED (#2254 review B2): a
+        # workspace that declared an allow-list never starts unrestricted —
+        # silently ignoring it would disable a security control the user
+        # requested, so a missing/unstartable sidecar raises instead. With no
+        # allowed_domains the workspace starts unrestricted (no filtering
+        # requested). The hook model's netfilter machinery remains imported +
+        # unit-tested, pending a dedicated cleanup.
+        if allowed_domains:
+            if not self._egress_sidecar_enabled():
+                raise podman.PodmanError(
+                    500,
+                    f"workspace {workspace_id[:8]} declares allowed_domains "
+                    "but the egress sidecar is not configured "
+                    "(egress_sidecar_image is empty); refusing to start "
+                    "unfiltered. Clear allowed_domains or configure "
+                    "egress_sidecar_image.",
+                )
             sidecar_id = await self._start_egress_sidecar(
                 workspace_id, allowed_domains, egress_mode
             )
-            if sidecar_id:
-                create_kwargs["network"] = f"container:{sidecar_id}"
-                create_kwargs.pop("dns", None)
-                create_kwargs.pop("dns_search", None)
-                # Remember this workspace has a live sidecar so its stop
-                # tears the sidecar down (#2254).
-                self._ws_with_sidecar.add(workspace_id)
+            create_kwargs["network"] = f"container:{sidecar_id}"
+            # --dns/--dns-search, --add-host, and --publish are all invalid
+            # under --network container: podman rejects --add-host outright
+            # ("cannot set extra host entries when ... joined to another
+            # containers network namespace"), dns/dns-search are
+            # incompatible, and --publish is silently discarded. The workspace
+            # still resolves host.containers.internal via the sidecar's
+            # /etc/hosts (podman populates it), and the sidecar's iptables
+            # statically allow-lists the backend port (entrypoint.sh, B1).
+            create_kwargs.pop("dns", None)
+            create_kwargs.pop("dns_search", None)
+            create_kwargs.pop("add_hosts", None)
+            create_kwargs.pop("publish", None)
+            # Remember this workspace has a live sidecar so its stop
+            # tears the sidecar down (#2254).
+            self._ws_with_sidecar.add(workspace_id)
 
         # #2045: grant the container CAP_NET_RAW so unprivileged ``ping``
         # works (a setuid ping binary in the base image bridges the cap to
