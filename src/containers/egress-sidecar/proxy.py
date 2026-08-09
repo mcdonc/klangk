@@ -105,7 +105,21 @@ def allowed(qname: str) -> bool:
 
 
 def allow_ip(ip: str) -> None:
-    """Insert an allow-rule at the top of OUTPUT for a learned IP."""
+    """Insert an allow-rule at the top of OUTPUT for a learned IP.
+
+    Dedup: skip if an ACCEPT rule for this IP already exists, so repeated
+    resolutions of the same name don't pile duplicate rules atop OUTPUT
+    unboundedly (#2256). Learned IPs are still allow-listed on all ports
+    (no per-domain port scoping yet) — also tracked in #2256.
+    """
+    if (
+        subprocess.run(
+            [IPT, "-C", "OUTPUT", "-d", ip, "-j", "ACCEPT"],
+            capture_output=True,
+        ).returncode
+        == 0
+    ):
+        return
     subprocess.run(
         [IPT, "-I", "OUTPUT", "1", "-d", ip, "-j", "ACCEPT"],
         capture_output=True,
