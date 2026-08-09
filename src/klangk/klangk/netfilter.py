@@ -34,9 +34,11 @@ import re
 logger = logging.getLogger(__name__)
 
 # NFLOG group for interactive egress consent (#2239). The sidecar's
-# entrypoint stamps this group on its NFLOG rule (interactive mode only);
-# the consent daemon listens here via a netlink socket. Mirrored as the
-# entrypoint's default (KLANGKNETWORK_EGRESS_NFLOG_GROUP).
+# entrypoint stamps this group on its NFLOG rule (interactive mode only) for
+# the consent daemon to consume. The daemon itself (an NFLOG/netlink listener
+# on the klangkd side) is not built yet (#2242): the rule is installed but
+# nothing reads it, so interactive consent is not yet functional. Mirrored as
+# the entrypoint's default (KLANGKNETWORK_EGRESS_NFLOG_GROUP).
 NFLOG_GROUP = 5139
 
 # A hostname or IPv4 address with an optional trailing ``:port``.
