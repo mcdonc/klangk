@@ -726,14 +726,14 @@ class KlangkSettings(BaseSettings):
     # with a bad value is denied and keeps the old config (#1939, reversing
     # #1772).
     netfilter_default_domains: list[str] | None = None
-    # egress_sidecar_image: the container image for the FQDN egress sidecar
+    # network_sidecar_image: the container image for the FQDN network sidecar
     # (#2250). Filtered workspaces run two containers sharing a netns: this
     # sidecar (NET_ADMIN, runs the DNS proxy) + the workspace
     # (--network container:<sidecar>). Defaults to the published sidecar
     # image name (publishing alongside a release is tracked separately);
     # set to "" to disable egress filtering entirely. Read live (SIGHUP
     # reload-safe).
-    egress_sidecar_image: str = "klangk-egress-sidecar"
+    network_sidecar_image: str = "klangk-network-sidecar"
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
     # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 16384 PIDs,
