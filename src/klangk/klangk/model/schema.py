@@ -146,7 +146,7 @@ async def init_db(db) -> None:
                 mounts TEXT,  -- JSON array of host:container mount specs
                 env TEXT,  -- JSON dict of custom environment variables
                 -- comma-joined host[:port] specs; NULL = unrestricted
-                -- egress (see KLANGKD_NETFILTER_HOOKS_DIR, #1365)
+                -- egress (#1365)
                 allowed_domains TEXT,
                 -- egress filtering mode: 'static' (immutable allow-list
                 -- at create time, the default) or 'interactive'

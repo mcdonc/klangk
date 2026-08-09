@@ -702,10 +702,6 @@ class KlangkSettings(BaseSettings):
     # /api/v1/config field of the same name is the resolved armed status
     # (this switch AND network_sidecar_image set).
     netfilter_enabled: bool = True
-    # netfilter_hooks_dir: legacy OCI-hook hooks directory. The hook model
-    # was superseded by the FQDN network sidecar (#2255); this setting is
-    # retained so existing configs don't error but is no longer read by any
-    # enforcement path.
     # netfilter_default_domains: a deploy-wide allow-list applied to every
     # workspace that doesn't declare its own (#1365). A workspace with a
     # non-empty allowed_domains *overrides* (replaces) this default; a
