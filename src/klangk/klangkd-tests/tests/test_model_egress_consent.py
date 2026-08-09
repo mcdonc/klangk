@@ -1,6 +1,9 @@
 """Tests for ``EgressConsentModel`` and the ``egress_mode`` workspace field (#2239)."""
 
+import sqlite3
+
 import pytest
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from klangk.model.egress_consent import (
     DECISION_ALLOWED,
@@ -328,3 +331,102 @@ async def test_cascade_delete_on_workspace_delete(ec, ws, user):
     await ec.create_request(w["id"], "a.com", 443)
     await ws.delete_workspace(w["id"], user["id"])
     assert await ec.list_requests(w["id"]) == []
+
+
+# -- DB-level integrity (CHECK constraints + partial unique index) --
+#
+# The CHECK constraints + partial unique index are the structural backstop:
+# a code path that bypasses EgressConsentModel (raw SQL) still can't land a
+# bad decision/scope or a duplicate pending prompt. These prove the
+# constraints are enforced at the storage layer, independent of decide()'s
+# Python validation (#2251). They mirror the idiom in
+# test_main.test_users_handle_has_unique_constraint.
+
+
+async def test_db_check_rejects_invalid_decision_on_insert(
+    ws, user, db, app_state
+):
+    w = await ws.create_workspace(user["id"], "chk-ins-ws")
+    async with app_state.state.db.transaction() as conn:
+        with pytest.raises(SAIntegrityError) as exc_info:
+            await conn.execute(
+                "INSERT INTO egress_consent"
+                " (id, workspace_id, dest_host, decision, requested_at)"
+                " VALUES (?, ?, ?, 'bogus', ?)",
+                ("r1", w["id"], "a.com", 0.0),
+            )
+    assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
+
+
+async def test_db_check_rejects_invalid_decision_on_update(
+    ws, user, db, app_state
+):
+    w = await ws.create_workspace(user["id"], "chk-upd-ws")
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "INSERT INTO egress_consent"
+            " (id, workspace_id, dest_host, requested_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("r2", w["id"], "a.com", 0.0),
+        )
+        with pytest.raises(SAIntegrityError) as exc_info:
+            await conn.execute(
+                "UPDATE egress_consent SET decision = 'bogus' WHERE id = ?",
+                ("r2",),
+            )
+    assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
+
+
+async def test_db_check_rejects_invalid_scope(ws, user, db, app_state):
+    w = await ws.create_workspace(user["id"], "chk-scope-ws")
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "INSERT INTO egress_consent"
+            " (id, workspace_id, dest_host, requested_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("r3", w["id"], "a.com", 0.0),
+        )
+        with pytest.raises(SAIntegrityError) as exc_info:
+            await conn.execute(
+                "UPDATE egress_consent SET scope = 'nonsense' WHERE id = ?",
+                ("r3",),
+            )
+    assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
+
+
+async def test_db_check_accepts_null_and_legal_scopes(ws, user, db, app_state):
+    """scope NULL (the default) + each legal value pass the CHECK."""
+    w = await ws.create_workspace(user["id"], "chk-scope-ok")
+    legal = [None, "once", "workspace", "deploy"]
+    async with app_state.state.db.transaction() as conn:
+        for i, scope in enumerate(legal):
+            await conn.execute(
+                "INSERT INTO egress_consent"
+                " (id, workspace_id, dest_host, scope, requested_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (f"ok-{i}", w["id"], f"h{i}.com", scope, 0.0),
+            )
+
+
+async def test_db_partial_unique_index_rejects_duplicate_pending(
+    ws, user, db, app_state
+):
+    """The partial unique index is the real backstop behind INSERT OR IGNORE:
+    a plain second INSERT of a pending for the same (workspace, host, port)
+    raises — dedup is structural, not just app-level (#2251)."""
+    w = await ws.create_workspace(user["id"], "chk-uniq-ws")
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "INSERT INTO egress_consent"
+            " (id, workspace_id, dest_host, dest_port, requested_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            ("u1", w["id"], "a.com", 443, 0.0),
+        )
+        with pytest.raises(SAIntegrityError) as exc_info:
+            await conn.execute(
+                "INSERT INTO egress_consent"
+                " (id, workspace_id, dest_host, dest_port, requested_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("u2", w["id"], "a.com", 443, 0.0),
+            )
+    assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
