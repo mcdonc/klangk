@@ -528,12 +528,22 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Security
 
-- **Network sidecar: filtered workspaces with `allow_sudo` now drop `net_raw`
-  (#2276).** A filtered workspace whose user can `sudo` to root could bypass
-  the egress filter via `SO_MARK` (root would have the `net_raw` that
-  `enable_ping` grants). The create path now drops `net_raw` from the bounding
-  set so even root can't acquire it, keeping the filter enforced; the setuid-ping
-  bridge is disabled for such workspaces (the trade for keeping the filter on).
+- **Network sidecar: filtered workspaces with `allow_sudo` drop `net_raw` as
+  defense-in-depth (#2276).** The primary `SO_MARK`-bypass guard is
+  user-namespace isolation — the workspace runs in its own keep-id userns,
+  distinct from the one that owns the network sidecar's netns, so its caps are
+  not valid there. A filtered+`allow_sudo` workspace additionally drops
+  `net_raw` from the bounding set so that if that isolation ever does not hold,
+  `sudo`→root still can't mark; the setuid-ping bridge is disabled for such
+  workspaces.
+
+- **Network sidecar: filtered workspaces now require a non-empty
+  `KLANGKD_USERNS` (egress-stack review).** An empty `KLANGKD_USERNS` made the
+  workspace share the network sidecar's user namespace, silently reopening the
+  `SO_MARK` egress bypass. A filtered workspace (`allowed_domains` set) now
+  refuses to start when `KLANGKD_USERNS` is empty (fail-closed). The default
+  (`keep-id:uid=1000,gid=1000`) is unaffected; only deployments that explicitly
+  set `KLANGKD_USERNS=""` are impacted.
 
 - **`git-credential-klangk`: secrets redacted from debug output (#1938).**
 

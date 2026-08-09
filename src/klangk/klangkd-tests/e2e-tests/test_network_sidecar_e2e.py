@@ -152,16 +152,17 @@ import dns.message
 name = sys.argv[1]
 server = sys.argv[2]
 mark = int(sys.argv[3]) if len(sys.argv) > 3 else 75
-# Replicate production (#2276). By default gosu-drop to the non-root klangk user
-# (uid 1000): the workspace starts as root (PID 1) then drops, which clears the
-# effective+permitted cap sets, so CAP_NET_RAW (in the bounding set via
-# enable_ping) is NOT effective and setsockopt(SO_MARK) must fail. Pass a 4th
-# arg ("root") to STAY root instead — used by the filtered+sudo test, where the
-# workspace's net_raw is dropped (#2276 B) so even root cannot SO_MARK.
-# (Launching with --user 1000:1000 instead of the in-process drop would be a
-# *naive* repro that lies: podman promotes cap-add'd caps to AMBIENT for a
-# non-root init, making the cap effective and the bypass falsely look open.)
-if len(sys.argv) <= 4:
+# The #2264 bypass guard is USER-NAMESPACE ISOLATION (review #1 of the egress
+# stack): the workspace runs in its own keep-id userns, distinct from the one
+# that owns the network sidecar's netns, so its caps are not valid there and
+# setsockopt(SO_MARK) EPERMs even though the klangk user has net_raw effective
+# (podman promotes --cap-add caps to ambient for a non-root init). The faithful
+# production repro launches this probe with --userns=keep-id:uid=1000,gid=1000
+# (see _probe_somark(keep_id=True)); the probe is then already uid 1000, so no
+# in-process drop is needed. The legacy default-userns repro below drops to
+# uid 1000 in-process ONLY when PID 1 is root and we were not told to stay root
+# (the filtered+sudo case, #2276 B); pass a 4th arg ("root") to stay root.
+if os.getuid() == 0 and not (len(sys.argv) > 4 and sys.argv[4] == "root"):
     os.setgid(1000)
     os.setuid(1000)
 
@@ -346,13 +347,14 @@ def _query(env, stack, name, server=None):
 
     Returns the ws_query.py stdout (one line: 'A ...' / 'NXDOMAIN' / 'ERR ...').
 
-    Mirrors how klangk launches a filtered workspace (#2264, #2276): the
-    container starts as root with CAP_NET_RAW in the *bounding* set (enable_ping
-    default True), then gosu-drops to the non-root klangk user (uid 1000) — the
-    drop clears effective caps, so the workspace cannot setsockopt(SO_MARK) to
-    skip the nat REDIRECT (the #2264 bypass); ping still works via the setuid
-    binary. The drop is done in-process by ws_query.py; the explicit SO_MARK
-    bypass attempt is test_somark_bypass_blocked_under_production_caps.
+    Mirrors how klangk launches a filtered workspace's NETWORK sidecar join
+    (#2264): the container shares the sidecar's netns with --cap-add net_raw
+    (enable_ping) and an in-process drop to uid 1000. DNS resolution (UDP :53,
+    REDIRECTed to the proxy) does not depend on the workspace's userns or caps,
+    so this simpler launch is fine for the resolution/exfil tests; the explicit
+    SO_MARK bypass attempt — which DOES depend on user-namespace isolation —
+    lives in test_somark_bypass_blocked_under_production_userns (a faithful
+    keep-id repro).
     """
     _, network_sidecar = stack
     args = ["/wq.py", name]
@@ -377,27 +379,51 @@ def _query(env, stack, name, server=None):
 
 
 def _probe_somark(
-    env, stack, name, server, *, mark=75, as_root=False, cap_drop=False
+    env,
+    stack,
+    name,
+    server,
+    *,
+    mark=75,
+    as_root=False,
+    cap_drop=False,
+    keep_id=False,
 ):
     """Run the SO_MARK bypass probe as a filtered workspace.
 
     Returns the probe's stdout (see _SOMARK_PROBE_PY).
 
+    * ``keep_id``: launch with ``--userns=keep-id:uid=1000,gid=1000`` — the
+      FAITHFUL production repro (review #1). The probe is then uid 1000 from
+      PID 1 (no in-process drop); the cap is effective but SO_MARK EPERMs via
+      user-namespace isolation, the real bypass guard. Incompatible with
+      ``as_root``/``cap_drop`` (those model the legacy default-userns sudo case).
     * ``as_root``: stay root in the probe (simulate ``sudo``->root) instead of
-      gosu-dropping to uid 1000 (the normal non-root workspace user).
+      dropping to uid 1000 (the legacy default-userns non-root repro).
     * ``cap_drop``: launch with ``--cap-drop net_raw`` (the filtered+sudo
       config, #2276 B) instead of ``--cap-add net_raw`` (enable_ping).
     """
     _, network_sidecar = stack
-    caps = ["--cap-drop", "net_raw"] if cap_drop else ["--cap-add", "net_raw"]
-    args = ["/probe.py", name, server, str(mark)]
-    if as_root:
-        args.append("root")  # 4th arg => probe stays root (sudo->root)
+    if keep_id:
+        # Production launch: own keep-id userns + net_raw (enable_ping). The
+        # probe skips its in-process drop (it is already uid 1000).
+        userns = ["--userns", "keep-id:uid=1000,gid=1000"]
+        caps = ["--cap-add", "net_raw"]
+        args = ["/probe.py", name, server, str(mark)]
+    else:
+        userns = []
+        caps = (
+            ["--cap-drop", "net_raw"] if cap_drop else ["--cap-add", "net_raw"]
+        )
+        args = ["/probe.py", name, server, str(mark)]
+        if as_root:
+            args.append("root")  # 4th arg => probe stays root (sudo->root)
     out = _podman(
         "run",
         "--rm",
         "--network",
         f"container:{network_sidecar}",
+        *userns,
         *caps,
         "-v",
         f"{env['somark_probe']}:/probe.py:ro",
@@ -507,22 +533,30 @@ class TestNetworkSidecarE2E:
             _podman("rm", "-f", nc, check=False, timeout=60)
             _podman("network", "rm", net, check=False, timeout=60)
 
-    def test_somark_bypass_blocked_under_production_caps(self, env, stack):
-        # #2276: a filtered workspace runs as the NON-ROOT user with net_raw
-        # only in its bounding set (not effective), so it cannot setsockopt
-        # (SO_MARK) to skip the nat REDIRECT and reach the upstream directly
-        # (the #2264 bypass). The probe arms a UDP socket with SO_MARK=75 and
-        # queries the upstream directly; under production caps it must get
-        # SO_MARK_EPERM (the user lacks the effective cap) and NEVER the exfil IP.
+    def test_somark_bypass_blocked_under_production_userns(self, env, stack):
+        # Review #1 of the egress stack: a filtered workspace launches in its
+        # OWN keep-id userns (--userns=keep-id:uid=1000,gid=1000), distinct from
+        # the userns that owns the network sidecar's netns. SO_MARK needs
+        # CAP_NET_RAW/NET_ADMIN in the netns-OWNER's userns, so even though the
+        # klangk user has net_raw EFFECTIVE (podman promotes --cap-add caps to
+        # ambient for a non-root init), setsockopt(SO_MARK) EPERMs and the
+        # workspace cannot skip the nat REDIRECT to reach the upstream directly
+        # (the #2264 bypass). This is the FAITHFUL production repro (the probe
+        # runs as uid 1000 from PID 1, no in-process drop); it must get
+        # SO_MARK_EPERM and NEVER the exfil IP. A future change that makes the
+        # workspace share the sidecar's userns (e.g. emptying KLANGKD_USERNS)
+        # would flip this to SO_MARK_OK and fail here.
         upstream_ip, _ = stack
-        out = _probe_somark(env, stack, "exfil.test", upstream_ip)
+        out = _probe_somark(
+            env, stack, "exfil.test", upstream_ip, keep_id=True
+        )
         assert "6.6.6.6" not in out, (
-            f"SO_MARK bypass OPEN under production caps — exfil IP reached:\n"
+            f"SO_MARK bypass OPEN under production userns — exfil IP reached:\n"
             f"{out}"
         )
         assert out.startswith("SO_MARK_EPERM"), (
-            f"expected SO_MARK_EPERM (non-root user lacks effective net_raw), "
-            f"got:\n{out}"
+            f"expected SO_MARK_EPERM (userns isolation; cap is effective but "
+            f"not valid in the sidecar's netns), got:\n{out}"
         )
 
     def test_somark_bypass_closed_for_filtered_sudo_workspace(

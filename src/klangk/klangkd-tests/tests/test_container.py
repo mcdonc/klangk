@@ -876,6 +876,75 @@ class TestStartContainer:
         assert "dns" not in creates[1]
         assert "dns_search" not in creates[1]
 
+    async def test_filtered_workspace_userns_isolates_netns(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # Review #1/#2 of the egress stack: the SO_MARK-bypass guard is
+        # user-namespace isolation. The workspace MUST launch in a user
+        # namespace distinct from the one that owns the network sidecar's netns.
+        # The sidecar launches with NO --userns (podman default); the workspace
+        # launches with the configured settings.userns (keep-id by default) --
+        # so the workspace's caps are not valid in the sidecar's netns and
+        # setsockopt(SO_MARK) EPERMs. If they ever share a userns the FQDN
+        # allow-list is defeated.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                allowed_domains=["github.com:443"],
+            )
+        sidecar, ws = creates[0], creates[1]
+        # The sidecar (netns owner) launches with NO --userns (podman default).
+        assert not sidecar.get("userns")
+        # The workspace launches in the configured (non-default) userns.
+        assert ws["userns"] == self.registry.app.state.settings.userns
+        assert ws["userns"].startswith("keep-id")
+        # They differ -> isolation holds (the SO_MARK guard).
+        assert ws["userns"] != sidecar.get("userns")
+
+    async def test_filtered_workspace_refuses_empty_userns(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # Review #2: an empty KLANGKD_USERNS would emit no --userns, putting the
+        # workspace in podman's default userns -- the same one the network
+        # sidecar owns its netns in -- reopening the SO_MARK egress bypass.
+        # Fail-closed: refuse to start a filtered workspace.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        monkeypatch.setattr(self.registry.app.state.settings, "userns", "")
+        with patch_podman(self.registry):
+            with pytest.raises(podman.PodmanError) as exc:
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+        assert "KLANGKD_USERNS" in str(exc.value)
+
     async def test_filtered_workspace_with_allow_sudo_drops_net_raw(
         self, workspace, tmp_path, monkeypatch, caplog
     ):
