@@ -42,15 +42,26 @@ workspace's configured resolvers (the sidecar's `--dns`, which the workspace
 inherits) — otherwise the proxy's forwards loop back into itself. `entrypoint.sh`
 skips any nameserver equal to the upstream as a guard.
 
+### Backend reachability
+
+The workspace must reach the klangkd backend (`/llm-proxy`, the bridge) on
+`host.containers.internal` to function. That host is a `/etc/hosts` entry (podman
+populates it under `--network container:`), not a DNS lookup, so the FQDN proxy
+can never learn its IP. `entrypoint.sh` therefore statically allow-lists
+`host.containers.internal:<KLANGKEGRESS_BACKEND_PORT>` (resolved via `getent`),
+scoped to that one port — the klangkd backend is itself authenticated. Pass the
+klangkd `egress_port` here (#2254 B1).
+
 ## Configuration (env)
 
-| var                        | default    | meaning                                           |
-| -------------------------- | ---------- | ------------------------------------------------- |
-| `KLANGKEGRESS_ALLOW`       | _(empty)_  | comma-separated allow-list: `host[:port]` or CIDR |
-| `KLANGKEGRESS_UPSTREAM`    | `8.8.8.8`  | real upstream the proxy forwards to               |
-| `KLANGKEGRESS_LISTEN_PORT` | `15353`    | UDP port the proxy listens on                     |
-| `KLANGKEGRESS_IPTABLES`    | `iptables` | iptables binary path                              |
-| `KLANGKEGRESS_DEBUG`       | unset      | if set, log each allow/deny decision              |
+| var                         | default    | meaning                                           |
+| --------------------------- | ---------- | ------------------------------------------------- |
+| `KLANGKEGRESS_ALLOW`        | _(empty)_  | comma-separated allow-list: `host[:port]` or CIDR |
+| `KLANGKEGRESS_UPSTREAM`     | `8.8.8.8`  | real upstream the proxy forwards to               |
+| `KLANGKEGRESS_BACKEND_PORT` | _(empty)_  | klangkd backend port on host.containers.internal  |
+| `KLANGKEGRESS_LISTEN_PORT`  | `15353`    | UDP port the proxy listens on                     |
+| `KLANGKEGRESS_IPTABLES`     | `iptables` | iptables binary path                              |
+| `KLANGKEGRESS_DEBUG`        | unset      | if set, log each allow/deny decision              |
 
 ## Limitations (#2256)
 
