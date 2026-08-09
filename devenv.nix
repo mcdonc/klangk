@@ -148,10 +148,7 @@ in
       showOutput = true;
     };
     "klangk:build-network-sidecar" = {
-      exec = ''
-        P=''${KLANGKD_PODMAN_BIN:-podman}
-        $P build -t klangk-network-sidecar -f src/containers/network/Dockerfile src/containers/network
-      '';
+      exec = ''exec bash "$DEVENV_ROOT/scripts/build-network-sidecar.sh"'';
     };
     "klangk:kill-port-holders" = {
       exec = ''
