@@ -67,6 +67,14 @@ def _valid_domain_spec(spec: str) -> bool:
     # below is unchanged (#1935).
     if "/" in spec:
         return _valid_cidr_spec(spec)
+    # Wildcard: a leading ``*.`` matches subdomains only (NOT the apex) —
+    # distinct from a bare host, which matches the apex + subdomains. Strip
+    # the ``*.`` and validate the remaining ``host[:port]`` grammar. A bare
+    # ``*`` or ``*.`` has no matchable base (#2256).
+    if spec.startswith("*."):
+        spec = spec[2:]
+        if not spec:
+            return False
     if not _DOMAIN_RE.match(spec):
         return False
     # The regex accepts up to 5 digits; additionally reject ports > 65535.

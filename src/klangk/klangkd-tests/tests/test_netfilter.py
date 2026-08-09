@@ -59,6 +59,11 @@ class TestParseAllowedDomains:
             "10.0.0.1:53",
             "sub.domain.example.com:8080",
             "a.com:65535",  # max valid port
+            # #2256: leading "*." wildcards (subdomains only, + optional port).
+            "*.pypi.org",
+            "*.pypi.org:443",
+            "*.double.example.com",  # wildcard on a multi-label base
+            "*.pypi.org:65535",  # wildcard + max port
             # #1935: IPv4 CIDR ranges (with and without a port scope).
             "10.0.0.0/8",
             "10.0.0.0/8:443",
@@ -85,6 +90,13 @@ class TestParseAllowedDomains:
             "/etc/passwd",  # slash but not a valid CIDR
             "-leading",  # leading hyphen rejected by host grammar
             "a.com/path",  # slash but not a valid CIDR
+            # #2256: wildcards must be a leading "*." (dot required), and
+            # a wildcard with no matchable base is invalid.
+            "*pypi.org",  # missing the dot after *
+            "*",  # bare wildcard — nothing to match
+            "*.",  # wildcard with empty base
+            "a*.pypi.org",  # wildcard not at the leading position
+            "pypi.org.*",  # wildcard at the wrong end
             # #1935: malformed CIDR specs.
             "10.0.0.0/33",  # prefix length > 32
             "10.0.0.0/",  # missing prefix length

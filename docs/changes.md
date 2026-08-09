@@ -32,6 +32,17 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
+  TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
+  (subdomains only — distinct from a bare `domain`, which also matches the
+  apex). `host:port` scopes a learned IP to that single TCP port (a bare
+  `host` keeps all-ports); the sidecar's entrypoint now applies the same
+  port scoping to CIDR specs like `10.0.0.0/8:443` (previously stripped).
+  Resolved IPs are allow-listed only for the DNS response's TTL — the proxy
+  re-resolves on each query and a background sweep removes the rule when the
+  TTL elapses, so stale IPs no longer linger. See
+  `docs/features/egress-filtering.md`.
+
 - **`klangk-build-nix-seed` + `klangk-load-nix-seed-btrfs` — build/load the
   `/nix` seed from a wheel install (#2225).** Two console scripts (shipped with
   `pip install klangk`) replace the former devenv-only shell scripts.
