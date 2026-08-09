@@ -38,7 +38,11 @@ outbound networking exactly as before.
    **allow-lists resolved IPs at runtime** — so a domain whose IPs rotate
    (CDN, DNS round-robin) stays reachable without a container restart,
    and a denied domain returns NXDOMAIN. This replaces the create-time
-   IP-pinning the old OCI hook model used (#2255).
+   IP-pinning the old OCI hook model used (#2255). The workspace is told
+   its resolver is `1.1.1.1` (a placeholder) — the `:53` traffic is
+   `REDIRECT`ed to the proxy before it ever leaves, so `1.1.1.1` is never
+   actually reached; the proxy forwards to a _different_ detected upstream
+   (loop avoidance).
 5. **IPv6 egress is default-denied** — the sidecar sets
    `ip6tables -P OUTPUT DROP`, so the v4 allow-list cannot be bypassed
    over IPv6 (#1936). `allowed_domains` therefore accepts only hostnames
