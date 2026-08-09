@@ -104,6 +104,26 @@ runtime swap (the SIGHUP config reload, #1587) propagate without per-subsystem
 `reconfigure()` boilerplate. Cached subobject references silently keep the old
 value after a swap and are a recurring source of stale-config bugs (#1608).
 
+## Environment variable naming
+
+Env vars use a **category prefix** formed by concatenating `KLANGK` with the
+category word and **no underscore**, then a single underscore before the field
+name: `KLANGK<WORD>_<FIELD>`. Existing categories: `KLANGKD_` (daemon),
+`KLANGKWS_` (in-workspace runtime), `KLANGKBUILD_` (build tooling), `KLANGKC_`
+(CLI), `KLANGKNETWORK_` (the network sidecar).
+
+**Never insert an underscore between `KLANGK` and the category word.** The first
+underscore must come _after_ the full category word. `KLANGK_NETWORK_UPSTREAM`
+is wrong (it parses ambiguously — is the category `KLANGK` or `KLANGK_NETWORK`?);
+use `KLANGKNETWORK_EGRESS_UPSTREAM`. The network sidecar handles both ingress
+and egress, so its vars further sub-namespace by subsystem —
+`KLANGKNETWORK_EGRESS_*` (the DNS-filtering proxy + OUTPUT ruleset) vs a future
+`KLANGKNETWORK_INGRESS_*` (host port publishing); a shared tool path like
+`KLANGKNETWORK_IPTABLES` stays at the category level. When you add a new family,
+pick one category word and concatenate it onto `KLANGK` so `grep -E
+'^KLANGK<WORD>_'` matches the whole family exactly. Single-letter categories
+are fine too (`KLANGKD` = daemon, `KLANGKC` = CLI).
+
 ## Process manager: devenv 2.x native (not process-compose)
 
 `devenv processes up` / `devenv up` use **devenv 2.x's built-in process manager**,
