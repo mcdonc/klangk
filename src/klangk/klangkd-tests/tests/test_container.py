@@ -966,6 +966,51 @@ class TestStartContainer:
         # The workspace still publishes nothing under --network container:.
         assert "publish" not in creates[1]
 
+    async def test_filtered_workspace_no_ports_publishes_nothing_on_sidecar(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2267: a filtered workspace that requests NO host ports publishes
+        # nothing on the sidecar (publish=[]). Pinned because the empty-ports
+        # path produces [] (not None) and must neither emit a stray -p nor
+        # change the sidecar's network setup.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        async def _fake_reconcile(workspace_id, num_ports):
+            return []
+
+        monkeypatch.setattr(self.registry, "_reconcile_ports", _fake_reconcile)
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                allowed_domains=["github.com:443"],
+                num_ports=0,
+            )
+        assert len(creates) == 2
+        # No host ports -> the sidecar publishes nothing.
+        assert creates[0]["publish"] == []
+        # The workspace publishes nothing (filtered, under --network container:).
+        assert "publish" not in creates[1]
+
     async def test_filtered_workspace_userns_isolates_netns(
         self, workspace, tmp_path, monkeypatch
     ):

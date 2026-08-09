@@ -2005,7 +2005,14 @@ class ContainerRegistry:
                     container_name,
                     resolved_image,
                     workspace_id,
-                    publish,
+                    # The workspace's OWN publish (what _resolve_port_conflict
+                    # scans for stale holders). A filtered workspace publishes
+                    # nothing (its ports moved to the sidecar, #2267), so pass
+                    # create_kwargs's actual publish (empty for filtered) rather
+                    # than the stale local -- otherwise a conflict on a filtered
+                    # workspace would scan the sidecar's ports and tear the
+                    # sidecar (and its netns) down.
+                    create_kwargs.get("publish", []),
                     allow_sudo,
                     create_kwargs,
                     health_check=health_check,
