@@ -277,6 +277,7 @@ class Podman:
         memory: str | None = None,
         pids_limit: int | None = None,
         command: list[str] | None = None,
+        network: str | None = None,
     ) -> str:
         """Create a container and return its id.
 
@@ -327,6 +328,8 @@ class Podman:
             args += ["--memory", memory]
         if pids_limit is not None:
             args += ["--pids-limit", str(pids_limit)]
+        if network:
+            args += ["--network", network]
         for key, value in (labels or {}).items():
             args += ["--label", f"{key}={value}"]
         for key, value in (annotations or {}).items():
