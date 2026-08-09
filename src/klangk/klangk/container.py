@@ -28,6 +28,20 @@ DEFAULT_PORTS_PER_WORKSPACE = 5
 
 HEALTH_MESSAGE_MAX_BYTES = 512
 
+# Network sidecar readiness (#2277): the sidecar's proxy prints
+# "dns-proxy listening" once bound. _start_network_sidecar polls the sidecar's
+# logs for it before returning, so a workspace never joins a netns whose OUTPUT
+# policy is still ACCEPT (the entrypoint hasn't run -P OUTPUT DROP yet) — a
+# fail-open window. Module-level so the timeout path is unit-testable fast.
+_NETWORK_SIDECAR_READY_TIMEOUT = 30.0
+_NETWORK_SIDECAR_READY_POLL = 0.3
+_NETWORK_SIDECAR_READY_TOKEN = "dns-proxy listening"
+# fwmark the sidecar's proxy stamps on its upstream socket and the entrypoint
+# matches in its nat/filter rules (#2264). Single source of truth, passed to the
+# sidecar via KLANGKNETWORK_EGRESS_MARK so proxy.py and entrypoint.sh (which
+# both default to 75) can't diverge (#2282).
+_NETWORK_SIDECAR_MARK = 75
+
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
 _VALID_MOUNT_OPTIONS = {
@@ -604,6 +618,10 @@ class ContainerRegistry:
 
         self.states: dict[str, ContainerState] = {}
         self._cid_to_wsid: dict[str, str] = {}
+        # Workspaces with a live network sidecar (#2254) — only these get a
+        # best-effort network sidecar teardown on stop, so a non-filtered workspace
+        # stop doesn't fire a speculative remove.
+        self._ws_with_network_sidecar: set[str] = set()
         self._workspace_locks: dict[str, asyncio.Lock] = {}
         self._service_session_locks: dict[str, asyncio.Lock] = {}
         self.on_workspace_killed = None
@@ -1079,19 +1097,148 @@ class ContainerRegistry:
             self.app.state.settings.container_pids_limit,
         )
 
-    def _egress_filter(
-        self, allowed_domains: list[str] | None
-    ) -> tuple[dict[str, str] | None, list[str] | None, list[str] | None]:
-        """Build ``(annotations, hooks_dirs, cap_drop)`` for egress (#1365).
+    def _network_sidecar_enabled(self) -> bool:
+        """Whether the FQDN network sidecar model is configured (#2254).
 
-        ``(None, None, None)`` when unrestricted (no domains, or netfilter
-        disabled). Delegates to ``app.state.netfilter``; defensive for
-        test app-states that may not wire it.
+        Mirrors :meth:`NetFilter.enabled`: the master switch on AND the
+        sidecar image set (which ships with a default, so this is True out
+        of the box)."""
+        return self.app.state.settings.netfilter_enabled and bool(
+            self.app.state.settings.network_sidecar_image
+        )
+
+    def _network_sidecar_name(self, workspace_id: str) -> str:
+        """Derive the network sidecar name from the workspace ID (#2254)."""
+        return f"klangk-net-{workspace_id[:8]}"
+
+    async def _start_network_sidecar(
+        self,
+        workspace_id: str,
+        allowed_domains: list[str],
+        egress_mode: str = "static",
+    ) -> str:
+        """Create + start the FQDN network sidecar for a filtered workspace (#2254).
+
+        Returns the network sidecar's container ID (for ``--network container:<id>``).
+        Raises ``podman.PodmanError`` on failure — the caller fail-closes (a
+        workspace that declared an allow-list never starts unrestricted; #2254
+        review B2). The network sidecar gets ``--cap-add NET_ADMIN`` + ``--dns 1.1.1.1``
+        (the REDIRECT target the workspace inherits); the proxy forwards to a
+        *different* detected upstream (loop avoidance). The allow-list + the
+        klangkd backend port are passed via env.
         """
+        image = self.app.state.settings.network_sidecar_image
+        if not image:
+            raise podman.PodmanError(
+                500, "network_sidecar_image is not configured"
+            )
+        name = self._network_sidecar_name(workspace_id)
+        # Pick an upstream that differs from the REDIRECT target (1.1.1.1).
         nf = getattr(self.app.state, "netfilter", None)
-        if nf is None:
-            return None, None, None
-        return nf.create_kwargs(allowed_domains)
+        resolvers = nf.resolvers() if nf else []
+        upstream = next((r for r in resolvers if r != "1.1.1.1"), "8.8.8.8")
+        env = [
+            f"KLANGKNETWORK_EGRESS_ALLOW={','.join(allowed_domains)}",
+            f"KLANGKNETWORK_EGRESS_UPSTREAM={upstream}",
+            # The klangkd backend port (LLM proxy + bridge on
+            # host.containers.internal). The network sidecar allow-lists it statically
+            # — it's a /etc/hosts entry the FQDN proxy can't learn (#2254 B1).
+            f"KLANGKNETWORK_EGRESS_BACKEND_PORT={self.app.state.settings.egress_port}",
+            # Single source of truth for the fwmark both proxy.py and
+            # entrypoint.sh use (#2264, #2282): they default to 75, but pass it
+            # explicitly so the two can't diverge.
+            f"KLANGKNETWORK_EGRESS_MARK={_NETWORK_SIDECAR_MARK}",
+        ]
+        if egress_mode == "interactive":
+            env.append("KLANGKNETWORK_EGRESS_MODE=interactive")
+            # Tag for the NFLOG prefix so the consent daemon correlates a
+            # blocked packet with this workspace (the entrypoint stamps it
+            # into --nflog-prefix "klangk-egress:<tag>:") (#2239, #2255).
+            env.append(f"KLANGKNETWORK_EGRESS_TAG={workspace_id[:12]}")
+        # Label the network sidecar with this klangk instance so the startup reaper
+        # (reap_instance_containers) and the shutdown orphan sweep cull any
+        # network sidecar left behind by a failed stop — the same culling workspace
+        # containers get (#2254 review).
+        labels = {
+            "klangk.instance": self.app.state.util.instance_id(),
+            "klangk.network-sidecar": workspace_id,
+        }
+        # #2265: a same-named sidecar from a prior generation may linger
+        # (an unclean stop, or the workspace container was killed externally
+        # so stop_and_remove_container never ran for it). The sidecar name is
+        # deterministic per workspace, so create_container would collide and
+        # the caller would fail-closed. Idempotently clear any existing
+        # same-named container first; the instance reaper is the backstop for
+        # orphans, but this keeps a restart from deadlocking on a stale name.
+        try:
+            await self.app.state.podman.remove_container(name, force=True)
+        except podman.PodmanError:
+            pass  # no existing sidecar to clear — expected on a fresh start
+        try:
+            cid = await self.app.state.podman.create_container(
+                name,
+                image,
+                cap_add=["NET_ADMIN"],
+                dns=["1.1.1.1"],
+                env=env,
+                labels=labels,
+                pull="missing",
+            )
+            await self.app.state.podman.start_container(cid)
+            # #2277: wait for the proxy to be listening before returning, so the
+            # workspace never joins a netns whose OUTPUT is still ACCEPT
+            # (entrypoint mid-flight) — a fail-open window. The proxy prints
+            # "dns-proxy listening" once bound; poll its logs. Fail-closed: if
+            # the sidecar exits first or the proxy never binds, raise so the
+            # caller refuses to start the workspace rather than run it unfiltered.
+            deadline = time.monotonic() + _NETWORK_SIDECAR_READY_TIMEOUT
+            ready = False
+            while time.monotonic() < deadline:
+                logs = await self.app.state.podman.container_logs(cid)
+                if _NETWORK_SIDECAR_READY_TOKEN in logs:
+                    ready = True
+                    break
+                state = await self.app.state.podman.inspect_container(cid)
+                status = (state or {}).get("State", {}).get("Status", "")
+                if status in ("exited", "stopped"):
+                    raise podman.PodmanError(
+                        500,
+                        f"network sidecar {name} exited before the DNS proxy "
+                        f"was ready; logs:\n{logs}",
+                    )
+                await asyncio.sleep(_NETWORK_SIDECAR_READY_POLL)
+            if not ready:
+                raise podman.PodmanError(
+                    500,
+                    f"network sidecar {name} DNS proxy did not become ready "
+                    f"within {_NETWORK_SIDECAR_READY_TIMEOUT:.0f}s; the "
+                    "workspace would join an unfiltered netns",
+                )
+            logger.info(
+                "network sidecar started for %s: %s (%s)",
+                workspace_id[:8],
+                name,
+                cid[:12],
+            )
+            return cid
+        except podman.PodmanError as exc:
+            logger.warning(
+                "network sidecar failed for %s: %s — fail-closed at caller",
+                workspace_id[:8],
+                exc,
+            )
+            raise
+
+    async def _stop_network_sidecar(self, workspace_id: str) -> None:
+        """Best-effort remove the network sidecar for a workspace (#2254)."""
+        if not self._network_sidecar_enabled():
+            return
+        name = self._network_sidecar_name(workspace_id)
+        try:
+            await self.app.state.podman.remove_container(name, force=True)
+            logger.info("network sidecar removed: %s", name)
+        except podman.PodmanError:
+            pass  # network sidecar may not exist (or already removed)
 
     async def start_container(
         self,
@@ -1113,6 +1260,7 @@ class ContainerRegistry:
         service_command: str | None = None,
         allowed_domains: list[str] | None = None,
         workspace_settings: dict | None = None,
+        egress_mode: str = "static",
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -1142,6 +1290,7 @@ class ContainerRegistry:
                 service_command=service_command,
                 allowed_domains=allowed_domains,
                 workspace_settings=workspace_settings,
+                egress_mode=egress_mode,
             )
 
     async def _handle_existing_container(
@@ -1444,9 +1593,17 @@ class ContainerRegistry:
             owner_id=owner_id,
             setup_state=setup_state,
         )
+        # --hooks-dir is a podman global flag that must be present on the
+        # start invocation — podman does not persist it from create. No
+        # caller sets create_kwargs["hooks_dir"] since the egress filter
+        # moved into the network sidecar (#2255); the passthrough is kept
+        # for any future --hooks-dir consumer.
+        _hooks_dirs = create_kwargs.get("hooks_dir")
         t_podman_start = time.monotonic()
         try:
-            await self.app.state.podman.start_container(cid)
+            await self.app.state.podman.start_container(
+                cid, hooks_dir=_hooks_dirs
+            )
         except podman.PodmanError as exc:
             if not self._is_port_conflict(exc):
                 raise
@@ -1459,7 +1616,9 @@ class ContainerRegistry:
             for delay in (0.5, 1.5):
                 await asyncio.sleep(delay)
                 try:
-                    await self.app.state.podman.start_container(cid)
+                    await self.app.state.podman.start_container(
+                        cid, hooks_dir=_hooks_dirs
+                    )
                     last_exc = None
                     break
                 except podman.PodmanError as retry_exc:
@@ -1472,6 +1631,12 @@ class ContainerRegistry:
             "workspace-open: boot container (podman start): %.3fs",
             time.monotonic() - t_podman_start,
         )
+
+        # Backend gateway: the network sidecar statically allow-lists
+        # host.containers.internal on the klangkd backend port in its
+        # entrypoint (KLANGKNETWORK_EGRESS_BACKEND_PORT) — it's a
+        # /etc/hosts entry the FQDN proxy can't learn. No post-start
+        # allow step is needed (#2255).
 
         # Configure sudo inside the container.
         if allow_sudo:
@@ -1577,6 +1742,7 @@ class ContainerRegistry:
         service_command: str | None = None,
         allowed_domains: list[str] | None = None,
         workspace_settings: dict | None = None,
+        egress_mode: str = "static",
     ) -> tuple[str, str]:
         """Inner implementation of start_container (called under lock)."""
         t_start = time.monotonic()
@@ -1598,6 +1764,15 @@ class ContainerRegistry:
                 setup_state=setup_state,
             )
             if result is not None:
+                # Re-track a filtered workspace's network sidecar on reconnect.
+                # _ws_with_network_sidecar is in-memory and lost on a process
+                # restart; without this, a reconnect-then-stop would skip
+                # _stop_network_sidecar (only the create path added it before)
+                # and leak the sidecar until the next start's force-remove or
+                # the instance reaper. A filtered workspace always has a live
+                # sidecar (fail-closed), so allowed_domains set => re-track.
+                if allowed_domains:
+                    self._ws_with_network_sidecar.add(workspace_id)
                 return result
 
         # Allocate host ports.
@@ -1683,38 +1858,125 @@ class ContainerRegistry:
             pull=self.image_pull_policy(),
         )
 
-        # Per-workspace egress filtering (#1365): add the OCI annotation
-        # + --hooks-dir only when the workspace declares allowed_domains
-        # AND netfilter is enabled, so unrestricted workspaces keep
-        # podman's default hooks-dir behavior (no behavior change). The
-        # klangk hooks dir is passed alongside the standard default hook
-        # dirs (#1770 — --hooks-dir overrides, not appends, so the
-        # standard dirs are repeated to keep operator createContainer
-        # hooks running). The filtered container also drops NET_ADMIN
-        # (#1773) so the entrypoint can't flush the ruleset.
-        annotations, hooks_dirs, cap_drop = self._egress_filter(
-            allowed_domains
-        )
-        if annotations is not None:
-            create_kwargs["annotations"] = annotations
-            create_kwargs["hooks_dir"] = hooks_dirs
-            create_kwargs["cap_drop"] = cap_drop
+        # Egress filtering (#1365): the FQDN network sidecar is the only egress
+        # model. The OCI-hook "static" model was dropped (#2254 review) —
+        # maintaining two complete models was more complexity than value. A
+        # filtered workspace (allowed_domains set) runs
+        # --network container:<network sidecar> (the network sidecar's proxy owns the rules;
+        # the workspace is unprivileged). Fail-CLOSED (#2254 review B2): a
+        # workspace that declared an allow-list never starts unrestricted —
+        # silently ignoring it would disable a security control the user
+        # requested, so a missing/unstartable network sidecar raises
+        # instead. With no allowed_domains the workspace starts
+        # unrestricted (no filtering requested).
+        # #2276 (B): whether net_raw must be dropped for this workspace. A
+        # filtered workspace whose user can sudo to root would let root use the
+        # net_raw that enable_ping grants to setsockopt(SO_MARK) and bypass the
+        # egress filter; dropping net_raw (from the bounding set) closes that
+        # for root too. Applied in the cap_add/cap_drop logic after this branch.
+        drop_net_raw = False
+        if allowed_domains:
+            if not self._network_sidecar_enabled():
+                raise podman.PodmanError(
+                    500,
+                    f"workspace {workspace_id[:8]} declares allowed_domains "
+                    "but the network sidecar is not configured "
+                    "(network_sidecar_image is empty); refusing to start "
+                    "unfiltered. Clear allowed_domains or configure "
+                    "network_sidecar_image.",
+                )
+            # The #2264 SO_MARK-bypass guard is user-namespace isolation: the
+            # workspace must run in a user namespace DISTINCT from the one that
+            # owns the network sidecar's netns. The sidecar is launched with no
+            # --userns (podman's default), so an empty KLANGKD_USERNS here would
+            # emit no --userns either, putting the workspace in that same default
+            # userns and reopening the bypass (review #2). Fail-closed: require
+            # an explicit, non-empty userns. (Default keep-id:uid=1000,gid=1000
+            # satisfies this; pinned by test_filtered_workspace_userns_isolates_netns.)
+            if not self.app.state.settings.userns:
+                raise podman.PodmanError(
+                    500,
+                    f"workspace {workspace_id[:8]} declares allowed_domains "
+                    "(egress filtering), which requires a non-empty "
+                    "KLANGKD_USERNS so the workspace runs in a user namespace "
+                    "distinct from the network sidecar's. An empty userns would "
+                    "share the sidecar's userns and reopen the SO_MARK egress "
+                    "bypass. Set KLANGKD_USERNS (default "
+                    "keep-id:uid=1000,gid=1000) or clear allowed_domains.",
+                )
+            network_sidecar_id = await self._start_network_sidecar(
+                workspace_id, allowed_domains, egress_mode
+            )
+            create_kwargs["network"] = f"container:{network_sidecar_id}"
+            # --dns/--dns-search, --add-host, and --publish are all invalid
+            # under --network container: podman rejects --add-host outright
+            # ("cannot set extra host entries when ... joined to another
+            # containers network namespace"), dns/dns-search are
+            # incompatible, and --publish is silently discarded. The workspace
+            # still resolves host.containers.internal via the network sidecar's
+            # /etc/hosts (podman populates it), and the network sidecar's iptables
+            # statically allow-lists the backend port (entrypoint.sh, B1).
+            create_kwargs.pop("dns", None)
+            create_kwargs.pop("dns_search", None)
+            create_kwargs.pop("add_hosts", None)
+            create_kwargs.pop("publish", None)
+            # Remember this workspace has a live network sidecar so its stop
+            # tears the network sidecar down (#2254).
+            self._ws_with_network_sidecar.add(workspace_id)
+            # #2276 (B): defense-in-depth for the filtered+sudo case. The
+            # PRIMARY guard against the #2264 SO_MARK bypass is user-namespace
+            # isolation (see the enable_ping note below): the workspace's keep-id
+            # userns differs from the one that owns the network sidecar's netns,
+            # so its caps are not valid there and setsockopt(SO_MARK) EPERMs even
+            # though the klangk user has net_raw effective. If that isolation
+            # ever does not hold (e.g. KLANGKD_USERNS unset so the workspace
+            # shares the sidecar's userns — guarded above), dropping net_raw
+            # from the bounding set removes the one cap SO_MARK can use
+            # (NET_ADMIN is never granted), so sudo->root still can't mark.
+            # podman rejects a cap in both --cap-add and --cap-drop, so this
+            # also suppresses the enable_ping net_raw add below. Cost: the
+            # setuid-ping bridge breaks for this workspace (ping disabled).
+            if allow_sudo:
+                drop_net_raw = True
+                logger.info(
+                    "workspace %s is egress-filtered with allow_sudo on; "
+                    "dropping net_raw as defense-in-depth (userns isolation "
+                    "is the primary SO_MARK guard) — ping (setuid) is "
+                    "disabled for this workspace (#2276)",
+                    workspace_id[:8],
+                )
 
-        # #2045: grant the container CAP_NET_RAW so unprivileged ``ping``
-        # works (a setuid ping binary in the base image bridges the cap to
-        # the non-root klangk user). The ping_group_range / setcap
-        # alternatives don't work rootless — see #2045 for the full
-        # analysis. CAP_NET_RAW does NOT let a filtered workspace escape
-        # egress filtering: raw-socket packets still traverse the netfilter
-        # OUTPUT chain (default DROP + dest-IP allowlist), and in rootless
-        # pasta/slirp only forwards TCP/UDP/ICMP — so it grants neither
-        # bridge sniffing/ARP (no shared L2) nor egress to disallowed
-        # hosts. Applies to newly-created containers only: a SIGHUP reload
-        # changes the setting for future workspaces; a running container
-        # keeps its existing cap set until recreated. Read live off
-        # settings (the app-ownership rule). Default on.
-        if self.app.state.settings.enable_ping:
+        # #2045: grant the container CAP_NET_RAW so unprivileged ``ping`` works
+        # (a setuid ping binary in the base image bridges the cap to the non-root
+        # klangk user). The ping_group_range / setcap alternatives don't work
+        # rootless — see #2045 for the full analysis.
+        #
+        # Why this is safe for a *filtered* workspace (#2276; review #1 of the
+        # egress stack): the guard against the #2264 SO_MARK bypass is
+        # USER-NAMESPACE ISOLATION, not cap effectiveness. The workspace runs in
+        # its own keep-id userns (``settings.userns``, default
+        # ``keep-id:uid=1000,gid=1000``), distinct from the userns that owns the
+        # network sidecar's netns. SO_MARK needs CAP_NET_RAW/NET_ADMIN in the
+        # userns that OWNS the destination netns, so the workspace's caps —
+        # which ARE effective here (podman promotes --cap-add caps to ambient for
+        # a non-root init; the old "caps are effective only for uid 0" rationale
+        # was wrong) — do not authorize it, and setsockopt(SO_MARK) EPERMs. ping
+        # still works because the setuid ping binary is root-owned. This is
+        # contingent on the workspace userns differing from the sidecar's
+        # (enforced above + pinned by test_filtered_workspace_userns_isolates_netns);
+        # an empty KLANGKD_USERNS would collapse them and reopen the bypass
+        # (review #2, guarded above).
+        #
+        # #2276 (B): for a filtered+sudo workspace, drop net_raw instead of
+        # adding it (see drop_net_raw above) as defense-in-depth.
+        #
+        # Applies to newly-created containers only: a SIGHUP reload changes the
+        # setting for future workspaces. Read live off settings (the app-ownership
+        # rule). Default on.
+        if self.app.state.settings.enable_ping and not drop_net_raw:
             create_kwargs["cap_add"] = ["net_raw"]
+        if drop_net_raw:
+            create_kwargs["cap_drop"] = ["net_raw"]
 
         logger.info(
             "workspace-open: build env vars, volumes, and "
@@ -1724,19 +1986,31 @@ class ContainerRegistry:
 
         # Shield create+start from cancellation so a dropped
         # WebSocket doesn't orphan a running container.
-        container_id = await asyncio.shield(
-            self._create_and_start(
-                container_name,
-                resolved_image,
-                workspace_id,
-                publish,
-                allow_sudo,
-                create_kwargs,
-                health_check=health_check,
-                owner_id=user_id,
-                setup_state=setup_state,
+        try:
+            container_id = await asyncio.shield(
+                self._create_and_start(
+                    container_name,
+                    resolved_image,
+                    workspace_id,
+                    publish,
+                    allow_sudo,
+                    create_kwargs,
+                    health_check=health_check,
+                    owner_id=user_id,
+                    setup_state=setup_state,
+                )
             )
-        )
+        except BaseException:
+            # If the workspace container fails to create/start after a
+            # network sidecar was started for it, tear the sidecar down so
+            # it doesn't leak (NET_ADMIN + proxy) until the next startup
+            # reap. The klangk.instance label would eventually cull it, but
+            # cleaning up immediately matches how workspace containers are
+            # treated and avoids an unfiltered netns lingering (#2255).
+            if workspace_id in self._ws_with_network_sidecar:
+                await self._stop_network_sidecar(workspace_id)
+                self._ws_with_network_sidecar.discard(workspace_id)
+            raise
 
         # Fresh create: provision the agent home and fire the service
         # command (#1244). This is the single choke point -- every
@@ -1763,15 +2037,17 @@ class ContainerRegistry:
     async def stop_and_remove_container(self, container_id: str) -> None:
         """Stop and remove a container.
 
-        The slow ``self.app.state.podman.remove_container`` call runs *outside* the
-        workspace lock; only the registry-state teardown is serialized --
-        under the same per-workspace lock :meth:`start_container` uses -- so
-        a concurrent start for the same workspace cannot observe a
-        half-cleaned registry (#1258). Under the lock we re-check that
-        ``container_id`` still maps to this workspace: a racing
-        ``start_container`` may already have re-bound the workspace to a
-        fresh container, in which case we must not tear down the new state
-        (or revoke its browsers).
+        The slow ``self.app.state.podman.remove_container`` call for the
+        workspace container runs *outside* the workspace lock; the
+        registry-state teardown *and* the network sidecar teardown are
+        serialized -- under the same per-workspace lock
+        :meth:`start_container` uses -- so a concurrent start for the same
+        workspace cannot observe a half-cleaned registry (#1258) and cannot
+        have its freshly-started sidecar removed out from under it (#2265).
+        Under the lock we re-check that ``container_id`` still maps to this
+        workspace: a racing ``start_container`` may already have re-bound
+        the workspace to a fresh container, in which case we must not tear
+        down the new state (or revoke its browsers, or remove its sidecar).
 
         The per-workspace lock entry is deliberately *not* popped. Popping
         it while another coroutine is waiting on (or holding) that exact
@@ -1796,7 +2072,20 @@ class ContainerRegistry:
                 # Re-verify under the lock: a racing start_container may
                 # have re-bound this workspace to a new container while we
                 # waited for the lock. Only tear down state we still own.
+                # The re-verify now also guards the network sidecar teardown
+                # (#2265): a racing start that re-bound the workspace owns a
+                # fresh sidecar generation, so this (old) stop must not remove
+                # it -- doing so would leave the new container joined to a
+                # removed netns. The sidecar teardown runs under the lock for
+                # the same reason start holds it for sidecar I/O: the two must
+                # not interleave on the deterministic sidecar name.
                 if self._cid_to_wsid.get(container_id) == ws_id:
+                    # Remove the network sidecar only if this workspace
+                    # actually started one, so a non-filtered workspace stop
+                    # doesn't fire a speculative remove (#2254).
+                    if ws_id in self._ws_with_network_sidecar:
+                        self._ws_with_network_sidecar.discard(ws_id)
+                        await self._stop_network_sidecar(ws_id)
                     self._cid_to_wsid.pop(container_id, None)
                     self.revoke_workspace_browsers(ws_id)
                     self.states.pop(ws_id, None)

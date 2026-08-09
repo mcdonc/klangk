@@ -147,6 +147,15 @@ in
       after = [ "klangk:update-features" ];
       showOutput = true;
     };
+    "klangk:build-network-sidecar" = {
+      after = [ "klangk:update-features" ];
+      exec = ''exec bash "$DEVENV_ROOT/scripts/build-network-sidecar.sh"'';
+      showOutput = true;
+      execIfModified = [
+        "scripts/build-network-sidecar.sh"
+        "src/containers/network/**"
+      ];
+    };
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
@@ -183,6 +192,7 @@ in
       after = [
         "klangk:flutter-build"
         "klangk:build-workspace-image"
+        "klangk:build-network-sidecar"
         "klangk:kill-port-holders"
       ];
     };
@@ -224,6 +234,7 @@ in
     if pkgs.stdenv.hostPlatform.isAarch64 then "linux/arm64" else "linux/amd64"
   );
   env.KLANGKD_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
+  env.KLANGKD_NETWORK_SIDECAR_IMAGE = lib.mkOverride 1500 "klangk-network-sidecar";
 
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
   scripts.build-workspace-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh" "$@"'';

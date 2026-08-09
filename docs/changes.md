@@ -54,6 +54,24 @@ operators or integrators to act when upgrading.
   has no `nix_seed` backend configured; the underlying setting remains the
   boolean `nix`.
 
+- **Interactive egress consent mode (#2239, #2240, #2241).** Workspaces can now
+  set `egress_mode: "interactive"` (API/CLI). In this mode the OCI hook installs
+  an NFLOG rule that delivers blocked-connection metadata to userspace via a
+  netlink socket (group 5139), alongside the existing allow-list ACCEPT rules.
+  A future consent daemon will consume this feed to prompt a human for
+  allow/deny decisions; until the daemon ships, interactive mode behaves as
+  static filtering plus NFLOG observability — no prompts occur and unmatched
+  traffic is dropped. See `docs/features/egress-filtering.md`.
+
+- **FQDN egress network sidecar + DNS proxy (#2250, #2253).** New
+  `klangk-network-sidecar` image (`src/containers/network/`) that runs a
+  FQDN DNS proxy in a `NET_ADMIN` container sharing a filtered workspace's netns.
+  It intercepts the workspace's DNS (nat REDIRECT of its configured resolvers),
+  applies an allow-list, forwards allowed queries to a distinct upstream, and
+  allow-lists the resolved IPs at runtime — solving DNS round-robin (a filtered
+  workspace reaches an allowed domain on whatever IP it actually resolves). Part
+  of the FQDN egress build (#2250); klangk lifecycle wiring is #2254.
+
 - **`nix_seed` — per-workspace `/nix` with two backends (#2219, #2220).** The
   per-workspace `/nix` config is now one block — `nix_seed: {type, path}` —
   selecting a backend: `btrfs-snapshot` (a CoW snapshot of a seed btrfs
@@ -235,6 +253,19 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Egress filtering enforcement moved into the network sidecar (#2255).**
+  The per-workspace egress ruleset — default-deny OUTPUT, loopback,
+  established, the DNS REDIRECT + FQDN proxy, static CIDR allows, the
+  backend gateway, IPv6 default-deny, and interactive NFLOG — now lives
+  entirely in the network sidecar's netns (which the filtered workspace
+  shares via `--network container:`). The create-time OCI hook model
+  (`klangk-netfilter.sh` + `netfilter.py`'s annotation/`--hooks-dir` path)
+  and the post-start `allow_backend_gateway` nsenter step are removed; the
+  sidecar is the only egress model (fail-closed if it can't start). The
+  sidecar image (`network_sidecar_image`) defaults to
+  `klangk-network-sidecar`, so filtering works out of the box without
+  `KLANGKD_NETFILTER_HOOKS_DIR`.
+
 - **Workspace create/edit forms grouped into sections (#2229).** The
   browser's "New workspace" dialog and the workspace settings panel now
   group fields into the same logical sections the TUI form uses — General,
@@ -391,12 +422,64 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Network sidecar: no longer leaks across a process restart (#2248
+  review).** Reconnecting to a running filtered workspace after a klangkd
+  restart now re-tracks its sidecar, so stopping the workspace tears the
+  sidecar down. Previously the in-memory tracking was lost on restart and the
+  reconnect path didn't restore it, leaving the sidecar (NET_ADMIN + DNS
+  proxy) running until the next start or the instance reaper.
+
+- **Network sidecar: stop/start race on the deterministic sidecar name
+  (#2265).** A concurrent stop and start of the same filtered workspace could
+  race on the sidecar's per-workspace name: the stop removed the sidecar the
+  start had just created (leaving the workspace joined to a removed netns),
+  or the start collided with a lingering old sidecar and refused to come up.
+  The sidecar teardown is now serialized under the workspace lock with a
+  re-verify, and the start clears any stale same-named sidecar first.
+
+- **Network sidecar: a filtered workspace now waits for the sidecar's DNS
+  proxy to be ready before starting (#2277).** Previously the workspace joined
+  the sidecar's netns the instant it was started, before the entrypoint had
+  applied `iptables -P OUTPUT DROP` or the proxy had bound — a window of
+  unrestricted egress. The sidecar start now polls for the proxy's
+  `dns-proxy listening` line and refuses to start the workspace (fail-closed)
+  if the proxy exits or never binds.
+
+- **Network sidecar: the DNS proxy no longer dies on a single transient
+  failure (#2278).** A failed `iptables` call (learning an IP) or a `sendto`
+  to a vanished client used to escape the proxy's main loop and kill PID 1,
+  leaving the workspace without DNS while learned allow-rules persisted. The
+  learn+respond path now swallows such errors so one bad packet drops only that
+  response.
+
 - **`build-workspace-image.sh` no longer rebuilds the workspace image on
   every server restart (#2273).** The image-creation-time "verify the image
   is newer than every source file" check was unreliable (podman inspect
   timestamps don't reflect storage-layer caching / layer reuse) and always
   re-evaluated to "rebuild", defeating the stamp cache. Removed: when the
   stamp hash matches, the build is now skipped and the stamp trusted.
+- **Per-workspace egress filtering now actually fires on rootless podman
+  (#1365).** The OCI hook ran at the `createContainer` stage but drove
+  iptables through `nsenter` on the init pid — at that stage the hook is
+  _already_ inside the container network namespace (and pid is 0), so no
+  rules were installed and filtered workspaces ran unrestricted. The hook
+  now calls `iptables`/`ip6tables` directly. (The former
+  `sysctl net.ipv6.conf.*.disable_ipv6=1` was dropped — at createContainer
+  it runs before pasta configures the netns and makes pasta's IPv6 address
+  setup fail; `ip6tables -P OUTPUT DROP` alone carries the v6 default-deny.)
+  DNS resolvers can no
+  longer be read from the container's `/etc/resolv.conf` (netavark writes
+  it only after the create hooks, and the hook runs in the host mount
+  namespace), so the server detects the host's upstream resolvers, passes
+  them to the container via `--dns`, and mirrors them in a
+  `klangk.netfilter.resolvers` annotation the hook allows on `:53`.
+  `--hooks-dir` is also passed to `podman start` (podman 5.x reads it only
+  at start). The backend gateway (`host.containers.internal`) is
+  allow-listed post-start — the createContainer hook can't read the
+  container's `/etc/hosts` (pid=0), so after start the server resolves the
+  gateway IP and inserts an `ACCEPT` rule atop the container's `OUTPUT`
+  chain. DNS round-robin domains (create-time vs runtime resolution) remain
+  a known limitation of IP-pinning.
 - **Workspace: no more overlapping "Server unreachable" and
   "Session expired" overlays (#2227).** When the WebSocket closed with
   an auth-failure code (4001/4002, session expired), the client also
@@ -451,6 +534,23 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   brand-new window becoming active (only switches to an existing window).
 
 ### Security
+
+- **Network sidecar: filtered workspaces with `allow_sudo` drop `net_raw` as
+  defense-in-depth (#2276).** The primary `SO_MARK`-bypass guard is
+  user-namespace isolation — the workspace runs in its own keep-id userns,
+  distinct from the one that owns the network sidecar's netns, so its caps are
+  not valid there. A filtered+`allow_sudo` workspace additionally drops
+  `net_raw` from the bounding set so that if that isolation ever does not hold,
+  `sudo`→root still can't mark; the setuid-ping bridge is disabled for such
+  workspaces.
+
+- **Network sidecar: filtered workspaces now require a non-empty
+  `KLANGKD_USERNS` (egress-stack review).** An empty `KLANGKD_USERNS` made the
+  workspace share the network sidecar's user namespace, silently reopening the
+  `SO_MARK` egress bypass. A filtered workspace (`allowed_domains` set) now
+  refuses to start when `KLANGKD_USERNS` is empty (fail-closed). The default
+  (`keep-id:uid=1000,gid=1000`) is unaffected; only deployments that explicitly
+  set `KLANGKD_USERNS=""` are impacted.
 
 - **`git-credential-klangk`: secrets redacted from debug output (#1938).**
 

@@ -195,6 +195,18 @@ class TestInspectContainer:
             assert await _p.inspect_container("c") is None
 
 
+class TestContainerLogs:
+    async def test_returns_stdout_on_success(self):
+        with patch(EXEC, _exec(("dns-proxy listening\n", "", 0))):
+            assert await _p.container_logs("c") == "dns-proxy listening\n"
+
+    async def test_returns_empty_on_failure(self):
+        # check=False -> a nonzero exit (e.g. container gone) yields "", not a
+        # raise, so the readiness poll treats a vanished sidecar as not-yet-ready.
+        with patch(EXEC, _exec(("", "no such container", 1))):
+            assert await _p.container_logs("c") == ""
+
+
 class TestCreateContainer:
     async def test_minimal(self):
         with patch(EXEC, _exec(("abc123\n", "", 0))) as m:
@@ -338,6 +350,16 @@ class TestCreateContainer:
         ]
         assert emitted == dirs
 
+    async def test_network_flag_emitted(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", network="container:abc123", replace=False
+            )
+        args = _args(m)
+        assert ["--network", "container:abc123"] == args[
+            args.index("--network") : args.index("--network") + 2
+        ]
+
     async def test_no_hooks_dir_or_annotation_by_default(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
             await _p.create_container("n", "img", replace=False)
@@ -411,6 +433,22 @@ class TestStartContainer:
         with patch(EXEC, _exec(("", "", 0))) as m:
             await _p.start_container("cid")
         assert _args(m) == ["start", "cid"]
+
+    async def test_start_forwards_hooks_dir(self):
+        # podman 5.x only reads --hooks-dir at start time, so the OCI
+        # egress hook fires there — start_container must forward the same
+        # hooks dirs create_container got (#1365).
+        dirs = ["/klangk/hooks", "/usr/share/containers/oci/hooks.d"]
+        with patch(EXEC, _exec(("", "", 0))) as m:
+            await _p.start_container("cid", hooks_dir=dirs)
+        args = _args(m)
+        assert args[:4] == [
+            "--hooks-dir",
+            "/klangk/hooks",
+            "--hooks-dir",
+            "/usr/share/containers/oci/hooks.d",
+        ]
+        assert args[-2:] == ["start", "cid"]
 
 
 class TestExecContainer:
