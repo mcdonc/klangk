@@ -14,6 +14,9 @@ Hosted apps are accessible to anyone who can reach the Klangk server. Do not ser
 2. When a container starts, the port mappings are injected as `KLANGKWS_PORT_MAPPINGS` (e.g., `8000:9000,8001:9001,...`).
 3. The proxy proxies requests from `/hosted/{workspace_id}/{port}/` directly to the container — no Python in the request path.
 
+!!! note
+**Works with egress filtering.** A workspace with an `allowed_domains` allow-list runs behind the [network sidecar](egress-filtering.md), which owns the shared network namespace; host ports are published on the sidecar (not the workspace — `--publish` is silently discarded under `--network container:`) and forward into the shared netns to the workspace's listener, so hosting works the same as for unrestricted workspaces (#2267). IPv4 clients are reachable; the sidecar default-denies IPv6, so IPv6-only clients to a published port fail (#2277).
+
 ## Accessing hosted apps
 
 Start any HTTP server on a container port (8000-8004), then visit:
