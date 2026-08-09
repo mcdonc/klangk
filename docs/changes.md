@@ -430,6 +430,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `dns-proxy listening` line and refuses to start the workspace (fail-closed)
   if the proxy exits or never binds.
 
+- **Network sidecar: the DNS proxy no longer dies on a single transient
+  failure (#2278).** A failed `iptables` call (learning an IP) or a `sendto`
+  to a vanished client used to escape the proxy's main loop and kill PID 1,
+  leaving the workspace without DNS while learned allow-rules persisted. The
+  learn+respond path now swallows such errors so one bad packet drops only that
+  response.
+
 - **`build-workspace-image.sh` no longer rebuilds the workspace image on
   every server restart (#2273).** The image-creation-time "verify the image
   is newer than every source file" check was unreliable (podman inspect

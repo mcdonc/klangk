@@ -151,6 +151,32 @@ def check_mark() -> None:
         probe.close()
 
 
+def _respond_allowed(
+    s: socket.socket, resp: bytes, addr: tuple[str, int], qname: str
+) -> None:
+    """Learn the response's A-record IPs + send it, swallowing transient errors.
+
+    A failure here (a transient ``iptables`` error in :func:`allow_ip`, or a
+    ``sendto`` to a vanished client) must drop only this one response — not
+    kill the proxy. If it escaped :func:`main` the sidecar's PID 1 would exit,
+    DNS would be dead for the workspace, and the learned ``ACCEPT`` rules would
+    persist (a partial fail-open: previously-resolved hosts stay reachable).
+    #2278.
+    """
+    try:
+        ips = a_records(resp)
+    except Exception:
+        ips = []
+    try:
+        for ip in ips:
+            allow_ip(ip)
+        if DEBUG:
+            print(f"allow {qname} -> {ips}", flush=True)
+        s.sendto(resp, addr)
+    except Exception:
+        pass
+
+
 def main() -> None:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(("127.0.0.1", LISTEN_PORT))
@@ -187,15 +213,7 @@ def main() -> None:
             us.close()
             continue
         us.close()
-        try:
-            ips = a_records(resp)
-        except Exception:
-            ips = []
-        for ip in ips:
-            allow_ip(ip)
-        if DEBUG:
-            print(f"allow {qname} -> {ips}", flush=True)
-        s.sendto(resp, addr)
+        _respond_allowed(s, resp, addr, qname)
 
 
 if __name__ == "__main__":
