@@ -367,6 +367,101 @@ class TestTTLAndSweep:
         assert "live" in learned._LEARNED
 
 
+class TestARecordsWithTtl:
+    """``a_records_with_ttl`` extracts every A record from a DNS response's
+    answer section — transparently across a CNAME chain — each paired with
+    its rrset TTL. That transparency is the bounded widening risk in
+    egress-filtering.md (#2279): an allow-listed domain that CNAMEs to an
+    attacker-controlled (or shared-CDN) host has that host's A record learned,
+    scoped to the declared port + TTL by #2256. Pin the extraction so a
+    refactor can't silently change which records are learned."""
+
+    class _RRset:
+        """A fake DNS rrset: an rdtype, a ttl, and an iterable of rdata."""
+
+        def __init__(self, rdtype, ttl, addresses):
+            # 1 == dns.rdatatype.A (the stub pins A=1); 5 is CNAME.
+            self.rdtype = rdtype
+            self.ttl = ttl
+            self._rdata = [types.SimpleNamespace(address=a) for a in addresses]
+
+        def __iter__(self):
+            return iter(self._rdata)
+
+    @staticmethod
+    def _msg(answer):
+        return types.SimpleNamespace(answer=answer)
+
+    def _wire(self, proxy, monkeypatch, answer):
+        """Stub ``dns.message.from_wire`` to return a response with ``answer``;
+        return throwaway wire bytes (the stub ignores them)."""
+        monkeypatch.setattr(
+            proxy.dns.message, "from_wire", lambda wire: self._msg(answer)
+        )
+        return b""
+
+    def test_cname_chain_yields_target_a_records(self, proxy, monkeypatch):
+        # cdn.example.com CNAME cdn-backend.fastly.net, then A 1.2.3.4.
+        wire = self._wire(
+            proxy,
+            monkeypatch,
+            [
+                self._RRset(5, 60, []),  # CNAME — skipped
+                self._RRset(1, 300, ["1.2.3.4"]),  # A — learned
+            ],
+        )
+        # The CNAME target's A record is extracted (CNAME transparency, #2279).
+        assert proxy.a_records_with_ttl(wire) == [("1.2.3.4", 300)]
+
+    def test_apex_and_cname_target_a_records_both_learned(
+        self, proxy, monkeypatch
+    ):
+        # Both the queried name's own A and the CNAME target's A sit in the
+        # answer; both are learned (the widening — two IPs for one query).
+        wire = self._wire(
+            proxy,
+            monkeypatch,
+            [
+                self._RRset(5, 60, []),
+                self._RRset(1, 300, ["10.0.0.1"]),
+                self._RRset(1, 300, ["10.0.0.2"]),
+            ],
+        )
+        assert proxy.a_records_with_ttl(wire) == [
+            ("10.0.0.1", 300),
+            ("10.0.0.2", 300),
+        ]
+
+    def test_multiple_a_in_one_rrset(self, proxy, monkeypatch):
+        wire = self._wire(
+            proxy,
+            monkeypatch,
+            [self._RRset(1, 60, ["1.1.1.1", "2.2.2.2"])],
+        )
+        assert proxy.a_records_with_ttl(wire) == [
+            ("1.1.1.1", 60),
+            ("2.2.2.2", 60),
+        ]
+
+    def test_ttl_is_per_rrset(self, proxy, monkeypatch):
+        wire = self._wire(
+            proxy,
+            monkeypatch,
+            [
+                self._RRset(1, 300, ["1.1.1.1"]),
+                self._RRset(1, 30, ["2.2.2.2"]),
+            ],
+        )
+        assert proxy.a_records_with_ttl(wire) == [
+            ("1.1.1.1", 300),
+            ("2.2.2.2", 30),
+        ]
+
+    def test_cname_only_yields_no_a_records(self, proxy, monkeypatch):
+        wire = self._wire(proxy, monkeypatch, [self._RRset(5, 60, [])])
+        assert proxy.a_records_with_ttl(wire) == []
+
+
 class TestRespondAllowedSwallowsFailures:
     """#2278: a transient failure in allow or sendto must drop only the one
     response, not kill the proxy (an escaped raise would take down PID 1,
