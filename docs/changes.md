@@ -391,6 +391,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`build-workspace-image.sh` no longer rebuilds the workspace image on
+  every server restart (#2273).** The image-creation-time "verify the image
+  is newer than every source file" check was unreliable (podman inspect
+  timestamps don't reflect storage-layer caching / layer reuse) and always
+  re-evaluated to "rebuild", defeating the stamp cache. Removed: when the
+  stamp hash matches, the build is now skipped and the stamp trusted.
 - **Workspace: no more overlapping "Server unreachable" and
   "Session expired" overlays (#2227).** When the WebSocket closed with
   an auth-failure code (4001/4002, session expired), the client also
