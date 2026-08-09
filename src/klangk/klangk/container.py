@@ -1802,7 +1802,7 @@ class ContainerRegistry:
         publish: list[tuple[int, int]],
         container_name: str,
         *,
-        hooks_dir: str | None = None,
+        hooks_dir: list[str] | None = None,
     ) -> None:
         """Start a container, recovering from host-port bind conflicts (#2293).
 
