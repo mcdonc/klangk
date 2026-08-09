@@ -604,6 +604,31 @@ def _sudo_call(p):
     )
 
 
+class TestWorkspaceNameSlug:
+    """Pure-function tests for container._workspace_name_slug (#2286)."""
+
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            ("my-dev-env", "my-dev-env"),
+            ("My Cool WS", "my-cool-ws"),
+            ("  a__b!!c  ", "a-b-c"),
+            ("UPPER", "upper"),
+            ("a.b/c:d", "a-b-c-d"),
+            ("!!!---!!!", ""),
+            ("", ""),
+            ("x" * 40, "x" * 24),
+            ("café", "caf"),  # non-ascii collapses
+            ("name with   multiple   gaps", "name-with-multiple-gaps"),
+        ],
+    )
+    def test_slug(self, name, expected):
+        assert container._workspace_name_slug(name) == expected
+
+    def test_slug_none_is_empty(self):
+        assert container._workspace_name_slug(None) == ""
+
+
 class TestStartContainer:
     def setup_method(self):
         app_state = _make_app_state()
@@ -632,6 +657,94 @@ class TestStartContainer:
         assert "annotations" not in kwargs
         assert "hooks_dir" not in kwargs
         assert "cap_drop" not in kwargs
+
+    # --- #2286: correlation + human-readable names ---
+
+    async def test_workspace_container_name_includes_slug_and_labels(
+        self, workspace
+    ):
+        # #2286: the workspace container name carries the slugified workspace
+        # name (for `podman ps | grep <partial-name>`) and a shared
+        # klangk.workspace + klangk.role=workspace label (for correlation with
+        # the sidecar).
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        iid = self.registry.app.state.util.instance_id()
+        slug = container._workspace_name_slug(workspace["name"])
+        kwargs = p.create_container.call_args.kwargs
+        assert p.create_container.call_args.args[0] == (
+            f"klangk-{iid}-{slug}-{workspace['id'][:8]}"
+        )
+        assert kwargs["labels"]["klangk.workspace"] == workspace["id"]
+        assert kwargs["labels"]["klangk.role"] == "workspace"
+        assert kwargs["labels"]["klangk.workspace-name"] == slug
+
+    async def test_empty_workspace_name_falls_back_to_id_only_name(self, user):
+        # #2286: a name that slugifies to nothing (all symbols) falls back to
+        # an id-only name so the container is still valid + unique.
+        ws = await self.registry.app.state.model.workspaces.create_workspace(
+            user["id"], "!!!"
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                ws["id"], "/tmp/ws", "/tmp/home"
+            )
+        iid = self.registry.app.state.util.instance_id()
+        assert p.create_container.call_args.args[0] == (
+            f"klangk-{iid}-{ws['id'][:8]}"
+        )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["labels"]["klangk.workspace-name"] == ""
+
+    async def test_filtered_start_correlates_workspace_and_sidecar(
+        self, workspace, monkeypatch
+    ):
+        # #2286: a workspace and its sidecar share a klangk.workspace label,
+        # carry the same slug + workspace_id[:8] tail in their names (so a
+        # partial-name or id-prefix grep matches the pair), and are
+        # distinguishable by klangk.role.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, **kw})
+            return "net-cid" if name.startswith("klangk-net-") else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                allowed_domains=["github.com:443"],
+            )
+        assert len(creates) == 2
+        sidecar, ws_container = creates[0], creates[1]
+        iid = self.registry.app.state.util.instance_id()
+        slug = container._workspace_name_slug(workspace["name"])
+        tail = workspace["id"][:8]
+        # Both names carry the slug and the same id[:8] tail.
+        assert sidecar["name"] == f"klangk-net-{slug}-{tail}"
+        assert ws_container["name"] == f"klangk-{iid}-{slug}-{tail}"
+        # Shared correlation label + role distinction.
+        assert sidecar["labels"]["klangk.workspace"] == workspace["id"]
+        assert ws_container["labels"]["klangk.workspace"] == workspace["id"]
+        assert sidecar["labels"]["klangk.role"] == "network-sidecar"
+        assert ws_container["labels"]["klangk.role"] == "workspace"
+        assert sidecar["labels"]["klangk.workspace-name"] == slug
+        assert ws_container["labels"]["klangk.workspace-name"] == slug
 
     # --- #2254: FQDN network sidecar lifecycle ---
 
@@ -679,7 +792,10 @@ class TestStartContainer:
             kwargs["labels"]["klangk.instance"]
             == self.registry.app.state.util.instance_id()
         )
-        assert kwargs["labels"]["klangk.network-sidecar"] == ws_id
+        # #2286: shared klangk.workspace + role labels correlate the sidecar
+        # with its workspace (supersedes the old klangk.network-sidecar).
+        assert kwargs["labels"]["klangk.workspace"] == ws_id
+        assert kwargs["labels"]["klangk.role"] == "network-sidecar"
         p.start_container.assert_awaited_once_with("new-cid")
 
     async def test_start_network_sidecar_publishes_host_ports(
@@ -725,13 +841,14 @@ class TestStartContainer:
             )
         assert p.create_container.call_args.kwargs["publish"] is None
 
-    async def test_start_network_sidecar_clears_lingering_same_named(
+    async def test_start_network_sidecar_clears_lingering_by_label(
         self, monkeypatch
     ):
-        # #2265: _start_network_sidecar force-removes any same-named sidecar
-        # left by a prior generation before creating, so a restart (or an
-        # external kill that left the old sidecar running) does not collide
-        # on the deterministic name and fail-closed.
+        # #2265 + #2286: _start_network_sidecar removes any sidecar from a
+        # prior generation before creating, so a restart (or an external kill
+        # that left the old sidecar running) does not collide and fail-closed.
+        # Removal is by the klangk.workspace label + role=network-sidecar, so a
+        # sidecar whose name carries a now-stale slug (a rename) is still found.
         ws_id = "abcdef1234567890"
         monkeypatch.setattr(
             self.registry.app.state.settings,
@@ -741,24 +858,35 @@ class TestStartContainer:
         from klangk import netfilter as _nf
 
         monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
-        with patch_podman(self.registry) as p:
+        stale = {
+            "Id": "stale-cid",
+            "Names": ["klangk-net-oldslug-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            self.registry, list_containers=AsyncMock(return_value=[stale])
+        ) as p:
             await self.registry._start_network_sidecar(
                 ws_id, ["github.com:443"]
             )
-        sidecar_name = self.registry._network_sidecar_name(ws_id)
-        # The lingering same-named sidecar is force-removed before the create.
-        assert p.remove_container.await_args_list[0].args == (sidecar_name,)
+        # The stale sidecar is found by label and removed by id (not by the
+        # stale-slug name) before the create.
+        p.list_containers.assert_awaited_with(f"klangk.workspace={ws_id}")
+        assert p.remove_container.await_args_list[0].args == ("stale-cid",)
         assert p.remove_container.await_args_list[0].kwargs == {"force": True}
         # And the fresh sidecar is still created + started.
         assert p.create_container.await_count == 1
-        assert p.create_container.call_args.args[0] == sidecar_name
 
     async def test_start_network_sidecar_ignores_force_remove_error(
         self, monkeypatch
     ):
-        # #2265: the pre-create force-remove of a lingering same-named sidecar
-        # is best-effort -- if it errors (the name is already gone, or podman
-        # hiccups), the except swallows it and the create proceeds normally.
+        # #2265 + #2286: the pre-create removal of a lingering sidecar is
+        # best-effort -- if the per-container remove errors (the id is already
+        # gone, or podman hiccups), _remove_network_sidecar swallows it and
+        # the create proceeds normally.
         ws_id = "abcdef1234567890"
         monkeypatch.setattr(
             self.registry.app.state.settings,
@@ -768,8 +896,17 @@ class TestStartContainer:
         from klangk import netfilter as _nf
 
         monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        stale = {
+            "Id": "stale-cid",
+            "Names": ["klangk-net-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
         with patch_podman(
             self.registry,
+            list_containers=AsyncMock(return_value=[stale]),
             remove_container=AsyncMock(
                 side_effect=podman.PodmanError(500, "not found")
             ),
@@ -814,17 +951,43 @@ class TestStartContainer:
                 "abcd1234", ["github.com:443"]
             )
 
-    async def test_stop_network_sidecar_removes_by_name(self, monkeypatch):
+    async def test_stop_network_sidecar_removes_by_label(self, monkeypatch):
+        # #2286: stop removes the sidecar by its klangk.workspace label +
+        # role=network-sidecar, leaving the workspace container alone and
+        # working even when the sidecar's name carries a stale slug.
+        ws_id = "abcdef1234567890"
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
             "img",
         )
-        with patch_podman(self.registry) as p:
-            await self.registry._stop_network_sidecar("abcdef12")
-        p.remove_container.assert_awaited_with(
-            "klangk-net-abcdef12", force=True
-        )
+        sidecar = {
+            "Id": "net-cid",
+            "Names": ["klangk-net-renamed-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        workspace_container = {
+            "Id": "ws-cid",
+            "Names": ["klangk-renamed-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+        }
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[sidecar, workspace_container]
+            ),
+        ) as p:
+            await self.registry._stop_network_sidecar(ws_id)
+        p.list_containers.assert_awaited_with(f"klangk.workspace={ws_id}")
+        # Only the sidecar (by id) is removed; the workspace container is left
+        # for stop_and_remove_container's own remove call.
+        p.remove_container.assert_awaited_once_with("net-cid", force=True)
 
     async def test_stop_network_sidecar_noop_when_disabled(self, monkeypatch):
         monkeypatch.setattr(
@@ -853,6 +1016,36 @@ class TestStartContainer:
         assert "KLANGKNETWORK_EGRESS_MODE=interactive" in kwargs["env"]
 
     async def test_stop_network_sidecar_swallows_error(self, monkeypatch):
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "img",
+        )
+        sidecar = {
+            "Id": "net-cid",
+            "Names": ["klangk-net-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(return_value=[sidecar]),
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "not found")
+            ),
+        ):
+            # The per-container remove error is swallowed (sidecar gone).
+            await self.registry._stop_network_sidecar(ws_id)
+
+    async def test_remove_network_sidecar_swallows_list_error(
+        self, monkeypatch
+    ):
+        # #2286: if list_containers itself errors (podman down), removal is
+        # best-effort: log + return, never raise, and never call remove.
+        ws_id = "abcdef1234567890"
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
@@ -860,11 +1053,48 @@ class TestStartContainer:
         )
         with patch_podman(
             self.registry,
-            remove_container=AsyncMock(
-                side_effect=podman.PodmanError(500, "not found")
+            list_containers=AsyncMock(
+                side_effect=podman.PodmanError(500, "podman down")
             ),
-        ):
-            await self.registry._stop_network_sidecar("abcdef12")
+        ) as p:
+            await self.registry._remove_network_sidecar(ws_id)
+        p.remove_container.assert_not_awaited()
+
+    async def test_remove_network_sidecar_uses_name_when_no_id(
+        self, monkeypatch
+    ):
+        # #2286: a sidecar missing the Id/ID field is still removed by its
+        # (first) name; a sidecar with neither id nor name is skipped.
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "img",
+        )
+        no_id_with_name = {
+            "Names": ["klangk-net-slug-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        no_id_no_name = {
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[no_id_with_name, no_id_no_name]
+            ),
+        ) as p:
+            await self.registry._remove_network_sidecar(ws_id)
+        # The name-only entry is removed by its name; the empty entry skipped.
+        p.remove_container.assert_awaited_once_with(
+            "klangk-net-slug-abcdef12", force=True
+        )
 
     async def test_filtered_workspace_uses_network_sidecar_when_enabled(
         self, workspace, tmp_path, monkeypatch
@@ -1260,8 +1490,18 @@ class TestStartContainer:
                 return "net-cid"
             raise podman.PodmanError(500, "workspace image pull failed")
 
+        net_sidecar = {
+            "Id": "net-cid",
+            "Names": [f"klangk-net-{workspace['id'][:8]}"],
+            "Labels": {
+                "klangk.workspace": workspace["id"],
+                "klangk.role": "network-sidecar",
+            },
+        }
         with patch_podman(
-            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+            self.registry,
+            create_container=AsyncMock(side_effect=_fake_create),
+            list_containers=AsyncMock(return_value=[net_sidecar]),
         ) as p:
             with pytest.raises(podman.PodmanError):
                 await self.registry.start_container(
@@ -1270,9 +1510,9 @@ class TestStartContainer:
                     "/tmp/home",
                     allowed_domains=["github.com:443"],
                 )
-        # The sidecar was removed on the workspace-create failure.
-        expected_name = f"klangk-net-{workspace['id'][:8]}"
-        p.remove_container.assert_awaited_with(expected_name, force=True)
+        # #2286: the sidecar was removed (by label/id) on the workspace-create
+        # failure.
+        p.remove_container.assert_awaited_with("net-cid", force=True)
         # And the workspace is no longer tracked as having a live sidecar.
         assert workspace["id"] not in self.registry._ws_with_network_sidecar
 
@@ -2053,7 +2293,9 @@ class TestStartContainer:
         args, kwargs = p.create_container.call_args
         assert args[1] == self.registry.image_name
         assert kwargs["labels"]["klangk.managed"] == "true"
-        assert kwargs["labels"]["klangk.workspace-id"] == workspace["id"]
+        # #2286: shared label + role (supersedes klangk.workspace-id).
+        assert kwargs["labels"]["klangk.workspace"] == workspace["id"]
+        assert kwargs["labels"]["klangk.role"] == "workspace"
         assert kwargs["init"] is True
         assert kwargs["interactive"] is True
 
@@ -2907,13 +3149,23 @@ class TestStopContainer:
         )
         self.registry.track_activity("cid", "ws1234567890")
         self.registry._ws_with_network_sidecar.add("ws1234567890")
-        with patch_podman(self.registry) as p:
+        net_sidecar = {
+            "Id": "net-cid",
+            "Names": ["klangk-net-ws123456"],
+            "Labels": {
+                "klangk.workspace": "ws1234567890",
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(return_value=[net_sidecar]),
+        ) as p:
             await self.registry.stop_and_remove_container("cid")
         removes = [c.args[0] for c in p.remove_container.await_args_list]
         assert "cid" in removes  # the workspace container
-        assert (
-            "klangk-net-ws123456" in removes
-        )  # the network sidecar (<ws[:8]>)
+        # #2286: the sidecar is removed by id (label-based), not by name.
+        assert "net-cid" in removes
         assert "ws1234567890" not in self.registry._ws_with_network_sidecar
 
     async def test_stop_prunes_orphaned_service_session_locks(self):
@@ -3501,7 +3753,7 @@ class TestReapInstanceContainers:
                 return_value=[
                     {
                         "Id": "orphan-123",
-                        "Labels": {"klangk.workspace-id": "ws-orphan"},
+                        "Labels": {"klangk.workspace": "ws-orphan"},
                     }
                 ]
             ),
@@ -3555,7 +3807,7 @@ class TestReapInstanceContainers:
                 return_value=[
                     {
                         "Id": "orphan-bad",
-                        "Labels": {"klangk.workspace-id": "ws-bad"},
+                        "Labels": {"klangk.workspace": "ws-bad"},
                     }
                 ]
             ),

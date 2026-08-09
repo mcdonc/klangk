@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 
 from . import podman
@@ -41,6 +42,20 @@ _NETWORK_SIDECAR_READY_TOKEN = "dns-proxy listening"
 # sidecar via KLANGKNETWORK_EGRESS_MARK so proxy.py and entrypoint.sh (which
 # both default to 75) can't diverge (#2282).
 _NETWORK_SIDECAR_MARK = 75
+
+
+def _workspace_name_slug(name: str, *, limit: int = 24) -> str:
+    """Sanitize a workspace name for embedding in a container name (#2286).
+
+    Podman container names must match ``[a-zA-Z0-9][a-zA-Z0-9_.-]*``. Lowercase,
+    collapse runs of non-``[a-z0-9]`` to a single ``-``, trim the ends, and cap
+    the length. Returns ``""`` for names that reduce to nothing (empty,
+    all-symbols) — callers fall back to an id-only name. The slug is decorative:
+    uniqueness always comes from the instance id + workspace id, never the slug.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower().strip())
+    return slug[:limit].strip("-")
+
 
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
@@ -1107,8 +1122,18 @@ class ContainerRegistry:
             self.app.state.settings.network_sidecar_image
         )
 
-    def _network_sidecar_name(self, workspace_id: str) -> str:
-        """Derive the network sidecar name from the workspace ID (#2254)."""
+    def _network_sidecar_name(self, workspace_id: str, slug: str = "") -> str:
+        """Derive the network sidecar name (#2254, #2286).
+
+        Carries the slugified workspace name (when there is one) so
+        ``podman ps | grep <partial-name>`` surfaces the sidecar next to its
+        workspace, and uses the same ``workspace_id[:8]`` tail as the workspace
+        container name so an id-prefix grep matches the pair. Removal is by the
+        ``klangk.workspace`` label (see :meth:`_remove_network_sidecar`), not by
+        name — so a stale slug (after a rename) can't strand an orphan.
+        """
+        if slug:
+            return f"klangk-net-{slug}-{workspace_id[:8]}"
         return f"klangk-net-{workspace_id[:8]}"
 
     async def _start_network_sidecar(
@@ -1117,6 +1142,7 @@ class ContainerRegistry:
         allowed_domains: list[str],
         egress_mode: str = "static",
         publish: list[tuple[int, int]] | None = None,
+        slug: str = "",
     ) -> str:
         """Create + start the FQDN network sidecar for a filtered workspace (#2254).
 
@@ -1138,7 +1164,7 @@ class ContainerRegistry:
             raise podman.PodmanError(
                 500, "network_sidecar_image is not configured"
             )
-        name = self._network_sidecar_name(workspace_id)
+        name = self._network_sidecar_name(workspace_id, slug)
         # Pick an upstream that differs from the REDIRECT target (1.1.1.1).
         nf = getattr(self.app.state, "netfilter", None)
         resolvers = nf.resolvers() if nf else []
@@ -1167,19 +1193,25 @@ class ContainerRegistry:
         # containers get (#2254 review).
         labels = {
             "klangk.instance": self.app.state.util.instance_id(),
-            "klangk.network-sidecar": workspace_id,
+            # #2286: a shared klangk.workspace label + a klangk.role label let
+            # one `podman ps --filter label=klangk.workspace=<id>` correlate
+            # the sidecar with its workspace; the slug is mirrored for
+            # exact-match filtering. (Supersedes the old write-only
+            # klangk.network-sidecar.)
+            "klangk.workspace": workspace_id,
+            "klangk.role": "network-sidecar",
+            "klangk.workspace-name": slug,
         }
-        # #2265: a same-named sidecar from a prior generation may linger
-        # (an unclean stop, or the workspace container was killed externally
-        # so stop_and_remove_container never ran for it). The sidecar name is
-        # deterministic per workspace, so create_container would collide and
-        # the caller would fail-closed. Idempotently clear any existing
-        # same-named container first; the instance reaper is the backstop for
-        # orphans, but this keeps a restart from deadlocking on a stale name.
-        try:
-            await self.app.state.podman.remove_container(name, force=True)
-        except podman.PodmanError:
-            pass  # no existing sidecar to clear — expected on a fresh start
+        # #2265: a sidecar from a prior generation may linger (an unclean
+        # stop, or the workspace container was killed externally so
+        # stop_and_remove_container never ran for it). Clear it before create
+        # so create_container doesn't collide and the caller doesn't
+        # fail-closed. Removal is by the klangk.workspace label (#2286), not
+        # the name — the name now carries the workspace-name slug, which may
+        # differ from a prior generation's (a rename) and can't be
+        # reconstructed from the id alone. The instance reaper is the
+        # backstop for orphans; this just keeps a restart from deadlocking.
+        await self._remove_network_sidecar(workspace_id)
         try:
             cid = await self.app.state.podman.create_container(
                 name,
@@ -1237,15 +1269,57 @@ class ContainerRegistry:
             raise
 
     async def _stop_network_sidecar(self, workspace_id: str) -> None:
-        """Best-effort remove the network sidecar for a workspace (#2254)."""
+        """Best-effort remove the network sidecar for a workspace (#2254, #2286).
+
+        Delegates to :meth:`_remove_network_sidecar` (label-based) so a sidecar
+        whose name carries a now-stale slug (a renamed or deleted workspace) is
+        still found and removed.
+        """
         if not self._network_sidecar_enabled():
             return
-        name = self._network_sidecar_name(workspace_id)
+        await self._remove_network_sidecar(workspace_id)
+
+    async def _remove_network_sidecar(self, workspace_id: str) -> None:
+        """Best-effort remove this workspace's network sidecar by label (#2286).
+
+        Keyed on ``klangk.workspace=<workspace_id>`` +
+        ``klangk.role=network-sidecar`` rather than the container name: the name
+        now carries the slugified workspace name, which can't be reconstructed
+        from the id alone after a rename, a delete (cascade), or a process
+        restart (the in-memory set is gone). Label-based removal finds the
+        sidecar regardless, leaves the workspace container (role=workspace)
+        untouched, and is 404-tolerant.
+        """
         try:
-            await self.app.state.podman.remove_container(name, force=True)
-            logger.info("network sidecar removed: %s", name)
-        except podman.PodmanError:
-            pass  # network sidecar may not exist (or already removed)
+            containers = await self.app.state.podman.list_containers(
+                f"klangk.workspace={workspace_id}"
+            )
+        except (podman.PodmanError, OSError) as exc:
+            logger.warning(
+                "cannot list containers to remove network sidecar for %s: %s",
+                workspace_id[:8],
+                exc,
+            )
+            return
+        for c in containers:
+            labels = c.get("Labels") or {}
+            if labels.get("klangk.role") != "network-sidecar":
+                continue
+            ident = c.get("Id") or c.get("ID") or ""
+            if not ident:
+                names = c.get("Names") or []
+                ident = names[0] if names else ""
+            if not ident:
+                continue
+            try:
+                await self.app.state.podman.remove_container(ident, force=True)
+                logger.info(
+                    "network sidecar removed for %s: %s",
+                    workspace_id[:8],
+                    ident[:12],
+                )
+            except podman.PodmanError:
+                pass  # already gone — expected
 
     async def start_container(
         self,
@@ -1832,7 +1906,20 @@ class ContainerRegistry:
             for i, host_port in enumerate(host_ports)
         ]
         iid = self.app.state.util.instance_id()
-        container_name = f"klangk-{iid}-{workspace_id[:12]}"
+        # #2286: embed the slugified workspace name in the container + sidecar
+        # names so `podman ps | grep <partial-name>` finds a workspace and its
+        # sidecar together. The slug is decorative (uniqueness is iid + id); a
+        # missing/empty name falls back to an id-only name. Both names use the
+        # same workspace_id[:8] tail so an id-prefix grep matches the pair.
+        ws_row = await self.app.state.model.workspaces.get_workspace_by_id(
+            workspace_id
+        )
+        slug = _workspace_name_slug((ws_row or {}).get("name") or "")
+        container_name = (
+            f"klangk-{iid}-{slug}-{workspace_id[:8]}"
+            if slug
+            else f"klangk-{iid}-{workspace_id[:8]}"
+        )
         allow_sudo = self.app.state.settings.allow_sudo.strip().lower() in (
             "1",
             "true",
@@ -1843,7 +1930,13 @@ class ContainerRegistry:
             labels={
                 "klangk.managed": "true",
                 "klangk.instance": iid,
-                "klangk.workspace-id": workspace_id,
+                # #2286: shared label + role so one `podman ps --filter
+                # label=klangk.workspace=<id>` correlates the workspace with its
+                # network sidecar; the slug mirrors the name for exact-match
+                # filtering. (Supersedes the old write-only klangk.workspace-id.)
+                "klangk.workspace": workspace_id,
+                "klangk.role": "workspace",
+                "klangk.workspace-name": slug,
             },
             binds=binds,
             tmpfs={
@@ -1912,7 +2005,11 @@ class ContainerRegistry:
                     "keep-id:uid=1000,gid=1000) or clear allowed_domains.",
                 )
             network_sidecar_id = await self._start_network_sidecar(
-                workspace_id, allowed_domains, egress_mode, publish=publish
+                workspace_id,
+                allowed_domains,
+                egress_mode,
+                publish=publish,
+                slug=slug,
             )
             create_kwargs["network"] = f"container:{network_sidecar_id}"
             # --dns/--dns-search, --add-host, and --publish are all invalid
