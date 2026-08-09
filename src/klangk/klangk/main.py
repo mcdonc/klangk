@@ -865,9 +865,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # (cert-dir resolver + backend-process trust applier). The 4 pure
     # path/bundle helpers stay module-level in ssl_trust.py.
     app.state.ssl_trust = ssl_trust.SSLTrust(app)
-    # #1365: NetFilter(app_state) owns the per-workspace egress-filter
-    # OCI hook install dir + annotation builder (opt-in via
-    # KLANGKD_NETFILTER_HOOKS_DIR). Reaches config through self.settings.
+    # #1365: NetFilter(app_state) owns the egress-filter settings surface
+    # (validators, host-resolver detection, the deploy default allow-list).
+    # Enforcement lives in the network sidecar (#2255). Reaches config
+    # through self.settings.
     app.state.netfilter = netfilter.NetFilter(app)
     app.state.auth = auth.Auth(app)
     # #1468: Podman(settings) owns the resolved binary path + the ~20 CLI

@@ -841,6 +841,43 @@ class TestStartContainer:
                     allowed_domains=["github.com:443"],
                 )
 
+    async def test_workspace_create_failure_cleans_up_sidecar(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2255 review: if the workspace container fails to create AFTER the
+        # network sidecar already started, the sidecar must be torn down so
+        # it doesn't leak (NET_ADMIN + proxy) until the next startup reap.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
+
+        async def _fake_create(name, image, **kw):
+            # Sidecar create succeeds; workspace create fails.
+            if "klangk-net-" in name:
+                return "net-cid"
+            raise podman.PodmanError(500, "workspace image pull failed")
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ) as p:
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+        # The sidecar was removed on the workspace-create failure.
+        expected_name = f"klangk-net-{workspace['id'][:8]}"
+        p.remove_container.assert_awaited_with(expected_name, force=True)
+        # And the workspace is no longer tracked as having a live sidecar.
+        assert workspace["id"] not in self.registry._ws_with_network_sidecar
+
     async def test_allowed_domains_without_network_sidecar_refuses_to_start(
         self, workspace, tmp_path, monkeypatch
     ):

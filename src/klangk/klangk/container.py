@@ -1536,8 +1536,10 @@ class ContainerRegistry:
             setup_state=setup_state,
         )
         # --hooks-dir is a podman global flag that must be present on the
-        # start invocation — podman does not persist it from create. OCI
-        # hooks (netfilter egress) fire at start time.
+        # start invocation — podman does not persist it from create. No
+        # caller sets create_kwargs["hooks_dir"] since the egress filter
+        # moved into the network sidecar (#2255); the passthrough is kept
+        # for any future --hooks-dir consumer.
         _hooks_dirs = create_kwargs.get("hooks_dir")
         t_podman_start = time.monotonic()
         try:
@@ -1797,10 +1799,9 @@ class ContainerRegistry:
         # the workspace is unprivileged). Fail-CLOSED (#2254 review B2): a
         # workspace that declared an allow-list never starts unrestricted —
         # silently ignoring it would disable a security control the user
-        # requested, so a missing/unstartable network sidecar raises instead. With no
-        # allowed_domains the workspace starts unrestricted (no filtering
-        # requested). The hook model's netfilter machinery remains imported +
-        # unit-tested, pending a dedicated cleanup.
+        # requested, so a missing/unstartable network sidecar raises
+        # instead. With no allowed_domains the workspace starts
+        # unrestricted (no filtering requested).
         if allowed_domains:
             if not self._network_sidecar_enabled():
                 raise podman.PodmanError(
@@ -1855,19 +1856,31 @@ class ContainerRegistry:
 
         # Shield create+start from cancellation so a dropped
         # WebSocket doesn't orphan a running container.
-        container_id = await asyncio.shield(
-            self._create_and_start(
-                container_name,
-                resolved_image,
-                workspace_id,
-                publish,
-                allow_sudo,
-                create_kwargs,
-                health_check=health_check,
-                owner_id=user_id,
-                setup_state=setup_state,
+        try:
+            container_id = await asyncio.shield(
+                self._create_and_start(
+                    container_name,
+                    resolved_image,
+                    workspace_id,
+                    publish,
+                    allow_sudo,
+                    create_kwargs,
+                    health_check=health_check,
+                    owner_id=user_id,
+                    setup_state=setup_state,
+                )
             )
-        )
+        except BaseException:
+            # If the workspace container fails to create/start after a
+            # network sidecar was started for it, tear the sidecar down so
+            # it doesn't leak (NET_ADMIN + proxy) until the next startup
+            # reap. The klangk.instance label would eventually cull it, but
+            # cleaning up immediately matches how workspace containers are
+            # treated and avoids an unfiltered netns lingering (#2255).
+            if workspace_id in self._ws_with_network_sidecar:
+                await self._stop_network_sidecar(workspace_id)
+                self._ws_with_network_sidecar.discard(workspace_id)
+            raise
 
         # Fresh create: provision the agent home and fire the service
         # command (#1244). This is the single choke point -- every

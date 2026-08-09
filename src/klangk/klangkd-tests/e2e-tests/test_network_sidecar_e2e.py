@@ -328,3 +328,58 @@ class TestNetworkSidecarE2E:
         assert "REDIRECT" in nat and "RETURN" in nat, (
             f"nat OUTPUT should RETURN marked + REDIRECT the rest:\n{nat}"
         )
+
+    def test_ipv6_egress_is_default_denied(self, env, stack):
+        # #1936/#2255: the sidecar sets ip6tables -P OUTPUT DROP so an IPv6
+        # path can't bypass the v4 allow-list. ip6tables ships in the same
+        # alpine iptables package.
+        _, network_sidecar = stack
+        v6 = _podman(
+            "exec", network_sidecar, "ip6tables", "-S", "OUTPUT"
+        ).stdout
+        assert any("-P OUTPUT DROP" in ln for ln in v6.splitlines()), (
+            f"ip6tables OUTPUT policy is not DROP:\n{v6}"
+        )
+
+    def test_interactive_mode_installs_nflog(self, env):
+        # #2255: in interactive mode the sidecar appends a rate-limited NFLOG
+        # rule (group 5139) so the consent daemon can observe blocked traffic.
+        # Standalone sidecar (no fake upstream needed — the rule is installed
+        # before the proxy runs).
+        net = f"netc-nf-{uuid.uuid4().hex[:8]}"
+        nc = f"netc-nf-{uuid.uuid4().hex[:8]}"
+        _podman("network", "create", net)
+        try:
+            _podman(
+                "run",
+                "-d",
+                "--name",
+                nc,
+                "--network",
+                net,
+                "--cap-add",
+                "net_admin",
+                "--dns",
+                "1.1.1.1",
+                "-e",
+                "KLANGKNETWORK_EGRESS_UPSTREAM=8.8.8.8",
+                "-e",
+                "KLANGKNETWORK_EGRESS_ALLOW=allowed.test",
+                "-e",
+                "KLANGKNETWORK_EGRESS_MODE=interactive",
+                "-e",
+                "KLANGKNETWORK_EGRESS_TAG=testws000001",
+                env["image"],
+            )
+            _wait_ready(nc)
+            rules = _podman("exec", nc, "iptables", "-S", "OUTPUT").stdout
+            assert any(
+                "NFLOG" in ln and "5139" in ln for ln in rules.splitlines()
+            ), f"no NFLOG group-5139 rule in interactive mode:\n{rules}"
+            assert any(
+                "--nflog-prefix" in ln and "testws000001" in ln
+                for ln in rules.splitlines()
+            ), f"NFLOG prefix should carry the workspace tag:\n{rules}"
+        finally:
+            _podman("rm", "-f", nc, check=False, timeout=60)
+            _podman("network", "rm", net, check=False, timeout=60)

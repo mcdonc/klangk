@@ -287,16 +287,17 @@ class Podman:
         ``command`` (optional ``list[str]``) overrides the image ``Cmd``:
         the args are appended after the image name (e.g. LiteLLM's
         ``--config /app/config.yaml``).
-        ``annotations``/``hooks_dir`` carry per-workspace OCI hooks (e.g.
-        the netfilter egress filter, #1365): each annotation becomes a
-        ``--annotation key=value`` flag, and each ``hooks_dir`` entry becomes
-        a ``--hooks-dir`` flag. ``--hooks-dir`` overrides (does not append)
-        podman's default hook search paths, so a filtered container passes
-        the klangk dir *and* the standard default dirs to keep operator
-        createContainer hooks running (#1770); unrestricted workspaces omit
-        the flag entirely (no behavior change). ``cap_drop`` becomes one
-        ``--cap-drop`` flag each (used to drop ``NET_ADMIN`` on filtered
-        workspaces, #1773). ``cap_add`` becomes one ``--cap-add`` flag
+        ``annotations``/``hooks_dir`` carry per-workspace OCI hooks: each
+        annotation becomes a ``--annotation key=value`` flag, and each
+        ``hooks_dir`` entry becomes a ``--hooks-dir`` flag. ``--hooks-dir``
+        overrides (does not append) podman's default hook search paths, so
+        a caller passing its own dir repeats the standard default dirs to
+        keep operator createContainer hooks running (#1770); callers that
+        set no hooks omit the flag entirely (no behavior change). (The
+        egress filter moved to the network sidecar and no longer uses
+        these, #2255; they remain for general OCI-hook consumers.) ``cap_drop``
+        becomes one ``--cap-drop`` flag each. ``cap_add`` becomes one
+        ``--cap-add`` flag
         each (used to grant ``NET_RAW`` so unprivileged ``ping`` works,
         #2045). ``cpus``/``memory``/``pids_limit`` are the
         deploy-wide resource caps (#34): each emits its flag **only when
@@ -368,9 +369,8 @@ class Podman:
         ``hooks_dir`` is the same list passed to ``create_container``:
         ``--hooks-dir`` is a podman **global** flag that must be present on
         the ``start`` invocation too — podman does not persist it from
-        ``create``.  OCI hooks (e.g. the netfilter egress hook) are
-        discovered and executed at ``start`` time, so omitting the flag
-        here silently skips all hooks.
+        ``create``.  OCI hooks are discovered and executed at ``start``
+        time, so omitting the flag here silently skips all hooks.
         """
         args: list[str] = []
         for d in hooks_dir or []:
