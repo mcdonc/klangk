@@ -810,6 +810,58 @@ class TestStartContainer:
         assert "dns" not in creates[1]
         assert "dns_search" not in creates[1]
 
+    async def test_filtered_workspace_with_allow_sudo_drops_net_raw(
+        self, workspace, tmp_path, monkeypatch, caplog
+    ):
+        # #2276 (B): a filtered workspace (allowed_domains) created with
+        # allow_sudo on would let the klangk user sudo to root and use the
+        # net_raw that enable_ping grants to setsockopt(SO_MARK), bypassing
+        # the egress filter. Instead drop net_raw from the bounding set so even
+        # root can't acquire it (NET_ADMIN is never granted) — the filter holds,
+        # at the cost of ping (setuid) for this workspace.
+        import logging
+
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            with caplog.at_level(logging.INFO, logger="klangk.container"):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+        ws = creates[1]  # creates[0] is the network sidecar
+        # net_raw is dropped, not added (podman rejects a cap in both).
+        assert ws["cap_drop"] == ["net_raw"]
+        assert "net_raw" not in ws.get("cap_add", [])
+        # The ping-loss is logged once at create time so an operator chasing
+        # broken ping isn't guessing.
+        assert any(
+            "ping" in rec.message.lower() and "#2276" in rec.message
+            for rec in caplog.records
+        ), [rec.message for rec in caplog.records]
+
     async def test_network_sidecar_failure_refuses_to_start(
         self, workspace, tmp_path, monkeypatch
     ):

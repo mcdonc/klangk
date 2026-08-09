@@ -505,6 +505,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Security
 
+- **Network sidecar: filtered workspaces with `allow_sudo` now drop `net_raw`
+  (#2276).** A filtered workspace whose user can `sudo` to root could bypass
+  the egress filter via `SO_MARK` (root would have the `net_raw` that
+  `enable_ping` grants). The create path now drops `net_raw` from the bounding
+  set so even root can't acquire it, keeping the filter enforced; the setuid-ping
+  bridge is disabled for such workspaces (the trade for keeping the filter on).
+
 - **`git-credential-klangk`: secrets redacted from debug output (#1938).**
 
 - **Read-only terminal input whitelist (#1716).** Spectators can no longer

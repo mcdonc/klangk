@@ -1802,6 +1802,12 @@ class ContainerRegistry:
         # requested, so a missing/unstartable network sidecar raises
         # instead. With no allowed_domains the workspace starts
         # unrestricted (no filtering requested).
+        # #2276 (B): whether net_raw must be dropped for this workspace. A
+        # filtered workspace whose user can sudo to root would let root use the
+        # net_raw that enable_ping grants to setsockopt(SO_MARK) and bypass the
+        # egress filter; dropping net_raw (from the bounding set) closes that
+        # for root too. Applied in the cap_add/cap_drop logic after this branch.
+        drop_net_raw = False
         if allowed_domains:
             if not self._network_sidecar_enabled():
                 raise podman.PodmanError(
@@ -1831,22 +1837,54 @@ class ContainerRegistry:
             # Remember this workspace has a live network sidecar so its stop
             # tears the network sidecar down (#2254).
             self._ws_with_network_sidecar.add(workspace_id)
+            # #2276 (B): if sudo is also granted, the klangk user can `sudo`
+            # to root. Root would have the net_raw that enable_ping grants in
+            # its effective set and could setsockopt(SO_MARK) to skip the nat
+            # REDIRECT and reach the upstream directly — the #2264 bypass. Drop
+            # net_raw from the bounding set so even root can't acquire it
+            # (NET_ADMIN is never granted, so SO_MARK — which needs one of the
+            # two — fails for everyone). podman rejects a cap in both --cap-add
+            # and --cap-drop, so this also suppresses the enable_ping net_raw
+            # add below. Cost: the setuid-ping bridge breaks for this workspace
+            # (ping disabled) — the trade for keeping the filter enforced.
+            if allow_sudo:
+                drop_net_raw = True
+                logger.info(
+                    "workspace %s is egress-filtered with allow_sudo on; "
+                    "dropping net_raw so sudo->root cannot SO_MARK-bypass "
+                    "the egress filter — ping (setuid) is disabled for this "
+                    "workspace (#2276)",
+                    workspace_id[:8],
+                )
 
-        # #2045: grant the container CAP_NET_RAW so unprivileged ``ping``
-        # works (a setuid ping binary in the base image bridges the cap to
-        # the non-root klangk user). The ping_group_range / setcap
-        # alternatives don't work rootless — see #2045 for the full
-        # analysis. CAP_NET_RAW does NOT let a filtered workspace escape
-        # egress filtering: raw-socket packets still traverse the netfilter
-        # OUTPUT chain (default DROP + dest-IP allowlist), and in rootless
-        # pasta/slirp only forwards TCP/UDP/ICMP — so it grants neither
-        # bridge sniffing/ARP (no shared L2) nor egress to disallowed
-        # hosts. Applies to newly-created containers only: a SIGHUP reload
-        # changes the setting for future workspaces; a running container
-        # keeps its existing cap set until recreated. Read live off
-        # settings (the app-ownership rule). Default on.
-        if self.app.state.settings.enable_ping:
+        # #2045: grant the container CAP_NET_RAW so unprivileged ``ping`` works
+        # (a setuid ping binary in the base image bridges the cap to the non-root
+        # klangk user). The ping_group_range / setcap alternatives don't work
+        # rootless — see #2045 for the full analysis.
+        #
+        # Why this is safe for a *filtered* workspace (#2276): the guard against
+        # the #2264 SO_MARK bypass is NOT that "raw packets traverse netfilter"
+        # (the old rationale here, which was wrong) — it is that the klangk user
+        # is non-root. CAP_NET_RAW added here is only in the container's
+        # *bounding* set; capabilities become *effective* only for uid 0, so the
+        # non-root klangk user cannot setsockopt(SO_MARK) (EPERM) and cannot skip
+        # the nat REDIRECT to reach the upstream directly. ping still works
+        # because the setuid ping binary is root-owned.
+        #
+        # #2276 (B): if the filtered workspace also grants allow_sudo, the
+        # klangk user can `sudo` to root, which WOULD have net_raw effective and
+        # could SO_MARK — so drop net_raw instead of adding it (see drop_net_raw
+        # above). NET_ADMIN is never granted (not in the default cap set), so
+        # with net_raw dropped neither root nor the user can SO_MARK and the
+        # filter holds even under sudo. ping is disabled for such workspaces.
+        #
+        # Applies to newly-created containers only: a SIGHUP reload changes the
+        # setting for future workspaces. Read live off settings (the app-ownership
+        # rule). Default on.
+        if self.app.state.settings.enable_ping and not drop_net_raw:
             create_kwargs["cap_add"] = ["net_raw"]
+        if drop_net_raw:
+            create_kwargs["cap_drop"] = ["net_raw"]
 
         logger.info(
             "workspace-open: build env vars, volumes, and "
