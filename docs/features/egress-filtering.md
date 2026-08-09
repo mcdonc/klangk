@@ -8,7 +8,7 @@ networking exactly as before.
 
 The mechanism uses a **network sidecar** — a small NET_ADMIN container
 that shares the filtered workspace's network namespace and owns its
-egress ruleset. There is no TLS interception and no microVM. Each
+egress ruleset. Each
 workspace that declares an allow-list runs behind the sidecar, which
 default-denies outbound traffic and allow-lists only the declared
 destinations (resolved at runtime by a DNS proxy, so DNS round-robin is
