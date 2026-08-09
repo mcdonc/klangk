@@ -5,5 +5,6 @@ cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 PODMAN="${KLANGKD_PODMAN_BIN:-podman}"
 # shellcheck source=_podman_common.sh disable=SC1091
 source "$SCRIPT_DIR/_podman_common.sh"
+echo "Building nework sidecar image ..."
 "$PODMAN" build -t klangk-network-sidecar \
   -f src/containers/network/Dockerfile src/containers/network
