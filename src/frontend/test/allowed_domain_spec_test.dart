@@ -13,6 +13,25 @@ void main() {
       expect(validateAllowedDomainSpec('pypi.org:80'), isNull);
     });
 
+    // #2256: leading "*." wildcards (subdomains only, + optional port).
+    test('accepts *.domain wildcards', () {
+      expect(validateAllowedDomainSpec('*.pypi.org'), isNull);
+      expect(validateAllowedDomainSpec('*.pypi.org:443'), isNull);
+      expect(validateAllowedDomainSpec('*.double.example.com'), isNull);
+      expect(validateAllowedDomainSpec('*.pypi.org:65535'), isNull);
+    });
+
+    test('rejects malformed wildcards', () {
+      expect(validateAllowedDomainSpec('*pypi.org'), isNotNull); // no dot
+      expect(validateAllowedDomainSpec('*'), isNotNull); // bare wildcard
+      expect(validateAllowedDomainSpec('*.'), isNotNull); // empty base
+      expect(
+          validateAllowedDomainSpec('a*.pypi.org'), isNotNull); // not leading
+      expect(validateAllowedDomainSpec('pypi.org.*'), isNotNull); // wrong end
+      expect(
+          validateAllowedDomainSpec('*.pypi.org:99999'), isNotNull); // bad port
+    });
+
     test('accepts an IPv4 literal', () {
       expect(validateAllowedDomainSpec('10.0.0.1'), isNull);
       expect(validateAllowedDomainSpec('10.0.0.1:53'), isNull);

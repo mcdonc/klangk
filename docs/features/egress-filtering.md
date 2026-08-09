@@ -181,7 +181,7 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
 - `host:port` allows a single TCP port (port must be 1–65535) to that host
   and its subdomains.
 - `*.domain` allows **subdomains only, not the apex** — `*.pypi.org` matches
-  `files.pythonhosted.org`-style subdomains but not `pypi.org` itself. Append
+  `downloads.pypi.org`-style subdomains but not `pypi.org` itself. Append
   a port to scope it (`*.pypi.org:443`). This is distinct from a bare
   `domain` (which includes the apex), so you can allow subdomains without the
   apex or vice-versa (#2256).

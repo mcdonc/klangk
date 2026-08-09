@@ -44,13 +44,14 @@ String? validateMountSpec(String spec) {
   return null;
 }
 
-/// Client-side validation for a ``host``, ``host:port``, or IPv4 CIDR
-/// allowed-domain spec. Returns an error string on failure, ``null`` on
-/// success. The server validates definitively; this catches typos at the
-/// boundary (#1935 added CIDR support).
+/// Client-side validation for a ``host``, ``host:port``, ``*.domain[:port]``
+/// wildcard, or IPv4 CIDR allowed-domain spec. Returns an error string on
+/// failure, ``null`` on success. The server validates definitively; this
+/// catches typos at the boundary (#1935 added CIDR support, #2256 added
+/// wildcards).
 String? validateAllowedDomainSpec(String spec) {
   if (spec.contains(' ')) {
-    return 'Expected host or host:port';
+    return 'Expected host, host:port, or *.domain';
   }
   // A "/" denotes an IPv4 CIDR range (e.g. 10.0.0.0/8, optionally
   // 10.0.0.0/8:443). Validate it separately — the host regex below
@@ -58,10 +59,22 @@ String? validateAllowedDomainSpec(String spec) {
   if (spec.contains('/')) {
     return _validateCidrDomainSpec(spec);
   }
+  // Wildcard: a leading "*." matches subdomains only (NOT the apex) —
+  // #2256. Strip it and validate the remaining host[:port] grammar. A bare
+  // "*" or "*." has no matchable base.
+  var hostSpec = spec;
+  if (hostSpec.startsWith('*.')) {
+    hostSpec = hostSpec.substring(2);
+    if (hostSpec.isEmpty) {
+      return 'Expected host, host:port, or *.domain';
+    }
+  }
   final re = RegExp(r'^[A-Za-z0-9][A-Za-z0-9.\-]*(:[0-9]{1,5})?$');
-  if (!re.hasMatch(spec)) return 'Expected host or host:port';
+  if (!re.hasMatch(hostSpec)) {
+    return 'Expected host, host:port, or *.domain';
+  }
   // Reject ports > 65535 (the regex allows up to 5 digits).
-  final portMatch = RegExp(r':(\d{1,5})$').firstMatch(spec);
+  final portMatch = RegExp(r':(\d{1,5})$').firstMatch(hostSpec);
   if (portMatch != null && int.parse(portMatch.group(1)!) > 65535) {
     return 'Port must be 1–65535';
   }

@@ -35,8 +35,12 @@ operators or integrators to act when upgrading.
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the
-  apex). `host:port` scopes a learned IP to that single TCP port (a bare
-  `host` keeps all-ports); the sidecar's entrypoint now applies the same
+  apex). `host:port` now scopes a learned IP to that single TCP port — a
+  **behavior change**: previously a learned IP was reachable on **all** ports
+  regardless of the spec's port, so an operator who relied on that (e.g.
+  reaching `:22` on an IP resolved under a `:443` spec) will now see that
+  traffic blocked; add an explicit spec for the extra port (a bare `host`
+  keeps all-ports, unchanged). The sidecar's entrypoint now applies the same
   port scoping to CIDR specs like `10.0.0.0/8:443` (previously stripped).
   Resolved IPs are allow-listed only for the DNS response's TTL — the proxy
   re-resolves on each query and a background sweep removes the rule when the

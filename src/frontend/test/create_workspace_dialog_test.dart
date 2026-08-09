@@ -535,7 +535,8 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      expect(find.text('Expected host or host:port'), findsOneWidget);
+      expect(
+          find.text('Expected host, host:port, or *.domain'), findsOneWidget);
       // The bad spec did not become a list item.
       expect(
         find.byWidgetPredicate(

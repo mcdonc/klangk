@@ -47,8 +47,6 @@ Configuration (env):
                             response does not immediately yank the rule the
                             workspace needs to reach the IP it just resolved
                             (default 30).
-  KLANGKNETWORK_EGRESS_DEFAULT_TTL  TTL used when a response carries no usable
-                            TTL (default 300).
 
 Limitations: transport is UDP only (TCP fallback is a future addition).
 """
@@ -77,7 +75,6 @@ MARK = int(os.environ.get("KLANGKNETWORK_EGRESS_MARK", "75"))
 # Learned-IP housekeeping (#2256).
 SWEEP_INTERVAL = float(os.environ.get("KLANGKNETWORK_EGRESS_SWEEP_INTERVAL", "5"))
 MIN_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_MIN_TTL", "30"))
-DEFAULT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_DEFAULT_TTL", "300"))
 
 
 def parse_specs() -> list[tuple[str, int | None, bool]]:
@@ -222,10 +219,19 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
     rule the workspace needs to reach the IP it just resolved) and only ever
     moves forward, so a shorter-TTL re-resolution can't prematurely expire a
     longer-lived prior rule (#2256).
+
+    The install happens **under** :data:`_LOCK` so the kernel rule and its
+    ``_LEARNED`` record are atomic w.r.t. :func:`sweep_once`'s remove+delete
+    (also under the lock). Without that, the sweeper could delete a rule
+    :func:`allow` just installed while ``_LEARNED`` still records it as
+    present — a fail-closed availability gap that only self-heals on the next
+    re-resolution (#2256 review). The main loop is single-threaded and the
+    sweeper runs every ``SWEEP_INTERVAL``, so serializing the iptables calls
+    under the lock is negligible contention.
     """
-    _install(ip, port)
     expire = time.time() + max(ttl, MIN_TTL)
     with _LOCK:
+        _install(ip, port)
         rec = _LEARNED.get(ip)
         if rec is None:
             _LEARNED[ip] = {"expire": expire, "ports": {port}}
@@ -237,20 +243,27 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
 def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
     """Remove learned IPs whose TTL has elapsed; return ``(ip, ports)`` removed.
 
-    Factored out of :func:`_sweeper` so it is unit-testable with a mocked
-    clock and iptables (#2256).
+    Removal runs **under** :data:`_LOCK` (see :func:`allow`): the rule delete
+    and the ``_LEARNED`` delete are atomic, so a concurrent :func:`allow`
+    can't re-record an IP whose kernel rule was just swept. Factored out of
+    :func:`_sweeper` so it is unit-testable with a mocked clock and iptables
+    (#2256).
     """
     if now is None:
         now = time.time()
     expired: list[tuple[str, set]] = []
     with _LOCK:
         for ip, rec in list(_LEARNED.items()):
-            if rec["expire"] <= now:
-                expired.append((ip, set(rec["ports"])))
-                del _LEARNED[ip]
-    for ip, ports in expired:
-        for port in ports:
-            _remove(ip, port)
+            if rec["expire"] > now:
+                continue
+            ports = set(rec["ports"])
+            for port in ports:
+                try:
+                    _remove(ip, port)
+                except Exception:
+                    pass  # a transient failure drops one rule, not the sweep
+            del _LEARNED[ip]
+            expired.append((ip, ports))
     return expired
 
 
@@ -318,6 +331,20 @@ def _respond_allowed(
         pass
 
 
+def _decision(qname: str, ports: set[int] | None) -> tuple[bool, set[int | None]]:
+    """Classify a query: ``(deny, port_set)``.
+
+    ``deny=True`` -> send NXDOMAIN. ``port_set`` is the set of ports to allow
+    for each learned IP (a ``None`` entry is the all-ports rule). Factored out
+    of :func:`main` so the None-vs-empty gate is unit-tested directly —
+    inverting it (treating ``None`` as deny, or an empty set as allow) is a
+    fail-open/fail-closed bug in the security gate (#2256).
+    """
+    if not qname or (ports is not None and not ports):
+        return True, set()
+    return False, ports if ports is not None else {None}
+
+
 def main() -> None:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(("127.0.0.1", LISTEN_PORT))
@@ -338,9 +365,8 @@ def main() -> None:
         except Exception:
             continue  # malformed/unparseable query -> drop
         ports = ports_for(qname)
-        # Deny only when nothing matched (empty port set). ``None`` means a
-        # port-less spec matched (all ports) — that is an allow.
-        if not qname or (ports is not None and not ports):
+        deny, port_set = _decision(qname, ports)
+        if deny:
             if DEBUG:
                 print(f"deny  {qname}", flush=True)
             try:
@@ -348,7 +374,6 @@ def main() -> None:
             except Exception:
                 pass
             continue
-        port_set = ports if ports is not None else {None}
         us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         us.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, MARK)
         us.settimeout(3)

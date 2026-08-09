@@ -205,6 +205,58 @@ class TestRuleArgs:
         ]
 
 
+class TestRuleArgsInvariant:
+    """The dedup/delete cycle is sound only if -C (exists), -I (install), and
+    -D (remove) build IDENTICAL args from one ``_rule_args``. A future edit
+    that drifts would silently break dedup or orphan rules (#2256 review)."""
+
+    @pytest.mark.parametrize("port", [None, 443])
+    def test_check_install_remove_share_args(self, proxy, monkeypatch, port):
+        calls = []
+
+        def fake_run(args, **kw):
+            calls.append(list(args))
+            return types.SimpleNamespace(returncode=1)  # absent -> -I fires
+
+        monkeypatch.setattr(proxy.subprocess, "run", fake_run)
+        proxy._install("1.2.3.4", port)
+        proxy._rule_exists("1.2.3.4", port)
+        proxy._remove("1.2.3.4", port)
+        expected = proxy._rule_args("1.2.3.4", port)
+        ops = set()
+        for cmd in calls:
+            assert cmd[0] == proxy.IPT, cmd
+            assert cmd[1] in ("-C", "-I", "-D"), cmd
+            # The rule-matching args (-d/-p/--dport/-j ACCEPT) are the SHARED
+            # tail across all three: -C and -D are "<op> OUTPUT <args>"; -I
+            # is "-I OUTPUT 1 <args>" (the position arg sits before the tail).
+            assert cmd[-len(expected) :] == expected, (cmd, expected)
+            ops.add(cmd[1])
+        assert {"-C", "-I", "-D"} <= ops
+
+
+class TestDecision:
+    """The None-vs-empty gate consumed by ``main()``. ``None`` (a port-less
+    spec matched) is an ALLOW on all ports; an empty set is a DENY.
+    Inverting either is a fail-open/fail-closed bug in the security gate
+    (#2256 review)."""
+
+    def test_empty_qname_denies(self, proxy):
+        assert proxy._decision("", {443}) == (True, set())
+
+    def test_none_ports_allows_all_ports(self, proxy):
+        assert proxy._decision("a.com", None) == (False, {None})
+
+    def test_empty_set_denies(self, proxy):
+        assert proxy._decision("a.com", set()) == (True, set())
+
+    def test_port_set_scoped_allow(self, proxy):
+        assert proxy._decision("a.com", {443, 8443}) == (
+            False,
+            {443, 8443},
+        )
+
+
 class TestTTLAndSweep:
     """Learned-IP TTL tracking + expiry sweep (#2256)."""
 
@@ -270,6 +322,21 @@ class TestTTLAndSweep:
         monkeypatch.setattr(learned.time, "time", lambda: 0.0)
         learned.allow("1.2.3.4", None, 60)
         assert learned._LEARNED["1.2.3.4"]["ports"] == {None}
+
+    def test_cross_domain_shared_ip_accumulates_ports(
+        self, learned, monkeypatch
+    ):
+        # Two different domains resolving to one CDN IP union their ports
+        # under that single IP (#2256 review).
+        monkeypatch.setattr(
+            learned.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=1),
+        )
+        monkeypatch.setattr(learned.time, "time", lambda: 0.0)
+        learned.allow("9.9.9.9", 443, 60)  # github.com:443 -> 9.9.9.9
+        learned.allow("9.9.9.9", 8443, 60)  # registry.com:8443 -> 9.9.9.9
+        assert learned._LEARNED["9.9.9.9"]["ports"] == {443, 8443}
 
     def test_sweep_removes_expired_rules(self, learned, monkeypatch):
         removed = []
