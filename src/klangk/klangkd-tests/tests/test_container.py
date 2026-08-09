@@ -803,6 +803,12 @@ class TestStartContainer:
             e.startswith("KLANGKNETWORK_EGRESS_BACKEND_PORT=")
             for e in creates[0]["env"]
         )
+        # #2282: the fwmark is passed explicitly (single source of truth) so
+        # proxy.py and entrypoint.sh can't diverge.
+        assert any(
+            e.startswith("KLANGKNETWORK_EGRESS_MARK=")
+            for e in creates[0]["env"]
+        ), creates[0]["env"]
         assert creates[1]["network"] == "container:net-cid"
         assert "annotations" not in creates[1]
         # #2254 B1: --add-host is rejected and --publish is discarded under

@@ -36,6 +36,11 @@ HEALTH_MESSAGE_MAX_BYTES = 512
 _NETWORK_SIDECAR_READY_TIMEOUT = 30.0
 _NETWORK_SIDECAR_READY_POLL = 0.3
 _NETWORK_SIDECAR_READY_TOKEN = "dns-proxy listening"
+# fwmark the sidecar's proxy stamps on its upstream socket and the entrypoint
+# matches in its nat/filter rules (#2264). Single source of truth, passed to the
+# sidecar via KLANGKNETWORK_EGRESS_MARK so proxy.py and entrypoint.sh (which
+# both default to 75) can't diverge (#2282).
+_NETWORK_SIDECAR_MARK = 75
 
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
@@ -1139,6 +1144,10 @@ class ContainerRegistry:
             # host.containers.internal). The network sidecar allow-lists it statically
             # — it's a /etc/hosts entry the FQDN proxy can't learn (#2254 B1).
             f"KLANGKNETWORK_EGRESS_BACKEND_PORT={self.app.state.settings.egress_port}",
+            # Single source of truth for the fwmark both proxy.py and
+            # entrypoint.sh use (#2264, #2282): they default to 75, but pass it
+            # explicitly so the two can't diverge.
+            f"KLANGKNETWORK_EGRESS_MARK={_NETWORK_SIDECAR_MARK}",
         ]
         if egress_mode == "interactive":
             env.append("KLANGKNETWORK_EGRESS_MODE=interactive")
