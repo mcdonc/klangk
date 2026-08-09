@@ -630,68 +630,15 @@ class TestStartContainer:
         assert "hooks_dir" not in kwargs
         assert "cap_drop" not in kwargs
 
-    async def test_egress_filter_disabled_fail_opens(self, workspace, caplog):
-        # allowed_domains set but netfilter disabled (no hooks dir) ->
-        # unrestricted with a loud warning (fail open). #1365
-        with patch_podman(self.registry), caplog.at_level("WARNING"):
-            await self.registry.start_container(
-                workspace["id"],
-                "/tmp/ws",
-                "/tmp/home",
-                allowed_domains=["github.com:443"],
-            )
-        assert any("UNRESTRICTED" in r.message for r in caplog.records)
-
-    async def test_egress_filter_enabled_passes_annotation_and_hooks_dir(
-        self, workspace, tmp_path, monkeypatch
-    ):
-        monkeypatch.setattr(
-            self.registry.app.state.settings,
-            "netfilter_hooks_dir",
-            str(tmp_path / "hooks"),
-        )
-        # On macOS, install_hooks() tries to SSH into the podman VM;
-        # force Linux so the local-only path is exercised (#1983).
-        from klangk import netfilter as _nf_mod
-
-        monkeypatch.setattr(_nf_mod.platform, "system", lambda: "Linux")
-        # create_kwargs() detects the host's DNS resolvers; neutralize so the
-        # exact annotation dict assertion is host-independent (#1365).
-        monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
-        # #1771: create_kwargs only trusts a dir whose hook is actually
-        # installed, so arm it before starting the container.
-        self.registry.app.state.netfilter.install_hooks()
-        with patch_podman(self.registry) as p:
-            await self.registry.start_container(
-                workspace["id"],
-                "/tmp/ws",
-                "/tmp/home",
-                allowed_domains=["github.com:443", "pypi.org"],
-            )
-        kwargs = p.create_container.call_args.kwargs
-        assert kwargs["annotations"] == {
-            "klangk.netfilter.rules": "github.com:443,pypi.org"
-        }
-        assert kwargs["hooks_dir"] == [
-            str((tmp_path / "hooks").resolve()),
-            "/usr/share/containers/oci/hooks.d",
-            "/etc/containers/oci/hooks.d",
-        ]
-        assert kwargs["cap_drop"] == ["NET_ADMIN"]
-
-    def test_egress_filter_missing_netfilter_state_is_noop(self):
-        # Defensive: an app-state without a netfilter subsystem (some
-        # partial test builders) is treated as unrestricted rather than
-        # raising. #1365
-        app_state = types.SimpleNamespace(
-            state=types.SimpleNamespace(settings=make_settings({}))
-        )
-        reg = container.ContainerRegistry(app_state)
-        assert reg._egress_filter(["github.com"]) == (None, None, None, None)
-
     # --- #2254: FQDN egress sidecar lifecycle ---
 
-    def test_egress_sidecar_disabled_by_default(self):
+    def test_egress_sidecar_enabled_by_default(self, monkeypatch):
+        # Defaults to the published sidecar image name (#2254 review); set
+        # egress_sidecar_image="" to disable egress filtering entirely.
+        assert self.registry._egress_sidecar_enabled()
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "egress_sidecar_image", ""
+        )
         assert not self.registry._egress_sidecar_enabled()
 
     def test_egress_sidecar_enabled_when_image_set(self, monkeypatch):
@@ -724,8 +671,15 @@ class TestStartContainer:
         )
         assert kwargs["cap_add"] == ["NET_ADMIN"]
         assert kwargs["dns"] == ["1.1.1.1"]
-        assert "KLANGK_EGRESS_ALLOW=github.com:443" in kwargs["env"]
-        assert "KLANGK_EGRESS_UPSTREAM=8.8.8.8" in kwargs["env"]
+        assert "KLANGKEGRESS_ALLOW=github.com:443" in kwargs["env"]
+        assert "KLANGKEGRESS_UPSTREAM=8.8.8.8" in kwargs["env"]
+        # #2254 review: the sidecar is labelled with this klangk instance so
+        # the startup reaper culls any leftover sidecar at boot.
+        assert (
+            kwargs["labels"]["klangk.instance"]
+            == self.registry.app.state.util.instance_id()
+        )
+        assert kwargs["labels"]["klangk.egress-sidecar"] == ws_id
         p.start_container.assert_awaited_once_with("new-cid")
 
     async def test_start_egress_sidecar_failure_returns_empty(
@@ -748,7 +702,12 @@ class TestStartContainer:
             )
         assert cid == ""
 
-    async def test_start_egress_sidecar_returns_empty_without_image(self):
+    async def test_start_egress_sidecar_returns_empty_without_image(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "egress_sidecar_image", ""
+        )
         cid = await self.registry._start_egress_sidecar(
             "abcd1234", ["github.com:443"]
         )
@@ -766,7 +725,10 @@ class TestStartContainer:
             "klangk-egress-abcdef12", force=True
         )
 
-    async def test_stop_egress_sidecar_noop_when_disabled(self):
+    async def test_stop_egress_sidecar_noop_when_disabled(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "egress_sidecar_image", ""
+        )
         with patch_podman(self.registry) as p:
             await self.registry._stop_egress_sidecar("abcd1234")
         p.remove_container.assert_not_awaited()
@@ -788,7 +750,7 @@ class TestStartContainer:
                 "abcdef12", ["github.com:443"], egress_mode="interactive"
             )
         kwargs = p.create_container.call_args.kwargs
-        assert "KLANGK_EGRESS_MODE=interactive" in kwargs["env"]
+        assert "KLANGKEGRESS_MODE=interactive" in kwargs["env"]
 
     async def test_stop_egress_sidecar_swallows_error(self, monkeypatch):
         monkeypatch.setattr(
@@ -837,28 +799,25 @@ class TestStartContainer:
         assert len(creates) == 2
         assert creates[0]["name"].startswith("klangk-egress-")
         assert creates[0]["cap_add"] == ["NET_ADMIN"]
-        assert "KLANGK_EGRESS_ALLOW=github.com:443" in creates[0]["env"]
+        assert "KLANGKEGRESS_ALLOW=github.com:443" in creates[0]["env"]
         assert creates[1]["network"] == "container:sidecar-cid"
         assert "annotations" not in creates[1]
 
-    async def test_sidecar_failure_falls_back_to_hook(
+    async def test_sidecar_failure_runs_unrestricted(
         self, workspace, tmp_path, monkeypatch
     ):
+        # #2254 review: the OCI-hook "static" model is gone, so a sidecar
+        # failure no longer falls back to the hook — the workspace just
+        # starts unrestricted (fail-open, the historical no-filter posture).
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "egress_sidecar_image",
             "test-sidecar",
         )
-        monkeypatch.setattr(
-            self.registry.app.state.settings,
-            "netfilter_hooks_dir",
-            str(tmp_path / "hooks"),
-        )
         from klangk import netfilter as _nf_mod
 
         monkeypatch.setattr(_nf_mod.platform, "system", lambda: "Linux")
         monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
-        self.registry.app.state.netfilter.install_hooks()
 
         ws_kwargs = {}
 
@@ -877,7 +836,11 @@ class TestStartContainer:
                 "/tmp/home",
                 allowed_domains=["github.com:443"],
             )
-        assert "annotations" in ws_kwargs
+        # No sidecar (it failed) and no hook fallback -> unrestricted.
+        assert "network" not in ws_kwargs
+        assert "annotations" not in ws_kwargs
+        assert "hooks_dir" not in ws_kwargs
+        assert "cap_drop" not in ws_kwargs
 
     async def test_resource_limits_defaults_emit_flags(self, workspace):
         # #2030: with no deploy limits configured, the built-in protective
@@ -2448,6 +2411,27 @@ class TestStopContainer:
         # The workspace lock entry is deliberately retained (#1258).
         assert "ws" in self.registry._workspace_locks
         assert self.registry._workspace_locks["ws"] is lock
+
+    async def test_stop_removes_sidecar_when_workspace_had_one(
+        self, monkeypatch
+    ):
+        # #2254: a workspace that started a sidecar (tracked in
+        # _ws_with_sidecar) tears the sidecar down on stop — named
+        # klangk-egress-<ws[:8]>. A non-filtered workspace (not in the
+        # set) must NOT fire a speculative sidecar remove.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "test-sidecar",
+        )
+        self.registry.track_activity("cid", "ws1234567890")
+        self.registry._ws_with_sidecar.add("ws1234567890")
+        with patch_podman(self.registry) as p:
+            await self.registry.stop_and_remove_container("cid")
+        removes = [c.args[0] for c in p.remove_container.await_args_list]
+        assert "cid" in removes  # the workspace container
+        assert "klangk-egress-ws123456" in removes  # the sidecar (<ws[:8]>)
+        assert "ws1234567890" not in self.registry._ws_with_sidecar
 
     async def test_stop_prunes_orphaned_service_session_locks(self):
         # stop_and_remove_container sweeps the per-container service-firing
