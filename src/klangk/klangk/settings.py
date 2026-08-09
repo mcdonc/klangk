@@ -694,25 +694,18 @@ class KlangkSettings(BaseSettings):
     health_check_timeout: str | None = None
     hosted_ports_per_workspace: str = "5"
     # netfilter_enabled: master on/off switch for per-workspace egress
-    # filtering (#1774). Defaults to True — netfilter is armed out of the
-    # box (the OCI hook is materialized into a state_dir subdir at startup;
-    # see NetFilter). Set False to disable the feature entirely (e.g. in an
-    # environment without iptables/nsenter, or where the hook can't be
-    # granted CAP_NET_ADMIN): enabled() reports false, create_kwargs() never
-    # passes --hooks-dir, and workspaces with allowed_domains fail open
-    # with a loud warning (#1769). This is the operator *intent*; the
-    # /api/v1/config field of the same name is the resolved *armed status*
-    # (intent AND hook installed, #1771).
+    # filtering (#1774). Defaults to True — together with the defaulted
+    # network_sidecar_image, FQDN egress filtering is available out of the
+    # box (#2255). Set False to disable the feature entirely: enabled()
+    # reports false and a workspace that declares allowed_domains fails to
+    # start (fail-closed) until filtering is re-enabled. The
+    # /api/v1/config field of the same name is the resolved armed status
+    # (this switch AND network_sidecar_image set).
     netfilter_enabled: bool = True
-    # netfilter_hooks_dir: directory where the per-workspace egress-filter
-    # OCI hook (klangk-netfilter.{json,sh}) is materialized at startup.
-    # When netfilter_enabled is True (the default) and this is unset, it
-    # defaults to <state_dir>/oci-hooks — so filtering works out of the box
-    # without a second env var (#1774). Set it explicitly only when the OCI
-    # runtime can't see state_dir (a split runtime / DinD outer container /
-    # podman-machine CoreOS VM). The path must be resolvable where the OCI
-    # runtime executes.
-    netfilter_hooks_dir: str | None = None
+    # netfilter_hooks_dir: legacy OCI-hook hooks directory. The hook model
+    # was superseded by the FQDN network sidecar (#2255); this setting is
+    # retained so existing configs don't error but is no longer read by any
+    # enforcement path.
     # netfilter_default_domains: a deploy-wide allow-list applied to every
     # workspace that doesn't declare its own (#1365). A workspace with a
     # non-empty allowed_domains *overrides* (replaces) this default; a

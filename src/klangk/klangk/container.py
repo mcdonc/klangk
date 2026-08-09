@@ -1084,8 +1084,14 @@ class ContainerRegistry:
         )
 
     def _network_sidecar_enabled(self) -> bool:
-        """Whether the FQDN network sidecar model is configured (#2254)."""
-        return bool(self.app.state.settings.network_sidecar_image)
+        """Whether the FQDN network sidecar model is configured (#2254).
+
+        Mirrors :meth:`NetFilter.enabled`: the master switch on AND the
+        sidecar image set (which ships with a default, so this is True out
+        of the box)."""
+        return self.app.state.settings.netfilter_enabled and bool(
+            self.app.state.settings.network_sidecar_image
+        )
 
     def _network_sidecar_name(self, workspace_id: str) -> str:
         """Derive the network sidecar name from the workspace ID (#2254)."""
@@ -1127,6 +1133,10 @@ class ContainerRegistry:
         ]
         if egress_mode == "interactive":
             env.append("KLANGKNETWORK_EGRESS_MODE=interactive")
+            # Tag for the NFLOG prefix so the consent daemon correlates a
+            # blocked packet with this workspace (the entrypoint stamps it
+            # into --nflog-prefix "klangk-egress:<tag>:") (#2239, #2255).
+            env.append(f"KLANGKNETWORK_EGRESS_TAG={workspace_id[:12]}")
         # Label the network sidecar with this klangk instance so the startup reaper
         # (reap_instance_containers) and the shutdown orphan sweep cull any
         # network sidecar left behind by a failed stop — the same culling workspace
@@ -1562,10 +1572,11 @@ class ContainerRegistry:
             time.monotonic() - t_podman_start,
         )
 
-        # Backend gateway: the network sidecar model must allow
-        # host.containers.internal separately (the proxy's ruleset doesn't
-        # yet) — tracked under #2254. The hook model's post-start
-        # allow_backend_gateway() is gone with the hook model.
+        # Backend gateway: the network sidecar statically allow-lists
+        # host.containers.internal on the klangkd backend port in its
+        # entrypoint (KLANGKNETWORK_EGRESS_BACKEND_PORT) — it's a
+        # /etc/hosts entry the FQDN proxy can't learn. No post-start
+        # allow step is needed (#2255).
 
         # Configure sudo inside the container.
         if allow_sudo:

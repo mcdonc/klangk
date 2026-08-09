@@ -659,7 +659,6 @@ class TestStartContainer:
         from klangk import netfilter as _nf
 
         monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
-        self.registry.app.state.netfilter.install_hooks()
         with patch_podman(self.registry) as p:
             cid = await self.registry._start_network_sidecar(
                 ws_id, ["github.com:443"]
@@ -743,7 +742,6 @@ class TestStartContainer:
         from klangk import netfilter as _nf
 
         monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
-        self.registry.app.state.netfilter.install_hooks()
         with patch_podman(self.registry) as p:
             await self.registry._start_network_sidecar(
                 "abcdef12", ["github.com:443"], egress_mode="interactive"
@@ -778,7 +776,6 @@ class TestStartContainer:
         monkeypatch.setattr(
             _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
         )
-        self.registry.app.state.netfilter.install_hooks()
 
         creates = []
 
@@ -826,7 +823,6 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf_mod
 
-        monkeypatch.setattr(_nf_mod.platform, "system", lambda: "Linux")
         monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
 
         async def _fake_create(name, image, **kw):

@@ -75,9 +75,9 @@ def _validate_allowed_domains(
     Returns the validated list (de-duplicated, ordered), or ``None`` when
     no list was supplied (unrestricted egress). Raises an HTTP 400 with a
     precise message on any malformed ``host[:port]`` entry. Only warns —
-    never rejects — when the deployer has not enabled netfilter: the value
+    never rejects — when the network sidecar is not configured: the value
     is still persisted so it takes effect the moment the operator sets
-    ``KLANGKD_NETFILTER_HOOKS_DIR`` (#1365).
+    ``KLANGKD_NETWORK_SIDECAR_IMAGE`` (#1365, #2255).
     """
     if not values:
         return None
@@ -87,9 +87,12 @@ def _validate_allowed_domains(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not app.state.netfilter.enabled():
         logger.warning(
-            "Workspace configured allowed_domains=%s but netfilter is not "
-            "armed on this server; the value is persisted but egress will "
-            "be UNRESTRICTED until netfilter is enabled (#1365, #1774).",
+            "Workspace configured allowed_domains=%s but the network "
+            "sidecar is disabled on this server "
+            "(KLANGKD_NETFILTER_ENABLED=false or "
+            "KLANGKD_NETWORK_SIDECAR_IMAGE empty); the value is persisted "
+            "but the workspace will fail to start until filtering is "
+            "re-enabled (#1365, #2255).",
             domains,
         )
     return domains

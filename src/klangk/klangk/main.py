@@ -355,11 +355,6 @@ class Lifecycle:
         SIGHUP restart path.
         """
         state = self.app.state
-        # #1365: materialize the OCI egress-filter hook into the configured
-        # hooks dir (no-op when netfilter is disabled). Best-effort — a
-        # failure logs and leaves the feature disabled rather than blocking
-        # startup.
-        state.netfilter.install_hooks()
         registry = state.container_registry
         await registry.prewarm_podman()
         await registry.reap_instance_containers()

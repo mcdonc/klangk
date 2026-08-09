@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import platform
 import shutil
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from klangk.doctor import (
     CheckResult,
@@ -16,7 +14,6 @@ from klangk.doctor import (
     check_gnu_du,
     check_gnu_stat,
     check_gnu_tar,
-    check_netfilter_host,
     check_podman_policy,
     check_subuid,
     detect_package_manager,
@@ -465,56 +462,3 @@ class TestRunDoctor:
         r = results[0]
         assert not r.ok
         assert r.is_warning
-
-
-class TestCheckNetfilterHost:
-    """Linux host netfilter prereqs — iptables + ip6tables (#1936, #2248 B1)."""
-
-    def test_ok_when_both_present(self):
-        if platform.system() == "Darwin":
-            pytest.skip("Linux-only check")
-        with patch("shutil.which", side_effect=lambda b: "/usr/sbin/" + b):
-            r = check_netfilter_host()
-        assert r.ok
-        assert "iptables + ip6tables" in r.message
-
-    def test_warns_when_ip6tables_missing(self):
-        if platform.system() == "Darwin":
-            pytest.skip("Linux-only check")
-        with patch(
-            "shutil.which",
-            side_effect=lambda b: (
-                None if b == "ip6tables" else "/usr/sbin/" + b
-            ),
-        ):
-            r = check_netfilter_host()
-        assert not r.ok
-        assert r.is_warning
-        assert "ip6tables" in r.message
-        assert "IPv6 egress bypasses" in r.message
-
-    def test_warns_when_both_missing(self):
-        if platform.system() == "Darwin":
-            pytest.skip("Linux-only check")
-        with patch("shutil.which", return_value=None):
-            r = check_netfilter_host()
-        assert not r.ok
-        assert r.is_warning
-        assert "iptables" in r.message
-        assert "ip6tables" in r.message
-
-    def test_warns_when_only_iptables_missing(self):
-        if platform.system() == "Darwin":
-            pytest.skip("Linux-only check")
-        with patch(
-            "shutil.which",
-            side_effect=lambda b: (
-                None if b == "iptables" else "/usr/sbin/" + b
-            ),
-        ):
-            r = check_netfilter_host()
-        assert not r.ok
-        assert r.is_warning
-        assert "iptables" in r.message
-        # No IPv6-bypass note when only iptables is missing.
-        assert "IPv6 egress bypasses" not in r.message

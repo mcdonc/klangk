@@ -6,72 +6,61 @@ exfiltration vector. The filter is **opt-in** per workspace _and_ per
 deploy: a workspace with no `allowed_domains` keeps unrestricted outbound
 networking exactly as before.
 
-The mechanism uses OCI hooks — there is no proxy, no TLS interception, and
-no microVM. Each workspace that declares an allow-list gets iptables rules
-injected into its network namespace before its process starts.
+The mechanism uses a **network sidecar** — a small NET_ADMIN container
+that shares the filtered workspace's network namespace and owns its
+egress ruleset. There is no TLS interception and no microVM. Each
+workspace that declares an allow-list runs behind the sidecar, which
+default-denies outbound traffic and allow-lists only the declared
+destinations (resolved at runtime by a DNS proxy, so DNS round-robin is
+handled). A workspace **without** an allow-list keeps unrestricted
+outbound networking exactly as before.
 
 ## How it works
 
 1. A workspace carries an `allowed_domains` list (`host`, `host:port`,
    or IPv4 CIDR specs — see the [API](#api) section for the full grammar).
-2. On container start, if the deploy has enabled netfilter, the backend
-   passes `--annotation klangk.netfilter.rules=<host:port,...>` to
-   `podman create`, plus a `klangk.netfilter.resolvers` annotation and
-   matching `--dns` flags carrying the host's upstream DNS resolvers (see
-   step 4). On Linux it also passes `--hooks-dir <dir>` to **both**
-   `podman create` and `podman start` — podman 5.x only reads `--hooks-dir`
-   at start, so the flag must be present on the start invocation too (see
-   the caveat below on `--hooks-dir` overriding default hook dirs). On macOS
-   the hook is installed inside the podman machine VM and discovered
-   automatically.
-3. The OCI hook (`klangk-netfilter.sh`, materialized by the backend into the
-   hooks dir) fires at the `createContainer` stage — inside the container's
-   network namespace, before `CAP_NET_ADMIN` is dropped, with its binaries
-   resolved on the host (so a tampered in-container `iptables` cannot
-   subvert it). It reads the annotations from the container state, resolves
-   each host to IPs, and installs an iptables ruleset in the container's
-   network namespace **directly** (no `nsenter` — the hook is already in
-   that netns).
-4. The default `OUTPUT` policy is `DROP`; loopback, established
-   connections, **DNS to the container's configured resolvers only**
-   (read from the `klangk.netfilter.resolvers` annotation — the
-   `createContainer` hook runs in the host mount namespace and can't read
-   the container's `/etc/resolv.conf`, which netavark writes only after
-   the create hooks; the server detects the host's upstream resolvers and
-   mirrors them both here and via `--dns`, so the allow-rules match what
-   the container actually queries — not a blanket `udp/tcp 53` allow),
-   the backend gateway (`host.containers.internal` — allow-listed
-   _post-start_: the createContainer hook can't read the container's
-   `/etc/hosts` at pid=0, so after start the server resolves the gateway
-   IP and inserts an `ACCEPT` rule atop the `OUTPUT` chain), and the
-   resolved allowed destinations are `ACCEPT`ed. Everything else is
-   dropped.
-5. **IPv6 egress is default-denied** — the hook sets
-   `ip6tables -P OUTPUT DROP`, so the v4 allow-list cannot be bypassed over
-   IPv6 (#1936). (An earlier `sysctl net.ipv6.conf.*.disable_ipv6=1` was
-   dropped: it fires at `createContainer`, before pasta configures the
-   netns, and the disabled knob makes pasta's IPv6 address setup fail.
-   `ip6tables` is the sole v6 default-deny and is verified at startup.)
-   `allowed_domains` therefore accepts only hostnames and IPv4 addresses
-   (no `[ipv6]` literals), and AAAA records returned by DNS are ignored.
+2. On container start, if the workspace declares `allowed_domains`, the
+   backend starts a **network sidecar** container (`klangk-net-<ws-id>`,
+   from the `network_sidecar_image` image, which defaults to
+   `klangk-network-sidecar`) with `--cap-add NET_ADMIN` and
+   `--dns 1.1.1.1`, then starts the workspace with
+   `--network container:<sidecar>` so the two share a network namespace.
+   The workspace container itself is unprivileged.
+3. The sidecar's entrypoint installs the egress ruleset in the shared
+   netns: a default `DROP` OUTPUT policy, loopback (by destination),
+   established connections, a mark-scoped allow for the DNS proxy's
+   upstream forwards, static CIDR allows, and the backend gateway
+   (`host.containers.internal` on the klangkd port — a `/etc/hosts` entry
+   the FQDN proxy can't learn, so it's allow-listed statically).
+4. DNS is redirected: a `nat OUTPUT REDIRECT` sends all `:53` traffic
+   (except the proxy's own marked forwards) to the sidecar's FQDN DNS
+   proxy. The proxy resolves each query against a real upstream, and
+   **allow-lists resolved IPs at runtime** — so a domain whose IPs rotate
+   (CDN, DNS round-robin) stays reachable without a container restart,
+   and a denied domain returns NXDOMAIN. This replaces the create-time
+   IP-pinning the old OCI hook model used (#2255).
+5. **IPv6 egress is default-denied** — the sidecar sets
+   `ip6tables -P OUTPUT DROP`, so the v4 allow-list cannot be bypassed
+   over IPv6 (#1936). `allowed_domains` therefore accepts only hostnames
+   and IPv4 addresses (no `[ipv6]` literals), and AAAA records returned by
+   DNS are ignored.
 
-The hook runs **before** the container process starts, so the ruleset is in
-place and immutable before any user code runs — `CAP_NET_ADMIN` is dropped
-by the runtime before the container entrypoint executes.
+The ruleset is in place before the workspace process starts, and the
+workspace lacks `CAP_NET_ADMIN` so it cannot flush the ruleset.
 
 ## Interactive egress mode (#2239)
 
 A workspace can set `egress_mode` to `"interactive"` (default is `"static"`)
-via the API or CLI. In interactive mode the OCI hook installs the same
-allow-list ACCEPT rules as static mode, but adds two additional rules at the
-end of the OUTPUT chain:
+via the API or CLI. In interactive mode the sidecar installs the same
+allow-list as static mode, but adds two additional rules at the end of the
+OUTPUT chain:
 
 1. A rate-limited **NFLOG** rule (`-j NFLOG --nflog-group 5139`) that
    delivers blocked-packet metadata to userspace via a netlink socket.
    The `--nflog-prefix` is `klangk-egress:<id>:` where `<id>` is the
-   first 12 characters of the OCI container id (the same short id shown
-   by `podman ps`). The consent daemon uses this prefix to correlate
-   packets with workspaces.
+   workspace-id prefix (passed to the sidecar as
+   `KLANGKNETWORK_EGRESS_TAG`). The consent daemon uses this prefix to
+   correlate packets with workspaces.
 2. An explicit **DROP** rule — redundant given the OUTPUT policy, but makes
    the chain self-documenting and ensures NFLOG precedes DROP regardless
    of future chain additions.
@@ -90,39 +79,24 @@ throttled — the DROP fires for every packet.
 
 ## Enabling it (operator)
 
-Netfilter is **armed by default**. At startup klangkd materializes the hook
-script (`klangk-netfilter.sh`) and its config (`klangk-netfilter.json`)
-into a hooks directory and registers the OCI `createContainer` hook — no
-configuration is required for the common case.
+Egress filtering is **available by default**: `network_sidecar_image`
+ships with a default (`klangk-network-sidecar`), so a workspace that
+declares `allowed_domains` is filtered out of the box — no configuration
+is required for the common case.
 
-1. Ensure `iptables`, `ip6tables`, and `getent` are available where the
-   OCI runtime executes the hook (the host — _not_ the workspace image;
-   `createContainer` hooks resolve their binaries on the host). The hook
-   runs inside the container's network namespace at `createContainer` with
-   `CAP_NET_ADMIN` still held, so no `nsenter`/`sudo` is needed and no
-   host-level privilege is required. (`ip6tables` carries the IPv6
-   default-deny, #1936; if it is absent the hook logs a warning and v6
-   egress is not blocked, so the deploy must provide it.)
-2. The hooks dir defaults to `<state_dir>/oci-hooks`
-   (`KLANGKD_STATE_DIR`/`oci-hooks`). On macOS the backend automatically
-   copies the hooks into the podman machine VM at startup — no manual
-   configuration is needed. Override `KLANGKD_NETFILTER_HOOKS_DIR` only
-   when the OCI runtime can't see `state_dir` on Linux — a split
-   runtime or a DinD outer container:
+1. Build (or pull) the sidecar image so it's available to podman. In dev,
+   the `klangk:build-network-sidecar` devenv task builds it from
+   `src/containers/network/`. For a deploy, publish the image to your
+   registry and point `KLANGKD_NETWORK_SIDECAR_IMAGE` at it if you don't
+   use the default name.
+2. Restart klangkd. A workspace that declares `allowed_domains` now starts
+   behind the sidecar.
 
-   ```bash
-   export KLANGKD_NETFILTER_HOOKS_DIR=/var/lib/klangk/netfilter-hooks
-   ```
-
-3. Restart klangkd. The log shows
-   `Netfilter egress filtering enabled: OCI hooks installed in <dir>`.
-
-To **disable** netfilter entirely (e.g. an environment without
-`iptables`/`nsenter`, or where the hook can't be granted `CAP_NET_ADMIN`),
-set `KLANGKD_NETFILTER_ENABLED=false` (or YAML `netfilter_enabled: false`).
-When disabled, `enabled()` reports false, `--hooks-dir` is never passed,
-and workspaces with `allowed_domains` fail open with a loud warning
-(#1769). (#1774)
+To **disable** egress filtering entirely, set
+`KLANGKD_NETFILTER_ENABLED=false` (or YAML `netfilter_enabled: false`).
+When disabled, a workspace that declares `allowed_domains` **fails to
+start** (fail-closed) rather than running unrestricted — see
+[Fail-closed behavior](#fail-closed-behavior).
 
 ### Deploy-wide default allow-list
 
@@ -216,18 +190,18 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
 A restart of the workspace container applies the change to a running
 workspace (the ruleset is set at create time).
 
-## Fail-open behavior
+## Fail-closed behavior
 
-If a workspace declares `allowed_domains` but netfilter is **not armed**
-on the server — disabled via `KLANGKD_NETFILTER_ENABLED=false`, the hooks
-dir unwritable, or the hook not installed/current (#1771) — the workspace
-starts **unrestricted** and the server logs a loud warning. The
-`allowed_domains` value is still persisted, so it takes effect the moment
-netfilter is armed. The workspace's Settings panel and list row also badge
-the gap (#1769), so the user who set the list sees it — not just operator
-logs. This is deliberate: a misconfigured deploy degrades to the
-unrestricted baseline rather than making workspaces unusable, but the
-warning makes the gap visible.
+If a workspace declares `allowed_domains` but egress filtering is **not
+available** on the server — disabled via `KLANGKD_NETFILTER_ENABLED=false`,
+or the sidecar image unset/cleared — the workspace **refuses to start**
+rather than running unrestricted. Silently ignoring an allow-list would
+disable a security control the user explicitly requested (#2254 review
+B2). The `allowed_domains` value is still persisted, so it takes effect
+the moment filtering is re-enabled.
+
+A workspace **without** `allowed_domains` always starts unrestricted,
+regardless of the filtering setting.
 
 ## Common service domain lists
 
@@ -236,9 +210,9 @@ ports a service requires. The tables below cover the most-requested
 services; the same research pattern (check the provider's firewall /
 proxy docs, then test) works for any service.
 
-> **Note:** Hostnames are resolved to IPs at container-create time. If a
-> service's IPs change (common with CDN-fronted domains), the container
-> must be **restarted** to pick up the new addresses. See the
+> **Note:** Hostnames are resolved to IPs **at runtime** by the sidecar's
+> DNS proxy, so a service whose IPs change (common with CDN-fronted domains)
+> stays reachable without restarting the container. See the
 > [Caveats](#caveats) section.
 
 ### GitHub (SSH git operations)
@@ -557,15 +531,12 @@ netfilter_default_domains:
 
 ## Caveats
 
-- **IPv6 egress is default-denied — IPv4 egress only.** The hook sets
+- **IPv6 egress is default-denied — IPv4 egress only.** The sidecar sets
   `ip6tables -P OUTPUT DROP`, so the allow-list can't be bypassed over v6
-  (#1936). (An earlier `sysctl disable_ipv6=1` was dropped — it fired
-  before pasta configured the netns and broke pasta's IPv6 setup.)
-  Hostnames resolve to IPv4 only (AAAA records are ignored), and
+  (#1936). Hostnames resolve to IPv4 only (AAAA records are ignored), and
   `[ipv6]:port` literals are rejected by the validator. Trade-off: a
-  workspace that genuinely needs IPv6 egress
-  cannot use the filter — clear `allowed_domains` (and the deploy-wide
-  default) to run it unrestricted.
+  workspace that genuinely needs IPv6 egress cannot use the filter — clear
+  `allowed_domains` (and the deploy-wide default) to run it unrestricted.
 - **`0.0.0.0/0` matches all IPv4 — don't use it to "disable" the
   filter.** A `/0` CIDR (e.g. `0.0.0.0/0`) is a valid spec but the
   ACCEPT rule it emits matches the entire IPv4 space, so it effectively
@@ -575,69 +546,38 @@ netfilter_default_domains:
   egress, leave `allowed_domains` empty (or set
   `KLANGKD_NETFILTER_ENABLED=false`) — those are the documented,
   obvious ways to opt out (#1935).
-- **DNS resolution at creation time — restart on IP change.** iptables
-  matches IPs, so hostnames are resolved once when the container is
-  created. If a service rotates IPs (common with CDNs like Fastly,
-  CloudFront, and Cloudflare), access may break without warning.
-  **Restart the workspace container** to re-resolve hostnames and
-  update the iptables rules. Mitigation: allow a CIDR range
-  (`10.0.0.0/8`), which is installed as a single stable `-d <ip>/<plen>`
-  rule with no DNS resolution (#1935).
-- **DNS is pinned to resolvers, not blocked entirely.** Outbound `:53` is
-  accepted only to the nameservers in the container's `/etc/resolv.conf`,
-  so a workspace cannot talk to an arbitrary host on port 53. This does
-  **not** prevent DNS tunneling through those permitted resolvers to
-  attacker-controlled domains (data can still be encoded in DNS queries).
-  Treat the filter as an egress allow-list, not a complete anti-exfiltration
-  guarantee against DNS-based channels.
+- **Hostnames resolve at runtime — no restart needed on IP change.** The
+  sidecar's DNS proxy resolves each query against a real upstream and
+  allow-lists the IP at runtime, so a service that rotates IPs (CDNs like
+  Fastly, CloudFront, Cloudflare) stays reachable without restarting the
+  container. Static CIDR ranges (`10.0.0.0/8`) are installed as a single
+  stable `-d <ip>/<plen>` rule with no resolution (#1935).
+- **DNS is redirected to the sidecar's proxy, not blocked.** Outbound
+  `:53` is `REDIRECT`ed to the sidecar's FQDN DNS proxy, which resolves
+  against a real upstream and allow-lists the IPs at runtime; a denied
+  domain returns NXDOMAIN. This does **not** prevent DNS tunneling through
+  the proxy to attacker-controlled domains (data can still be encoded in
+  DNS queries). Treat the filter as an egress allow-list, not a complete
+  anti-exfiltration guarantee against DNS-based channels.
 - **Ruleset immutability depends on the runtime capability set.** The
-  hook installs the iptables rules before the container entrypoint starts,
-  and a filtered workspace also has `NET_ADMIN` dropped explicitly
-  (`--cap-drop NET_ADMIN`). `NET_ADMIN` is already absent from podman's
-  default capability set, so this is a no-op under defaults and defense
-  in depth against an operator override. It is **not** a hard guarantee:
-  running the workspace `--privileged`, adding `--cap-add NET_ADMIN`, or a
-  permissive seccomp profile hands the entrypoint `iptables -F OUTPUT`,
-  which flushes the ruleset and lets it exfiltrate freely. Do not run
-  filtered workspaces privileged or grant `NET_ADMIN`.
-- **`--hooks-dir` overrides podman's default hook dirs (Linux only).**
-  On Linux, podman's `--hooks-dir` flag _replaces_ (does not append to)
-  the default OCI hook search paths, so passing only klangk's hooks dir
-  for a filtered workspace would silently disable every other
-  `createContainer` hook an operator relies on (monitoring, secrets
-  injection, GPU, corporate integrations). To avoid that, a filtered
-  container passes klangk's hooks dir **and** the two standard default
-  dirs (`/usr/share/containers/oci/hooks.d`,
-  `/etc/containers/oci/hooks.d`), preserving operator hooks. Podman
-  tolerates a dir that doesn't exist (it simply finds no hooks there).
-  Limitation: a _non-standard_ hooks dir configured only via
-  `containers.conf` is still clobbered by an explicit `--hooks-dir`;
-  unrestricted workspaces are unaffected (the flag isn't passed). On
-  macOS, `--hooks-dir` is not used (it is silently ignored by the remote
-  client); hooks are installed in the VM's standard hooks dir and
-  discovered automatically. See #1770.
+  sidecar installs the iptables rules in the shared netns, and the
+  workspace container is unprivileged (no `NET_ADMIN`). It is **not** a
+  hard guarantee: running the workspace `--privileged`, adding
+  `--cap-add NET_ADMIN`, or a permissive seccomp profile hands the
+  entrypoint `iptables -F OUTPUT`, which flushes the ruleset and lets it
+  exfiltrate freely. Do not run filtered workspaces privileged or grant
+  `NET_ADMIN`.
 - **Port granularity.** A spec allows either all ports (`host`, or a
   CIDR like `10.0.0.0/8`) or a single TCP port (`host:port`, CIDR with
   `:port`). Port-only rules (allow a port to any host) are not
   supported — that would be an exfiltration channel.
 - **macOS hosts.** On macOS, podman runs inside a CoreOS VM via
-  `podman machine`. klangkd automatically copies the OCI hook script
-  and JSON into the VM at startup (via `podman machine ssh`), writes a
-  `containers.conf` drop-in so rootless podman discovers the hooks dir,
-  and uses `sudo` inside the hook for the `nsenter` calls that require
-  root (the Fedora CoreOS `core` user has passwordless `sudo`). No
-  manual configuration is needed — egress filtering works out of the
-  box on macOS. The hook runs inside the container's Linux network
-  namespace in the VM, never the macOS (XNU) kernel, so `iptables`
-  availability is not host-dependent. Run `klangkd doctor` to verify
-  that `iptables`, `nsenter`, and `getent` are available inside the VM.
+  `podman machine`. The network sidecar runs as a normal container in
+  that VM (it owns its netns + iptables), so egress filtering works the
+  same way as on Linux — no host `iptables`/`nsenter` is needed.
 
 ## References
 
-- [Podman maintainer discussion on OCI hooks for iptables][podman-disc]
-- [Working OCI hooks + iptables implementation][jerabaul29]
-- [OCI runtime spec — hooks][oci-hooks]
+- [FQDN egress via a DNS-proxy sidecar][fqdn-sidecar]
 
-[podman-disc]: https://github.com/containers/podman/discussions/27099
-[jerabaul29]: https://github.com/jerabaul29/2025_podman_iptable_rules
-[oci-hooks]: https://github.com/opencontainers/runtime-spec/blob/main/config.md#posix-platform-hooks
+[fqdn-sidecar]: https://github.com/mcdonc/klangk/issues/2250

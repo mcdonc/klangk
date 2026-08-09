@@ -253,6 +253,19 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Egress filtering enforcement moved into the network sidecar (#2255).**
+  The per-workspace egress ruleset — default-deny OUTPUT, loopback,
+  established, the DNS REDIRECT + FQDN proxy, static CIDR allows, the
+  backend gateway, IPv6 default-deny, and interactive NFLOG — now lives
+  entirely in the network sidecar's netns (which the filtered workspace
+  shares via `--network container:`). The create-time OCI hook model
+  (`klangk-netfilter.sh` + `netfilter.py`'s annotation/`--hooks-dir` path)
+  and the post-start `allow_backend_gateway` nsenter step are removed; the
+  sidecar is the only egress model (fail-closed if it can't start). The
+  sidecar image (`network_sidecar_image`) defaults to
+  `klangk-network-sidecar`, so filtering works out of the box without
+  `KLANGKD_NETFILTER_HOOKS_DIR`.
+
 - **Workspace create/edit forms grouped into sections (#2229).** The
   browser's "New workspace" dialog and the workspace settings panel now
   group fields into the same logical sections the TUI form uses — General,
