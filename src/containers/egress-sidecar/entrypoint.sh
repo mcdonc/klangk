@@ -40,7 +40,17 @@ unset IFS
 
 # --- nat OUTPUT: REDIRECT each configured resolver (:53) to the proxy ---
 grep -E '^nameserver' /etc/resolv.conf | awk '{print $2}' | while read -r ns; do
-  [ "$ns" = "$UPSTREAM" ] && continue
+  if [ "$ns" = "$UPSTREAM" ]; then
+    # Loop-avoidance skip — but make it LOUD: a resolver equal to the
+    # upstream is NOT redirected, so DNS to it bypasses the FQDN allow-list
+    # in proxy.py. The wiring (klangk starting this sidecar with --dns set
+    # to a resolver != upstream) must prevent this; until #2254 lands,
+    # surface it rather than fail silently.
+    echo "klangk-egress: resolver $ns == upstream $UPSTREAM; not redirecting" \
+      "(would loop) — DNS to it is UNFILTERED. Ensure the workspace's" \
+      "resolvers differ from the upstream (#2254)." >&2
+    continue
+  fi
   $IPT -t nat -A OUTPUT -d "$ns" -p udp --dport 53 -j REDIRECT --to-ports "$LISTEN_PORT"
   $IPT -t nat -A OUTPUT -d "$ns" -p tcp --dport 53 -j REDIRECT --to-ports "$LISTEN_PORT"
 done

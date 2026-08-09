@@ -315,6 +315,49 @@ class TestNetFilterCreateKwargs:
         # flush the ruleset (#1773).
         assert cap_drop == ["NET_ADMIN"]
 
+    def test_armed_but_ip6tables_missing_warns_v6_bypass(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        # PR #2248 B1: ip6tables is the sole IPv6 default-deny (the sysctl
+        # was removed). If it's absent on the host, the hook's v6 DROP
+        # fails silently -> IPv6 exfil bypass. create_kwargs still arms the
+        # v4 filter (refusing would discard working v4 protection) but
+        # warns loudly.
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(
+            nf.shutil,
+            "which",
+            lambda b: None if b == "ip6tables" else "/usr/sbin/" + b,
+        )
+        nf_obj.install_hooks()
+        with caplog.at_level("WARNING"):
+            ann, _hooks, cap_drop, _dns = nf_obj.create_kwargs(
+                ["github.com:443"]
+            )
+        # v4 filter still armed.
+        assert ann == {nf.ANNOTATION_KEY: "github.com:443"}
+        assert cap_drop == ["NET_ADMIN"]
+        assert any(
+            "ip6tables" in r.message and "BYPASS" in r.message
+            for r in caplog.records
+        )
+
+    def test_armed_and_ip6tables_present_no_v6_warning(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        # Counter-test: ip6tables present -> no v6-bypass warning.
+        path = str(tmp_path / "hooks")
+        nf_obj = nf.NetFilter(_app(hooks_dir=path))
+        monkeypatch.setattr(nf.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(nf.shutil, "which", lambda b: "/usr/sbin/" + b)
+        nf_obj.install_hooks()
+        with caplog.at_level("WARNING"):
+            ann, _h, _c, _dns = nf_obj.create_kwargs(["github.com:443"])
+        assert ann == {nf.ANNOTATION_KEY: "github.com:443"}
+        assert not any("BYPASS" in r.message for r in caplog.records)
+
     def test_workspace_overrides_deploy_default(self, tmp_path):
         # A non-empty workspace list replaces the default (no merge).
         path = str(tmp_path / "hooks")
