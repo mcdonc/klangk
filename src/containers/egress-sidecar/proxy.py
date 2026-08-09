@@ -16,17 +16,17 @@ handled correctly — a parser bug in a security component is dangerous, and a
 maintained library removes that risk.
 
 Configuration (env):
-  KLANGK_EGRESS_ALLOW       comma-separated allow-list: ``host[:port]`` or CIDR
+  KLANGKEGRESS_ALLOW       comma-separated allow-list: ``host[:port]`` or CIDR
                             specs. CIDR specs are applied statically by the
                             entrypoint; this proxy matches only the host specs
                             (exact or suffix).
-  KLANGK_EGRESS_UPSTREAM    the real upstream resolver the proxy forwards to
+  KLANGKEGRESS_UPSTREAM    the real upstream resolver the proxy forwards to
                             (default ``8.8.8.8``). MUST differ from the
                             workspace's configured (redirected) resolvers or the
                             proxy's forwards loop back into itself.
-  KLANGK_EGRESS_LISTEN_PORT UDP port to listen on (default ``15353``).
-  KLANGK_EGRESS_IPTABLES    iptables binary (default ``iptables``).
-  KLANGK_EGRESS_DEBUG       if set, log each allow/deny decision.
+  KLANGKEGRESS_LISTEN_PORT UDP port to listen on (default ``15353``).
+  KLANGKEGRESS_IPTABLES    iptables binary (default ``iptables``).
+  KLANGKEGRESS_DEBUG       if set, log each allow/deny decision.
 
 Limitations (tracked in #2256): a learned IP is allow-listed on *all* ports (no
 per-domain port scoping yet), no wildcard domains, and learned IPs are never
@@ -42,20 +42,20 @@ import dns.message
 import dns.rcode
 import dns.rdatatype
 
-UPSTREAM = (os.environ.get("KLANGK_EGRESS_UPSTREAM", "8.8.8.8"), 53)
-LISTEN_PORT = int(os.environ.get("KLANGK_EGRESS_LISTEN_PORT", "15353"))
-IPT = os.environ.get("KLANGK_EGRESS_IPTABLES", "iptables")
-DEBUG = bool(os.environ.get("KLANGK_EGRESS_DEBUG"))
+UPSTREAM = (os.environ.get("KLANGKEGRESS_UPSTREAM", "8.8.8.8"), 53)
+LISTEN_PORT = int(os.environ.get("KLANGKEGRESS_LISTEN_PORT", "15353"))
+IPT = os.environ.get("KLANGKEGRESS_IPTABLES", "iptables")
+DEBUG = bool(os.environ.get("KLANGKEGRESS_DEBUG"))
 
 
 def host_specs() -> list[str]:
-    """Host specs (suffix-match targets) from KLANGK_EGRESS_ALLOW.
+    """Host specs (suffix-match targets) from KLANGKEGRESS_ALLOW.
 
     CIDR specs (``10.0.0.0/8``) are excluded — the entrypoint applies those
     statically. ``host:port`` specs are stripped to the host part.
     """
     out = []
-    for spec in os.environ.get("KLANGK_EGRESS_ALLOW", "").split(","):
+    for spec in os.environ.get("KLANGKEGRESS_ALLOW", "").split(","):
         spec = spec.strip()
         if not spec or "/" in spec:
             continue
