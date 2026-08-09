@@ -43,6 +43,25 @@ path with no test will fail the build. When iterating
 fast on one file you can scope with `-k` / a path and add `--no-cov`, but
 re-run the full suite **with** coverage (and `-n auto`) before committing.
 
+For tight edit/test loops, `pytest-testmon` (in the `test` extra) selects
+only the tests whose coverage touches your changed lines. Run the
+`testmon` task — it baselines the line→test map into
+`src/klangk/.testmondata` on the first clean-tree run, then re-runs just
+the affected subset (~10s vs ~60s):
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- testmon
+```
+
+`--no-cov` is intentional: a scoped run only exercises a fraction of the
+package, so the 100% gate does not apply to it. Re-run the full suite
+**with** coverage (the `test-backend` task) before committing — testmon is
+a local accelerator only; CI always runs the full suite. The data file is
+per-worktree (rootdir-relative) and gitignored; concurrent `testmon` runs
+in the same worktree serialize on sqlite's busy-lock (a brief stall, not
+corruption). Delete `src/klangk/.testmondata` after a large refactor or
+branch switch to re-baseline.
+
 ## Verifying behavior empirically (avoid repro loops)
 
 When you need to confirm a runtime behavior empirically, **add a temporary

@@ -40,6 +40,11 @@ test = [
     "pytest-cov>=6.0.0",
     "pytest-xdist>=3.0.0",
     "pytest-timeout>=2.3.0",
+    # Selects only tests whose coverage touches changed source lines, for
+    # fast local iteration. Optional in spirit: CI runs the full suite the
+    # documented way (`-n auto`, full coverage); this powers the local
+    # `--testmon` scoped loop (#2288).
+    "pytest-testmon>=2.0.0",
 ]
 
 [project.scripts]

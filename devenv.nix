@@ -272,6 +272,20 @@ in
       -v -n auto --no-cov "$@"
   '';
 
+  # Scoped run: re-run only tests whose coverage touches changed source
+  # lines (pytest-testmon). Inert on CI — CI runs the full suite via
+  # test-backend; this is the local tight-loop accelerator (#2288).
+  # First run on a clean tree baselines the line->test map into
+  # src/klangk/.testmondata (~the same cost as test-unit); after that, a
+  # one-file edit re-runs just the affected subset (~10s vs ~60s). Delete
+  # src/klangk/.testmondata after a large refactor / branch switch to
+  # re-baseline.
+  scripts.testmon.exec = ''
+    cd $DEVENV_ROOT
+    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+      -v -n auto --no-cov --testmon "$@"
+  '';
+
   # CLI E2E tests: start real server, run klangk commands.
   # Free-allocated ports + instance-scoped cleanup (#1393) make xdist
   # safe with --dist=loadscope. Capped at 2 workers to limit podman
