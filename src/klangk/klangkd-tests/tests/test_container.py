@@ -559,6 +559,9 @@ def patch_podman(registry=None, **overrides):
     """
     defaults = {
         "inspect_container": AsyncMock(return_value=None),
+        "container_logs": AsyncMock(
+            return_value="dns-proxy listening on 127.0.0.1:15353"
+        ),
         "create_container": AsyncMock(return_value="new-cid"),
         "start_container": AsyncMock(),
         "wait_for_container_ready": AsyncMock(),
@@ -861,6 +864,82 @@ class TestStartContainer:
             "ping" in rec.message.lower() and "#2276" in rec.message
             for rec in caplog.records
         ), [rec.message for rec in caplog.records]
+
+    async def test_start_network_sidecar_raises_if_proxy_exits_before_ready(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2277: if the sidecar exits before the DNS proxy binds, refuse to
+        # start (fail-closed) rather than let the workspace join a netns whose
+        # OUTPUT is still ACCEPT (entrypoint mid-flight).
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        async def _fake_create(name, image, **kw):
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry,
+            create_container=AsyncMock(side_effect=_fake_create),
+            container_logs=AsyncMock(return_value=""),
+            inspect_container=AsyncMock(
+                return_value={"State": {"Status": "exited"}}
+            ),
+        ):
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+
+    async def test_start_network_sidecar_raises_on_readiness_timeout(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2277: if the proxy never prints its listening line within the
+        # readiness window, refuse to start (fail-closed). Monkeypatch the
+        # timeout/poll constants small so the test doesn't wait 30s.
+        import klangk.container as _c_mod
+
+        monkeypatch.setattr(_c_mod, "_NETWORK_SIDECAR_READY_TIMEOUT", 0.05)
+        monkeypatch.setattr(_c_mod, "_NETWORK_SIDECAR_READY_POLL", 0.01)
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        async def _fake_create(name, image, **kw):
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry,
+            create_container=AsyncMock(side_effect=_fake_create),
+            container_logs=AsyncMock(return_value=""),
+            inspect_container=AsyncMock(
+                return_value={"State": {"Status": "running"}}
+            ),
+        ):
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
 
     async def test_network_sidecar_failure_refuses_to_start(
         self, workspace, tmp_path, monkeypatch

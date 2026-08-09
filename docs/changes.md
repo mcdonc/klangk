@@ -422,6 +422,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Network sidecar: a filtered workspace now waits for the sidecar's DNS
+  proxy to be ready before starting (#2277).** Previously the workspace joined
+  the sidecar's netns the instant it was started, before the entrypoint had
+  applied `iptables -P OUTPUT DROP` or the proxy had bound — a window of
+  unrestricted egress. The sidecar start now polls for the proxy's
+  `dns-proxy listening` line and refuses to start the workspace (fail-closed)
+  if the proxy exits or never binds.
+
 - **`build-workspace-image.sh` no longer rebuilds the workspace image on
   every server restart (#2273).** The image-creation-time "verify the image
   is newer than every source file" check was unreliable (podman inspect

@@ -28,6 +28,15 @@ DEFAULT_PORTS_PER_WORKSPACE = 5
 
 HEALTH_MESSAGE_MAX_BYTES = 512
 
+# Network sidecar readiness (#2277): the sidecar's proxy prints
+# "dns-proxy listening" once bound. _start_network_sidecar polls the sidecar's
+# logs for it before returning, so a workspace never joins a netns whose OUTPUT
+# policy is still ACCEPT (the entrypoint hasn't run -P OUTPUT DROP yet) — a
+# fail-open window. Module-level so the timeout path is unit-testable fast.
+_NETWORK_SIDECAR_READY_TIMEOUT = 30.0
+_NETWORK_SIDECAR_READY_POLL = 0.3
+_NETWORK_SIDECAR_READY_TOKEN = "dns-proxy listening"
+
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
 _VALID_MOUNT_OPTIONS = {
@@ -1156,6 +1165,35 @@ class ContainerRegistry:
                 pull="missing",
             )
             await self.app.state.podman.start_container(cid)
+            # #2277: wait for the proxy to be listening before returning, so the
+            # workspace never joins a netns whose OUTPUT is still ACCEPT
+            # (entrypoint mid-flight) — a fail-open window. The proxy prints
+            # "dns-proxy listening" once bound; poll its logs. Fail-closed: if
+            # the sidecar exits first or the proxy never binds, raise so the
+            # caller refuses to start the workspace rather than run it unfiltered.
+            deadline = time.monotonic() + _NETWORK_SIDECAR_READY_TIMEOUT
+            ready = False
+            while time.monotonic() < deadline:
+                logs = await self.app.state.podman.container_logs(cid)
+                if _NETWORK_SIDECAR_READY_TOKEN in logs:
+                    ready = True
+                    break
+                state = await self.app.state.podman.inspect_container(cid)
+                status = (state or {}).get("State", {}).get("Status", "")
+                if status in ("exited", "stopped"):
+                    raise podman.PodmanError(
+                        500,
+                        f"network sidecar {name} exited before the DNS proxy "
+                        f"was ready; logs:\n{logs}",
+                    )
+                await asyncio.sleep(_NETWORK_SIDECAR_READY_POLL)
+            if not ready:
+                raise podman.PodmanError(
+                    500,
+                    f"network sidecar {name} DNS proxy did not become ready "
+                    f"within {_NETWORK_SIDECAR_READY_TIMEOUT:.0f}s; the "
+                    "workspace would join an unfiltered netns",
+                )
             logger.info(
                 "network sidecar started for %s: %s (%s)",
                 workspace_id[:8],

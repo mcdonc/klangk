@@ -251,6 +251,17 @@ class Podman:
         data = json.loads(out)
         return data[0] if data else None
 
+    async def container_logs(self, container_id: str) -> str:
+        """Return the container's combined stdout/stderr logs (empty if gone).
+
+        Used to wait for a container's entrypoint to signal readiness (e.g. the
+        network sidecar's proxy prints ``dns-proxy listening`` once bound) —
+        ``podman start`` returns the moment the container reaches "running",
+        which is before the entrypoint has finished its setup (#2277).
+        """
+        rc, out, _err = await self.run(["logs", container_id], check=False)
+        return out if rc == 0 else ""
+
     async def create_container(
         self,
         name: str,
