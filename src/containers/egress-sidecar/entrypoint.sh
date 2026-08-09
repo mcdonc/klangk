@@ -6,13 +6,13 @@
 # Loop-avoidance: the nat REDIRECT targets the workspace's configured resolvers
 # (read from this sidecar's /etc/resolv.conf — the workspace inherits them via
 # --network container:<sidecar>); the proxy forwards to a DIFFERENT upstream
-# ($KLANGK_EGRESS_UPSTREAM), which the REDIRECT must not match. Any nameserver
+# ($KLANGKEGRESS_UPSTREAM), which the REDIRECT must not match. Any nameserver
 # equal to the upstream is skipped (would loop).
 set -eu
 
-UPSTREAM="${KLANGK_EGRESS_UPSTREAM:-8.8.8.8}"
-IPT="${KLANGK_EGRESS_IPTABLES:-iptables}"
-LISTEN_PORT="${KLANGK_EGRESS_LISTEN_PORT:-15353}"
+UPSTREAM="${KLANGKEGRESS_UPSTREAM:-8.8.8.8}"
+IPT="${KLANGKEGRESS_IPTABLES:-iptables}"
+LISTEN_PORT="${KLANGKEGRESS_LISTEN_PORT:-15353}"
 
 # --- filter OUTPUT: default-deny + the paths the workspace + proxy need ---
 $IPT -P OUTPUT DROP
@@ -28,7 +28,7 @@ $IPT -A OUTPUT -d "$UPSTREAM" -p tcp --dport 53 -j ACCEPT
 # A "host:port" CIDR like 10.0.0.0/8:443 is stripped to its CIDR; per-domain
 # port scoping is #2256.
 IFS=','
-for spec in ${KLANGK_EGRESS_ALLOW:-}; do
+for spec in ${KLANGKEGRESS_ALLOW:-}; do
   case "$spec" in
   */*)
     cidr=${spec%%:*}

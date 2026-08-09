@@ -31,26 +31,26 @@ podman build -t klangk-egress-sidecar -f src/containers/egress-sidecar/Dockerfil
 ```bash
 podman run -d --name <ws>-egress --cap-add NET_ADMIN \
   --dns 1.1.1.1 \
-  -e KLANGK_EGRESS_ALLOW=github.com:443,pypi.org \
-  -e KLANGK_EGRESS_UPSTREAM=8.8.8.8 \
+  -e KLANGKEGRESS_ALLOW=github.com:443,pypi.org \
+  -e KLANGKEGRESS_UPSTREAM=8.8.8.8 \
   klangk-egress-sidecar
 podman run -d --name <ws> --network container:<ws>-egress <workspace-image> ...
 ```
 
-Constraint: `KLANGK_EGRESS_UPSTREAM` (default `8.8.8.8`) **must differ** from the
+Constraint: `KLANGKEGRESS_UPSTREAM` (default `8.8.8.8`) **must differ** from the
 workspace's configured resolvers (the sidecar's `--dns`, which the workspace
 inherits) — otherwise the proxy's forwards loop back into itself. `entrypoint.sh`
 skips any nameserver equal to the upstream as a guard.
 
 ## Configuration (env)
 
-| var                         | default    | meaning                                           |
-| --------------------------- | ---------- | ------------------------------------------------- |
-| `KLANGK_EGRESS_ALLOW`       | _(empty)_  | comma-separated allow-list: `host[:port]` or CIDR |
-| `KLANGK_EGRESS_UPSTREAM`    | `8.8.8.8`  | real upstream the proxy forwards to               |
-| `KLANGK_EGRESS_LISTEN_PORT` | `15353`    | UDP port the proxy listens on                     |
-| `KLANGK_EGRESS_IPTABLES`    | `iptables` | iptables binary path                              |
-| `KLANGK_EGRESS_DEBUG`       | unset      | if set, log each allow/deny decision              |
+| var                        | default    | meaning                                           |
+| -------------------------- | ---------- | ------------------------------------------------- |
+| `KLANGKEGRESS_ALLOW`       | _(empty)_  | comma-separated allow-list: `host[:port]` or CIDR |
+| `KLANGKEGRESS_UPSTREAM`    | `8.8.8.8`  | real upstream the proxy forwards to               |
+| `KLANGKEGRESS_LISTEN_PORT` | `15353`    | UDP port the proxy listens on                     |
+| `KLANGKEGRESS_IPTABLES`    | `iptables` | iptables binary path                              |
+| `KLANGKEGRESS_DEBUG`       | unset      | if set, log each allow/deny decision              |
 
 ## Limitations (#2256)
 
