@@ -422,6 +422,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Network sidecar: no longer leaks across a process restart (#2248
+  review).** Reconnecting to a running filtered workspace after a klangkd
+  restart now re-tracks its sidecar, so stopping the workspace tears the
+  sidecar down. Previously the in-memory tracking was lost on restart and the
+  reconnect path didn't restore it, leaving the sidecar (NET_ADMIN + DNS
+  proxy) running until the next start or the instance reaper.
+
 - **Network sidecar: stop/start race on the deterministic sidecar name
   (#2265).** A concurrent stop and start of the same filtered workspace could
   race on the sidecar's per-workspace name: the stop removed the sidecar the

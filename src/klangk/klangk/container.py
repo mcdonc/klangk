@@ -1764,6 +1764,15 @@ class ContainerRegistry:
                 setup_state=setup_state,
             )
             if result is not None:
+                # Re-track a filtered workspace's network sidecar on reconnect.
+                # _ws_with_network_sidecar is in-memory and lost on a process
+                # restart; without this, a reconnect-then-stop would skip
+                # _stop_network_sidecar (only the create path added it before)
+                # and leak the sidecar until the next start's force-remove or
+                # the instance reaper. A filtered workspace always has a live
+                # sidecar (fail-closed), so allowed_domains set => re-track.
+                if allowed_domains:
+                    self._ws_with_network_sidecar.add(workspace_id)
                 return result
 
         # Allocate host ports.

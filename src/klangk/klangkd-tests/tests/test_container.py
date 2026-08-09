@@ -1488,6 +1488,36 @@ class TestStartContainer:
         p.start_container.assert_not_awaited()
         p.create_container.assert_not_awaited()
 
+    async def test_reuse_running_filtered_container_retracks_sidecar(
+        self, workspace, monkeypatch
+    ):
+        # #2248 review nit: _ws_with_network_sidecar is in-memory (lost on a
+        # process restart). Reconnecting to a running FILTERED workspace must
+        # re-track its sidecar so a later stop tears it down instead of leaking
+        # it (only the create path added it before).
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        assert workspace["id"] not in self.registry._ws_with_network_sidecar
+        with patch_podman(
+            self.registry, inspect_container=_running(True)
+        ) as p:
+            cid, status = await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                existing_container_id="existing-cid",
+                allowed_domains=["github.com:443"],
+            )
+        assert cid == "existing-cid"
+        assert status == "connected"
+        p.start_container.assert_not_awaited()
+        p.create_container.assert_not_awaited()
+        # Re-tracked: a later stop will now tear the sidecar down.
+        assert workspace["id"] in self.registry._ws_with_network_sidecar
+
     async def test_recreate_stopped_container(self, workspace):
         with patch_podman(
             self.registry, inspect_container=_running(False)
