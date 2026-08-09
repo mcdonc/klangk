@@ -10,6 +10,11 @@ the responses, and inserts ``iptables -I OUTPUT 1 -d <ip> -j ACCEPT`` for each s
 the workspace can reach exactly the IPs it resolved — solving DNS round-robin.
 Denied names get NXDOMAIN.
 
+DNS wire parsing is delegated to **dnspython** (rather than hand-rolled byte
+slicing) so EDNS, CNAME chains, TCP-sized responses, and malformed packets are
+handled correctly — a parser bug in a security component is dangerous, and a
+maintained library removes that risk.
+
 Configuration (env):
   KLANGK_EGRESS_ALLOW       comma-separated allow-list: ``host[:port]`` or CIDR
                             specs. CIDR specs are applied statically by the
@@ -25,13 +30,17 @@ Configuration (env):
 
 Limitations (tracked in #2256): a learned IP is allow-listed on *all* ports (no
 per-domain port scoping yet), no wildcard domains, and learned IPs are never
-cleaned up (no TTL expiry).
+cleaned up (no TTL expiry). Transport is UDP only (TCP fallback is a future
+addition).
 """
 
 import os
 import socket
-import struct
 import subprocess
+
+import dns.message
+import dns.rcode
+import dns.rdatatype
 
 UPSTREAM = (os.environ.get("KLANGK_EGRESS_UPSTREAM", "8.8.8.8"), 53)
 LISTEN_PORT = int(os.environ.get("KLANGK_EGRESS_LISTEN_PORT", "15353"))
@@ -59,47 +68,36 @@ def host_specs() -> list[str]:
 ALLOWED = host_specs()
 
 
-def parse_qname(msg: bytes) -> str:
-    """The queried domain (lowercased), from a DNS wire-format message."""
-    i = 12  # skip the 12-byte header
-    labels = []
-    while i < len(msg) and msg[i] != 0:
-        n = msg[i]
-        labels.append(msg[i + 1 : i + 1 + n].decode("ascii", "ignore"))
-        i += 1 + n
-    return ".".join(labels).lower()
+def query_name(wire: bytes) -> str:
+    """The queried domain (lowercased, no trailing dot) from a DNS wire message."""
+    msg = dns.message.from_wire(wire)
+    if not msg.question:
+        return ""
+    return msg.question[0].name.to_text().rstrip(".").lower()
 
 
-def parse_a_ips(msg: bytes) -> list[str]:
-    """IPv4 A-record addresses from a DNS response (dotted-quad strings)."""
-    ancount = struct.unpack("!H", msg[6:8])[0]
-    i = 12
-    while i < len(msg) and msg[i] != 0:  # skip the question QNAME
-        i += 1 + msg[i]
-    i += 5  # null + QTYPE(2) + QCLASS(2)
+def a_records(wire: bytes) -> list[str]:
+    """IPv4 A-record addresses from a DNS response wire (dotted-quad strings).
+
+    Walks the answer section (following CNAME chains transparently — the A
+    records for the canonical name are in the answer too) and returns only
+    A-record IPs.
+    """
+    msg = dns.message.from_wire(wire)
     ips = []
-    for _ in range(ancount):
-        if i >= len(msg):
-            break
-        if msg[i] & 0xC0 == 0xC0:  # compressed name pointer
-            i += 2
-        else:
-            while i < len(msg) and msg[i] != 0:
-                i += 1 + msg[i]
-            i += 1
-        if i + 10 > len(msg):
-            break
-        rtype, _rclass, _ttl, rdlen = struct.unpack("!HHIH", msg[i : i + 10])
-        i += 10
-        if rtype == 1 and rdlen == 4:  # A
-            ips.append(".".join(str(b) for b in msg[i : i + 4]))
-        i += rdlen
+    for rrset in msg.answer:
+        if rrset.rdtype == dns.rdatatype.A:
+            for rdata in rrset:
+                ips.append(rdata.address)
     return ips
 
 
-def build_nxdomain(query: bytes) -> bytes:
-    """An NXDOMAIN response for the given query (preserves id + question)."""
-    return query[:2] + b"\x81\x83" + query[4:6] + b"\x00\x00\x00\x00" + query[12:]
+def nxdomain_for(wire: bytes) -> bytes:
+    """An NXDOMAIN response wire for the given query wire."""
+    query = dns.message.from_wire(wire)
+    resp = dns.message.make_response(query)
+    resp.set_rcode(dns.rcode.NXDOMAIN)
+    return resp.to_wire()
 
 
 def allowed(qname: str) -> bool:
@@ -124,28 +122,34 @@ def main() -> None:
     )
     while True:
         try:
-            data, addr = s.recvfrom(4096)
+            data, addr = s.recvfrom(65535)
         except Exception:
             continue
         try:
-            qname = parse_qname(data)
+            qname = query_name(data)
         except Exception:
-            continue
-        if not allowed(qname):
+            continue  # malformed/unparseable query -> drop
+        if not qname or not allowed(qname):
             if DEBUG:
                 print(f"deny  {qname}", flush=True)
-            s.sendto(build_nxdomain(data), addr)
+            try:
+                s.sendto(nxdomain_for(data), addr)
+            except Exception:
+                pass
             continue
         us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         us.settimeout(3)
         try:
             us.sendto(data, UPSTREAM)
-            resp, _ = us.recvfrom(4096)
+            resp, _ = us.recvfrom(65535)
         except Exception:
             us.close()
             continue
         us.close()
-        ips = parse_a_ips(resp)
+        try:
+            ips = a_records(resp)
+        except Exception:
+            ips = []
         for ip in ips:
             allow_ip(ip)
         if DEBUG:

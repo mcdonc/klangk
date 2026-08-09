@@ -3,7 +3,8 @@
 #
 # Build context is this directory (proxy.py + entrypoint.sh are COPY'd in).
 FROM alpine:latest
-RUN apk add --no-cache iptables python3
+RUN apk add --no-cache iptables python3 py3-pip \
+    && pip install --no-cache-dir --break-system-packages dnspython
 COPY proxy.py /proxy.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
