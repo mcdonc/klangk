@@ -38,6 +38,19 @@ for spec in ${KLANGKEGRESS_ALLOW:-}; do
 done
 unset IFS
 
+# --- backend reachability: allow the klangkd backend (LLM proxy + bridge)
+# on host.containers.internal. The workspace must reach it to function, and
+# host.containers.internal is a /etc/hosts entry (not a DNS lookup), so the
+# FQDN proxy can never learn its IP — allow it statically, scoped to the
+# backend port only (the klangkd backend is itself authenticated). #2254 B1.
+case "${KLANGKEGRESS_BACKEND_PORT:-}" in
+'' | *[!0-9]*) ;; # empty or non-numeric (e.g. "socket"): nothing to allow
+*)
+  gw=$(getent hosts host.containers.internal 2>/dev/null | awk '{print $1; exit}')
+  [ -n "$gw" ] && $IPT -A OUTPUT -d "$gw" -p tcp --dport "$KLANGKEGRESS_BACKEND_PORT" -j ACCEPT
+  ;;
+esac
+
 # --- nat OUTPUT: REDIRECT each configured resolver (:53) to the proxy ---
 grep -E '^nameserver' /etc/resolv.conf | awk '{print $2}' | while read -r ns; do
   if [ "$ns" = "$UPSTREAM" ]; then
