@@ -338,6 +338,16 @@ class TestCreateContainer:
         ]
         assert emitted == dirs
 
+    async def test_network_flag_emitted(self):
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n", "img", network="container:abc123", replace=False
+            )
+        args = _args(m)
+        assert ["--network", "container:abc123"] == args[
+            args.index("--network") : args.index("--network") + 2
+        ]
+
     async def test_no_hooks_dir_or_annotation_by_default(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
             await _p.create_container("n", "img", replace=False)

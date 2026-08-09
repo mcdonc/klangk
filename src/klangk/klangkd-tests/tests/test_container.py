@@ -689,6 +689,196 @@ class TestStartContainer:
         reg = container.ContainerRegistry(app_state)
         assert reg._egress_filter(["github.com"]) == (None, None, None, None)
 
+    # --- #2254: FQDN egress sidecar lifecycle ---
+
+    def test_egress_sidecar_disabled_by_default(self):
+        assert not self.registry._egress_sidecar_enabled()
+
+    def test_egress_sidecar_enabled_when_image_set(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "img",
+        )
+        assert self.registry._egress_sidecar_enabled()
+
+    async def test_start_egress_sidecar_creates_and_starts(self, monkeypatch):
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "sidecar-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        self.registry.app.state.netfilter.install_hooks()
+        with patch_podman(self.registry) as p:
+            cid = await self.registry._start_egress_sidecar(
+                ws_id, ["github.com:443"]
+            )
+        assert cid == "new-cid"
+        kwargs = p.create_container.call_args.kwargs
+        assert p.create_container.call_args.args[0].startswith(
+            "klangk-egress-"
+        )
+        assert kwargs["cap_add"] == ["NET_ADMIN"]
+        assert kwargs["dns"] == ["1.1.1.1"]
+        assert "KLANGK_EGRESS_ALLOW=github.com:443" in kwargs["env"]
+        assert "KLANGK_EGRESS_UPSTREAM=8.8.8.8" in kwargs["env"]
+        p.start_container.assert_awaited_once_with("new-cid")
+
+    async def test_start_egress_sidecar_failure_returns_empty(
+        self, monkeypatch
+    ):
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "sidecar-img",
+        )
+        with patch_podman(
+            self.registry,
+            create_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "no image")
+            ),
+        ):
+            cid = await self.registry._start_egress_sidecar(
+                ws_id, ["github.com:443"]
+            )
+        assert cid == ""
+
+    async def test_start_egress_sidecar_returns_empty_without_image(self):
+        cid = await self.registry._start_egress_sidecar(
+            "abcd1234", ["github.com:443"]
+        )
+        assert cid == ""
+
+    async def test_stop_egress_sidecar_removes_by_name(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "img",
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry._stop_egress_sidecar("abcdef12")
+        p.remove_container.assert_awaited_with(
+            "klangk-egress-abcdef12", force=True
+        )
+
+    async def test_stop_egress_sidecar_noop_when_disabled(self):
+        with patch_podman(self.registry) as p:
+            await self.registry._stop_egress_sidecar("abcd1234")
+        p.remove_container.assert_not_awaited()
+
+    async def test_start_egress_sidecar_passes_interactive_mode(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "sidecar-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        self.registry.app.state.netfilter.install_hooks()
+        with patch_podman(self.registry) as p:
+            await self.registry._start_egress_sidecar(
+                "abcdef12", ["github.com:443"], egress_mode="interactive"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert "KLANGK_EGRESS_MODE=interactive" in kwargs["env"]
+
+    async def test_stop_egress_sidecar_swallows_error(self, monkeypatch):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "img",
+        )
+        with patch_podman(
+            self.registry,
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "not found")
+            ),
+        ):
+            await self.registry._stop_egress_sidecar("abcdef12")
+
+    async def test_filtered_workspace_uses_sidecar_when_enabled(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "test-sidecar",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        self.registry.app.state.netfilter.install_hooks()
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "sidecar-cid" if "egress" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                allowed_domains=["github.com:443"],
+            )
+        assert len(creates) == 2
+        assert creates[0]["name"].startswith("klangk-egress-")
+        assert creates[0]["cap_add"] == ["NET_ADMIN"]
+        assert "KLANGK_EGRESS_ALLOW=github.com:443" in creates[0]["env"]
+        assert creates[1]["network"] == "container:sidecar-cid"
+        assert "annotations" not in creates[1]
+
+    async def test_sidecar_failure_falls_back_to_hook(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "egress_sidecar_image",
+            "test-sidecar",
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "netfilter_hooks_dir",
+            str(tmp_path / "hooks"),
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(_nf_mod.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
+        self.registry.app.state.netfilter.install_hooks()
+
+        ws_kwargs = {}
+
+        async def _fake_create(name, image, **kw):
+            if "egress" in name:
+                raise podman.PodmanError(500, "no image")
+            ws_kwargs.update(kw)
+            return "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                allowed_domains=["github.com:443"],
+            )
+        assert "annotations" in ws_kwargs
+
     async def test_resource_limits_defaults_emit_flags(self, workspace):
         # #2030: with no deploy limits configured, the built-in protective
         # defaults (2 CPUs / 8g / 16384 PIDs) still flow through to podman as
