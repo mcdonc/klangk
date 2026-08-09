@@ -57,6 +57,19 @@ def _workspace_name_slug(name: str, *, limit: int = 24) -> str:
     return slug[:limit].strip("-")
 
 
+def _workspace_container_name(iid: str, workspace_id: str, slug: str) -> str:
+    """The workspace container name: iid + slugified name + id[:8] (#2286).
+
+    Falls back to an id-only name when the slug is empty (all-symbol / missing
+    name). Uniqueness is iid + id; the slug is decorative. The network sidecar
+    name (:meth:`ContainerRegistry._network_sidecar_name`) shares the id[:8]
+    tail so an id-prefix grep matches the pair.
+    """
+    if slug:
+        return f"klangk-{iid}-{slug}-{workspace_id[:8]}"
+    return f"klangk-{iid}-{workspace_id[:8]}"
+
+
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
 _VALID_MOUNT_OPTIONS = {
@@ -1294,7 +1307,9 @@ class ContainerRegistry:
             containers = await self.app.state.podman.list_containers(
                 f"klangk.workspace={workspace_id}"
             )
-        except (podman.PodmanError, OSError) as exc:
+        except (podman.PodmanError, OSError, ValueError) as exc:
+            # ValueError: corrupted ps JSON (json.loads in list_containers) —
+            # best-effort removal must never raise into the caller.
             logger.warning(
                 "cannot list containers to remove network sidecar for %s: %s",
                 workspace_id[:8],
@@ -1915,11 +1930,7 @@ class ContainerRegistry:
             workspace_id
         )
         slug = _workspace_name_slug((ws_row or {}).get("name") or "")
-        container_name = (
-            f"klangk-{iid}-{slug}-{workspace_id[:8]}"
-            if slug
-            else f"klangk-{iid}-{workspace_id[:8]}"
-        )
+        container_name = _workspace_container_name(iid, workspace_id, slug)
         allow_sudo = self.app.state.settings.allow_sudo.strip().lower() in (
             "1",
             "true",
@@ -2195,7 +2206,7 @@ class ContainerRegistry:
                 # it -- doing so would leave the new container joined to a
                 # removed netns. The sidecar teardown runs under the lock for
                 # the same reason start holds it for sidecar I/O: the two must
-                # not interleave on the deterministic sidecar name.
+                # not interleave on the network sidecar's netns lifecycle.
                 if self._cid_to_wsid.get(container_id) == ws_id:
                     # Remove the network sidecar only if this workspace
                     # actually started one, so a non-filtered workspace stop

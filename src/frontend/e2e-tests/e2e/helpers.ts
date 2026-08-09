@@ -426,7 +426,7 @@ function podmanEnv(): NodeJS.ProcessEnv {
 export function dockerContainersForWorkspace(workspaceId: string): string[] {
   const podman = process.env.KLANGKD_PODMAN_BIN || "podman";
   const output = execSync(
-    `${podman} ps --filter "label=klangk.workspace=${workspaceId}" --format "{{.ID}}"`,
+    `${podman} ps --filter "label=klangk.workspace=${workspaceId}" --filter "label=klangk.role=workspace" --format "{{.ID}}"`,
     { encoding: "utf-8", env: podmanEnv() },
   );
   return output.trim().split("\n").filter(Boolean);

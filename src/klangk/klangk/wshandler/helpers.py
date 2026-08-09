@@ -3,6 +3,7 @@
 import logging
 
 from .. import model
+from ..container import _workspace_container_name, _workspace_name_slug
 from .safe_websocket import SafeWebSocket
 from .constants import log_ws_msg
 from .session import WebSocketState
@@ -169,10 +170,16 @@ def format_idle_timeout(seconds: int | float) -> str:
 
 
 def format_container_info(
-    workspace_id: str, ports: list, instance_id: str
+    workspace_id: str, ports: list, instance_id: str, workspace_name: str = ""
 ) -> tuple[str, str]:
-    """Return (container_name, ports_str) for status messages."""
-    name = f"klangk-{instance_id}-{workspace_id[:12]}"
+    """Return (container_name, ports_str) for status messages.
+
+    The name mirrors the real container name (slugified workspace name +
+    id[:8], #2286) so an operator can ``podman ps | grep`` the name shown here
+    and find the container.
+    """
+    slug = _workspace_name_slug(workspace_name)
+    name = _workspace_container_name(instance_id, workspace_id, slug)
     ports_str = f" (ports {','.join(str(p) for p in ports)})" if ports else ""
     return name, ports_str
 

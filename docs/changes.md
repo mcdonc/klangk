@@ -269,18 +269,15 @@ operators or integrators to act when upgrading.
 ### Changed
 
 - **Workspace + network sidecar container names and labels (#2286).** A
-  workspace and its network sidecar now share a `klangk.workspace=<id>` label
-  (plus `klangk.role=workspace|network-sidecar`) so one
-  `podman ps --filter label=klangk.workspace=<id>` returns the pair, and both
-  container names embed the slugified workspace name + a shared
-  `workspace_id[:8]` tail so `podman ps | grep <partial-name>` finds both.
-  This **renames** the old write-only labels `klangk.workspace-id` and
-  `klangk.network-sidecar` (never read by production) to the shared
-  `klangk.workspace` key. Container names/labels are immutable post-create, so
-  a renamed workspace shows its old slug until the container restarts;
-  correlation via `klangk.workspace` is unaffected (the id never changes).
-  Sidecar removal is now label-based (not by name), making it robust to renames
-  and process restarts.
+  workspace and its network sidecar now share a `klangk.workspace=<id>` +
+  `klangk.role` label (so one `podman ps --filter label=klangk.workspace=<id>`
+  returns the pair), and both container names embed the slugified workspace name
+  on a shared `id[:8]` tail so `podman ps | grep <partial-name>` finds both.
+  This renames the old write-only labels `klangk.workspace-id` /
+  `klangk.network-sidecar` to the shared key, and sidecar removal is now
+  label-based (robust to renames/restarts). A renamed workspace keeps its old
+  slug until the container restarts; correlation via `klangk.workspace` is
+  unaffected.
 
 - **Egress filtering enforcement moved into the network sidecar (#2255).**
   The per-workspace egress ruleset — default-deny OUTPUT, loopback,
