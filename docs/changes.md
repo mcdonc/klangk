@@ -32,6 +32,27 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Egress consent recording (#2242).** The network sidecar records every
+  blocked destination to the `egress_consent` table: for **static**
+  workspaces (the default) as `denied` with no human (`decided_by` NULL),
+  immediately; for **interactive** workspaces as a `pending` request a
+  human can allow/deny via the consent UI (#2244, not yet wired) before it
+  auto-expires (`egress_consent_timeout`, default 30s; rate-limited per
+  workspace via `egress_consent_rate_limit`, default 50). The sidecar
+  consumes its own NFQUEUE (`-j NFQUEUE --queue-num 5139`; it is the netns
+  owner with `NET_ADMIN`) and POSTs each blocked packet's destination to
+  klangkd's consent endpoint (workspace-JWT-authenticated via Caddy's
+  forward_auth); it also forwards denied DNS queries with their domain
+  names (NFQUEUE only carries raw IPs). Static mode is now strictly better
+  than the old silent-deny: it records denied attempts for audit/review.
+- **`scripts/consent-watch.py`** — a tiny `rich`-based live view of a
+  workspace's egress-consent request history (pending/allowed/denied/expired),
+  for debugging interactive mode (#2242).
+- **`scripts/consent-decide.py`** — an interactive CLI to accept/deny a
+  workspace's pending egress-consent requests at runtime (the command-line
+  decide flow for #2244); accept marks a request `allowed` and adds the
+  destination to the workspace's allow-list (applies on next recreate), deny
+  marks it `denied` (#2242).
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the
@@ -69,15 +90,14 @@ operators or integrators to act when upgrading.
   has no `nix_seed` backend configured; the underlying setting remains the
   boolean `nix`.
 
-- **Interactive egress consent mode (#2239, #2240, #2241).** Workspaces can now
-  set `egress_mode: "interactive"` (API/CLI). In this mode the OCI hook installs
-  an NFLOG rule that delivers blocked-connection metadata to userspace via a
-  netlink socket (group 5139), alongside the existing allow-list ACCEPT rules.
-  A future consent daemon will consume this feed to prompt a human for
-  allow/deny decisions; until the daemon ships, interactive mode behaves as
-  static filtering plus NFLOG observability — no prompts occur and unmatched
-  traffic is dropped. See `docs/features/egress-filtering.md`.
-
+- **Interactive egress consent mode (#2239, #2240, #2241).** Workspaces can
+  now set `egress_mode: "interactive"` (API/CLI). In this mode the sidecar
+  queues otherwise-blocked packets to its own NFQUEUE consumer (group 5139),
+  which forwards each destination to klangkd for consent (#2242); the human
+  decide/notify UI lands with #2244. Until then, interactive mode denies
+  unmatched traffic exactly like static mode (no prompts; no security gap)
+  while the monitor records the attempts. See
+  `docs/features/egress-filtering.md`.
 - **FQDN egress network sidecar + DNS proxy (#2250, #2253).** New
   `klangk-network-sidecar` image (`src/containers/network/`) that runs a
   FQDN DNS proxy in a `NET_ADMIN` container sharing a filtered workspace's netns.

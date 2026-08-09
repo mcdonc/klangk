@@ -56,9 +56,9 @@ SETUP_STATES = frozenset(
     {SETUP_STATE_PENDING, SETUP_STATE_COMPLETE, SETUP_STATE_FAILED}
 )
 
-# egress_mode values (#2239). 'static' = immutable allow-list at
-# container create time; 'interactive' = prompt on first connection
-# to an unlisted host.
+# egress_mode values (#2239). 'static' (the default) = deny + record
+# denied attempts (no human prompt); 'interactive' = a pending request a
+# human can allow/deny via the consent UI (#2244, not yet wired).
 EGRESS_MODE_STATIC = "static"
 EGRESS_MODE_INTERACTIVE = "interactive"
 EGRESS_MODES = frozenset({EGRESS_MODE_STATIC, EGRESS_MODE_INTERACTIVE})

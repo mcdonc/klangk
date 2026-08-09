@@ -270,6 +270,12 @@ class WorkspaceSession:
                 await self.app.state.terminal.set_workspace_token(
                     container_id, new_token
                 )
+                # #2242: refresh the sidecar's bind-mounted token file too —
+                # it can't be exec-pushed (no token-setter in the sidecar
+                # image), so it reads this file on each consent POST.
+                self.app.state.container_registry.write_sidecar_token(
+                    self.workspace_id, new_token
+                )
                 self.workspace_token_expiry = datetime.now(
                     timezone.utc
                 ) + timedelta(

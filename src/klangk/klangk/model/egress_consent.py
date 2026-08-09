@@ -87,6 +87,57 @@ class EgressConsentModel:
             "decided_by": None,
         }
 
+    async def record_static_denial(
+        self,
+        workspace_id: str,
+        dest_host: str,
+        dest_port: int | None = None,
+    ) -> dict | None:
+        """Insert a static-mode denial: denied by policy, no human
+        (``decided_by`` NULL), immediately -- no pending state, no timeout.
+
+        Static mode only ever records denials (the sidecar observes only
+        blocked/NXDOMAIN'd traffic; allowed traffic passes through
+        unobserved). Dedup: at most one static denial per (workspace, host,
+        port) via ``idx_egress_consent_static_dedup`` (INSERT OR IGNORE), so
+        a flooding workspace can't spam denial rows. Returns the row, or
+        None if one already exists.
+        """
+        request_id = str(uuid.uuid4())
+        now = time.time()
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO egress_consent"
+                " (id, workspace_id, dest_host, dest_port,"
+                "  decision, requested_at, decided_at, decided_by)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    request_id,
+                    workspace_id,
+                    dest_host,
+                    dest_port,
+                    DECISION_DENIED,
+                    now,
+                    now,
+                    None,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return {
+            "id": request_id,
+            "workspace_id": workspace_id,
+            "dest_host": dest_host,
+            "dest_port": dest_port,
+            "pid": None,
+            "process_name": None,
+            "decision": DECISION_DENIED,
+            "scope": None,
+            "requested_at": now,
+            "decided_at": now,
+            "decided_by": None,
+        }
+
     async def get_request(self, request_id: str) -> dict | None:
         """Get a single consent request by ID."""
         row = await self.app.state.db.fetchone(

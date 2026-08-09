@@ -42,6 +42,10 @@ _NETWORK_SIDECAR_READY_TOKEN = "dns-proxy listening"
 # sidecar via KLANGKNETWORK_EGRESS_MARK so proxy.py and entrypoint.sh (which
 # both default to 75) can't diverge (#2282).
 _NETWORK_SIDECAR_MARK = 75
+# NFQUEUE queue number the sidecar's interactive-mode consumer binds (#2242).
+# Matches the old NFLOG group for familiarity; single source of truth passed to
+# both the entrypoint (iptables -j NFQUEUE) and the consumer via env.
+_NETWORK_SIDECAR_NFQUEUE = 5139
 
 
 def _workspace_name_slug(name: str, *, limit: int = 24) -> str:
@@ -1149,6 +1153,30 @@ class ContainerRegistry:
             return f"klangk-net-{slug}-{workspace_id[:8]}"
         return f"klangk-net-{workspace_id[:8]}"
 
+    def _sidecar_token_path(self, workspace_id: str) -> str:
+        """Host path of the sidecar's bind-mounted workspace-token file."""
+        return os.path.join(
+            self.app.state.settings.data_dir, "ws-tokens", workspace_id
+        )
+
+    def write_sidecar_token(self, workspace_id: str, token: str) -> None:
+        """Write the current workspace token to the sidecar's token file.
+
+        The sidecar reads this (read-only bind mount) on each consent POST, so
+        refreshing it here -- on launch and on every WS-driven token rotation
+        -- keeps the sidecar authenticated without baking a (rotating,
+        expiring) token into its env (#2242). The sidecar image lacks the
+        workspace image's token-setter, so it can't be exec-pushed like the
+        workspace container. Atomic (os.replace) so the sidecar never reads a
+        half-written token.
+        """
+        path = self._sidecar_token_path(workspace_id)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w") as f:
+            f.write(token)
+        os.replace(tmp, path)
+
     async def _start_network_sidecar(
         self,
         workspace_id: str,
@@ -1194,12 +1222,29 @@ class ContainerRegistry:
             # explicitly so the two can't diverge.
             f"KLANGKNETWORK_EGRESS_MARK={_NETWORK_SIDECAR_MARK}",
         ]
-        if egress_mode == "interactive":
-            env.append("KLANGKNETWORK_EGRESS_MODE=interactive")
-            # Tag for the NFLOG prefix so the consent daemon correlates a
-            # blocked packet with this workspace (the entrypoint stamps it
-            # into --nflog-prefix "klangk-egress:<tag>:") (#2239, #2255).
-            env.append(f"KLANGKNETWORK_EGRESS_TAG={workspace_id[:12]}")
+        binds = []
+        # #2242: consent recording (deny + record) runs for every filtered
+        # workspace when the monitor is wired, regardless of egress_mode -- the
+        # mode only affects the recorded decision (static=denied+no-human,
+        # interactive=pending), applied by the monitor. The workspace JWT is
+        # bind-mounted in and refreshed on rotation (write_sidecar_token), not
+        # baked in env (it rotates).
+        if getattr(self.app.state, "consent_monitor", None) is not None:
+            port = self.app.state.settings.egress_port
+            env.append(
+                "KLANGKNETWORK_EGRESS_CONSENT_URL="
+                f"http://host.containers.internal:{port}"
+                "/internal/egress-consent/events"
+            )
+            env.append(
+                f"KLANGKNETWORK_EGRESS_NFQUEUE_NUM={_NETWORK_SIDECAR_NFQUEUE}"
+            )
+            token = self.app.state.auth.create_workspace_token(workspace_id)
+            self.write_sidecar_token(workspace_id, token)
+            binds.append(
+                f"{self._sidecar_token_path(workspace_id)}"
+                ":/run/klangk/workspace-token:ro"
+            )
         # Label the network sidecar with this klangk instance so the startup reaper
         # (reap_instance_containers) and the shutdown orphan sweep cull any
         # network sidecar left behind by a failed stop — the same culling workspace
@@ -1226,15 +1271,18 @@ class ContainerRegistry:
         # backstop for orphans; this just keeps a restart from deadlocking.
         await self._remove_network_sidecar(workspace_id)
         try:
-            cid = await self.app.state.podman.create_container(
-                name,
-                image,
+            sidecar_kwargs = dict(
                 cap_add=["NET_ADMIN"],
                 dns=["1.1.1.1"],
                 env=env,
                 labels=labels,
                 publish=publish,
                 pull="missing",
+            )
+            if binds:
+                sidecar_kwargs["binds"] = binds
+            cid = await self.app.state.podman.create_container(
+                name, image, **sidecar_kwargs
             )
             await self._start_with_port_conflict_retry(
                 cid, publish or [], name

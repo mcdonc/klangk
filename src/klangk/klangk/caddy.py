@@ -527,7 +527,20 @@ class CaddyRenderer:
             f"		reverse_proxy {upstream}\n"
             "	}\n"
         )
-        return not_src_matcher + llm + delegate + post_chat
+        # #2242: the sidecar's egress-consent event receiver. The site-level
+        # forward_auth validates its workspace JWT; this handle proxies it to
+        # the app (the egress site only reverse-proxies its explicit handles --
+        # /llm-proxy, browser-delegate, post-chat-message, and this one). The
+        # @notContainerSrc guard applies on this egress port (8995); the main
+        # browser port's catch-all also reaches it with just the workspace-JWT
+        # check (consistent with /llm-proxy).
+        consent = (
+            "	handle /internal/egress-consent/events {\n"
+            f"{guard}"
+            f"		reverse_proxy {upstream}\n"
+            "	}\n"
+        )
+        return not_src_matcher + consent + llm + delegate + post_chat
 
     def _egress_site(self, upstream: str, container_srcs: str) -> str:
         """The full container-egress site block (headless + full both render it)."""

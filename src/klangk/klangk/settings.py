@@ -723,6 +723,14 @@ class KlangkSettings(BaseSettings):
     # set to "" to disable egress filtering entirely. Read live (SIGHUP
     # reload-safe).
     network_sidecar_image: str = "klangk-network-sidecar"
+    # egress_consent_rate_limit / egress_consent_timeout: interactive-mode
+    # consent monitor (#2242) tuning. rate_limit caps pending requests per
+    # workspace (anti attention-flood from adversarial containers); timeout
+    # is how long a request stays pending before the monitor auto-expires it
+    # (DECISION_EXPIRED). The human decide/notify UI lands with #2244; until
+    # then requests simply expire. Read live (SIGHUP reload-safe).
+    egress_consent_rate_limit: int = 50
+    egress_consent_timeout: float = 30.0
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
     # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 16384 PIDs,

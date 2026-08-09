@@ -1,0 +1,163 @@
+"""Interactive egress-consent monitor (#2239, #2242).
+
+Receives blocked-destination events from the network sidecar's NFQUEUE
+consumer and persists each as a pending consent request, auto-expiring it
+after a timeout if no human decides (#2244 wires the decide/notify UI; this
+component owns the receive → persist → expire loop).
+
+The sidecar is the netns owner with ``NET_ADMIN``, so it consumes its own
+NFQUEUE (iptables ``-j NFQUEUE`` in interactive mode) and POSTs each blocked
+destination here, authenticating with the workspace's own JWT. That JWT is
+validated by Caddy's egress-port ``forward_auth`` and re-decoded by the
+receive endpoint, so this monitor gets the workspace id straight from the
+request — no tag-to-id resolution, and the workspace can't forge events for
+other workspaces (its JWT is workspace-scoped).
+
+The monitor owns only ``app`` (the app-ownership rule) and reads
+``settings.egress_consent_*`` live via property.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from .model.workspaces import EGRESS_MODE_INTERACTIVE
+
+logger = logging.getLogger(__name__)
+
+
+class EgressConsentMonitor:
+    """Receive sidecar egress events and persist consent requests.
+
+    Constructed once in :func:`build_app` and stored on ``app.state``; started
+    in the lifespan and stopped on shutdown. Mirrors the monitor pattern used
+    by :class:`HealthMonitor`. Events arrive via :meth:`submit` (called by the
+    receive endpoint) and are processed serially by the ``_run`` loop.
+
+    Owns only ``app``; rate-limit / timeout are read live off settings so a
+    SIGHUP reload propagates (:meth:`reconfigure` swaps ``app``).
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self._task: asyncio.Task | None = None
+        self._timeouts: set[asyncio.Task] = set()
+
+    def reconfigure(self, app) -> None:
+        self.app = app
+
+    @property
+    def rate_limit(self) -> int:
+        return self.app.state.settings.egress_consent_rate_limit
+
+    @property
+    def timeout(self) -> float:
+        return self.app.state.settings.egress_consent_timeout
+
+    def submit(
+        self, workspace_id: str, dst_ip: str, dst_port: int | None
+    ) -> None:
+        """Enqueue an observed blocked destination (called by the endpoint)."""
+        self._queue.put_nowait((workspace_id, dst_ip, dst_port))
+
+    def start(self) -> None:
+        """Start the processing loop (idempotent). Runs until :meth:`stop`."""
+        if self._task is None:
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        """Cancel the loop and any pending timeout tasks."""
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        for task in list(self._timeouts):
+            task.cancel()
+
+    async def _run(self) -> None:
+        try:
+            while True:
+                workspace_id, dst_ip, dst_port = await self._queue.get()
+                try:
+                    await self._handle_event(workspace_id, dst_ip, dst_port)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # One bad event must not kill the monitor (matches
+                    # HealthMonitor's per-sweep isolation).
+                    logger.exception("egress consent: event handling failed")
+        except asyncio.CancelledError:
+            pass
+
+    async def _handle_event(
+        self, workspace_id: str, dst_ip: str, dst_port: int | None
+    ) -> None:
+        # static (default): the sidecar observed a denial -> record it as
+        # denied-by-policy (no human), immediately. interactive: a denial
+        # becomes a pending request a human can decide (#2244).
+        if await self._is_interactive(workspace_id):
+            await self._handle_interactive(workspace_id, dst_ip, dst_port)
+        else:
+            request = await (
+                self.app.state.model.egress_consent.record_static_denial(
+                    workspace_id, dst_ip, dst_port
+                )
+            )
+            if request is not None:
+                self._notify(request)
+
+    async def _is_interactive(self, workspace_id: str) -> bool:
+        ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
+        return bool(ws) and ws.get("egress_mode") == EGRESS_MODE_INTERACTIVE
+
+    async def _handle_interactive(
+        self, workspace_id: str, dst_ip: str, dst_port: int | None
+    ) -> None:
+        consent = self.app.state.model.egress_consent
+        if await consent.count_pending(workspace_id) >= self.rate_limit:
+            logger.warning(
+                "egress consent: workspace %s pending cap reached (%d); "
+                "dropping %s:%s",
+                workspace_id[:8],
+                self.rate_limit,
+                dst_ip,
+                dst_port,
+            )
+            return
+        request = await consent.create_request(workspace_id, dst_ip, dst_port)
+        if request is None:
+            return  # a pending request for this (ws, ip, port) already exists
+        self._notify(request)
+        task = asyncio.create_task(self._timeout(request["id"]))
+        self._timeouts.add(task)
+        task.add_done_callback(self._timeouts.discard)
+
+    async def _timeout(self, request_id: str) -> None:
+        """Auto-expire a pending request after the configured timeout."""
+        try:
+            await asyncio.sleep(self.timeout)
+            await self.app.state.model.egress_consent.expire_pending(
+                request_id
+            )
+        except asyncio.CancelledError:
+            pass
+
+    def _notify(self, request: dict) -> None:
+        """Notify connected frontends of a new pending request.
+
+        Stub: #2244 wires the WebSocket event. The request is persisted and
+        auto-expires on timeout regardless of notification, so the consent
+        loop is correct end-to-end without it.
+        """
+        logger.info(
+            "egress consent request: ws=%s %s:%s id=%s",
+            str(request.get("workspace_id"))[:8],
+            request.get("dest_host"),
+            request.get("dest_port"),
+            request.get("id"),
+        )

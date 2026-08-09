@@ -134,6 +134,26 @@ async def test_create_request_dedup_returns_none(ec, ws, user):
     assert await ec.count_pending(w["id"]) == 1
 
 
+async def test_record_static_denial_inserts_denied_no_human(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "static-denial-ws")
+    req = await ec.record_static_denial(w["id"], "evil.com", 443)
+    assert req["decision"] == DECISION_DENIED
+    assert req["decided_by"] is None  # no human
+    assert req["decided_at"] is not None  # decided immediately
+    row = await ec.get_request(req["id"])
+    assert row["decision"] == DECISION_DENIED
+    assert row["decided_by"] is None
+
+
+async def test_record_static_denial_dedup_per_destination(ec, ws, user):
+    # One static denial per (workspace, host, port); a second call returns None.
+    w = await ws.create_workspace(user["id"], "static-dedup-ws")
+    first = await ec.record_static_denial(w["id"], "evil.com", 443)
+    second = await ec.record_static_denial(w["id"], "evil.com", 443)
+    assert first is not None
+    assert second is None
+
+
 async def test_create_request_dedup_no_port(ec, ws, user):
     """Dedup works for portless requests too."""
     w = await ws.create_workspace(user["id"], "dedup-noport")
