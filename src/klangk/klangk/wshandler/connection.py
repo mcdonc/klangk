@@ -437,7 +437,10 @@ class Connection:
         )
         status = getattr(self, "container_status", "created")
         container_name, ports_str = format_container_info(
-            workspace_id, ports, self.app.state.util.instance_id()
+            workspace_id,
+            ports,
+            self.app.state.util.instance_id(),
+            (self.workspace or {}).get("name") or "",
         )
         status_msg = {
             "connected": f"Connected to running container "
@@ -539,7 +542,10 @@ class Connection:
             workspace_id
         )
         container_name, ports_str = format_container_info(
-            workspace_id, ports, self.app.state.util.instance_id()
+            workspace_id,
+            ports,
+            self.app.state.util.instance_id(),
+            (self.workspace or {}).get("name") or "",
         )
         status_msg = f"Container restarted {container_name}{ports_str}"
 

@@ -15,7 +15,7 @@ docker run -it --rm \
   --name "klangk-test-container" \
   --label "klangk.managed=true" \
   --label "klangk.instance=default" \
-  --label "klangk.workspace-id=$WORKSPACE_ID" \
+  --label "klangk.workspace=$WORKSPACE_ID" \
   --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=256m \
   --tmpfs /run:rw,noexec,nosuid,size=16m \

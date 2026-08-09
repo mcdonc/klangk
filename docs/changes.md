@@ -268,6 +268,17 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Workspace + network sidecar container names and labels (#2286).** A
+  workspace and its network sidecar now share a `klangk.workspace=<id>` +
+  `klangk.role` label (so one `podman ps --filter label=klangk.workspace=<id>`
+  returns the pair), and both container names embed the slugified workspace name
+  on a shared `id[:8]` tail so `podman ps | grep <partial-name>` finds both.
+  This renames the old write-only labels `klangk.workspace-id` /
+  `klangk.network-sidecar` to the shared key, and sidecar removal is now
+  label-based (robust to renames/restarts). A renamed workspace keeps its old
+  slug until the container restarts; correlation via `klangk.workspace` is
+  unaffected.
+
 - **Egress filtering enforcement moved into the network sidecar (#2255).**
   The per-workspace egress ruleset — default-deny OUTPUT, loopback,
   established, the DNS REDIRECT + FQDN proxy, static CIDR allows, the
@@ -437,6 +448,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Stopping a workspace now tears down its network sidecar even when the
+  workspace isn't tracked in the in-memory registry (#2286).** A workspace
+  started by autostart or a prior klangkd session, then stopped from the TUI
+  (or `/stop`, `/delete`, `/restart`), previously left its network sidecar
+  running until the next start or the startup reaper. The stop path now takes
+  the workspace id directly from the endpoint and removes the sidecar by label.
+
 - **Network sidecar: filtered workspaces can host apps again (#2267).** A
   filtered workspace shares the network sidecar's netns, so `--publish` on the
   workspace itself was silently discarded by podman and configured host ports
@@ -485,7 +503,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 - **Per-workspace egress filtering now actually fires on rootless podman
   (#1365).** The OCI hook ran at the `createContainer` stage but drove
   iptables through `nsenter` on the init pid — at that stage the hook is
-  _already_ inside the container network namespace (and pid is 0), so no
+  already inside the container network namespace (and pid is 0), so no
   rules were installed and filtered workspaces ran unrestricted. The hook
   now calls `iptables`/`ip6tables` directly. (The former
   `sysctl net.ipv6.conf.*.disable_ipv6=1` was dropped — at createContainer

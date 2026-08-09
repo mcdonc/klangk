@@ -63,15 +63,6 @@ def server():
         LOGFIRE_TOKEN="",
     )
 
-    # Fetch auto-generated instance ID from the running server (used by
-    # _container_id_for_workspace for deterministic container-name lookups).
-    config_resp = server["client"].get("/api/v1/config", timeout=10)
-    server["instance_id"] = (
-        config_resp.json().get("instance_id", "")
-        if config_resp.status_code == 200
-        else ""
-    )
-
     yield server
 
     stop_server(server)
@@ -100,20 +91,24 @@ def _rm_containers(instance_id):
         )
 
 
-def _container_id_for_workspace(workspace_id, instance_id):
-    """Return the running container id for a specific workspace.
+def _container_id_for_workspace(workspace_id):
+    """Return the running workspace container id for a workspace.
 
-    The container name is deterministic (``klangk-{instance_id}-{ws[:12]}``),
-    so filtering by name targets the exact workspace -- never a stale
-    container left over from another test/run under the same instance.
+    Looked up by the ``klangk.workspace`` correlation label + ``role=workspace``
+    (#2286) rather than the container name: the name now carries the slugified
+    workspace name and uses ``id[:8]``, so reconstructing it is fragile, and
+    ``role=workspace`` excludes the network sidecar (which shares the label).
+    Targets the exact workspace -- never a stale container from another
+    test/run.
     """
-    name = f"klangk-{instance_id}-{workspace_id[:12]}"
     result = subprocess.run(
         [
             "podman",
             "ps",
             "--filter",
-            f"name=^{name}$",
+            f"label=klangk.workspace={workspace_id}",
+            "--filter",
+            "label=klangk.role=workspace",
             "-q",
         ],
         capture_output=True,
@@ -274,15 +269,13 @@ class TestAgentHomeE2E:
             # Wait for the eagerly-started container to be running.
             # create_workspace awaits start_workspace, so the
             # container is up by the time the POST returned; poll as a
-            # belt-and-suspenders against scheduling latency.  Filter by
-            # the deterministic container name so we target THIS
-            # workspace's container, never a stale one.
+            # belt-and-suspenders against scheduling latency.  Filter by the
+            # klangk.workspace label so we target THIS workspace's container,
+            # never a stale one.
             cids = []
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
-                cids = _container_id_for_workspace(
-                    workspace_id, server["instance_id"]
-                )
+                cids = _container_id_for_workspace(workspace_id)
                 if cids:
                     break
                 time.sleep(0.5)

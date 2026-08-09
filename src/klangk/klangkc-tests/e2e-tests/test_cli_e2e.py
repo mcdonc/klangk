@@ -1778,7 +1778,7 @@ class TestContainerReplace:
                     "--filter",
                     "label=klangk.instance=cli-e2e",
                     "--filter",
-                    "label=klangk.workspace-id",
+                    "label=klangk.workspace",
                     "--format",
                     "{{.ID}}",
                 ],

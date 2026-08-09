@@ -11067,3 +11067,37 @@ class TestTokenRenewalFailureLogged:
                 await task
             except asyncio.CancelledError:
                 pass
+
+
+class TestFormatContainerInfo:
+    """format_container_info must mirror the real container name (#2286).
+
+    The status-message name is what users see and grep in `podman ps`, so it
+    must equal what container.py stamps on the container.
+    """
+
+    def test_named_workspace_matches_real_container_name(self):
+        from klangk.container import (
+            _workspace_container_name,
+            _workspace_name_slug,
+        )
+        from klangk.wshandler import format_container_info
+
+        ws_id = "abcdef1234567890"
+        iid = "inst1"
+        name, ports_str = format_container_info(
+            ws_id, [9000, 9001], iid, "My Dev Env"
+        )
+        slug = _workspace_name_slug("My Dev Env")
+        assert name == _workspace_container_name(iid, ws_id, slug)
+        assert name == f"klangk-{iid}-{slug}-{ws_id[:8]}"
+        assert ports_str == " (ports 9000,9001)"
+
+    def test_symbol_only_name_falls_back_to_id_only(self):
+        from klangk.wshandler import format_container_info
+
+        ws_id = "abcdef1234567890"
+        iid = "inst1"
+        name, ports_str = format_container_info(ws_id, [], iid, "!!!")
+        assert name == f"klangk-{iid}-{ws_id[:8]}"
+        assert ports_str == ""
