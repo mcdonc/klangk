@@ -17,7 +17,7 @@ jobs:
       KLANGK_DEFAULT_USER: admin@plope.com
       KLANGK_DEFAULT_PASSWORD: admin
       KLANGK_TEST_MODE: "1"
-      KLANGK_PODMAN_BIN: /usr/bin/podman
+      KLANGKD_PODMAN_BIN: /usr/bin/podman
     steps:
       - uses: actions/checkout@v7
 

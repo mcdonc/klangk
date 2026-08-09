@@ -45,6 +45,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import subprocess
 
 from .podman import PodmanError
@@ -306,6 +307,28 @@ def _detect_host_resolvers() -> list[str]:
     )
 
 
+def _ip6tables_on_host() -> bool:
+    """Best-effort check that ``ip6tables`` is reachable for the OCI hook.
+
+    The createContainer hook default-denies IPv6 solely via
+    ``ip6tables -P OUTPUT DROP`` (the former ``sysctl
+    net.ipv6.conf.*.disable_ipv6=1`` was removed — it fired before pasta
+    configured the netns and broke v6 setup). If ``ip6tables`` is absent
+    where the OCI runtime executes, that DROP fails silently and a filtered
+    workspace has an unrestricted IPv6 path that bypasses the v4 allow-list
+    (every host publishes a AAAA). :meth:`NetFilter.create_kwargs` warns and
+    ``klangkd doctor``'s ``check_netfilter_host`` checks it.
+
+    Best-effort: on macOS the runtime is inside the podman machine VM
+    (verified by the VM doctor check, not here), and a containerized server
+    whose PATH differs from the runtime's can false-negative. Returns True
+    on macOS (defer to the VM check).
+    """
+    if platform.system() == "Darwin":
+        return True
+    return shutil.which("ip6tables") is not None
+
+
 def render_hook_json(
     script_path: str, *, stage: str = "createContainer"
 ) -> str:
@@ -475,8 +498,12 @@ ipt -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 # also ran `sysctl net.ipv6.conf.*.disable_ipv6=1`, but that fires at
 # createContainer, before pasta configures the netns, and the disabled knob
 # makes pasta's IPv6 address setup fail with EPERM — so the sysctl is dropped
-# and ip6tables DROP alone carries the v6 default-deny. ip6tables is verified
-# at startup; a deploy without it gets a warning and no v6 default-deny.)
+# and ip6tables DROP alone carries the v6 default-deny.) NOTE: if ip6tables
+# is absent where this hook runs, this DROP fails (logged to stderr only) and
+# IPv6 egress is UNRESTRICTED — an exfil bypass. `klangkd doctor`
+# (check_netfilter_host) and the server's create_kwargs() warn when ip6tables
+# is missing; install it (iptables-nft provides both iptables + ip6tables)
+# before relying on the filter (#1936, PR #2248 review B1).
 ipt6 -P OUTPUT DROP
 
 # DNS: allow :53 ONLY to the container's configured resolvers — NOT to any
@@ -913,6 +940,21 @@ class NetFilter:
             if platform.system() == "Darwin"
             else [path, *STANDARD_HOOK_DIRS]
         )
+        if not _ip6tables_on_host():
+            # The v4 ruleset is armed below, but the IPv6 default-deny
+            # (`ip6tables -P OUTPUT DROP`) will fail silently — a filtered
+            # workspace then has an unrestricted IPv6 path that bypasses
+            # the v4 allow-list. Warn loudly; do NOT refuse to arm, since
+            # that would also discard the working v4 filter. The
+            # authoritative operator-facing check is `klangkd doctor`
+            # (#1936, PR #2248 review B1).
+            logger.warning(
+                "ip6tables is not on the server PATH; the netfilter hook's "
+                "IPv6 default-deny will fail silently, leaving an IPv6 "
+                "egress path that BYPASSES the v4 allow-list (every host "
+                "publishes a AAAA). Install ip6tables where the OCI runtime "
+                "executes, or run `klangkd doctor` (#1936)."
+            )
         return (annotation, hooks_dirs, list(DROPPED_CAPABILITIES), _resolvers)
 
     async def allow_backend_gateway(self, container_id: str) -> bool:
@@ -930,6 +972,14 @@ class NetFilter:
         Best-effort + idempotent: returns False (and logs) if the gateway
         can't be resolved or the rule can't be inserted — the workspace still
         starts, only its backend reachability is affected.
+
+        Security note: the gateway IP is resolved via ``getent`` exec'd
+        INSIDE the container, so a root-compromised container that can
+        rewrite its ``/etc/hosts`` could poison
+        ``host.containers.internal`` to an arbitrary IP and get it ACCEPT'd
+        atop the OUTPUT chain. Low severity (needs prior root compromise),
+        but it is a new privilege boundary; resolving the gateway from
+        ``podman inspect`` instead would close it (PR #2248 review N1).
         """
         pod = self.app.state.podman
         try:

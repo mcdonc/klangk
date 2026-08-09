@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FQDN egress DNS proxy — runs in the egress sidecar (#2250, #2253).
+"""FQDN egress DNS proxy — runs in the network sidecar (#2250, #2253).
 
 The sidecar shares the workspace's network namespace (the workspace runs
 ``--network container:<this sidecar>``). The sidecar's ``entrypoint.sh`` installs
@@ -16,17 +16,17 @@ handled correctly — a parser bug in a security component is dangerous, and a
 maintained library removes that risk.
 
 Configuration (env):
-  KLANGK_EGRESS_ALLOW       comma-separated allow-list: ``host[:port]`` or CIDR
+  KLANGKNETWORK_EGRESS_ALLOW       comma-separated allow-list: ``host[:port]`` or CIDR
                             specs. CIDR specs are applied statically by the
                             entrypoint; this proxy matches only the host specs
                             (exact or suffix).
-  KLANGK_EGRESS_UPSTREAM    the real upstream resolver the proxy forwards to
+  KLANGKNETWORK_EGRESS_UPSTREAM    the real upstream resolver the proxy forwards to
                             (default ``8.8.8.8``). MUST differ from the
                             workspace's configured (redirected) resolvers or the
                             proxy's forwards loop back into itself.
-  KLANGK_EGRESS_LISTEN_PORT UDP port to listen on (default ``15353``).
-  KLANGK_EGRESS_IPTABLES    iptables binary (default ``iptables``).
-  KLANGK_EGRESS_DEBUG       if set, log each allow/deny decision.
+  KLANGKNETWORK_EGRESS_LISTEN_PORT UDP port to listen on (default ``15353``).
+  KLANGKNETWORK_IPTABLES    iptables binary (default ``iptables``).
+  KLANGKNETWORK_EGRESS_DEBUG       if set, log each allow/deny decision.
 
 Limitations (tracked in #2256): a learned IP is allow-listed on *all* ports (no
 per-domain port scoping yet), no wildcard domains, and learned IPs are never
@@ -42,20 +42,27 @@ import dns.message
 import dns.rcode
 import dns.rdatatype
 
-UPSTREAM = (os.environ.get("KLANGK_EGRESS_UPSTREAM", "8.8.8.8"), 53)
-LISTEN_PORT = int(os.environ.get("KLANGK_EGRESS_LISTEN_PORT", "15353"))
-IPT = os.environ.get("KLANGK_EGRESS_IPTABLES", "iptables")
-DEBUG = bool(os.environ.get("KLANGK_EGRESS_DEBUG"))
+UPSTREAM = (os.environ.get("KLANGKNETWORK_EGRESS_UPSTREAM", "8.8.8.8"), 53)
+LISTEN_PORT = int(os.environ.get("KLANGKNETWORK_EGRESS_LISTEN_PORT", "15353"))
+IPT = os.environ.get("KLANGKNETWORK_IPTABLES", "iptables")
+DEBUG = bool(os.environ.get("KLANGKNETWORK_EGRESS_DEBUG"))
+# fwmark the proxy stamps on its upstream socket so the sidecar's nat/filter
+# rules (a) exempt the proxy's forwards from the :53 REDIRECT (loop-avoidance)
+# and (b) allow only marked packets to reach the upstream. The workspace lacks
+# CAP_NET_RAW/NET_ADMIN so it cannot mark — its :53 traffic is redirected here
+# and allow-listed, closing the direct-to-upstream exfil bypass (#2264). Must
+# match entrypoint.sh's KLANGKNETWORK_EGRESS_MARK.
+MARK = int(os.environ.get("KLANGKNETWORK_EGRESS_MARK", "75"))
 
 
 def host_specs() -> list[str]:
-    """Host specs (suffix-match targets) from KLANGK_EGRESS_ALLOW.
+    """Host specs (suffix-match targets) from KLANGKNETWORK_EGRESS_ALLOW.
 
     CIDR specs (``10.0.0.0/8``) are excluded — the entrypoint applies those
     statically. ``host:port`` specs are stripped to the host part.
     """
     out = []
-    for spec in os.environ.get("KLANGK_EGRESS_ALLOW", "").split(","):
+    for spec in os.environ.get("KLANGKNETWORK_EGRESS_ALLOW", "").split(","):
         spec = spec.strip()
         if not spec or "/" in spec:
             continue
@@ -105,11 +112,43 @@ def allowed(qname: str) -> bool:
 
 
 def allow_ip(ip: str) -> None:
-    """Insert an allow-rule at the top of OUTPUT for a learned IP."""
+    """Insert an allow-rule at the top of OUTPUT for a learned IP.
+
+    Dedup: skip if an ACCEPT rule for this IP already exists, so repeated
+    resolutions of the same name don't pile duplicate rules atop OUTPUT
+    unboundedly (#2256). Learned IPs are still allow-listed on all ports
+    (no per-domain port scoping yet) — also tracked in #2256.
+    """
+    if (
+        subprocess.run(
+            [IPT, "-C", "OUTPUT", "-d", ip, "-j", "ACCEPT"],
+            capture_output=True,
+        ).returncode
+        == 0
+    ):
+        return
     subprocess.run(
         [IPT, "-I", "OUTPUT", "1", "-d", ip, "-j", "ACCEPT"],
         capture_output=True,
     )
+
+
+def check_mark() -> None:
+    """Verify the proxy can set SO_MARK (needs CAP_NET_ADMIN/NET_RAW).
+
+    Without it the proxy's upstream forwards are not exempted from the nat
+    REDIRECT and loop back into itself — DNS is broken. Fail loud at startup.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, MARK)
+    except OSError as exc:
+        raise SystemExit(
+            f"dns-proxy: cannot set SO_MARK={MARK} ({exc}); the sidecar needs "
+            "CAP_NET_ADMIN for mark-based loop-avoidance (#2264)"
+        )
+    finally:
+        probe.close()
 
 
 def main() -> None:
@@ -120,6 +159,7 @@ def main() -> None:
         f"(upstream={UPSTREAM[0]}, allowed={ALLOWED})",
         flush=True,
     )
+    check_mark()
     while True:
         try:
             data, addr = s.recvfrom(65535)
@@ -138,6 +178,7 @@ def main() -> None:
                 pass
             continue
         us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        us.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, MARK)
         us.settimeout(3)
         try:
             us.sendto(data, UPSTREAM)

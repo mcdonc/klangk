@@ -63,8 +63,8 @@ operators or integrators to act when upgrading.
   static filtering plus NFLOG observability — no prompts occur and unmatched
   traffic is dropped. See `docs/features/egress-filtering.md`.
 
-- **FQDN egress sidecar image + DNS proxy (#2250, #2253).** New
-  `klangk-egress-sidecar` image (`src/containers/egress-sidecar/`) that runs a
+- **FQDN egress network sidecar + DNS proxy (#2250, #2253).** New
+  `klangk-network-sidecar` image (`src/containers/network/`) that runs a
   FQDN DNS proxy in a `NET_ADMIN` container sharing a filtered workspace's netns.
   It intercepts the workspace's DNS (nat REDIRECT of its configured resolvers),
   applies an allow-list, forwards allowed queries to a distinct upstream, and
