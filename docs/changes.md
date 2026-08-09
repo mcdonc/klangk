@@ -422,6 +422,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Network sidecar: filtered workspaces can host apps again (#2267).** A
+  filtered workspace shares the network sidecar's netns, so `--publish` on the
+  workspace itself was silently discarded by podman and configured host ports
+  (`KLANGKWS_PORT_MAPPINGS`) vanished with no warning. Host ports are now
+  published on the network sidecar instead (it owns the netns), forwarding into
+  the shared netns to the workspace's listener. IPv4 clients work; the sidecar
+  still kills IPv6 (#2277), so IPv6-only clients to a published port will fail
+  until that lands.
+
 - **Network sidecar: no longer leaks across a process restart (#2248
   review).** Reconnecting to a running filtered workspace after a klangkd
   restart now re-tracks its sidecar, so stopping the workspace tears the

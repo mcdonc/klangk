@@ -37,6 +37,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -254,6 +255,16 @@ def _ip_of(name):
         name,
     )
     return out.stdout.strip()
+
+
+def _free_port():
+    """A free host TCP port for the sidecar to publish (best-effort; tiny
+    TOCTOU window before podman rebinds it)."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
 
 
 def _wait_ready(name, timeout=40):
@@ -582,3 +593,81 @@ class TestNetworkSidecarE2E:
             f"expected SO_MARK_EPERM (net_raw dropped; root can't mark), "
             f"got:\n{out}"
         )
+
+    def test_host_port_published_on_sidecar_reaches_workspace(self, env):
+        # #2267: a filtered workspace cannot publish host ports itself
+        # (--publish is discarded under --network container:), so klangk
+        # publishes them on the network sidecar instead. The workspace shares
+        # the sidecar's netns, so the sidecar's --publish forwards into it and
+        # reaches the workspace's listener. Prove end-to-end (real podman, real
+        # sidecar image + iptables) that a host port reaches a workspace
+        # listener THROUGH the sidecar's publish -- the whole point of routing
+        # publish onto the sidecar.
+        import urllib.request
+
+        host_port = _free_port()
+        net = f"netc-pp-{uuid.uuid4().hex[:8]}"
+        nc = f"netc-pp-nc-{uuid.uuid4().hex[:8]}"
+        ws = f"netc-pp-ws-{uuid.uuid4().hex[:8]}"
+        _podman("network", "create", net)
+        try:
+            # The sidecar owns the netns and publishes host_port -> :8000.
+            _podman(
+                "run",
+                "-d",
+                "--name",
+                nc,
+                "--network",
+                net,
+                "--cap-add",
+                "net_admin",
+                "--dns",
+                "1.1.1.1",
+                "--publish",
+                f"{host_port}:8000",
+                "-e",
+                "KLANGKNETWORK_EGRESS_UPSTREAM=8.8.8.8",
+                "-e",
+                "KLANGKNETWORK_EGRESS_ALLOW=allowed.test",
+                env["image"],
+            )
+            _wait_ready(nc)
+            # The workspace shares the sidecar's netns and binds :8000.
+            _podman(
+                "run",
+                "-d",
+                "--name",
+                ws,
+                "--network",
+                f"container:{nc}",
+                "--entrypoint",
+                "python3",
+                env["image"],
+                "-m",
+                "http.server",
+                "8000",
+                "--bind",
+                "0.0.0.0",
+            )
+            # Reach the workspace's listener through the SIDECAR's published
+            # port (127.0.0.1 avoids the IPv6 happy-eyeballs path the sidecar
+            # kills). Poll briefly for http.server to finish binding.
+            deadline = time.monotonic() + 8
+            code = None
+            while time.monotonic() < deadline:
+                try:
+                    with urllib.request.urlopen(
+                        f"http://127.0.0.1:{host_port}/", timeout=2
+                    ) as resp:
+                        code = resp.status
+                        break
+                except Exception:
+                    time.sleep(0.3)
+            assert code == 200, (
+                f"published port {host_port} did not reach the workspace "
+                f"listener (HTTP {code}); the sidecar must publish the "
+                f"workspace's host ports (#2267)."
+            )
+        finally:
+            _podman("rm", "-f", ws, nc, check=False, timeout=60)
+            _podman("network", "rm", net, check=False, timeout=60)

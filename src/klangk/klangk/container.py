@@ -1116,6 +1116,7 @@ class ContainerRegistry:
         workspace_id: str,
         allowed_domains: list[str],
         egress_mode: str = "static",
+        publish: list[tuple[int, int]] | None = None,
     ) -> str:
         """Create + start the FQDN network sidecar for a filtered workspace (#2254).
 
@@ -1125,7 +1126,12 @@ class ContainerRegistry:
         review B2). The network sidecar gets ``--cap-add NET_ADMIN`` + ``--dns 1.1.1.1``
         (the REDIRECT target the workspace inherits); the proxy forwards to a
         *different* detected upstream (loop avoidance). The allow-list + the
-        klangkd backend port are passed via env.
+        klangkd backend port are passed via env. ``publish`` (the host ports the
+        workspace requested) is published on the sidecar itself (#2267): the
+        workspace shares the sidecar's netns, so ``--publish`` is inert on the
+        workspace under ``--network container:`` but works on the netns owner,
+        forwarding into the shared netns to the workspace's listener — letting
+        filtered workspaces host apps.
         """
         image = self.app.state.settings.network_sidecar_image
         if not image:
@@ -1182,6 +1188,7 @@ class ContainerRegistry:
                 dns=["1.1.1.1"],
                 env=env,
                 labels=labels,
+                publish=publish,
                 pull="missing",
             )
             await self.app.state.podman.start_container(cid)
@@ -1905,7 +1912,7 @@ class ContainerRegistry:
                     "keep-id:uid=1000,gid=1000) or clear allowed_domains.",
                 )
             network_sidecar_id = await self._start_network_sidecar(
-                workspace_id, allowed_domains, egress_mode
+                workspace_id, allowed_domains, egress_mode, publish=publish
             )
             create_kwargs["network"] = f"container:{network_sidecar_id}"
             # --dns/--dns-search, --add-host, and --publish are all invalid
@@ -1916,6 +1923,12 @@ class ContainerRegistry:
             # still resolves host.containers.internal via the network sidecar's
             # /etc/hosts (podman populates it), and the network sidecar's iptables
             # statically allow-lists the backend port (entrypoint.sh, B1).
+            # #2267: the workspace's host ports are instead published on the
+            # network sidecar (passed to _start_network_sidecar above). The
+            # workspace shares the sidecar's netns, so the sidecar's --publish
+            # forwards into that netns and reaches the workspace's listener,
+            # letting filtered workspaces host apps (which --publish on the
+            # workspace itself cannot, under --network container:).
             create_kwargs.pop("dns", None)
             create_kwargs.pop("dns_search", None)
             create_kwargs.pop("add_hosts", None)
@@ -1992,7 +2005,14 @@ class ContainerRegistry:
                     container_name,
                     resolved_image,
                     workspace_id,
-                    publish,
+                    # The workspace's OWN publish (what _resolve_port_conflict
+                    # scans for stale holders). A filtered workspace publishes
+                    # nothing (its ports moved to the sidecar, #2267), so pass
+                    # create_kwargs's actual publish (empty for filtered) rather
+                    # than the stale local -- otherwise a conflict on a filtered
+                    # workspace would scan the sidecar's ports and tear the
+                    # sidecar (and its netns) down.
+                    create_kwargs.get("publish", []),
                     allow_sudo,
                     create_kwargs,
                     health_check=health_check,
