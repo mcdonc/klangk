@@ -480,7 +480,9 @@ async def delete_workspace(
     # shared state; the agent subprocess runs inside the container, so
     # stopping the container kills it either way.
     if cid:
-        await app.state.container_registry.stop_and_remove_container(cid)
+        await app.state.container_registry.stop_and_remove_container(
+            cid, workspace_id=workspace_id
+        )
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
 
     deleted = await app.state.workspaces.delete_workspace(
@@ -525,7 +527,9 @@ async def restart_workspace(
         else workspace.get("container_id")
     )
     if cid:
-        await app.state.container_registry.stop_and_remove_container(cid)
+        await app.state.container_registry.stop_and_remove_container(
+            cid, workspace_id=workspace_id
+        )
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
     # Start a fresh container; the service command fires via the
     # create choke point in start_container.
@@ -559,7 +563,9 @@ async def stop_workspace(
         await app.state.container_registry.notify_workspace_killed(
             workspace_id
         )
-        await app.state.container_registry.stop_and_remove_container(cid)
+        await app.state.container_registry.stop_and_remove_container(
+            cid, workspace_id=workspace_id
+        )
         # Notify live WS viewers that the container was stopped on purpose
         # so the UI shows "stopped" rather than "disconnected" (re-homed
         # from the retired WS ``shutdown_container`` handler). Only when a

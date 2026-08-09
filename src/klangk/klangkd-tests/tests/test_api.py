@@ -1968,7 +1968,9 @@ class TestWorkspaceRoutes:
             )
         assert resp.status_code == 200
         mock_stop_agent.assert_awaited_once_with(ws_id)
-        mock_rm.assert_awaited_once_with("fake-container-id")
+        mock_rm.assert_awaited_once_with(
+            "fake-container-id", workspace_id=ws_id
+        )
 
     async def test_delete_workspace_cleans_up_groups(
         self, client, app, user, registry, app_state
@@ -2087,7 +2089,7 @@ class TestWorkspaceRoutes:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "restarted"
-        mock_stop.assert_awaited_once_with("cid-restart")
+        mock_stop.assert_awaited_once_with("cid-restart", workspace_id=ws_id)
         # #1244: restart re-starts the container (not just stop+remove),
         # so the service command re-fires at the create choke point and
         # the workspace recovers.
@@ -2148,7 +2150,7 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json()["status"] == "stopped"
         mock_killed.assert_awaited_once_with(ws_id)
-        mock_stop.assert_awaited_once_with("cid-stop")
+        mock_stop.assert_awaited_once_with("cid-stop", workspace_id=ws_id)
         # REST /stop tears down the Pi RPC subprocess for the workspace
         # (via reset_workspace_state -> reset_workspace); lock the contract.
         mock_stop_session.assert_awaited_once_with(ws_id)

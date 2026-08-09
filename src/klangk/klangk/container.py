@@ -2162,7 +2162,9 @@ class ContainerRegistry:
         )
         return container_id, "created"
 
-    async def stop_and_remove_container(self, container_id: str) -> None:
+    async def stop_and_remove_container(
+        self, container_id: str, workspace_id: str | None = None
+    ) -> None:
         """Stop and remove a container.
 
         The slow ``self.app.state.podman.remove_container`` call for the
@@ -2172,10 +2174,14 @@ class ContainerRegistry:
         :meth:`start_container` uses -- so a concurrent start for the same
         workspace cannot observe a half-cleaned registry (#1258) and cannot
         have its freshly-started sidecar removed out from under it (#2265).
-        Under the lock we re-check that ``container_id`` still maps to this
-        workspace: a racing ``start_container`` may already have re-bound
-        the workspace to a fresh container, in which case we must not tear
-        down the new state (or revoke its browsers, or remove its sidecar).
+        Under the lock we re-check (via the live registry state) that this is
+        still the workspace's container: a racing ``start_container`` may
+        already have re-bound the workspace to a fresh container, in which case
+        we must not tear down the new state (or revoke its browsers, or remove
+        its sidecar). ``workspace_id`` lets a caller that knows the workspace
+        (the /stop, /delete endpoints) supply it directly, so a container
+        started by autostart or a prior klangkd session -- not in the in-memory
+        registry -- still gets its network sidecar torn down on stop (#2286).
 
         The per-workspace lock entry is deliberately *not* popped. Popping
         it while another coroutine is waiting on (or holding) that exact
@@ -2194,26 +2200,29 @@ class ContainerRegistry:
                 container_id,
                 e,
             )
-        ws_id = self._cid_to_wsid.get(container_id)
+        # The caller (/stop, /delete) knows the workspace_id even when this
+        # container isn't tracked in the in-memory registry (started by autostart
+        # or a prior klangkd session, stopped without a connect in this process).
+        ws_id = workspace_id or self._cid_to_wsid.get(container_id)
         if ws_id:
             async with self._get_workspace_lock(ws_id):
-                # Re-verify under the lock: a racing start_container may
-                # have re-bound this workspace to a new container while we
-                # waited for the lock. Only tear down state we still own.
-                # The re-verify now also guards the network sidecar teardown
-                # (#2265): a racing start that re-bound the workspace owns a
-                # fresh sidecar generation, so this (old) stop must not remove
-                # it -- doing so would leave the new container joined to a
-                # removed netns. The sidecar teardown runs under the lock for
-                # the same reason start holds it for sidecar I/O: the two must
-                # not interleave on the network sidecar's netns lifecycle.
-                if self._cid_to_wsid.get(container_id) == ws_id:
-                    # Remove the network sidecar only if this workspace
-                    # actually started one, so a non-filtered workspace stop
-                    # doesn't fire a speculative remove (#2254).
-                    if ws_id in self._ws_with_network_sidecar:
-                        self._ws_with_network_sidecar.discard(ws_id)
-                        await self._stop_network_sidecar(ws_id)
+                # Re-verify under the lock: a racing start_container may have
+                # re-bound this workspace to a new container while we waited.
+                # Only tear down state we still own. The check uses the live
+                # registry state (not the reverse cid map) so it can tell a
+                # re-bound workspace (state's container_id differs -- leave the
+                # fresh sidecar generation alone, #2265) from an untracked one
+                # (no state -- no racing start possible, so its sidecar is safe
+                # to remove by label even though it isn't in the in-memory set).
+                current = self.states.get(ws_id)
+                if current is None or current.container_id == container_id:
+                    # Remove the network sidecar (label-based, idempotent -- a
+                    # no-op for non-filtered workspaces or when egress is
+                    # disabled). Done for every non-rebound stop so a sidecar
+                    # started by autostart / a prior session is cleaned up even
+                    # if it isn't tracked in _ws_with_network_sidecar (#2286).
+                    self._ws_with_network_sidecar.discard(ws_id)
+                    await self._stop_network_sidecar(ws_id)
                     self._cid_to_wsid.pop(container_id, None)
                     self.revoke_workspace_browsers(ws_id)
                     self.states.pop(ws_id, None)
@@ -2256,7 +2265,9 @@ class ContainerRegistry:
         for ws in workspaces:
             if ws["container_id"]:
                 await self.notify_workspace_killed(ws["id"])
-                await self.stop_and_remove_container(ws["container_id"])
+                await self.stop_and_remove_container(
+                    ws["container_id"], workspace_id=ws["id"]
+                )
 
     # --- Pre-warm ---
 

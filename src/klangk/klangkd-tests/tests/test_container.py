@@ -3138,10 +3138,9 @@ class TestStopContainer:
     async def test_stop_removes_network_sidecar_when_workspace_had_one(
         self, monkeypatch
     ):
-        # #2254: a workspace that started a network sidecar (tracked in
-        # _ws_with_network_sidecar) tears the network sidecar down on stop — named
-        # klangk-net-<ws[:8]>. A non-filtered workspace (not in the
-        # set) must NOT fire a speculative network sidecar remove.
+        # #2254: a workspace that started a network sidecar tears it down on
+        # stop (removed by label, #2286). A non-filtered workspace's stop calls
+        # _stop_network_sidecar too, but it's a no-op (no sidecar found).
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
@@ -3167,6 +3166,43 @@ class TestStopContainer:
         # #2286: the sidecar is removed by id (label-based), not by name.
         assert "net-cid" in removes
         assert "ws1234567890" not in self.registry._ws_with_network_sidecar
+
+    async def test_stop_tears_down_sidecar_for_untracked_workspace(
+        self, monkeypatch
+    ):
+        # #2286 follow-up: a workspace started by autostart or a prior klangkd
+        # session isn't in the in-memory registry (_cid_to_wsid / states). When
+        # /stop stops it (passing workspace_id), the sidecar must still be torn
+        # down -- previously it leaked until the next start's clear-on-start or
+        # the startup reaper. (Reproduces the TUI-stop-doesn't-stop-sidecar bug.)
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        net_sidecar = {
+            "Id": "net-cid",
+            "Names": [f"klangk-net-{ws_id[:8]}"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        # NOTE: no track_activity -> not in _cid_to_wsid / states (untracked),
+        # mirroring a workspace started outside this process.
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(return_value=[net_sidecar]),
+        ) as p:
+            await self.registry.stop_and_remove_container(
+                "cid-from-db", workspace_id=ws_id
+            )
+        removes = [c.args[0] for c in p.remove_container.await_args_list]
+        # The workspace container is removed ...
+        assert "cid-from-db" in removes
+        # ... and so is the sidecar, found by label despite no in-memory tracking.
+        assert "net-cid" in removes
 
     async def test_stop_prunes_orphaned_service_session_locks(self):
         # stop_and_remove_container sweeps the per-container service-firing

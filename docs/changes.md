@@ -448,6 +448,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Stopping a workspace now tears down its network sidecar even when the
+  workspace isn't tracked in the in-memory registry (#2286).** A workspace
+  started by autostart or a prior klangkd session, then stopped from the TUI
+  (or `/stop`, `/delete`, `/restart`), previously left its network sidecar
+  running until the next start or the startup reaper. The stop path now takes
+  the workspace id directly from the endpoint and removes the sidecar by label.
+
 - **Network sidecar: filtered workspaces can host apps again (#2267).** A
   filtered workspace shares the network sidecar's netns, so `--publish` on the
   workspace itself was silently discarded by podman and configured host ports
