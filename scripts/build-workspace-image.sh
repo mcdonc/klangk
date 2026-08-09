@@ -43,32 +43,15 @@ done
 if ! $FORCE_BUILD && "$PODMAN" image exists "${KLANGKD_IMAGE_NAME}" 2>/dev/null && [ -f "$STAMP" ]; then
   OLD_HASH=$(cat "$STAMP" 2>/dev/null || true)
   if [ "$CURRENT_HASH" = "$OLD_HASH" ]; then
-    # Stamp matches source, but verify the image is actually newer than
-    # every source file.  A previous build may have written the stamp
-    # from matching source while the image lacked a later COPY target
-    # (e.g. a file added to profile.d/ before the Dockerfile's COPY
-    # line existed).  Compare the image creation time against the
-    # newest source file; rebuild if any source is newer.
-    IMAGE_CREATED=$("$PODMAN" inspect --format '{{.Created}}' "${KLANGKD_IMAGE_NAME}:latest" 2>/dev/null || true)
-    if [ -n "$IMAGE_CREATED" ]; then
-      IMAGE_EPOCH=$(date -d "$IMAGE_CREATED" +%s 2>/dev/null || echo 0)
-      NEWEST_SOURCE=$(find \
-        src/containers/workspace/ \
-        features.yaml \
-        features/ \
-        -type f -printf '%T@\n' 2>/dev/null |
-        sort -rn | head -1 | cut -d. -f1)
-      NEWEST_SOURCE=${NEWEST_SOURCE:-0}
-      if [ "$NEWEST_SOURCE" -gt "$IMAGE_EPOCH" ]; then
-        echo "Source files are newer than image — rebuilding."
-      else
-        echo "Image ${KLANGKD_IMAGE_NAME} is up to date, skipping build."
-        exit 0
-      fi
-    else
-      echo "Image ${KLANGKD_IMAGE_NAME} is up to date, skipping build."
-      exit 0
-    fi
+    # Stamp matches source — trust it and skip the build. The stamp hash
+    # already covers every file that affects the image (this script, the
+    # workspace image dir, features.yaml, and the feature trees), so a
+    # matching stamp means the image is up to date. The image-creation-time
+    # "newer than every source file" check that lived here was unreliable
+    # (podman inspect timestamps don't reflect storage-layer caching / layer
+    # reuse) and rebuilt the image on every server restart (#2273).
+    echo "Image ${KLANGKD_IMAGE_NAME} is up to date, skipping build."
+    exit 0
   fi
 fi
 
