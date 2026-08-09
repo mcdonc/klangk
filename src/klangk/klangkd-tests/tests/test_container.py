@@ -559,6 +559,9 @@ def patch_podman(registry=None, **overrides):
     """
     defaults = {
         "inspect_container": AsyncMock(return_value=None),
+        "container_logs": AsyncMock(
+            return_value="dns-proxy listening on 127.0.0.1:15353"
+        ),
         "create_container": AsyncMock(return_value="new-cid"),
         "start_container": AsyncMock(),
         "wait_for_container_ready": AsyncMock(),
@@ -659,7 +662,6 @@ class TestStartContainer:
         from klangk import netfilter as _nf
 
         monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
-        self.registry.app.state.netfilter.install_hooks()
         with patch_podman(self.registry) as p:
             cid = await self.registry._start_network_sidecar(
                 ws_id, ["github.com:443"]
@@ -743,7 +745,6 @@ class TestStartContainer:
         from klangk import netfilter as _nf
 
         monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
-        self.registry.app.state.netfilter.install_hooks()
         with patch_podman(self.registry) as p:
             await self.registry._start_network_sidecar(
                 "abcdef12", ["github.com:443"], egress_mode="interactive"
@@ -778,7 +779,6 @@ class TestStartContainer:
         monkeypatch.setattr(
             _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
         )
-        self.registry.app.state.netfilter.install_hooks()
 
         creates = []
 
@@ -803,6 +803,12 @@ class TestStartContainer:
             e.startswith("KLANGKNETWORK_EGRESS_BACKEND_PORT=")
             for e in creates[0]["env"]
         )
+        # #2282: the fwmark is passed explicitly (single source of truth) so
+        # proxy.py and entrypoint.sh can't diverge.
+        assert any(
+            e.startswith("KLANGKNETWORK_EGRESS_MARK=")
+            for e in creates[0]["env"]
+        ), creates[0]["env"]
         assert creates[1]["network"] == "container:net-cid"
         assert "annotations" not in creates[1]
         # #2254 B1: --add-host is rejected and --publish is discarded under
@@ -812,6 +818,134 @@ class TestStartContainer:
         assert "publish" not in creates[1]
         assert "dns" not in creates[1]
         assert "dns_search" not in creates[1]
+
+    async def test_filtered_workspace_with_allow_sudo_drops_net_raw(
+        self, workspace, tmp_path, monkeypatch, caplog
+    ):
+        # #2276 (B): a filtered workspace (allowed_domains) created with
+        # allow_sudo on would let the klangk user sudo to root and use the
+        # net_raw that enable_ping grants to setsockopt(SO_MARK), bypassing
+        # the egress filter. Instead drop net_raw from the bounding set so even
+        # root can't acquire it (NET_ADMIN is never granted) — the filter holds,
+        # at the cost of ping (setuid) for this workspace.
+        import logging
+
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            with caplog.at_level(logging.INFO, logger="klangk.container"):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+        ws = creates[1]  # creates[0] is the network sidecar
+        # net_raw is dropped, not added (podman rejects a cap in both).
+        assert ws["cap_drop"] == ["net_raw"]
+        assert "net_raw" not in ws.get("cap_add", [])
+        # The ping-loss is logged once at create time so an operator chasing
+        # broken ping isn't guessing.
+        assert any(
+            "ping" in rec.message.lower() and "#2276" in rec.message
+            for rec in caplog.records
+        ), [rec.message for rec in caplog.records]
+
+    async def test_start_network_sidecar_raises_if_proxy_exits_before_ready(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2277: if the sidecar exits before the DNS proxy binds, refuse to
+        # start (fail-closed) rather than let the workspace join a netns whose
+        # OUTPUT is still ACCEPT (entrypoint mid-flight).
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        async def _fake_create(name, image, **kw):
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry,
+            create_container=AsyncMock(side_effect=_fake_create),
+            container_logs=AsyncMock(return_value=""),
+            inspect_container=AsyncMock(
+                return_value={"State": {"Status": "exited"}}
+            ),
+        ):
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+
+    async def test_start_network_sidecar_raises_on_readiness_timeout(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2277: if the proxy never prints its listening line within the
+        # readiness window, refuse to start (fail-closed). Monkeypatch the
+        # timeout/poll constants small so the test doesn't wait 30s.
+        import klangk.container as _c_mod
+
+        monkeypatch.setattr(_c_mod, "_NETWORK_SIDECAR_READY_TIMEOUT", 0.05)
+        monkeypatch.setattr(_c_mod, "_NETWORK_SIDECAR_READY_POLL", 0.01)
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        async def _fake_create(name, image, **kw):
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry,
+            create_container=AsyncMock(side_effect=_fake_create),
+            container_logs=AsyncMock(return_value=""),
+            inspect_container=AsyncMock(
+                return_value={"State": {"Status": "running"}}
+            ),
+        ):
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
 
     async def test_network_sidecar_failure_refuses_to_start(
         self, workspace, tmp_path, monkeypatch
@@ -826,7 +960,6 @@ class TestStartContainer:
         )
         from klangk import netfilter as _nf_mod
 
-        monkeypatch.setattr(_nf_mod.platform, "system", lambda: "Linux")
         monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
 
         async def _fake_create(name, image, **kw):
@@ -844,6 +977,43 @@ class TestStartContainer:
                     "/tmp/home",
                     allowed_domains=["github.com:443"],
                 )
+
+    async def test_workspace_create_failure_cleans_up_sidecar(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2255 review: if the workspace container fails to create AFTER the
+        # network sidecar already started, the sidecar must be torn down so
+        # it doesn't leak (NET_ADMIN + proxy) until the next startup reap.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(_nf_mod, "_detect_host_resolvers", lambda: [])
+
+        async def _fake_create(name, image, **kw):
+            # Sidecar create succeeds; workspace create fails.
+            if "klangk-net-" in name:
+                return "net-cid"
+            raise podman.PodmanError(500, "workspace image pull failed")
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ) as p:
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+        # The sidecar was removed on the workspace-create failure.
+        expected_name = f"klangk-net-{workspace['id'][:8]}"
+        p.remove_container.assert_awaited_with(expected_name, force=True)
+        # And the workspace is no longer tracked as having a live sidecar.
+        assert workspace["id"] not in self.registry._ws_with_network_sidecar
 
     async def test_allowed_domains_without_network_sidecar_refuses_to_start(
         self, workspace, tmp_path, monkeypatch

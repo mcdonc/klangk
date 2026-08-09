@@ -448,7 +448,18 @@ class TestConfig:
         headers = await _auth_headers(client)
         resp = await client.get("/api/v1/config", headers=headers)
         assert resp.json()["netfilter_default_domains"] == ["github.com:443"]
-        # hooks dir unset in the test fixture → disabled.
+        # The network sidecar ships with a default image, so egress
+        # filtering is available out of the box (#2255).
+        assert resp.json()["netfilter_enabled"] is True
+
+    async def test_get_config_netfilter_disabled_when_sidecar_unset(
+        self, client, app, user
+    ):
+        # An operator who clears the sidecar image (or sets
+        # KLANGKD_NETFILTER_ENABLED=false) sees filtering as off.
+        app.state.settings.network_sidecar_image = ""
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/config", headers=headers)
         assert resp.json()["netfilter_enabled"] is False
 
     async def test_get_config_includes_features(
@@ -1770,8 +1781,10 @@ class TestWorkspaceRoutes:
     async def test_create_with_allowed_domains_persists(
         self, client, app, user, caplog
     ):
-        # netfilter is disabled by default in the test app, so the value
-        # is persisted (fail-open) with a loud warning (#1365).
+        # When the network sidecar is disabled, allowed_domains is still
+        # persisted (with a loud warning) so it takes effect once filtering
+        # is re-enabled (#1365, #2255).
+        app.state.settings.network_sidecar_image = ""
         headers = await _auth_headers(client)
         with caplog.at_level("WARNING"):
             resp = await client.post(
@@ -1791,7 +1804,9 @@ class TestWorkspaceRoutes:
             "github.com:443",
             "pypi.org",
         ]
-        assert any("UNRESTRICTED" in r.message for r in caplog.records)
+        assert any(
+            "network sidecar is disabled" in r.message for r in caplog.records
+        )
 
     async def test_create_with_invalid_allowed_domains_rejected(
         self, client, user

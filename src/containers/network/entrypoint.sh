@@ -12,6 +12,7 @@ set -eu
 
 UPSTREAM="${KLANGKNETWORK_EGRESS_UPSTREAM:-8.8.8.8}"
 IPT="${KLANGKNETWORK_IPTABLES:-iptables}"
+IPT6="${KLANGKNETWORK_IP6TABLES:-ip6tables}"
 LISTEN_PORT="${KLANGKNETWORK_EGRESS_LISTEN_PORT:-15353}"
 # fwmark the proxy stamps on its upstream socket (#2264). Must match proxy.py's
 # KLANGKNETWORK_EGRESS_MARK. The mark scopes upstream:53 access to the proxy: the
@@ -21,6 +22,23 @@ MARK="${KLANGKNETWORK_EGRESS_MARK:-75}"
 
 # --- filter OUTPUT: default-deny + the paths the workspace + proxy need ---
 $IPT -P OUTPUT DROP
+# IPv6 default-deny (#1936): every host publishes a AAAA; without this an
+# IPv6 path bypasses the v4 allow-list. ip6tables ships in the same alpine
+# iptables package. The sidecar owns the netns (shared with the workspace
+# via --network container:), so this is the authoritative v6 deny (#2255).
+$IPT6 -P OUTPUT DROP
+# Defense-in-depth (#2275): also disable the v6 stack in this netns. Unlike
+# the createContainer-hook sysctl that was dropped (it ran before pasta
+# configured the netns and broke pasta's v6 address setup), this runs in the
+# sidecar entrypoint — AFTER pasta has configured the netns — so it just
+# removes the v6 addresses rather than blocking setup. Best-effort: rootless
+# per-netns ipv6 sysctl writability isn't guaranteed, and a silent no-op is
+# fine because the ip6tables DROP above is the certain backstop. Written via
+# procfs so no extra package (sysctl is in Alpine's procps, not installed).
+if [ -w /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
+  echo 1 >/proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null ||
+    echo "egress-sidecar: could not disable IPv6 stack (relying on ip6tables DROP)" >&2
+fi
 # Loopback by *destination* (not -o lo): REDIRECT keeps the packet's original
 # output interface, so -o lo misses the redirected :53 packet under a DROP policy.
 $IPT -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
@@ -57,6 +75,22 @@ case "${KLANGKNETWORK_EGRESS_BACKEND_PORT:-}" in
   [ -n "$gw" ] && $IPT -A OUTPUT -d "$gw" -p tcp --dport "$KLANGKNETWORK_EGRESS_BACKEND_PORT" -j ACCEPT
   ;;
 esac
+
+# --- interactive egress consent (#2239): in interactive mode, observe blocked
+# destinations via NFLOG so the consent daemon (netlink group) can prompt a
+# human. Rate-limited to cap flooding from adversarial containers; the DROP
+# policy still fires for every packet. Placed AFTER every ACCEPT so only
+# genuinely-blocked traffic is logged. In static mode (the default) no NFLOG
+# rule is added — the DROP policy alone carries the deny, and the ruleset is
+# fully immutable. The tag correlates a blocked packet with its workspace
+# (passed from klangkd as the workspace-id prefix).
+if [ "${KLANGKNETWORK_EGRESS_MODE:-}" = "interactive" ]; then
+  _tag="${KLANGKNETWORK_EGRESS_TAG:-unknown}"
+  $IPT -A OUTPUT -m limit --limit 5/sec --limit-burst 20 \
+    -j NFLOG --nflog-group "${KLANGKNETWORK_EGRESS_NFLOG_GROUP:-5139}" \
+    --nflog-prefix "klangk-egress:${_tag}:"
+  $IPT -A OUTPUT -j DROP
+fi
 
 # --- nat OUTPUT: REDIRECT ALL :53 to the proxy, EXCEPT the proxy's own marked
 # forwards (loop-avoidance). Redirecting every resolver — not just the

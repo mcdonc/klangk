@@ -240,6 +240,26 @@ class _WebSession:
                 return msg
         raise TimeoutError(f"Waiting for {target_type}")
 
+    async def _drain_until_windows(self, predicate, timeout=10):
+        """Drain frames until a terminal_windows snapshot satisfies predicate.
+
+        ``_drain_until("terminal_windows")`` returns on the *next* window-list
+        frame, which may not yet reflect a just-sent create/close — the
+        snapshot can lag the command by one frame and the test then sees a
+        stale window set. This variant keeps reading until the snapshot
+        actually reflects the change, so window mutations are observed
+        deterministically.
+        """
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            raw = await asyncio.wait_for(self.ws.recv(), timeout=timeout)
+            msg = json.loads(raw)
+            if msg.get("type") == "terminal_windows":
+                self.windows = msg.get("windows", [])
+                if predicate(self.windows):
+                    return
+        raise TimeoutError("Waiting for window-list change")
+
     async def drain_pending(self, timeout=1.0):
         try:
             while True:
@@ -262,7 +282,11 @@ class _WebSession:
                 }
             )
         )
-        await self._drain_until("terminal_windows", timeout=10)
+        # Wait until the new window actually appears in a snapshot, not just
+        # for the next frame (which can predate the create).
+        await self._drain_until_windows(
+            lambda wins: any(w["name"] == name for w in wins), timeout=10
+        )
         new_win = next(
             (w for w in self.windows if w["name"] == name),
             None,
@@ -299,7 +323,11 @@ class _WebSession:
                 }
             )
         )
-        await self._drain_until("terminal_windows", timeout=10)
+        # Wait until the closed window is gone from a snapshot.
+        await self._drain_until_windows(
+            lambda wins: all(w["id"] != window_id for w in wins),
+            timeout=10,
+        )
 
     async def disconnect(self):
         if self._ctx:
@@ -652,6 +680,19 @@ wait
 
             if tab_a:
                 await web_a.select_window(tab_a["id"])
+
+            # connect() defaults to windows[0], but the backend sometimes
+            # orders the workspace's window list active-first — and web_a
+            # just made @1 (tabA) active — so web_b's default can land on @1
+            # too. Put web_b on a window that is provably not web_a's, then
+            # session independence is the assertion, not the default ordering.
+            if tab_a:
+                other = next(
+                    (w for w in web_b.windows if w["id"] != tab_a["id"]),
+                    None,
+                )
+                if other:
+                    await web_b.select_window(other["id"])
 
             await web_b.drain_pending()
             assert web_a.selected_window_id != web_b.selected_window_id, (

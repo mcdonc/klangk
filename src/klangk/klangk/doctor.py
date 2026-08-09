@@ -419,96 +419,6 @@ def check_podman_machine() -> CheckResult:  # pragma: no cover
     )
 
 
-def check_netfilter_vm() -> CheckResult:  # pragma: no cover
-    """macOS: verify netfilter prerequisites inside the podman machine VM.
-
-    On macOS, podman runs in remote mode — the OCI runtime is inside
-    a CoreOS VM.  The netfilter hook needs iptables, nsenter, and getent
-    to be available inside the VM.  This check verifies they are present.
-    """
-    if platform.system() != "Darwin":
-        return CheckResult(
-            name="netfilter (VM)",
-            ok=True,
-            message="skipped on Linux (hooks run locally)",
-        )
-    rc, _out, _err = _run(
-        [
-            "podman",
-            "machine",
-            "ssh",
-            "command -v iptables && command -v nsenter && command -v getent",
-        ]
-    )
-    if rc != 0:
-        return CheckResult(
-            name="netfilter (VM)",
-            ok=False,
-            is_warning=True,
-            message=(
-                "iptables/nsenter/getent not all available in podman "
-                "machine VM"
-            ),
-            hint=(
-                "Egress filtering requires iptables, nsenter, and getent "
-                "inside the VM; install them via rpm-ostree or check your "
-                "podman machine image"
-            ),
-        )
-    return CheckResult(
-        name="netfilter (VM)",
-        ok=True,
-        message="netfilter dependencies available in podman machine VM",
-    )
-
-
-def check_netfilter_host() -> CheckResult:
-    """Linux host: verify the netfilter egress hook's prerequisites.
-
-    The OCI createContainer hook installs the v4 egress ruleset with
-    ``iptables`` and default-denies IPv6 with ``ip6tables`` (the sysctl
-    v6-disable was removed — it broke pasta's netns setup). If ``ip6tables``
-    is absent where the OCI runtime executes, the v6 default-deny fails
-    silently and a filtered workspace has an unrestricted IPv6 path that
-    bypasses the v4 allow-list (every host publishes a AAAA). This check
-    surfaces that at doctor time. macOS skips (the runtime is in the podman
-    machine VM; see :func:`check_netfilter_vm`) (#1936, PR #2248 B1).
-    """
-    if platform.system() == "Darwin":  # pragma: no cover
-        return CheckResult(
-            name="netfilter (host)",
-            ok=True,
-            message="skipped on macOS (hooks run in the podman machine VM)",
-        )
-    missing = [b for b in ("iptables", "ip6tables") if shutil.which(b) is None]
-    if missing:
-        extra = (
-            " — ip6tables missing means IPv6 egress bypasses the v4 allow-list"
-            if "ip6tables" in missing
-            else ""
-        )
-        return CheckResult(
-            name="netfilter (host)",
-            ok=False,
-            is_warning=True,
-            message=(
-                f"{', '.join(missing)} not on PATH — the netfilter egress "
-                f"hook cannot fully enforce its ruleset{extra}"
-            ),
-            hint=(
-                "Install iptables + ip6tables where the OCI runtime "
-                "executes (e.g. apt install iptables / dnf install "
-                "iptables-nft) or per-workspace egress filtering will "
-                "silently no-op"
-            ),
-        )
-    return CheckResult(
-        name="netfilter (host)",
-        ok=True,
-        message="iptables + ip6tables available on the host",
-    )
-
-
 def check_rootless_podman() -> CheckResult:  # pragma: no cover
     """Verify rootless podman can actually run a container."""
     if not shutil.which("podman"):
@@ -596,15 +506,8 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
         report.add(result)
 
         report.add(check_subuid(user))
-
-        # Netfilter hook prerequisites (iptables + ip6tables). ip6tables is
-        # the sole IPv6 default-deny (the sysctl was removed — it broke
-        # pasta); without it a filtered workspace has an IPv6 exfil bypass
-        # (#1936, PR #2248 B1).
-        report.add(check_netfilter_host())
     else:  # pragma: no cover
         report.add(check_podman_machine())
-        report.add(check_netfilter_vm())
 
     # 3. Configuration checks
     report.add(check_podman_policy())
