@@ -291,7 +291,6 @@ port: "8997"
 | `podman_bin`                 | `podman`                        | `KLANGKD_PODMAN_BIN`                 |
 | `disable_tmux`               |                                 | `KLANGKD_DISABLE_TMUX`               |
 | `netfilter_enabled`          | `true`                          | `KLANGKD_NETFILTER_ENABLED`          |
-| `netfilter_hooks_dir`        | `<state_dir>/oci-hooks`         | `KLANGKD_NETFILTER_HOOKS_DIR`        |
 | `netfilter_default_domains`  | _(unset)_                       | `KLANGKD_NETFILTER_DEFAULT_DOMAINS`  |
 | `container_cpu_limit`        | `2.0`                           | `KLANGKD_CONTAINER_CPU_LIMIT`        |
 | `container_memory_limit`     | `8g`                            | `KLANGKD_CONTAINER_MEMORY_LIMIT`     |
