@@ -556,6 +556,19 @@ netfilter_default_domains:
   Fastly, CloudFront, Cloudflare) stays reachable without restarting the
   container. Static CIDR ranges (`10.0.0.0/8`) are installed as a single
   stable `-d <ip>/<plen>` rule with no resolution (#1935).
+- **A CNAME can widen egress to an attacker-steerable IP — on all ports.**
+  The proxy allow-lists every A record in a response, including those reached
+  via a CNAME chain, and a learned IP is reachable on **all ports** (no
+  per-domain port scoping yet, #2256). If an allowed domain CNAMEs to a host an
+  attacker controls (or to a shared CDN frontend), that IP becomes reachable
+  on every port for the workspace's life. Prefer `host:port` specs and avoid
+  allow-listing domains whose CNAME targets you don't control (#2279).
+- **Learned IPs are never revoked.** A resolved IP is allow-listed with no TTL
+  and is not removed when a domain is dropped from `allowed_domains` — it
+  stays reachable until the workspace is recreated (the sidecar is rebuilt
+  fresh on each start). Removing a domain from a _running_ workspace's
+  allow-list does not revoke egress to IPs it already resolved; recreate the
+  workspace to fully revoke (#2256, #2281).
 - **DNS is redirected to the sidecar's proxy, not blocked.** Outbound
   `:53` is `REDIRECT`ed to the sidecar's FQDN DNS proxy, which resolves
   against a real upstream and allow-lists the IPs at runtime; a denied
