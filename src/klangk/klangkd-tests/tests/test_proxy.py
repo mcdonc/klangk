@@ -72,6 +72,53 @@ def proxy():
     return mod
 
 
+class TestAllowedGate:
+    """The allow/deny gate (``allowed``) is the core security check. A
+    suffix-match regression here (e.g. a bare ``endswith(h)``) would wrongly
+    admit ``evilgithub.com`` for an allow-listed ``github.com``. Pin the exact /
+    subdomain / boundary semantics so a refactor can't silently weaken it (only
+    the real-podman e2e covered it before)."""
+
+    @pytest.mark.parametrize(
+        "qname, expected",
+        [
+            ("github.com", True),  # exact match
+            ("api.github.com", True),  # subdomain matches
+            ("a.b.c.github.com", True),  # deep subdomain matches
+            ("evilgithub.com", False),  # boundary: NOT a subdomain
+            ("notgithub.com", False),  # boundary
+            ("github.com.attacker.test", False),  # prefix-of, not a suffix
+            ("evil.test", False),  # unrelated
+        ],
+    )
+    def test_suffix_boundary(self, proxy, monkeypatch, qname, expected):
+        # The dot boundary ("." + h) is what stops evilgithub.com matching
+        # github.com. A bare endswith(h) would flip the False cases to True.
+        monkeypatch.setattr(proxy, "ALLOWED", ["github.com"])
+        assert proxy.allowed(qname) == expected
+
+    def test_multiple_specs_any_match(self, proxy, monkeypatch):
+        monkeypatch.setattr(proxy, "ALLOWED", ["github.com", "pypi.org"])
+        assert proxy.allowed("api.github.com") is True
+        assert proxy.allowed("files.pythonhosted.org") is False
+        assert proxy.allowed("github.com") is True
+
+    def test_empty_allow_list_denies_all(self, proxy, monkeypatch):
+        monkeypatch.setattr(proxy, "ALLOWED", [])
+        assert proxy.allowed("anything.test") is False
+        assert proxy.allowed("github.com") is False
+
+    def test_case_sensitive_relies_on_caller_lowercasing(
+        self, proxy, monkeypatch
+    ):
+        # allowed() compares verbatim; query_name()/host_specs() lowercase at
+        # the edges. Pin that contract: a mixed-case qname does NOT match a
+        # lowercased spec, so the lowercasing must not be dropped upstream.
+        monkeypatch.setattr(proxy, "ALLOWED", ["github.com"])
+        assert proxy.allowed("GitHub.Com") is False
+        assert proxy.allowed("API.GITHUB.COM") is False
+
+
 class TestRespondAllowedSwallowsFailures:
     """#2278: a transient failure in allow_ip or sendto must drop only the one
     response, not kill the proxy (an escaped raise would take down PID 1,
