@@ -50,14 +50,20 @@ $IPT -A OUTPUT -d "$UPSTREAM" -p udp --dport 53 -m mark --mark "$MARK" -j ACCEPT
 $IPT -A OUTPUT -d "$UPSTREAM" -p tcp --dport 53 -m mark --mark "$MARK" -j ACCEPT
 
 # --- static CIDR allow-specs (host specs are learned dynamically by the proxy).
-# A "host:port" CIDR like 10.0.0.0/8:443 is stripped to its CIDR; per-domain
-# port scoping is #2256.
+# A "cidr:port" spec like 10.0.0.0/8:443 is scoped to that TCP port; a bare
+# CIDR allows all ports. Per-domain port scoping for hosts is the proxy's
+# job (#2256).
 IFS=','
 for spec in ${KLANGKNETWORK_EGRESS_ALLOW:-}; do
   case "$spec" in
   */*)
     cidr=${spec%%:*}
-    $IPT -A OUTPUT -d "$cidr" -j ACCEPT
+    port=${spec#*:}
+    if [ "$port" = "$spec" ]; then
+      $IPT -A OUTPUT -d "$cidr" -j ACCEPT
+    else
+      $IPT -A OUTPUT -d "$cidr" -p tcp --dport "$port" -j ACCEPT
+    fi
     ;;
   esac
 done

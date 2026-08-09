@@ -54,19 +54,29 @@ klangkd `egress_port` here (#2254 B1).
 
 ## Configuration (env)
 
-| var                                 | default    | meaning                                           |
-| ----------------------------------- | ---------- | ------------------------------------------------- |
-| `KLANGKNETWORK_EGRESS_ALLOW`        | _(empty)_  | comma-separated allow-list: `host[:port]` or CIDR |
-| `KLANGKNETWORK_EGRESS_UPSTREAM`     | `8.8.8.8`  | real upstream the proxy forwards to               |
-| `KLANGKNETWORK_EGRESS_BACKEND_PORT` | _(empty)_  | klangkd backend port on host.containers.internal  |
-| `KLANGKNETWORK_EGRESS_LISTEN_PORT`  | `15353`    | UDP port the proxy listens on                     |
-| `KLANGKNETWORK_IPTABLES`            | `iptables` | iptables binary path                              |
-| `KLANGKNETWORK_EGRESS_DEBUG`        | unset      | if set, log each allow/deny decision              |
+| var                                   | default    | meaning                                                                     |
+| ------------------------------------- | ---------- | --------------------------------------------------------------------------- |
+| `KLANGKNETWORK_EGRESS_ALLOW`          | _(empty)_  | comma-separated allow-list: `host[:port]`, `*.domain[:port]`, or CIDR       |
+| `KLANGKNETWORK_EGRESS_UPSTREAM`       | `8.8.8.8`  | real upstream the proxy forwards to                                         |
+| `KLANGKNETWORK_EGRESS_BACKEND_PORT`   | _(empty)_  | klangkd backend port on host.containers.internal                            |
+| `KLANGKNETWORK_EGRESS_LISTEN_PORT`    | `15353`    | UDP port the proxy listens on                                               |
+| `KLANGKNETWORK_EGRESS_MARK`           | `75`       | fwmark for the proxy's upstream socket (must match entrypoint.sh)           |
+| `KLANGKNETWORK_EGRESS_SWEEP_INTERVAL` | `5`        | seconds between learned-IP TTL-expiry sweeps                                |
+| `KLANGKNETWORK_EGRESS_MIN_TTL`        | `30`       | floor for a learned IP's lifetime (a 0-TTL response must not yank the rule) |
+| `KLANGKNETWORK_IPTABLES`              | `iptables` | iptables binary path                                                        |
+| `KLANGKNETWORK_EGRESS_DEBUG`          | unset      | if set, log each allow/deny decision                                        |
 
-## Limitations (#2256)
+## Allow-list semantics (#2256)
 
-Learned IPs are allow-listed on **all** ports (no per-domain port scoping yet),
-wildcard domains aren't supported, and learned IPs never expire (no TTL cleanup).
+- `host` allows all ports to the host **and its subdomains**; `host:port`
+  scopes a learned IP to one TCP port.
+- `*.domain[:port]` allows **subdomains only** (not the apex) — distinct
+  from a bare `domain`.
+- A resolved IP is allow-listed **only for the DNS response's TTL**; the
+  proxy re-resolves on each query and a background sweep removes the rule
+  once the TTL elapses.
+- CIDR specs (`10.0.0.0/8`, `10.0.0.0/8:443`) are installed statically by
+  the entrypoint (not resolved); a `cidr:port` scopes the rule to that port.
 
 ## References
 

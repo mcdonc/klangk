@@ -18,7 +18,8 @@ outbound networking exactly as before.
 ## How it works
 
 1. A workspace carries an `allowed_domains` list (`host`, `host:port`,
-   or IPv4 CIDR specs — see the [API](#api) section for the full grammar).
+   `*.domain[:port]` wildcards, or IPv4 CIDR specs — see the [API](#api)
+   section for the full grammar).
 2. On container start, if the workspace declares `allowed_domains`, the
    backend starts a **network sidecar** container (`klangk-net-<ws-id>`,
    from the `network_sidecar_image` image, which defaults to
@@ -38,7 +39,10 @@ outbound networking exactly as before.
    **allow-lists resolved IPs at runtime** — so a domain whose IPs rotate
    (CDN, DNS round-robin) stays reachable without a container restart,
    and a denied domain returns NXDOMAIN. This replaces the create-time
-   IP-pinning the old OCI hook model used (#2255). The workspace is told
+   IP-pinning the old OCI hook model used (#2255). A resolved IP is allowed
+   **only for the DNS response's TTL**; the proxy re-resolves on the next
+   query and a background sweep removes the allow-rule once the TTL
+   elapses, so stale IPs do not linger (#2256). The workspace is told
    its resolver is `1.1.1.1` (a placeholder) — the `:53` traffic is
    `REDIRECT`ed to the proxy before it ever leaves, so `1.1.1.1` is never
    actually reached; the proxy forwards to a _different_ detected upstream
@@ -172,13 +176,24 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
   -d '{"allowed_domains": ["github.com:443", "pypi.org", "registry.npmjs.org"]}'
 ```
 
-- `host` allows all ports to that host.
-- `host:port` allows a single TCP port (port must be 1–65535).
+- `host` allows all ports to that host **and its subdomains**
+  (`github.com` also covers `api.github.com`).
+- `host:port` allows a single TCP port (port must be 1–65535) to that host
+  and its subdomains.
+- `*.domain` allows **subdomains only, not the apex** — `*.pypi.org` matches
+  `downloads.pypi.org`-style subdomains but not `pypi.org` itself. Append
+  a port to scope it (`*.pypi.org:443`). This is distinct from a bare
+  `domain` (which includes the apex), so you can allow subdomains without the
+  apex or vice-versa (#2256).
 - `10.0.0.0/8` allows an entire IPv4 subnet (CIDR notation); append a
   port to scope it, e.g. `10.0.0.0/8:443`. A CIDR is installed as a
   single iptables `-d <ip>/<plen>` rule and is **not** DNS-resolved, so
   it is the stable choice for a private range whose individual hosts you
   don't want to enumerate (#1935).
+- Resolved IPs (for `host`/`*.domain` specs) are allowed **only for the
+  DNS response's TTL**; the sidecar's proxy re-resolves on each query and
+  drops the allow-rule once the TTL elapses, so a stale IP is not reachable
+  indefinitely (#2256).
 - IPv6 literals and IPv6 CIDRs (e.g. `[::1]`, `[2001:db8::1]:443`,
   `2001:db8::/32`) are **not** accepted — IPv6 egress is default-denied
   inside filtered containers, so a v6 destination is neither reachable
@@ -556,19 +571,22 @@ netfilter_default_domains:
   Fastly, CloudFront, Cloudflare) stays reachable without restarting the
   container. Static CIDR ranges (`10.0.0.0/8`) are installed as a single
   stable `-d <ip>/<plen>` rule with no resolution (#1935).
-- **A CNAME can widen egress to an attacker-steerable IP — on all ports.**
+- **A CNAME can widen egress to an attacker-steerable IP.**
   The proxy allow-lists every A record in a response, including those reached
-  via a CNAME chain, and a learned IP is reachable on **all ports** (no
-  per-domain port scoping yet, #2256). If an allowed domain CNAMEs to a host an
-  attacker controls (or to a shared CDN frontend), that IP becomes reachable
-  on every port for the workspace's life. Prefer `host:port` specs and avoid
-  allow-listing domains whose CNAME targets you don't control (#2279).
-- **Learned IPs are never revoked.** A resolved IP is allow-listed with no TTL
-  and is not removed when a domain is dropped from `allowed_domains` — it
-  stays reachable until the workspace is recreated (the sidecar is rebuilt
-  fresh on each start). Removing a domain from a _running_ workspace's
-  allow-list does not revoke egress to IPs it already resolved; recreate the
-  workspace to fully revoke (#2256, #2281).
+  via a CNAME chain. A `host:port` spec scopes a learned IP to that one TCP
+  port; a bare `host` allows all ports; and a learned IP expires with the DNS
+  response's TTL (#2256). But within that port/TTL window, if an allowed
+  domain CNAMEs to a host an attacker controls (or to a shared CDN frontend
+  IP), that IP becomes reachable for the spec's ports. Prefer `host:port`
+  specs and avoid allow-listing domains whose CNAME targets you don't control
+  (#2279).
+- **Dropping a domain from a running workspace does not revoke already-
+  resolved IPs.** A resolved IP is allow-listed for the DNS response's TTL
+  and the sidecar's proxy drops the rule once the TTL elapses, so stale IPs
+  do not persist indefinitely (#2256). But the allow-list a running sidecar
+  enforces is fixed at start — removing a domain from `allowed_domains` does
+  not revoke egress to IPs the workspace already resolved; recreate the
+  workspace (or wait for TTL expiry) to fully revoke (#2281).
 - **DNS is redirected to the sidecar's proxy, not blocked.** Outbound
   `:53` is `REDIRECT`ed to the sidecar's FQDN DNS proxy, which resolves
   against a real upstream and allow-lists the IPs at runtime; a denied

@@ -615,7 +615,8 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      expect(find.text('Expected host or host:port'), findsOneWidget);
+      expect(
+          find.text('Expected host, host:port, or *.domain'), findsOneWidget);
       expect(
         find.byWidgetPredicate(
           (w) => w is SelectableText && (w.data ?? '') == 'bad spec',
