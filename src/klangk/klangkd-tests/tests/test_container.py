@@ -682,6 +682,63 @@ class TestStartContainer:
         assert kwargs["labels"]["klangk.network-sidecar"] == ws_id
         p.start_container.assert_awaited_once_with("new-cid")
 
+    async def test_start_network_sidecar_clears_lingering_same_named(
+        self, monkeypatch
+    ):
+        # #2265: _start_network_sidecar force-removes any same-named sidecar
+        # left by a prior generation before creating, so a restart (or an
+        # external kill that left the old sidecar running) does not collide
+        # on the deterministic name and fail-closed.
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        with patch_podman(self.registry) as p:
+            await self.registry._start_network_sidecar(
+                ws_id, ["github.com:443"]
+            )
+        sidecar_name = self.registry._network_sidecar_name(ws_id)
+        # The lingering same-named sidecar is force-removed before the create.
+        assert p.remove_container.await_args_list[0].args == (sidecar_name,)
+        assert p.remove_container.await_args_list[0].kwargs == {"force": True}
+        # And the fresh sidecar is still created + started.
+        assert p.create_container.await_count == 1
+        assert p.create_container.call_args.args[0] == sidecar_name
+
+    async def test_start_network_sidecar_ignores_force_remove_error(
+        self, monkeypatch
+    ):
+        # #2265: the pre-create force-remove of a lingering same-named sidecar
+        # is best-effort -- if it errors (the name is already gone, or podman
+        # hiccups), the except swallows it and the create proceeds normally.
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        with patch_podman(
+            self.registry,
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "not found")
+            ),
+        ) as p:
+            cid = await self.registry._start_network_sidecar(
+                ws_id, ["github.com:443"]
+            )
+        assert (
+            cid == "new-cid"
+        )  # create still happened despite the remove error
+        assert p.create_container.await_count == 1
+
     async def test_start_network_sidecar_failure_raises(self, monkeypatch):
         # #2254 review B2: a network sidecar that can't start must surface the failure
         # (raise), not return "" — the caller fail-closes rather than starting
@@ -2732,6 +2789,50 @@ class TestStopContainer:
         # the under-lock re-check, stop would have already torn the old
         # state down and revoked browsers before the rebind.)
         assert revoked == []
+
+    async def test_stop_does_not_remove_sidecar_when_workspace_rebound(
+        self, monkeypatch
+    ):
+        # #2265: a stop that loses the race to a rebound start must not tear
+        # down the new generation's network sidecar -- doing so would leave
+        # the new container joined (--network container:) to a removed netns.
+        # The sidecar teardown is now under the workspace lock and gated by
+        # the same re-verify that guards the registry teardown.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        self.registry.track_activity("cid-old", "ws1234567890")
+        self.registry._ws_with_network_sidecar.add("ws1234567890")
+        lock = self.registry._get_workspace_lock("ws1234567890")
+
+        with patch_podman(self.registry) as p:
+            async with lock:
+                # Start stop; it removes the old workspace container, peeks
+                # cid-old->ws, then blocks on the lock we hold.
+                task = asyncio.create_task(
+                    self.registry.stop_and_remove_container("cid-old")
+                )
+                for _ in range(5):
+                    await asyncio.sleep(0)
+                # While stop is blocked, a racing start re-binds the
+                # workspace to a new container (track_activity drops the
+                # old cid reverse-mapping).
+                self.registry.track_activity("cid-new", "ws1234567890")
+            # Releasing the lock lets stop acquire it; under the lock the
+            # re-check sees cid-old no longer maps to ws, so it bails --
+            # including the sidecar teardown.
+            await task
+        # The new generation's sidecar was NOT removed.
+        sidecar_name = self.registry._network_sidecar_name("ws1234567890")
+        removes = [c.args[0] for c in p.remove_container.await_args_list]
+        assert sidecar_name not in removes
+        # Only the old workspace container itself was removed.
+        assert "cid-old" in removes
+        # And the new container's state + sidecar tracking survive.
+        assert self.registry.states["ws1234567890"].container_id == "cid-new"
+        assert "ws1234567890" in self.registry._ws_with_network_sidecar
 
     async def test_stop_does_not_replace_workspace_lock(self):
         # Regression for the lock-replacement race: even after stop tears

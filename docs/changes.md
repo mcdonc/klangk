@@ -422,6 +422,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Network sidecar: stop/start race on the deterministic sidecar name
+  (#2265).** A concurrent stop and start of the same filtered workspace could
+  race on the sidecar's per-workspace name: the stop removed the sidecar the
+  start had just created (leaving the workspace joined to a removed netns),
+  or the start collided with a lingering old sidecar and refused to come up.
+  The sidecar teardown is now serialized under the workspace lock with a
+  re-verify, and the start clears any stale same-named sidecar first.
+
 - **Network sidecar: a filtered workspace now waits for the sidecar's DNS
   proxy to be ready before starting (#2277).** Previously the workspace joined
   the sidecar's netns the instant it was started, before the entrypoint had

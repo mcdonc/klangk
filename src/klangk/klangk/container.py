@@ -1163,6 +1163,17 @@ class ContainerRegistry:
             "klangk.instance": self.app.state.util.instance_id(),
             "klangk.network-sidecar": workspace_id,
         }
+        # #2265: a same-named sidecar from a prior generation may linger
+        # (an unclean stop, or the workspace container was killed externally
+        # so stop_and_remove_container never ran for it). The sidecar name is
+        # deterministic per workspace, so create_container would collide and
+        # the caller would fail-closed. Idempotently clear any existing
+        # same-named container first; the instance reaper is the backstop for
+        # orphans, but this keeps a restart from deadlocking on a stale name.
+        try:
+            await self.app.state.podman.remove_container(name, force=True)
+        except podman.PodmanError:
+            pass  # no existing sidecar to clear — expected on a fresh start
         try:
             cid = await self.app.state.podman.create_container(
                 name,
@@ -1992,15 +2003,17 @@ class ContainerRegistry:
     async def stop_and_remove_container(self, container_id: str) -> None:
         """Stop and remove a container.
 
-        The slow ``self.app.state.podman.remove_container`` call runs *outside* the
-        workspace lock; only the registry-state teardown is serialized --
-        under the same per-workspace lock :meth:`start_container` uses -- so
-        a concurrent start for the same workspace cannot observe a
-        half-cleaned registry (#1258). Under the lock we re-check that
-        ``container_id`` still maps to this workspace: a racing
-        ``start_container`` may already have re-bound the workspace to a
-        fresh container, in which case we must not tear down the new state
-        (or revoke its browsers).
+        The slow ``self.app.state.podman.remove_container`` call for the
+        workspace container runs *outside* the workspace lock; the
+        registry-state teardown *and* the network sidecar teardown are
+        serialized -- under the same per-workspace lock
+        :meth:`start_container` uses -- so a concurrent start for the same
+        workspace cannot observe a half-cleaned registry (#1258) and cannot
+        have its freshly-started sidecar removed out from under it (#2265).
+        Under the lock we re-check that ``container_id`` still maps to this
+        workspace: a racing ``start_container`` may already have re-bound
+        the workspace to a fresh container, in which case we must not tear
+        down the new state (or revoke its browsers, or remove its sidecar).
 
         The per-workspace lock entry is deliberately *not* popped. Popping
         it while another coroutine is waiting on (or holding) that exact
@@ -2021,17 +2034,24 @@ class ContainerRegistry:
             )
         ws_id = self._cid_to_wsid.get(container_id)
         if ws_id:
-            # Remove the network sidecar only if this workspace actually
-            # started one, so a non-filtered workspace stop doesn't fire a
-            # speculative remove (#2254).
-            if ws_id in self._ws_with_network_sidecar:
-                self._ws_with_network_sidecar.discard(ws_id)
-                await self._stop_network_sidecar(ws_id)
             async with self._get_workspace_lock(ws_id):
                 # Re-verify under the lock: a racing start_container may
                 # have re-bound this workspace to a new container while we
                 # waited for the lock. Only tear down state we still own.
+                # The re-verify now also guards the network sidecar teardown
+                # (#2265): a racing start that re-bound the workspace owns a
+                # fresh sidecar generation, so this (old) stop must not remove
+                # it -- doing so would leave the new container joined to a
+                # removed netns. The sidecar teardown runs under the lock for
+                # the same reason start holds it for sidecar I/O: the two must
+                # not interleave on the deterministic sidecar name.
                 if self._cid_to_wsid.get(container_id) == ws_id:
+                    # Remove the network sidecar only if this workspace
+                    # actually started one, so a non-filtered workspace stop
+                    # doesn't fire a speculative remove (#2254).
+                    if ws_id in self._ws_with_network_sidecar:
+                        self._ws_with_network_sidecar.discard(ws_id)
+                        await self._stop_network_sidecar(ws_id)
                     self._cid_to_wsid.pop(container_id, None)
                     self.revoke_workspace_browsers(ws_id)
                     self.states.pop(ws_id, None)
