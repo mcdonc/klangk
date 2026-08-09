@@ -147,6 +147,12 @@ in
       after = [ "klangk:update-features" ];
       showOutput = true;
     };
+    "klangk:build-network-sidecar" = {
+      exec = ''
+        P=''${KLANGKD_PODMAN_BIN:-podman}
+        $P build -t klangk-network-sidecar -f src/containers/network/Dockerfile src/containers/network
+      '';
+    };
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
