@@ -448,6 +448,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Network sidecar start recovers from host-port conflicts (#2293).** Since
+  #2291 a filtered workspace publishes its host ports on the network sidecar,
+  so a bind conflict there could fail the workspace start with no retry (unlike
+  the non-filtered workspace path, which self-heals). The sidecar start now
+  shares the workspace path's port-conflict recovery: it removes the stale
+  holder and retries with back-off.
+
 - **Stopping a workspace now tears down its network sidecar even when the
   workspace isn't tracked in the in-memory registry (#2286).** A workspace
   started by autostart or a prior klangkd session, then stopped from the TUI

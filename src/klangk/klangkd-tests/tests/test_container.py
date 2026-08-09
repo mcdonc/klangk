@@ -796,7 +796,7 @@ class TestStartContainer:
         # with its workspace (supersedes the old klangk.network-sidecar).
         assert kwargs["labels"]["klangk.workspace"] == ws_id
         assert kwargs["labels"]["klangk.role"] == "network-sidecar"
-        p.start_container.assert_awaited_once_with("new-cid")
+        p.start_container.assert_awaited_once_with("new-cid", hooks_dir=None)
 
     async def test_start_network_sidecar_publishes_host_ports(
         self, monkeypatch
@@ -840,6 +840,66 @@ class TestStartContainer:
                 ws_id, ["github.com:443"]
             )
         assert p.create_container.call_args.kwargs["publish"] is None
+
+    async def test_start_network_sidecar_recovers_from_port_conflict(
+        self, monkeypatch
+    ):
+        # #2293: the sidecar start reuses the workspace path's port-conflict
+        # recovery. A host-port bind conflict (a TOCTOU between the DB
+        # allocator's probe and pasta's bind) removes the stale holder and
+        # retries, instead of failing the filtered workspace's start.
+        ws_id = "abcdef1234567890"
+        conflict_port = 18080
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+
+        start_calls = []
+
+        async def start_side_effect(cid, **kwargs):
+            start_calls.append(cid)
+            if len(start_calls) == 1:
+                raise podman.PodmanError(
+                    500,
+                    f"Bind for 0.0.0.0:{conflict_port} failed: "
+                    "port is already allocated",
+                )
+
+        async def list_side_effect(label):
+            # clear-on-start (klangk.workspace=) finds no stale sidecar; the
+            # port-conflict resolver (klangk.instance=) finds the holder.
+            if label.startswith("klangk.instance="):
+                return [{"Id": "stale-cid", "Labels": {}}]
+            return []
+
+        stale_info = {
+            "HostConfig": {
+                "PortBindings": {
+                    "8000/tcp": [{"HostPort": str(conflict_port)}]
+                }
+            }
+        }
+        with patch_podman(
+            self.registry,
+            start_container=AsyncMock(side_effect=start_side_effect),
+            list_containers=AsyncMock(side_effect=list_side_effect),
+            inspect_container=AsyncMock(return_value=stale_info),
+        ) as p:
+            cid = await self.registry._start_network_sidecar(
+                ws_id, ["github.com:443"], publish=[(conflict_port, 8000)]
+            )
+        assert cid == "new-cid"
+        # The conflict was retried (initial + 1 retry).
+        assert len(start_calls) == 2
+        # The stale holder of conflict_port was removed.
+        assert "stale-cid" in [
+            c.args[0] for c in p.remove_container.call_args_list
+        ]
 
     async def test_start_network_sidecar_clears_lingering_by_label(
         self, monkeypatch

@@ -1236,7 +1236,9 @@ class ContainerRegistry:
                 publish=publish,
                 pull="missing",
             )
-            await self.app.state.podman.start_container(cid)
+            await self._start_with_port_conflict_retry(
+                cid, publish or [], name
+            )
             # #2277: wait for the proxy to be listening before returning, so the
             # workspace never joins a netns whose OUTPUT is still ACCEPT
             # (entrypoint mid-flight) — a fail-open window. The proxy prints
@@ -1696,33 +1698,9 @@ class ContainerRegistry:
         # for any future --hooks-dir consumer.
         _hooks_dirs = create_kwargs.get("hooks_dir")
         t_podman_start = time.monotonic()
-        try:
-            await self.app.state.podman.start_container(
-                cid, hooks_dir=_hooks_dirs
-            )
-        except podman.PodmanError as exc:
-            if not self._is_port_conflict(exc):
-                raise
-            await self._resolve_port_conflict(
-                cid, container_name, publish, self.app.state.podman
-            )
-            # Retry with back-off; ports may linger in TIME_WAIT after
-            # the previous container's pasta process exits.
-            last_exc = exc
-            for delay in (0.5, 1.5):
-                await asyncio.sleep(delay)
-                try:
-                    await self.app.state.podman.start_container(
-                        cid, hooks_dir=_hooks_dirs
-                    )
-                    last_exc = None
-                    break
-                except podman.PodmanError as retry_exc:
-                    if not self._is_port_conflict(retry_exc):
-                        raise
-                    last_exc = retry_exc
-            if last_exc is not None:
-                raise last_exc
+        await self._start_with_port_conflict_retry(
+            cid, publish, container_name, hooks_dir=_hooks_dirs
+        )
         logger.info(
             "workspace-open: boot container (podman start): %.3fs",
             time.monotonic() - t_podman_start,
@@ -1817,6 +1795,55 @@ class ContainerRegistry:
                         stale_id[:12],
                         del_exc,
                     )
+
+    async def _start_with_port_conflict_retry(
+        self,
+        cid: str,
+        publish: list[tuple[int, int]],
+        container_name: str,
+        *,
+        hooks_dir: list[str] | None = None,
+    ) -> None:
+        """Start a container, recovering from host-port bind conflicts (#2293).
+
+        On a port-conflict ``PodmanError`` (a TOCTOU between the DB
+        allocator's ``socket.bind`` probe and pasta's bind), remove stale
+        instance containers holding the conflicting host ports
+        (:meth:`_resolve_port_conflict`, which skips ``cid`` itself) and retry
+        with back-off — ports may linger in TIME_WAIT after the previous
+        container's pasta process exits. Shared by the workspace create path
+        (:meth:`_create_and_start`) and the network sidecar start, so a
+        filtered workspace — whose host ports are published on the sidecar
+        (#2291) — self-heals the same way a non-filtered one does. Fails
+        closed: an unresolved conflict re-raises.
+        """
+        try:
+            await self.app.state.podman.start_container(
+                cid, hooks_dir=hooks_dir
+            )
+        except podman.PodmanError as exc:
+            if not self._is_port_conflict(exc):
+                raise
+            await self._resolve_port_conflict(
+                cid, container_name, publish, self.app.state.podman
+            )
+            # Retry with back-off; ports may linger in TIME_WAIT after the
+            # previous container's pasta process exits.
+            last_exc = exc
+            for delay in (0.5, 1.5):
+                await asyncio.sleep(delay)
+                try:
+                    await self.app.state.podman.start_container(
+                        cid, hooks_dir=hooks_dir
+                    )
+                    last_exc = None
+                    break
+                except podman.PodmanError as retry_exc:
+                    if not self._is_port_conflict(retry_exc):
+                        raise
+                    last_exc = retry_exc
+            if last_exc is not None:
+                raise last_exc
 
     async def _start_container_inner(
         self,
