@@ -195,6 +195,18 @@ class TestInspectContainer:
             assert await _p.inspect_container("c") is None
 
 
+class TestContainerLogs:
+    async def test_returns_stdout_on_success(self):
+        with patch(EXEC, _exec(("dns-proxy listening\n", "", 0))):
+            assert await _p.container_logs("c") == "dns-proxy listening\n"
+
+    async def test_returns_empty_on_failure(self):
+        # check=False -> a nonzero exit (e.g. container gone) yields "", not a
+        # raise, so the readiness poll treats a vanished sidecar as not-yet-ready.
+        with patch(EXEC, _exec(("", "no such container", 1))):
+            assert await _p.container_logs("c") == ""
+
+
 class TestCreateContainer:
     async def test_minimal(self):
         with patch(EXEC, _exec(("abc123\n", "", 0))) as m:

@@ -27,6 +27,18 @@ $IPT -P OUTPUT DROP
 # iptables package. The sidecar owns the netns (shared with the workspace
 # via --network container:), so this is the authoritative v6 deny (#2255).
 $IPT6 -P OUTPUT DROP
+# Defense-in-depth (#2275): also disable the v6 stack in this netns. Unlike
+# the createContainer-hook sysctl that was dropped (it ran before pasta
+# configured the netns and broke pasta's v6 address setup), this runs in the
+# sidecar entrypoint — AFTER pasta has configured the netns — so it just
+# removes the v6 addresses rather than blocking setup. Best-effort: rootless
+# per-netns ipv6 sysctl writability isn't guaranteed, and a silent no-op is
+# fine because the ip6tables DROP above is the certain backstop. Written via
+# procfs so no extra package (sysctl is in Alpine's procps, not installed).
+if [ -w /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
+  echo 1 >/proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null ||
+    echo "egress-sidecar: could not disable IPv6 stack (relying on ip6tables DROP)" >&2
+fi
 # Loopback by *destination* (not -o lo): REDIRECT keeps the packet's original
 # output interface, so -o lo misses the redirected :53 packet under a DROP policy.
 $IPT -A OUTPUT -d 127.0.0.0/8 -j ACCEPT

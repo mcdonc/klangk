@@ -422,6 +422,21 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Network sidecar: a filtered workspace now waits for the sidecar's DNS
+  proxy to be ready before starting (#2277).** Previously the workspace joined
+  the sidecar's netns the instant it was started, before the entrypoint had
+  applied `iptables -P OUTPUT DROP` or the proxy had bound — a window of
+  unrestricted egress. The sidecar start now polls for the proxy's
+  `dns-proxy listening` line and refuses to start the workspace (fail-closed)
+  if the proxy exits or never binds.
+
+- **Network sidecar: the DNS proxy no longer dies on a single transient
+  failure (#2278).** A failed `iptables` call (learning an IP) or a `sendto`
+  to a vanished client used to escape the proxy's main loop and kill PID 1,
+  leaving the workspace without DNS while learned allow-rules persisted. The
+  learn+respond path now swallows such errors so one bad packet drops only that
+  response.
+
 - **`build-workspace-image.sh` no longer rebuilds the workspace image on
   every server restart (#2273).** The image-creation-time "verify the image
   is newer than every source file" check was unreliable (podman inspect
@@ -504,6 +519,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   brand-new window becoming active (only switches to an existing window).
 
 ### Security
+
+- **Network sidecar: filtered workspaces with `allow_sudo` now drop `net_raw`
+  (#2276).** A filtered workspace whose user can `sudo` to root could bypass
+  the egress filter via `SO_MARK` (root would have the `net_raw` that
+  `enable_ping` grants). The create path now drops `net_raw` from the bounding
+  set so even root can't acquire it, keeping the filter enforced; the setuid-ping
+  bridge is disabled for such workspaces (the trade for keeping the filter on).
 
 - **`git-credential-klangk`: secrets redacted from debug output (#1938).**
 
