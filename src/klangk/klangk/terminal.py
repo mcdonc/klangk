@@ -123,6 +123,8 @@ def build_shell_command(
     read_only: bool = False,
     tmux_enabled: bool = True,
     ssh_agent_socket: str | None = None,
+    user_id: str | None = None,
+    user_handle: str | None = None,
 ) -> tuple[list[str], str | None]:
     """Build the shell command for a terminal session.
 
@@ -162,6 +164,10 @@ def build_shell_command(
         tmux_env = ["-e", f"HOME={user_home}"]
     if ssh_agent_socket is not None:
         tmux_env += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+    if user_id is not None:
+        tmux_env += ["-e", f"KLANGKWS_USER_ID={user_id}"]
+    if user_handle is not None:
+        tmux_env += ["-e", f"KLANGKWS_USER_HANDLE={user_handle}"]
     if session_name is not None:
         if join_session is not None:
             # Join an existing session group.  Use a unique session name
@@ -306,14 +312,16 @@ class Terminal:
         session_name: str,
         user_home: str | None = None,
         ssh_agent_socket: str | None = None,
+        user_id: str | None = None,
+        user_handle: str | None = None,
     ) -> bool:
         """Ensure a detached base tmux session exists for *session_name*.
 
         Idempotent: returns ``True`` if the session was freshly created,
-        ``False`` if it already existed or could not be created. HOME and
-        SSH_AUTH_SOCK are passed as tmux ``-e`` flags (part of the command,
-        not podman's), so the session's window-0 shell sources the right
-        profile.
+        ``False`` if it already existed or could not be created. HOME,
+        SSH_AUTH_SOCK, and user identity vars are passed as tmux ``-e``
+        flags (part of the command, not podman's), so the session's
+        window-0 shell inherits them (#2259).
         """
         if await self.has_tmux_session(container_id, session_name):
             return False
@@ -322,6 +330,10 @@ class Terminal:
             env_args += ["-e", f"HOME={user_home}"]
         if ssh_agent_socket is not None:
             env_args += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+        if user_id is not None:
+            env_args += ["-e", f"KLANGKWS_USER_ID={user_id}"]
+        if user_handle is not None:
+            env_args += ["-e", f"KLANGKWS_USER_HANDLE={user_handle}"]
         try:
             await self.podman.exec_container(
                 container_id,
@@ -351,6 +363,8 @@ class Terminal:
         session_name: str,
         user_home: str | None = None,
         ssh_agent_socket: str | None = None,
+        user_id: str | None = None,
+        user_handle: str | None = None,
     ) -> bool:
         """Ensure the firing user's base tmux session + window 0 exist.
 
@@ -362,7 +376,12 @@ class Terminal:
         regardless of setup state (#1133).
         """
         return await self._ensure_tmux_session(
-            container_id, session_name, user_home, ssh_agent_socket
+            container_id,
+            session_name,
+            user_home,
+            ssh_agent_socket,
+            user_id=user_id,
+            user_handle=user_handle,
         )
 
     async def set_workspace_name(
@@ -924,6 +943,8 @@ class TerminalSession:
                 self.session_name,
                 user_home=self.user_home,
                 ssh_agent_socket=self.ssh_agent_socket,
+                user_id=self.user_id,
+                user_handle=self.user_handle,
             )
         # Set @workspace_name globally so every grouped session's status
         # bar picks it up.  Runs on every terminal_start (idempotent)
@@ -947,6 +968,8 @@ class TerminalSession:
             read_only=self.read_only,
             tmux_enabled=self._terminal.tmux_enabled(),
             ssh_agent_socket=self.ssh_agent_socket,
+            user_id=self.user_id,
+            user_handle=self.user_handle,
         )
         work_dir = "/home"
         argv = _build_exec_argv(self.container_id, env, shell_cmd, work_dir)

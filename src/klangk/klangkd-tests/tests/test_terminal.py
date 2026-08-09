@@ -256,11 +256,14 @@ class TestStart:
         assert "KLANGKWS_USER_HANDLE=alice" in fake.argv
         # Work dir is always /home (bash cd's to $HOME on login)
         assert fake.argv[fake.argv.index("-w") + 1] == "/home"
-        # HOME is also passed to tmux via -e so child shells inherit it
+        # HOME + user identity are also passed to tmux via -e so child
+        # shells inherit them (#2259).
         tmux_idx = fake.argv.index("tmux")
         tmux_tail = fake.argv[tmux_idx:]
         assert "-e" in tmux_tail
         assert "HOME=/home/alice" in tmux_tail
+        assert "KLANGKWS_USER_ID=uid-123" in tmux_tail
+        assert "KLANGKWS_USER_HANDLE=alice" in tmux_tail
         # Grouped session: -t targets the base session, -s is a unique name
         assert "-t" in tmux_tail
         assert tmux_tail[tmux_tail.index("-t") + 1] == "uid-123"
@@ -1315,7 +1318,7 @@ class TestEnsureBaseSession:
         assert created is False
 
     async def test_env_args_passed(self):
-        """HOME and SSH_AUTH_SOCK are passed as tmux -e flags."""
+        """HOME, SSH_AUTH_SOCK, and user identity are passed as tmux -e flags."""
 
         with patch.object(
             _mock_pod,
@@ -1328,10 +1331,14 @@ class TestEnsureBaseSession:
                 "my-session",
                 user_home="/home/u",
                 ssh_agent_socket="/tmp/agent.sock",
+                user_id="uid-123",
+                user_handle="alice",
             )
         new_cmd = mock_exec.call_args_list[1].args[1]
         assert "HOME=/home/u" in new_cmd
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in new_cmd
+        assert "KLANGKWS_USER_ID=uid-123" in new_cmd
+        assert "KLANGKWS_USER_HANDLE=alice" in new_cmd
 
 
 class TestSetWorkspaceName:
