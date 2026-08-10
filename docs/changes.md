@@ -113,14 +113,17 @@ operators or integrators to act when upgrading.
   (`tcp_syn_retries` ~127s) instead of a DNS resolver's <=30s `getaddrinfo`
   cap. `KLANGKD_EGRESS_CONSENT_TIMEOUT` and `KLANGKNETWORK_EGRESS_HOLD_TIMEOUT`
   defaults rise 30 -> 120s to use that window; SYN retransmits reuse the cached
-  verdict so they don't each re-prompt. New sidecar config:
-  `KLANGKNETWORK_EGRESS_VERDICT_CACHE_TTL` (how long to reuse a SYN verdict,
-  default 120s) and `KLANGKNETWORK_EGRESS_REJECT_TTL` (how long a deny keeps its
-  REJECT tcp-reset rule so the connection fails fast, default 10s).
-  `KLANGKNETWORK_EGRESS_HOLD_LIMIT` is removed (the DNS-path hold bound; the SYN
-  path is bounded by the iptables rate-limit). The proxy is asyncio + the sidecar image gains the `websockets`
-  dependency; the legacy fire-and-forget POST endpoint is superseded (recording
-  happens on the WS path, removal tracked in #2318).
+  verdict so they don't each re-prompt. Distinct concurrent flows are held in
+  parallel (#2329): the NFQUEUE consumer is loop-driven (`get_fd` + `add_reader`)
+  - non-blocking (each held SYN is retained + handed to a verdict task), not a
+    single blocking thread that serializes flows behind the first. New sidecar
+    config: `KLANGKNETWORK_EGRESS_VERDICT_CACHE_TTL` (how long to reuse a SYN verdict,
+    default 120s) and `KLANGKNETWORK_EGRESS_REJECT_TTL` (how long a deny keeps its
+    REJECT tcp-reset rule so the connection fails fast, default 10s).
+    `KLANGKNETWORK_EGRESS_HOLD_LIMIT` is removed (the DNS-path hold bound; the SYN
+    path is bounded by the iptables rate-limit). The proxy is asyncio + the sidecar image gains the `websockets`
+    dependency; the legacy fire-and-forget POST endpoint is superseded (recording
+    happens on the WS path, removal tracked in #2318).
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the
