@@ -31,6 +31,8 @@ import asyncio
 import logging
 import time
 
+from .wshandler.safe_websocket import WS_ERRORS
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,7 +45,8 @@ class ConsentDeciderRegistry:
 
     def __init__(self, app) -> None:
         self.app = app
-        # decider_id -> {"ws": workspace_id | None, "seen": monotonic, "email"}
+        # decider_id -> {"ws": workspace_id | None, "seen": monotonic,
+        #                 "email": str, "sock": SafeWebSocket}
         # workspace_id None = deploy-wide (decides for every workspace).
         self._deciders: dict[str, dict] = {}
         self._reaper: asyncio.Task | None = None
@@ -56,13 +59,23 @@ class ConsentDeciderRegistry:
         return self.app.state.settings.consent_decider_timeout
 
     def register(
-        self, decider_id: str, workspace_id: str | None, email: str | None
+        self,
+        decider_id: str,
+        workspace_id: str | None,
+        email: str | None,
+        sock,
     ) -> None:
-        """Register a live decider (connect). Idempotent on decider_id."""
+        """Register a live decider (connect). Idempotent on decider_id.
+
+        ``sock`` is the decider's :class:`SafeWebSocket`; the endpoint owns its
+        lifecycle (start/stop sender) -- the registry holds only a reference for
+        :meth:`broadcast` fanout.
+        """
         self._deciders[decider_id] = {
             "ws": workspace_id,
             "seen": time.monotonic(),
             "email": email,
+            "sock": sock,
         }
         logger.info(
             "consent decider registered: scope=%s decider=%s",
@@ -105,6 +118,35 @@ class ConsentDeciderRegistry:
             if (entry["ws"] is None or entry["ws"] == workspace_id)
             and (now - entry["seen"] <= cutoff)
         ]
+
+    def broadcast(self, workspace_id: str, message: dict) -> int:
+        """Send *message* to every live decider for this workspace or deploy-wide.
+
+        Used by the coordinator to fan out ``egress_request`` (new hold) and
+        ``egress_resolved`` (verdict/timeout) frames. A decider whose socket is
+        dead/slow is pruned immediately (its endpoint's ``finally`` deregister
+        is then a no-op). Returns the number of deciders delivered to.
+        Non-blocking: ``SafeWebSocket.send_json`` enqueues on a bounded queue.
+        """
+        now = time.monotonic()
+        cutoff = self.timeout
+        dead: list[str] = []
+        delivered = 0
+        for did, entry in self._deciders.items():
+            scope = entry["ws"]
+            if (
+                not (scope is None or scope == workspace_id)
+                or now - entry["seen"] > cutoff
+            ):
+                continue
+            try:
+                entry["sock"].send_json(message)
+                delivered += 1
+            except WS_ERRORS:
+                dead.append(did)
+        for did in dead:
+            self._deciders.pop(did, None)
+        return delivered
 
     def start(self) -> None:
         """Start the liveness reaper (idempotent). Runs until :meth:`stop`."""

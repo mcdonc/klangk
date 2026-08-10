@@ -79,6 +79,18 @@ operators or integrators to act when upgrading.
   is the klangkd coordination half** — the sidecar's kernel-level hold
   (suspending DNS queries, deferring NFQUEUE verdicts) + its WS client land in
   a follow-up, and decider fanout/verdict reception with #2244.
+- **Decider WebSocket fanout + verdict reception (#2244).** Held egress
+  requests now reach a human: when the coordinator creates a hold it broadcasts
+  an `egress_request` frame to every live decider for the workspace (and
+  deploy-wide) over the `/ws/consent-decider` socket; a decider's `verdict`
+  message is fed to `resolve()`, which records the decision, releases the held
+  sidecar connection, and broadcasts `egress_resolved` so co-deciders drop it
+  (first-decision-wins). A decider connecting mid-flight gets a snapshot of the
+  workspace's current pending requests. The #2308 authz gap is closed: a
+  workspace-scoped decider now needs `terminal` access to that workspace, a
+  deploy-wide decider needs admin (else the socket is closed `4003 Forbidden`),
+  and a verdict is honored only for the decider's own workspace. The first
+  consumer is the `consent-decide` client (#2310).
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the

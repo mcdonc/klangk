@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import types
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from fastapi import WebSocketDisconnect
 
@@ -41,6 +41,7 @@ def _app(
     workspace_exists: bool = True,
     has_decider: bool = True,
     decide_row=None,
+    pending_rows=None,
 ):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
@@ -54,6 +55,7 @@ def _app(
     egress_consent.record_static_denial = AsyncMock(return_value=_denial())
     egress_consent.decide = AsyncMock(return_value=decide_row)
     egress_consent.expire_pending = AsyncMock(return_value=True)
+    egress_consent.list_requests = AsyncMock(return_value=pending_rows or [])
     workspaces = AsyncMock()
     workspaces.get_workspace = AsyncMock(
         return_value={"egress_mode": egress_mode} if workspace_exists else None
@@ -62,7 +64,8 @@ def _app(
         egress_consent=egress_consent, workspaces=workspaces
     )
     app.state.consent_deciders = types.SimpleNamespace(
-        has_decider=lambda workspace_id: has_decider
+        has_decider=lambda workspace_id: has_decider,
+        broadcast=Mock(return_value=0),
     )
     return app
 
@@ -144,6 +147,78 @@ class TestConsentCoordinatorGate:
         assert coord._holds == {}
 
 
+class TestConsentCoordinatorFanout:
+    async def test_hold_broadcasts_egress_request_to_deciders(self):
+        app = _app(request=_request())
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.consent_deciders.broadcast.assert_called_once()
+        ws_arg, frame = app.state.consent_deciders.broadcast.call_args.args
+        assert ws_arg == FULL_WS
+        assert frame["type"] == "egress_request"
+        assert frame["workspace_id"] == FULL_WS
+        assert frame["request"]["id"] == "rid-1"
+
+    async def test_resolve_broadcasts_egress_resolved(self):
+        row = _request()
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.consent_deciders.broadcast.reset_mock()
+        await coord.resolve("rid-1", "allowed", "once", "a@x")
+        # second broadcast is the resolved frame (first was the egress_request)
+        ws_arg, frame = app.state.consent_deciders.broadcast.call_args.args
+        assert frame == {
+            "type": "egress_resolved",
+            "workspace_id": FULL_WS,
+            "request_id": "rid-1",
+            "decision": "allowed",
+        }
+
+    async def test_resolve_rejects_verdict_outside_decider_workspace(self):
+        # defense-in-depth: a workspace-scoped decider may not decide another
+        # workspace's request; the hold stays for a scoped decider.
+        row = _request()
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "allowed", "once", "a@x", decider_workspace="other-ws"
+        )
+        assert verdict is None
+        assert "rid-1" in coord._holds  # hold untouched
+        app.state.model.egress_consent.decide.assert_not_awaited()
+
+    async def test_timeout_broadcasts_expired(self):
+        app = _app(timeout=0.05, request=_request())
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.consent_deciders.broadcast.reset_mock()
+        await asyncio.sleep(0.12)
+        ws_arg, frame = app.state.consent_deciders.broadcast.call_args.args
+        assert frame["type"] == "egress_resolved"
+        assert frame["decision"] == "expired"
+
+    async def test_snapshot_replays_pending_requests(self):
+        rows = [_request("a"), _request("b")]
+        app = _app(pending_rows=rows)
+        coord = ConsentCoordinator(app)
+        frames = await coord.snapshot(FULL_WS)
+        assert [f["request"]["id"] for f in frames] == ["a", "b"]
+        assert all(f["type"] == "egress_request" for f in frames)
+        app.state.model.egress_consent.list_requests.assert_awaited_once_with(
+            FULL_WS, decision="pending"
+        )
+
+    async def test_snapshot_deploy_wide_is_empty(self):
+        app = _app()
+        coord = ConsentCoordinator(app)
+        assert await coord.snapshot(None) == []
+        app.state.model.egress_consent.list_requests.assert_not_awaited()
+
+
 class TestConsentCoordinatorResolve:
     async def test_resolve_allow_records_and_releases(self):
         row = _request()
@@ -193,6 +268,42 @@ class TestConsentCoordinatorResolve:
         # timeout cancelled -> the row was NOT expired
         app.state.model.egress_consent.expire_pending.assert_not_awaited()
         assert fut.result()["decision"] == "allow"
+
+    async def test_resolve_fail_closes_when_decide_raises(self):
+        # decide() raising (DB error) must not orphan the Future -- the hold's
+        # timeout is already cancelled, so resolve fail-closes to deny itself.
+        app = _app(request=_request())
+        app.state.model.egress_consent.decide = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.consent_deciders.broadcast.reset_mock()
+        verdict = await coord.resolve("rid-1", "allowed", "once", "a@x")
+        assert verdict == {"decision": "deny", "reason": "error"}
+        assert fut.done() and fut.result()["decision"] == "deny"
+        ws_arg, frame = app.state.consent_deciders.broadcast.call_args.args
+        assert frame["type"] == "egress_resolved"
+        assert frame["decision"] == "expired"
+        assert coord._holds == {}  # hold gone, no orphan
+
+    async def test_concurrent_resolves_first_decision_wins(self):
+        # two deciders resolve the same hold concurrently: exactly one wins
+        # (one decide() write), the other is a no-op (returns None).
+        row = _request()
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        v1, v2 = await asyncio.gather(
+            coord.resolve("rid-1", "allowed", "once", "a@x"),
+            coord.resolve("rid-1", "denied", "once", "b@x"),
+        )
+        winners = [v for v in (v1, v2) if v is not None]
+        assert len(winners) == 1  # exactly one winner
+        assert (
+            app.state.model.egress_consent.decide.await_count == 1
+        )  # one DB write
 
 
 class TestConsentCoordinatorTimeout:
