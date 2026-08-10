@@ -120,7 +120,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
                     safe_ws.send_json({"type": "pong"})
                 elif mtype == "verdict":
                     await _handle_verdict(
-                        app, safe_ws, msg, workspace, email, user["id"]
+                        app, safe_ws, msg, workspace, user["id"]
                     )
                 # unknown types are ignored
             except SlowClientError:
@@ -141,9 +141,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         await safe_ws.stop_sender()
 
 
-async def _handle_verdict(
-    app, safe_ws, msg, workspace, email, user_id
-) -> None:
+async def _handle_verdict(app, safe_ws, msg, workspace, user_id) -> None:
     """Validate + apply a decider's verdict to a held request (#2244)."""
     decision = msg.get("decision")
     if decision not in (DECISION_ALLOWED, DECISION_DENIED):
@@ -167,9 +165,9 @@ async def _handle_verdict(
         request_id,
         decision,
         scope,
-        # A human decision is always attributable; fall back to the stable
-        # user id if the row lacks an email (never NULL -- NULL means "no
-        # human", the static/expired case).
-        email or user_id or "",
+        # decided_by is the stable user id (egress_consent.decided_by REFERENCES
+        # users(id); the email is volatile + not a key). Never NULL for a human
+        # decision -- NULL means "no human" (the static/expired case).
+        user_id,
         decider_workspace=workspace,
     )

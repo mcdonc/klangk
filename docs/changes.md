@@ -348,6 +348,12 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **New workspaces default to `egress_mode=interactive` (for testing).**
+  The default is `interactive` while the consent-decide end-to-end flow is
+  being exercised, so held egress requests reach a decider without a manual
+  per-workspace flip (`EGRESS_MODE_DEFAULT` in `model/workspaces.py`; move it
+  back to `static` once interactive mode is production-ready).
+
 - **Workspace + network sidecar container names and labels (#2286).** A
   workspace and its network sidecar now share a `klangk.workspace=<id>` +
   `klangk.role` label (so one `podman ps --filter label=klangk.workspace=<id>`
@@ -527,6 +533,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 - **`klangk invite` → `klangk admin invitations send` (#1374).**
 
 ### Fixed
+
+- **Consent verdict `decided_by` now stores the stable user id, not the
+  volatile email (#2244).** `egress_consent.decided_by` is `REFERENCES
+users(id)`, so the decider handler passing the decider's email violated the
+  foreign key and every verdict failed with an `IntegrityError`. It now
+  threads the user id through `_handle_verdict`.
 
 - **Egress-site `forward_auth` no longer breaks WebSocket upgrades
   (#2319, #2322).** Caddy's site-level `forward_auth` copied the WS

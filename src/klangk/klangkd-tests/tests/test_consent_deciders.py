@@ -352,7 +352,7 @@ class TestConsentDeciderWS:
         )
         await handle_consent_decider(ws, app)
         app.state.consent_coordinator.resolve.assert_awaited_once_with(
-            "rid", "allowed", "once", "decider@x", decider_workspace=WS
+            "rid", "allowed", "once", "u1", decider_workspace=WS
         )
 
     async def test_verdict_invalid_decision_sends_error(self):

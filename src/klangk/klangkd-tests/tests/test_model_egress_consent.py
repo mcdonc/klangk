@@ -14,8 +14,8 @@ from klangk.model.egress_consent import (
     SCOPE_WORKSPACE,
 )
 from klangk.model.workspaces import (
+    EGRESS_MODE_DEFAULT,
     EGRESS_MODE_INTERACTIVE,
-    EGRESS_MODE_STATIC,
 )
 
 
@@ -35,7 +35,7 @@ async def ws(app_state, db):
 
 async def test_workspace_default_egress_mode(ws, user):
     row = await ws.create_workspace(user["id"], "default-mode")
-    assert row["egress_mode"] == EGRESS_MODE_STATIC
+    assert row["egress_mode"] == EGRESS_MODE_DEFAULT
 
 
 async def test_workspace_create_interactive_mode(ws, user):
@@ -61,7 +61,7 @@ async def test_workspace_create_with_acl_invalid_egress_mode(ws, user):
 
 async def test_workspace_update_egress_mode(ws, user):
     row = await ws.create_workspace(user["id"], "update-mode")
-    assert row["egress_mode"] == EGRESS_MODE_STATIC
+    assert row["egress_mode"] == EGRESS_MODE_DEFAULT
     updated = await ws.update_workspace(
         row["id"], user["id"], egress_mode=EGRESS_MODE_INTERACTIVE
     )
