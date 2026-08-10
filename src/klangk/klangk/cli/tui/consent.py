@@ -210,8 +210,7 @@ class ConsentDeciderApp(App):
     #requests { height: 1fr; }
     #empty { padding: 1 2; color: $text-muted; }
     .req-host { color: $text; }
-    .req-proc { color: $text-muted; }
-    .req-time { color: $warning; }
+    #requests Button { height: 1; border: none; padding: 0 1; }
     """
 
     BINDINGS = [
@@ -374,7 +373,13 @@ class ConsentDeciderApp(App):
     # -- rendering ---------------------------------------------------------
 
     def _refresh(self) -> None:
-        """Rebuild the request list + status line from controller state."""
+        """Sync the list to controller state WITHOUT a full rebuild.
+
+        A clear+rebuild every tick flickered badly. Instead we remove only
+        resolved/expired rows, repaint the countdown text of survivors in
+        place, and append genuinely-new ones. Order is stable (oldest-first
+        by requested_at), so we never have to reorder.
+        """
         try:
             lv = self.query_one("#requests", ListView)
             status = self.query_one("#status", Static)
@@ -382,10 +387,21 @@ class ConsentDeciderApp(App):
         except Exception:
             return  # not mounted yet (pre-mount call)
         ordered = self.controller.ordered()
+        current_ids = {req.id for req in ordered}
         focused_id = self._focused_request_id()
-        lv.clear()
+        # Drop resolved/expired rows (leave survivors untouched -> no flicker).
+        for child in list(lv.children):
+            rid = getattr(child, "request_id", None)
+            if rid is not None and rid not in current_ids:
+                child.remove()
+        # Repaint survivors' countdown in place; append only new rows.
+        existing = {getattr(c, "request_id", None): c for c in lv.children}
         for req in ordered:
-            lv.append(self._render_item(req))
+            item = existing.get(req.id)
+            if item is None:
+                lv.append(self._render_item(req))
+            else:
+                self._update_item(item, req)
         self._select_by_id(focused_id)
         empty.display = not ordered
         if self._flash_until > time.time():
@@ -396,17 +412,20 @@ class ConsentDeciderApp(App):
                 f" {self.workspace_name}  ·  {conn}  ·  {len(ordered)} held"
             )
 
-    def _render_item(self, req: ConsentRequest) -> ListItem:
+    def _host_line(self, req: ConsentRequest) -> str:
         host = req.dest_host
         if req.dest_port is not None:
             host = f"{host}:{req.dest_port}"
         proc = f"  ({req.process_name})" if req.process_name else ""
         secs = int(self.controller.remaining(req))
+        return f"{host}{proc}  ({secs}s)"
+
+    def _render_item(self, req: ConsentRequest) -> ListItem:
         # Host+time is a direct child of the ListItem (renders horizontally);
         # the per-row Allow/Deny buttons sit in a Horizontal below it so they
         # never fight the host for width. Each button id encodes the request id.
         item = ListItem(
-            Static(f"{host}{proc}  ({secs}s)", classes="req-host"),
+            Static(self._host_line(req), classes="req-host"),
             Horizontal(
                 Button("Allow", id=f"allow-{req.id}", variant="success"),
                 Button("Deny", id=f"deny-{req.id}", variant="error"),
@@ -414,6 +433,10 @@ class ConsentDeciderApp(App):
         )
         item.request_id = req.id  # type: ignore[attr-defined]
         return item
+
+    def _update_item(self, item: ListItem, req: ConsentRequest) -> None:
+        """Repaint only the host/countdown line of a surviving row."""
+        item.query_one(".req-host", Static).update(self._host_line(req))
 
     def _focused_request_id(self) -> str | None:
         child = self.query_one("#requests", ListView).highlighted_child

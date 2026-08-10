@@ -740,3 +740,64 @@ async def test_request_row_renders_host_horizontal_and_buttons_onscreen():
             f"allow off-screen: {allow.region}"
         )
         assert deny.region.right <= screen_w, f"deny off-screen: {deny.region}"
+        # Buttons flat (height 1) so a row is compact, not a 3-row bordered button.
+        assert allow.region.height == 1, f"allow not flat: {allow.region}"
+        assert deny.region.height == 1, f"deny not flat: {deny.region}"
+
+
+async def test_refresh_keeps_surviving_row_object_across_ticks():
+    """Anti-flicker: a periodic refresh updates survivors in place, never
+    clear+rebuild (which flashed the whole list every second)."""
+    app = _make_app()
+    async with app.run_test() as pilot:
+        app.controller.apply_frame(_req_frame("r1", host="a.com"))
+        app._refresh()
+        await pilot.pause()
+        before = list(app.query_one("#requests", ListView).children)
+        assert len(before) == 1
+        app._refresh()  # second tick, nothing changed
+        await pilot.pause()
+        after = list(app.query_one("#requests", ListView).children)
+        assert before[0] is after[0], "refresh rebuilt the row (flicker)"
+
+
+async def test_refresh_appends_new_and_drops_resolved_in_place():
+    """New rows append; resolved rows drop; untouched rows keep their identity."""
+    app = _make_app()
+    async with app.run_test() as pilot:
+        app.controller.apply_frame(_req_frame("r1", host="a.com"))
+        app._refresh()
+        await pilot.pause()
+        lv = app.query_one("#requests", ListView)
+        item_r1 = next(
+            c for c in lv.children if getattr(c, "request_id", None) == "r1"
+        )
+        # r2 arrives -> both present, r1 unchanged.
+        app.controller.apply_frame(_req_frame("r2", host="b.com"))
+        app._refresh()
+        await pilot.pause()
+        assert {getattr(c, "request_id", None) for c in lv.children} == {
+            "r1",
+            "r2",
+        }
+        assert (
+            next(
+                c
+                for c in lv.children
+                if getattr(c, "request_id", None) == "r1"
+            )
+            is item_r1
+        )
+        # r1 resolved -> removed; r2 survives.
+        app.controller.apply_frame(
+            json.dumps(
+                {
+                    "type": "egress_resolved",
+                    "request_id": "r1",
+                    "decision": "allowed",
+                }
+            )
+        )
+        app._refresh()
+        await pilot.pause()
+        assert {getattr(c, "request_id", None) for c in lv.children} == {"r2"}
