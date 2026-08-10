@@ -399,8 +399,9 @@ class _FakeWS:
     mirroring the real sidecar's send-then-wait-for-verdict ordering.
     """
 
-    def __init__(self, params: dict):
+    def __init__(self, params: dict, headers: dict | None = None):
         self.query_params = params
+        self.headers = headers or {}
         self._incoming: asyncio.Queue = asyncio.Queue()
         self.sent: list[str] = []
         self.accepted = False
@@ -451,6 +452,33 @@ class TestEgressSidecarWS:
         await handle_egress_sidecar(ws, app)
         assert ws.closed == (4001, "Missing token")
         assert ws.accepted is False
+
+    async def test_authorization_header_token_accepted(self):
+        # egress path (#2319): the JWT rides in the Authorization header (the
+        # sidecar sends `Bearer <jwt>` so the egress site's forward_auth sees
+        # it), not the ?token= query param. Both paths must authenticate.
+        from klangk.wshandler.sidecar import handle_egress_sidecar
+
+        app, coord = _sidecar_app()
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut.set_result({"decision": "deny", "reason": "static"})
+        coord.hold = AsyncMock(return_value=fut)
+        ws = _FakeWS({}, headers={"authorization": "Bearer hdr-tok"})
+        handler = asyncio.create_task(handle_egress_sidecar(ws, app))
+        await ws.feed(
+            json.dumps(
+                {
+                    "type": "egress",
+                    "id": "loc1",
+                    "dst": "1.2.3.4",
+                    "dport": 443,
+                }
+            )
+        )
+        await asyncio.sleep(0.05)
+        coord.hold.assert_awaited_once_with(FULL_WS, "1.2.3.4", 443)
+        await ws.feed(WebSocketDisconnect())
+        await handler
 
     async def test_invalid_token_rejected(self):
         from klangk.wshandler.sidecar import handle_egress_sidecar

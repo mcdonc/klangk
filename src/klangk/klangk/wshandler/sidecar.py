@@ -36,7 +36,13 @@ logger = logging.getLogger(__name__)
 
 async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
     """Receive blocked-egress events from the sidecar; relay verdicts back."""
-    token = websocket.query_params.get("token")
+    # forward_auth validated the workspace JWT from the Authorization header
+    # on the egress site; re-read it here for the workspace id. The ?token=
+    # query-param fallback covers the ingress path and handler-level tests.
+    authorization = websocket.headers.get("authorization", "")
+    token = authorization[7:] if authorization.startswith("Bearer ") else None
+    if not token:
+        token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4001, reason="Missing token")
         return
