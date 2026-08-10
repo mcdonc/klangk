@@ -91,6 +91,18 @@ operators or integrators to act when upgrading.
   deploy-wide decider needs admin (else the socket is closed `4003 Forbidden`),
   and a verdict is honored only for the decider's own workspace. The first
   consumer is the `consent-decide` client (#2310).
+- **Sidecar kernel-level egress hold (#2311).** The network sidecar now
+  _holds_ a denied connection in-flight pending the consent verdict (DNS:
+  suspends the query; NFQUEUE: defers the packet) instead of NXDOMAIN/DROP-ing
+  at once -- `allow` lets it proceed, `deny`/timeout/WS-down fail-closes
+  (a static workspace or an unreachable klangkd behaves exactly as before; no
+  new latency, no hang). New sidecar config: `KLANGKNETWORK_EGRESS_HOLD_TIMEOUT`
+  (default 30s), `KLANGKNETWORK_EGRESS_HOLD_LIMIT` (default 32 concurrent
+  holds; a flood past it fail-closes to NXDOMAIN). The proxy is now asyncio
+  (one task per denied query so holds never block the receive loop) and the
+  sidecar image gains the `websockets` dependency; the legacy fire-and-forget
+  POST endpoint is superseded (recording now happens on the WS hold path,
+  removal tracked in #2318).
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the

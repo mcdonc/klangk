@@ -10,12 +10,13 @@ e2e. These tests import it as a module and drive its helpers directly.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
 import types
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -520,9 +521,10 @@ class TestRespondAllowedSwallowsFailures:
 
 
 class TestConsentForward:
-    """Sidecar consent forwarding (#2242): packet parsing, the best-effort
-    POST, and the NFQUEUE consumer's graceful no-op when netfilterqueue is
-    absent (the server venv doesn't ship it)."""
+    """Sidecar consent (#2242 recording -> #2311 half B hold): packet parsing,
+    the egress-sidecar WS client's fail-close contract, the DNS hold path, and
+    the NFQUEUE consumer's graceful no-op when netfilterqueue is absent (the
+    server venv doesn't ship it)."""
 
     def test_parse_dest_tcp(self, proxy):
         ip = bytearray(40)
@@ -553,75 +555,277 @@ class TestConsentForward:
         assert proxy.parse_dest(bytes(10)) == ("", 0)
         assert proxy.parse_dest(b"\xff" * 20) == ("", 0)  # not IPv4
 
-    def test_post_event_sends_bearer_json(self, proxy, monkeypatch, tmp_path):
-        monkeypatch.setattr(proxy, "CONSENT_URL", "http://klangkd/ev")
-        token_file = tmp_path / "token"
-        token_file.write_text("from-file-tok")
-        monkeypatch.setattr(proxy, "WORKSPACE_TOKEN_PATH", str(token_file))
-        captured = {}
+    # --- _ws_url: derive the WS URL from the consent HTTP URL (#2311) ---
 
-        class _Resp:
-            def close(self):
+    def test_ws_url_http_to_ws(self, proxy):
+        assert (
+            proxy._ws_url(
+                "http://host.containers.internal:9/internal/egress-consent/events"
+            )
+            == "ws://host.containers.internal:9/ws/egress-sidecar"
+        )
+
+    def test_ws_url_https_to_wss(self, proxy):
+        assert (
+            proxy._ws_url("https://klangkd.example/ev")
+            == "wss://klangkd.example/ws/egress-sidecar"
+        )
+
+    def test_ws_url_passthrough_ws(self, proxy):
+        # an already-ws(s):// URL is used verbatim
+        assert (
+            proxy._ws_url("ws://x/ws/egress-sidecar")
+            == "ws://x/ws/egress-sidecar"
+        )
+
+    # --- _HoldLimiter: bounded in-flight DNS holds ---
+
+    def test_hold_limiter_bounds_and_releases(self, proxy):
+        lim = proxy._HoldLimiter(2)
+        assert lim.try_acquire() is True
+        assert lim.try_acquire() is True
+        assert lim.try_acquire() is False  # exhausted
+        lim.release()
+        assert lim.try_acquire() is True  # freed
+
+    def test_hold_limiter_release_floor(self, proxy):
+        lim = proxy._HoldLimiter(1)
+        lim.release()  # must not go negative
+        assert lim.try_acquire() is True
+
+    # --- SidecarConsentClient.request: fail-close contract ---
+
+    async def test_request_fail_close_when_disconnected(self, proxy, tmp_path):
+        # WS down -> "deny" at once, no frame sent (today's static behavior).
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        assert c.connected is False
+        assert await c.request("evil.test", None) == "deny"
+
+    async def test_request_sends_frame_and_resolves_on_verdict(
+        self, proxy, tmp_path
+    ):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        task = asyncio.create_task(c.request("evil.test", 443))
+        await asyncio.sleep(0)  # let it send + await the verdict
+        frame = json.loads(sent[0])
+        assert frame["type"] == "egress"
+        assert frame["dst"] == "evil.test"
+        assert frame["dport"] == 443
+        c._dispatch(
+            json.dumps(
+                {"type": "verdict", "id": frame["id"], "decision": "allow"}
+            )
+        )
+        assert await task == "allow"
+        assert c._pending == {}  # cleaned up
+
+    async def test_request_deny_verdict(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        task = asyncio.create_task(c.request("evil.test", None))
+        await asyncio.sleep(0)
+        frame = json.loads(sent[0])
+        c._dispatch(
+            json.dumps(
+                {"type": "verdict", "id": frame["id"], "decision": "deny"}
+            )
+        )
+        assert await task == "deny"
+
+    async def test_request_non_allow_verdict_is_deny(self, proxy, tmp_path):
+        # expired/malformed decision -> deny (fail-close)
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        task = asyncio.create_task(c.request("evil.test", None))
+        await asyncio.sleep(0)
+        frame = json.loads(sent[0])
+        c._dispatch(
+            json.dumps(
+                {"type": "verdict", "id": frame["id"], "decision": "expired"}
+            )
+        )
+        assert await task == "deny"
+
+    async def test_request_timeout_fail_close(self, proxy, tmp_path):
+        # no verdict within HOLD_TIMEOUT -> "deny"; slot cleaned up
+        c = proxy.SidecarConsentClient(
+            "http://h/ev", str(tmp_path / "t"), 0.05
+        )
+        c._connected.set()
+
+        class _FakeWS:
+            async def send(self, frame):
                 pass
 
-        def fake_urlopen(req, timeout):
-            captured["url"] = req.full_url
-            captured["body"] = req.data.decode()
-            captured["auth"] = req.headers.get("Authorization")
-            captured["ctype"] = req.headers.get("Content-type")
-            return _Resp()
+        c._ws = _FakeWS()
+        assert await c.request("evil.test", None) == "deny"
+        assert c._pending == {}
 
-        monkeypatch.setattr(proxy.urllib.request, "urlopen", fake_urlopen)
-        proxy._post_event("1.2.3.4", 80)
-        assert captured["url"] == "http://klangkd/ev"
-        assert json.loads(captured["body"]) == {"dst": "1.2.3.4", "dport": 80}
-        assert captured["auth"] == "Bearer from-file-tok"
-        assert captured["ctype"] == "application/json"
+    async def test_request_send_error_fail_close(self, proxy, tmp_path):
+        # ws.send raises -> "deny", slot cleaned up
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
 
-    def test_post_event_noop_without_url(self, proxy, monkeypatch, tmp_path):
-        monkeypatch.setattr(proxy, "CONSENT_URL", "")
-        monkeypatch.setattr(
-            proxy, "WORKSPACE_TOKEN_PATH", str(tmp_path / "token")
-        )
-        called = []
-        monkeypatch.setattr(
-            proxy.urllib.request, "urlopen", lambda *a, **k: called.append(1)
-        )
-        proxy._post_event("1.2.3.4", 80)
-        assert called == []
+        class _FakeWS:
+            async def send(self, frame):
+                raise OSError("connection gone")
 
-    def test_post_event_noop_without_token(self, proxy, monkeypatch, tmp_path):
-        # Missing token file -> no POST (sidecar not yet provisioned, or token
-        # expired before the file refreshed).
-        monkeypatch.setattr(proxy, "CONSENT_URL", "http://klangkd/ev")
-        monkeypatch.setattr(
-            proxy, "WORKSPACE_TOKEN_PATH", str(tmp_path / "no-such-file")
-        )
-        called = []
-        monkeypatch.setattr(
-            proxy.urllib.request, "urlopen", lambda *a, **k: called.append(1)
-        )
-        proxy._post_event("1.2.3.4", 80)
-        assert called == []
+        c._ws = _FakeWS()
+        assert await c.request("evil.test", None) == "deny"
+        assert c._pending == {}
 
-    def test_post_event_swallows_errors(self, proxy, monkeypatch, tmp_path):
-        # A down/slow klangkd must not break the verdict loop (DROP carries
-        # the deny regardless).
-        monkeypatch.setattr(proxy, "CONSENT_URL", "http://klangkd/ev")
-        token_file = tmp_path / "token"
-        token_file.write_text("tok")
-        monkeypatch.setattr(proxy, "WORKSPACE_TOKEN_PATH", str(token_file))
-        monkeypatch.setattr(
-            proxy.urllib.request,
-            "urlopen",
-            lambda *a, **k: (_ for _ in ()).throw(OSError("klangkd down")),
+    def test_dispatch_ignores_non_verdict_and_bad_id(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._dispatch("not-json")
+        c._dispatch(json.dumps({"type": "egress"}))  # wrong type
+        c._dispatch(
+            json.dumps({"type": "verdict", "decision": "allow"})
+        )  # no id
+        c._dispatch(
+            json.dumps({"type": "verdict", "id": 123, "decision": "allow"})
+        )  # non-str id
+        # a verdict for an unknown id is a no-op (already popped/timed out)
+        c._dispatch(
+            json.dumps({"type": "verdict", "id": "nope", "decision": "allow"})
         )
-        proxy._post_event("1.2.3.4", 80)  # must not raise
 
-    def test_start_nfq_consumer_noop_without_netfilterqueue(
-        self, proxy, capsys
+    async def test_dispatch_resolves_pending_future(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        fut = asyncio.get_running_loop().create_future()
+        c._pending["abc"] = fut
+        c._dispatch(
+            json.dumps({"type": "verdict", "id": "abc", "decision": "allow"})
+        )
+        assert fut.result() == "allow"
+        assert "abc" not in c._pending
+
+    async def test_fail_close_pending_resolves_deny(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        fut = asyncio.get_running_loop().create_future()
+        c._pending["x"] = fut
+        c._fail_close_pending()
+        assert fut.result() == "deny"
+        assert c._pending == {}
+
+    def test_read_token_missing_file(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient(
+            "http://h/ev", str(tmp_path / "no-such"), 5
+        )
+        assert c._read_token() == ""
+
+    def test_read_token_reads_file(self, proxy, tmp_path):
+        f = tmp_path / "tok"
+        f.write_text("abc-xyz\n")
+        c = proxy.SidecarConsentClient("http://h/ev", str(f), 5)
+        assert c._read_token() == "abc-xyz"
+
+    # --- _gate_deny: should this denied query be held or fail-close NXDOMAIN? ---
+
+    def test_gate_deny_false_when_no_client(self, proxy):
+        # consent disabled -> never hold, always NXDOMAIN (today's behavior)
+        assert proxy._gate_deny(None, proxy._HoldLimiter(8)) is False
+
+    def test_gate_deny_false_when_disconnected(self, proxy):
+        client = MagicMock()
+        client.connected = False
+        assert proxy._gate_deny(client, proxy._HoldLimiter(8)) is False
+
+    def test_gate_deny_false_when_flood_bound(self, proxy):
+        client = MagicMock()
+        client.connected = True
+        lim = proxy._HoldLimiter(1)
+        assert lim.try_acquire()  # fill the only slot
+        assert (
+            proxy._gate_deny(client, lim) is False
+        )  # exhausted -> fail-close
+
+    def test_gate_deny_true_acquires_slot(self, proxy):
+        client = MagicMock()
+        client.connected = True
+        lim = proxy._HoldLimiter(2)
+        assert proxy._gate_deny(client, lim) is True
+        assert lim.try_acquire() is True  # one slot now in use -> one left
+        assert lim.try_acquire() is False  # both taken
+
+    # --- _handle_hold: the DNS hold task (gate already passed) ---
+
+    async def test_handle_hold_allow_forwards_upstream(
+        self, proxy, monkeypatch
     ):
-        # The server venv has no netfilterqueue -> the lazy import fails and
-        # the consumer logs + returns instead of raising.
-        proxy._start_nfq_consumer()
+        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        fwd = AsyncMock()
+        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value="allow")
+        s = MagicMock()
+        lim = proxy._HoldLimiter(8)
+        await proxy._handle_hold(
+            s, b"q", ("1.2.3.4", 53), "evil.test", client, lim
+        )
+        s.sendto.assert_not_called()  # not denied
+        client.request.assert_awaited_once_with("evil.test", None)
+        fwd.assert_awaited_once()  # forwarded upstream (all-ports)
+        assert lim._in_flight == 0  # slot released
+
+    async def test_handle_hold_deny_sends_nxdomain(self, proxy, monkeypatch):
+        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        fwd = AsyncMock()
+        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value="deny")
+        s = MagicMock()
+        lim = proxy._HoldLimiter(8)
+        await proxy._handle_hold(
+            s, b"q", ("1.2.3.4", 53), "evil.test", client, lim
+        )
+        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+        fwd.assert_not_awaited()
+        assert lim._in_flight == 0  # slot released
+
+    async def test_handle_hold_request_error_fail_closes(
+        self, proxy, monkeypatch
+    ):
+        # request() raising -> deny + NXDOMAIN + slot still released
+        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(side_effect=RuntimeError("boom"))
+        s = MagicMock()
+        lim = proxy._HoldLimiter(8)
+        await proxy._handle_hold(
+            s, b"q", ("1.2.3.4", 53), "evil.test", client, lim
+        )
+        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+        assert lim._in_flight == 0  # released despite the error
+
+    # --- _run_nfq_consumer: graceful no-op without netfilterqueue ---
+
+    def test_run_nfq_consumer_noop_without_netfilterqueue(self, proxy, capsys):
+        # The server venv has no netfilterqueue -> lazy import fails -> logs +
+        # returns instead of raising.
+        proxy._run_nfq_consumer(None, asyncio.new_event_loop())
         assert "netfilterqueue unavailable" in capsys.readouterr().out
