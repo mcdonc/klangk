@@ -518,6 +518,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Egress-sidecar WebSocket on the egress port (#2319).** The network
+  sidecar's held-egress WS (`/ws/egress-sidecar`) was never added as an
+  explicit handle on the container-egress Caddy site, so every sidecar WS
+  upgrade fell through to the catch-all `StaticFiles` (which asserts
+  `scope["type"] == "http"`) and failed with HTTP 500. The egress site now
+  reverse-proxies that WS to the app, and the sidecar sends its workspace JWT
+  as an `Authorization: Bearer` header (matching the site's `forward_auth`
+  and the legacy consent POST) instead of a `?token=` query param.
+
 - **Sidecar token file retention (#2309).** A periodic sweep now removes
   leftover per-workspace token files under `data_dir/ws-tokens/` once the
   workspace row is gone, so they no longer accumulate one file per workspace

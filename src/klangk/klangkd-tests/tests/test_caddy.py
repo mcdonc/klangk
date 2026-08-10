@@ -523,6 +523,19 @@ class TestRenderConfig:
         assert "respond @notContainerSrc 403" in locs
         assert "reverse_proxy upstream" in locs
 
+    def test_egress_proxies_sidecar_ws(self):
+        # #2319: the sidecar's egress-sidecar WebSocket has an explicit handle
+        # on the egress site so its WS upgrade is reverse-proxied to the app
+        # (+ container-src-guarded) instead of falling through to the catch-all
+        # StaticFiles (which asserts scope["type"]=="http" -> 500).
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
+        locs = _renderer(s)._egress_locations("upstream", "10.0.0.0/8")
+        assert "handle /ws/egress-sidecar" in locs
+        assert (
+            "flush_interval -1" in locs
+        )  # unbuffered bidirectional verdict stream
+        assert "reverse_proxy upstream" in locs
+
     def test_headless_has_only_egress(self):
         s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         cf = _renderer(s).render_config("unix//sock", self.ADMIN)

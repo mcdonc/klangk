@@ -540,7 +540,25 @@ class CaddyRenderer:
             f"		reverse_proxy {upstream}\n"
             "	}\n"
         )
-        return not_src_matcher + consent + llm + delegate + post_chat
+        # #2319: the sidecar's egress-sidecar WebSocket (held-egress verdicts).
+        # Same protection as the consent POST above: the site-level
+        # forward_auth validates the sidecar's workspace JWT, then this handle
+        # proxies the WS upgrade to the app. The sidecar sends the JWT as an
+        # ``Authorization: Bearer`` header (not a query param) so forward_auth
+        # sees it; ``flush_interval -1`` avoids buffering the bidirectional
+        # verdict stream.
+        egress_ws = (
+            "	handle /ws/egress-sidecar {\n"
+            f"{guard}"
+            f"		reverse_proxy {upstream} {{\n"
+            f"{self._common_rp_headers()}\n"
+            "			flush_interval -1\n"
+            "		}\n"
+            "	}\n"
+        )
+        return (
+            not_src_matcher + consent + egress_ws + llm + delegate + post_chat
+        )
 
     def _egress_site(self, upstream: str, container_srcs: str) -> str:
         """The full container-egress site block (headless + full both render it)."""

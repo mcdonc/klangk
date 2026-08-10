@@ -556,10 +556,13 @@ class SidecarConsentClient:
                     self._no_token_warned = True
                 await asyncio.sleep(1.0)
                 continue
-            url = f"{self._url}?token={token}"
             try:
                 async with websockets.connect(
-                    url, ping_interval=20, ping_timeout=10, close_timeout=5
+                    self._url,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=5,
+                    additional_headers={"Authorization": "Bearer " + token},
                 ) as ws:
                     self._ws = ws
                     self._connected.set()
@@ -570,10 +573,11 @@ class SidecarConsentClient:
                     async for raw in ws:
                         self._dispatch(raw)
             except Exception as exc:
-                # Log the exception TYPE only -- the URL carries the workspace
-                # JWT as ?token=, and a websockets exception could embed it
-                # (#2309). The websockets package logger is capped at WARNING
-                # on import so its DEBUG request-line can't leak either.
+                # Log the exception TYPE only -- the connection carries the
+                # workspace JWT (Authorization header), and a websockets
+                # exception could embed request details (#2309). The websockets
+                # package logger is capped at WARNING on import so its DEBUG
+                # request-line can't leak either.
                 if DEBUG:
                     print(
                         f"consent: connection error: {type(exc).__name__}",
