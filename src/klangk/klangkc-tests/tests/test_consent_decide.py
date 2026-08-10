@@ -801,3 +801,44 @@ async def test_refresh_appends_new_and_drops_resolved_in_place():
         app._refresh()
         await pilot.pause()
         assert {getattr(c, "request_id", None) for c in lv.children} == {"r2"}
+
+
+def test_reset_clears_pending():
+    """reset() drops all pending rows (called at the top of each connection)."""
+    c = ConsentDeciderController()
+    c.apply_frame(_req_frame("r1"))
+    c.apply_frame(_req_frame("r2"))
+    assert len(c.pending) == 2
+    c.reset()
+    assert c.pending == {}
+    assert c.ordered() == []
+
+
+async def test_pump_drops_stale_rows_on_empty_snapshot_reconnect():
+    """On (re)connect the server snapshot is authoritative. Rows that resolved
+    while disconnected (no egress_resolved ever received) must not linger as
+    (0s) ghosts -- the orphan-reap / klangkd-restart case sends an EMPTY
+    snapshot, so _pump must clear the queue even when no frames arrive."""
+    app = _make_app()
+    async with app.run_test() as pilot:
+        # stale row from a prior session (resolved server-side while offline)
+        app.controller.apply_frame(_req_frame("r1", host="a.com"))
+        await pilot.pause()
+        assert len(app.controller.pending) == 1
+        # reconnect: server reaped orphans / nothing held -> empty snapshot
+        await app._pump(FakeWS([]))
+        await pilot.pause()
+        assert app.controller.pending == {}, app.controller.pending
+
+
+async def test_pump_repoulates_from_snapshot_after_reset():
+    """reset() must not lose live rows: the snapshot that follows a reconnect
+    repopulates the queue."""
+    app = _make_app()
+    async with app.run_test() as pilot:
+        app.controller.apply_frame(_req_frame("stale", host="old.com"))
+        await pilot.pause()
+        # reconnect: snapshot carries a different, currently-held request
+        await app._pump(FakeWS([_req_frame("live", host="new.com")]))
+        await pilot.pause()
+        assert set(app.controller.pending) == {"live"}

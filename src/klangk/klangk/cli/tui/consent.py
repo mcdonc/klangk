@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass
 
 import websockets
+from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, ListItem, ListView, Static
@@ -168,6 +169,17 @@ class ConsentDeciderController:
         """Seconds until this hold's countdown hits zero (clamped at 0)."""
         return max(0.0, req.requested_at + self.hold_timeout - self._clock())
 
+    def reset(self) -> None:
+        """Drop all pending requests.
+
+        Called at the start of each (re)connection: the server's snapshot
+        that immediately follows is authoritative for currently-held
+        requests, so rows that resolved while we were disconnected -- and
+        thus never sent us an ``egress_resolved`` -- must not linger as
+        ``(0s)`` ghosts after a reconnect or a klangkd restart.
+        """
+        self.pending.clear()
+
 
 def _parse_request(obj: object) -> ConsentRequest | None:
     """Build a :class:`ConsentRequest` from a frame's ``request`` object.
@@ -184,13 +196,17 @@ def _parse_request(obj: object) -> ConsentRequest | None:
     if not isinstance(requested_at, (int, float)):
         requested_at = 0
     port = obj.get("dest_port")
+    pid = obj.get("pid")
     return ConsentRequest(
         id=rid,
         workspace_id=wid,
         dest_host=str(obj.get("dest_host") or ""),
         dest_port=int(port) if isinstance(port, (int, float)) else None,
         process_name=obj.get("process_name"),
-        pid=obj.get("pid") if isinstance(obj.get("pid"), int) else None,
+        # bool is an int subclass -- exclude it so pid=True doesn't yield 1.
+        pid=pid
+        if isinstance(pid, int) and not isinstance(pid, bool)
+        else None,
         requested_at=float(requested_at),
     )
 
@@ -329,6 +345,17 @@ class ConsentDeciderApp(App):
         and re-trigger the bug in a tight reconnect loop).
         """
         ping = asyncio.create_task(self._ping_loop(ws))
+        # The server's snapshot (sent immediately on connect) is authoritative
+        # for currently-held requests: drop anything stale from a prior session
+        # so rows that resolved while disconnected don't linger as (0s) ghosts.
+        # Refresh now too -- an EMPTY snapshot (klangkd restart + orphan reap)
+        # sends no frames, so nothing else would clear the stale UI. Isolated
+        # like every render: a UI bug must never tear down the transport.
+        self.controller.reset()
+        try:
+            self._refresh()
+        except Exception:
+            logger.exception("consent-decide render failed")
         auth_close = False
         try:
             while True:
@@ -418,7 +445,9 @@ class ConsentDeciderApp(App):
             host = f"{host}:{req.dest_port}"
         proc = f"  ({req.process_name})" if req.process_name else ""
         secs = int(self.controller.remaining(req))
-        return f"{host}{proc}  ({secs}s)"
+        # dest_host is server-observed DNS; escape it so a host containing
+        # rich markup (e.g. "[red]") renders literally, not as styling.
+        return escape(f"{host}{proc}  ({secs}s)")
 
     def _render_item(self, req: ConsentRequest) -> ListItem:
         # Host+time is a direct child of the ListItem (renders horizontally);
@@ -460,7 +489,7 @@ class ConsentDeciderApp(App):
         clobber it immediately). Used for verdict send failures and server
         error frames.
         """
-        self._flash_msg = f" [red]![/red] {message}"
+        self._flash_msg = f" [red]![/red] {escape(message)}"
         self._flash_until = time.time() + ttl
         self.query_one("#status", Static).update(self._flash_msg)
 
