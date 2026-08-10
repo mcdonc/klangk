@@ -39,28 +39,52 @@ under-counts and you'll see a false ~93% total with heavy files like
 single-process run — re-run with `-n auto` first.
 
 The 100% coverage gate is enforced on the `klangk` package; a new code
-path with no test will fail the build. When iterating
-fast on one file you can scope with `-k` / a path and add `--no-cov`, but
-re-run the full suite **with** coverage (and `-n auto`) before committing.
+path with no test will fail the build.
 
-For tight edit/test loops, `pytest-testmon` (in the `test` extra) selects
-only the tests whose coverage touches your changed lines. Run the
-`testmon` task — it baselines the line→test map into
-`src/klangk/.testmondata` on the first clean-tree run, then re-runs just
-the affected subset (~10s vs ~60s):
+### Rapid iteration: use the `testmon` task
+
+For edit/test loops, **default to the `testmon` task** instead of the full
+suite. `pytest-testmon` (in the `test` extra) selects only the tests whose
+coverage touches your changed lines, so a typical local change re-runs in
+~10s vs. the full ~60s:
 
 ```bash
 devenv --quiet -O dotenv.enable:bool false shell -- testmon
 ```
 
-`--no-cov` is intentional: a scoped run only exercises a fraction of the
-package, so the 100% gate does not apply to it. Re-run the full suite
-**with** coverage (the `test-backend` task) before committing — testmon is
-a local accelerator only; CI always runs the full suite. The data file is
-per-worktree (rootdir-relative) and gitignored; concurrent `testmon` runs
-in the same worktree serialize on sqlite's busy-lock (a brief stall, not
-corruption). Delete `src/klangk/.testmondata` after a large refactor or
-branch switch to re-baseline.
+It baselines the line→test map into `src/klangk/.testmondata` on the first
+clean-tree run, then re-runs just the affected subset. Reach for it
+whenever the change is localized to already-covered code — that's most
+edits to an existing module.
+
+Fall back to the full suite (or re-baseline) when testmon can under-select:
+
+- **Broad changes** — a large refactor, a branch switch, or edits to shared
+  `conftest.py` / fixtures / base classes. testmon can't tell that a
+  changed fixture affects tests that don't import it by line coverage, so
+  delete `src/klangk/.testmondata` to re-baseline, or just run the full
+  suite.
+- **New code path** with no prior coverage is never selected — write the
+  test first, then iterate with testmon.
+- `-k <name>` / a single path plus `--no-cov` is an escape hatch for one or
+  two tests, not a default.
+
+`--no-cov` in the task is intentional: a scoped run exercises only a
+fraction of the package, so the 100% gate does not apply to it.
+
+### Before commit: the full suite, always
+
+testmon is a **local accelerator only**. CI always runs the full suite
+with `-n auto` and coverage, so before committing (and before trusting any
+"passing" or "coverage" signal from a scoped run) re-run the CI suite:
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- test-backend
+```
+
+Operational notes: `.testmondata` is per-worktree (rootdir-relative) and
+gitignored; concurrent `testmon` runs in the same worktree serialize on
+sqlite's busy-lock (a brief stall, not corruption).
 
 ## Verifying behavior empirically (avoid repro loops)
 
