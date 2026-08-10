@@ -501,11 +501,12 @@ class TestNetworkSidecarE2E:
             f"ip6tables OUTPUT policy is not DROP:\n{v6}"
         )
 
-    def test_interactive_mode_installs_nflog(self, env):
-        # #2255: in interactive mode the sidecar appends a rate-limited NFLOG
-        # rule (group 5139) so the consent daemon can observe blocked traffic.
-        # Standalone sidecar (no fake upstream needed — the rule is installed
-        # before the proxy runs).
+    def test_consent_recording_installs_nfqueue_rule(self, env):
+        # #2242: whenever a consent endpoint is configured, the sidecar queues
+        # blocked packets (--queue-num 5139) for its NFQUEUE consumer (proxy.py).
+        # Recording is mode-independent (static vs interactive only affects the
+        # recorded decision, applied by klangkd). Standalone sidecar (the rule
+        # is installed before the proxy runs; no fake upstream needed).
         net = f"netc-nf-{uuid.uuid4().hex[:8]}"
         nc = f"netc-nf-{uuid.uuid4().hex[:8]}"
         _podman("network", "create", net)
@@ -526,20 +527,29 @@ class TestNetworkSidecarE2E:
                 "-e",
                 "KLANGKNETWORK_EGRESS_ALLOW=allowed.test",
                 "-e",
-                "KLANGKNETWORK_EGRESS_MODE=interactive",
-                "-e",
-                "KLANGKNETWORK_EGRESS_TAG=testws000001",
+                "KLANGKNETWORK_EGRESS_CONSENT_URL=http://fake-klangkd:8995/internal/egress-consent/events",
                 env["image"],
             )
             _wait_ready(nc)
             rules = _podman("exec", nc, "iptables", "-S", "OUTPUT").stdout
             assert any(
-                "NFLOG" in ln and "5139" in ln for ln in rules.splitlines()
-            ), f"no NFLOG group-5139 rule in interactive mode:\n{rules}"
-            assert any(
-                "--nflog-prefix" in ln and "testws000001" in ln
+                "-j NFQUEUE" in ln and "5139" in ln
                 for ln in rules.splitlines()
-            ), f"NFLOG prefix should carry the workspace tag:\n{rules}"
+            ), f"no NFQUEUE queue-5139 rule in interactive mode:\n{rules}"
+            # The NFQUEUE consumer thread (proxy.py) binds after the proxy is
+            # ready; poll its log to prove the consumer runs in the real image.
+            deadline = time.monotonic() + 20
+            bound = False
+            while time.monotonic() < deadline:
+                logs = _podman("logs", nc, check=False).stdout
+                if "nfqueue consumer bound to queue 5139" in logs:
+                    bound = True
+                    break
+                time.sleep(0.5)
+            assert bound, (
+                "NFQUEUE consumer did not bind in interactive mode:\n"
+                f"{_podman('logs', nc, check=False).stdout}"
+            )
         finally:
             _podman("rm", "-f", nc, check=False, timeout=60)
             _podman("network", "rm", net, check=False, timeout=60)

@@ -54,8 +54,10 @@ Limitations: transport is UDP only (TCP fallback is a future addition).
 import os
 import socket
 import subprocess
+import json
 import threading
 import time
+import urllib.request
 
 import dns.message
 import dns.rcode
@@ -75,6 +77,24 @@ MARK = int(os.environ.get("KLANGKNETWORK_EGRESS_MARK", "75"))
 # Learned-IP housekeeping (#2256).
 SWEEP_INTERVAL = float(os.environ.get("KLANGKNETWORK_EGRESS_SWEEP_INTERVAL", "5"))
 MIN_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_MIN_TTL", "30"))
+# --- interactive consent (#2242): the NFQUEUE consumer forwards each blocked
+# destination to klangkd's consent endpoint. Only active in interactive mode
+# (main() starts the consumer thread); empty CONSENT_URL -> log only.
+QUEUE_NUM = int(os.environ.get("KLANGKNETWORK_EGRESS_NFQUEUE_NUM", "5139"))
+# Bounds concurrent consent POST threads from the denied-DNS path (which has no
+# iptables rate limit, unlike NFQUEUE): at most this many _post_event threads
+# run at once. A flooding workspace can't spawn unbounded threads (which would
+# hit the pids limit, raise from Thread.start(), and crash the proxy -- PID 1
+# -- stranding learned ACCEPT rules without the sweeper).
+_FORWARD_SEM = threading.Semaphore(10)
+CONSENT_URL = os.environ.get("KLANGKNETWORK_EGRESS_CONSENT_URL", "")
+# The workspace JWT (rotated) is bind-mounted here read-only; read it fresh on
+# each POST so rotation is picked up (#2242). Not baked in env because the
+# workspace token expires and rotates.
+WORKSPACE_TOKEN_PATH = "/run/klangk/workspace-token"
+# Consent recording (#2242): forward denied DNS queries (domains) AND
+# NFQUEUE'd blocked packets (raw IPs) to klangkd whenever a consent endpoint
+# is configured (recording runs for every filtered workspace).
 
 
 def parse_specs() -> list[tuple[str, int | None, bool]]:
@@ -345,6 +365,90 @@ def _decision(qname: str, ports: set[int] | None) -> tuple[bool, set[int | None]
     return False, ports if ports is not None else {None}
 
 
+def parse_dest(payload: bytes) -> tuple[str, int]:
+    """``(dst_ip, dst_port)`` from an IPv4 packet payload, or ``("", 0)``.
+
+    The NFQUEUE payload may start at L3 (IP) or include a 14-byte Ethernet
+    header; detect the IPv4 version nibble. Port is 0 for non-TCP/UDP. Pure
+    so it can be unit-tested with synthetic bytes.
+    """
+    off = 0
+    if len(payload) > 14 and (payload[0] >> 4) != 4 and (payload[14] >> 4) == 4:
+        off = 14  # Ethernet header
+    if off + 20 > len(payload) or (payload[off] >> 4) != 4:
+        return "", 0
+    ihl = (payload[off] & 0x0F) * 4
+    if ihl < 20 or off + ihl > len(payload):
+        return "", 0
+    proto = payload[off + 9]
+    dst = ".".join(str(b) for b in payload[off + 16 : off + 20])
+    port = 0
+    if proto in (6, 17) and off + ihl + 4 <= len(
+        payload
+    ):  # TCP / UDP, L4 header present
+        port = int.from_bytes(payload[off + ihl + 2 : off + ihl + 4], "big")
+    return dst, port
+
+
+def _read_workspace_token() -> str:
+    """The current workspace JWT from the bind-mounted token file."""
+    try:
+        with open(WORKSPACE_TOKEN_PATH) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _post_event(dst: str, port: int) -> None:
+    """Best-effort POST of an observed destination to klangkd (#2242)."""
+    if not CONSENT_URL:
+        return
+    token = _read_workspace_token()
+    if not token:
+        return
+    body = json.dumps({"dst": dst, "dport": port})
+    req = urllib.request.Request(
+        CONSENT_URL,
+        data=body.encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token,
+        },
+    )
+    try:
+        urllib.request.urlopen(req, timeout=2).close()
+    except Exception:
+        pass  # best-effort; the DROP verdict carries the deny regardless
+
+
+def _start_nfq_consumer() -> None:
+    """Bind the sidecar's NFQUEUE and forward blocked destinations (#2242).
+
+    Verdicts DROP (fail-closed: blocked traffic stays blocked; observation is
+    best-effort via a fire-and-forget thread). netfilterqueue is a sidecar-only
+    dep, imported lazily so the module loads without it.
+    """
+    try:
+        from netfilterqueue import NetfilterQueue
+    except Exception as exc:
+        print(f"nfqueue: netfilterqueue unavailable ({exc})", flush=True)
+        return
+
+    def _cb(pkt) -> None:
+        dst, port = parse_dest(pkt.get_payload())
+        pkt.drop()
+        if dst:
+            threading.Thread(target=_post_event, args=(dst, port), daemon=True).start()
+
+    try:
+        nfq = NetfilterQueue()
+        nfq.bind(QUEUE_NUM, _cb)
+        print(f"nfqueue consumer bound to queue {QUEUE_NUM}", flush=True)
+        nfq.run()
+    except Exception as exc:
+        print(f"nfqueue consumer failed: {exc}", flush=True)
+
+
 def main() -> None:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(("127.0.0.1", LISTEN_PORT))
@@ -355,6 +459,10 @@ def main() -> None:
     )
     check_mark()
     threading.Thread(target=_sweeper, daemon=True).start()
+    # Consent recording (#2242): observe NFQUEUE'd blocked destinations and
+    # forward them to klangkd. Runs whenever a consent endpoint is configured.
+    if CONSENT_URL:
+        threading.Thread(target=_start_nfq_consumer, daemon=True).start()
     while True:
         try:
             data, addr = s.recvfrom(65535)
@@ -369,6 +477,22 @@ def main() -> None:
         if deny:
             if DEBUG:
                 print(f"deny  {qname}", flush=True)
+            # Consent recording (#2242): forward the denied query's domain
+            # to klangkd (best-effort). Bounded by _FORWARD_SEM so a flooding
+            # workspace can't spawn unbounded POST threads; if the semaphore is
+            # exhausted the forward is skipped (the NXDOMAIN below still fires).
+            if CONSENT_URL and _FORWARD_SEM.acquire(blocking=False):
+
+                def _forward():
+                    try:
+                        _post_event(qname, None)
+                    finally:
+                        _FORWARD_SEM.release()
+
+                try:
+                    threading.Thread(target=_forward, daemon=True).start()
+                except Exception:
+                    _FORWARD_SEM.release()  # never started; free the slot
             try:
                 s.sendto(nxdomain_for(data), addr)
             except Exception:

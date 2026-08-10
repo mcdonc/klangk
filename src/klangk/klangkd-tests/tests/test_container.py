@@ -1057,9 +1057,11 @@ class TestStartContainer:
             await self.registry._stop_network_sidecar("abcd1234")
         p.remove_container.assert_not_awaited()
 
-    async def test_start_network_sidecar_passes_interactive_mode(
+    async def test_start_network_sidecar_no_consent_env_without_monitor(
         self, monkeypatch
     ):
+        # #2242: consent recording is gated on the monitor being wired, not on
+        # egress_mode. Without a consent_monitor, no CONSENT_URL/NFQUEUE env.
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
@@ -1072,8 +1074,74 @@ class TestStartContainer:
             await self.registry._start_network_sidecar(
                 "abcdef12", ["github.com:443"], egress_mode="interactive"
             )
+        env = p.create_container.call_args.kwargs["env"]
+        assert not any("CONSENT_URL" in e for e in env)
+        assert not any("NFQUEUE_NUM" in e for e in env)
+
+    async def test_start_network_sidecar_passes_consent_env(
+        self, monkeypatch, tmp_path
+    ):
+        # #2242: consent recording runs for every filtered workspace (here in
+        # static mode) when the monitor is wired -- mode-independent. The
+        # workspace-token file is bind-mounted in (rotated), not baked in env.
+        import types as _types
+
+        WS = "abcdef12-abcd-1234-5678-aaaaaaaaaaaa"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "egress_port", "8997"
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "data_dir", str(tmp_path)
+        )
+        monkeypatch.setattr(
+            self.registry.app.state,
+            "consent_monitor",
+            _types.SimpleNamespace(),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            self.registry.app.state,
+            "auth",
+            _types.SimpleNamespace(create_workspace_token=lambda ws: "ws-tok"),
+            raising=False,
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        with patch_podman(self.registry) as p:
+            await self.registry._start_network_sidecar(
+                WS, ["github.com:443"], egress_mode="interactive"
+            )
         kwargs = p.create_container.call_args.kwargs
-        assert "KLANGKNETWORK_EGRESS_MODE=interactive" in kwargs["env"]
+        env = kwargs["env"]
+        assert any(
+            "KLANGKNETWORK_EGRESS_CONSENT_URL=" in e and "8997" in e
+            for e in env
+        )
+        assert "KLANGKNETWORK_EGRESS_NFQUEUE_NUM=5139" in env
+        assert not any("TOKEN" in e for e in env)
+        # the workspace token was written to the bind-mounted file ...
+        assert (tmp_path / "ws-tokens" / WS).read_text() == "ws-tok"
+        # ... and bind-mounted read-only into the sidecar
+        assert any("workspace-token:ro" in b for b in kwargs.get("binds", []))
+
+    def test_write_sidecar_token_atomic(self, monkeypatch, tmp_path):
+        # The sidecar reads this file per POST; writes must be atomic (no
+        # half-written token) and overwritable on rotation.
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "data_dir", str(tmp_path)
+        )
+        self.registry.write_sidecar_token("ws-id", "tok-A")
+        path = tmp_path / "ws-tokens" / "ws-id"
+        assert path.read_text() == "tok-A"
+        self.registry.write_sidecar_token("ws-id", "tok-B")  # rotation
+        assert path.read_text() == "tok-B"
+        assert not (tmp_path / "ws-tokens" / "ws-id.tmp").exists()
 
     async def test_stop_network_sidecar_swallows_error(self, monkeypatch):
         ws_id = "abcdef1234567890"

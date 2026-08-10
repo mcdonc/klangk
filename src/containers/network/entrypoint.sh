@@ -82,20 +82,20 @@ case "${KLANGKNETWORK_EGRESS_BACKEND_PORT:-}" in
   ;;
 esac
 
-# --- interactive egress consent (#2239): in interactive mode, observe blocked
-# destinations via NFLOG so the consent daemon (netlink group) can prompt a
-# human. Rate-limited to cap flooding from adversarial containers; the DROP
-# policy still fires for every packet. Placed AFTER every ACCEPT so only
-# genuinely-blocked traffic is logged. In static mode (the default) no NFLOG
-# rule is added — the DROP policy alone carries the deny, and the ruleset is
-# fully immutable. The tag correlates a blocked packet with its workspace
-# (passed from klangkd as the workspace-id prefix).
-if [ "${KLANGKNETWORK_EGRESS_MODE:-}" = "interactive" ]; then
-  _tag="${KLANGKNETWORK_EGRESS_TAG:-unknown}"
+# --- egress consent recording (#2242): queue blocked packets to the sidecar's
+# own NFQUEUE consumer (proxy.py) whenever a consent endpoint is configured.
+# Recording runs for every filtered workspace; egress_mode (static vs
+# interactive) only affects the recorded decision, applied by klangkd. The
+# sidecar is the netns owner with NET_ADMIN, so it reads its own NFQUEUE -- no
+# host-side /dev/kmsg access or new privilege. Fail-closed: a down consumer
+# means the kernel drops queued packets; unmatched traffic hits the OUTPUT DROP
+# policy. Rate-limited so a flooding workspace can't overwhelm the consumer;
+# packets past the limit miss the match and fall through to DROP (denied,
+# unobserved). Denied DNS queries are also forwarded by the proxy with their
+# domain names -- NFQUEUE only carries raw IPs.
+if [ -n "${KLANGKNETWORK_EGRESS_CONSENT_URL:-}" ]; then
   $IPT -A OUTPUT -m limit --limit 5/sec --limit-burst 20 \
-    -j NFLOG --nflog-group "${KLANGKNETWORK_EGRESS_NFLOG_GROUP:-5139}" \
-    --nflog-prefix "klangk-egress:${_tag}:"
-  $IPT -A OUTPUT -j DROP
+    -j NFQUEUE --queue-num "${KLANGKNETWORK_EGRESS_NFQUEUE_NUM:-5139}"
 fi
 
 # --- nat OUTPUT: REDIRECT ALL :53 to the proxy, EXCEPT the proxy's own marked

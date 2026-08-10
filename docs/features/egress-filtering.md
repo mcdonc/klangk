@@ -56,34 +56,34 @@ outbound networking exactly as before.
 The ruleset is in place before the workspace process starts, and the
 workspace lacks `CAP_NET_ADMIN` so it cannot flush the ruleset.
 
-## Interactive egress mode (#2239)
+## Egress consent recording (#2242)
 
-A workspace can set `egress_mode` to `"interactive"` (default is `"static"`)
-via the API or CLI. In interactive mode the sidecar installs the same
-allow-list as static mode, but adds two additional rules at the end of the
-OUTPUT chain:
+The network sidecar records every blocked destination to the
+`egress_consent` table, regardless of `egress_mode`:
 
-1. A rate-limited **NFLOG** rule (`-j NFLOG --nflog-group 5139`) that
-   delivers blocked-packet metadata to userspace via a netlink socket.
-   The `--nflog-prefix` is `klangk-egress:<id>:` where `<id>` is the
-   workspace-id prefix (passed to the sidecar as
-   `KLANGKNETWORK_EGRESS_TAG`). The consent daemon uses this prefix to
-   correlate packets with workspaces.
-2. An explicit **DROP** rule — redundant given the OUTPUT policy, but makes
-   the chain self-documenting and ensures NFLOG precedes DROP regardless
-   of future chain additions.
+- **static** (the default) -> recorded as `denied`, `decided_by` NULL (no
+  human), immediately. Static mode is strictly better than the old silent-deny:
+  it logs every denied attempt for audit/review (`scripts/consent-watch.py`
+  shows a live view). One row per (workspace, host, port); repeats don't spam.
+- **interactive** -> recorded as `pending`, then a human can `allow`/`deny` it
+  via the consent UI (**#2244, not yet wired**) before it auto-expires
+  (`egress_consent_timeout`, default 30s; rate-limited per workspace via
+  `egress_consent_rate_limit`, default 50).
 
-Rate limiting (`--limit 5/sec --limit-burst 20`) prevents an adversarial
-container from flooding the NFLOG queue. Only the NFLOG notification is
-throttled — the DROP fires for every packet.
+The sidecar consumes its own NFQUEUE (`-j NFQUEUE --queue-num 5139`; it is the
+netns owner with `NET_ADMIN`) and POSTs each blocked packet's destination to
+klangkd's consent endpoint (workspace-JWT-authenticated via Caddy's
+`forward_auth`); it also forwards denied DNS queries with their domain names
+(NFQUEUE only carries raw IPs). The workspace JWT is bind-mounted into the
+sidecar and refreshed on rotation, so it never goes stale.
 
-> **Current status:** interactive mode today is **static filtering plus NFLOG
-> observability**. The consent daemon that would consume the NFLOG feed and
-> prompt a human to allow or deny blocked destinations **does not exist yet**
-> (#2242). Enabling interactive mode on a workspace will silently drop
-> unmatched traffic (exactly like static mode) while emitting NFLOG packets
-> that nothing is listening to. Do not enable interactive mode expecting
-> consent prompts — it is a building block for the upcoming consent system.
+A workspace sets `egress_mode` to `"interactive"` (default `"static"`) via the
+API or CLI.
+
+> **Current status:** static recording works end-to-end (deny + record). The
+> interactive decide/notify UI that lets a human actually allow/deny a pending
+> request **is not wired yet** (#2244) -- until then interactive requests simply
+> expire. Do not enable interactive mode expecting real-time consent prompts.
 
 ## Enabling it (operator)
 

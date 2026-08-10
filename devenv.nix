@@ -242,6 +242,15 @@ in
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
   scripts.build-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-base-image.sh" "$@"'';
   scripts.build-host-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-host-image.sh" "$@"'';
+  # Live, rich-rendered view of a workspace's egress-consent history (#2242).
+  # The dev klangkd's DB (klangk.db) lives under $dataDir.
+  scripts.consent-watch.exec = ''
+    exec python3 "$DEVENV_ROOT/scripts/consent-watch.py" --data-dir "${dataDir}" "$@"
+  '';
+  # Interactive accept/deny of a workspace's pending consent requests (#2242).
+  scripts.consent-decide.exec = ''
+    exec python3 "$DEVENV_ROOT/scripts/consent-decide.py" --data-dir "${dataDir}" "$@"
+  '';
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
   scripts.trivy-workspace.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-workspace.sh" "$@"'';
   scripts.trivy-workspace-report.exec = ''

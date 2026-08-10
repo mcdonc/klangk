@@ -11,6 +11,7 @@ e2e. These tests import it as a module and drive its helpers directly.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -516,3 +517,111 @@ class TestRespondAllowedSwallowsFailures:
         assert ("5.6.7.8", 443, 200) in calls
         assert ("5.6.7.8", 8443, 200) in calls
         s.sendto.assert_called_once_with(b"resp", ("127.0.0.1", 1234))
+
+
+class TestConsentForward:
+    """Sidecar consent forwarding (#2242): packet parsing, the best-effort
+    POST, and the NFQUEUE consumer's graceful no-op when netfilterqueue is
+    absent (the server venv doesn't ship it)."""
+
+    def test_parse_dest_tcp(self, proxy):
+        ip = bytearray(40)
+        ip[0] = 0x45  # IPv4, IHL 5 (20 bytes)
+        ip[9] = 6  # TCP
+        ip[12:16] = bytes([1, 1, 1, 1])  # src
+        ip[16:20] = bytes([8, 8, 8, 8])  # dst
+        ip[22:24] = (443).to_bytes(2, "big")  # TCP dport at IHL(20)+2
+        assert proxy.parse_dest(bytes(ip)) == ("8.8.8.8", 443)
+
+    def test_parse_dest_udp(self, proxy):
+        ip = bytearray(28)
+        ip[0] = 0x45
+        ip[9] = 17  # UDP
+        ip[16:20] = bytes([1, 2, 3, 4])
+        ip[22:24] = (53).to_bytes(2, "big")  # UDP dport at 20+2
+        assert proxy.parse_dest(bytes(ip)) == ("1.2.3.4", 53)
+
+    def test_parse_dest_ethernet_prefixed(self, proxy):
+        eth = bytes(14)  # 14-byte L2 header before the IP packet
+        ip = bytearray(20)
+        ip[0] = 0x45
+        ip[16:20] = bytes([9, 9, 9, 9])
+        assert proxy.parse_dest(bytes(eth) + bytes(ip)) == ("9.9.9.9", 0)
+
+    def test_parse_dest_malformed(self, proxy):
+        assert proxy.parse_dest(b"") == ("", 0)
+        assert proxy.parse_dest(bytes(10)) == ("", 0)
+        assert proxy.parse_dest(b"\xff" * 20) == ("", 0)  # not IPv4
+
+    def test_post_event_sends_bearer_json(self, proxy, monkeypatch, tmp_path):
+        monkeypatch.setattr(proxy, "CONSENT_URL", "http://klangkd/ev")
+        token_file = tmp_path / "token"
+        token_file.write_text("from-file-tok")
+        monkeypatch.setattr(proxy, "WORKSPACE_TOKEN_PATH", str(token_file))
+        captured = {}
+
+        class _Resp:
+            def close(self):
+                pass
+
+        def fake_urlopen(req, timeout):
+            captured["url"] = req.full_url
+            captured["body"] = req.data.decode()
+            captured["auth"] = req.headers.get("Authorization")
+            captured["ctype"] = req.headers.get("Content-type")
+            return _Resp()
+
+        monkeypatch.setattr(proxy.urllib.request, "urlopen", fake_urlopen)
+        proxy._post_event("1.2.3.4", 80)
+        assert captured["url"] == "http://klangkd/ev"
+        assert json.loads(captured["body"]) == {"dst": "1.2.3.4", "dport": 80}
+        assert captured["auth"] == "Bearer from-file-tok"
+        assert captured["ctype"] == "application/json"
+
+    def test_post_event_noop_without_url(self, proxy, monkeypatch, tmp_path):
+        monkeypatch.setattr(proxy, "CONSENT_URL", "")
+        monkeypatch.setattr(
+            proxy, "WORKSPACE_TOKEN_PATH", str(tmp_path / "token")
+        )
+        called = []
+        monkeypatch.setattr(
+            proxy.urllib.request, "urlopen", lambda *a, **k: called.append(1)
+        )
+        proxy._post_event("1.2.3.4", 80)
+        assert called == []
+
+    def test_post_event_noop_without_token(self, proxy, monkeypatch, tmp_path):
+        # Missing token file -> no POST (sidecar not yet provisioned, or token
+        # expired before the file refreshed).
+        monkeypatch.setattr(proxy, "CONSENT_URL", "http://klangkd/ev")
+        monkeypatch.setattr(
+            proxy, "WORKSPACE_TOKEN_PATH", str(tmp_path / "no-such-file")
+        )
+        called = []
+        monkeypatch.setattr(
+            proxy.urllib.request, "urlopen", lambda *a, **k: called.append(1)
+        )
+        proxy._post_event("1.2.3.4", 80)
+        assert called == []
+
+    def test_post_event_swallows_errors(self, proxy, monkeypatch, tmp_path):
+        # A down/slow klangkd must not break the verdict loop (DROP carries
+        # the deny regardless).
+        monkeypatch.setattr(proxy, "CONSENT_URL", "http://klangkd/ev")
+        token_file = tmp_path / "token"
+        token_file.write_text("tok")
+        monkeypatch.setattr(proxy, "WORKSPACE_TOKEN_PATH", str(token_file))
+        monkeypatch.setattr(
+            proxy.urllib.request,
+            "urlopen",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("klangkd down")),
+        )
+        proxy._post_event("1.2.3.4", 80)  # must not raise
+
+    def test_start_nfq_consumer_noop_without_netfilterqueue(
+        self, proxy, capsys
+    ):
+        # The server venv has no netfilterqueue -> the lazy import fails and
+        # the consumer logs + returns instead of raising.
+        proxy._start_nfq_consumer()
+        assert "netfilterqueue unavailable" in capsys.readouterr().out

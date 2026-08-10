@@ -19,6 +19,7 @@ from . import (
     agent,
     auth,
     container,
+    consent,
     emailsvc,
     files,
     model,
@@ -467,6 +468,7 @@ class Lifecycle:
             "podman",
             "sockets",
             "container_registry",
+            "consent_monitor",
             "proxy_watchdog",
             "llm_router",
             "terminal",
@@ -688,6 +690,7 @@ async def lifespan(app: FastAPI):
         app.state.sockets.notify_container_status
     )
     await app.state.lifecycle.startup()
+    app.state.consent_monitor.start()
     # Start the proxy (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.proxy_watchdog.start()
@@ -706,6 +709,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
+        await app.state.consent_monitor.stop()
         await app.state.proxy_watchdog.stop()
         await app.state.lifecycle.runtime_shutdown()
         await app.state.lifecycle.process_shutdown()
@@ -882,6 +886,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app)
+    # #2242: interactive egress-consent monitor — tails /dev/kmsg for the
+    # sidecar's interactive-mode LOG lines and persists pending consent
+    # requests (started/stopped in the lifespan; WS notify lands with #2244).
+    app.state.consent_monitor = consent.EgressConsentMonitor(app)
     # #2201: per-workspace nix store via a btrfs snapshot or fuse overlay
     # (off unless KLANGKD_NIX_SEED__PATH names a seed; see nix.Nix).
     app.state.nix = nix.Nix(app)

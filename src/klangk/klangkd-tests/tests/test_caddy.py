@@ -513,6 +513,16 @@ class TestRenderConfig:
         assert "bind 127.0.0.1" in cf
         assert "bind 0.0.0.0" in cf
 
+    def test_egress_proxies_consent_endpoint(self):
+        # #2242: the consent receiver has an explicit handle on the egress
+        # site (reverse-proxied to the app, container-src-guarded) -- without
+        # it Caddy returns 200-empty and the app never sees the POST.
+        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
+        locs = _renderer(s)._egress_locations("upstream", "10.0.0.0/8")
+        assert "handle /internal/egress-consent/events" in locs
+        assert "respond @notContainerSrc 403" in locs
+        assert "reverse_proxy upstream" in locs
+
     def test_headless_has_only_egress(self):
         s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         cf = _renderer(s).render_config("unix//sock", self.ADMIN)
