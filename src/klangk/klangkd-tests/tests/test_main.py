@@ -20,6 +20,7 @@ from klangk import (
     auth as auth_mod,
     caddy as caddy_mod,
     consent,
+    consent_coordinator,
     consent_deciders,
     emailsvc as emailsvc_mod,
     files as files_mod,
@@ -811,6 +812,9 @@ class TestLifespan:
         app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(
             app
         )
+        app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
+            app
+        )
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
@@ -861,6 +865,9 @@ class TestLifespan:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_monitor = consent.EgressConsentMonitor(app)
         app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(
+            app
+        )
+        app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
             app
         )
         app.state.oidc = oidc.OIDC(app)
@@ -1393,6 +1400,9 @@ class TestStartupShutdownRestart:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_monitor = consent.EgressConsentMonitor(app)
         app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(
+            app
+        )
+        app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
             app
         )
         app.state.oidc = oidc.OIDC(app)

@@ -59,6 +59,7 @@ from .agent_mention import (
     mentions_agent as mentions_agent,
 )
 from .decider import handle_consent_decider as handle_consent_decider
+from .sidecar import handle_egress_sidecar as handle_egress_sidecar
 from .dispatch import (
     _WS_CONNECTION_COMMANDS as _WS_CONNECTION_COMMANDS,
     _WS_STATE_COMMANDS as _WS_STATE_COMMANDS,
