@@ -534,6 +534,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Orphaned pending egress-consent requests no longer replay after a
+  klangkd restart.** On startup every still-`pending` row is an orphan (its
+  in-memory hold died with the prior process), so they're reaped to `expired`
+  up front — otherwise the decider snapshot replayed stale requests that could
+  never be resolved (the "orphans return" in `consent-decide`).
+
 - **Consent verdict `decided_by` now stores the stable user id, not the
   volatile email (#2244).** `egress_consent.decided_by` is `REFERENCES
 users(id)`, so the decider handler passing the decider's email violated the

@@ -314,6 +314,23 @@ async def test_expire_pending(ec, ws, user):
     assert got["decided_by"] is None  # auto-expired, no user
 
 
+async def test_expire_all_pending_reaps_only_pending(ec, ws, user):
+    """Startup reaping: every still-pending row is an orphan (its in-memory
+    hold died with the prior process), so expire them so the decider snapshot
+    doesn't replay stale requests. Already-decided rows are left untouched.
+    """
+    w1 = await ws.create_workspace(user["id"], "reap1")
+    w2 = await ws.create_workspace(user["id"], "reap2")
+    p1 = await ec.create_request(w1["id"], "a.com", 443)
+    p2 = await ec.create_request(w2["id"], "b.com", 80)
+    decided = await ec.create_request(w1["id"], "c.com", 443)
+    await ec.decide(decided["id"], DECISION_DENIED, SCOPE_ONCE, user["id"])
+    assert await ec.expire_all_pending() == 2
+    assert (await ec.get_request(p1["id"]))["decision"] == DECISION_EXPIRED
+    assert (await ec.get_request(p2["id"]))["decision"] == DECISION_EXPIRED
+    assert (await ec.get_request(decided["id"]))["decision"] == DECISION_DENIED
+
+
 async def test_expire_distinct_from_deny(ec, ws, user):
     """Expired and denied are distinguishable in the audit trail."""
     w = await ws.create_workspace(user["id"], "exp-vs-deny")
