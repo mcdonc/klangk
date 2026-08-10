@@ -101,18 +101,26 @@ operators or integrators to act when upgrading.
   deploy-wide decider needs admin (else the socket is closed `4003 Forbidden`),
   and a verdict is honored only for the decider's own workspace. The first
   consumer is the `consent-decide` client (#2310).
-- **Sidecar kernel-level egress hold (#2311).** The network sidecar now
-  _holds_ a denied connection in-flight pending the consent verdict (DNS:
-  suspends the query; NFQUEUE: defers the packet) instead of NXDOMAIN/DROP-ing
-  at once -- `allow` lets it proceed, `deny`/timeout/WS-down fail-closes
-  (a static workspace or an unreachable klangkd behaves exactly as before; no
-  new latency, no hang). New sidecar config: `KLANGKNETWORK_EGRESS_HOLD_TIMEOUT`
-  (default 30s), `KLANGKNETWORK_EGRESS_HOLD_LIMIT` (default 32 concurrent
-  holds; a flood past it fail-closes to NXDOMAIN). The proxy is now asyncio
-  (one task per denied query so holds never block the receive loop) and the
-  sidecar image gains the `websockets` dependency; the legacy fire-and-forget
-  POST endpoint is superseded (recording now happens on the WS hold path,
-  removal tracked in #2318).
+- **Sidecar consent gates the connection SYN (#2311, #2324).** The network
+  sidecar holds a non-allow-listed connection's SYN (NFQUEUE) pending the
+  consent verdict instead of the DNS query: a denied name now _resolves_ (the
+  workspace gets the IP) and the first packet to that IP is queued -- `allow`
+  learns the IP + lets it proceed, `deny`/timeout/WS-down fail-closes -- a
+  denied connection gets a RST via a temporary REJECT (tcp-reset) rule so it
+  fails at once (ECONNREFUSED), not after tcp_syn_retries ~127s (a static
+  workspace or an unreachable klangkd behaves exactly as before; no hang).
+  Gating the SYN gives the human the kernel's connect timeout
+  (`tcp_syn_retries` ~127s) instead of a DNS resolver's <=30s `getaddrinfo`
+  cap. `KLANGKD_EGRESS_CONSENT_TIMEOUT` and `KLANGKNETWORK_EGRESS_HOLD_TIMEOUT`
+  defaults rise 30 -> 120s to use that window; SYN retransmits reuse the cached
+  verdict so they don't each re-prompt. New sidecar config:
+  `KLANGKNETWORK_EGRESS_VERDICT_CACHE_TTL` (how long to reuse a SYN verdict,
+  default 120s) and `KLANGKNETWORK_EGRESS_REJECT_TTL` (how long a deny keeps its
+  REJECT tcp-reset rule so the connection fails fast, default 10s).
+  `KLANGKNETWORK_EGRESS_HOLD_LIMIT` is removed (the DNS-path hold bound; the SYN
+  path is bounded by the iptables rate-limit). The proxy is asyncio + the sidecar image gains the `websockets`
+  dependency; the legacy fire-and-forget POST endpoint is superseded (recording
+  happens on the WS path, removal tracked in #2318).
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the

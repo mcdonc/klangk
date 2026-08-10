@@ -2671,7 +2671,7 @@ def consent_decide(
         help="Workspace name or id whose held egress requests to decide"
     ),
     hold_timeout: float = typer.Option(
-        30.0,
+        120.0,
         "--hold-timeout",
         help=(
             "Seconds a held request counts down before auto-deny "
