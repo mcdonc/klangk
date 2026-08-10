@@ -32,8 +32,8 @@ from dataclasses import dataclass
 
 import websockets
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
-from textual.widgets import Footer, Header, ListItem, ListView, Static
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Footer, Header, ListItem, ListView, Static
 
 from ..auth import refresh_token
 from ..transport import ws_connect
@@ -209,7 +209,7 @@ class ConsentDeciderApp(App):
     #status { padding: 0 1; background: $panel; color: $text-muted; }
     #requests { height: 1fr; }
     #empty { padding: 1 2; color: $text-muted; }
-    .req-host { color: $secondary; }
+    .req-host { color: $text; }
     .req-proc { color: $text-muted; }
     .req-time { color: $warning; }
     """
@@ -253,6 +253,9 @@ class ConsentDeciderApp(App):
         with Vertical():
             yield ListView(id="requests")
             yield Static("No held requests — connected, waiting.", id="empty")
+        with Horizontal(id="actions"):
+            yield Button("Allow", id="allow", variant="success")
+            yield Button("Deny", id="deny", variant="error")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -436,6 +439,14 @@ class ConsentDeciderApp(App):
         self.query_one("#status", Static).update(self._flash_msg)
 
     # -- actions -----------------------------------------------------------
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        # The Allow/Deny buttons mirror the a/d keys so a click decides the
+        # currently-highlighted request (same _focused_request_id path).
+        if event.button.id == "allow":
+            self.action_allow()
+        elif event.button.id == "deny":
+            self.action_deny()
 
     def action_allow(self) -> None:
         self._decide(DECISION_ALLOWED)
