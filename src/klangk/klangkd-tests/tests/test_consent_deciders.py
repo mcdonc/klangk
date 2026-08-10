@@ -239,6 +239,9 @@ class TestConsentDeciderWS:
             {"token": "tok", "workspace": WS},
             [
                 "not-json",  # invalid JSON -> continue
+                '"hello"',  # valid JSON but not a dict -> continue
+                "123",  # valid JSON int, not a dict -> continue
+                "[1, 2]",  # valid JSON list, not a dict -> continue
                 '{"type":"hello"}',  # valid JSON, not a ping -> ignored
                 '{"type":"ping"}',  # ping -> pong
                 WebSocketDisconnect(),

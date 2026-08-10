@@ -61,6 +61,17 @@ operators or integrators to act when upgrading.
   workspace with no decider registered now records blocked egress as a
   static denial instead of queuing it — it needs a live decider to queue.
   The decider client itself lands with #2310.
+- **`/ws/egress-sidecar` + consent hold/resolve coordinator (#2311).** The
+  network sidecar's blocked-egress path gains a synchronous hold: a
+  workspace's blocked egress is held in-flight (pending a human verdict) only
+  while a consent decider is registered (#2308); with no decider it is denied
+  at once as a static denial (no hold, no queued row). The sidecar connects
+  over a new `/ws/egress-sidecar` WebSocket (workspace-JWT auth) and receives
+  a verdict per blocked destination; the in-process coordinator fail-closes
+  on timeout or shutdown (no leaked allow, no hung connection). **Scope: this
+  is the klangkd coordination half** — the sidecar's kernel-level hold
+  (suspending DNS queries, deferring NFQUEUE verdicts) + its WS client land in
+  a follow-up, and decider fanout/verdict reception with #2244.
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the

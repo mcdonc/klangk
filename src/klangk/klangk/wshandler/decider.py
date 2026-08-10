@@ -68,6 +68,8 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(msg, dict):
+                continue
             if msg.get("type") == "ping":
                 registry.touch(decider_id)
                 # NOTE(#2244): when this endpoint fans out held requests, route

@@ -27,6 +27,17 @@ from .model.workspaces import EGRESS_MODE_INTERACTIVE
 logger = logging.getLogger(__name__)
 
 
+async def workspace_is_interactive(app, workspace_id: str) -> bool:
+    # #2308: interactivity is runtime state -- a workspace is interactive
+    # only while a live consent decider is registered for it (or
+    # deploy-wide), AND the workspace has opted in (egress_mode). No
+    # decider -> static behavior (clean denial, no held connection).
+    ws = await app.state.model.workspaces.get_workspace(workspace_id)
+    if not ws or ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
+        return False
+    return app.state.consent_deciders.has_decider(workspace_id)
+
+
 class EgressConsentMonitor:
     """Receive sidecar egress events and persist consent requests.
 
@@ -112,14 +123,7 @@ class EgressConsentMonitor:
                 self._notify(request)
 
     async def _is_interactive(self, workspace_id: str) -> bool:
-        # #2308: interactivity is runtime state -- a workspace is interactive
-        # only while a live consent decider is registered for it (or
-        # deploy-wide), AND the workspace has opted in (egress_mode). No
-        # decider -> static behavior (clean denial, no held connection).
-        ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
-        if not ws or ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
-            return False
-        return self.app.state.consent_deciders.has_decider(workspace_id)
+        return await workspace_is_interactive(self.app, workspace_id)
 
     async def _handle_interactive(
         self, workspace_id: str, dst_ip: str, dst_port: int | None
