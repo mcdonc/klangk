@@ -572,6 +572,18 @@ class WorkspacesModel:
             "egress_mode": row["egress_mode"],
         }
 
+    async def existing_workspace_ids(self) -> set[str]:
+        """Return the IDs of every workspace row (for orphan-file sweeps).
+
+        Used by the periodic sidecar-token sweep (:meth:`ContainerRegistry.
+        _sweep_orphaned_sidecar_tokens`) to tell token files whose workspace
+        still exists from orphans left by a deleted/crashed workspace (#2309).
+        """
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute("SELECT id FROM workspaces")
+            rows = await cursor.fetchall()
+        return {row["id"] for row in rows}
+
     async def get_workspace_members(self, workspace_id: str) -> list[dict]:
         """Get users who have been granted access to a workspace via ACL.
 

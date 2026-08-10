@@ -46,6 +46,10 @@ _NETWORK_SIDECAR_MARK = 75
 # Matches the old NFLOG group for familiarity; single source of truth passed to
 # both the entrypoint (iptables -j NFQUEUE) and the consumer via env.
 _NETWORK_SIDECAR_NFQUEUE = 5139
+# How often the idle cleanup loop scans data_dir/ws-tokens/ for orphaned
+# sidecar-token files (workspaces whose DB row is gone). Self-throttled so
+# the directory + workspace table are not hit on every idle tick (#2309).
+ORPHAN_TOKEN_SWEEP_INTERVAL = 300
 
 
 def _workspace_name_slug(name: str, *, limit: int = 24) -> str:
@@ -291,6 +295,7 @@ class IdleMonitor:
 
     async def cleanup_idle_containers(self) -> None:
         registry = self.app.state.container_registry
+        last_token_sweep = 0.0
         while True:
             timeouts = [
                 s.idle_timeout
@@ -336,6 +341,17 @@ class IdleMonitor:
                             logger.error("Idle callback error: %s", e)
                 await registry.notify_workspace_killed(wid)
                 await registry.stop_and_remove_container(cid)
+
+            # Periodic orphan sidecar-token sweep (#2309): reclaim
+            # ws-tokens/<id> files whose workspace row is gone. Piggybacks
+            # on this loop (no separate task); self-throttled to scan at
+            # most every ORPHAN_TOKEN_SWEEP_INTERVAL.
+            if now - last_token_sweep >= ORPHAN_TOKEN_SWEEP_INTERVAL:
+                last_token_sweep = now
+                try:
+                    await registry._sweep_orphaned_sidecar_tokens()
+                except Exception as e:
+                    logger.warning("Orphan sidecar-token sweep failed: %s", e)
 
     def start_cleanup_loop(self) -> None:
         registry = self.app.state.container_registry
@@ -1176,6 +1192,53 @@ class ContainerRegistry:
         with open(tmp, "w") as f:
             f.write(token)
         os.replace(tmp, path)
+
+    async def _sweep_orphaned_sidecar_tokens(self) -> int:
+        """Remove ``ws-tokens/<id>`` files for workspaces that no longer exist.
+
+        The sidecar's workspace-token file is written on every network-sidecar
+        start (:meth:`write_sidecar_token`) and intentionally kept across
+        stop/restart -- a stopped workspace must keep its token for a later
+        restart. Only a final delete (or a crash that skips cleanup) orphans
+        the file, so this sweep reclaims them (#2309). Safe: a workspace whose
+        row still exists keeps its token; only files with no matching row are
+        removed. Returns the number of files removed.
+        """
+        token_dir = os.path.join(self.app.state.settings.data_dir, "ws-tokens")
+        if not os.path.isdir(token_dir):
+            return 0
+        try:
+            names = os.listdir(token_dir)
+        except OSError as e:
+            logger.warning(
+                "Cannot scan %s for orphaned tokens: %s", token_dir, e
+            )
+            return 0
+        try:
+            existing = await self.app.state.workspaces.existing_workspace_ids()
+        except Exception as e:
+            logger.warning("Cannot list workspace ids for token sweep: %s", e)
+            return 0
+        removed = 0
+        for name in names:
+            # Skip transient write_sidecar_token temp files: unlinking one
+            # races the writer (os.replace would then FileNotFoundError).
+            if name.endswith(".tmp"):
+                continue
+            path = os.path.join(token_dir, name)
+            if not os.path.isfile(path):
+                continue
+            if name in existing:
+                continue
+            try:
+                os.unlink(path)
+                removed += 1
+                logger.info("Removed orphaned sidecar token %s", name)
+            except OSError as e:
+                logger.warning(
+                    "Could not remove orphaned token %s: %s", name, e
+                )
+        return removed
 
     async def _start_network_sidecar(
         self,

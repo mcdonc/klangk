@@ -435,6 +435,11 @@ class Workspaces:
             workspace_id, user_id
         )
 
+    async def existing_workspace_ids(self) -> set[str]:
+        # Delegates to the model; used by the periodic sidecar-token sweep
+        # (container.py) to tell orphans from live workspace tokens (#2309).
+        return await self.app.state.model.workspaces.existing_workspace_ids()
+
     async def delete_workspace(self, workspace_id: str, user_id: str) -> bool:
         workspace = await self.app.state.model.workspaces.get_workspace(
             workspace_id, user_id

@@ -476,6 +476,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Sidecar token file retention (#2309).** A periodic sweep now removes
+  leftover per-workspace token files under `data_dir/ws-tokens/` once the
+  workspace row is gone, so they no longer accumulate one file per workspace
+  ever started. The sweep piggybacks on the idle container cleanup loop (at
+  most every 5 minutes) and leaves the token in place for any workspace that
+  still exists, including stopped ones awaiting a restart.
+
 - **Starting/restarting a workspace with a bad bind mount returns a 400, not
   a 500 (#2157).** A workspace whose extra mount points at a nonexistent host
   path previously raised an unhandled `ValueError` from the volume pre-check,

@@ -45,6 +45,19 @@ async def test_create_workspace_row_only(ws, user):
     assert got["id"] == ws_row["id"]
 
 
+async def test_existing_workspace_ids(ws, user):
+    # Basis for the orphan sidecar-token sweep: the set reflects the live
+    # workspaces table, and a delete drops the id (#2309).
+    a = await ws.create_workspace(user["id"], "alpha")
+    b = await ws.create_workspace(user["id"], "beta")
+    ids = await ws.existing_workspace_ids()
+    assert {a["id"], b["id"]} <= ids
+    await ws.delete_workspace(a["id"], user["id"])
+    ids_after = await ws.existing_workspace_ids()
+    assert a["id"] not in ids_after
+    assert b["id"] in ids_after
+
+
 async def test_create_workspace_with_acl_rejects_agent(ws):
     with pytest.raises(AgentPrincipalError):
         await ws.create_workspace_with_acl(AGENT_USER_ID, "agent-owned")
