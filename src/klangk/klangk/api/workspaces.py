@@ -533,7 +533,12 @@ async def restart_workspace(
     await wshandler.reset_workspace_state(app.state.sockets, workspace_id)
     # Start a fresh container; the service command fires via the
     # create choke point in start_container.
-    await app.state.workspaces.start_workspace(workspace)
+    try:
+        await app.state.workspaces.start_workspace(workspace)
+    except ValueError as exc:
+        # User-config error (e.g. a bind-mount source path that doesn't
+        # exist) — surface as a 400, not an unhandled 500 (#2157).
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "restarted"}
 
 
@@ -605,7 +610,13 @@ async def start_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found")
     if app.state.container_registry.get_state(workspace_id) is not None:
         return {"status": "already_running"}
-    await app.state.workspaces.start_workspace(workspace)
+    try:
+        await app.state.workspaces.start_workspace(workspace)
+    except ValueError as exc:
+        # User-config error (e.g. a bind-mount source path that doesn't
+        # exist) — surface as a 400, not an unhandled 500 (#2157). The WS
+        # start path sends an error frame for the same condition.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "started"}
 
 

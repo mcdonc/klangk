@@ -448,6 +448,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Starting/restarting a workspace with a bad bind mount returns a 400, not
+  a 500 (#2157).** A workspace whose extra mount points at a nonexistent host
+  path previously raised an unhandled `ValueError` from the volume pre-check,
+  surfacing as a 500 traceback. The `/workspaces/{id}/start` and `/restart`
+  endpoints now catch it and return HTTP 400 with the message (e.g. "Bind mount
+  source does not exist: /path"), matching the create/update endpoints and
+  the WebSocket start path. The pre-check stays (it catches typos); it just no
+  longer 500s in the HTTP path.
+
 - **Network sidecar start recovers from host-port conflicts (#2293).** Since
   #2291 a filtered workspace publishes its host ports on the network sidecar,
   so a bind conflict there could fail the workspace start with no retry (unlike

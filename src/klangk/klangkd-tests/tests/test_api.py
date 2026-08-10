@@ -2098,6 +2098,41 @@ class TestWorkspaceRoutes:
         # Clean up registry state.
         registry.states.pop(ws_id, None)
 
+    async def test_restart_returns_400_on_user_config_error(
+        self, client, app, user, registry
+    ):
+        # A user-config problem on restart surfaces as a 400, not a 500
+        # (#2157). The existing container is still stopped+removed first.
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "bad-mount-restart"},
+        )
+        ws_id = create_resp.json()["id"]
+        registry.track_activity("cid-rst", ws_id)
+        with (
+            patch.object(
+                registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                app.state.workspaces,
+                "start_workspace",
+                new_callable=AsyncMock,
+                side_effect=ValueError(
+                    "Bind mount source does not exist: /nonexistent/path"
+                ),
+            ),
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+        assert resp.status_code == 400
+        assert "Bind mount source does not exist" in resp.json()["detail"]
+        registry.states.pop(ws_id, None)
+
     async def test_restart_not_found(self, client, user, app_state):
         headers = await _auth_headers(client)
         fake_id = "fake-restart-id"
@@ -2229,6 +2264,30 @@ class TestWorkspaceRoutes:
         assert resp.json()["status"] == "already_running"
         mock_start.assert_not_awaited()
         registry.states.pop(ws_id, None)
+
+    async def test_start_returns_400_on_user_config_error(
+        self, client, app, user
+    ):
+        # A user-config problem (e.g. a bind-mount source path that doesn't
+        # exist) surfaces as a 400, not an unhandled 500 (#2157).
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "bad-mount"}
+        )
+        ws_id = create_resp.json()["id"]
+        with patch.object(
+            app.state.workspaces,
+            "start_workspace",
+            new_callable=AsyncMock,
+            side_effect=ValueError(
+                "Bind mount source does not exist: /nonexistent/path"
+            ),
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/start", headers=headers
+            )
+        assert resp.status_code == 400
+        assert "Bind mount source does not exist" in resp.json()["detail"]
 
     async def test_stop_not_found(self, client, user, app_state):
         headers = await _auth_headers(client)
