@@ -959,9 +959,14 @@ async def _decide_and_verdict(
     if len(_VERDICT_CACHE) > 4096:
         _VERDICT_CACHE.clear()
     _VERDICT_CACHE[(dst, port)] = (decision, now + VERDICT_CACHE_TTL)
+    # Run the iptables fork (allow/reject) in the executor so it doesn't block
+    # the loop thread -- matches the DNS path's _learn_all, which also runs
+    # off the loop. The packet is retained, so verdicting after the await is
+    # safe; the rule is installed before the SYN is released.
+    loop = asyncio.get_running_loop()
     if decision == "allow":
         try:
-            allow(dst, None, MIN_TTL)
+            await loop.run_in_executor(None, allow, dst, None, MIN_TTL)
         except Exception:
             pass
         pkt.accept()
@@ -971,7 +976,7 @@ async def _decide_and_verdict(
         # next retransmit gets a RST -> ECONNREFUSED (eager deny).
         if port:
             try:
-                reject(dst, port, CONSENT_REJECT_TTL)
+                await loop.run_in_executor(None, reject, dst, port, CONSENT_REJECT_TTL)
             except Exception:
                 pass
         pkt.drop()
