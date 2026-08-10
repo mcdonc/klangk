@@ -565,7 +565,14 @@ class TestRenderConfig:
     def test_forward_auth_present(self):
         s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
-        assert "forward_auth unix//s {" in cf
+        # WS upgrades bypass forward_auth: Caddy copies the Upgrade headers onto
+        # the auth subrequest, making IT a websocket so uvicorn routes the HTTP
+        # verify endpoint as a WS -> no match -> StaticFiles 500. The @notWs
+        # matcher excludes WS upgrades; the egress WS endpoint self-authenticates
+        # via the Authorization header instead.
+        assert "@notWs {" in cf
+        assert "not header Upgrade websocket" in cf
+        assert "forward_auth @notWs unix//s {" in cf
         assert "uri /api/v1/auth/verify-workspace-token" in cf
 
     def test_request_body_max_size(self):

@@ -518,6 +518,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Egress-site `forward_auth` no longer breaks WebSocket upgrades
+  (#2319, #2322).** Caddy's site-level `forward_auth` copied the WS
+  `Upgrade` headers onto its auth subrequest, so uvicorn treated the
+  (HTTP) `verify-workspace-token` check _itself_ as a websocket — no ws
+  route at that path → the catch-all `StaticFiles` asserted
+  `scope["type"] == "http"` → HTTP 500. Every WS through the container-egress
+  port (the sidecar's `/ws/egress-sidecar`) failed this way even after #2321
+  added the handle. `forward_auth` now takes a `@notWs` matcher so WS
+  upgrades skip it; the egress WS endpoint self-authenticates via the
+  `Authorization` header.
+
 - **Egress-sidecar WebSocket on the egress port (#2319).** The network
   sidecar's held-egress WS (`/ws/egress-sidecar`) was never added as an
   explicit handle on the container-egress Caddy site, so every sidecar WS
