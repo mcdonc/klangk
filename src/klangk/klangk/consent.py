@@ -112,8 +112,14 @@ class EgressConsentMonitor:
                 self._notify(request)
 
     async def _is_interactive(self, workspace_id: str) -> bool:
+        # #2308: interactivity is runtime state -- a workspace is interactive
+        # only while a live consent decider is registered for it (or
+        # deploy-wide), AND the workspace has opted in (egress_mode). No
+        # decider -> static behavior (clean denial, no held connection).
         ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
-        return bool(ws) and ws.get("egress_mode") == EGRESS_MODE_INTERACTIVE
+        if not ws or ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
+            return False
+        return self.app.state.consent_deciders.has_decider(workspace_id)
 
     async def _handle_interactive(
         self, workspace_id: str, dst_ip: str, dst_port: int | None

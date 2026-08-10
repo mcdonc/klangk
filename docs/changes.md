@@ -53,6 +53,14 @@ operators or integrators to act when upgrading.
   decide flow for #2244); accept marks a request `allowed` and adds the
   destination to the workspace's allow-list (applies on next recreate), deny
   marks it `denied` (#2242).
+- **Consent decider registry + `/ws/consent-decider` (#2308).** Interactive
+  egress consent is now runtime state: a workspace's blocked egress is held
+  for a decision only while a consent decider is registered for it (or
+  deploy-wide), over a new decider WebSocket (`consent_decider_timeout`,
+  default 45s, reaps silent deciders). **Behavior change:** an `interactive`
+  workspace with no decider registered now records blocked egress as a
+  static denial instead of queuing it — it needs a live decider to queue.
+  The decider client itself lands with #2310.
 - **FQDN egress allow-list wildcards, per-domain port scoping, and learned-IP
   TTL (#2256).** `allowed_domains` now accepts `*.domain[:port]` wildcards
   (subdomains only — distinct from a bare `domain`, which also matches the

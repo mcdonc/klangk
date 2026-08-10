@@ -731,6 +731,14 @@ class KlangkSettings(BaseSettings):
     # then requests simply expire. Read live (SIGHUP reload-safe).
     egress_consent_rate_limit: int = 50
     egress_consent_timeout: float = 30.0
+    # consent_decider_timeout (#2308): a consent decider (a live client that
+    # can approve/deny held egress) is registered while its WebSocket is
+    # connected and pinging. This is the liveness window -- a decider whose
+    # last ping is older than this is reaped (its registration dropped), so
+    # an unclean disconnect (crash, network drop) can't leave a workspace
+    # falsely "interactive" with a dead decider. Read live (SIGHUP
+    # reload-safe).
+    consent_decider_timeout: float = 45.0
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
     # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 16384 PIDs,

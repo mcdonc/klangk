@@ -58,6 +58,7 @@ from .agent_mention import (
     handle_agent_mention as handle_agent_mention,
     mentions_agent as mentions_agent,
 )
+from .decider import handle_consent_decider as handle_consent_decider
 from .dispatch import (
     _WS_CONNECTION_COMMANDS as _WS_CONNECTION_COMMANDS,
     _WS_STATE_COMMANDS as _WS_STATE_COMMANDS,

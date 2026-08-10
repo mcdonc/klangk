@@ -29,6 +29,7 @@ def _app(
     static_denial=None,
     egress_mode: str = "static",
     workspace_exists: bool = True,
+    has_decider: bool = True,
 ):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
@@ -47,6 +48,9 @@ def _app(
     )
     app.state.model = types.SimpleNamespace(
         egress_consent=egress_consent, workspaces=workspaces
+    )
+    app.state.consent_deciders = types.SimpleNamespace(
+        has_decider=lambda workspace_id: has_decider
     )
     return app
 
@@ -89,6 +93,22 @@ class TestEgressConsentMonitor:
         mon = consent.EgressConsentMonitor(app)
         await mon._handle_event(FULL_WS, "1.2.3.4", 80)
         app.state.model.egress_consent.record_static_denial.assert_awaited_once()
+
+    async def test_interactive_without_decider_falls_to_static(self):
+        # #2308: interactive mode is runtime state -- with no live decider
+        # registered, a blocked destination is recorded as a static denial,
+        # not queued as pending (no hanging connection).
+        app = _app(
+            egress_mode="interactive",
+            has_decider=False,
+            static_denial=_denial(),
+        )
+        mon = consent.EgressConsentMonitor(app)
+        await mon._handle_event(FULL_WS, "1.2.3.4", 80)
+        app.state.model.egress_consent.record_static_denial.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4", 80
+        )
+        app.state.model.egress_consent.create_request.assert_not_called()
 
     async def test_interactive_creates_pending_and_schedules_timeout(self):
         req = {

@@ -20,6 +20,7 @@ from . import (
     auth,
     container,
     consent,
+    consent_deciders,
     emailsvc,
     files,
     model,
@@ -49,7 +50,7 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
-from .wshandler import handle_websocket
+from .wshandler import handle_consent_decider, handle_websocket
 
 logger = logging.getLogger(__name__)
 
@@ -469,6 +470,7 @@ class Lifecycle:
             "sockets",
             "container_registry",
             "consent_monitor",
+            "consent_deciders",
             "proxy_watchdog",
             "llm_router",
             "terminal",
@@ -691,6 +693,7 @@ async def lifespan(app: FastAPI):
     )
     await app.state.lifecycle.startup()
     app.state.consent_monitor.start()
+    app.state.consent_deciders.start()
     # Start the proxy (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.proxy_watchdog.start()
@@ -710,6 +713,7 @@ async def lifespan(app: FastAPI):
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
         await app.state.consent_monitor.stop()
+        await app.state.consent_deciders.stop()
         await app.state.proxy_watchdog.stop()
         await app.state.lifecycle.runtime_shutdown()
         await app.state.lifecycle.process_shutdown()
@@ -890,6 +894,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # sidecar's interactive-mode LOG lines and persists pending consent
     # requests (started/stopped in the lifespan; WS notify lands with #2244).
     app.state.consent_monitor = consent.EgressConsentMonitor(app)
+    app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(app)
     # #2201: per-workspace nix store via a btrfs snapshot or fuse overlay
     # (off unless KLANGKD_NIX_SEED__PATH names a seed; see nix.Nix).
     app.state.nix = nix.Nix(app)
@@ -964,6 +969,13 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     @app.websocket("/ws")
     async def websocket_endpoint(ws: WebSocket):  # pragma: no cover
         await handle_websocket(ws, app)
+
+    @app.websocket("/ws/consent-decider")
+    async def consent_decider_endpoint(ws: WebSocket):  # pragma: no cover
+        # #2308: a live consent decider registers here; its connection
+        # lifecycle drives the ConsentDeciderRegistry (the interactive-mode
+        # gate). Event content lands with #2244.
+        await handle_consent_decider(ws, app)
 
     # Frontend UI dir, resolved from settings (#1456, #1600). Mounted only
     # when it exists; a packaged/installed klangkd ships the UI inside the
