@@ -92,11 +92,14 @@ ships with a default (`klangk-network-sidecar`), so a workspace that
 declares `allowed_domains` is filtered out of the box — no configuration
 is required for the common case.
 
-1. Build (or pull) the sidecar image so it's available to podman. In dev,
-   the `klangk:build-network-sidecar` devenv task builds it from
-   `src/containers/network/`. For a deploy, publish the image to your
-   registry and point `KLANGKD_NETWORK_SIDECAR_IMAGE` at it if you don't
-   use the default name.
+1. Make the sidecar image available to podman:
+   - **All-in-one host image** (`scripts/build-host-image.sh`): nothing to
+     do — the sidecar image is embedded as a tarball in the host image and
+     `podman load`ed on first startup (#2301).
+   - **Dev**: the `klangk:build-network-sidecar` devenv task builds it from
+     `src/containers/network/`.
+   - **Other deploys**: publish the image to your registry and point
+     `KLANGKD_NETWORK_SIDECAR_IMAGE` at it if you don't use the default name.
 2. Restart klangkd. A workspace that declares `allowed_domains` now starts
    behind the sidecar.
 
