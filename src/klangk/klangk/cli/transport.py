@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import socket as _socket
 from dataclasses import dataclass
+from urllib.parse import urlencode
 
 import httpx
 import websockets
@@ -29,6 +30,7 @@ class ServerTransport:
     uds_path: str | None
     base_url: str  # e.g. "http://host:8995" or "http://localhost" (UDS)
     ws_uri: str  # e.g. "ws://host:8995/ws" or "ws://localhost/ws" (UDS)
+    ws_base: str  # scheme://host[:port] — ws_uri minus the path ("/ws")
     server_spec: str  # original spec for back-reference
 
 
@@ -46,14 +48,15 @@ def resolve_transport(server_spec: str) -> ServerTransport:
     if server_spec.startswith("http://") or server_spec.startswith("https://"):
         # TCP — derive WS URI from the URL.
         if server_spec.startswith("http://"):
-            ws_uri = server_spec.replace("http://", "ws://", 1) + "/ws"
+            ws_base = server_spec.replace("http://", "ws://", 1)
         else:
-            ws_uri = server_spec.replace("https://", "wss://", 1) + "/ws"
+            ws_base = server_spec.replace("https://", "wss://", 1)
         return ServerTransport(
             is_uds=False,
             uds_path=None,
             base_url=server_spec,
-            ws_uri=ws_uri,
+            ws_uri=ws_base + "/ws",
+            ws_base=ws_base,
             server_spec=server_spec,
         )
 
@@ -68,6 +71,7 @@ def resolve_transport(server_spec: str) -> ServerTransport:
         uds_path=server_spec,
         base_url="http://localhost",
         ws_uri="ws://localhost/ws",
+        ws_base="ws://localhost",
         server_spec=server_spec,
     )
 
@@ -152,6 +156,8 @@ async def ws_connect(
     *,
     token: str,
     max_size: int | None = None,
+    path: str = "/ws",
+    query: dict[str, str] | None = None,
     **kwargs,
 ):
     """Connect a WebSocket, routing through UDS or TCP.
@@ -160,10 +166,17 @@ async def ws_connect(
     module-level function tests patch).  On the UDS path it opens a
     preconnected ``AF_UNIX`` socket and passes it via ``sock=``.
 
-    Yields the open WebSocket connection.
+    ``path`` selects the server WS endpoint (default ``/ws``; the consent
+    decider client uses ``/ws/consent-decider``), and ``query`` adds extra
+    query params alongside the always-present ``token``. Yields the open
+    WebSocket connection.
     """
     transport = resolve_transport(server_spec)
-    uri = f"{transport.ws_uri}?token={token}"
+    qs = dict(query) if query else {}
+    qs["token"] = (
+        token  # token always wins -- a caller can't clobber it via query
+    )
+    uri = f"{transport.ws_base}{path}?{urlencode(qs)}"
     ws_kwargs = dict(kwargs)
     if max_size is not None:
         ws_kwargs["max_size"] = max_size

@@ -32,6 +32,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`klangk consent-decide <workspace>` (#2310).** A live Textual client that
+  connects to a workspace's consent-decider stream and shows its held egress
+  requests (blocked destinations the network sidecar is holding for a
+  verdict), with a countdown to auto-deny. Press `a` to allow (once) or `d` to
+  deny; accepting lets that exact held connection proceed while a deny (or the
+  countdown hitting zero) fails it. It pings every 15s to stay registered as
+  the workspace's live decider and reconnects on drop; while no client is
+  attached, held requests auto-deny (fail-closed). Requires terminal access to
+  the workspace.
+
 - **Embedded network sidecar image (#2301).** The all-in-one host image
   (`scripts/build-host-image.sh`) now embeds the network sidecar image as a
   tarball and `podman load`s it on first startup, mirroring the workspace
@@ -338,6 +348,11 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **New workspaces default to `egress_mode=interactive`.** The default is
+  `interactive`, so held egress requests reach a decider out of the box without
+  a manual per-workspace flip (`EGRESS_MODE_DEFAULT` in `model/workspaces.py`);
+  set a workspace to `static` to opt into silent deny + record instead.
+
 - **Workspace + network sidecar container names and labels (#2286).** A
   workspace and its network sidecar now share a `klangk.workspace=<id>` +
   `klangk.role` label (so one `podman ps --filter label=klangk.workspace=<id>`
@@ -517,6 +532,18 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 - **`klangk invite` → `klangk admin invitations send` (#1374).**
 
 ### Fixed
+
+- **Orphaned pending egress-consent requests no longer replay after a
+  klangkd restart.** On startup every still-`pending` row is an orphan (its
+  in-memory hold died with the prior process), so they're reaped to `expired`
+  up front — otherwise the decider snapshot replayed stale requests that could
+  never be resolved (the "orphans return" in `consent-decide`).
+
+- **Consent verdict `decided_by` now stores the stable user id, not the
+  volatile email (#2244).** `egress_consent.decided_by` is `REFERENCES
+users(id)`, so the decider handler passing the decider's email violated the
+  foreign key and every verdict failed with an `IntegrityError`. It now
+  threads the user id through `_handle_verdict`.
 
 - **Egress-site `forward_auth` no longer breaks WebSocket upgrades
   (#2319, #2322).** Caddy's site-level `forward_auth` copied the WS

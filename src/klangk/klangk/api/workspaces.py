@@ -38,6 +38,7 @@ from ..workspace_settings import (
 from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
+    EGRESS_MODE_DEFAULT,
     PRINCIPAL_GROUP,
     PRINCIPAL_USER,
 )
@@ -203,7 +204,7 @@ class CreateWorkspaceRequest(BaseModel):
     health_check: str | None = None
     allowed_domains: list[str] | None = None
     settings: dict | None = None
-    egress_mode: Literal["static", "interactive"] = "static"
+    egress_mode: Literal["static", "interactive"] = EGRESS_MODE_DEFAULT
 
 
 @router.post("/workspaces")

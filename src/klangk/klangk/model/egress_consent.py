@@ -288,6 +288,25 @@ class EgressConsentModel:
             )
             return cursor.rowcount > 0
 
+    async def expire_all_pending(self) -> int:
+        """Expire EVERY pending request (startup reaping).
+
+        On startup the in-memory holds are gone, so any row still ``pending``
+        from a prior run is an orphan with no live hold to resolve it. Mark
+        them ``expired`` so :meth:`list_requests` (the decider snapshot) does
+        not replay them to a freshly-connected decider. Returns the count
+        reaped.
+        """
+        decided_at = time.time()
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "UPDATE egress_consent"
+                " SET decision = ?, decided_at = ?"
+                " WHERE decision = ?",
+                (DECISION_EXPIRED, decided_at, DECISION_PENDING),
+            )
+            return cursor.rowcount
+
     async def delete_for_workspace(self, workspace_id: str) -> int:
         """Delete all consent records for a workspace. Returns count."""
         async with self.app.state.db.transaction() as db:

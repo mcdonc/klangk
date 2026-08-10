@@ -698,6 +698,14 @@ async def lifespan(app: FastAPI):
         app.state.sockets.notify_container_status
     )
     await app.state.lifecycle.startup()
+    # Reap orphaned pending consent rows from a prior run: the in-memory
+    # holds are gone on restart, so without this the decider snapshot would
+    # replay stale requests that can never be resolved (#2310).
+    reaped = await app.state.model.egress_consent.expire_all_pending()
+    logger.info(
+        "expired %d orphaned pending egress-consent request(s) on startup",
+        reaped,
+    )
     app.state.consent_monitor.start()
     app.state.consent_coordinator.start()
     app.state.consent_deciders.start()

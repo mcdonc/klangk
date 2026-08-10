@@ -56,11 +56,14 @@ SETUP_STATES = frozenset(
     {SETUP_STATE_PENDING, SETUP_STATE_COMPLETE, SETUP_STATE_FAILED}
 )
 
-# egress_mode values (#2239). 'static' (the default) = deny + record
-# denied attempts (no human prompt); 'interactive' = a pending request a
-# human can allow/deny via the consent UI (#2244, not yet wired).
+# egress_mode values (#2239). 'static' = deny + record denied attempts (no
+# human prompt); 'interactive' = a pending request a human can allow/deny via
+# the consent-decide client (#2310). The default for NEW workspaces is
+# 'interactive' so consent-gated egress is on out of the box; set a workspace
+# to 'static' to opt back into silent deny + record.
 EGRESS_MODE_STATIC = "static"
 EGRESS_MODE_INTERACTIVE = "interactive"
+EGRESS_MODE_DEFAULT = EGRESS_MODE_INTERACTIVE
 EGRESS_MODES = frozenset({EGRESS_MODE_STATIC, EGRESS_MODE_INTERACTIVE})
 
 # Whitelisted sort columns for workspace list queries. Values are the
@@ -116,7 +119,7 @@ class WorkspacesModel:
         health_check: str | None,
         allowed_domains: list[str] | None = None,
         settings: dict | None = None,
-        egress_mode: str = EGRESS_MODE_STATIC,
+        egress_mode: str = EGRESS_MODE_DEFAULT,
     ) -> dict:
         """INSERT a workspace row on ``db`` and return the new workspace dict.
 
@@ -249,7 +252,7 @@ class WorkspacesModel:
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
         settings: dict | None = None,
-        egress_mode: str = EGRESS_MODE_STATIC,
+        egress_mode: str = EGRESS_MODE_DEFAULT,
     ) -> dict:
         """Create a workspace row AND seed its owner ACE + role groups.
 
@@ -303,7 +306,7 @@ class WorkspacesModel:
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
         settings: dict | None = None,
-        egress_mode: str = EGRESS_MODE_STATIC,
+        egress_mode: str = EGRESS_MODE_DEFAULT,
     ) -> dict:
         """Insert a workspace row only (no ACL seeding).
 

@@ -2665,6 +2665,58 @@ def volumes_rm(
     typer.echo(f"Deleted volume {name}")
 
 
+@app.command("consent-decide")
+def consent_decide(
+    workspace: str = typer.Argument(
+        help="Workspace name or id whose held egress requests to decide"
+    ),
+    hold_timeout: float = typer.Option(
+        30.0,
+        "--hold-timeout",
+        help=(
+            "Seconds a held request counts down before auto-deny "
+            "(match the server's KLANGKD_EGRESS_CONSENT_TIMEOUT)."
+        ),
+    ),
+) -> None:
+    """Decide a workspace's held egress requests live (#2310).
+
+    Connects to the server's consent-decider stream, shows the workspace's
+    held egress requests (a blocked destination the sidecar is holding for
+    a verdict), and lets you accept (allow once) or deny each one while it
+    is held. Accepting lets that exact connection proceed; denying (or the
+    countdown hitting zero) fails it. Requires terminal access to the
+    workspace (owner/member/spectator).
+    """
+    require_auth()
+    client = _client()
+    ws = _resolve_workspace_for_consent(client, workspace)
+    token = _state().get_token(server_url())
+    # Lazy import so the textual dep only loads on this command path.
+    from .tui.consent import ConsentDeciderApp  # noqa: allow-deferred-import
+
+    ConsentDeciderApp(
+        server_url(),
+        token,
+        ws.id,
+        ws.name,
+        hold_timeout=hold_timeout,
+        max_size=ws_max_size(),
+    ).run()
+
+
+def _resolve_workspace_for_consent(client: KlangkClient, arg: str):
+    """Resolve a workspace name OR id to a Workspace (for consent-decide)."""
+    all_ws = client.list_workspaces(all_pages=True) + (
+        client.list_shared_workspaces(all_pages=True)
+    )
+    match = next((w for w in all_ws if w.id == arg or w.name == arg), None)
+    if match is None:
+        _err.print(f"[red]No such workspace:[/red] {arg}")
+        raise typer.Exit(code=1)
+    return match
+
+
 def main() -> None:  # pragma: no cover
     try:
         app()

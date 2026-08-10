@@ -5169,3 +5169,115 @@ class TestResolveOwnWindow:
         match, err = main._resolve_own_window([self._w("@0", "bash")], "nope")
         assert match is None
         assert "not found" in err
+
+
+class TestConsentDecideCommand:
+    """`klangk consent-decide <workspace>` wiring (#2310)."""
+
+    @staticmethod
+    def _launch_capture():
+        launched = {}
+
+        def fake_run(self):
+            launched["app"] = self
+
+        return launched, fake_run
+
+    def test_resolves_name_and_launches(self, logged_in_cfg):
+        from klangk.cli import main
+        from klangk.cli.tui import consent as tui_consent
+
+        ws = Workspace(id="wsid", name="my-ws", created_at="x")
+        client = MagicMock()
+        client.list_workspaces.return_value = [ws]
+        client.list_shared_workspaces.return_value = []
+        launched, fake_run = self._launch_capture()
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
+        ):
+            from typer.testing import CliRunner
+
+            result = CliRunner().invoke(main.app, ["consent-decide", "my-ws"])
+        assert result.exit_code == 0
+        app = launched["app"]
+        assert app.workspace_id == "wsid"
+        assert app.workspace_name == "my-ws"
+        assert app.server_url == "http://localhost:8995"
+        assert app.token == "test-token"
+
+    def test_resolves_by_id(self, logged_in_cfg):
+        from klangk.cli import main
+        from klangk.cli.tui import consent as tui_consent
+
+        ws = Workspace(id="wsid", name="my-ws", created_at="x")
+        client = MagicMock()
+        client.list_workspaces.return_value = [ws]
+        client.list_shared_workspaces.return_value = []
+        launched, fake_run = self._launch_capture()
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
+        ):
+            from typer.testing import CliRunner
+
+            result = CliRunner().invoke(main.app, ["consent-decide", "wsid"])
+        assert result.exit_code == 0
+        assert launched["app"].workspace_id == "wsid"
+
+    def test_shared_workspace_resolves(self, logged_in_cfg):
+        from klangk.cli import main
+        from klangk.cli.tui import consent as tui_consent
+
+        ws = Workspace(id="shared1", name="team", created_at="x")
+        client = MagicMock()
+        client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = [ws]
+        launched, fake_run = self._launch_capture()
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
+        ):
+            from typer.testing import CliRunner
+
+            result = CliRunner().invoke(main.app, ["consent-decide", "team"])
+        assert result.exit_code == 0
+        assert launched["app"].workspace_id == "shared1"
+
+    def test_hold_timeout_option_passed_through(self, logged_in_cfg):
+        from klangk.cli import main
+        from klangk.cli.tui import consent as tui_consent
+
+        ws = Workspace(id="wsid", name="my-ws", created_at="x")
+        client = MagicMock()
+        client.list_workspaces.return_value = [ws]
+        client.list_shared_workspaces.return_value = []
+        launched, fake_run = self._launch_capture()
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
+        ):
+            from typer.testing import CliRunner
+
+            result = CliRunner().invoke(
+                main.app, ["consent-decide", "my-ws", "--hold-timeout", "60"]
+            )
+        assert result.exit_code == 0
+        assert launched["app"].controller.hold_timeout == 60.0
+
+    def test_not_found_exits_1(self, logged_in_cfg):
+        from klangk.cli import main
+
+        client = MagicMock()
+        client.list_workspaces.return_value = []
+        client.list_shared_workspaces.return_value = []
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            result = CliRunner().invoke(main.app, ["consent-decide", "ghost"])
+        assert result.exit_code == 1
