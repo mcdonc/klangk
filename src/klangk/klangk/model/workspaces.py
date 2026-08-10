@@ -59,8 +59,8 @@ SETUP_STATES = frozenset(
 # egress_mode values (#2239). 'static' = deny + record denied attempts (no
 # human prompt); 'interactive' = a pending request a human can allow/deny via
 # the consent-decide client (#2310). The default for NEW workspaces is
-# 'interactive' for now (end-to-end consent testing); flip EGRESS_MODE_DEFAULT
-# back to STATIC once it's production-ready.
+# 'interactive' so consent-gated egress is on out of the box; set a workspace
+# to 'static' to opt back into silent deny + record.
 EGRESS_MODE_STATIC = "static"
 EGRESS_MODE_INTERACTIVE = "interactive"
 EGRESS_MODE_DEFAULT = EGRESS_MODE_INTERACTIVE

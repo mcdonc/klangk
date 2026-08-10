@@ -348,11 +348,10 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
-- **New workspaces default to `egress_mode=interactive` (for testing).**
-  The default is `interactive` while the consent-decide end-to-end flow is
-  being exercised, so held egress requests reach a decider without a manual
-  per-workspace flip (`EGRESS_MODE_DEFAULT` in `model/workspaces.py`; move it
-  back to `static` once interactive mode is production-ready).
+- **New workspaces default to `egress_mode=interactive`.** The default is
+  `interactive`, so held egress requests reach a decider out of the box without
+  a manual per-workspace flip (`EGRESS_MODE_DEFAULT` in `model/workspaces.py`);
+  set a workspace to `static` to opt into silent deny + record instead.
 
 - **Workspace + network sidecar container names and labels (#2286).** A
   workspace and its network sidecar now share a `klangk.workspace=<id>` +
