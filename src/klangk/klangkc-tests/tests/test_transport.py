@@ -34,6 +34,7 @@ class TestResolveTransport:
             uds_path=None,
             base_url="http://localhost:8995",
             ws_uri="ws://localhost:8995/ws",
+            ws_base="ws://localhost:8995",
             server_spec="http://localhost:8995",
         )
 
@@ -44,6 +45,7 @@ class TestResolveTransport:
             uds_path=None,
             base_url="https://example.com",
             ws_uri="wss://example.com/ws",
+            ws_base="wss://example.com",
             server_spec="https://example.com",
         )
 
@@ -54,6 +56,7 @@ class TestResolveTransport:
             uds_path="/tmp/klangk.sock",
             base_url="http://localhost",
             ws_uri="ws://localhost/ws",
+            ws_base="ws://localhost",
             server_spec="/tmp/klangk.sock",
         )
 
@@ -199,6 +202,78 @@ class TestWsConnect:
             "ws://localhost/ws?token=tok", sock=mock_sock, max_size=2048
         )
         mock_sock.close.assert_called_once()
+
+    async def test_tcp_with_path_and_query(self):
+        mock_ws = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "klangk.cli.transport.websockets.connect", return_value=mock_cm
+        ) as mock_connect:
+            async with ws_connect(
+                "http://localhost:8995",
+                token="tok",
+                path="/ws/consent-decider",
+                query={"workspace": "wsid"},
+            ) as ws:
+                assert ws is mock_ws
+
+        mock_connect.assert_called_once_with(
+            "ws://localhost:8995/ws/consent-decider?workspace=wsid&token=tok"
+        )
+
+    async def test_uds_with_path_and_query(self):
+        mock_ws = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_sock = MagicMock()
+
+        with (
+            patch(
+                "klangk.cli.transport.websockets.connect", return_value=mock_cm
+            ) as mock_connect,
+            patch(
+                "klangk.cli.transport._socket.socket", return_value=mock_sock
+            ),
+        ):
+            async with ws_connect(
+                "/tmp/klangk.sock",
+                token="tok",
+                path="/ws/consent-decider",
+                query={"workspace": "wsid"},
+            ) as ws:
+                assert ws is mock_ws
+
+        mock_connect.assert_called_once_with(
+            "ws://localhost/ws/consent-decider?workspace=wsid&token=tok",
+            sock=mock_sock,
+        )
+
+    async def test_token_wins_over_query_footgun(self):
+        # A caller passing query={"token": ...} must NOT clobber the auth token
+        # (#2320 review #6).
+        mock_ws = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_ws)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "klangk.cli.transport.websockets.connect", return_value=mock_cm
+        ) as mock_connect:
+            async with ws_connect(
+                "http://localhost:8995",
+                token="real-token",
+                query={"token": "evil", "workspace": "wsid"},
+            ) as ws:
+                assert ws is mock_ws
+
+        uri = mock_connect.call_args.args[0]
+        assert "token=real-token" in uri
+        assert "token=evil" not in uri
+        assert "workspace=wsid" in uri
 
     async def test_uds_closes_socket_on_error(self):
         mock_sock = MagicMock()

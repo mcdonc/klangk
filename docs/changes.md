@@ -32,6 +32,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`klangk consent-decide <workspace>` (#2310).** A live Textual client that
+  connects to a workspace's consent-decider stream and shows its held egress
+  requests (blocked destinations the network sidecar is holding for a
+  verdict), with a countdown to auto-deny. Press `a` to allow (once) or `d` to
+  deny; accepting lets that exact held connection proceed while a deny (or the
+  countdown hitting zero) fails it. It pings every 15s to stay registered as
+  the workspace's live decider and reconnects on drop; while no client is
+  attached, held requests auto-deny (fail-closed). Requires terminal access to
+  the workspace.
+
 - **Embedded network sidecar image (#2301).** The all-in-one host image
   (`scripts/build-host-image.sh`) now embeds the network sidecar image as a
   tarball and `podman load`s it on first startup, mirroring the workspace
