@@ -407,6 +407,30 @@ class TestTTLAndSweep:
         assert ("1.2.3.4", 80) not in learned._REJECTED
         assert ("5.6.7.8", 443) in learned._REJECTED  # live one kept
 
+    def test_all_ports_allow_supersedes_prior_port_denies(
+        self, learned, monkeypatch
+    ):
+        # An all-ports allow must clear per-port REJECTs for that IP, else the
+        # ACCEPT at the top of OUTPUT silently shadows a lingering REJECT (the
+        # decider allowed the host -> a prior port-specific deny no longer applies).
+        removed = []
+        monkeypatch.setattr(
+            learned,
+            "_remove_reject",
+            lambda ip, port: removed.append((ip, port)),
+        )
+        monkeypatch.setattr(learned, "_install", lambda *a: None)
+        learned._REJECTED.clear()
+        learned._REJECTED[("1.2.3.4", 443)] = 9999.0
+        learned._REJECTED[("1.2.3.4", 80)] = 9999.0
+        learned._REJECTED[("5.6.7.8", 443)] = 9999.0  # different IP, untouched
+        learned.allow("1.2.3.4", None, 60)  # all-ports (consent path)
+        assert ("1.2.3.4", 443) in removed
+        assert ("1.2.3.4", 80) in removed
+        assert ("5.6.7.8", 443) not in removed  # different IP kept
+        assert ("1.2.3.4", 443) not in learned._REJECTED
+        assert ("5.6.7.8", 443) in learned._REJECTED
+
 
 class TestARecordsWithTtl:
     """``a_records_with_ttl`` extracts every A record from a DNS response's

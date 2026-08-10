@@ -182,8 +182,8 @@ SPECS = parse_specs()
 # NFQUEUE (#2324). Guarded by _LOCK: the asyncio loop runs the iptables installs
 # + sweeps in the default thread-pool executor (see _learn_all / _async_sweeper),
 # so two worker threads can touch _LEARNED at once; the lock serializes the
-# rule+record mutations. The NFQUEUE consumer reads ``host`` without the lock
-# (GIL-atomic; set by the DNS loop before the SYN arrives).
+# rule+record mutations. The NFQUEUE consumer reads ``host`` via _host_for
+# (under the lock; the host is set by the DNS loop before the SYN arrives).
 _LEARNED: dict[str, dict] = {}
 _LOCK = threading.Lock()
 # Reused SYN verdicts: {(ip, port): (verdict, expire)} so the kernel's SYN
@@ -324,6 +324,17 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
             rec["expire"] = max(rec["expire"], expire)
             rec["ports"].add(port)
             # ``host`` (set by _record_hosts) is preserved across re-learn.
+        # An all-ports allow (the consent path) supersedes any prior per-port
+        # denies for this IP -- otherwise the all-ports ACCEPT at the top of
+        # OUTPUT would silently shadow a lingering REJECT (the decider allowed
+        # the host, so a prior port-specific deny no longer applies).
+        if port is None:
+            for key in [k for k in _REJECTED if k[0] == ip]:
+                try:
+                    _remove_reject(*key)
+                except Exception:
+                    pass
+                del _REJECTED[key]
 
 
 def _reject_rule_args(ip: str, port: int) -> list[str]:
