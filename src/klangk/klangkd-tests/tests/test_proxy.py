@@ -803,13 +803,21 @@ class TestConsentForward:
         assert fut.result() == "allow"
         assert "abc" not in c._pending
 
-    async def test_fail_close_pending_resolves_deny(self, proxy, tmp_path):
+    async def test_fail_close_pending_resolves_deny_and_clears_cache(
+        self, proxy, tmp_path
+    ):
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
         fut = asyncio.get_running_loop().create_future()
         c._pending["x"] = fut
+        # A lost connection is a fresh session: prior verdicts must not be trusted.
+        proxy._VERDICT_CACHE.clear()
+        proxy._VERDICT_CACHE[("1.2.3.4", 443)] = ("allow", 9999999.0)
         c._fail_close_pending()
         assert fut.result() == "deny"
         assert c._pending == {}
+        assert (
+            proxy._VERDICT_CACHE == {}
+        )  # stale verdicts dropped on disconnect
 
     def test_read_token_missing_file(self, proxy, tmp_path):
         c = proxy.SidecarConsentClient(

@@ -746,6 +746,11 @@ class SidecarConsentClient:
             return "deny"
 
     def _fail_close_pending(self) -> None:
+        # A lost connection is a fresh session against a (possibly restarted)
+        # coordinator, so prior verdicts must not be trusted: in-flight flows
+        # re-prompt after reconnect instead of being silently re-allowed/denied
+        # by a stale cached verdict (#2326 review).
+        _VERDICT_CACHE.clear()
         for lid in list(self._pending):
             fut = self._pending.pop(lid, None)
             if fut is not None and not fut.done():
