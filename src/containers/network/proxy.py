@@ -74,6 +74,10 @@ Configuration (env):
   KLANGKNETWORK_EGRESS_VERDICT_CACHE_TTL  seconds to reuse a SYN verdict for an
                             (ip, port) flow so the kernel's SYN retransmits
                             (tcp_syn_retries) don't each re-prompt (default 120).
+  KLANGKNETWORK_EGRESS_REJECT_TTL   seconds a deny keeps its REJECT (tcp-reset)
+                            rule so the denied connection fails fast
+                            (ECONNREFUSED) instead of waiting for tcp_syn_retries
+                            (~127s) (default 10).
 
 Limitations: transport is UDP only (TCP fallback is a future addition).
 """
@@ -128,6 +132,11 @@ HOLD_TIMEOUT = float(os.environ.get("KLANGKNETWORK_EGRESS_HOLD_TIMEOUT", "120"))
 VERDICT_CACHE_TTL = float(
     os.environ.get("KLANGKNETWORK_EGRESS_VERDICT_CACHE_TTL", "120")
 )
+# How long a deny keeps its REJECT (tcp-reset) rule so the denied connection
+# fails fast (ECONNREFUSED) instead of waiting for tcp_syn_retries (~127s).
+# Only needs to catch the SYN retransmit (~1 RTO); the verdict cache separately
+# keeps the deny from re-prompting for VERDICT_CACHE_TTL.
+CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10"))
 # The workspace JWT (rotated) is bind-mounted here read-only; read fresh on each
 # (re)connect so rotation is picked up (#2242, #2311). Not baked in env because
 # the workspace token expires and rotates.
@@ -181,6 +190,11 @@ _LOCK = threading.Lock()
 # retransmits (tcp_syn_retries) don't each re-prompt. Single-threaded NFQUEUE
 # consumer -- no lock. Lazy-evicted on read.
 _VERDICT_CACHE: dict[tuple[str, int], tuple[str, float]] = {}
+# Temporary REJECT (tcp-reset) rules for denied connections: {(ip, port): expire}.
+# Swept by sweep_once alongside _LEARNED. Makes a deny fail-fast (ECONNREFUSED)
+# instead of waiting for tcp_syn_retries (~127s) -- dropping a SYN alone doesn't
+# fail connect(); the kernel just retransmits until its own timeout.
+_REJECTED: dict[tuple[str, int], float] = {}
 # Strong refs to background asyncio tasks (the TTL sweeper) so CPython doesn't
 # GC a sleeping task. A done-callback discards each entry on completion.
 _BG_TASKS: set[asyncio.Task] = set()
@@ -312,6 +326,65 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
             # ``host`` (set by _record_hosts) is preserved across re-learn.
 
 
+def _reject_rule_args(ip: str, port: int) -> list[str]:
+    """iptables OUTPUT rule args for REJECT (tcp-reset) to ``ip:port``."""
+    return [
+        "-d",
+        ip,
+        "-p",
+        "tcp",
+        "--dport",
+        str(port),
+        "-j",
+        "REJECT",
+        "--reject-with",
+        "tcp-reset",
+    ]
+
+
+def _reject_rule_exists(ip: str, port: int) -> bool:
+    return (
+        subprocess.run(
+            [IPT, "-C", "OUTPUT", *_reject_rule_args(ip, port)],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def _install_reject(ip: str, port: int) -> None:
+    """Insert the REJECT (tcp-reset) rule at the top of OUTPUT if not present."""
+    if _reject_rule_exists(ip, port):
+        return
+    subprocess.run(
+        [IPT, "-I", "OUTPUT", "1", *_reject_rule_args(ip, port)],
+        capture_output=True,
+    )
+
+
+def _remove_reject(ip: str, port: int) -> None:
+    """Delete the REJECT rule; swallow failure if it's already gone."""
+    subprocess.run(
+        [IPT, "-D", "OUTPUT", *_reject_rule_args(ip, port)],
+        capture_output=True,
+    )
+
+
+def reject(ip: str, port: int, ttl: float) -> None:
+    """Install a temporary REJECT (tcp-reset) for ``ip:port`` + set its TTL.
+
+    A denied SYN is dropped, but dropping a SYN doesn't fail ``connect()`` --
+    the kernel retransmits (tcp_syn_retries, ~127s) before timing out. The
+    REJECT rule makes the next retransmit get a RST, so ``connect()`` returns
+    ECONNREFUSED at once (eager deny). Like :func:`allow`, the install + the
+    ``_REJECTED`` record are atomic under :data:`_LOCK` w.r.t. :func:`sweep_once`.
+    """
+    expire = time.time() + ttl
+    with _LOCK:
+        _install_reject(ip, port)
+        _REJECTED[(ip, port)] = max(_REJECTED.get((ip, port), 0.0), expire)
+
+
 def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
     """Remove learned IPs whose TTL has elapsed; return ``(ip, ports)`` removed.
 
@@ -336,6 +409,13 @@ def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
                     pass  # a transient failure drops one rule, not the sweep
             del _LEARNED[ip]
             expired.append((ip, ports))
+        # also sweep temporary REJECT (tcp-reset) rules for denied connections
+        for key in [k for k, exp in _REJECTED.items() if exp <= now]:
+            try:
+                _remove_reject(*key)
+            except Exception:
+                pass
+            del _REJECTED[key]
     return expired
 
 
@@ -780,7 +860,9 @@ def _run_nfq_consumer(
     all-ports (reconnects + the rest of this connection's SYN retransmits pass
     without re-prompting) + ``pkt.accept()`` (conntrack ESTABLISHED,RELATED
     carries the in-flight connection); ``deny``/timeout/WS-down -> ``pkt.drop``
-    (fail-close). SYN retransmits (tcp_syn_retries) of a flow already decided
+    + a temporary REJECT (tcp-reset) rule so the next retransmit gets RST'd
+    (ECONNREFUSED) instead of the kernel retransmitting for ~127s. SYN retransmits
+    (tcp_syn_retries) of a flow already decided
     reuse the cached verdict so they don't each re-prompt. Blocking the callback
     serializes NFQUEUE; the kernel queue length + the iptables rate-limit in
     entrypoint.sh absorb bursts (overflows DROP). netfilterqueue is a sidecar-
@@ -825,6 +907,14 @@ def _run_nfq_consumer(
                 pass
             pkt.accept()
         else:
+            # Dropping a SYN doesn't fail connect() -- the kernel retransmits
+            # for tcp_syn_retries (~127s). Install a temporary REJECT (tcp-reset)
+            # so the next retransmit gets a RST -> ECONNREFUSED (eager deny).
+            if port:
+                try:
+                    reject(dst, port, CONSENT_REJECT_TTL)
+                except Exception:
+                    pass
             pkt.drop()
 
     try:

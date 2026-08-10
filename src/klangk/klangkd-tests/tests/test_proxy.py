@@ -368,6 +368,45 @@ class TestTTLAndSweep:
         assert [ip for ip, _ in gone] == ["dead"]
         assert "live" in learned._LEARNED
 
+    def test_reject_installs_reject_rule_and_records(
+        self, learned, monkeypatch
+    ):
+        runs = []
+
+        def fake_run(args, **kw):
+            runs.append(args)
+            return types.SimpleNamespace(returncode=1)  # rule absent -> -I
+
+        monkeypatch.setattr(learned.subprocess, "run", fake_run)
+        monkeypatch.setattr(learned.time, "time", lambda: 1000.0)
+        learned._REJECTED.clear()
+        learned.reject("1.2.3.4", 80, 10)
+        assert any(
+            "-I" in a and "REJECT" in a and "tcp-reset" in a for a in runs
+        )
+        assert learned._REJECTED[("1.2.3.4", 80)] == 1010.0
+
+    def test_sweep_removes_expired_reject_rules(self, learned, monkeypatch):
+        removed = []
+
+        def fake_run(args, **kw):
+            if "-D" in args:
+                removed.append(args)
+            return types.SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(learned.subprocess, "run", fake_run)
+        learned._LEARNED.clear()
+        learned._REJECTED.clear()
+        learned._REJECTED[("1.2.3.4", 80)] = 100.0  # expired
+        learned._REJECTED[("5.6.7.8", 443)] = 9999.0  # live
+        learned.sweep_once(now=500.0)
+        assert any(
+            "1.2.3.4" in a and "REJECT" in a and "tcp-reset" in a
+            for a in removed
+        )
+        assert ("1.2.3.4", 80) not in learned._REJECTED
+        assert ("5.6.7.8", 443) in learned._REJECTED  # live one kept
+
 
 class TestARecordsWithTtl:
     """``a_records_with_ttl`` extracts every A record from a DNS response's
@@ -930,14 +969,25 @@ class TestNfqueueCallback:
             "evil.test", 443
         )  # host, not IP
 
-    async def test_deny_verdict_drops(self, proxy, monkeypatch):
+    async def test_deny_verdict_drops_and_rejects(self, proxy, monkeypatch):
+        # deny -> drop the SYN + install a REJECT (tcp-reset) so the retransmit
+        # gets RST'd (ECONNREFUSED), not a ~127s tcp_syn_retries wait.
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value="deny")
+        rejected = []
+        monkeypatch.setattr(
+            proxy,
+            "reject",
+            lambda ip, port, ttl: rejected.append((ip, port, ttl)),
+        )
         nfq = self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await asyncio.to_thread(nfq.cb, pkt)
         assert pkt.verdict == "drop"
+        assert rejected == [
+            ("1.2.3.4", 443, proxy.CONSENT_REJECT_TTL)
+        ]  # eager deny
 
     async def test_request_error_drops(self, proxy, monkeypatch):
         client = MagicMock()

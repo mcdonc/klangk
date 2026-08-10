@@ -88,7 +88,9 @@ esac
 # not the DNS query: non-allow-listed names resolve (the workspace gets the IP),
 # and the first packet to that IP is queued here pending a verdict (allow ->
 # pkt.accept() + learn the IP, then conntrack's ESTABLISHED,RELATED rule passes
-# the rest; deny/timeout/WS-down -> pkt.drop()); klangkd records the decision.
+# the rest; deny/timeout/WS-down -> pkt.drop() + a temporary REJECT
+# (tcp-reset) rule so the retransmit fails connect() at once (ECONNREFUSED), not
+# after tcp_syn_retries ~127s); klangkd records the decision.
 # Gating the SYN (not the DNS query) gives the human the kernel's connect
 # timeout (~127s) instead of a DNS resolver's <=30s getaddrinfo cap. The sidecar
 # is the netns owner with NET_ADMIN, so it reads its own NFQUEUE -- no host-side

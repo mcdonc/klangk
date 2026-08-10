@@ -105,9 +105,11 @@ operators or integrators to act when upgrading.
   sidecar holds a non-allow-listed connection's SYN (NFQUEUE) pending the
   consent verdict instead of the DNS query: a denied name now _resolves_ (the
   workspace gets the IP) and the first packet to that IP is queued -- `allow`
-  learns the IP + lets it proceed, `deny`/timeout/WS-down fail-closes (a static
-  workspace or an unreachable klangkd behaves exactly as before; no new latency,
-  no hang). Gating the SYN gives the human the kernel's connect timeout
+  learns the IP + lets it proceed, `deny`/timeout/WS-down fail-closes -- a
+  denied connection gets a RST via a temporary REJECT (tcp-reset) rule so it
+  fails at once (ECONNREFUSED), not after tcp_syn_retries ~127s (a static
+  workspace or an unreachable klangkd behaves exactly as before; no hang).
+  Gating the SYN gives the human the kernel's connect timeout
   (`tcp_syn_retries` ~127s) instead of a DNS resolver's <=30s `getaddrinfo`
   cap. `KLANGKD_EGRESS_CONSENT_TIMEOUT` and `KLANGKNETWORK_EGRESS_HOLD_TIMEOUT`
   defaults rise 30 -> 120s to use that window; SYN retransmits reuse the cached
