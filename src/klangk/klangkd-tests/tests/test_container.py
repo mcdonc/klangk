@@ -6,7 +6,7 @@ import types
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -3858,6 +3858,144 @@ class TestCleanupIdleContainers:
             p.remove_container.assert_awaited()
         finally:
             self.registry.states.clear()
+
+    async def test_sweep_removes_orphaned_sidecar_tokens(
+        self, tmp_path, monkeypatch
+    ):
+        # Orphan ws-tokens/<id> files (workspace row gone) are unlinked;
+        # tokens for live workspaces and transient .tmp writes are kept (#2309).
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "data_dir", str(tmp_path)
+        )
+        token_dir = tmp_path / "ws-tokens"
+        token_dir.mkdir()
+        (token_dir / "live-ws").write_text("tok-live")  # row exists
+        (token_dir / "gone-ws").write_text("tok-gone")  # orphan
+        (token_dir / "gone-ws.tmp").write_text("partial")  # transient write
+        (token_dir / "subdir").mkdir()  # non-file entry: skipped, not unlinked
+        monkeypatch.setattr(
+            self.registry.app.state.workspaces,
+            "existing_workspace_ids",
+            AsyncMock(return_value={"live-ws"}),
+        )
+        removed = await self.registry._sweep_orphaned_sidecar_tokens()
+        assert removed == 1
+        assert (token_dir / "live-ws").exists()
+        assert not (token_dir / "gone-ws").exists()
+        # .tmp is never unlinked (would race write_sidecar_token's os.replace)
+        assert (token_dir / "gone-ws.tmp").exists()
+        # non-file entries (subdirs) are left untouched
+        assert (token_dir / "subdir").is_dir()
+
+    async def test_sweep_noop_without_token_dir(self, tmp_path, monkeypatch):
+        # No ws-tokens/ dir (no filtered workspace ever started) -> 0, and
+        # the workspaces table is not even queried.
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "data_dir", str(tmp_path)
+        )
+        queried = AsyncMock()
+        monkeypatch.setattr(
+            self.registry.app.state.workspaces,
+            "existing_workspace_ids",
+            queried,
+        )
+        assert await self.registry._sweep_orphaned_sidecar_tokens() == 0
+        queried.assert_not_awaited()
+
+    async def test_sweep_swallows_workspace_lookup_error(
+        self, tmp_path, monkeypatch
+    ):
+        # A DB error mid-sweep must not propagate (resilience over crash); the
+        # token file is left intact for the next sweep to retry.
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "data_dir", str(tmp_path)
+        )
+        (tmp_path / "ws-tokens").mkdir()
+        (tmp_path / "ws-tokens" / "ws-x").write_text("t")
+        monkeypatch.setattr(
+            self.registry.app.state.workspaces,
+            "existing_workspace_ids",
+            AsyncMock(side_effect=RuntimeError("db down")),
+        )
+        assert await self.registry._sweep_orphaned_sidecar_tokens() == 0
+        assert (tmp_path / "ws-tokens" / "ws-x").exists()
+
+    async def test_idle_loop_invokes_orphan_token_sweep(self):
+        # The periodic idle loop piggybacks the sweep; last_token_sweep starts
+        # at 0 so the first iteration always sweeps (#2309).
+        sweep = AsyncMock()
+        self.registry._sweep_orphaned_sidecar_tokens = sweep
+        with patch_podman(self.registry):
+            task = asyncio.create_task(self.registry.cleanup_idle_containers())
+            await asyncio.sleep(0.05)
+            self.registry.get_cleanup_wake().set()
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        sweep.assert_awaited()
+
+    async def test_sweep_swallows_listdir_error(self, tmp_path, monkeypatch):
+        # An OSError scanning ws-tokens/ must not propagate; the workspaces
+        # table is not queried (early return).
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "data_dir", str(tmp_path)
+        )
+        (tmp_path / "ws-tokens").mkdir()
+        queried = AsyncMock()
+        monkeypatch.setattr(
+            self.registry.app.state.workspaces,
+            "existing_workspace_ids",
+            queried,
+        )
+        monkeypatch.setattr(
+            "klangk.container.os.listdir",
+            MagicMock(side_effect=OSError("io")),
+        )
+        assert await self.registry._sweep_orphaned_sidecar_tokens() == 0
+        queried.assert_not_awaited()
+
+    async def test_sweep_swallows_unlink_error(self, tmp_path, monkeypatch):
+        # An OSError unlinking one orphan is logged and skipped (the file is
+        # left for the next sweep); other orphans are still processed.
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "data_dir", str(tmp_path)
+        )
+        token_dir = tmp_path / "ws-tokens"
+        token_dir.mkdir()
+        (token_dir / "gone-ws").write_text("tok")
+        monkeypatch.setattr(
+            self.registry.app.state.workspaces,
+            "existing_workspace_ids",
+            AsyncMock(return_value=set()),
+        )
+        monkeypatch.setattr(
+            "klangk.container.os.unlink",
+            MagicMock(side_effect=OSError("busy")),
+        )
+        removed = await self.registry._sweep_orphaned_sidecar_tokens()
+        assert removed == 0  # the unlink failed
+        assert (token_dir / "gone-ws").exists()  # left intact
+
+    async def test_idle_loop_swallows_sweep_error(self):
+        # A sweep failure raised inside the loop is logged, not propagated --
+        # the loop runs a full iteration and is only stopped by cancellation.
+        self.registry._sweep_orphaned_sidecar_tokens = AsyncMock(
+            side_effect=RuntimeError("sweep broke")
+        )
+        with patch_podman(self.registry):
+            task = asyncio.create_task(self.registry.cleanup_idle_containers())
+            await asyncio.sleep(0.05)
+            self.registry.get_cleanup_wake().set()
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self.registry._sweep_orphaned_sidecar_tokens.assert_awaited()
 
 
 class TestStartCleanupLoop:

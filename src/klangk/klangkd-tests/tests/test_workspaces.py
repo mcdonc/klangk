@@ -48,6 +48,21 @@ class TestCreateWorkspace:
                 user["id"], "unique"
             )
 
+    async def test_existing_workspace_ids_delegates_to_model(
+        self, user, app_state
+    ):
+        # The service wrapper delegates to the model; the live id-set is the
+        # basis for the orphan sidecar-token sweep (container.py, #2309).
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "sweep-me"
+        )
+        ids = await app_state.state.workspaces.existing_workspace_ids()
+        assert ws["id"] in ids
+        await app_state.state.workspaces.delete_workspace(ws["id"], user["id"])
+        assert ws["id"] not in (
+            await app_state.state.workspaces.existing_workspace_ids()
+        )
+
     async def test_invalid_setup_state_rejected(self, user, app_state):
         """Invalid setup_state raises ValueError (#1033)."""
         # Service layer (goes through create_workspace_with_acl).
