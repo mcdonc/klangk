@@ -79,6 +79,7 @@ Limitations: transport is UDP only (TCP fallback is a future addition).
 
 import asyncio
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -89,6 +90,11 @@ import uuid
 import dns.message
 import dns.rcode
 import dns.rdatatype
+
+# The `websockets` client logs the full HTTP request line (incl. any ?token=
+# query param) at DEBUG; cap it at WARNING so a workspace JWT can't leak to
+# sidecar stdout/logs even if debug logging is enabled elsewhere (#2309).
+logging.getLogger("websockets").setLevel(logging.WARNING)
 
 UPSTREAM = (os.environ.get("KLANGKNETWORK_EGRESS_UPSTREAM", "8.8.8.8"), 53)
 LISTEN_PORT = int(os.environ.get("KLANGKNETWORK_EGRESS_LISTEN_PORT", "15353"))
@@ -156,10 +162,15 @@ SPECS = parse_specs()
 
 # Learned IPs: {ip: {"expire": epoch, "ports": set[int | None]}}. A ``None``
 # in ``ports`` is the all-ports ACCEPT rule. Guarded by _LOCK because the
-# sweeper thread removes entries while the main loop adds/refreshes them
-# (only the main loop installs rules; the sweeper only removes).
+# asyncio loop runs the iptables installs + sweeps in the default thread-pool
+# executor (see _learn_all / _async_sweeper), so two worker threads can touch
+# _LEARNED at once; the lock serializes the rule+record mutations.
 _LEARNED: dict[str, dict] = {}
 _LOCK = threading.Lock()
+# Strong refs to background asyncio tasks (DNS holds + the TTL sweeper) so
+# CPython doesn't GC a task that's awaiting a verdict / sleeping. A done-callback
+# discards each entry when its task completes.
+_BG_TASKS: set[asyncio.Task] = set()
 
 
 def query_name(wire: bytes) -> str:
@@ -268,12 +279,13 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
 
     The install happens **under** :data:`_LOCK` so the kernel rule and its
     ``_LEARNED`` record are atomic w.r.t. :func:`sweep_once`'s remove+delete
-    (also under the lock). Without that, the sweeper could delete a rule
-    :func:`allow` just installed while ``_LEARNED`` still records it as
-    present — a fail-closed availability gap that only self-heals on the next
-    re-resolution (#2256 review). The main loop is single-threaded and the
-    sweeper runs every ``SWEEP_INTERVAL``, so serializing the iptables calls
-    under the lock is negligible contention.
+    (also under the lock). Without that, a concurrent sweep running in another
+    executor worker could delete a rule :func:`allow` just installed while
+    ``_LEARNED`` still records it as present -- a fail-closed availability gap
+    that only self-heals on the next re-resolution (#2256 review). ``allow`` and
+    :func:`sweep_once` both run off the event loop in the default thread-pool
+    executor (see :func:`_learn_all` / :func:`_async_sweeper`), so the lock
+    genuinely serializes them; contention is negligible.
     """
     expire = time.time() + max(ttl, MIN_TTL)
     with _LOCK:
@@ -314,11 +326,16 @@ def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
 
 
 async def _async_sweeper() -> None:
-    """Background task: periodically drop learned IPs past their TTL (#2256)."""
+    """Background task: periodically drop learned IPs past their TTL (#2256).
+
+    :func:`sweep_once` runs in the executor so its iptables ``-D`` forks don't
+    block the loop (and so it can run concurrently with :func:`_learn_all`,
+    serialized by :data:`_LOCK`).
+    """
     while True:
         await asyncio.sleep(SWEEP_INTERVAL)
         try:
-            sweep_once()
+            await asyncio.get_running_loop().run_in_executor(None, sweep_once)
         except Exception:
             pass  # a transient sweep failure defers cleanup to the next tick
 
@@ -345,7 +362,15 @@ def check_mark() -> None:
         probe.close()
 
 
-def _respond_allowed(
+def _learn_all(recs: list[tuple[str, int]], ports: set[int | None]) -> None:
+    """Install the ACCEPT rule for each learned IP/port (sync; runs in the
+    executor so the iptables forks don't block the event loop)."""
+    for ip, ttl in recs:
+        for port in ports:
+            allow(ip, port, ttl)
+
+
+async def _respond_allowed(
     s: socket.socket,
     resp: bytes,
     addr: tuple[str, int],
@@ -355,21 +380,22 @@ def _respond_allowed(
     """Learn the response's IPs (port-scoped, TTL-tracked) + send it, swallowing
     transient errors.
 
-    A failure here (a transient ``iptables`` error in :func:`allow`, or a
-    ``sendto`` to a vanished client) must drop only this one response — not
-    kill the proxy. If it escaped :func:`main` the sidecar's PID 1 would exit,
-    DNS would be dead for the workspace, and the learned ``ACCEPT`` rules would
-    persist (a partial fail-open: previously-resolved hosts stay reachable).
-    #2278.
+    The iptables installs (:func:`_learn_all`) run off the loop in the default
+    thread-pool executor so a burst of learned IPs can't stall the DNS receive
+    loop or verdict dispatch. A failure here (a transient ``iptables`` error, or
+    a ``sendto`` to a vanished client) must drop only this one response -- not
+    kill the proxy (#2278): if it escaped, the sidecar's PID 1 would exit, DNS
+    would be dead for the workspace, and the learned ``ACCEPT`` rules would
+    persist (a partial fail-open).
     """
+    loop = asyncio.get_running_loop()
     try:
         recs = a_records_with_ttl(resp)
     except Exception:
         recs = []
     try:
-        for ip, ttl in recs:
-            for port in ports:
-                allow(ip, port, ttl)
+        if recs:
+            await loop.run_in_executor(None, _learn_all, recs, ports)
         if DEBUG:
             print(
                 f"allow {qname} -> {[ip for ip, _ in recs]} ports={_fmt_ports(ports)}",
@@ -487,6 +513,7 @@ class SidecarConsentClient:
         self._connected = asyncio.Event()
         self._pending: dict[str, asyncio.Future] = {}  # id -> Future
         self._stop = False
+        self._no_token_warned = False
         self._task: asyncio.Task | None = None
 
     @property
@@ -521,6 +548,12 @@ class SidecarConsentClient:
             if not token:
                 # Token file not present yet (workspace JWT not written). Retry
                 # without escalating backoff (expected at startup).
+                if DEBUG and not self._no_token_warned:
+                    print(
+                        "consent: workspace token not yet present; retrying",
+                        flush=True,
+                    )
+                    self._no_token_warned = True
                 await asyncio.sleep(1.0)
                 continue
             url = f"{self._url}?token={token}"
@@ -530,14 +563,22 @@ class SidecarConsentClient:
                 ) as ws:
                     self._ws = ws
                     self._connected.set()
+                    self._no_token_warned = False
                     backoff = 1.0
                     if DEBUG:
                         print(f"consent: connected to {self._url}", flush=True)
                     async for raw in ws:
                         self._dispatch(raw)
             except Exception as exc:
+                # Log the exception TYPE only -- the URL carries the workspace
+                # JWT as ?token=, and a websockets exception could embed it
+                # (#2309). The websockets package logger is capped at WARNING
+                # on import so its DEBUG request-line can't leak either.
                 if DEBUG:
-                    print(f"consent: connection error: {exc}", flush=True)
+                    print(
+                        f"consent: connection error: {type(exc).__name__}",
+                        flush=True,
+                    )
             finally:
                 # Disconnected (clean close, error, or crash): the sidecar's
                 # held connections die with it (fail-close). Any in-flight
@@ -626,10 +667,10 @@ async def _forward_and_learn(
         await asyncio.wait_for(loop.sock_sendto(us, data, UPSTREAM), 3)
         resp, _ = await asyncio.wait_for(loop.sock_recvfrom(us, 65535), 3)
     except Exception:
-        us.close()
         return
-    us.close()
-    _respond_allowed(s, resp, addr, qname, port_set)
+    finally:
+        us.close()  # closed on success, error, AND cancellation
+    await _respond_allowed(s, resp, addr, qname, port_set)
 
 
 def _send_nxdomain(s: socket.socket, data: bytes, addr: tuple[str, int]) -> None:
@@ -675,6 +716,9 @@ async def _handle_hold(
     if decision == "allow":
         if DEBUG:
             print(f"consent-allow {qname}", flush=True)
+        # all-ports {None}: a human consenting to a domain opens every port to
+        # its resolved IPs for the TTL (like a port-less allow spec) -- consent
+        # is per-domain, not per-port (#2311 half B).
         await _forward_and_learn(s, data, addr, qname, {None})
     else:
         if DEBUG:
@@ -727,6 +771,39 @@ def _run_nfq_consumer(
         print(f"nfqueue consumer failed: {exc}", flush=True)
 
 
+async def _handle_packet(
+    s: socket.socket,
+    data: bytes,
+    addr: tuple[str, int],
+    client: SidecarConsentClient | None,
+    limiter: _HoldLimiter,
+) -> None:
+    """Classify + route one DNS query (the per-packet body of :func:`_async_main`).
+
+    Factored out of the receive loop so the routing -- classify -> gate ->
+    hold / NXDOMAIN / forward -- is unit-testable without running the infinite
+    ``recvfrom`` loop. A statically-allow-listed name goes straight to the
+    forward path (never held); only denied names hit the consent gate.
+    """
+    try:
+        qname = query_name(data)
+    except Exception:
+        return  # malformed/unparseable query -> drop
+    ports = ports_for(qname)
+    deny, port_set = _decision(qname, ports)
+    if deny:
+        if DEBUG:
+            print(f"deny  {qname}", flush=True)
+        if _gate_deny(client, limiter):
+            t = asyncio.create_task(_handle_hold(s, data, addr, qname, client, limiter))
+            _BG_TASKS.add(t)  # strong ref so the hold task isn't GC'd
+            t.add_done_callback(_BG_TASKS.discard)
+        else:
+            _send_nxdomain(s, data, addr)
+        return
+    await _forward_and_learn(s, data, addr, qname, port_set)
+
+
 async def _async_main() -> None:
     """The asyncio DNS loop (#2311 half B): holds denied queries pending verdicts.
 
@@ -747,7 +824,9 @@ async def _async_main() -> None:
         flush=True,
     )
     check_mark()
-    asyncio.create_task(_async_sweeper())
+    _sweep = asyncio.create_task(_async_sweeper())
+    _BG_TASKS.add(_sweep)  # strong ref for the loop's lifetime
+    _sweep.add_done_callback(_BG_TASKS.discard)
     # NFQUEUE consumer runs nfq.run() in a thread (blocking); its callback
     # crosses into this loop to await the consent verdict (#2311 half B).
     if CONSENT_URL:
@@ -760,21 +839,7 @@ async def _async_main() -> None:
             data, addr = await loop.sock_recvfrom(s, 65535)
         except Exception:
             continue
-        try:
-            qname = query_name(data)
-        except Exception:
-            continue  # malformed/unparseable query -> drop
-        ports = ports_for(qname)
-        deny, port_set = _decision(qname, ports)
-        if deny:
-            if DEBUG:
-                print(f"deny  {qname}", flush=True)
-            if _gate_deny(client, limiter):
-                asyncio.create_task(_handle_hold(s, data, addr, qname, client, limiter))
-            else:
-                _send_nxdomain(s, data, addr)
-            continue
-        await _forward_and_learn(s, data, addr, qname, port_set)
+        await _handle_packet(s, data, addr, client, limiter)
 
 
 def main() -> None:
