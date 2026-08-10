@@ -16,7 +16,7 @@ import types
 
 import pytest
 import websockets
-from textual.widgets import ListView, Static
+from textual.widgets import Button, ListView, Static
 
 from klangk.cli.tui import consent as tui_consent
 from klangk.cli.tui.consent import (
@@ -713,3 +713,30 @@ class TestWsLoop:
         done.set()  # release the read -> pump ends -> early break
         await asyncio.wait_for(task, timeout=1.0)
         assert task.done()
+
+
+async def test_request_row_renders_host_horizontal_and_buttons_onscreen():
+    """Regression guard: the per-row host must render on ONE line (a width fight
+    once wrapped it one-character-per-line) and the Allow/Deny buttons must land
+    on-screen (the same fight once pushed them past the right edge)."""
+    app = _make_app()
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.controller.apply_frame(_req_frame("r1", host="ford.com"))
+        app._refresh()
+        await pilot.pause()
+        host = app.query_one(".req-host", Static)
+        allow = app.query_one("#allow-r1", Button)
+        deny = app.query_one("#deny-r1", Button)
+        # Host text on one line, not wrapped one-character-per-line.
+        assert host.region.height == 1, (
+            f"host wrapped vertically: {host.region}"
+        )
+        assert host.region.width >= len("ford.com"), (
+            f"host too narrow: {host.region}"
+        )
+        # Both buttons fully on-screen (not pushed off the right edge).
+        screen_w = app.size.width
+        assert allow.region.right <= screen_w, (
+            f"allow off-screen: {allow.region}"
+        )
+        assert deny.region.right <= screen_w, f"deny off-screen: {deny.region}"

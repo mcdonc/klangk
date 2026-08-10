@@ -209,7 +209,7 @@ class ConsentDeciderApp(App):
     #status { padding: 0 1; background: $panel; color: $text-muted; }
     #requests { height: 1fr; }
     #empty { padding: 1 2; color: $text-muted; }
-    .req-host { color: $text; width: 1fr; }
+    .req-host { color: $text; }
     .req-proc { color: $text-muted; }
     .req-time { color: $warning; }
     """
@@ -402,15 +402,15 @@ class ConsentDeciderApp(App):
             host = f"{host}:{req.dest_port}"
         proc = f"  ({req.process_name})" if req.process_name else ""
         secs = int(self.controller.remaining(req))
-        # Each row carries its own Allow/Deny buttons (id encodes the request
-        # id) so a click decides THAT request, unambiguous with a queue.
+        # Host+time is a direct child of the ListItem (renders horizontally);
+        # the per-row Allow/Deny buttons sit in a Horizontal below it so they
+        # never fight the host for width. Each button id encodes the request id.
         item = ListItem(
+            Static(f"{host}{proc}  ({secs}s)", classes="req-host"),
             Horizontal(
-                Static(f"{host}{proc}", classes="req-host"),
-                Static(f"{secs}s", classes="req-time"),
                 Button("Allow", id=f"allow-{req.id}", variant="success"),
                 Button("Deny", id=f"deny-{req.id}", variant="error"),
-            )
+            ),
         )
         item.request_id = req.id  # type: ignore[attr-defined]
         return item
