@@ -82,17 +82,18 @@ case "${KLANGKNETWORK_EGRESS_BACKEND_PORT:-}" in
   ;;
 esac
 
-# --- egress consent recording (#2242): queue blocked packets to the sidecar's
-# own NFQUEUE consumer (proxy.py) whenever a consent endpoint is configured.
-# Recording runs for every filtered workspace; egress_mode (static vs
-# interactive) only affects the recorded decision, applied by klangkd. The
-# sidecar is the netns owner with NET_ADMIN, so it reads its own NFQUEUE -- no
-# host-side /dev/kmsg access or new privilege. Fail-closed: a down consumer
-# means the kernel drops queued packets; unmatched traffic hits the OUTPUT DROP
-# policy. Rate-limited so a flooding workspace can't overwhelm the consumer;
-# packets past the limit miss the match and fall through to DROP (denied,
-# unobserved). Denied DNS queries are also forwarded by the proxy with their
-# domain names -- NFQUEUE only carries raw IPs.
+# --- egress consent hold (#2242 recording -> #2311 half B hold): queue
+# blocked packets to the sidecar's own NFQUEUE consumer (proxy.py) whenever a
+# consent endpoint is configured. The consumer holds each packet pending a
+# verdict (allow -> pkt.accept(), then conntrack's ESTABLISHED,RELATED rule
+# passes the rest of the connection; deny/timeout/WS-down -> pkt.drop());
+# klangkd records the decision. The sidecar is the netns owner with NET_ADMIN,
+# so it reads its own NFQUEUE -- no host-side /dev/kmsg access or new privilege.
+# Fail-closed: a down consumer means the kernel drops queued packets; unmatched
+# traffic hits the OUTPUT DROP policy. Rate-limited so a flooding workspace can't
+# overwhelm the consumer; packets past the limit miss the match and fall through
+# to DROP (denied). Denied DNS queries are also held by the proxy (by domain) --
+# NFQUEUE only carries raw IPs.
 if [ -n "${KLANGKNETWORK_EGRESS_CONSENT_URL:-}" ]; then
   $IPT -A OUTPUT -m limit --limit 5/sec --limit-burst 20 \
     -j NFQUEUE --queue-num "${KLANGKNETWORK_EGRESS_NFQUEUE_NUM:-5139}"

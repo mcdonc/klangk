@@ -15,9 +15,9 @@ the consent WS contract (``sidecar <-WS-> klangkd <-WS-> decider``). No bespoke
 credential; the workspace id comes straight from the token.
 
 This is the klangkd half of #2311. The sidecar's kernel-level hold (suspending
-DNS queries, deferring NFQUEUE verdicts) + its WS client land in a stacked
-follow-up; #2244 wires the decider fanout to
-:meth:`klangk.consent_coordinator.ConsentCoordinator.resolve`.
+DNS queries, deferring NFQUEUE verdicts) + its WS client are implemented in
+the sidecar (``src/containers/network/proxy.py``); #2244 wires the decider
+fanout to :meth:`klangk.consent_coordinator.ConsentCoordinator.resolve`.
 """
 
 from __future__ import annotations
