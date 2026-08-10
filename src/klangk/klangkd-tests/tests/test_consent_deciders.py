@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import types
+from unittest.mock import AsyncMock
 
 from klangk.consent_deciders import ConsentDeciderRegistry
 
@@ -18,6 +20,19 @@ def _app(timeout: float = 45.0):
     return app
 
 
+class _FakeSock:
+    """Stand-in for a SafeWebSocket's outbound channel (registry broadcast)."""
+
+    def __init__(self, *, raising: bool = False) -> None:
+        self.sent: list[dict] = []
+        self._raising = raising
+
+    def send_json(self, msg: dict) -> None:
+        if self._raising:
+            raise RuntimeError("dead socket")
+        self.sent.append(msg)
+
+
 class TestConsentDeciderRegistry:
     async def test_no_decider_is_not_interactive(self):
         reg = ConsentDeciderRegistry(_app())
@@ -25,7 +40,7 @@ class TestConsentDeciderRegistry:
 
     async def test_register_then_deregister(self):
         reg = ConsentDeciderRegistry(_app())
-        reg.register("d1", WS, "admin@example.com")
+        reg.register("d1", WS, "admin@example.com", _FakeSock())
         assert reg.has_decider(WS) is True
         reg.deregister("d1")
         assert reg.has_decider(WS) is False
@@ -34,9 +49,9 @@ class TestConsentDeciderRegistry:
 
     async def test_multiple_deciders_same_workspace(self):
         reg = ConsentDeciderRegistry(_app())
-        reg.register("d1", WS, "a@x")
-        reg.register("d2", WS, "b@x")
-        reg.register("d3", WS, "c@x")
+        reg.register("d1", WS, "a@x", _FakeSock())
+        reg.register("d2", WS, "b@x", _FakeSock())
+        reg.register("d3", WS, "c@x", _FakeSock())
         assert reg.has_decider(WS) is True
         # N concurrent deciders; removing one leaves the rest
         reg.deregister("d1")
@@ -48,7 +63,7 @@ class TestConsentDeciderRegistry:
 
     async def test_decider_scoped_to_one_workspace(self):
         reg = ConsentDeciderRegistry(_app())
-        reg.register("d1", WS, "a@x")
+        reg.register("d1", WS, "a@x", _FakeSock())
         assert reg.has_decider(WS) is True
         # not visible to a different workspace
         assert reg.has_decider(WS2) is False
@@ -56,22 +71,22 @@ class TestConsentDeciderRegistry:
 
     async def test_deploy_wide_decider_covers_every_workspace(self):
         reg = ConsentDeciderRegistry(_app())
-        reg.register("admin", None, "admin@example.com")
+        reg.register("admin", None, "admin@example.com", _FakeSock())
         assert reg.has_decider(WS) is True
         assert reg.has_decider(WS2) is True
         assert set(reg.deciders_for(WS)) == {"admin"}
 
     async def test_register_is_idempotent_on_decider_id(self):
         reg = ConsentDeciderRegistry(_app())
-        reg.register("d1", WS, "a@x")
+        reg.register("d1", WS, "a@x", _FakeSock())
         reg.register(
-            "d1", WS, "a@x"
+            "d1", WS, "a@x", _FakeSock()
         )  # reconnect with same id -> refresh, not dup
         assert reg.deciders_for(WS) == ["d1"]
 
     async def test_touch_extends_liveness(self):
         reg = ConsentDeciderRegistry(_app(timeout=0.05))
-        reg.register("d1", WS, "a@x")
+        reg.register("d1", WS, "a@x", _FakeSock())
         # age it past the timeout, then ping to refresh
         reg._deciders["d1"]["seen"] -= 1.0
         assert reg.has_decider(WS) is False
@@ -82,7 +97,7 @@ class TestConsentDeciderRegistry:
 
     async def test_reaper_drops_stale_deciders(self):
         reg = ConsentDeciderRegistry(_app(timeout=0.02))
-        reg.register("d1", WS, "a@x")
+        reg.register("d1", WS, "a@x", _FakeSock())
         reg.start()
         try:
             # mark stale; the reaper ticks at >= timeout
@@ -95,7 +110,7 @@ class TestConsentDeciderRegistry:
 
     async def test_reaper_keeps_fresh_deciders(self):
         reg = ConsentDeciderRegistry(_app(timeout=0.05))
-        reg.register("d1", WS, "a@x")
+        reg.register("d1", WS, "a@x", _FakeSock())
         reg.start()
         try:
             await asyncio.sleep(0.04)
@@ -107,12 +122,55 @@ class TestConsentDeciderRegistry:
 
     async def test_stop_clears_all_and_is_idempotent(self):
         reg = ConsentDeciderRegistry(_app())
-        reg.register("d1", WS, "a@x")
-        reg.register("d2", None, "b@x")
+        reg.register("d1", WS, "a@x", _FakeSock())
+        reg.register("d2", None, "b@x", _FakeSock())
         await reg.stop()
         assert reg._deciders == {}
         assert reg._reaper is None
         await reg.stop()  # idempotent
+
+
+class TestConsentDeciderRegistryBroadcast:
+    async def test_broadcast_sends_to_matching_deciders_only(self):
+        reg = ConsentDeciderRegistry(_app())
+        s1, s2, s3 = _FakeSock(), _FakeSock(), _FakeSock()
+        reg.register("d1", WS, "a@x", s1)  # scoped to WS
+        reg.register("d2", WS, "b@x", s2)  # scoped to WS
+        reg.register("d3", WS2, "c@x", s3)  # different workspace
+        delivered = reg.broadcast(WS, {"type": "egress_request"})
+        assert delivered == 2
+        assert len(s1.sent) == 1
+        assert len(s2.sent) == 1
+        assert s3.sent == []  # different workspace, not delivered
+
+    async def test_broadcast_includes_deploy_wide_deciders(self):
+        reg = ConsentDeciderRegistry(_app())
+        deploy, scoped = _FakeSock(), _FakeSock()
+        reg.register("admin", None, "admin@x", deploy)  # deploy-wide
+        reg.register("d2", WS, "a@x", scoped)  # scoped to WS
+        delivered = reg.broadcast(WS, {"type": "egress_request"})
+        assert delivered == 2
+        assert len(deploy.sent) == 1
+        assert len(scoped.sent) == 1
+
+    async def test_broadcast_prunes_dead_deciders(self):
+        reg = ConsentDeciderRegistry(_app())
+        live = _FakeSock()
+        dead = _FakeSock(raising=True)  # send_json raises -> dead socket
+        reg.register("d1", WS, "a@x", live)
+        reg.register("d2", WS, "b@x", dead)
+        delivered = reg.broadcast(WS, {"type": "egress_resolved"})
+        assert delivered == 1
+        assert reg.has_decider(WS) is True  # d1 still live
+        assert "d2" not in reg._deciders  # pruned on socket error
+
+    async def test_broadcast_skips_stale_deciders(self):
+        reg = ConsentDeciderRegistry(_app(timeout=0.05))
+        s = _FakeSock()
+        reg.register("d1", WS, "a@x", s)
+        reg._deciders["d1"]["seen"] -= 1.0  # age past timeout
+        assert reg.broadcast(WS, {"type": "x"}) == 0
+        assert s.sent == []
 
 
 class _FakeWS:
@@ -134,6 +192,10 @@ class _FakeWS:
     async def send_text(self, data: str) -> None:
         self.sent.append(data)
 
+    async def send_json(self, data) -> None:
+        # SafeWebSocket's sender task writes each enqueued frame here.
+        self.sent.append(json.dumps(data))
+
     async def receive_text(self) -> str:
         item = next(self._incoming)
         if isinstance(item, BaseException):
@@ -141,16 +203,33 @@ class _FakeWS:
         return item
 
 
-def _ws_app(token_result):
-    """App with mocked auth + a real ConsentDeciderRegistry."""
-    from unittest.mock import AsyncMock
-
+def _ws_app(
+    token_result,
+    *,
+    allowed: bool = True,
+    snapshot=None,
+):
+    """App with mocked auth + acl + coordinator, and a real registry."""
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
     app.state.settings = types.SimpleNamespace(consent_decider_timeout=45.0)
     app.state.consent_deciders = ConsentDeciderRegistry(app)
     app.state.auth = types.SimpleNamespace(
         get_user_from_token=AsyncMock(return_value=token_result)
+    )
+    app.state.acl = types.SimpleNamespace(
+        get_principals=AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "group_ids": [],
+                "authenticated": True,
+            }
+        ),
+        check_permission=AsyncMock(return_value=allowed),
+    )
+    app.state.consent_coordinator = types.SimpleNamespace(
+        snapshot=AsyncMock(return_value=snapshot or []),
+        resolve=AsyncMock(return_value=None),
     )
     return app
 
@@ -161,7 +240,7 @@ class TestConsentDeciderWS:
 
         from klangk.wshandler.decider import handle_consent_decider
 
-        app = _ws_app({"email": "admin@example.com"})
+        app = _ws_app({"id": "u1", "email": "admin@example.com"})
         ws = _FakeWS(
             {"token": "tok", "workspace": WS},
             [WebSocketDisconnect()],  # connect, then immediately disconnect
@@ -175,7 +254,7 @@ class TestConsentDeciderWS:
     async def test_missing_token_is_rejected(self):
         from klangk.wshandler.decider import handle_consent_decider
 
-        app = _ws_app({"email": "a@x"})
+        app = _ws_app({"id": "u1", "email": "a@x"})
         ws = _FakeWS({"workspace": WS}, [])
         await handle_consent_decider(ws, app)
         assert ws.closed == (4001, "Missing token")
@@ -199,14 +278,31 @@ class TestConsentDeciderWS:
         await handle_consent_decider(ws, app)
         assert ws.closed == (4002, "Token expired")
 
-    async def test_ping_touches_and_pongs(self):
-        import json
+    async def test_non_member_workspace_scoped_is_forbidden(self):
+        from klangk.wshandler.decider import handle_consent_decider
 
+        app = _ws_app({"id": "u1", "email": "a@x"}, allowed=False)
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        await handle_consent_decider(ws, app)
+        assert ws.closed == (4003, "Forbidden")
+        assert ws.accepted is False
+        assert app.state.consent_deciders.has_decider(WS) is False
+
+    async def test_non_admin_deploy_wide_is_forbidden(self):
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"}, allowed=False)
+        ws = _FakeWS({"token": "tok"}, [])  # no workspace -> deploy-wide
+        await handle_consent_decider(ws, app)
+        assert ws.closed == (4003, "Forbidden")
+        assert ws.accepted is False
+
+    async def test_ping_touches_and_pongs(self):
         from fastapi import WebSocketDisconnect
 
         from klangk.wshandler.decider import handle_consent_decider
 
-        app = _ws_app({"email": "a@x"})
+        app = _ws_app({"id": "u1", "email": "a@x"})
         ws = _FakeWS(
             {"token": "tok", "workspace": WS},
             ['{"type":"ping"}', WebSocketDisconnect()],
@@ -214,12 +310,123 @@ class TestConsentDeciderWS:
         await handle_consent_decider(ws, app)
         assert any(json.loads(m).get("type") == "pong" for m in ws.sent)
 
+    async def test_snapshot_replayed_on_connect(self):
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        frame = {
+            "type": "egress_request",
+            "workspace_id": WS,
+            "request": {"id": "r1"},
+        }
+        app = _ws_app({"id": "u1", "email": "a@x"}, snapshot=[frame])
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS}, [WebSocketDisconnect()]
+        )
+        await handle_consent_decider(ws, app)
+        assert any(
+            json.loads(m).get("type") == "egress_request" for m in ws.sent
+        )
+        app.state.consent_coordinator.snapshot.assert_awaited_once_with(WS)
+
+    async def test_verdict_resolves_the_hold(self):
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "decider@x"})
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            [
+                json.dumps(
+                    {
+                        "type": "verdict",
+                        "request_id": "rid",
+                        "decision": "allowed",
+                        "scope": "once",
+                    }
+                ),
+                WebSocketDisconnect(),
+            ],
+        )
+        await handle_consent_decider(ws, app)
+        app.state.consent_coordinator.resolve.assert_awaited_once_with(
+            "rid", "allowed", "once", "decider@x", decider_workspace=WS
+        )
+
+    async def test_verdict_invalid_decision_sends_error(self):
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            [
+                json.dumps(
+                    {
+                        "type": "verdict",
+                        "request_id": "rid",
+                        "decision": "maybe",
+                    }
+                ),
+                WebSocketDisconnect(),
+            ],
+        )
+        await handle_consent_decider(ws, app)
+        app.state.consent_coordinator.resolve.assert_not_awaited()
+        assert any(json.loads(m).get("type") == "error" for m in ws.sent)
+
+    async def test_verdict_invalid_scope_sends_error(self):
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            [
+                json.dumps(
+                    {
+                        "type": "verdict",
+                        "request_id": "rid",
+                        "decision": "denied",
+                        "scope": "bogus",
+                    }
+                ),
+                WebSocketDisconnect(),
+            ],
+        )
+        await handle_consent_decider(ws, app)
+        app.state.consent_coordinator.resolve.assert_not_awaited()
+        assert any(json.loads(m).get("type") == "error" for m in ws.sent)
+
+    async def test_verdict_missing_request_id_sends_error(self):
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            [
+                json.dumps(
+                    {"type": "verdict", "decision": "denied"}  # no request_id
+                ),
+                WebSocketDisconnect(),
+            ],
+        )
+        await handle_consent_decider(ws, app)
+        app.state.consent_coordinator.resolve.assert_not_awaited()
+        assert any(json.loads(m).get("type") == "error" for m in ws.sent)
+
     async def test_deploy_wide_when_no_workspace_param(self):
         from fastapi import WebSocketDisconnect
 
         from klangk.wshandler.decider import handle_consent_decider
 
-        app = _ws_app({"email": "admin@example.com"})
+        app = _ws_app({"id": "u1", "email": "admin@example.com"})
         ws = _FakeWS({"token": "tok"}, [WebSocketDisconnect()])
         # While connected it would cover every workspace; after disconnect,
         # nothing remains.
@@ -227,14 +434,66 @@ class TestConsentDeciderWS:
         assert app.state.consent_deciders.has_decider(WS) is False
         assert app.state.consent_deciders.has_decider(WS2) is False
 
-    async def test_non_ping_and_invalid_json_are_ignored(self):
-        import json
-
+    async def test_verdict_resolve_error_does_not_tear_down_connection(self):
+        # a verdict whose resolve() raises is logged + swallowed -- the
+        # connection survives to handle later messages (no whole-connection
+        # teardown for one bad verdict).
         from fastapi import WebSocketDisconnect
 
         from klangk.wshandler.decider import handle_consent_decider
 
-        app = _ws_app({"email": "a@x"})
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        app.state.consent_coordinator.resolve = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            [
+                json.dumps(
+                    {
+                        "type": "verdict",
+                        "request_id": "rid",
+                        "decision": "allowed",
+                    }
+                ),
+                '{"type":"ping"}',  # must still be handled after the error
+                WebSocketDisconnect(),
+            ],
+        )
+        await handle_consent_decider(ws, app)
+        assert any(
+            json.loads(m).get("type") == "pong" for m in ws.sent
+        )  # connection survived
+        app.state.consent_coordinator.resolve.assert_awaited_once()
+
+    async def test_slow_client_is_dropped(self):
+        # a full outbound queue (SlowClientError) drops the connection, like
+        # the main /ws handler.
+        from unittest.mock import patch
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler import safe_websocket as sw_mod
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            ['{"type":"ping"}', WebSocketDisconnect()],
+        )
+        with patch.object(
+            sw_mod.SafeWebSocket,
+            "send_json",
+            side_effect=sw_mod.SlowClientError("full"),
+        ):
+            await handle_consent_decider(ws, app)
+        assert app.state.consent_deciders.has_decider(WS) is False  # dropped
+
+    async def test_non_ping_and_invalid_json_are_ignored(self):
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
         ws = _FakeWS(
             {"token": "tok", "workspace": WS},
             [
@@ -242,7 +501,7 @@ class TestConsentDeciderWS:
                 '"hello"',  # valid JSON but not a dict -> continue
                 "123",  # valid JSON int, not a dict -> continue
                 "[1, 2]",  # valid JSON list, not a dict -> continue
-                '{"type":"hello"}',  # valid JSON, not a ping -> ignored
+                '{"type":"hello"}',  # valid JSON, unknown type -> ignored
                 '{"type":"ping"}',  # ping -> pong
                 WebSocketDisconnect(),
             ],
@@ -258,7 +517,7 @@ class TestConsentDeciderWS:
         # handler treats it as a disconnect and still deregisters.
         from klangk.wshandler.decider import handle_consent_decider
 
-        app = _ws_app({"email": "a@x"})
+        app = _ws_app({"id": "u1", "email": "a@x"})
         ws = _FakeWS(
             {"token": "tok", "workspace": WS}, [RuntimeError("disconnected")]
         )

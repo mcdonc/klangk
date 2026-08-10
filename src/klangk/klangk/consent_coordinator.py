@@ -35,6 +35,7 @@ import asyncio
 import logging
 
 from .consent import workspace_is_interactive
+from .model.egress_consent import DECISION_PENDING
 
 logger = logging.getLogger(__name__)
 
@@ -156,29 +157,57 @@ class ConsentCoordinator:
         decision: str,
         scope: str | None,
         decided_by: str,
+        *,
+        decider_workspace: str | None = None,
     ) -> dict | None:
         """Apply a decider verdict to a held request (the #2244 hook).
 
         Records the decision in SQLite (allowed/denied), cancels the hold's
-        timeout, and resolves its Future. Returns the verdict dict relayed to
-        the sidecar, or ``None`` if the request is not currently held (already
-        resolved, timed out, or never held).
+        timeout, resolves its Future, and broadcasts an ``egress_resolved``
+        frame so co-deciders drop it (first-decision-wins across N deciders).
+        Returns the verdict dict relayed to the sidecar, or ``None`` if the
+        request is not currently held (already resolved, timed out, never
+        held) or -- defense-in-depth -- if a workspace-scoped decider tries to
+        decide a request outside its workspace (``decider_workspace``).
         """
-        hold = self._holds.pop(request_id, None)
+        hold = self._holds.get(request_id)
         if hold is None:
             return None
+        if (
+            decider_workspace is not None
+            and hold["workspace_id"] != decider_workspace
+        ):
+            # Restore nothing (we only peeked); the hold stays for a decider
+            # actually scoped to it.
+            return None
+        hold = self._holds.pop(request_id)
         hold["task"].cancel()
-        row = await self.app.state.model.egress_consent.decide(
-            request_id, decision, scope, decided_by
-        )
-        if row is None:
-            verdict = {"decision": VERDICT_DENY, "reason": "gone"}
-        elif decision == "allowed":
-            verdict = {"decision": VERDICT_ALLOW, "reason": "decided"}
+        try:
+            row = await self.app.state.model.egress_consent.decide(
+                request_id, decision, scope, decided_by
+            )
+        except Exception:
+            # decide() failed (DB error). The hold's own timeout is already
+            # cancelled, so we MUST resolve the Future ourselves -- otherwise
+            # the sidecar relay awaits it forever ("no hold pending forever").
+            # Fail-close to deny + broadcast so co-deciders drop it; the
+            # pending row is left for GC.
+            logger.exception("consent: resolve failed; fail-closing to deny")
+            verdict = {"decision": VERDICT_DENY, "reason": "error"}
+            resolved = "expired"
         else:
-            verdict = {"decision": VERDICT_DENY, "reason": "decided"}
+            if row is None:
+                verdict = {"decision": VERDICT_DENY, "reason": "gone"}
+                resolved = "expired"
+            elif decision == "allowed":
+                verdict = {"decision": VERDICT_ALLOW, "reason": "decided"}
+                resolved = "allowed"
+            else:
+                verdict = {"decision": VERDICT_DENY, "reason": "decided"}
+                resolved = "denied"
         if not hold["future"].done():
             hold["future"].set_result(verdict)
+        self._broadcast_resolved(request_id, hold["workspace_id"], resolved)
         return verdict
 
     async def _timeout(self, request_id: str) -> None:
@@ -221,20 +250,71 @@ class ConsentCoordinator:
             hold["future"].set_result(
                 {"decision": VERDICT_DENY, "reason": reason}
             )
+        self._broadcast_resolved(request_id, hold["workspace_id"], "expired")
 
     def _fanout(self, request: dict) -> None:
         """Broadcast the pending request to the workspace's deciders (#2244).
 
-        Stub: until #2244 wires the decider WebSocket fanout, a hold simply
-        waits for its timeout (or a ``resolve`` call). The hold is correct
-        end-to-end without the fanout -- it fail-closes on timeout.
+        Pushes an ``egress_request`` frame to every live decider for the
+        workspace (and deploy-wide). Until a decider responds with a verdict,
+        the hold simply waits for its timeout (or a ``resolve`` call) -- the
+        hold is correct end-to-end regardless: it fail-closes on timeout.
         """
+        workspace_id = request["workspace_id"]
+        self.app.state.consent_deciders.broadcast(
+            workspace_id, self._request_frame(request)
+        )
         logger.info(
-            "consent hold created: ws=%s %s:%s id=%s (fanout via #2244)",
-            str(request.get("workspace_id"))[:8],
+            "consent hold created: ws=%s %s:%s id=%s",
+            str(workspace_id)[:8],
             request.get("dest_host"),
             request.get("dest_port"),
             str(request.get("id"))[:8],
+        )
+
+    async def snapshot(self, workspace_id: str | None) -> list[dict]:
+        """Pending-request frames for a newly-connected decider (replay).
+
+        A decider that connects mid-flight sees the workspace's current holds
+        so it can act on in-flight requests, not just ones created after it
+        joined. Deploy-wide deciders (``workspace_id`` None) get no snapshot
+        for now -- a cross-workspace pending list is a follow-up. Caveat: a
+        deploy-only decider connecting after holds exist will not see them, so
+        those holds time out fail-closed; they still receive NEW holds live via
+        :meth:`_fanout`.
+        """
+        if workspace_id is None:
+            return []
+        rows = await self.app.state.model.egress_consent.list_requests(
+            workspace_id, decision=DECISION_PENDING
+        )
+        return [self._request_frame(row) for row in rows]
+
+    @staticmethod
+    def _request_frame(request: dict) -> dict:
+        """Build an ``egress_request`` frame from a consent-request row."""
+        return {
+            "type": "egress_request",
+            "workspace_id": request["workspace_id"],
+            "request": request,
+        }
+
+    def _broadcast_resolved(
+        self, request_id: str, workspace_id: str, decision: str
+    ) -> None:
+        """Tell the workspace's deciders a request is no longer pending.
+
+        Sent on verdict (``resolve``) and timeout/shutdown (``_fail_close``)
+        so co-deciders drop it from their queue (first-decision-wins).
+        """
+        self.app.state.consent_deciders.broadcast(
+            workspace_id,
+            {
+                "type": "egress_resolved",
+                "workspace_id": workspace_id,
+                "request_id": request_id,
+                "decision": decision,
+            },
         )
 
     async def _is_interactive(self, workspace_id: str) -> bool:
