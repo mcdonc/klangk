@@ -35,7 +35,7 @@ import asyncio
 import logging
 
 from .consent import workspace_is_interactive
-from .model.egress_consent import DECISION_PENDING
+from .model.egress_consent import DECISION_PENDING, DURATION_DEFAULT
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,7 @@ class ConsentCoordinator:
         decision: str,
         scope: str | None,
         decided_by: str,
+        duration: str = DURATION_DEFAULT,
         *,
         decider_workspace: str | None = None,
     ) -> dict | None:
@@ -184,7 +185,7 @@ class ConsentCoordinator:
         hold["task"].cancel()
         try:
             row = await self.app.state.model.egress_consent.decide(
-                request_id, decision, scope, decided_by
+                request_id, decision, scope, decided_by, duration
             )
         except Exception:
             # decide() failed (DB error). The hold's own timeout is already
@@ -200,10 +201,18 @@ class ConsentCoordinator:
                 verdict = {"decision": VERDICT_DENY, "reason": "gone"}
                 resolved = "expired"
             elif decision == "allowed":
-                verdict = {"decision": VERDICT_ALLOW, "reason": "decided"}
+                verdict = {
+                    "decision": VERDICT_ALLOW,
+                    "reason": "decided",
+                    "duration": duration,
+                }
                 resolved = "allowed"
             else:
-                verdict = {"decision": VERDICT_DENY, "reason": "decided"}
+                verdict = {
+                    "decision": VERDICT_DENY,
+                    "reason": "decided",
+                    "duration": duration,
+                }
                 resolved = "denied"
         if not hold["future"].done():
             hold["future"].set_result(verdict)

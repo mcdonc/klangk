@@ -226,11 +226,21 @@ class TestConsentCoordinatorResolve:
         app = _app(request=_request(), decide_row=row)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
-        verdict = await coord.resolve("rid-1", "allowed", "workspace", "a@x")
-        assert verdict == {"decision": "allow", "reason": "decided"}
-        assert fut.result() == {"decision": "allow", "reason": "decided"}
+        verdict = await coord.resolve(
+            "rid-1", "allowed", "workspace", "a@x", duration="1d"
+        )
+        assert verdict == {
+            "decision": "allow",
+            "reason": "decided",
+            "duration": "1d",
+        }
+        assert fut.result() == {
+            "decision": "allow",
+            "reason": "decided",
+            "duration": "1d",
+        }
         app.state.model.egress_consent.decide.assert_awaited_once_with(
-            "rid-1", "allowed", "workspace", "a@x"
+            "rid-1", "allowed", "workspace", "a@x", "1d"
         )
         assert coord._holds == {}
 
@@ -240,8 +250,14 @@ class TestConsentCoordinatorResolve:
         app = _app(request=_request(), decide_row=row)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
-        verdict = await coord.resolve("rid-1", "denied", "once", "a@x")
-        assert verdict == {"decision": "deny", "reason": "decided"}
+        verdict = await coord.resolve(
+            "rid-1", "denied", "once", "a@x", duration="15m"
+        )
+        assert verdict == {
+            "decision": "deny",
+            "reason": "decided",
+            "duration": "15m",
+        }
         assert fut.result()["decision"] == "deny"
 
     async def test_resolve_unknown_returns_none(self):
@@ -521,7 +537,12 @@ class TestEgressSidecarWS:
         )  # let the relay call hold + flush the verdict
         coord.hold.assert_awaited_once_with(FULL_WS, "1.2.3.4", 443)
         assert [json.loads(m) for m in ws.sent] == [
-            {"type": "verdict", "id": "loc1", "decision": "deny"}
+            {
+                "type": "verdict",
+                "id": "loc1",
+                "decision": "deny",
+                "duration": "once",
+            }
         ]
         await ws.feed(WebSocketDisconnect())
         await handler
@@ -541,10 +562,17 @@ class TestEgressSidecarWS:
             )
         )
         await asyncio.sleep(0.05)  # relay is now awaiting the verdict Future
-        fut.set_result({"decision": "allow", "reason": "decided"})
+        fut.set_result(
+            {"decision": "allow", "reason": "decided", "duration": "1d"}
+        )
         await asyncio.sleep(0.05)  # relay sends the verdict
         assert [json.loads(m) for m in ws.sent] == [
-            {"type": "verdict", "id": "loc1", "decision": "allow"}
+            {
+                "type": "verdict",
+                "id": "loc1",
+                "decision": "allow",
+                "duration": "1d",
+            }
         ]
         await ws.feed(WebSocketDisconnect())
         await handler

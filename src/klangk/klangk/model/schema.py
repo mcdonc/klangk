@@ -351,6 +351,7 @@ async def init_db(db) -> None:
                     CHECK (decision IN ('pending', 'allowed', 'denied', 'expired')),
                 scope TEXT
                     CHECK (scope IS NULL OR scope IN ('once', 'workspace', 'deploy')),
+                duration TEXT,
                 requested_at REAL NOT NULL,
                 decided_at REAL,
                 decided_by TEXT REFERENCES users(id) ON DELETE SET NULL
@@ -378,6 +379,14 @@ async def init_db(db) -> None:
             ON egress_consent(workspace_id, dest_host, COALESCE(dest_port, -1))
             WHERE decision = 'denied' AND decided_by IS NULL
         """)
+        # Migration: add duration column (#2328). NULL until a decider records
+        # a decision; the sidecar honors it (allow-learn / deny-REJECT for T).
+        cursor = await db.execute("PRAGMA table_info(egress_consent)")
+        ec_cols = {row[1] for row in await cursor.fetchall()}
+        if "duration" not in ec_cols:
+            await db.execute(
+                "ALTER TABLE egress_consent ADD COLUMN duration TEXT"
+            )
         # Migration: drop legacy role and workspace_access tables
         for table in ("user_roles", "roles", "workspace_access"):
             await db.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608

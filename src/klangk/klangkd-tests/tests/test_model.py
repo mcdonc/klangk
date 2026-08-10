@@ -259,6 +259,42 @@ class TestMigration:
             assert mounts is None
             assert env is None
 
+    async def test_migrate_egress_consent_adds_duration(
+        self, temp_data_dir, app_state
+    ):
+        """init_db adds the duration column to egress_consent tables that
+        predate #2328 (NULL until a decider records a decision)."""
+        db_path = get_test_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db = await aiosqlite.connect(str(db_path))
+        try:
+            # Old egress_consent WITHOUT the duration column.
+            await db.execute("""
+                CREATE TABLE egress_consent (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    dest_host TEXT NOT NULL,
+                    dest_port INTEGER,
+                    pid INTEGER,
+                    process_name TEXT,
+                    decision TEXT NOT NULL DEFAULT 'pending',
+                    scope TEXT,
+                    requested_at REAL NOT NULL,
+                    decided_at REAL,
+                    decided_by TEXT
+                )
+            """)
+            await db.commit()
+        finally:
+            await db.close()
+
+        await app_state.state.model.init_db()
+
+        async with app_state.state.db.transaction() as conn:
+            cursor = await conn.execute("PRAGMA table_info(egress_consent)")
+            cols = {row[1] for row in await cursor.fetchall()}
+            assert "duration" in cols
+
     async def test_migrate_workspaces_adds_settings(
         self, temp_data_dir, app_state
     ):

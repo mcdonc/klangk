@@ -27,6 +27,33 @@ SCOPE_WORKSPACE = "workspace"  # persisted to workspace's allowed_domains
 SCOPE_DEPLOY = "deploy"  # promoted to deploy-wide default
 SCOPES = frozenset({SCOPE_ONCE, SCOPE_WORKSPACE, SCOPE_DEPLOY})
 
+# Duration values for an allow/deny decision (#2328): how long the sidecar
+# honors it (allow learns the IP for T; deny REJECTs for T). `once` = this
+# connection only; `restart` = the workspace container's lifetime (the sidecar's
+# in-memory rules); `forever` = the workspace's lifetime -- persists across
+# container/sidecar restarts (klangkd stores + re-applies it on reconnect).
+DURATION_ONCE = "once"
+DURATION_5M = "5m"
+DURATION_15M = "15m"
+DURATION_1H = "1h"
+DURATION_1D = "1d"
+DURATION_1W = "1w"
+DURATION_RESTART = "restart"
+DURATION_FOREVER = "forever"
+DURATIONS = frozenset(
+    {
+        DURATION_ONCE,
+        DURATION_5M,
+        DURATION_15M,
+        DURATION_1H,
+        DURATION_1D,
+        DURATION_1W,
+        DURATION_RESTART,
+        DURATION_FOREVER,
+    }
+)
+DURATION_DEFAULT = DURATION_RESTART
+
 
 class EgressConsentModel:
     """CRUD for the ``egress_consent`` table."""
@@ -226,12 +253,13 @@ class EgressConsentModel:
         decision: str,
         scope: str | None,
         decided_by: str,
+        duration: str = DURATION_DEFAULT,
     ) -> dict | None:
         """Record a decision on a pending request.
 
         Returns the updated row dict, or ``None`` if the request doesn't
         exist or is no longer pending. Raises ``ValueError`` for invalid
-        decision/scope values.
+        decision/scope/duration values.
         """
         if decision not in (DECISION_ALLOWED, DECISION_DENIED):
             raise ValueError(
@@ -240,15 +268,19 @@ class EgressConsentModel:
             )
         if scope is not None and scope not in SCOPES:
             raise ValueError(f"Invalid scope: {scope!r}")
+        if duration not in DURATIONS:
+            raise ValueError(f"Invalid duration: {duration!r}")
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "UPDATE egress_consent"
-                " SET decision = ?, scope = ?, decided_at = ?, decided_by = ?"
+                " SET decision = ?, scope = ?, duration = ?,"
+                " decided_at = ?, decided_by = ?"
                 " WHERE id = ? AND decision = ?",
                 (
                     decision,
                     scope,
+                    duration,
                     decided_at,
                     decided_by,
                     request_id,

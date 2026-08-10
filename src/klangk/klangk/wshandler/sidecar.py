@@ -125,6 +125,7 @@ async def _relay_verdict(
                 "type": "verdict",
                 "id": local_id,
                 "decision": verdict["decision"],
+                "duration": verdict.get("duration", "once"),
             }
         )
     except (asyncio.CancelledError, SlowClientError, *WS_ERRORS):

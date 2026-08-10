@@ -46,6 +46,27 @@ logger = logging.getLogger(__name__)
 DECISION_ALLOWED = "allowed"
 DECISION_DENIED = "denied"
 SCOPE_ONCE = "once"
+# Duration tokens mirror the server (model/egress_consent.py); duplicated here
+# per CLI isolation. Ordered for the TUI selector; default is `restart` (#2328).
+DURATION_ONCE = "once"
+DURATION_5M = "5m"
+DURATION_15M = "15m"
+DURATION_1H = "1h"
+DURATION_1D = "1d"
+DURATION_1W = "1w"
+DURATION_RESTART = "restart"
+DURATION_FOREVER = "forever"
+DURATIONS = (
+    DURATION_ONCE,
+    DURATION_5M,
+    DURATION_15M,
+    DURATION_1H,
+    DURATION_1D,
+    DURATION_1W,
+    DURATION_RESTART,
+    DURATION_FOREVER,
+)
+DURATION_DEFAULT = DURATION_RESTART
 
 # Pings must beat the server's consent_decider_timeout (45s) or the decider is
 # reaped and the workspace reverts to static. 15s leaves margin. NOTE: if an
@@ -86,7 +107,7 @@ class ConsentRequest:
 
 
 def make_verdict(
-    request_id: str, decision: str, scope: str = SCOPE_ONCE
+    request_id: str, decision: str, duration: str = DURATION_DEFAULT
 ) -> str:
     """Build an outbound verdict frame (JSON string) for a held request."""
     return json.dumps(
@@ -94,7 +115,8 @@ def make_verdict(
             "type": "verdict",
             "request_id": request_id,
             "decision": decision,
-            "scope": scope,
+            "scope": SCOPE_ONCE,
+            "duration": duration,
         }
     )
 
@@ -227,6 +249,7 @@ class ConsentDeciderApp(App):
     #empty { padding: 1 2; color: $text-muted; }
     .req-host { color: $text; }
     #requests Button { height: 1; border: none; padding: 0 1; }
+    #requests .dur-sel { background: $accent; color: $background; }
     """
 
     BINDINGS = [
@@ -450,17 +473,28 @@ class ConsentDeciderApp(App):
         return escape(f"{host}{proc}  ({secs}s)")
 
     def _render_item(self, req: ConsentRequest) -> ListItem:
-        # Host+time is a direct child of the ListItem (renders horizontally);
-        # the per-row Allow/Deny buttons sit in a Horizontal below it so they
-        # never fight the host for width. Each button id encodes the request id.
+        # Host line; a row of duration toggle-buttons (default `restart`, click to
+        # select -- selecting does NOT submit); Allow/Deny are the only submit
+        # actions, decided with the row's selected duration (#2328).
+        dur_btns = []
+        for d in DURATIONS:
+            b = Button(
+                d,
+                id=f"dur-{d}-{req.id}",
+                classes=("dur-sel" if d == DURATION_DEFAULT else ""),
+            )
+            b.duration = d  # type: ignore[attr-defined]
+            dur_btns.append(b)
         item = ListItem(
             Static(self._host_line(req), classes="req-host"),
+            Horizontal(*dur_btns, classes="req-durations"),
             Horizontal(
                 Button("Allow", id=f"allow-{req.id}", variant="success"),
                 Button("Deny", id=f"deny-{req.id}", variant="error"),
             ),
         )
         item.request_id = req.id  # type: ignore[attr-defined]
+        item.selected_duration = DURATION_DEFAULT  # type: ignore[attr-defined]
         return item
 
     def _update_item(self, item: ListItem, req: ConsentRequest) -> None:
@@ -496,14 +530,39 @@ class ConsentDeciderApp(App):
     # -- actions -----------------------------------------------------------
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        # Each row carries its own Allow/Deny button whose id encodes the
-        # request id (``allow-<rid>`` / ``deny-<rid>``), so a click decides
-        # THAT request unambiguously -- not a separate "focused" one.
         bid = event.button.id or ""
-        if bid.startswith("allow-"):
-            self._decide_id(bid.removeprefix("allow-"), DECISION_ALLOWED)
+        if bid.startswith("dur-"):
+            # Selecting a duration does NOT submit -- it only sets the row's
+            # pending choice (Allow/Deny submit with it).
+            self._select_duration(event.button)
+        elif bid.startswith("allow-"):
+            rid = bid.removeprefix("allow-")
+            self._decide_id(rid, DECISION_ALLOWED, self._row_duration(rid))
         elif bid.startswith("deny-"):
-            self._decide_id(bid.removeprefix("deny-"), DECISION_DENIED)
+            rid = bid.removeprefix("deny-")
+            self._decide_id(rid, DECISION_DENIED, self._row_duration(rid))
+
+    def _select_duration(self, button: Button) -> None:
+        """Set a row's selected duration + highlight it (no submit)."""
+        d = getattr(button, "duration", None)
+        if d is None:
+            return
+        item = button.parent
+        while item is not None and not isinstance(item, ListItem):
+            item = item.parent
+        if item is None:
+            return
+        item.selected_duration = d  # type: ignore[attr-defined]
+        for b in item.query(".dur-sel"):
+            b.remove_class("dur-sel")
+        button.add_class("dur-sel")
+
+    def _row_duration(self, rid: str) -> str:
+        """The selected duration for a request's row (default if not found)."""
+        for child in self.query_one("#requests", ListView).children:
+            if getattr(child, "request_id", None) == rid:
+                return getattr(child, "selected_duration", DURATION_DEFAULT)
+        return DURATION_DEFAULT
 
     def action_allow(self) -> None:
         # `a` key -> the highlighted row (keyboard path).
@@ -516,9 +575,9 @@ class ConsentDeciderApp(App):
         rid = self._focused_request_id()
         if rid is None:
             return
-        self._decide_id(rid, decision)
+        self._decide_id(rid, decision, self._row_duration(rid))
 
-    def _decide_id(self, rid: str, decision: str) -> None:
+    def _decide_id(self, rid: str, decision: str, duration: str) -> None:
         ws = self._ws
         if ws is None:
             self._flash("disconnected — reconnecting")
@@ -528,10 +587,12 @@ class ConsentDeciderApp(App):
         # would otherwise silently lose the verdict). Do not optimistically
         # drop the row: a duplicate/no-op verdict must not hide a still-held
         # request (the server's egress_resolved frame removes it).
-        asyncio.create_task(self._send_verdict(ws, rid, decision))
+        asyncio.create_task(self._send_verdict(ws, rid, decision, duration))
 
-    async def _send_verdict(self, ws, rid: str, decision: str) -> None:
+    async def _send_verdict(
+        self, ws, rid: str, decision: str, duration: str
+    ) -> None:
         try:
-            await ws.send(make_verdict(rid, decision))
+            await ws.send(make_verdict(rid, decision, duration))
         except Exception:
             self._flash("verdict send failed — reconnecting")

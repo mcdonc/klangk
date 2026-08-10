@@ -137,6 +137,32 @@ VERDICT_CACHE_TTL = float(
 # Only needs to catch the SYN retransmit (~1 RTO); the verdict cache separately
 # keeps the deny from re-prompting for VERDICT_CACHE_TTL.
 CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10"))
+# Duration token -> seconds the sidecar honors a verdict (#2328): an allow
+# learns the IP for T; a deny REJECTs for T. `once` = this connection only (no
+# learn; a short deny). `restart` = the container's lifetime (the sidecar's
+# in-memory rules); `forever` = the workspace's lifetime -- at the sidecar level
+# both map to a long in-memory TTL, but `forever`'s real distinction is that
+# klangkd persists it across sidecar restarts (re-applied on reconnect). That
+# cross-restart persistence is #2328's `forever` sub-piece (not yet wired).
+_DURATION_SECONDS = {
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "1d": 86400,
+    "1w": 604800,
+}
+_DURATION_FOREVER = 365 * 86400  # ~a year; practically until restart
+
+
+def _duration_ttl(duration: str) -> float | None:
+    """Seconds for a timed/restart/forever duration, or None for ``once``."""
+    if duration in _DURATION_SECONDS:
+        return _DURATION_SECONDS[duration]
+    if duration in ("restart", "forever"):
+        return _DURATION_FOREVER
+    return None  # "once" or unknown -> caller handles (no learn / short reject)
+
+
 # The workspace JWT (rotated) is bind-mounted here read-only; read fresh on each
 # (re)connect so rotation is picked up (#2242, #2311). Not baked in env because
 # the workspace token expires and rotates.
@@ -719,17 +745,21 @@ class SidecarConsentClient:
         fut = self._pending.pop(vid, None)
         if fut is not None and not fut.done():
             # Any non-"allow" verdict (deny, expired, malformed) -> deny.
-            fut.set_result(decision if decision == "allow" else "deny")
+            token = decision if decision == "allow" else "deny"
+            duration = msg.get("duration") or "once"
+            fut.set_result((token, duration))
 
-    async def request(self, dst: str, dport: int | None) -> str:
-        """Send an egress frame + await the verdict. Fail-close -> ``"deny"``.
+    async def request(self, dst: str, dport: int | None) -> tuple[str, str]:
+        """Send an egress frame + await the verdict. Fail-close -> ``("deny",
+        "once")``.
 
-        Returns ``"allow"`` or ``"deny"``. A down connection returns ``"deny"``
-        at once (no frame sent); a timed-out or disconnected-in-flight request
-        resolves to ``"deny"`` so the caller fail-closes.
+        Returns ``(decision, duration)`` where decision is ``"allow"`` or
+        ``"deny"`` and duration is the verdict's duration token (#2328). A
+        down connection returns the fail-close pair at once (no frame sent); a
+        timed-out or disconnected-in-flight request resolves the same way.
         """
         if not self._connected.is_set() or self._ws is None:
-            return "deny"
+            return "deny", "once"
         lid = uuid.uuid4().hex
         fut = asyncio.get_running_loop().create_future()
         self._pending[lid] = fut
@@ -738,12 +768,12 @@ class SidecarConsentClient:
             await self._ws.send(frame)
         except Exception:
             self._pending.pop(lid, None)
-            return "deny"
+            return "deny", "once"
         try:
             return await asyncio.wait_for(fut, self._hold_timeout)
         except asyncio.TimeoutError:
             self._pending.pop(lid, None)
-            return "deny"
+            return "deny", "once"
 
     def _fail_close_pending(self) -> None:
         # A lost connection is a fresh session against a (possibly restarted)
@@ -754,7 +784,7 @@ class SidecarConsentClient:
         for lid in list(self._pending):
             fut = self._pending.pop(lid, None)
             if fut is not None and not fut.done():
-                fut.set_result("deny")
+                fut.set_result(("deny", "once"))
 
     def _read_token(self) -> str:
         try:
@@ -950,9 +980,9 @@ async def _decide_and_verdict(
     this flow reuse it.
     """
     try:
-        decision = await client.request(host, port)
+        decision, duration = await client.request(host, port)
     except Exception:
-        decision = "deny"  # timeout / loop dead -> fail-close
+        decision, duration = "deny", "once"  # timeout / loop dead -> fail-close
     now = time.time()
     # Bound memory under a denied-flow flood (allowed flows get learned +
     # stop hitting NFQUEUE; only denied flows accumulate in the cache).
@@ -964,19 +994,25 @@ async def _decide_and_verdict(
     # off the loop. The packet is retained, so verdicting after the await is
     # safe; the rule is installed before the SYN is released.
     loop = asyncio.get_running_loop()
+    ttl = _duration_ttl(duration)
     if decision == "allow":
-        try:
-            await loop.run_in_executor(None, allow, dst, None, MIN_TTL)
-        except Exception:
-            pass
+        # `once` (ttl None) -> no learn, just this connection (reconnect
+        # re-prompts); a timed duration -> learn all-ports for it.
+        if ttl is not None:
+            try:
+                await loop.run_in_executor(None, allow, dst, None, ttl)
+            except Exception:
+                pass
         pkt.accept()
     else:
         # Dropping a SYN doesn't fail connect() -- the kernel retransmits for
         # tcp_syn_retries (~127s). Install a temporary REJECT (tcp-reset) so the
-        # next retransmit gets a RST -> ECONNREFUSED (eager deny).
+        # next retransmit gets a RST -> ECONNREFUSED (eager deny). `once` ->
+        # the short fail-close window; a timed duration -> that long.
+        reject_ttl = ttl if ttl is not None else CONSENT_REJECT_TTL
         if port:
             try:
-                await loop.run_in_executor(None, reject, dst, port, CONSENT_REJECT_TTL)
+                await loop.run_in_executor(None, reject, dst, port, reject_ttl)
             except Exception:
                 pass
         pkt.drop()
