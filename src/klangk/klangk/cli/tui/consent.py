@@ -209,7 +209,7 @@ class ConsentDeciderApp(App):
     #status { padding: 0 1; background: $panel; color: $text-muted; }
     #requests { height: 1fr; }
     #empty { padding: 1 2; color: $text-muted; }
-    .req-host { color: $text; }
+    .req-host { color: $text; width: 1fr; }
     .req-proc { color: $text-muted; }
     .req-time { color: $warning; }
     """
@@ -253,9 +253,6 @@ class ConsentDeciderApp(App):
         with Vertical():
             yield ListView(id="requests")
             yield Static("No held requests — connected, waiting.", id="empty")
-        with Horizontal(id="actions"):
-            yield Button("Allow", id="allow", variant="success")
-            yield Button("Deny", id="deny", variant="error")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -405,9 +402,15 @@ class ConsentDeciderApp(App):
             host = f"{host}:{req.dest_port}"
         proc = f"  ({req.process_name})" if req.process_name else ""
         secs = int(self.controller.remaining(req))
+        # Each row carries its own Allow/Deny buttons (id encodes the request
+        # id) so a click decides THAT request, unambiguous with a queue.
         item = ListItem(
-            Static(f"{host}{proc}", classes="req-host"),
-            Static(f"auto-deny in {secs}s", classes="req-time"),
+            Horizontal(
+                Static(f"{host}{proc}", classes="req-host"),
+                Static(f"{secs}s", classes="req-time"),
+                Button("Allow", id=f"allow-{req.id}", variant="success"),
+                Button("Deny", id=f"deny-{req.id}", variant="error"),
+            )
         )
         item.request_id = req.id  # type: ignore[attr-defined]
         return item
@@ -441,14 +444,17 @@ class ConsentDeciderApp(App):
     # -- actions -----------------------------------------------------------
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        # The Allow/Deny buttons mirror the a/d keys so a click decides the
-        # currently-highlighted request (same _focused_request_id path).
-        if event.button.id == "allow":
-            self.action_allow()
-        elif event.button.id == "deny":
-            self.action_deny()
+        # Each row carries its own Allow/Deny button whose id encodes the
+        # request id (``allow-<rid>`` / ``deny-<rid>``), so a click decides
+        # THAT request unambiguously -- not a separate "focused" one.
+        bid = event.button.id or ""
+        if bid.startswith("allow-"):
+            self._decide_id(bid.removeprefix("allow-"), DECISION_ALLOWED)
+        elif bid.startswith("deny-"):
+            self._decide_id(bid.removeprefix("deny-"), DECISION_DENIED)
 
     def action_allow(self) -> None:
+        # `a` key -> the highlighted row (keyboard path).
         self._decide(DECISION_ALLOWED)
 
     def action_deny(self) -> None:
@@ -458,6 +464,9 @@ class ConsentDeciderApp(App):
         rid = self._focused_request_id()
         if rid is None:
             return
+        self._decide_id(rid, decision)
+
+    def _decide_id(self, rid: str, decision: str) -> None:
         ws = self._ws
         if ws is None:
             self._flash("disconnected — reconnecting")

@@ -565,8 +565,9 @@ class TestAppActions:
             status = app.query_one("#status", Static)
             assert "verdict send failed" in str(status.content)
 
-    async def test_allow_button_decides_focused(self):
-        # The Allow button mirrors the `a` key: a click decides the focused row.
+    async def test_allow_button_decides_that_request(self):
+        # The per-row Allow button (id "allow-<rid>") decides THAT request,
+        # independent of which row is highlighted.
         app = _make_app()
         async with app.run_test() as pilot:
             ws = FakeWS([])
@@ -574,15 +575,15 @@ class TestAppActions:
             app.controller.apply_frame(_req_frame("r1", host="a.com"))
             app._refresh()
             await pilot.pause()
-            app.query_one("#requests", ListView).index = 0
-            await pilot.pause()
             app.on_button_pressed(
-                types.SimpleNamespace(button=types.SimpleNamespace(id="allow"))
+                types.SimpleNamespace(
+                    button=types.SimpleNamespace(id="allow-r1")
+                )
             )
             await pilot.pause()
             assert any('"allowed"' in s and '"r1"' in s for s in ws.sent)
 
-    async def test_deny_button_decides_focused(self):
+    async def test_deny_button_decides_that_request(self):
         app = _make_app()
         async with app.run_test() as pilot:
             ws = FakeWS([])
@@ -590,13 +591,13 @@ class TestAppActions:
             app.controller.apply_frame(_req_frame("r1", host="a.com"))
             app._refresh()
             await pilot.pause()
-            app.query_one("#requests", ListView).index = 0
-            await pilot.pause()
             app.on_button_pressed(
-                types.SimpleNamespace(button=types.SimpleNamespace(id="deny"))
+                types.SimpleNamespace(
+                    button=types.SimpleNamespace(id="deny-r1")
+                )
             )
             await pilot.pause()
-            assert any('"denied"' in s for s in ws.sent)
+            assert any('"denied"' in s and '"r1"' in s for s in ws.sent)
 
 
 class TestWsLoop:
