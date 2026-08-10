@@ -803,13 +803,21 @@ class TestConsentForward:
         assert fut.result() == "allow"
         assert "abc" not in c._pending
 
-    async def test_fail_close_pending_resolves_deny(self, proxy, tmp_path):
+    async def test_fail_close_pending_resolves_deny_and_clears_cache(
+        self, proxy, tmp_path
+    ):
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
         fut = asyncio.get_running_loop().create_future()
         c._pending["x"] = fut
+        # A lost connection is a fresh session: prior verdicts must not be trusted.
+        proxy._VERDICT_CACHE.clear()
+        proxy._VERDICT_CACHE[("1.2.3.4", 443)] = ("allow", 9999999.0)
         c._fail_close_pending()
         assert fut.result() == "deny"
         assert c._pending == {}
+        assert (
+            proxy._VERDICT_CACHE == {}
+        )  # stale verdicts dropped on disconnect
 
     def test_read_token_missing_file(self, proxy, tmp_path):
         c = proxy.SidecarConsentClient(
@@ -879,10 +887,12 @@ class TestConsentForward:
 
     # --- _run_nfq_consumer: graceful no-op without netfilterqueue ---
 
-    def test_run_nfq_consumer_noop_without_netfilterqueue(self, proxy, capsys):
+    def test_setup_nfq_consumer_noop_without_netfilterqueue(
+        self, proxy, capsys
+    ):
         # The server venv has no netfilterqueue -> lazy import fails -> logs +
-        # returns instead of raising.
-        proxy._run_nfq_consumer(None, asyncio.new_event_loop())
+        # returns instead of raising (before touching the event loop).
+        proxy._setup_nfq_consumer(None)
         assert "netfilterqueue unavailable" in capsys.readouterr().out
 
 
@@ -900,22 +910,6 @@ def _ip_payload(dst: str, dport: int, proto: int = 6) -> bytes:
     return bytes(b)
 
 
-class _FakeNFQ:
-    """Stand-in for netfilterqueue.NetfilterQueue: captures the bound callback
-    and returns at once from run() so the test can drive _cb itself."""
-
-    def __init__(self) -> None:
-        self.cb = None
-        self.queue = None
-
-    def bind(self, queue: int, cb) -> None:
-        self.queue = queue
-        self.cb = cb
-
-    def run(self) -> None:
-        pass  # do not block -- the test invokes self.cb directly
-
-
 class _FakePkt:
     def __init__(self, payload: bytes) -> None:
         self._payload = payload
@@ -930,29 +924,28 @@ class _FakePkt:
     def drop(self) -> None:
         self.verdict = "drop"
 
-
-def _install_fake_nfq(monkeypatch, nfq: _FakeNFQ) -> None:
-    """Make ``from netfilterqueue import NetfilterQueue`` return ``nfq``."""
-    mod = types.ModuleType("netfilterqueue")
-    mod.NetfilterQueue = lambda: nfq  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "netfilterqueue", mod)
+    def retain(self) -> None:
+        pass  # the real binding needs retain() for a deferred verdict
 
 
 class TestNfqueueCallback:
-    """The SYN consent gate (#2324): the NFQUEUE ``_cb`` names the host from the
-    IP->host map, holds the packet pending the verdict, learns the IP on allow,
-    and reuses the verdict for SYN retransmits. Driven with a stubbed
-    netfilterqueue + a fake packet."""
+    """The SYN consent gate (#2324, #2329): the non-blocking NFQUEUE ``_cb``
+    names the host, hands the verdict wait to a task, learns on allow, REJECTs
+    on deny, and reuses the verdict for retransmits. ``_cb`` +
+    ``_decide_and_verdict`` are driven directly (the loop-native get_fd /
+    add_reader plumbing is exercised by the e2e, #2327)."""
 
     def _bind(self, proxy, monkeypatch, client):
-        """Clear module state + bind the fake NFQUEUE consumer; return its cb."""
+        """Clear module state (the ``proxy`` fixture is module-scoped)."""
         proxy._VERDICT_CACHE.clear()
         proxy._LEARNED.clear()
         proxy._BG_TASKS.clear()
-        nfq = _FakeNFQ()
-        _install_fake_nfq(monkeypatch, nfq)
-        proxy._run_nfq_consumer(client, asyncio.get_running_loop())  # binds cb
-        return nfq
+
+    async def _decide(self, proxy, pkt, client):
+        """Run the non-blocking ``_cb`` to completion + await its verdict task(s)."""
+        proxy._cb(pkt, client)
+        if proxy._BG_TASKS:
+            await asyncio.gather(*proxy._BG_TASKS)
 
     async def test_allow_verdict_accepts_and_learns_ip(
         self, proxy, monkeypatch
@@ -966,9 +959,9 @@ class TestNfqueueCallback:
             "allow",
             lambda ip, port, ttl: learned.append((ip, port, ttl)),
         )
-        nfq = self._bind(proxy, monkeypatch, client)
+        self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await asyncio.to_thread(nfq.cb, pkt)
+        await self._decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
         client.request.assert_awaited_once_with(
             "1.2.3.4", 443
@@ -982,12 +975,12 @@ class TestNfqueueCallback:
         client.connected = True
         client.request = AsyncMock(return_value="allow")
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
-        nfq = self._bind(proxy, monkeypatch, client)
+        self._bind(proxy, monkeypatch, client)
         proxy._record_hosts(
             [("1.2.3.4", 60)], "evil.test"
         )  # DNS resolved this IP
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await asyncio.to_thread(nfq.cb, pkt)
+        await self._decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
         client.request.assert_awaited_once_with(
             "evil.test", 443
@@ -1005,9 +998,9 @@ class TestNfqueueCallback:
             "reject",
             lambda ip, port, ttl: rejected.append((ip, port, ttl)),
         )
-        nfq = self._bind(proxy, monkeypatch, client)
+        self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await asyncio.to_thread(nfq.cb, pkt)
+        await self._decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         assert rejected == [
             ("1.2.3.4", 443, proxy.CONSENT_REJECT_TTL)
@@ -1017,30 +1010,29 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(side_effect=RuntimeError("boom"))
-        nfq = self._bind(proxy, monkeypatch, client)
+        self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await asyncio.to_thread(nfq.cb, pkt)
+        await self._decide(proxy, pkt, client)
         assert pkt.verdict == "drop"  # except -> deny -> drop
 
     async def test_verdict_timeout_drops(self, proxy, monkeypatch):
-        monkeypatch.setattr(proxy, "HOLD_TIMEOUT", 0.05)
+        # client.request enforces the hold timeout (asyncio.wait_for); a timeout
+        # raises -> _decide_and_verdict fail-closes to deny -> drop.
         client = MagicMock()
         client.connected = True
-        # request outlasts HOLD_TIMEOUT -> fut.result() times out -> drop
-        client.request = AsyncMock(side_effect=lambda *a: asyncio.sleep(0.5))
-        nfq = self._bind(proxy, monkeypatch, client)
+        client.request = AsyncMock(side_effect=asyncio.TimeoutError)
+        self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await asyncio.to_thread(nfq.cb, pkt)
+        await self._decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
-        await asyncio.sleep(0.6)  # let the abandoned sleep(0.5) finish cleanly
 
     async def test_ws_down_drops_without_request(self, proxy, monkeypatch):
         client = MagicMock()
         client.connected = False
         client.request = AsyncMock()
-        nfq = self._bind(proxy, monkeypatch, client)
+        self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await asyncio.to_thread(nfq.cb, pkt)
+        await self._decide(proxy, pkt, client)  # _cb drops inline (no task)
         assert pkt.verdict == "drop"
         client.request.assert_not_awaited()
 
@@ -1048,9 +1040,9 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value="allow")
-        nfq = self._bind(proxy, monkeypatch, client)
+        self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(b"\x00" * 24)  # version nibble 0 -> parse_dest ("", 0)
-        await asyncio.to_thread(nfq.cb, pkt)
+        await self._decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         client.request.assert_not_awaited()
 
@@ -1063,14 +1055,45 @@ class TestNfqueueCallback:
         client.connected = True
         client.request = AsyncMock(return_value="allow")
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
-        nfq = self._bind(proxy, monkeypatch, client)
+        self._bind(proxy, monkeypatch, client)
         pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
         pkt2 = _FakePkt(_ip_payload("1.2.3.4", 443))  # retransmit
-        await asyncio.to_thread(nfq.cb, pkt1)
-        await asyncio.to_thread(nfq.cb, pkt2)
+        await self._decide(proxy, pkt1, client)
+        proxy._cb(pkt2, client)  # cache hit -> inline accept, no task
         assert pkt1.verdict == "accept"
         assert pkt2.verdict == "accept"  # reused the cached allow
         client.request.assert_awaited_once()  # NOT twice
+
+    async def test_distinct_flows_held_concurrently_not_serialized(
+        self, proxy, monkeypatch
+    ):
+        # #2329: distinct flows are held concurrently (two verdict tasks in
+        # flight), not one-behind-the-other. The pre-fix blocking _cb serialized
+        # them; this gates request() on both being started before either resolves.
+        started = []
+        gate = asyncio.Event()
+
+        async def slow_request(host, port):
+            started.append((host, port))
+            await gate.wait()
+            return "allow"
+
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(side_effect=slow_request)
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        proxy._cb(_FakePkt(_ip_payload("1.2.3.4", 443)), client)
+        proxy._cb(_FakePkt(_ip_payload("5.6.7.8", 80)), client)
+        # both verdict tasks started concurrently before either resolved
+        for _ in range(100):
+            if len(started) == 2:
+                break
+            await asyncio.sleep(0.001)
+        assert len(proxy._BG_TASKS) == 2
+        assert set(started) == {("1.2.3.4", 443), ("5.6.7.8", 80)}
+        gate.set()  # release both
+        await asyncio.gather(*proxy._BG_TASKS)
 
 
 class TestHandlePacket:
