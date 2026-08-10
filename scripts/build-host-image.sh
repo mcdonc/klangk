@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the klangk-host container image via Dockerfile.
 #
-# Builds all prerequisites (flutter web, workspace image) then embeds
-# the workspace image tarball in the host image.
+# Builds all prerequisites (flutter web, workspace image, network sidecar
+# image) then embeds both image tarballs in the host image.
 #
 # Usage:
 #   bash scripts/build-host-image.sh
@@ -22,6 +22,7 @@ rm -rf src/klangk/dist
 bash "$SCRIPT_DIR/build_wheel.sh"
 
 bash "$SCRIPT_DIR/build-workspace-image.sh"
+bash "$SCRIPT_DIR/build-network-sidecar.sh"
 
 VERSION="$(jq -r .version "$KLANGKD_VERSION_FILE")"
 IMAGE="${KLANGKBUILD_HOST_IMAGE:-klangk-host}"
@@ -30,6 +31,10 @@ IMAGE="${KLANGKBUILD_HOST_IMAGE:-klangk-host}"
 cp "$KLANGKD_VERSION_FILE" version.json
 
 WORKSPACE_IMAGE="${KLANGKD_IMAGE_NAME:-klangk-workspace}"
+# Must match the tag in scripts/build-network-sidecar.sh and the default of
+# the network_sidecar_image setting (settings.py) so all three agree on the
+# name the embedded tar provides.
+SIDECAR_IMAGE="klangk-network-sidecar"
 PODMAN="${KLANGKD_PODMAN_BIN:-podman}"
 # Export workspace image so it can be embedded in the host image. The host
 # image no longer stages feature trees (#1660/#1665) — the runtime reads
@@ -37,9 +42,12 @@ PODMAN="${KLANGKD_PODMAN_BIN:-podman}"
 # above) already bakes feature trees in for Pi — so there's no separate
 # staging tempdir here anymore, just the workspace tarball.
 WORKSPACE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/klangk-workspace-XXXXXX")
-trap 'rm -rf "$WORKSPACE_DIR"' EXIT
+SIDECAR_DIR=$(mktemp -d "${TMPDIR:-/tmp}/klangk-sidecar-XXXXXX")
+trap 'rm -rf "$WORKSPACE_DIR" "$SIDECAR_DIR"' EXIT
 echo "Exporting workspace image $WORKSPACE_IMAGE from podman ..."
 "$PODMAN" save -o "$WORKSPACE_DIR/workspace.tar" "$WORKSPACE_IMAGE"
+echo "Exporting network sidecar image $SIDECAR_IMAGE from podman ..."
+"$PODMAN" save -o "$SIDECAR_DIR/network-sidecar.tar" "$SIDECAR_IMAGE"
 
 echo "Building $IMAGE $VERSION ..."
 
@@ -47,6 +55,7 @@ docker build \
   --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
   -f src/containers/host/Dockerfile \
   --build-context "workspace-image=$WORKSPACE_DIR" \
+  --build-context "network-sidecar-image=$SIDECAR_DIR" \
   -t "$IMAGE:latest" \
   -t "$IMAGE:$VERSION" \
   "$@" \

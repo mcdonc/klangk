@@ -32,6 +32,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Embedded network sidecar image (#2301).** The all-in-one host image
+  (`scripts/build-host-image.sh`) now embeds the network sidecar image as a
+  tarball and `podman load`s it on first startup, mirroring the workspace
+  image. A default host-image deployment with FQDN egress enabled can start
+  a workspace with `allowed_domains` without separately building or pulling
+  the sidecar.
+
 - **Egress consent recording (#2242).** The network sidecar records every
   blocked destination to the `egress_consent` table: for **static**
   workspaces (the default) as `denied` with no human (`decided_by` NULL),

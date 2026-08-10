@@ -79,6 +79,8 @@ COPY --chown=klangk:klangk src/containers/host/storage.conf /home/klangk/.config
 
 # Embedded workspace image — loaded into podman on first startup
 COPY --from=workspace-image --chown=klangk:klangk workspace.tar /home/klangk/workspace.tar
+# Embedded network sidecar image — loaded into podman on first startup (#2301)
+COPY --from=network-sidecar-image --chown=klangk:klangk network-sidecar.tar /home/klangk/network-sidecar.tar
 
 
 ENV HOME=/home/klangk
