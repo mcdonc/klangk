@@ -62,17 +62,18 @@ Configuration (env):
                             workspace needs to reach the IP it just resolved
                             (default 30).
   KLANGKNETWORK_EGRESS_CONSENT_URL  klangkd consent endpoint (HTTP). When set,
-                            the proxy opens the egress-sidecar WS + holds denied
-                            egress pending a verdict. Empty -> static
-                            NXDOMAIN/DROP (today's behavior; consent disabled).
+                            the proxy opens the egress-sidecar WS + gates
+                            non-allow-listed egress at the connection SYN
+                            (NFQUEUE) pending a verdict. Empty -> static
+                            NXDOMAIN/DROP (consent disabled).
   KLANGKNETWORK_EGRESS_HOLD_TIMEOUT  seconds to await a verdict before
-                            fail-closing to deny (default 30). Should be >=
-                            klangkd's consent hold timeout; a DNS resolver may
-                            give up first (~10s), in which case a slower verdict
-                            effectively denies the query.
-  KLANGKNETWORK_EGRESS_HOLD_LIMIT    max concurrent DNS-path holds in flight
-                            (default 32); a flood past this fail-closes to
-                            NXDOMAIN.
+                            fail-closing to deny (default 120). The gate is the
+                            connection SYN, so this can match the kernel's
+                            connect timeout (tcp_syn_retries ~= 127s), not a
+                            DNS resolver's <=30s getaddrinfo cap (#2324).
+  KLANGKNETWORK_EGRESS_VERDICT_CACHE_TTL  seconds to reuse a SYN verdict for an
+                            (ip, port) flow so the kernel's SYN retransmits
+                            (tcp_syn_retries) don't each re-prompt (default 120).
 
 Limitations: transport is UDP only (TCP fallback is a future addition).
 """
@@ -114,15 +115,19 @@ MIN_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_MIN_TTL", "30"))
 # the proxy holds denied egress pending a verdict over the egress-sidecar WS.
 QUEUE_NUM = int(os.environ.get("KLANGKNETWORK_EGRESS_NFQUEUE_NUM", "5139"))
 CONSENT_URL = os.environ.get("KLANGKNETWORK_EGRESS_CONSENT_URL", "")
-# How long to await a verdict before fail-closing to deny. Should be >= klangkd's
-# consent hold timeout so the sidecar is still waiting when the coordinator
-# expires the hold (and returns deny/expired).
-HOLD_TIMEOUT = float(os.environ.get("KLANGKNETWORK_EGRESS_HOLD_TIMEOUT", "30"))
-# Bounds concurrent DNS-path holds so a flooding workspace can't exhaust the
-# proxy (each hold occupies a task + a slot for up to HOLD_TIMEOUT). The NFQUEUE
-# path is bounded separately by the kernel queue length + the iptables
-# rate-limit in entrypoint.sh; overflows DROP (fail-close).
-HOLD_LIMIT = int(os.environ.get("KLANGKNETWORK_EGRESS_HOLD_LIMIT", "32"))
+# How long to await a verdict before fail-closing to deny. The consent gate is
+# the connection SYN (NFQUEUE), so this can match the kernel's connect timeout
+# (tcp_syn_retries ~= 127s) -- far longer than a DNS resolver's <=30s getaddrinfo
+# cap (#2324). Should be >= klangkd's consent hold timeout so the sidecar is
+# still waiting when the coordinator expires the hold (and returns deny/expired).
+HOLD_TIMEOUT = float(os.environ.get("KLANGKNETWORK_EGRESS_HOLD_TIMEOUT", "120"))
+# How long to reuse a SYN verdict for a (ip, port) flow. The kernel retransmits
+# a held SYN (tcp_syn_retries); without reuse each retransmit would re-prompt.
+# After an allow the IP is also learned (ACCEPT), so new SYNs stop hitting
+# NFQUEUE -- this only covers retransmits that queued during the hold.
+VERDICT_CACHE_TTL = float(
+    os.environ.get("KLANGKNETWORK_EGRESS_VERDICT_CACHE_TTL", "120")
+)
 # The workspace JWT (rotated) is bind-mounted here read-only; read fresh on each
 # (re)connect so rotation is picked up (#2242, #2311). Not baked in env because
 # the workspace token expires and rotates.
@@ -160,16 +165,24 @@ def parse_specs() -> list[tuple[str, int | None, bool]]:
 
 SPECS = parse_specs()
 
-# Learned IPs: {ip: {"expire": epoch, "ports": set[int | None]}}. A ``None``
-# in ``ports`` is the all-ports ACCEPT rule. Guarded by _LOCK because the
-# asyncio loop runs the iptables installs + sweeps in the default thread-pool
-# executor (see _learn_all / _async_sweeper), so two worker threads can touch
-# _LEARNED at once; the lock serializes the rule+record mutations.
+# Learned IPs: {ip: {"expire": epoch, "ports": set[int | None], "host": str}}.
+# ``ports`` holds the ACCEPT rule ports (a ``None`` is all-ports); ``host`` is
+# the DNS name that resolved to this IP (named in the consent request). An
+# entry can be host-only (ports empty, no ACCEPT) -- recorded when a
+# non-allow-listed name resolves so its connection SYN is consent-gated at
+# NFQUEUE (#2324). Guarded by _LOCK: the asyncio loop runs the iptables installs
+# + sweeps in the default thread-pool executor (see _learn_all / _async_sweeper),
+# so two worker threads can touch _LEARNED at once; the lock serializes the
+# rule+record mutations. The NFQUEUE consumer reads ``host`` without the lock
+# (GIL-atomic; set by the DNS loop before the SYN arrives).
 _LEARNED: dict[str, dict] = {}
 _LOCK = threading.Lock()
-# Strong refs to background asyncio tasks (DNS holds + the TTL sweeper) so
-# CPython doesn't GC a task that's awaiting a verdict / sleeping. A done-callback
-# discards each entry when its task completes.
+# Reused SYN verdicts: {(ip, port): (verdict, expire)} so the kernel's SYN
+# retransmits (tcp_syn_retries) don't each re-prompt. Single-threaded NFQUEUE
+# consumer -- no lock. Lazy-evicted on read.
+_VERDICT_CACHE: dict[tuple[str, int], tuple[str, float]] = {}
+# Strong refs to background asyncio tasks (the TTL sweeper) so CPython doesn't
+# GC a sleeping task. A done-callback discards each entry on completion.
 _BG_TASKS: set[asyncio.Task] = set()
 
 
@@ -292,10 +305,11 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
         _install(ip, port)
         rec = _LEARNED.get(ip)
         if rec is None:
-            _LEARNED[ip] = {"expire": expire, "ports": {port}}
+            _LEARNED[ip] = {"expire": expire, "ports": {port}, "host": None}
         else:
             rec["expire"] = max(rec["expire"], expire)
             rec["ports"].add(port)
+            # ``host`` (set by _record_hosts) is preserved across re-learn.
 
 
 def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
@@ -368,6 +382,34 @@ def _learn_all(recs: list[tuple[str, int]], ports: set[int | None]) -> None:
     for ip, ttl in recs:
         for port in ports:
             allow(ip, port, ttl)
+
+
+def _record_hosts(recs: list[tuple[str, int]], host: str) -> None:
+    """Record IP->host in _LEARNED WITHOUT installing an ACCEPT rule (#2324).
+
+    A non-allow-listed name resolves (the workspace gets the IP + can SYN) but
+    its connection is consent-gated at the SYN (NFQUEUE), so the IP must NOT be
+    allow-learned here. Recording host lets the NFQUEUE consumer name the host
+    in the consent request. Sync; runs in the executor alongside allow/sweep
+    (under _LOCK). The TTL refreshes on each resolve so a re-resolution extends
+    the window in which a SYN names the right host.
+    """
+    now = time.time()
+    with _LOCK:
+        for ip, ttl in recs:
+            expire = now + max(ttl, MIN_TTL)
+            rec = _LEARNED.get(ip)
+            if rec is None:
+                _LEARNED[ip] = {"expire": expire, "ports": set(), "host": host}
+            else:
+                rec["expire"] = max(rec["expire"], expire)
+                rec["host"] = host  # latest name that resolved to this IP
+
+
+def _host_for(ip: str) -> str:
+    """The DNS name that resolved to ``ip``, or ``ip`` itself (direct-IP connect)."""
+    with _LOCK:
+        return _LEARNED.get(ip, {}).get("host") or ip
 
 
 async def _respond_allowed(
@@ -464,29 +506,6 @@ def _ws_url(consent_url: str) -> str:
         host = consent_url[len("http://") :].split("/", 1)[0]
         return f"ws://{host}/ws/egress-sidecar"
     return consent_url  # already ws(s)://, or an exotic scheme used verbatim
-
-
-class _HoldLimiter:
-    """Bounded in-flight DNS holds (single-threaded asyncio: no lock needed).
-
-    A flood of denied queries past :data:`HOLD_LIMIT` fail-closes to NXDOMAIN
-    rather than queuing unbounded hold tasks. ``try_acquire`` / ``release``
-    run between await points on the loop thread, so they are atomic.
-    """
-
-    def __init__(self, limit: int) -> None:
-        self._limit = limit
-        self._in_flight = 0
-
-    def try_acquire(self) -> bool:
-        if self._in_flight >= self._limit:
-            return False
-        self._in_flight += 1
-        return True
-
-    def release(self) -> None:
-        if self._in_flight > 0:
-            self._in_flight -= 1
 
 
 class SidecarConsentClient:
@@ -677,6 +696,66 @@ async def _forward_and_learn(
     await _respond_allowed(s, resp, addr, qname, port_set)
 
 
+async def _respond_recorded(
+    s: socket.socket,
+    resp: bytes,
+    addr: tuple[str, int],
+    qname: str,
+) -> None:
+    """Record the response's IP->host (NO ACCEPT install) + send it (#2324).
+
+    The workspace gets the IP (can SYN) but the connection is consent-gated at
+    the SYN (NFQUEUE), so the IP is NOT allow-learned here -- only the IP->host
+    mapping is recorded so the NFQUEUE consumer can name the host. Mirrors
+    :func:`_respond_allowed` minus the ACCEPT install.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        recs = a_records_with_ttl(resp)
+    except Exception:
+        recs = []
+    try:
+        if recs:
+            await loop.run_in_executor(None, _record_hosts, recs, qname)
+        if DEBUG:
+            print(
+                f"resolve {qname} -> {[ip for ip, _ in recs]} (consent at SYN)",
+                flush=True,
+            )
+        s.sendto(resp, addr)
+    except Exception:
+        pass
+
+
+async def _forward_and_record(
+    s: socket.socket,
+    data: bytes,
+    addr: tuple[str, int],
+    qname: str,
+) -> None:
+    """Forward a non-allow-listed query upstream + respond, recording IP->host
+    but NOT learning an ACCEPT (#2324).
+
+    The workspace resolves the name (gets the IP, can SYN); the connection is
+    consent-gated at the SYN (NFQUEUE) rather than held at the DNS query, so the
+    human decision window is the kernel's connect timeout (~127s), not the
+    resolver's <=30s getaddrinfo cap. Uses a non-blocking socket + the loop's
+    sock_* helpers like :func:`_forward_and_learn`.
+    """
+    loop = asyncio.get_running_loop()
+    us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    us.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, MARK)
+    us.setblocking(False)
+    try:
+        await asyncio.wait_for(loop.sock_sendto(us, data, UPSTREAM), 3)
+        resp, _ = await asyncio.wait_for(loop.sock_recvfrom(us, 65535), 3)
+    except Exception:
+        return
+    finally:
+        us.close()
+    await _respond_recorded(s, resp, addr, qname)
+
+
 def _send_nxdomain(s: socket.socket, data: bytes, addr: tuple[str, int]) -> None:
     try:
         s.sendto(nxdomain_for(data), addr)
@@ -684,66 +763,28 @@ def _send_nxdomain(s: socket.socket, data: bytes, addr: tuple[str, int]) -> None
         pass
 
 
-def _gate_deny(client: SidecarConsentClient | None, limiter: _HoldLimiter) -> bool:
-    """True if a denied query should be held (ask the coordinator); False if it
-    should fail-close NXDOMAIN inline -- no client, WS down, or the flood bound
-    is exhausted. On True the limiter slot is acquired (released by the hold).
-    Pure + inline so a flood of fail-close denies never spawns a task per query
-    (only real holds do, bounded by :data:`HOLD_LIMIT`).
-    """
-    if client is None or not client.connected:
-        return False
-    return limiter.try_acquire()
-
-
-async def _handle_hold(
-    s: socket.socket,
-    data: bytes,
-    addr: tuple[str, int],
-    qname: str,
-    client: SidecarConsentClient,
-    limiter: _HoldLimiter,
-) -> None:
-    """Hold a denied DNS query pending the consent verdict (#2311 half B).
-
-    The caller has already gate-checked + acquired the limiter slot (see
-    :func:`_gate_deny`): ``allow`` resolves upstream + learns the IPs
-    (all-ports, TTL-tracked); ``deny``/timeout -> NXDOMAIN. Runs as a task so
-    the hold never blocks the receive loop.
-    """
-    try:
-        decision = await client.request(qname, None)
-    except Exception:
-        decision = "deny"
-    finally:
-        limiter.release()
-    if decision == "allow":
-        if DEBUG:
-            print(f"consent-allow {qname}", flush=True)
-        # all-ports {None}: a human consenting to a domain opens every port to
-        # its resolved IPs for the TTL (like a port-less allow spec) -- consent
-        # is per-domain, not per-port (#2311 half B).
-        await _forward_and_learn(s, data, addr, qname, {None})
-    else:
-        if DEBUG:
-            print(f"consent-deny  {qname}", flush=True)
-        _send_nxdomain(s, data, addr)
-
-
 def _run_nfq_consumer(
     client: SidecarConsentClient | None, loop: asyncio.AbstractEventLoop
 ) -> None:
-    """Bind the sidecar's NFQUEUE and consent-gate blocked IP egress (#2311).
+    """Bind the sidecar's NFQUEUE and consent-gate the connection SYN (#2324).
 
-    Runs ``nfq.run()`` in a thread (netfilterqueue is synchronous). The
-    callback holds the packet pending the verdict by crossing into the loop
-    via ``run_coroutine_threadsafe`` (blocking): ``allow`` -> ``pkt.accept()``
-    (conntrack's ``ESTABLISHED,RELATED`` rule passes the rest of the
-    connection); ``deny``/timeout/WS-down -> ``pkt.drop()`` (fail-close).
-    Blocking the callback serializes NFQUEUE; the kernel queue length + the
-    iptables rate-limit in entrypoint.sh absorb bursts (overflows DROP).
-    netfilterqueue is a sidecar-only dep, imported lazily so the module loads
-    without it.
+    Consent gates the SYN, not the DNS query: a non-allow-listed name resolves
+    (the workspace gets the IP) and the first packet to that IP is queued here
+    pending a verdict -- so the human decision window is the kernel's connect
+    timeout (tcp_syn_retries ~= 127s), not the resolver's <=30s getaddrinfo
+    cap. Runs ``nfq.run()`` in a thread (netfilterqueue is synchronous); the
+    callback crosses into the loop via ``run_coroutine_threadsafe`` (blocking).
+
+    Per packet: name the host from the IP->host map (the IP itself for a
+    direct-IP connect), ask the coordinator, then ``allow`` -> learn the IP
+    all-ports (reconnects + the rest of this connection's SYN retransmits pass
+    without re-prompting) + ``pkt.accept()`` (conntrack ESTABLISHED,RELATED
+    carries the in-flight connection); ``deny``/timeout/WS-down -> ``pkt.drop``
+    (fail-close). SYN retransmits (tcp_syn_retries) of a flow already decided
+    reuse the cached verdict so they don't each re-prompt. Blocking the callback
+    serializes NFQUEUE; the kernel queue length + the iptables rate-limit in
+    entrypoint.sh absorb bursts (overflows DROP). netfilterqueue is a sidecar-
+    only dep, imported lazily so the module loads without it.
     """
     try:
         from netfilterqueue import NetfilterQueue
@@ -756,12 +797,32 @@ def _run_nfq_consumer(
         if not dst or client is None or not client.connected:
             pkt.drop()  # unparseable / no consent / WS down -> fail-close
             return
+        now = time.time()
+        # SYN retransmit of an already-decided flow -> reuse the verdict so the
+        # kernel's retransmits (tcp_syn_retries) don't each re-prompt.
+        cached = _VERDICT_CACHE.get((dst, port))
+        if cached is not None and cached[1] > now:
+            if cached[0] == "allow":
+                pkt.accept()
+            else:
+                pkt.drop()
+            return
+        host = _host_for(dst)  # DNS name if resolved here, else the IP
         try:
-            fut = asyncio.run_coroutine_threadsafe(client.request(dst, port), loop)
+            fut = asyncio.run_coroutine_threadsafe(client.request(host, port), loop)
             decision = fut.result(HOLD_TIMEOUT)
         except Exception:
             decision = "deny"  # timeout / loop dead -> fail-close
+        # Bound memory under a denied-flow flood (allowed flows get learned +
+        # stop hitting NFQUEUE; only denied flows accumulate in the cache).
+        if len(_VERDICT_CACHE) > 4096:
+            _VERDICT_CACHE.clear()
+        _VERDICT_CACHE[(dst, port)] = (decision, now + VERDICT_CACHE_TTL)
         if decision == "allow":
+            try:
+                allow(dst, None, MIN_TTL)
+            except Exception:
+                pass
             pkt.accept()
         else:
             pkt.drop()
@@ -780,14 +841,14 @@ async def _handle_packet(
     data: bytes,
     addr: tuple[str, int],
     client: SidecarConsentClient | None,
-    limiter: _HoldLimiter,
 ) -> None:
     """Classify + route one DNS query (the per-packet body of :func:`_async_main`).
 
-    Factored out of the receive loop so the routing -- classify -> gate ->
-    hold / NXDOMAIN / forward -- is unit-testable without running the infinite
-    ``recvfrom`` loop. A statically-allow-listed name goes straight to the
-    forward path (never held); only denied names hit the consent gate.
+    Allow-listed names forward + learn (ACCEPT). A denied name in interactive
+    mode (a consent client) resolves + responds + records IP->host but installs
+    NO ACCEPT -- its connection SYN is consent-gated at NFQUEUE (#2324), so the
+    human decision window is the kernel's connect timeout (~127s), not the
+    resolver's <=30s getaddrinfo cap. Static mode (no client) -> NXDOMAIN.
     """
     try:
         qname = query_name(data)
@@ -798,10 +859,10 @@ async def _handle_packet(
     if deny:
         if DEBUG:
             print(f"deny  {qname}", flush=True)
-        if _gate_deny(client, limiter):
-            t = asyncio.create_task(_handle_hold(s, data, addr, qname, client, limiter))
-            _BG_TASKS.add(t)  # strong ref so the hold task isn't GC'd
-            t.add_done_callback(_BG_TASKS.discard)
+        if client is not None:
+            # Interactive: resolve + respond + record IP->host; the SYN is
+            # consent-gated at NFQUEUE (not held here at the DNS query).
+            await _forward_and_record(s, data, addr, qname)
         else:
             _send_nxdomain(s, data, addr)
         return
@@ -809,10 +870,9 @@ async def _handle_packet(
 
 
 async def _async_main() -> None:
-    """The asyncio DNS loop (#2311 half B): holds denied queries pending verdicts.
-
-    Allowed queries forward inline (serial, like the pre-consent proxy); denied
-    queries run as bounded tasks so a hold never blocks the receive loop.
+    """The asyncio DNS loop (#2311 half B, #2324): allow-listed + denied names
+    resolve inline; a denied name in interactive mode records IP->host so its
+    connection SYN is consent-gated at NFQUEUE (a separate thread).
     """
     loop = asyncio.get_running_loop()
     client: SidecarConsentClient | None = None
@@ -832,18 +892,17 @@ async def _async_main() -> None:
     _BG_TASKS.add(_sweep)  # strong ref for the loop's lifetime
     _sweep.add_done_callback(_BG_TASKS.discard)
     # NFQUEUE consumer runs nfq.run() in a thread (blocking); its callback
-    # crosses into this loop to await the consent verdict (#2311 half B).
+    # crosses into this loop to await the consent verdict (#2311 half B, #2324).
     if CONSENT_URL:
         threading.Thread(
             target=_run_nfq_consumer, args=(client, loop), daemon=True
         ).start()
-    limiter = _HoldLimiter(HOLD_LIMIT)
     while True:
         try:
             data, addr = await loop.sock_recvfrom(s, 65535)
         except Exception:
             continue
-        await _handle_packet(s, data, addr, client, limiter)
+        await _handle_packet(s, data, addr, client)
 
 
 def main() -> None:

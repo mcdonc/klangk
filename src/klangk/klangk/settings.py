@@ -727,10 +727,12 @@ class KlangkSettings(BaseSettings):
     # consent monitor (#2242) tuning. rate_limit caps pending requests per
     # workspace (anti attention-flood from adversarial containers); timeout
     # is how long a request stays pending before the monitor auto-expires it
-    # (DECISION_EXPIRED). The human decide/notify UI lands with #2244; until
-    # then requests simply expire. Read live (SIGHUP reload-safe).
+    # (DECISION_EXPIRED). Now that consent gates the connection SYN (#2324)
+    # the human window is the kernel's connect timeout (~127s), so the default
+    # matches it (was 30s when the gate was the DNS query, bounded by
+    # getaddrinfo). Read live (SIGHUP reload-safe).
     egress_consent_rate_limit: int = 50
-    egress_consent_timeout: float = 30.0
+    egress_consent_timeout: float = 120.0
     # consent_decider_timeout (#2308): a consent decider (a live client that
     # can approve/deny held egress) is registered while its WebSocket is
     # connected and pinging. This is the liveness window -- a decider whose

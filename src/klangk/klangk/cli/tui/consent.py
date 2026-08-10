@@ -120,7 +120,7 @@ class ConsentDeciderController:
 
     def __init__(
         self,
-        hold_timeout: float = 30.0,
+        hold_timeout: float = 120.0,
         *,
         clock=time.time,
     ) -> None:
@@ -242,7 +242,7 @@ class ConsentDeciderApp(App):
         workspace_id: str,
         workspace_name: str,
         *,
-        hold_timeout: float = 30.0,
+        hold_timeout: float = 120.0,
         max_size: int | None = None,
         ping_interval: float = _PING_INTERVAL,
         reconnect_delays: tuple[float, ...] = _RECONNECT_DELAYS,

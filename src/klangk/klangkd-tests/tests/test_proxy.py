@@ -579,20 +579,38 @@ class TestConsentForward:
             == "ws://x/ws/egress-sidecar"
         )
 
-    # --- _HoldLimiter: bounded in-flight DNS holds ---
+    # --- _record_hosts / _host_for: IP->host map for the SYN consent gate (#2324) ---
 
-    def test_hold_limiter_bounds_and_releases(self, proxy):
-        lim = proxy._HoldLimiter(2)
-        assert lim.try_acquire() is True
-        assert lim.try_acquire() is True
-        assert lim.try_acquire() is False  # exhausted
-        lim.release()
-        assert lim.try_acquire() is True  # freed
+    def test_record_hosts_records_ip_to_host_without_accept(self, proxy):
+        proxy._LEARNED.clear()
+        proxy._record_hosts([("1.2.3.4", 60)], "evil.test")
+        rec = proxy._LEARNED["1.2.3.4"]
+        assert rec["host"] == "evil.test"
+        assert rec["ports"] == set()  # NO ACCEPT rule installed
 
-    def test_hold_limiter_release_floor(self, proxy):
-        lim = proxy._HoldLimiter(1)
-        lim.release()  # must not go negative
-        assert lim.try_acquire() is True
+    def test_record_hosts_preserves_prior_learn_ports(self, learned):
+        import time
+
+        # a prior consent-allow learned the IP (ports={None}); a re-resolve
+        # refreshes host + expire without dropping the ports.
+        learned._LEARNED["1.2.3.4"] = {
+            "expire": time.time() + 10,
+            "ports": {None},
+            "host": None,
+        }
+        learned._record_hosts([("1.2.3.4", 300)], "evil.test")
+        rec = learned._LEARNED["1.2.3.4"]
+        assert rec["host"] == "evil.test"
+        assert rec["ports"] == {None}  # preserved
+
+    def test_host_for_returns_host_when_recorded(self, proxy):
+        proxy._LEARNED.clear()
+        proxy._record_hosts([("1.2.3.4", 60)], "evil.test")
+        assert proxy._host_for("1.2.3.4") == "evil.test"
+
+    def test_host_for_falls_back_to_ip_for_direct_connect(self, proxy):
+        proxy._LEARNED.clear()
+        assert proxy._host_for("5.6.7.8") == "5.6.7.8"  # no DNS record -> IP
 
     # --- SidecarConsentClient.request: fail-close contract ---
 
@@ -742,86 +760,59 @@ class TestConsentForward:
         c = proxy.SidecarConsentClient("http://h/ev", str(f), 5)
         assert c._read_token() == "abc-xyz"
 
-    # --- _gate_deny: should this denied query be held or fail-close NXDOMAIN? ---
+    # --- _respond_recorded: resolve + record IP->host + respond (no ACCEPT) (#2324) ---
 
-    def test_gate_deny_false_when_no_client(self, proxy):
-        # consent disabled -> never hold, always NXDOMAIN (today's behavior)
-        assert proxy._gate_deny(None, proxy._HoldLimiter(8)) is False
-
-    def test_gate_deny_false_when_disconnected(self, proxy):
-        client = MagicMock()
-        client.connected = False
-        assert proxy._gate_deny(client, proxy._HoldLimiter(8)) is False
-
-    def test_gate_deny_false_when_flood_bound(self, proxy):
-        client = MagicMock()
-        client.connected = True
-        lim = proxy._HoldLimiter(1)
-        assert lim.try_acquire()  # fill the only slot
-        assert (
-            proxy._gate_deny(client, lim) is False
-        )  # exhausted -> fail-close
-
-    def test_gate_deny_true_acquires_slot(self, proxy):
-        client = MagicMock()
-        client.connected = True
-        lim = proxy._HoldLimiter(2)
-        assert proxy._gate_deny(client, lim) is True
-        assert lim.try_acquire() is True  # one slot now in use -> one left
-        assert lim.try_acquire() is False  # both taken
-
-    # --- _handle_hold: the DNS hold task (gate already passed) ---
-
-    async def test_handle_hold_allow_forwards_upstream(
+    async def test_respond_recorded_records_host_and_sends(
         self, proxy, monkeypatch
     ):
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
-        fwd = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
-        client = MagicMock()
-        client.connected = True
-        client.request = AsyncMock(return_value="allow")
-        s = MagicMock()
-        lim = proxy._HoldLimiter(8)
-        await proxy._handle_hold(
-            s, b"q", ("1.2.3.4", 53), "evil.test", client, lim
+        proxy._LEARNED.clear()
+        recorded = []
+        monkeypatch.setattr(
+            proxy,
+            "_record_hosts",
+            lambda recs, host: recorded.append((recs, host)),
         )
-        s.sendto.assert_not_called()  # not denied
-        client.request.assert_awaited_once_with("evil.test", None)
-        fwd.assert_awaited_once()  # forwarded upstream (all-ports)
-        assert lim._in_flight == 0  # slot released
-
-    async def test_handle_hold_deny_sends_nxdomain(self, proxy, monkeypatch):
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
-        fwd = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
-        client = MagicMock()
-        client.connected = True
-        client.request = AsyncMock(return_value="deny")
-        s = MagicMock()
-        lim = proxy._HoldLimiter(8)
-        await proxy._handle_hold(
-            s, b"q", ("1.2.3.4", 53), "evil.test", client, lim
+        monkeypatch.setattr(
+            proxy, "a_records_with_ttl", lambda wire: [("1.2.3.4", 60)]
         )
-        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
-        fwd.assert_not_awaited()
-        assert lim._in_flight == 0  # slot released
+        s = MagicMock()
+        await proxy._respond_recorded(s, b"resp", ("1.2.3.4", 53), "evil.test")
+        assert recorded == [([("1.2.3.4", 60)], "evil.test")]
+        s.sendto.assert_called_once_with(b"resp", ("1.2.3.4", 53))
 
-    async def test_handle_hold_request_error_fail_closes(
+    async def test_respond_recorded_no_records_skips_record(
         self, proxy, monkeypatch
     ):
-        # request() raising -> deny + NXDOMAIN + slot still released
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
-        client = MagicMock()
-        client.connected = True
-        client.request = AsyncMock(side_effect=RuntimeError("boom"))
-        s = MagicMock()
-        lim = proxy._HoldLimiter(8)
-        await proxy._handle_hold(
-            s, b"q", ("1.2.3.4", 53), "evil.test", client, lim
+        proxy._LEARNED.clear()
+        recorded = []
+        monkeypatch.setattr(
+            proxy,
+            "_record_hosts",
+            lambda recs, host: recorded.append((recs, host)),
         )
-        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
-        assert lim._in_flight == 0  # released despite the error
+        monkeypatch.setattr(
+            proxy, "a_records_with_ttl", lambda wire: []
+        )  # upstream NXDOMAIN
+        s = MagicMock()
+        await proxy._respond_recorded(s, b"resp", ("1.2.3.4", 53), "evil.test")
+        assert recorded == []  # nothing to record
+        s.sendto.assert_called_once_with(
+            b"resp", ("1.2.3.4", 53)
+        )  # still forwarded
+
+    async def test_respond_recorded_swallows_sendto_failure(
+        self, proxy, monkeypatch
+    ):
+        proxy._LEARNED.clear()
+        monkeypatch.setattr(proxy, "_record_hosts", lambda recs, host: None)
+        monkeypatch.setattr(
+            proxy, "a_records_with_ttl", lambda wire: [("1.2.3.4", 60)]
+        )
+        s = MagicMock()
+        s.sendto.side_effect = OSError("gone")
+        await proxy._respond_recorded(  # must not raise
+            s, b"resp", ("1.2.3.4", 53), "evil.test"
+        )
 
     # --- _run_nfq_consumer: graceful no-op without netfilterqueue ---
 
@@ -885,157 +876,172 @@ def _install_fake_nfq(monkeypatch, nfq: _FakeNFQ) -> None:
 
 
 class TestNfqueueCallback:
-    """The NFQUEUE verdict->accept/drop path (#2311 half B review #1): the
-    ``_cb`` body is otherwise untested (only the import-failure early-return
-    was). Drive it with a stubbed netfilterqueue + a fake packet."""
+    """The SYN consent gate (#2324): the NFQUEUE ``_cb`` names the host from the
+    IP->host map, holds the packet pending the verdict, learns the IP on allow,
+    and reuses the verdict for SYN retransmits. Driven with a stubbed
+    netfilterqueue + a fake packet."""
 
-    async def test_allow_verdict_accepts(self, proxy, monkeypatch):
-        loop = asyncio.get_running_loop()
+    def _bind(self, proxy, monkeypatch, client):
+        """Clear module state + bind the fake NFQUEUE consumer; return its cb."""
+        proxy._VERDICT_CACHE.clear()
+        proxy._LEARNED.clear()
+        proxy._BG_TASKS.clear()
         nfq = _FakeNFQ()
         _install_fake_nfq(monkeypatch, nfq)
+        proxy._run_nfq_consumer(client, asyncio.get_running_loop())  # binds cb
+        return nfq
+
+    async def test_allow_verdict_accepts_and_learns_ip(
+        self, proxy, monkeypatch
+    ):
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value="allow")
-        proxy._run_nfq_consumer(client, loop)  # binds cb; run() returns
+        learned = []
+        monkeypatch.setattr(
+            proxy,
+            "allow",
+            lambda ip, port, ttl: learned.append((ip, port, ttl)),
+        )
+        nfq = self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        # _cb blocks on the verdict (run_coroutine_threadsafe); run it in a
-        # worker thread so the loop is free to resolve client.request.
         await asyncio.to_thread(nfq.cb, pkt)
         assert pkt.verdict == "accept"
-        client.request.assert_awaited_once_with("1.2.3.4", 443)
+        client.request.assert_awaited_once_with(
+            "1.2.3.4", 443
+        )  # host=IP (no record)
+        assert learned == [
+            ("1.2.3.4", None, proxy.MIN_TTL)
+        ]  # learned all-ports
+
+    async def test_allow_names_host_from_ip_map(self, proxy, monkeypatch):
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value="allow")
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        nfq = self._bind(proxy, monkeypatch, client)
+        proxy._record_hosts(
+            [("1.2.3.4", 60)], "evil.test"
+        )  # DNS resolved this IP
+        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        await asyncio.to_thread(nfq.cb, pkt)
+        assert pkt.verdict == "accept"
+        client.request.assert_awaited_once_with(
+            "evil.test", 443
+        )  # host, not IP
 
     async def test_deny_verdict_drops(self, proxy, monkeypatch):
-        loop = asyncio.get_running_loop()
-        nfq = _FakeNFQ()
-        _install_fake_nfq(monkeypatch, nfq)
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value="deny")
-        proxy._run_nfq_consumer(client, loop)
+        nfq = self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await asyncio.to_thread(nfq.cb, pkt)
         assert pkt.verdict == "drop"
 
     async def test_request_error_drops(self, proxy, monkeypatch):
-        loop = asyncio.get_running_loop()
-        nfq = _FakeNFQ()
-        _install_fake_nfq(monkeypatch, nfq)
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(side_effect=RuntimeError("boom"))
-        proxy._run_nfq_consumer(client, loop)
+        nfq = self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await asyncio.to_thread(nfq.cb, pkt)
         assert pkt.verdict == "drop"  # except -> deny -> drop
 
     async def test_verdict_timeout_drops(self, proxy, monkeypatch):
-        loop = asyncio.get_running_loop()
         monkeypatch.setattr(proxy, "HOLD_TIMEOUT", 0.05)
-        nfq = _FakeNFQ()
-        _install_fake_nfq(monkeypatch, nfq)
         client = MagicMock()
         client.connected = True
         # request outlasts HOLD_TIMEOUT -> fut.result() times out -> drop
         client.request = AsyncMock(side_effect=lambda *a: asyncio.sleep(0.5))
-        proxy._run_nfq_consumer(client, loop)
+        nfq = self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await asyncio.to_thread(nfq.cb, pkt)
         assert pkt.verdict == "drop"
         await asyncio.sleep(0.6)  # let the abandoned sleep(0.5) finish cleanly
 
     async def test_ws_down_drops_without_request(self, proxy, monkeypatch):
-        loop = asyncio.get_running_loop()
-        nfq = _FakeNFQ()
-        _install_fake_nfq(monkeypatch, nfq)
         client = MagicMock()
         client.connected = False
         client.request = AsyncMock()
-        proxy._run_nfq_consumer(client, loop)
+        nfq = self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await asyncio.to_thread(nfq.cb, pkt)
         assert pkt.verdict == "drop"
         client.request.assert_not_awaited()
 
     async def test_unparseable_dest_drops(self, proxy, monkeypatch):
-        loop = asyncio.get_running_loop()
-        nfq = _FakeNFQ()
-        _install_fake_nfq(monkeypatch, nfq)
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value="allow")
-        proxy._run_nfq_consumer(client, loop)
+        nfq = self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(b"\x00" * 24)  # version nibble 0 -> parse_dest ("", 0)
         await asyncio.to_thread(nfq.cb, pkt)
         assert pkt.verdict == "drop"
         client.request.assert_not_awaited()
 
+    async def test_retransmit_reuses_verdict_without_re_request(
+        self, proxy, monkeypatch
+    ):
+        # A SYN retransmit (tcp_syn_retries) of an already-decided flow reuses the
+        # cached verdict so it doesn't re-prompt the decider.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value="allow")
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        nfq = self._bind(proxy, monkeypatch, client)
+        pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
+        pkt2 = _FakePkt(_ip_payload("1.2.3.4", 443))  # retransmit
+        await asyncio.to_thread(nfq.cb, pkt1)
+        await asyncio.to_thread(nfq.cb, pkt2)
+        assert pkt1.verdict == "accept"
+        assert pkt2.verdict == "accept"  # reused the cached allow
+        client.request.assert_awaited_once()  # NOT twice
+
 
 class TestHandlePacket:
-    """The per-packet routing extracted from _async_main (#2311 half B review #2):
-    classify -> gate -> hold / NXDOMAIN / forward, incl. the property that a
-    statically-allow-listed name is never held."""
+    """The per-packet DNS routing (#2311 half B, #2324): classify -> forward /
+    resolve+record / NXDOMAIN. A statically-allow-listed name forwards + learns;
+    a denied name in interactive mode resolves + records IP->host (its SYN is
+    consent-gated at NFQUEUE); static mode (no client) -> NXDOMAIN."""
 
-    async def test_allowed_name_forwards_not_held(self, proxy, monkeypatch):
-        proxy._BG_TASKS.clear()
+    async def test_allowed_name_forwards_and_learns(self, proxy, monkeypatch):
         monkeypatch.setattr(proxy, "query_name", lambda wire: "allowed.test")
         monkeypatch.setattr(proxy, "SPECS", [("allowed.test", None, False)])
         fwd = AsyncMock()
         monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
         s = MagicMock()
-        await proxy._handle_packet(
-            s, b"q", ("1.2.3.4", 53), None, proxy._HoldLimiter(8)
-        )
-        fwd.assert_awaited_once()  # forwarded, not held/denied
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
+        fwd.assert_awaited_once()  # forwarded + learned, not denied
         s.sendto.assert_not_called()  # no NXDOMAIN
 
     async def test_denied_no_client_sends_nxdomain(self, proxy, monkeypatch):
-        proxy._BG_TASKS.clear()
         monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
         monkeypatch.setattr(proxy, "SPECS", [])
         monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
         s = MagicMock()
-        await proxy._handle_packet(
-            s, b"q", ("1.2.3.4", 53), None, proxy._HoldLimiter(8)
-        )
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
 
-    async def test_denied_connected_spawns_hold(self, proxy, monkeypatch):
-        proxy._BG_TASKS.clear()
+    async def test_denied_with_client_resolves_and_records(
+        self, proxy, monkeypatch
+    ):
+        # Interactive: a denied name resolves + records IP->host (NO ACCEPT) so
+        # its SYN is consent-gated at NFQUEUE -- it is NOT held at the DNS query.
         monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
         monkeypatch.setattr(proxy, "SPECS", [])
-        hold = AsyncMock()
-        monkeypatch.setattr(proxy, "_handle_hold", hold)
+        rec = AsyncMock()
+        monkeypatch.setattr(proxy, "_forward_and_record", rec)
+        nxd = MagicMock()
+        monkeypatch.setattr(proxy, "_send_nxdomain", nxd)
         client = MagicMock()
         client.connected = True
-        lim = proxy._HoldLimiter(8)
         s = MagicMock()
-        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), client, lim)
-        tasks = list(proxy._BG_TASKS)
-        await asyncio.gather(*tasks)  # run the spawned hold task(s)
-        hold.assert_awaited_once_with(
-            s, b"q", ("1.2.3.4", 53), "evil.test", client, lim
-        )
-        assert proxy._BG_TASKS == set()  # done-callback discarded the entry
-
-    async def test_denied_flood_bound_sends_nxdomain(self, proxy, monkeypatch):
-        proxy._BG_TASKS.clear()
-        monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
-        monkeypatch.setattr(proxy, "SPECS", [])
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
-        hold = AsyncMock()
-        monkeypatch.setattr(proxy, "_handle_hold", hold)
-        client = MagicMock()
-        client.connected = True
-        lim = proxy._HoldLimiter(1)
-        assert lim.try_acquire()  # fill the only slot
-        s = MagicMock()
-        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), client, lim)
-        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))  # fail-close
-        hold.assert_not_awaited()
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), client)
+        rec.assert_awaited_once_with(s, b"q", ("1.2.3.4", 53), "evil.test")
+        nxd.assert_not_called()  # not NXDOMAIN -- resolves for the SYN gate
 
     async def test_malformed_query_is_dropped(self, proxy, monkeypatch):
-        proxy._BG_TASKS.clear()
-
         def _boom(wire):
             raise RuntimeError("bad wire")
 
@@ -1043,8 +1049,6 @@ class TestHandlePacket:
         fwd = AsyncMock()
         monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
         s = MagicMock()
-        await proxy._handle_packet(
-            s, b"q", ("1.2.3.4", 53), None, proxy._HoldLimiter(8)
-        )
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_not_called()  # dropped, no response
         fwd.assert_not_awaited()
