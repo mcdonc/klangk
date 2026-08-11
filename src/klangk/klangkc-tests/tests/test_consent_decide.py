@@ -25,6 +25,7 @@ from klangk.cli.tui.consent import (
     IGNORED,
     PONG,
     RESOLVED,
+    REVOKE_ACK,
     RULES,
     ConsentDeciderApp,
     ConsentDeciderController,
@@ -34,6 +35,7 @@ from klangk.cli.tui.consent import (
     PauseState,
     RulesScreen,
     make_ping,
+    make_revoke,
     make_verdict,
 )
 
@@ -369,6 +371,13 @@ class TestFrameBuilders:
 
     def test_make_ping(self):
         assert json.loads(make_ping()) == {"type": "ping"}
+
+    def test_make_revoke(self):
+        # #2341: revoke frame carries only the request id.
+        assert json.loads(make_revoke("r9")) == {
+            "type": "revoke",
+            "request_id": "r9",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1347,6 +1356,73 @@ def test_reset_clears_rules():
 # ---------------------------------------------------------------------------
 
 
+class TestControllerRevokeAck:
+    """``revoke_ack`` frame handling (#2341 slice D)."""
+
+    @staticmethod
+    def _controller_with(allowed=(), denied=()) -> ConsentDeciderController:
+        c = ConsentDeciderController()
+        c.apply_frame(
+            _rules_frame(allow_list=(), allowed=allowed, denied=denied)
+        )
+        return c
+
+    def test_ok_removes_from_allowed(self):
+        c = self._controller_with(
+            allowed=[_rule("a1", host="x.com"), _rule("a2", host="y.com")]
+        )
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "revoke_ack", "request_id": "a1", "ok": True})
+        )
+        assert outcome == REVOKE_ACK
+        assert payload == ("a1", True)
+        assert [r.id for r in c.rules.allowed] == ["a2"]
+
+    def test_ok_removes_from_denied(self):
+        c = self._controller_with(
+            denied=[_rule("d1", decision="denied", host="x.com")]
+        )
+        c.apply_frame(
+            json.dumps({"type": "revoke_ack", "request_id": "d1", "ok": True})
+        )
+        assert c.rules.denied == ()
+
+    def test_fail_leaves_rules_intact(self):
+        c = self._controller_with(allowed=[_rule("a1", host="x.com")])
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "revoke_ack", "request_id": "a1", "ok": False})
+        )
+        assert payload == ("a1", False)
+        assert [r.id for r in c.rules.allowed] == ["a1"]
+
+    def test_ok_unknown_id_is_noop(self):
+        c = self._controller_with(allowed=[_rule("a1", host="x.com")])
+        c.apply_frame(
+            json.dumps({"type": "revoke_ack", "request_id": "zzz", "ok": True})
+        )
+        assert [r.id for r in c.rules.allowed] == ["a1"]
+
+    def test_ok_when_no_rules_is_safe(self):
+        # No egress_rules frame yet -> rules is None; a success ack must not
+        # crash (nothing to remove).
+        c = ConsentDeciderController()
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "revoke_ack", "request_id": "a1", "ok": True})
+        )
+        assert outcome == REVOKE_ACK
+        assert payload == ("a1", True)
+        assert c.rules is None
+
+    def test_missing_request_id_returns_none_rid(self):
+        c = self._controller_with(allowed=[_rule("a1")])
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "revoke_ack", "ok": True})
+        )
+        assert outcome == REVOKE_ACK
+        assert payload == (None, True)
+        assert [r.id for r in c.rules.allowed] == ["a1"]  # not removed
+
+
 class TestRulesScreen:
     async def test_r_opens_screen_and_q_returns(self):
         app = _make_app()
@@ -1707,3 +1783,190 @@ async def test_deny_with_null_decided_at_renders_without_crash():
         assert "deny.example.com:443" in body
         assert "deny2.example.com:443" in body
         assert "Active denies (2)" in body
+
+
+class TestRulesRevoke:
+    """The revoke action on the rules screen (#2341 slice D)."""
+
+    @staticmethod
+    def _list_ids(app) -> list:
+        return [
+            getattr(c, "rule_id", None)
+            for c in app.screen.query_one("#rules-list", ListView).children
+        ]
+
+    async def test_x_sends_revoke_for_focused_rule(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(
+                _rules_frame(allowed=[_rule("a1", host="allow.com")])
+            )
+            app.action_rules()
+            await pilot.pause()
+            app.screen.query_one("#rules-list", ListView).index = 0
+            await pilot.pause()
+            app.screen.action_revoke()
+            await pilot.pause()
+            assert any('"revoke"' in s and '"a1"' in s for s in ws.sent), (
+                ws.sent
+            )
+
+    async def test_x_key_binding_sends_revoke(self):
+        # The `x` binding (not just the method) routes to action_revoke.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(
+                _rules_frame(allowed=[_rule("a1", host="x.com")])
+            )
+            app.action_rules()
+            await pilot.pause()
+            app.screen.query_one("#rules-list", ListView).index = 0
+            await pilot.pause()
+            await pilot.press("x")
+            await pilot.pause()
+            assert any('"revoke"' in s and '"a1"' in s for s in ws.sent), (
+                ws.sent
+            )
+
+    async def test_revoke_with_no_focus_sends_nothing(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_rules_frame(allowed=[_rule("a1")]))
+            app.action_rules()
+            await pilot.pause()
+            app.screen.action_revoke()  # nothing highlighted
+            await pilot.pause()
+            assert ws.sent == []
+
+    async def test_revoke_while_disconnected_flashes(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_rules_frame(allowed=[_rule("a1")]))
+            app.action_rules()
+            await pilot.pause()
+            app.screen.query_one("#rules-list", ListView).index = 0
+            await pilot.pause()
+            app.screen.action_revoke()  # app._ws is None
+            await pilot.pause()
+            status = app.screen.query_one("#rules-status", Static)
+            assert "disconnected" in str(status.content)
+
+    async def test_revoke_send_failure_flashes(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([], send_fail=True)
+            app._ws = ws
+            app.controller.apply_frame(_rules_frame(allowed=[_rule("a1")]))
+            app.action_rules()
+            await pilot.pause()
+            app.screen.query_one("#rules-list", ListView).index = 0
+            await pilot.pause()
+            app.screen.action_revoke()
+            await pilot.pause()
+            status = app.screen.query_one("#rules-status", Static)
+            assert "revoke send failed" in str(status.content)
+
+    async def test_static_allowlist_not_in_revoke_list(self):
+        # Scope guard: the static allow-list is NOT a revoke target -- only
+        # consent allows/denies appear in #rules-list.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(
+                _rules_frame(
+                    allow_list=["static.example.com"],
+                    allowed=[_rule("a1", host="allow.com")],
+                    denied=[_rule("d1", host="deny.com", decision="denied")],
+                )
+            )
+            app.action_rules()
+            await pilot.pause()
+            assert self._list_ids(app) == ["a1", "d1"]
+
+    async def test_revoke_ack_success_removes_row_from_list(self):
+        # On confirmation the row leaves the list (and the cached rules).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.action_rules()
+            await pilot.pause()
+            ws = FakeWS(
+                [
+                    _rules_frame(allowed=[_rule("a1", host="x.com")]),
+                    json.dumps(
+                        {
+                            "type": "revoke_ack",
+                            "request_id": "a1",
+                            "ok": True,
+                        }
+                    ),
+                ]
+            )
+            await app._pump(ws)
+            await pilot.pause()
+            assert [r.id for r in app.controller.rules.allowed] == []
+            assert self._list_ids(app) == []
+
+    async def test_revoke_ack_failure_flashes_and_keeps_row(self):
+        # A failed ack flashes + leaves the row enforced.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.action_rules()
+            await pilot.pause()
+            ws = FakeWS(
+                [
+                    _rules_frame(allowed=[_rule("a1", host="x.com")]),
+                    json.dumps(
+                        {
+                            "type": "revoke_ack",
+                            "request_id": "a1",
+                            "ok": False,
+                        }
+                    ),
+                ]
+            )
+            await app._pump(ws)
+            await pilot.pause()
+            status = app.screen.query_one("#rules-status", Static)
+            assert "revoke failed" in str(status.content)
+            assert [r.id for r in app.controller.rules.allowed] == ["a1"]
+            assert self._list_ids(app) == ["a1"]
+
+    async def test_refresh_rebuilds_list_only_on_change(self):
+        # A second refresh with unchanged rules hits the no-op early return
+        # (no flicker) and leaves the list intact.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_rules_frame(allowed=[_rule("a1")]))
+            app.action_rules()
+            await pilot.pause()
+            screen = app.screen
+            screen.refresh_rules()  # unchanged -> early return
+            await pilot.pause()
+            assert self._list_ids(app) == ["a1"]
+
+    async def test_rebuild_restores_focus_to_surviving_rule(self):
+        # When the rule set changes but the focused rule survives, focus is
+        # restored to it (covers the focus-restore loop in _rebuild_rule_list).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(
+                _rules_frame(allowed=[_rule("a1"), _rule("a2")])
+            )
+            app.action_rules()
+            await pilot.pause()
+            lv = app.screen.query_one("#rules-list", ListView)
+            lv.index = 1  # focus a2
+            await pilot.pause()
+            # a1 revoked elsewhere -> rules refresh drops a1; a2 survives.
+            app.controller.apply_frame(_rules_frame(allowed=[_rule("a2")]))
+            app.screen.refresh_rules()
+            await pilot.pause()
+            await pilot.pause()  # let call_after_refresh land the restore
+            lv = app.screen.query_one("#rules-list", ListView)
+            assert lv.highlighted_child is not None
+            assert getattr(lv.highlighted_child, "rule_id", None) == "a2"
