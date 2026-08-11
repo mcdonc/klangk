@@ -341,6 +341,11 @@ async def test_expire_pending(ec, ws, user):
     got = await ec.get_request(req["id"])
     assert got["decision"] == DECISION_EXPIRED
     assert got["decided_by"] is None  # auto-expired, no user
+    # a timeout is a non-persistent deny: duration=once (#2328)
+    row = await ec.app.state.db.fetchone(
+        "SELECT duration FROM egress_consent WHERE id = ?", (req["id"],)
+    )
+    assert row["duration"] == "once"
 
 
 async def test_expire_all_pending_reaps_only_pending(ec, ws, user):

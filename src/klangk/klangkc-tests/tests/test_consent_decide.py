@@ -606,8 +606,8 @@ class TestAppActions:
             assert any('"denied"' in s and '"r1"' in s for s in ws.sent)
 
     async def test_duration_selection_does_not_submit(self):
-        # Clicking a duration button selects it (highlights + stores) but sends
-        # NO verdict -- only Allow/Deny submit (#2328).
+        # Clicking a global duration button selects it (highlights + stores) but
+        # sends NO verdict -- only Allow/Deny submit (#2328).
         app = _make_app()
         async with app.run_test() as pilot:
             ws = FakeWS([])
@@ -615,20 +615,15 @@ class TestAppActions:
             app.controller.apply_frame(_req_frame("r1", host="a.com"))
             app._refresh()
             await pilot.pause()
-            btn = app.query_one("#dur-1d-r1", Button)
+            btn = app.query_one("#dur-1d", Button)
             app.on_button_pressed(types.SimpleNamespace(button=btn))
             await pilot.pause()
             assert ws.sent == []  # selecting a duration does NOT submit
-            row = next(
-                c
-                for c in app.query_one("#requests", ListView).children
-                if getattr(c, "request_id", None) == "r1"
-            )
-            assert row.selected_duration == "1d"
+            assert app._duration == "1d"
             assert btn.has_class("dur-sel")
 
     async def test_allow_submits_with_selected_duration(self):
-        # Allow sends the verdict carrying the row's selected duration.
+        # Allow sends the verdict carrying the global selected duration.
         app = _make_app()
         async with app.run_test() as pilot:
             ws = FakeWS([])
@@ -637,9 +632,7 @@ class TestAppActions:
             app._refresh()
             await pilot.pause()
             app.on_button_pressed(
-                types.SimpleNamespace(
-                    button=app.query_one("#dur-1h-r1", Button)
-                )
+                types.SimpleNamespace(button=app.query_one("#dur-1h", Button))
             )
             app.on_button_pressed(
                 types.SimpleNamespace(
@@ -671,23 +664,14 @@ class TestAppActions:
             assert any('"restart"' in s for s in ws.sent), ws.sent
 
     async def test_duration_selector_guards(self):
-        # Defensive guards: a button without a duration / without a ListItem
-        # ancestor is a no-op; an unknown rid yields the default duration.
+        # Defensive guard: a button without a duration attr is a no-op.
         app = _make_app()
         async with app.run_test() as pilot:
             app.controller.apply_frame(_req_frame("r1", host="a.com"))
             app._refresh()
             await pilot.pause()
-            # button without a duration attr -> no-op
-            app._select_duration(
-                types.SimpleNamespace(duration=None, parent=None)
-            )
-            # button with a duration but no ListItem ancestor -> no-op
-            app._select_duration(
-                types.SimpleNamespace(duration="1h", parent=None)
-            )
-            # unknown rid -> default duration
-            assert app._row_duration("does-not-exist") == "restart"
+            app._select_duration(types.SimpleNamespace(duration=None))
+            assert app._duration == "restart"  # unchanged (default)
 
 
 class TestWsLoop:

@@ -328,7 +328,11 @@ class TestConsentCoordinatorTimeout:
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await fut
-        assert verdict == {"decision": "deny", "reason": "timeout"}
+        assert verdict == {
+            "decision": "deny",
+            "reason": "timeout",
+            "duration": "once",
+        }
         app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
             "rid-1"
         )
@@ -361,7 +365,11 @@ class TestConsentCoordinatorTimeout:
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await fut
-        assert verdict == {"decision": "deny", "reason": "timeout"}
+        assert verdict == {
+            "decision": "deny",
+            "reason": "timeout",
+            "duration": "once",
+        }
         app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
             "rid-1"
         )

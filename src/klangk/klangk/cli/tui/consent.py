@@ -249,7 +249,9 @@ class ConsentDeciderApp(App):
     #empty { padding: 1 2; color: $text-muted; }
     .req-host { color: $text; }
     #requests Button { height: 1; border: none; padding: 0 1; }
-    #requests .dur-sel { background: $accent; color: $background; }
+    #duration-selector { width: auto; height: 1; }
+    #duration-selector Button { width: auto; min-width: 0; height: 1; border: none; padding: 0 1; }
+    .dur-sel { background: $accent; color: $background; }
     """
 
     BINDINGS = [
@@ -284,14 +286,30 @@ class ConsentDeciderApp(App):
         self._stop = False
         self._flash_msg = ""
         self._flash_until = 0.0
+        self._duration = DURATION_DEFAULT
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static(id="status")
+        # Global duration selector (default `restart`): click to choose; selecting
+        # does NOT submit -- only a row's Allow/Deny submits with this duration.
+        yield Horizontal(*self._duration_buttons(), id="duration-selector")
         with Vertical():
             yield ListView(id="requests")
             yield Static("No held requests — connected, waiting.", id="empty")
         yield Footer()
+
+    def _duration_buttons(self) -> list[Button]:
+        btns = []
+        for d in DURATIONS:
+            b = Button(
+                d,
+                id=f"dur-{d}",
+                classes=("dur-sel" if d == self._duration else ""),
+            )
+            b.duration = d  # type: ignore[attr-defined]
+            btns.append(b)
+        return btns
 
     def on_mount(self) -> None:
         self.title = f"consent-decide · {self.workspace_name}"
@@ -473,28 +491,17 @@ class ConsentDeciderApp(App):
         return escape(f"{host}{proc}  ({secs}s)")
 
     def _render_item(self, req: ConsentRequest) -> ListItem:
-        # Host line; a row of duration toggle-buttons (default `restart`, click to
-        # select -- selecting does NOT submit); Allow/Deny are the only submit
-        # actions, decided with the row's selected duration (#2328).
-        dur_btns = []
-        for d in DURATIONS:
-            b = Button(
-                d,
-                id=f"dur-{d}-{req.id}",
-                classes=("dur-sel" if d == DURATION_DEFAULT else ""),
-            )
-            b.duration = d  # type: ignore[attr-defined]
-            dur_btns.append(b)
+        # Host line + per-row Allow/Deny (the only submit actions). The duration
+        # is chosen once via the global selector above the list (#2328), so the
+        # row stays compact.
         item = ListItem(
             Static(self._host_line(req), classes="req-host"),
-            Horizontal(*dur_btns, classes="req-durations"),
             Horizontal(
                 Button("Allow", id=f"allow-{req.id}", variant="success"),
                 Button("Deny", id=f"deny-{req.id}", variant="error"),
             ),
         )
         item.request_id = req.id  # type: ignore[attr-defined]
-        item.selected_duration = DURATION_DEFAULT  # type: ignore[attr-defined]
         return item
 
     def _update_item(self, item: ListItem, req: ConsentRequest) -> None:
@@ -532,37 +539,27 @@ class ConsentDeciderApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""
         if bid.startswith("dur-"):
-            # Selecting a duration does NOT submit -- it only sets the row's
-            # pending choice (Allow/Deny submit with it).
+            # Selecting a duration does NOT submit -- it only sets the global
+            # choice (Allow/Deny submit with it).
             self._select_duration(event.button)
         elif bid.startswith("allow-"):
-            rid = bid.removeprefix("allow-")
-            self._decide_id(rid, DECISION_ALLOWED, self._row_duration(rid))
+            self._decide_id(
+                bid.removeprefix("allow-"), DECISION_ALLOWED, self._duration
+            )
         elif bid.startswith("deny-"):
-            rid = bid.removeprefix("deny-")
-            self._decide_id(rid, DECISION_DENIED, self._row_duration(rid))
+            self._decide_id(
+                bid.removeprefix("deny-"), DECISION_DENIED, self._duration
+            )
 
     def _select_duration(self, button: Button) -> None:
-        """Set a row's selected duration + highlight it (no submit)."""
+        """Set the global selected duration + highlight it (no submit)."""
         d = getattr(button, "duration", None)
         if d is None:
             return
-        item = button.parent
-        while item is not None and not isinstance(item, ListItem):
-            item = item.parent
-        if item is None:
-            return
-        item.selected_duration = d  # type: ignore[attr-defined]
-        for b in item.query(".dur-sel"):
+        self._duration = d
+        for b in self.query(".dur-sel"):
             b.remove_class("dur-sel")
         button.add_class("dur-sel")
-
-    def _row_duration(self, rid: str) -> str:
-        """The selected duration for a request's row (default if not found)."""
-        for child in self.query_one("#requests", ListView).children:
-            if getattr(child, "request_id", None) == rid:
-                return getattr(child, "selected_duration", DURATION_DEFAULT)
-        return DURATION_DEFAULT
 
     def action_allow(self) -> None:
         # `a` key -> the highlighted row (keyboard path).
@@ -575,7 +572,7 @@ class ConsentDeciderApp(App):
         rid = self._focused_request_id()
         if rid is None:
             return
-        self._decide_id(rid, decision, self._row_duration(rid))
+        self._decide_id(rid, decision, self._duration)
 
     def _decide_id(self, rid: str, decision: str, duration: str) -> None:
         ws = self._ws

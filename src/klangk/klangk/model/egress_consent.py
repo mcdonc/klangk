@@ -308,15 +308,23 @@ class EgressConsentModel:
         """Auto-expire a pending request (timeout). Returns True if updated.
 
         Uses ``DECISION_EXPIRED`` so the audit trail distinguishes a
-        human deny from an unattended timeout.
+        human deny from an unattended timeout. The duration is ``once`` -- a
+        timeout is a non-persistent deny (just this connection), distinct from
+        an active deny (which defaults to `restart`).
         """
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "UPDATE egress_consent"
-                " SET decision = ?, decided_at = ?"
+                " SET decision = ?, duration = ?, decided_at = ?"
                 " WHERE id = ? AND decision = ?",
-                (DECISION_EXPIRED, decided_at, request_id, DECISION_PENDING),
+                (
+                    DECISION_EXPIRED,
+                    DURATION_ONCE,
+                    decided_at,
+                    request_id,
+                    DECISION_PENDING,
+                ),
             )
             return cursor.rowcount > 0
 

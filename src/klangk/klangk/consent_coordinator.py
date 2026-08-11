@@ -35,7 +35,11 @@ import asyncio
 import logging
 
 from .consent import workspace_is_interactive
-from .model.egress_consent import DECISION_PENDING, DURATION_DEFAULT
+from .model.egress_consent import (
+    DECISION_PENDING,
+    DURATION_DEFAULT,
+    DURATION_ONCE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +261,11 @@ class ConsentCoordinator:
             )
         if not hold["future"].done():
             hold["future"].set_result(
-                {"decision": VERDICT_DENY, "reason": reason}
+                {
+                    "decision": VERDICT_DENY,
+                    "reason": reason,
+                    "duration": DURATION_ONCE,
+                }
             )
         self._broadcast_resolved(request_id, hold["workspace_id"], "expired")
 
