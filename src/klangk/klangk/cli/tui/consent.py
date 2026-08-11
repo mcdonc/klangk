@@ -28,7 +28,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import websockets
 from rich.markup import escape
@@ -121,6 +121,9 @@ RULES = "rules"  # refreshed in-effect rules snapshot; payload = EgressRules
 PONG = "pong"
 ERROR = "error"  # server rejected a verdict; payload = message str
 IGNORED = "ignore"  # non-JSON / unknown frame
+REVOKE_ACK = (  # server replied to a revoke (#2339/#2341); payload=(id, ok)
+    "revoke_ack"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +202,17 @@ def make_ping() -> str:
     return json.dumps({"type": "ping"})
 
 
+def make_revoke(request_id: str) -> str:
+    """Build an outbound revoke frame (JSON string) for an active verdict (#2341).
+
+    Asks the server (#2339) to drop the verdict's sidecar rule and mark the row
+    ``revoked``. The row leaves the list only once the server's ``revoke_ack``
+    confirms success -- never optimistically, so a still-enforced rule is never
+    hidden from the decider.
+    """
+    return json.dumps({"type": "revoke", "request_id": request_id})
+
+
 class ConsentDeciderController:
     """Pure state machine over the consent-decider WS protocol (#2310).
 
@@ -260,6 +274,25 @@ class ConsentDeciderController:
                 return IGNORED, None
             self.rules = rules
             return RULES, rules
+        if mtype == "revoke_ack":
+            # #2341: server confirmed a revoke. On success drop the row from the
+            # cached snapshot (idempotent -- the server also pushes a refreshed
+            # ``egress_rules``); on failure leave it enforced. ``request_id`` may
+            # be absent on a malformed frame -> rid None, no mutation.
+            rid = msg.get("request_id")
+            ok = bool(msg.get("ok"))
+            if ok and isinstance(rid, str) and self.rules is not None:
+                self.rules = replace(
+                    self.rules,
+                    allowed=tuple(
+                        r for r in self.rules.allowed if r.id != rid
+                    ),
+                    denied=tuple(r for r in self.rules.denied if r.id != rid),
+                )
+            return REVOKE_ACK, (
+                rid if isinstance(rid, str) else None,
+                ok,
+            )
         if mtype == "pong":
             return PONG, None
         if mtype == "error":
@@ -599,6 +632,17 @@ class ConsentDeciderApp(App):
                 try:
                     if action == ERROR:
                         self._flash(str(payload))
+                    elif action == REVOKE_ACK:
+                        # payload = (request_id, ok). A failed revoke (not an
+                        # active verdict, wrong workspace, or the sidecar never
+                        # acked the drop) leaves the row enforced -- flash so
+                        # the decider knows it is still in effect, never silent.
+                        # Success needs no flash; the controller already dropped
+                        # the row and the refresh re-renders the list without it.
+                        _rid, ok = payload  # type: ignore[misc]
+                        if not ok:
+                            self._flash("revoke failed — still in effect")
+                        self._refresh()
                     else:
                         self._refresh()
                 except Exception:
@@ -744,7 +788,15 @@ class ConsentDeciderApp(App):
         """
         self._flash_msg = f" [red]![/red] {escape(message)}"
         self._flash_until = time.time() + ttl
-        self.query_one("#status", Static).update(self._flash_msg)
+        # Query the ACTIVE screen (App.query_one searches the app's default
+        # screen, not a pushed one): the main queue's ``#status`` or the rules
+        # screen's ``#rules-status`` (a revoke can be issued / its ack can
+        # arrive while either is up).
+        screen = self.screen
+        target = (
+            "#rules-status" if isinstance(screen, RulesScreen) else "#status"
+        )
+        screen.query_one(target, Static).update(self._flash_msg)
 
     # -- actions -----------------------------------------------------------
 
@@ -833,12 +885,17 @@ class RulesScreen(Screen):
     CSS = """
     RulesScreen { layout: vertical; }
     #rules-status { padding: 0 1; background: $panel; color: $text-muted; }
-    #rules-body { padding: 0 1; }
+    #rules-body { padding: 0 1; height: 1fr; }
+    #rules-list-label { padding: 0 1; background: $panel; color: $text-muted; }
+    #rules-list { min-height: 3; height: auto; max-height: 12; border: round $primary; }
+    #rules-list:focus-within { border: round $accent; }
+    #rules-list ListItem { height: 1; }
     """
 
     BINDINGS = [
         ("escape", "back", "Back"),
         ("q", "back", "Back"),
+        ("x", "revoke", "Revoke"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -846,14 +903,56 @@ class RulesScreen(Screen):
         yield Static(id="rules-status")
         with VerticalScroll(id="rules-body"):
             yield Static(id="rules-content")
+        # #2341 slice D: a compact, selectable list of the revocable verdicts
+        # (allows + denies). The static allow-list is NOT here (it lives in the
+        # read-only #rules-content above), so it can never be the focused
+        # revoke target -- the scope guard is structural, not a runtime check.
+        yield Static(
+            "Revoke: focus a rule, press [bold]x[/bold]",
+            id="rules-list-label",
+        )
+        yield ListView(id="rules-list")
         yield Footer()
 
     def on_mount(self) -> None:
         self.refresh_rules()
+        # Focus the revoke selector so arrow keys + `x` work immediately.
+        self.query_one("#rules-list", ListView).focus()
 
     def action_back(self) -> None:
         """``q``/``Esc`` returns to the held-request queue."""
         self.app.pop_screen()
+
+    def action_revoke(self) -> None:
+        """``x`` revokes the focused revocable rule (#2341 slice D).
+
+        Sends the ``revoke`` frame; the row stays in the list until the
+        server's ``revoke_ack`` confirms it (never optimistically -- a still-
+        enforced rule must not be hidden). A failed ack flashes and leaves the
+        row; the removal-on-success is driven by the ack in :meth:`_pump`.
+        """
+        app = self.app
+        rid = self._focused_rule_id()
+        if rid is None:
+            return
+        ws = app._ws  # type: ignore[attr-defined]
+        if ws is None:
+            app._flash("disconnected — reconnecting")  # type: ignore[attr-defined]
+            return
+        asyncio.create_task(self._send_revoke(app, ws, rid))
+
+    async def _send_revoke(self, app, ws, rid: str) -> None:
+        try:
+            await ws.send(make_revoke(rid))
+        except Exception:
+            app._flash("revoke send failed — reconnecting")  # type: ignore[attr-defined]
+
+    def _focused_rule_id(self) -> str | None:
+        lv = self.query_one("#rules-list", ListView)
+        child = lv.highlighted_child
+        if child is None:
+            return None
+        return getattr(child, "rule_id", None)
 
     def refresh_rules(self) -> None:
         """Re-render the body from the controller's latest ``egress_rules``."""
@@ -865,12 +964,70 @@ class RulesScreen(Screen):
         app = self.app  # ConsentDeciderApp
         controller = app.controller  # type: ignore[attr-defined]
         rules = controller.rules
-        conn = "connected" if app._connected else "reconnecting"  # type: ignore[attr-defined]
-        held = len(controller.pending)
-        status.update(
-            f" {escape(app.workspace_name)}  ·  {conn}  ·  {held} held  ·  rules"  # type: ignore[attr-defined]
-        )
+        # Respect an active flash (e.g. a failed revoke) so the 1s refresh
+        # does not clobber it -- mirrors the main screen's status behavior.
+        if app._flash_until > time.time():  # type: ignore[attr-defined]
+            status.update(app._flash_msg)  # type: ignore[attr-defined]
+        else:
+            conn = "connected" if app._connected else "reconnecting"  # type: ignore[attr-defined]
+            held = len(controller.pending)
+            status.update(
+                f" {escape(app.workspace_name)}  ·  {conn}  ·  {held} held  ·  rules"  # type: ignore[attr-defined]
+            )
         content.update(self._render_body(rules, controller))
+        self._rebuild_rule_list(rules)
+
+    def _rebuild_rule_list(self, rules: EgressRules | None) -> None:
+        """Rebuild the revoke selector from the controller's rules (#2341).
+
+        Compact rows (no countdown -- the detail body above ticks that). Only
+        rebuilt when the set of revocable rule ids changes, so the 1s refresh
+        never flickers it. The static allow-list is intentionally absent -> it
+        is never a revoke target.
+        """
+        lv = self.query_one("#rules-list", ListView)
+        desired: list[str] = []
+        if rules is not None:
+            desired += [r.id for r in rules.allowed]
+            desired += [r.id for r in rules.denied]
+        current = [getattr(c, "rule_id", None) for c in lv.children]
+        if current == desired:
+            return  # unchanged -> no flicker
+        focused = (
+            getattr(lv.highlighted_child, "rule_id", None)
+            if lv.highlighted_child is not None
+            else None
+        )
+        lv.clear()
+        if rules is not None:
+            for r in rules.allowed:
+                lv.append(self._rule_item(r, DECISION_ALLOWED))
+            for r in rules.denied:
+                lv.append(self._rule_item(r, DECISION_DENIED))
+        if focused is not None:
+            # Restore focus to the surviving rule. ``lv.clear()`` schedules an
+            # index reset that would clobber a synchronous set, so defer the
+            # restore to after the refresh pass lands it.
+            def _restore_focus(_lv=lv, _focused=focused) -> None:
+                for index, child in enumerate(_lv.children):
+                    if getattr(child, "rule_id", None) == _focused:
+                        _lv.index = index
+                        break
+
+            lv.call_after_refresh(_restore_focus)
+
+    @staticmethod
+    def _rule_item(rule: ConsentRule, decision: str) -> ListItem:
+        host = rule.dest_host
+        if rule.dest_port is not None:
+            host = f"{host}:{rule.dest_port}"
+        proc = f"  ({rule.process_name})" if rule.process_name else ""
+        mark = "allow" if decision == DECISION_ALLOWED else "deny"
+        item = ListItem(
+            Static(f"{escape(mark)}  {escape(host)}{escape(proc)}")
+        )
+        item.rule_id = rule.id  # type: ignore[attr-defined]
+        return item
 
     def _render_body(self, rules: EgressRules | None, controller) -> str:
         """Build the grouped rich-markup body (allow-list, allows, denies, pause)."""

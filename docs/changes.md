@@ -32,6 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Revoke action in `consent-decide` (#2341).** On the rules screen
+  (`r`), focus an active consent allow/deny row and press `x` to revoke it:
+  klangkd drops the sidecar rule and marks the verdict spent, so the row
+  leaves the list immediately. A failed revoke (sidecar unreachable / no ack)
+  flashes `revoke failed — still in effect` and leaves the row enforced — a
+  still-active rule is never silently hidden. Static allow-list rows are not
+  revocable from this screen (edit them in workspace settings). Closes the
+  #2335 rule-management view.
+
 - **Read-only rules screen in `consent-decide` (#2340).** Press `r` in the
   `consent-decide` TUI to switch from the held-request queue to a second,
   read-only screen listing every egress decision currently in effect for the
