@@ -226,22 +226,6 @@ async def _wait_pending_empty(
     )
 
 
-async def _assert_no_request(
-    app: ConsentDeciderApp, host_substr: str, wait: float = 7.0
-) -> None:
-    """Confirm NO request for ``host_substr`` arrives within ``wait`` seconds
-    (a connection that passes the gate produces no consent prompt)."""
-    deadline = time.time() + wait
-    while time.time() < deadline:
-        for req in app.controller.pending.values():
-            if host_substr in (req.dest_host or ""):
-                raise AssertionError(
-                    f"unexpected re-prompt for '{host_substr}' "
-                    f"(should have passed the gate): {req}"
-                )
-        await asyncio.sleep(0.3)
-
-
 # --- tests -----------------------------------------------------------------
 
 
