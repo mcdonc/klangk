@@ -527,26 +527,12 @@ class CaddyRenderer:
             f"		reverse_proxy {upstream}\n"
             "	}\n"
         )
-        # #2242: the sidecar's egress-consent event receiver. The site-level
-        # forward_auth validates its workspace JWT; this handle proxies it to
-        # the app (the egress site only reverse-proxies its explicit handles --
-        # /llm-proxy, browser-delegate, post-chat-message, and this one). The
-        # @notContainerSrc guard applies on this egress port (8995); the main
-        # browser port's catch-all also reaches it with just the workspace-JWT
-        # check (consistent with /llm-proxy).
-        consent = (
-            "	handle /internal/egress-consent/events {\n"
-            f"{guard}"
-            f"		reverse_proxy {upstream}\n"
-            "	}\n"
-        )
         # #2319: the sidecar's egress-sidecar WebSocket (held-egress verdicts).
-        # Same protection as the consent POST above: the site-level
-        # forward_auth validates the sidecar's workspace JWT, then this handle
-        # proxies the WS upgrade to the app. The sidecar sends the JWT as an
-        # ``Authorization: Bearer`` header (not a query param) so forward_auth
-        # sees it; ``flush_interval -1`` avoids buffering the bidirectional
-        # verdict stream.
+        # The site-level forward_auth validates the sidecar's workspace JWT,
+        # then this handle proxies the WS upgrade to the app. The sidecar sends
+        # the JWT as an ``Authorization: Bearer`` header (not a query param) so
+        # forward_auth sees it; ``flush_interval -1`` avoids buffering the
+        # bidirectional verdict stream.
         egress_ws = (
             "	handle /ws/egress-sidecar {\n"
             f"{guard}"
@@ -556,9 +542,7 @@ class CaddyRenderer:
             "		}\n"
             "	}\n"
         )
-        return (
-            not_src_matcher + consent + egress_ws + llm + delegate + post_chat
-        )
+        return not_src_matcher + egress_ws + llm + delegate + post_chat
 
     def _egress_site(self, upstream: str, container_srcs: str) -> str:
         """The full container-egress site block (headless + full both render it)."""

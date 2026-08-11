@@ -502,6 +502,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Removed
 
+- **`POST /internal/egress-consent/events` (#2318).** The sidecar's
+  fire-and-forget consent-event endpoint is gone, superseded by the
+  synchronous `/ws/egress-sidecar` hold path (#2311): recording now happens
+  when the sidecar holds a destination pending a verdict (the coordinator
+  creates the row on `hold()`), so the POST handler + its Caddy handle were
+  dead. `KLANGKNETWORK_EGRESS_CONSENT_URL` still drives the sidecar (it now
+  only uses the `host:port`; the path is ignored) to derive the WS URL.
+
 - **`KLANGKD_SSL_CERT_DIR` (#1523).** Use `<KLANGKD_CUSTOMIZE_DIR>/certs/`.
 
 - **`KLANGKD_AGENT_DISABLED`, `KLANGKD_AGENT_EMAIL`, `KLANGKD_AGENT_HANDLE`
