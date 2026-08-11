@@ -44,6 +44,14 @@ operators or integrators to act when upgrading.
   sidecar level it maps to a long in-memory TTL). Recorded on the
   `egress_consent` row.
 
+- **Active-egress-decisions snapshot (`egress_rules` frame) (#2338).** The
+  consent-decider WebSocket now pushes an `egress_rules` snapshot on connect
+  (and refreshes it after each verdict): the workspace's in-effect consent
+  verdicts (allows and denies still within their duration) plus its static
+  allow-list, for the upcoming rule-management view (#2335). The
+  `egress_consent.duration` column is now read back and constrained by a DB
+  `CHECK` to the documented duration values (mirroring `DURATIONS`).
+
 - **`klangk consent-decide <workspace>` (#2310).** A live Textual client that
   connects to a workspace's consent-decider stream and shows its held egress
   requests (blocked destinations the network sidecar is holding for a

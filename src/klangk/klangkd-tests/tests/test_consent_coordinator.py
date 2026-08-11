@@ -42,6 +42,8 @@ def _app(
     has_decider: bool = True,
     decide_row=None,
     pending_rows=None,
+    active_rows=None,
+    allowed_domains=None,
 ):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
@@ -56,9 +58,14 @@ def _app(
     egress_consent.decide = AsyncMock(return_value=decide_row)
     egress_consent.expire_pending = AsyncMock(return_value=True)
     egress_consent.list_requests = AsyncMock(return_value=pending_rows or [])
+    egress_consent.list_active = AsyncMock(return_value=active_rows or [])
     workspaces = AsyncMock()
     workspaces.get_workspace = AsyncMock(
-        return_value={"egress_mode": egress_mode} if workspace_exists else None
+        return_value=(
+            {"egress_mode": egress_mode, "allowed_domains": allowed_domains}
+            if workspace_exists
+            else None
+        )
     )
     app.state.model = types.SimpleNamespace(
         egress_consent=egress_consent, workspaces=workspaces
@@ -167,14 +174,51 @@ class TestConsentCoordinatorFanout:
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.consent_deciders.broadcast.reset_mock()
         await coord.resolve("rid-1", "allowed", "once", "a@x")
-        # second broadcast is the resolved frame (first was the egress_request)
-        ws_arg, frame = app.state.consent_deciders.broadcast.call_args.args
-        assert frame == {
+        # the egress_resolved frame is among the broadcasts (resolve also pushes
+        # a refreshed egress_rules frame, #2335 slice A)
+        frames = [
+            c.args[1]
+            for c in app.state.consent_deciders.broadcast.call_args_list
+        ]
+        assert {
             "type": "egress_resolved",
             "workspace_id": FULL_WS,
             "request_id": "rid-1",
             "decision": "allowed",
-        }
+        } in frames
+
+    async def test_resolve_broadcasts_rules_after_verdict(self):
+        # A verdict landing refreshes the deciders' in-effect rules view
+        # (#2335 slice A).
+        row = _request()
+        row["decision"] = "allowed"
+        row["duration"] = (
+            "restart"  # a real in-effect duration (once would be excluded)
+        )
+        app = _app(
+            request=_request(),
+            decide_row=row,
+            active_rows=[row],
+            allowed_domains=["static.example.com"],
+        )
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.consent_deciders.broadcast.reset_mock()
+        await coord.resolve("rid-1", "allowed", "once", "a@x")
+        app.state.model.egress_consent.list_active.assert_awaited_once_with(
+            FULL_WS
+        )
+        frames = [
+            c.args[1]
+            for c in app.state.consent_deciders.broadcast.call_args_list
+        ]
+        rules = [f for f in frames if f["type"] == "egress_rules"]
+        assert len(rules) == 1
+        assert rules[0]["workspace_id"] == FULL_WS
+        assert rules[0]["allow_list"] == ["static.example.com"]
+        assert [r["dest_host"] for r in rules[0]["allowed"]] == ["1.2.3.4"]
+        assert rules[0]["denied"] == []
+        assert rules[0]["paused"] is None
 
     async def test_resolve_rejects_verdict_outside_decider_workspace(self):
         # defense-in-depth: a workspace-scoped decider may not decide another
@@ -201,6 +245,21 @@ class TestConsentCoordinatorFanout:
         assert frame["type"] == "egress_resolved"
         assert frame["decision"] == "expired"
 
+    async def test_broadcast_rules_swallows_refresh_failure(self):
+        # A rules-frame DB failure during the post-verdict refresh must not
+        # break resolve (best-effort: the sidecar already has its verdict).
+        row = _request()
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.model.workspaces.get_workspace = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        # must not raise -- the verdict path is unaffected by the refresh
+        verdict = await coord.resolve("rid-1", "allowed", "once", "a@x")
+        assert verdict["decision"] == "allow"
+
     async def test_snapshot_replays_pending_requests(self):
         rows = [_request("a"), _request("b")]
         app = _app(pending_rows=rows)
@@ -217,6 +276,58 @@ class TestConsentCoordinatorFanout:
         coord = ConsentCoordinator(app)
         assert await coord.snapshot(None) == []
         app.state.model.egress_consent.list_requests.assert_not_awaited()
+
+
+class TestConsentCoordinatorRules:
+    async def test_rules_frame_groups_active_and_allow_list(self):
+        allowed = {
+            "id": "a1",
+            "workspace_id": FULL_WS,
+            "dest_host": "allow.com",
+            "dest_port": 443,
+            "decision": "allowed",
+            "duration": "restart",
+        }
+        denied = {
+            "id": "d1",
+            "workspace_id": FULL_WS,
+            "dest_host": "deny.com",
+            "dest_port": 443,
+            "decision": "denied",
+            "duration": "forever",
+        }
+        app = _app(
+            active_rows=[allowed, denied],
+            allowed_domains=["static.example.com"],
+        )
+        coord = ConsentCoordinator(app)
+        frame = await coord.rules_frame(FULL_WS)
+        assert frame == {
+            "type": "egress_rules",
+            "workspace_id": FULL_WS,
+            "allow_list": ["static.example.com"],
+            "allowed": [allowed],
+            "denied": [denied],
+            "paused": None,
+        }
+        app.state.model.egress_consent.list_active.assert_awaited_once_with(
+            FULL_WS
+        )
+
+    async def test_rules_frame_none_for_missing_workspace(self):
+        app = _app(workspace_exists=False)
+        coord = ConsentCoordinator(app)
+        assert await coord.rules_frame(FULL_WS) is None
+        app.state.model.egress_consent.list_active.assert_not_awaited()
+
+    async def test_rules_frame_none_for_deploy_wide(self):
+        app = _app()
+        coord = ConsentCoordinator(app)
+        assert await coord.rules_frame(None) is None
+        # deploy-wide deciders get no rules frame (no single workspace),
+        # matching snapshot().
+        app.state.model.workspaces.get_workspace.assert_not_awaited()
+        app.state.model.egress_consent.list_active.assert_not_awaited()
 
 
 class TestConsentCoordinatorResolve:

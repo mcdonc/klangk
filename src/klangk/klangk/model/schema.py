@@ -1,7 +1,12 @@
 """Database schema creation and in-place migrations (``init_db``)."""
 
 from .acl import PRINCIPAL_USER
+from .egress_consent import DURATIONS
 from .users import AGENT_USER_ID, backfill_handles
+
+# The duration CHECK value list is generated from the single source of truth
+# (DURATIONS) so the DB constraint cannot drift from the Python enum (#2338).
+_DURATION_CHECK_VALUES = ", ".join(f"'{d}'" for d in sorted(DURATIONS))
 
 
 async def init_db(db) -> None:
@@ -339,7 +344,7 @@ async def init_db(db) -> None:
         # connections that need human approval. CHECK constraints enforce
         # the decision/scope state machine at the storage layer — the same
         # DB-backstop philosophy as the agent-user triggers above.
-        await db.execute("""
+        await db.execute(f"""
             CREATE TABLE IF NOT EXISTS egress_consent (
                 id TEXT PRIMARY KEY,
                 workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -351,12 +356,79 @@ async def init_db(db) -> None:
                     CHECK (decision IN ('pending', 'allowed', 'denied', 'expired')),
                 scope TEXT
                     CHECK (scope IS NULL OR scope IN ('once', 'workspace', 'deploy')),
-                duration TEXT,
+                duration TEXT
+                    CHECK (duration IS NULL OR duration IN
+                        ({_DURATION_CHECK_VALUES})),
                 requested_at REAL NOT NULL,
                 decided_at REAL,
                 decided_by TEXT REFERENCES users(id) ON DELETE SET NULL
             )
         """)
+        # egress_consent: attach a CHECK on `duration` (#2338). The column may
+        # already exist from an earlier ALTER (without the constraint) or be
+        # absent in an older dev DB; rebuild the table either way so the
+        # constraint is universal. Detected via sqlite_master (PRAGMA
+        # table_info doesn't expose CHECK). Data is copied across (mirrors the
+        # users rebuild above); the partial unique indexes are recreated by
+        # the CREATE INDEX statements below. No deployments to preserve.
+        ec_sql_cur = await db.execute(
+            "SELECT sql FROM sqlite_master"
+            " WHERE type='table' AND name='egress_consent'"
+        )
+        ec_sql_row = await ec_sql_cur.fetchone()
+        if (
+            ec_sql_row
+            and "duration IS NULL OR duration IN" not in ec_sql_row[0]
+        ):
+            await db.execute(f"""
+                CREATE TABLE egress_consent_new (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                    dest_host TEXT NOT NULL,
+                    dest_port INTEGER,
+                    pid INTEGER,
+                    process_name TEXT,
+                    decision TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (decision IN ('pending', 'allowed', 'denied', 'expired')),
+                    scope TEXT
+                        CHECK (scope IS NULL OR scope IN ('once', 'workspace', 'deploy')),
+                    duration TEXT
+                        CHECK (duration IS NULL OR duration IN
+                            ({_DURATION_CHECK_VALUES})),
+                    requested_at REAL NOT NULL,
+                    decided_at REAL,
+                    decided_by TEXT REFERENCES users(id) ON DELETE SET NULL
+                )
+            """)
+            ec_info = await db.execute("PRAGMA table_info(egress_consent)")
+            ec_old_cols = {r[1] for r in await ec_info.fetchall()}
+            ec_shared = [
+                c
+                for c in (
+                    "id",
+                    "workspace_id",
+                    "dest_host",
+                    "dest_port",
+                    "pid",
+                    "process_name",
+                    "decision",
+                    "scope",
+                    "duration",
+                    "requested_at",
+                    "decided_at",
+                    "decided_by",
+                )
+                if c in ec_old_cols
+            ]
+            ec_cols_str = ", ".join(ec_shared)
+            await db.execute(
+                f"INSERT INTO egress_consent_new ({ec_cols_str})"  # noqa: S608
+                f" SELECT {ec_cols_str} FROM egress_consent"
+            )
+            await db.execute("DROP TABLE egress_consent")
+            await db.execute(
+                "ALTER TABLE egress_consent_new RENAME TO egress_consent"
+            )
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_egress_consent_workspace
             ON egress_consent(workspace_id, decision)
@@ -379,14 +451,6 @@ async def init_db(db) -> None:
             ON egress_consent(workspace_id, dest_host, COALESCE(dest_port, -1))
             WHERE decision = 'denied' AND decided_by IS NULL
         """)
-        # Migration: add duration column (#2328). NULL until a decider records
-        # a decision; the sidecar honors it (allow-learn / deny-REJECT for T).
-        cursor = await db.execute("PRAGMA table_info(egress_consent)")
-        ec_cols = {row[1] for row in await cursor.fetchall()}
-        if "duration" not in ec_cols:
-            await db.execute(
-                "ALTER TABLE egress_consent ADD COLUMN duration TEXT"
-            )
         # Migration: drop legacy role and workspace_access tables
         for table in ("user_roles", "roles", "workspace_access"):
             await db.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
