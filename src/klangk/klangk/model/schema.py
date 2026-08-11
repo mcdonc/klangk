@@ -344,7 +344,7 @@ async def init_db(db) -> None:
         """)
         # Interactive egress consent (#2239). Tracks blocked outbound
         # connections that need human approval. CHECK constraints enforce
-        # the decision/scope state machine at the storage layer — the same
+        # the decision state machine at the storage layer — the same
         # DB-backstop philosophy as the agent-user triggers above.
         await db.execute(f"""
             CREATE TABLE IF NOT EXISTS egress_consent (
@@ -356,8 +356,6 @@ async def init_db(db) -> None:
                 process_name TEXT,
                 decision TEXT NOT NULL DEFAULT 'pending'
                     CHECK (decision IN ({_DECISION_CHECK_VALUES})),
-                scope TEXT
-                    CHECK (scope IS NULL OR scope IN ('once', 'workspace', 'deploy')),
                 duration TEXT
                     CHECK (duration IS NULL OR duration IN
                         ({_DURATION_CHECK_VALUES})),
@@ -391,8 +389,6 @@ async def init_db(db) -> None:
                     process_name TEXT,
                     decision TEXT NOT NULL DEFAULT 'pending'
                         CHECK (decision IN ({_DECISION_CHECK_VALUES})),
-                    scope TEXT
-                        CHECK (scope IS NULL OR scope IN ('once', 'workspace', 'deploy')),
                     duration TEXT
                         CHECK (duration IS NULL OR duration IN
                             ({_DURATION_CHECK_VALUES})),
@@ -415,7 +411,6 @@ async def init_db(db) -> None:
                     "pid",
                     "process_name",
                     "decision",
-                    "scope",
                     "duration",
                     "requested_at",
                     "decided_at",

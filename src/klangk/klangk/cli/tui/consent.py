@@ -43,11 +43,10 @@ from ..transport import ws_connect
 
 logger = logging.getLogger(__name__)
 
-# Decision/scope values mirror the server (model/egress_consent.py); the CLI
+# Decision values mirror the server (model/egress_consent.py); the CLI
 # is isolated from the server package, so they are duplicated here (#2309 rule).
 DECISION_ALLOWED = "allowed"
 DECISION_DENIED = "denied"
-SCOPE_ONCE = "once"
 # Duration tokens mirror the server (model/egress_consent.py); duplicated here
 # per CLI isolation. Ordered for the TUI selector; default is `restart` (#2328).
 DURATION_ONCE = "once"
@@ -188,7 +187,6 @@ def make_verdict(
             "type": "verdict",
             "request_id": request_id,
             "decision": decision,
-            "scope": SCOPE_ONCE,
             "duration": duration,
         }
     )

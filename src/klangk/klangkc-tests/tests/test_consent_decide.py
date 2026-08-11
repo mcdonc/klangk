@@ -115,7 +115,6 @@ def _rule(
         "pid": None,
         "process_name": process,
         "decision": decision,
-        "scope": "once",
         "duration": duration,
         "requested_at": 90.0,
         "decided_at": decided_at,
@@ -356,7 +355,6 @@ class TestFrameBuilders:
             "type": "verdict",
             "request_id": "r1",
             "decision": "allowed",
-            "scope": "once",
             "duration": "restart",
         }
 

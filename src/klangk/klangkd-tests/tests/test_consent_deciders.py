@@ -372,7 +372,6 @@ class TestConsentDeciderWS:
                         "type": "verdict",
                         "request_id": "rid",
                         "decision": "allowed",
-                        "scope": "once",
                         "duration": "1w",
                     }
                 ),
@@ -381,7 +380,7 @@ class TestConsentDeciderWS:
         )
         await handle_consent_decider(ws, app)
         app.state.consent_coordinator.resolve.assert_awaited_once_with(
-            "rid", "allowed", "once", "u1", duration="1w", decider_workspace=WS
+            "rid", "allowed", "u1", duration="1w", decider_workspace=WS
         )
 
     async def test_revoke_frame_calls_coordinator_and_acks(self):
@@ -424,30 +423,6 @@ class TestConsentDeciderWS:
                         "type": "verdict",
                         "request_id": "rid",
                         "decision": "maybe",
-                    }
-                ),
-                WebSocketDisconnect(),
-            ],
-        )
-        await handle_consent_decider(ws, app)
-        app.state.consent_coordinator.resolve.assert_not_awaited()
-        assert any(json.loads(m).get("type") == "error" for m in ws.sent)
-
-    async def test_verdict_invalid_scope_sends_error(self):
-        from fastapi import WebSocketDisconnect
-
-        from klangk.wshandler.decider import handle_consent_decider
-
-        app = _ws_app({"id": "u1", "email": "a@x"})
-        ws = _FakeWS(
-            {"token": "tok", "workspace": WS},
-            [
-                json.dumps(
-                    {
-                        "type": "verdict",
-                        "request_id": "rid",
-                        "decision": "denied",
-                        "scope": "bogus",
                     }
                 ),
                 WebSocketDisconnect(),

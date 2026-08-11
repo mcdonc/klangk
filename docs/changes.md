@@ -523,6 +523,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Removed
 
+- **`scope` removed from egress-consent verdicts (#2356).** The `scope`
+  field is gone from the decider WebSocket protocol, the `consent-decide` TUI,
+  and the `egress_consent` DB column + CHECK constraint. `duration` is now the
+  sole axis for how long a verdict holds (default unchanged: `restart`; `once`
+  is a one-connection duration). Operators with an existing DB keep a dead
+  `scope` column (harmless, unreferenced); no migration action.
+
 - **`POST /internal/egress-consent/events` (#2318).** The sidecar's
   fire-and-forget consent-event endpoint is gone, superseded by the
   synchronous `/ws/egress-sidecar` hold path (#2311): recording now happens

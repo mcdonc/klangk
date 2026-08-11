@@ -47,7 +47,6 @@ from ..model.egress_consent import (
     DECISION_DENIED,
     DURATIONS,
     DURATION_DEFAULT,
-    SCOPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,12 +172,6 @@ async def _handle_verdict(app, safe_ws, msg, workspace, user_id) -> None:
             {"type": "error", "message": f"invalid decision: {decision!r}"}
         )
         return
-    scope = msg.get("scope")
-    if scope is not None and scope not in SCOPES:
-        safe_ws.send_json(
-            {"type": "error", "message": f"invalid scope: {scope!r}"}
-        )
-        return
     duration = msg.get("duration") or DURATION_DEFAULT
     if duration not in DURATIONS:
         safe_ws.send_json(
@@ -194,7 +187,6 @@ async def _handle_verdict(app, safe_ws, msg, workspace, user_id) -> None:
     await app.state.consent_coordinator.resolve(
         request_id,
         decision,
-        scope,
         # decided_by is the stable user id (egress_consent.decided_by REFERENCES
         # users(id); the email is volatile + not a key). Never NULL for a human
         # decision -- NULL means "no human" (the static/expired case).

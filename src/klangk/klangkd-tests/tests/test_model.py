@@ -263,7 +263,8 @@ class TestMigration:
         self, temp_data_dir, app_state
     ):
         """init_db adds the duration column to egress_consent tables that
-        predate #2328 (NULL until a decider records a decision)."""
+        predate #2328 (NULL until a decider records a decision), and drops the
+        legacy `scope` column (#2356)."""
         db_path = get_test_db().db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = await aiosqlite.connect(str(db_path))
@@ -294,6 +295,8 @@ class TestMigration:
             cursor = await conn.execute("PRAGMA table_info(egress_consent)")
             cols = {row[1] for row in await cursor.fetchall()}
             assert "duration" in cols
+            # The rebuild drops the legacy `scope` column (#2356).
+            assert "scope" not in cols
 
     async def test_migrate_workspaces_adds_settings(
         self, temp_data_dir, app_state

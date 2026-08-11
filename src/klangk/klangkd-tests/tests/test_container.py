@@ -2058,7 +2058,7 @@ class TestStartContainer:
         # with the previous container, so list_active must not report them.
         ec = self.registry.app.state.model.egress_consent
         a = await ec.create_request(workspace["id"], "stale.com", 443)
-        await ec.decide(a["id"], "allowed", "once", user["id"], "restart")
+        await ec.decide(a["id"], "allowed", user["id"], "restart")
         # sanity: in effect before the start
         assert {
             r["dest_host"] for r in await ec.list_active(workspace["id"])
@@ -2076,7 +2076,7 @@ class TestStartContainer:
         # container didn't restart, so its in-memory rules are still alive.
         ec = self.registry.app.state.model.egress_consent
         a = await ec.create_request(workspace["id"], "live.com", 443)
-        await ec.decide(a["id"], "allowed", "once", user["id"], "restart")
+        await ec.decide(a["id"], "allowed", user["id"], "restart")
         with patch_podman(self.registry, inspect_container=_running(True)):
             cid, status = await self.registry.start_container(
                 workspace["id"],

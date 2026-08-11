@@ -26,14 +26,6 @@ DECISIONS = frozenset(
     }
 )
 
-# Scope values for an allow/deny decision.
-SCOPE_ONCE = (
-    "once"  # container lifetime only, not persisted to allowed_domains
-)
-SCOPE_WORKSPACE = "workspace"  # persisted to workspace's allowed_domains
-SCOPE_DEPLOY = "deploy"  # promoted to deploy-wide default
-SCOPES = frozenset({SCOPE_ONCE, SCOPE_WORKSPACE, SCOPE_DEPLOY})
-
 # Duration values for an allow/deny decision (#2328): how long the sidecar
 # honors it (allow learns the IP for T; deny REJECTs for T). `once` = this
 # connection only; `restart` = the workspace container's lifetime (the sidecar's
@@ -65,7 +57,7 @@ DURATION_DEFAULT = DURATION_RESTART
 # drift from the schema (a column added to the table is added here once).
 _EC_COLUMNS = (
     "id, workspace_id, dest_host, dest_port, pid, process_name,"
-    " decision, scope, duration, requested_at, decided_at, decided_by,"
+    " decision, duration, requested_at, decided_at, decided_by,"
     " revoked_at, revoked_by"
 )
 
@@ -123,7 +115,6 @@ class EgressConsentModel:
             "pid": pid,
             "process_name": process_name,
             "decision": DECISION_PENDING,
-            "scope": None,
             "requested_at": requested_at,
             "decided_at": None,
             "decided_by": None,
@@ -174,7 +165,6 @@ class EgressConsentModel:
             "pid": None,
             "process_name": None,
             "decision": DECISION_DENIED,
-            "scope": None,
             "requested_at": now,
             "decided_at": now,
             "decided_by": None,
@@ -330,7 +320,6 @@ class EgressConsentModel:
         self,
         request_id: str,
         decision: str,
-        scope: str | None,
         decided_by: str,
         duration: str = DURATION_DEFAULT,
     ) -> dict | None:
@@ -338,27 +327,24 @@ class EgressConsentModel:
 
         Returns the updated row dict, or ``None`` if the request doesn't
         exist or is no longer pending. Raises ``ValueError`` for invalid
-        decision/scope/duration values.
+        decision/duration values.
         """
         if decision not in (DECISION_ALLOWED, DECISION_DENIED):
             raise ValueError(
                 f"Invalid decision: {decision!r}"
                 f" (must be {DECISION_ALLOWED!r} or {DECISION_DENIED!r})"
             )
-        if scope is not None and scope not in SCOPES:
-            raise ValueError(f"Invalid scope: {scope!r}")
         if duration not in DURATIONS:
             raise ValueError(f"Invalid duration: {duration!r}")
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "UPDATE egress_consent"
-                " SET decision = ?, scope = ?, duration = ?,"
+                " SET decision = ?, duration = ?,"
                 " decided_at = ?, decided_by = ?"
                 " WHERE id = ? AND decision = ?",
                 (
                     decision,
-                    scope,
                     duration,
                     decided_at,
                     decided_by,
@@ -507,7 +493,6 @@ def _row_to_dict(row) -> dict:
         "pid": row["pid"],
         "process_name": row["process_name"],
         "decision": row["decision"],
-        "scope": row["scope"],
         "duration": row["duration"],
         "requested_at": row["requested_at"],
         "decided_at": row["decided_at"],
