@@ -344,6 +344,38 @@ class TestAppRender:
             status = app.query_one("#status", Static)
             assert "wsname" in str(status.content)
 
+    async def test_rows_are_compact_both_visible(self):
+        # Regression: each held-request row must be compact, not the full
+        # viewport height, so multiple pending requests are visible at once
+        # without scrolling. Previously ListItem defaulted to height:auto,
+        # which expanded to fill the whole ListView -- so with 2 requests
+        # only one row showed and the other lurked below the fold (you had
+        # to scroll the ListView to see it).
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app.controller.apply_frame(_req_frame("r2", host="b.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.pause()
+            lv = app.query_one("#requests", ListView)
+            rows = list(lv.children)
+            assert len(rows) == 2
+            # Each row is compact (host line + button line), nowhere near the
+            # full viewport height.
+            for row in rows:
+                assert row.outer_size.height <= 4, (
+                    f"row height {row.outer_size.height} too tall; "
+                    "multiple requests would be hidden below the fold"
+                )
+            # Both rows fit within the viewport -- the 2nd needs no scrolling.
+            viewport_h = lv.size.height
+            bottoms = [row.region.y + row.region.height for row in rows]
+            assert max(bottoms) <= viewport_h, (
+                f"row bottoms {bottoms} exceed viewport height {viewport_h}; "
+                "the 2nd row would require scrolling to see"
+            )
+
     async def test_refresh_empty_hides_queue(self):
         app = _make_app()
         async with app.run_test() as pilot:

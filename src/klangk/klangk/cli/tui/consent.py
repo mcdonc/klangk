@@ -246,6 +246,7 @@ class ConsentDeciderApp(App):
     Screen { layout: vertical; }
     #status { padding: 0 1; background: $panel; color: $text-muted; }
     #requests { height: 1fr; }
+    #requests ListItem { height: 2; }
     #empty { padding: 1 2; color: $text-muted; }
     .req-host { color: $text; }
     #requests Button { height: 1; border: none; padding: 0 1; }
