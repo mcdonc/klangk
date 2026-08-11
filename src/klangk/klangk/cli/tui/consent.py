@@ -681,7 +681,7 @@ class ConsentDeciderApp(App):
         else:
             conn = "connected" if self._connected else "reconnecting"
             status.update(
-                f" {self.workspace_name}  ·  {conn}  ·  {len(ordered)} held"
+                f" {escape(self.workspace_name)}  ·  {conn}  ·  {len(ordered)} held"
             )
 
     def _host_line(self, req: ConsentRequest) -> str:
@@ -868,7 +868,7 @@ class RulesScreen(Screen):
         conn = "connected" if app._connected else "reconnecting"  # type: ignore[attr-defined]
         held = len(controller.pending)
         status.update(
-            f" {app.workspace_name}  ·  {conn}  ·  {held} held  ·  rules"  # type: ignore[attr-defined]
+            f" {escape(app.workspace_name)}  ·  {conn}  ·  {held} held  ·  rules"  # type: ignore[attr-defined]
         )
         content.update(self._render_body(rules, controller))
 
@@ -931,11 +931,15 @@ class RulesScreen(Screen):
             label = "until restart"
         else:
             rem = controller.rule_remaining(rule)
-            label = (
-                f"{_fmt_duration(rem)} left"
-                if deny
-                else f"expires in {_fmt_duration(rem)}"
-                if rem is not None
-                else ""
-            )
+            # Guard None before formatting: a timed verdict with a null
+            # decided_at or an unknown duration has no countdown. Both allow
+            # and deny must degrade the same way (else _fmt_duration(None)
+            # raises TypeError on a deny) -- the parser permits these rows, so
+            # rendering must too.
+            if rem is None:
+                label = ""
+            elif deny:
+                label = f"{_fmt_duration(rem)} left"
+            else:
+                label = f"expires in {_fmt_duration(rem)}"
         return f"{escape(host)}{escape(proc)}  [dim]{escape(label)}[/dim]"

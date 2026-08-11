@@ -1513,19 +1513,76 @@ class TestRulesScreen:
             assert "Active allows (1)" in body
             assert "new.example.com:443" in body
 
-    async def test_ws_worker_not_torn_down_on_switch(self):
-        # Pushing/popping the rules screen must not reconnect the WS worker.
-        # _connected is only True inside the live ws_loop; here we set it, push
-        # the screen, pop it, and confirm it stayed True (no teardown).
-        app = _make_app()
+    async def test_ws_worker_survives_switch_and_delivers_frame(
+        self, monkeypatch
+    ):
+        # Real acceptance criterion: pushing/popping the rules screen must NOT
+        # tear down or reconnect the WS worker, AND a frame delivered over the
+        # still-open socket while the rules screen is up must reach it. Drives
+        # the real _ws_loop (not the autouse no-op stub) with a blocking WS that
+        # stays connected so we can feed a frame mid-stream.
+        delivered = asyncio.Queue()
+
+        class LiveWS:
+            sent = []
+
+            async def recv(self):
+                return await delivered.get()
+
+            async def send(self, d):
+                self.sent.append(d)
+
+        ws = LiveWS()
+        monkeypatch.setattr(
+            tui_consent, "ws_connect", lambda *a, **k: FakeCM(ws)
+        )
+        app = _make_app(reconnect_delays=(0.0,))
         async with app.run_test() as pilot:
-            app._connected = True
-            app.action_rules()
-            await pilot.pause()
-            assert isinstance(app.screen, RulesScreen)
-            app.screen.action_back()
-            await pilot.pause()
-            assert app._connected is True  # untouched across the switch
+            task = asyncio.create_task(_real_ws_loop(app))
+            try:
+                await pilot.pause()
+                await asyncio.sleep(0.05)
+                assert app._connected is True  # the real loop connected
+
+                # Switch to the rules screen mid-stream.
+                app.action_rules()
+                await pilot.pause()
+                assert isinstance(app.screen, RulesScreen)
+                body = str(
+                    app.screen.query_one("#rules-content", Static).content
+                )
+                assert "no rules received yet" in body  # nothing delivered yet
+
+                # A frame arrives over the SAME connection while viewing rules.
+                await delivered.put(
+                    _rules_frame(
+                        allow_list=["a.com"],
+                        allowed=[_rule("a1", host="new.example.com")],
+                    )
+                )
+                await pilot.pause()
+                await asyncio.sleep(0.05)
+                body = str(
+                    app.screen.query_one("#rules-content", Static).content
+                )
+                assert "a.com" in body
+                assert "Active allows (1)" in body
+                assert "new.example.com:443" in body
+
+                # Pop back; the worker is still on the same connection.
+                app.screen.action_back()
+                await pilot.pause()
+                assert app._connected is True
+            finally:
+                app._stop = True
+                # Unblock the parked recv() so the loop can exit cleanly.
+                await delivered.put(_rules_frame())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     async def test_refresh_rules_before_mount_is_noop(self):
         screen = RulesScreen()
@@ -1617,3 +1674,38 @@ async def test_q_and_escape_keypress_pop_back_via_pilot():
         await pilot.pause()
         assert not isinstance(app.screen, RulesScreen)
         assert app.is_running
+
+
+async def test_deny_with_null_decided_at_renders_without_crash():
+    # Regression: the deny branch of _rule_line once formatted rem before
+    # checking it for None, so a timed deny with a null decided_at (or an
+    # unknown duration) hit _fmt_duration(None) -> TypeError. The parser
+    # permits these rows, so rendering must degrade to a blank label rather
+    # than crash (which would silently stale the whole rules body).
+    app = _make_app()
+    async with app.run_test() as pilot:
+        app.controller.apply_frame(
+            _rules_frame(
+                denied=[
+                    _rule(
+                        "d1",
+                        host="deny.example.com",
+                        decision="denied",
+                        duration="5m",
+                        decided_at=None,
+                    ),
+                    _rule(
+                        "d2",
+                        host="deny2.example.com",
+                        decision="denied",
+                        duration="3fortnights",  # unknown -> rem None
+                    ),
+                ],
+            )
+        )
+        app.action_rules()
+        await pilot.pause()
+        body = str(app.screen.query_one("#rules-content", Static).content)
+        assert "deny.example.com:443" in body
+        assert "deny2.example.com:443" in body
+        assert "Active denies (2)" in body
