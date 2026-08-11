@@ -213,18 +213,23 @@ SPECS = parse_specs()
 # (under the lock; the host is set by the DNS loop before the SYN arrives).
 _LEARNED: dict[str, dict] = {}
 _LOCK = threading.Lock()
-# Reused SYN verdicts: {(ip, port): (verdict, expire)} so the kernel's SYN
-# retransmits (tcp_syn_retries) don't each re-prompt. Touched only on the
-# event-loop thread (the NFQUEUE consumer is loop-driven) -- no lock.
-_VERDICT_CACHE: dict[tuple[str, int], tuple[str, float]] = {}
-# Flows with a verdict task still in flight (held, no verdict yet): prevents a
-# SYN retransmit during the hold from spawning a SECOND consent request. The
-# post-verdict :data:`_VERDICT_CACHE` covers retransmits after a decision; this
-# covers the window before it (#2345 e2e: retransmit-pileup left duplicate
-# pending requests lingering past the first's resolution). Touched only on the
+# Reused SYN verdicts, keyed by connection (src IP+port, dst IP+port):
+# {(src_ip, src_port, dst, port): (verdict, expire)} so the kernel's SYN
+# retransmits (tcp_syn_retries) of an already-decided connection reuse the
+# verdict without re-prompting. The connection key (not just dst) is what makes
+# a NEW connection -- new source port -- re-prompt, so duration=once is truly
+# per-connection (#2361). Touched only on the event-loop thread (the NFQUEUE
+# consumer is loop-driven) -- no lock.
+_VERDICT_CACHE: dict[tuple[str, int, str, int], tuple[str, float]] = {}
+# Connections with a verdict task still in flight (held, no verdict yet):
+# keyed by the same connection tuple, prevents a SYN retransmit during the
+# hold from spawning a SECOND consent request. The post-verdict
+# :data:`_VERDICT_CACHE` covers retransmits after a decision; this covers the
+# window before it (#2345 e2e: retransmit-pileup left duplicate pending
+# requests lingering past the first's resolution). Touched only on the
 # event-loop thread -- no lock. Added in :func:`_cb`, discarded in
 # :func:`_decide_and_verdict` once the verdict is cached.
-_INFLIGHT: set[tuple[str, int]] = set()
+_INFLIGHT: set[tuple[str, int, str, int]] = set()
 # Temporary REJECT (tcp-reset) rules for denied connections: {(ip, port): expire}.
 # Swept by sweep_once alongside _LEARNED. Makes a deny fail-fast (ECONNREFUSED)
 # instead of waiting for tcp_syn_retries (~127s) -- dropping a SYN alone doesn't
@@ -1186,19 +1191,31 @@ def _drain(nfq) -> None:
 def _cb(pkt, client: SidecarConsentClient | None) -> None:
     """Classify + route one queued SYN -- non-blocking (#2324, #2329).
 
-    A retransmit of an already-decided flow reuses the cached verdict inline
-    (fast path). A new flow is retained + handed to :func:`_decide_and_verdict`
-    so the verdict wait doesn't block the queue's drain (distinct flows are held
-    concurrently, not serialized behind the first).
+    A retransmit of an already-decided connection reuses the cached verdict
+    inline (fast path). A new connection is retained + handed to
+    :func:`_decide_and_verdict` so the verdict wait doesn't block the queue's
+    drain (distinct connections are held concurrently, not serialized behind
+    the first).
     """
-    dst, port = parse_dest(pkt.get_payload())
+    payload = pkt.get_payload()
+    # Connection-level key (src IP+port + dst IP+port): a SYN retransmit shares
+    # its connection's tuple, a NEW connection has a new source port. Keying the
+    # verdict cache + in-flight set on the connection -- not just (dst, port) --
+    # is what makes duration=once re-prompt every subsequent connection instead
+    # of reusing a prior allow for the same destination (#2361).
+    src_ip, src_port, tdst, tport, _ = parse_syn_tuple(payload)
+    if tport:  # TCP: full connection tuple
+        dst, port = tdst, tport
+    else:  # non-TCP (UDP/other): no source port -> destination granularity
+        dst, port = parse_dest(payload)
     if not dst or client is None or not client.connected:
         pkt.drop()  # unparseable / no consent / WS down -> fail-close
         return
+    flow = (src_ip, src_port, dst, port)
     now = time.time()
-    # SYN retransmit of an already-decided flow -> reuse the verdict so the
-    # kernel's retransmits (tcp_syn_retries) don't each re-prompt.
-    cached = _VERDICT_CACHE.get((dst, port))
+    # SYN retransmit of an already-decided connection -> reuse the verdict so
+    # the kernel's retransmits (tcp_syn_retries) don't each re-prompt.
+    cached = _VERDICT_CACHE.get(flow)
     if cached is not None and cached[1] > now:
         if cached[0] == "allow":
             pkt.accept()
@@ -1206,27 +1223,28 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
             # Forge the eager-deny RST (a retried connect() to a denied flow
             # fails fast too), then drop. TCP only (port 0 is non-TCP).
             if port:
-                _send_rst(pkt.get_payload())
+                _send_rst(payload)
             pkt.drop()
         return
-    # A SYN retransmit that arrives WHILE this flow is still held (no verdict
-    # yet) must not spawn a second consent request: the in-flight task resolves
-    # the flow, and a request per retransmit piles up duplicates that linger
+    # A SYN retransmit that arrives WHILE this connection is still held (no
+    # verdict yet) must not spawn a second consent request: the in-flight task
+    # resolves it, and a request per retransmit piles up duplicates that linger
     # past the first's resolution (#2345 e2e flake). Drop it -- the kernel sends
     # another retransmit once the verdict lands, and that one hits the cache.
-    if (dst, port) in _INFLIGHT:
+    if flow in _INFLIGHT:
         pkt.drop()
         return
     host = _host_for(dst)  # DNS name if resolved here, else the IP
     pkt.retain()  # keep the payload valid past this callback (deferred verdict)
-    _INFLIGHT.add((dst, port))
-    t = asyncio.create_task(_decide_and_verdict(pkt, dst, port, host, client))
+    _INFLIGHT.add(flow)
+    t = asyncio.create_task(_decide_and_verdict(pkt, flow, dst, port, host, client))
     _BG_TASKS.add(t)  # strong ref so the verdict task isn't GC'd
     t.add_done_callback(_BG_TASKS.discard)
 
 
 async def _decide_and_verdict(
     pkt,
+    flow: tuple[str, int, str, int],
     dst: str,
     port: int,
     host: str,
@@ -1239,8 +1257,10 @@ async def _decide_and_verdict(
     ESTABLISHED,RELATED carries the in-flight connection); ``deny``/timeout/
     WS-down -> ``pkt.drop`` + a temporary REJECT (tcp-reset) rule so the next
     retransmit gets RST'd (ECONNREFUSED) instead of the kernel retransmitting
-    for ~127s. The verdict is cached so SYN retransmits (tcp_syn_retries) of
-    this flow reuse it.
+    for ~127s. The verdict is cached against ``flow`` (the connection tuple) so
+    SYN retransmits (tcp_syn_retries) of THIS connection reuse it -- a new
+    connection (new source port) is a cache miss and re-prompts, which is what
+    makes duration=once per-connection (#2361).
     """
     try:
         decision, duration = await client.request(host, port)
@@ -1251,7 +1271,7 @@ async def _decide_and_verdict(
     # stop hitting NFQUEUE; only denied flows accumulate in the cache).
     if len(_VERDICT_CACHE) > 4096:
         _VERDICT_CACHE.clear()
-    _VERDICT_CACHE[(dst, port)] = (decision, now + VERDICT_CACHE_TTL)
+    _VERDICT_CACHE[flow] = (decision, now + VERDICT_CACHE_TTL)
     # Run the iptables fork (allow/reject) in the executor so it doesn't block
     # the loop thread -- matches the DNS path's _learn_all, which also runs
     # off the loop. The packet is retained, so verdicting after the await is
@@ -1286,10 +1306,10 @@ async def _decide_and_verdict(
                     pass
             pkt.drop()
     finally:
-        # Flow resolved (verdict cached) -> retransmits now hit the cache, not
-        # the in-flight check. Always discard, even if the verdict raised, so a
-        # stuck flow can't block the tuple forever.
-        _INFLIGHT.discard((dst, port))
+        # Connection resolved (verdict cached) -> retransmits now hit the cache,
+        # not the in-flight check. Always discard, even if the verdict raised,
+        # so a stuck connection can't block the tuple forever.
+        _INFLIGHT.discard(flow)
 
 
 async def _handle_packet(
