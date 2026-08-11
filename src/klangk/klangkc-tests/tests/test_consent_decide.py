@@ -786,6 +786,54 @@ class TestAppActions:
             app._select_duration(types.SimpleNamespace(duration=None))
             assert app._duration == "restart"  # unchanged (default)
 
+    async def test_only_selected_duration_has_background_at_first_render(self):
+        # Regression (#2360): the first duration button ("once") grabbed
+        # initial focus on mount and, with no explicit transparent :focus,
+        # rendered the white focus background -- so it read as "selected"
+        # alongside the real ``dur-sel`` default (``restart``). Only the
+        # selected button may carry a background; every other (focused or
+        # not) must be transparent at first render. Asserted opacity-only so
+        # it holds across light/dark themes (the exact accent hue is the
+        # theme's business; the bug was a *second* visible background).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            opaque = [
+                d
+                for d in tui_consent.DURATIONS
+                if app.query_one(f"#dur-{d}", Button).styles.background.a != 0
+            ]
+            assert opaque == [tui_consent.DURATION_DEFAULT], (
+                f"expected only {tui_consent.DURATION_DEFAULT!r} to carry a "
+                f"background at first render, got {opaque!r}"
+            )
+
+    async def test_selected_duration_keeps_accent_when_focused(self):
+        # The ``.dur-sel`` rules must be specific enough to outrank the
+        # transparent ``#duration-selector Button:focus`` (#2360): selecting a
+        # duration both adds ``dur-sel`` and focuses the button, and the
+        # accent must survive focus -- else the just-selected button goes
+        # transparent and looks unselected. The previously-selected default
+        # drops to transparent.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            btn = app.query_one(f"#dur-{tui_consent.DURATION_5M}", Button)
+            app.on_button_pressed(types.SimpleNamespace(button=btn))
+            btn.focus()
+            await pilot.pause()
+            assert app.focused is btn  # focus really landed on it
+            assert btn.has_class("dur-sel")
+            assert btn.styles.background.a != 0, (
+                f"selected+focused button lost its background "
+                f"(got {btn.styles.background!r})"
+            )
+            restart = app.query_one(
+                f"#dur-{tui_consent.DURATION_DEFAULT}", Button
+            )
+            assert not restart.has_class("dur-sel")
+            assert restart.styles.background.a == 0
+
 
 class TestWsLoop:
     async def test_reconnect_after_drop(self, monkeypatch):

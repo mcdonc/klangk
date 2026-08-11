@@ -608,6 +608,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`consent-decide` duration selector no longer shows two highlighted
+  buttons at first render (#2360).** The first duration button ("once")
+  grabbed initial focus on mount and rendered with the default focus
+  background, so it read as "selected" alongside the real default
+  (`restart`). Non-selected duration buttons are now transparent even when
+  focused, leaving the selected (`dur-sel`) button as the only one with a
+  background.
+
 - **A reconnecting consent decider no longer re-shows an already-resolved
   request (#2345).** The decider (re)connect snapshot read pending requests
   from the DB, so a request whose `egress_resolved` broadcast was lost on

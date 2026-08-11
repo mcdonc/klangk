@@ -469,8 +469,17 @@ class ConsentDeciderApp(App):
     .req-host { color: $text; }
     #requests Button { height: 1; border: none; padding: 0 1; }
     #duration-selector { width: auto; height: 1; }
-    #duration-selector Button { width: auto; min-width: 0; height: 1; border: none; padding: 0 1; }
-    .dur-sel { background: $accent; color: $background; }
+    /* Non-selected duration buttons carry no background -- not even when focused
+    (#2360). The first button grabs initial focus on mount; without an explicit
+    transparent :focus it rendered with the white focus background, so it read
+    as "selected" alongside the real ``dur-sel`` default (``restart``). The
+    ``dur-sel`` rules are qualified under ``#duration-selector`` so they outrank
+    these ID-based transparent rules on specificity (an unqualified ``.dur-sel``
+    loses to ``#duration-selector Button:focus`` and the accent vanishes). */
+    #duration-selector Button { width: auto; min-width: 0; height: 1; border: none; padding: 0 1; background: transparent; }
+    #duration-selector Button:focus { background: transparent; }
+    #duration-selector .dur-sel { background: $accent; color: $background; }
+    #duration-selector .dur-sel:focus { background: $accent; color: $background; }
     """
 
     BINDINGS = [
