@@ -1018,6 +1018,7 @@ class TestNfqueueCallback:
     def _bind(self, proxy, monkeypatch, client):
         """Clear module state (the ``proxy`` fixture is module-scoped)."""
         proxy._VERDICT_CACHE.clear()
+        proxy._INFLIGHT.clear()
         proxy._LEARNED.clear()
         proxy._BG_TASKS.clear()
 
@@ -1297,6 +1298,40 @@ class TestNfqueueCallback:
         assert pkt2.verdict == "drop"
         client.request.assert_awaited_once()  # NOT re-requested
         assert sock.sendto.call_count == 2  # the retry also got an RST
+
+    async def test_retransmit_during_hold_does_not_re_prompt(
+        self, proxy, monkeypatch
+    ):
+        # A SYN retransmit that arrives WHILE the first is still held (before
+        # any verdict) must not spawn a second consent request -- the in-flight
+        # task resolves the flow. Without the _INFLIGHT dedup, each retransmit
+        # piled up a pending request that lingered past the first's resolution
+        # (#2345 e2e flake).
+        started = []
+        gate = asyncio.Event()
+
+        async def slow_request(host, port):
+            started.append((host, port))
+            await gate.wait()
+            return "deny"
+
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(side_effect=slow_request)
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        self._bind(proxy, monkeypatch, client)
+        pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
+        pkt2 = _FakePkt(_ip_payload("1.2.3.4", 443))  # retransmit during hold
+        proxy._cb(pkt1, client)  # spawns the task; flow is now in-flight
+        proxy._cb(pkt2, client)  # in-flight -> drop, no new task
+        assert pkt2.verdict == "drop"  # the retransmit is dropped
+        assert len(proxy._BG_TASKS) == 1  # only ONE verdict task
+        assert ("1.2.3.4", 443) in proxy._INFLIGHT  # still held
+        gate.set()  # release the verdict
+        await asyncio.gather(*proxy._BG_TASKS)
+        assert len(started) == 1  # only ONE request to the decider
+        assert ("1.2.3.4", 443) not in proxy._INFLIGHT  # cleared after verdict
 
 
 def test_duration_ttl_mapping(proxy):

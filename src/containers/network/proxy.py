@@ -217,6 +217,14 @@ _LOCK = threading.Lock()
 # retransmits (tcp_syn_retries) don't each re-prompt. Touched only on the
 # event-loop thread (the NFQUEUE consumer is loop-driven) -- no lock.
 _VERDICT_CACHE: dict[tuple[str, int], tuple[str, float]] = {}
+# Flows with a verdict task still in flight (held, no verdict yet): prevents a
+# SYN retransmit during the hold from spawning a SECOND consent request. The
+# post-verdict :data:`_VERDICT_CACHE` covers retransmits after a decision; this
+# covers the window before it (#2345 e2e: retransmit-pileup left duplicate
+# pending requests lingering past the first's resolution). Touched only on the
+# event-loop thread -- no lock. Added in :func:`_cb`, discarded in
+# :func:`_decide_and_verdict` once the verdict is cached.
+_INFLIGHT: set[tuple[str, int]] = set()
 # Temporary REJECT (tcp-reset) rules for denied connections: {(ip, port): expire}.
 # Swept by sweep_once alongside _LEARNED. Makes a deny fail-fast (ECONNREFUSED)
 # instead of waiting for tcp_syn_retries (~127s) -- dropping a SYN alone doesn't
@@ -1112,8 +1120,17 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
                 _send_rst(pkt.get_payload())
             pkt.drop()
         return
+    # A SYN retransmit that arrives WHILE this flow is still held (no verdict
+    # yet) must not spawn a second consent request: the in-flight task resolves
+    # the flow, and a request per retransmit piles up duplicates that linger
+    # past the first's resolution (#2345 e2e flake). Drop it -- the kernel sends
+    # another retransmit once the verdict lands, and that one hits the cache.
+    if (dst, port) in _INFLIGHT:
+        pkt.drop()
+        return
     host = _host_for(dst)  # DNS name if resolved here, else the IP
     pkt.retain()  # keep the payload valid past this callback (deferred verdict)
+    _INFLIGHT.add((dst, port))
     t = asyncio.create_task(_decide_and_verdict(pkt, dst, port, host, client))
     _BG_TASKS.add(t)  # strong ref so the verdict task isn't GC'd
     t.add_done_callback(_BG_TASKS.discard)
@@ -1152,32 +1169,38 @@ async def _decide_and_verdict(
     # safe; the rule is installed before the SYN is released.
     loop = asyncio.get_running_loop()
     ttl = _duration_ttl(duration)
-    if decision == "allow":
-        # `once` (ttl None) -> no learn, just this connection (reconnect
-        # re-prompts); a timed duration -> learn all-ports for it.
-        if ttl is not None:
-            try:
-                await loop.run_in_executor(None, allow, dst, None, ttl)
-            except Exception:
-                pass
-        pkt.accept()
-    else:
-        # Forge a RST directly so connect() fails fast (ECONNREFUSED) at once,
-        # independent of the conntrack/retransmit race that made the REJECT
-        # rule flaky (#2345). The REJECT rule stays as a belt-and-suspenders
-        # backstop for any retransmit the RST missed. `once` -> the short
-        # fail-close reject window; a timed duration -> that long.
-        if port:
-            try:
-                _send_rst(pkt.get_payload())
-            except Exception:
-                pass
-            reject_ttl = ttl if ttl is not None else CONSENT_REJECT_TTL
-            try:
-                await loop.run_in_executor(None, reject, dst, port, reject_ttl)
-            except Exception:
-                pass
-        pkt.drop()
+    try:
+        if decision == "allow":
+            # `once` (ttl None) -> no learn, just this connection (reconnect
+            # re-prompts); a timed duration -> learn all-ports for it.
+            if ttl is not None:
+                try:
+                    await loop.run_in_executor(None, allow, dst, None, ttl)
+                except Exception:
+                    pass
+            pkt.accept()
+        else:
+            # Forge a RST directly so connect() fails fast (ECONNREFUSED) at once,
+            # independent of the conntrack/retransmit race that made the REJECT
+            # rule flaky (#2345). The REJECT rule stays as a belt-and-suspenders
+            # backstop for any retransmit the RST missed. `once` -> the short
+            # fail-close reject window; a timed duration -> that long.
+            if port:
+                try:
+                    _send_rst(pkt.get_payload())
+                except Exception:
+                    pass
+                reject_ttl = ttl if ttl is not None else CONSENT_REJECT_TTL
+                try:
+                    await loop.run_in_executor(None, reject, dst, port, reject_ttl)
+                except Exception:
+                    pass
+            pkt.drop()
+    finally:
+        # Flow resolved (verdict cached) -> retransmits now hit the cache, not
+        # the in-flight check. Always discard, even if the verdict raised, so a
+        # stuck flow can't block the tuple forever.
+        _INFLIGHT.discard((dst, port))
 
 
 async def _handle_packet(

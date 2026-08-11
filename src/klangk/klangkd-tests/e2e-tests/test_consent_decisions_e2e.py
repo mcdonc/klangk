@@ -157,13 +157,17 @@ def _result(container: str, outfile: str) -> str:
 async def _wait_result(
     container: str, outfile: str, timeout: float = 30
 ) -> str:
-    """Poll the result file until curl has written something (the connection
-    completed, was refused, or hit --max-time). Outlasts curl's 25s max-time."""
+    """Poll the result file until curl has exited (its ``EXIT:$?`` line is
+    written), then return the full output. The progress meter is flushed to
+    the file *before* curl exits, so waiting for content alone races -- a
+    denied connection's fast ECONNREFUSED (#2345) made curl write the meter
+    before the test read it. Require the ``EXIT:`` marker so the exit code is
+    present. Outlasts curl's 25s max-time."""
     deadline = time.time() + timeout
     last = ""
     while time.time() < deadline:
         last = _result(container, outfile)
-        if last.strip():
+        if "EXIT:" in last:
             return last
         await asyncio.sleep(0.5)
     return last
