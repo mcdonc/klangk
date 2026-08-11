@@ -7,7 +7,8 @@ the held request arrive in the decider, performs a decision a user would
 make, and asserts the resulting end state.
 
   1. allow              -> the connection succeeds (curl exit 0), request resolves
-  2. deny               -> the connection does NOT succeed, request resolves
+  2. deny               -> connection refused fast (curl exit 7, ECONNREFUSED
+                         via the forged RST #2345), request resolves
   3. allow one host     -> a *different* host is still independently held
                           (per-host isolation; decisions aren't global)
   4. no decision        -> the consent timeout auto-denies; request auto-removes
@@ -277,13 +278,12 @@ class TestConsentDecisionEndStates:
     # ====================================================================
     @pytest.mark.asyncio
     async def test_deny_resolves_and_blocks(self, server, auth, workspace):
-        # HYPOTHESIS: when the user denies a held request, the connection never
-        # succeeds (the SYN is dropped + a REJECT/reset is installed) and the
-        # request is cleared from the decider. End state: the request is gone
-        # from pending AND curl did NOT exit 0 (contrast with test 1's allow,
-        # which exits 0). Whether the denial surfaces as ECONNREFUSED (exit 7)
-        # or a connect timeout (exit 28) depends on the NFQUEUE/conntrack/
-        # retransmit race; either way a denied connection does not succeed.
+        # HYPOTHESIS: when the user denies a held request, the connection is
+        # refused fast (the sidecar forges a RST directly #2345, so connect()
+        # gets ECONNREFUSED at once rather than the ~127s tcp_syn_retries)
+        # and the request is cleared from the decider. End state: the request
+        # is gone from pending AND curl exited 7 (Connection refused) -- not
+        # exit 0 (success) and not exit 28 (connect timeout).
         ws_id = workspace
         ws_conn = await ws_connect(server, auth, ws_id)
         try:
@@ -307,9 +307,11 @@ class TestConsentDecisionEndStates:
 
                 result = await _wait_result(container, "/tmp/r_deny.out")
 
-            # END STATE: request resolved + the connection did NOT succeed.
-            assert "EXIT:0" not in result, (
-                f"a denied connection should not succeed, got: {result!r}"
+            # END STATE: request resolved + the connection was refused fast
+            # (ECONNREFUSED, exit 7) -- the forged RST (#2345), not a timeout.
+            assert "EXIT:7" in result, (
+                f"a denied connection should be refused fast (exit 7), "
+                f"got: {result!r}"
             )
         finally:
             await ws_conn.close()
