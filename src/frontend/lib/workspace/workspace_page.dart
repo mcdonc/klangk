@@ -18,6 +18,8 @@ import '../terminal/ghostty_terminal.dart';
 import '../terminal/terminal_link.dart';
 import 'workspace_file_api.dart';
 import 'workspace_overlays.dart';
+import 'consent_banner.dart';
+import 'consent_decider_service.dart';
 import 'package:http/http.dart' as http;
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
@@ -70,6 +72,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
   String? _selectedOwnWindowId;
   String _stopReason = '';
   List<String> _workspacePermissions = [];
+
+  /// The workspace's egress_mode ('static' or 'interactive'), captured on
+  /// load. When interactive, a [ConsentDeciderService] + [ConsentBanner] let
+  /// the deciding user allow/deny held egress requests inline (#2246).
+  String _egressMode = 'interactive';
+  ConsentDeciderService? _consent;
   late final ToolPluginRegistry _featureRegistry;
   late final List<ToolPlugin> _features;
   late final List<WorkspaceTabPlugin> _featureTabs;
@@ -134,11 +142,16 @@ class _WorkspacePageState extends State<WorkspacePage> {
   Future<void> _fetchWorkspaceName() async {
     final auth = context.read<AuthService>();
     try {
-      final name = await _findWorkspaceName(auth, '/api/v1/workspaces') ??
-          await _findWorkspaceName(auth, '/api/v1/workspaces/shared');
-      if (name != null && mounted) {
-        setState(() => _workspaceName = name);
-        setPageTitle(_workspaceName);
+      final ws = await _findWorkspace(auth, '/api/v1/workspaces') ??
+          await _findWorkspace(auth, '/api/v1/workspaces/shared');
+      if (ws != null && mounted) {
+        final name = ws['name'] as String?;
+        setState(() {
+          if (name != null) _workspaceName = name;
+          _egressMode = ws['egress_mode']?.toString() ?? 'interactive';
+        });
+        if (name != null) setPageTitle(_workspaceName);
+        _maybeInitConsent(auth.token);
       }
     } catch (e) {
       debugPrint('[WorkspacePage] fetch workspace name failed: $e');
@@ -163,17 +176,28 @@ class _WorkspacePageState extends State<WorkspacePage> {
     }
   }
 
-  Future<String?> _findWorkspaceName(AuthService auth, String url) async {
+  Future<Map<String, dynamic>?> _findWorkspace(
+      AuthService auth, String url) async {
     final response = await auth.authGet(url);
     if (response.statusCode == 200) {
       final workspaces = jsonDecode(response.body) as List;
       for (final ws in workspaces) {
         if (ws['id'] == widget.workspaceId) {
-          return ws['name'] as String;
+          return ws as Map<String, dynamic>;
         }
       }
     }
     return null;
+  }
+
+  /// Create + connect the consent-decider service for an interactive-mode
+  /// workspace (#2246). Static (or unknown) mode mounts no banner.
+  void _maybeInitConsent(String? token) {
+    if (_egressMode != 'interactive' || token == null) return;
+    _consent ??= ConsentDeciderService(
+      workspaceId: widget.workspaceId,
+      token: token,
+    )..connect();
   }
 
   bool _hasPerm(String perm) =>
@@ -401,6 +425,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   void dispose() {
+    _consent?.dispose();
     for (final feature in _features) {
       feature.dispose();
     }
@@ -436,26 +461,34 @@ class _WorkspacePageState extends State<WorkspacePage> {
           const AppBarActions(),
         ],
       ),
-      body: Stack(
+      body: Column(
         children: [
-          _buildIdeLayout(wsClient, authToken),
-          for (final feature in _features)
-            if (feature.buildOverlay(context) != null)
-              feature.buildOverlay(context)!,
-          if (_containerStopped)
-            buildContainerStoppedOverlay(
-              restarting: _restarting,
-              stopReason: _stopReason,
-              onRestart: _restartContainer,
-              onBack: () => context.go('/workspaces'),
+          if (_egressMode == 'interactive' && _consent != null)
+            ConsentBanner(service: _consent!),
+          Expanded(
+            child: Stack(
+              children: [
+                _buildIdeLayout(wsClient, authToken),
+                for (final feature in _features)
+                  if (feature.buildOverlay(context) != null)
+                    feature.buildOverlay(context)!,
+                if (_containerStopped)
+                  buildContainerStoppedOverlay(
+                    restarting: _restarting,
+                    stopReason: _stopReason,
+                    onRestart: _restartContainer,
+                    onBack: () => context.go('/workspaces'),
+                  ),
+                if (_disconnected && !_containerStopped && !wsClient.authFailed)
+                  buildDisconnectedOverlay(
+                    reconnecting: wsClient.reconnecting,
+                    reconnectAttempt: wsClient.reconnectAttempt,
+                    onReconnect: _reconnect,
+                    onBack: () => context.go('/workspaces'),
+                  ),
+              ],
             ),
-          if (_disconnected && !_containerStopped && !wsClient.authFailed)
-            buildDisconnectedOverlay(
-              reconnecting: wsClient.reconnecting,
-              reconnectAttempt: wsClient.reconnectAttempt,
-              onReconnect: _reconnect,
-              onBack: () => context.go('/workspaces'),
-            ),
+          ),
         ],
       ),
     );
