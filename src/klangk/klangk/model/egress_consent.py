@@ -31,8 +31,9 @@ DECISIONS = frozenset(
 # connection only; `restart` = the workspace container's lifetime (the sidecar's
 # in-memory rules); `forever` = the workspace's lifetime -- persists across
 # container/sidecar restarts: an allow persists via an `allowed_domains`
-# mutation the sidecar re-reads on start (#2368); the deny counterpart
-# (`rejected_domains`) is #2369.
+# mutation the sidecar re-reads on start (#2368) -- best-effort, so a failed
+# mutation means the allow won't survive restart despite the audit row here;
+# the deny counterpart (`rejected_domains`) is #2369.
 DURATION_ONCE = "once"
 DURATION_5M = "5m"
 DURATION_15M = "15m"

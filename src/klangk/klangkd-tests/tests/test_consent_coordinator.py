@@ -650,6 +650,53 @@ class TestConsentCoordinatorResolve:
         assert verdict["decision"] == "allow"
         app.state.model.workspaces.add_allowed_domain.assert_awaited_once()
 
+    async def test_forever_deny_does_not_mutate_allowed_domains(self):
+        # `forever` mutates allowed_domains only for an ALLOW; a deny never
+        # touches the list (deny-forever is #2369, via rejected_domains).
+        row = _request()
+        row["decision"] = "denied"
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        await coord.resolve("rid-1", "denied", "a@x", duration="forever")
+        app.state.model.workspaces.add_allowed_domain.assert_not_awaited()
+
+    async def test_forever_allow_portless_not_persisted(self):
+        # A port-less verdict (e.g. ICMP, dest_port 0) is NOT persisted -- a
+        # bare host would broaden to all-ports + subdomains (#2371 review).
+        # The deciding connection still gets its in-memory ACCEPT (verdict
+        # allow); only durability is withheld.
+        row = _request()
+        row["decision"] = "allowed"
+        row["dest_port"] = 0
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "allowed", "a@x", duration="forever"
+        )
+        assert verdict["decision"] == "allow"
+        app.state.model.workspaces.add_allowed_domain.assert_not_awaited()
+
+    async def test_forever_allow_blocked_outside_decider_workspace(self):
+        # defense-in-depth: a workspace-scoped decider may not decide another
+        # workspace's request -> no verdict, no allowed_domains mutation.
+        row = _request()
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1",
+            "allowed",
+            "a@x",
+            duration="forever",
+            decider_workspace="other",
+        )
+        assert verdict is None
+        app.state.model.egress_consent.decide.assert_not_awaited()
+        app.state.model.workspaces.add_allowed_domain.assert_not_awaited()
+
 
 class TestConsentCoordinatorTimeout:
     async def test_timeout_expires_and_denies(self):
