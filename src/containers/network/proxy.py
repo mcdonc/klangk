@@ -433,9 +433,15 @@ def drop_for_host(host: str, decision: str) -> None:
     Host->IP comes from ``_LEARNED[ip]["host"]`` (set by ``_record_hosts`` for
     every resolved name, allow-listed or not), so a deny's IPs are found too;
     the host string itself is also a candidate IP (a direct-IP connect that
-    never went through DNS). Best-effort: a failed delete drops one rule, not
-    the whole revoke. Sync (forks iptables) — run off the loop; under ``_LOCK``
-    like allow/sweep.
+    never went through DNS, and a direct-IP allow whose ``host`` is ``None``).
+    Best-effort: a failed delete drops one rule, not the whole revoke. Sync
+    (forks iptables) — run off the loop; under ``_LOCK`` like allow/sweep.
+
+    L3/L4 limit (co-resident hosts): the egress rules are per IP+port, so two
+    DNS names that resolve to the SAME IP share one rule and cannot be revoked
+    individually — revoking one name removes the shared rule, affecting the
+    other too. A correct per-host revoke for co-resident hosts (CDN/S3/Cloudflare
+    fronted sites) needs L7/SNI filtering, which is a separate feature (#2352).
     """
     host_l = host.lower()
     with _LOCK:
@@ -445,7 +451,13 @@ def drop_for_host(host: str, decision: str) -> None:
             if (rec.get("host") or "").lower() == host_l
         ]
         if decision == "allowed":
-            for ip in ips:
+            # IPs that resolved to this host, plus the host itself if it's a
+            # direct-IP allow (allow() records host=None, so the scan above
+            # misses it).
+            targets = {ip for ip in ips}
+            targets.add(host_l)
+            targets.add(host)
+            for ip in [i for i in targets if i in _LEARNED]:
                 for port in list(_LEARNED[ip]["ports"]):
                     try:
                         _remove(ip, port)

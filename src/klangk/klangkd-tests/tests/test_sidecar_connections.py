@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import types
 
 from klangk.sidecar_connections import SidecarConnections
+from klangk.wshandler.safe_websocket import SlowClientError
 
 
 def _app():
@@ -21,9 +23,16 @@ class _Sock:
         self.sent.append(msg)
 
 
-class _DeadSock:
+class _FullSock:
+    """Mimics a SafeWebSocket whose send queue is full / sender stopped.
+
+    ``SafeWebSocket.send_json`` only ever raises ``SlowClientError`` (queue
+    full / ``_closed``) -- never ``ConnectionError``/``OSError`` -- so this is
+    the realistic production failure shape for the send_drop None path.
+    """
+
     def send_json(self, msg: dict) -> None:
-        raise ConnectionError("socket gone")
+        raise SlowClientError("outbound queue full")
 
 
 class TestSidecarConnections:
@@ -53,10 +62,27 @@ class TestSidecarConnections:
         assert fut.result() is True
 
     async def test_send_drop_send_failure_returns_none(self):
-        # socket died between get() and send() -> treat as "no sidecar"
+        # SafeWebSocket.send_json raises only SlowClientError (queue full /
+        # sender stopped) -> treat as "no sidecar" (the only realistic send
+        # failure; a dead-but-not-stopped socket accepts the enqueue and the
+        # caller's wait_for timeout is the backstop).
         reg = SidecarConnections(_app())
-        reg.register("ws-1", _DeadSock())
+        reg.register("ws-1", _FullSock())
         assert reg.send_drop("ws-1", "h", "allowed") is None
+        assert reg._pending == {}  # nothing leaked
+
+    async def test_send_drop_timeout_pops_pending(self):
+        # A hung-but-connected sidecar: the caller's wait_for cancels the
+        # Future on timeout -> the done-callback must pop the pending entry
+        # (no process-lifetime leak, #2339 review #3).
+        reg = SidecarConnections(_app())
+        reg.register("ws-1", _Sock())
+        fut = reg.send_drop("ws-1", "h", "allowed")
+        assert fut is not None
+        assert len(reg._pending) == 1
+        fut.cancel()  # simulate asyncio.wait_for timeout cancel
+        await asyncio.sleep(0)  # done-callback fires on the next loop tick
+        assert reg._pending == {}
 
     async def test_resolve_ack_unknown_is_noop(self):
         reg = SidecarConnections(_app())

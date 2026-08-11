@@ -1254,6 +1254,28 @@ class TestDropForHost:
         # an ACCEPT rule delete per port
         assert sum(1 for r in runs if "-D" in r and "ACCEPT" in r) == 2
 
+    def test_allowed_direct_ip_removes_learned(self, proxy, monkeypatch):
+        # #2339 review #1: a direct-IP allow records host=None (no DNS), so the
+        # allow branch must also admit the host string itself as a candidate IP.
+        proxy._LEARNED.clear()
+        proxy._REJECTED.clear()
+        runs = []
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: (
+                runs.append(a[0]) or types.SimpleNamespace(returncode=0)
+            ),
+        )
+        monkeypatch.setattr(proxy.time, "time", lambda: 0.0)
+        proxy.allow(
+            "203.0.113.9", None, 3600
+        )  # direct-IP allow, host stays None
+        assert proxy._LEARNED["203.0.113.9"]["host"] is None
+        proxy.drop_for_host("203.0.113.9", "allowed")
+        assert "203.0.113.9" not in proxy._LEARNED  # rule + record removed
+        assert any("-D" in r and "ACCEPT" in r for r in runs)
+
     def test_denied_removes_rejects(self, proxy, monkeypatch):
         proxy._LEARNED.clear()
         proxy._REJECTED.clear()

@@ -81,9 +81,19 @@ class SidecarConnections:
         """Push a ``drop_rule`` frame to the workspace's sidecar (#2339).
 
         Returns a Future that resolves ``True`` on a matching ``drop_ack``,
-        ``False`` on disconnect; or ``None`` if there is no live sidecar (or
-        the send failed) -- in the None case the caller proceeds (the rule
-        isn't enforced while the sidecar is down, so there's nothing to drop).
+        ``False`` on disconnect/shutdown; or ``None`` if there is no live
+        sidecar or the enqueue failed -- in the ``None`` case the caller
+        proceeds (the rule isn't enforced while the sidecar is down, so
+        there's nothing to drop).
+
+        The registered socket is a :class:`SafeWebSocket`, whose ``send_json``
+        is a non-blocking queue enqueue that raises only ``SlowClientError``
+        (queue full / sender stopped). So a dead-but-not-yet-stopped socket
+        accepts the enqueue and the Future stays pending; the caller's
+        ``wait_for`` timeout (in ``ConsentCoordinator.revoke``) is the backstop
+        and resolves fail-closed. The done-callback below pops the pending
+        entry on resolve OR cancel (the timeout cancels the Future), so a
+        timed-out revoke against a hung-but-connected sidecar does not leak.
         """
         sock = self._conns.get(workspace_id)
         if sock is None:
@@ -92,6 +102,9 @@ class SidecarConnections:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         self._pending[ack_id] = {"future": fut, "ws": workspace_id}
+        fut.add_done_callback(
+            lambda _f, aid=ack_id: self._pending.pop(aid, None)
+        )
         try:
             sock.send_json(
                 {
@@ -102,8 +115,8 @@ class SidecarConnections:
                 }
             )
         except WS_ERRORS:
-            # Socket died between the get() and the send -- treat as "no
-            # sidecar": nothing to drop, caller proceeds.
+            # Queue full / sender stopped -- treat as "no sidecar": nothing
+            # to drop, caller proceeds.
             self._pending.pop(ack_id, None)
             return None
         return fut
