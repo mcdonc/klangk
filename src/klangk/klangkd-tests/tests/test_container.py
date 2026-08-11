@@ -2048,6 +2048,45 @@ class TestStartContainer:
         assert status == "created"
         p.remove_container.assert_not_awaited()
 
+    async def test_create_clears_restart_duration_verdicts(
+        self, workspace, user
+    ):
+        # #2346: a fresh container (re)start reaps the workspace's
+        # restart-duration verdicts -- the sidecar's in-memory rules died
+        # with the previous container, so list_active must not report them.
+        ec = self.registry.app.state.model.egress_consent
+        a = await ec.create_request(workspace["id"], "stale.com", 443)
+        await ec.decide(a["id"], "allowed", "once", user["id"], "restart")
+        # sanity: in effect before the start
+        assert {
+            r["dest_host"] for r in await ec.list_active(workspace["id"])
+        } == {"stale.com"}
+        with patch_podman(self.registry):
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        assert await ec.list_active(workspace["id"]) == []
+
+    async def test_reuse_running_container_keeps_restart_verdicts(
+        self, workspace, user
+    ):
+        # #2346: the "connected" path (already running) must NOT reap -- the
+        # container didn't restart, so its in-memory rules are still alive.
+        ec = self.registry.app.state.model.egress_consent
+        a = await ec.create_request(workspace["id"], "live.com", 443)
+        await ec.decide(a["id"], "allowed", "once", user["id"], "restart")
+        with patch_podman(self.registry, inspect_container=_running(True)):
+            cid, status = await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                existing_container_id="existing-cid",
+            )
+        assert status == "connected"
+        assert {
+            r["dest_host"] for r in await ec.list_active(workspace["id"])
+        } == {"live.com"}
+
     async def test_disallowed_image_raises(self, workspace):
         with pytest.raises(ValueError, match="not in the allowed list"):
             await self.registry.start_container(

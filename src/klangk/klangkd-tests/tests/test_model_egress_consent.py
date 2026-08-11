@@ -494,6 +494,92 @@ def test_duration_in_effect_unknown_and_null_duration():
     )
 
 
+# -- clear_restart_duration (container-restart reaping, #2346) --
+
+
+async def test_clear_restart_duration_clears_allow_and_deny(ec, ws, user):
+    # A restart allow AND a restart deny both die with the container.
+    w = await ws.create_workspace(user["id"], "clr-rst")
+    a = await ec.create_request(w["id"], "allow.com", 443)
+    await ec.decide(
+        a["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
+    )
+    d = await ec.create_request(w["id"], "deny.com", 443)
+    await ec.decide(d["id"], DECISION_DENIED, None, user["id"], "restart")
+    count = await ec.clear_restart_duration(w["id"])
+    assert count == 2
+    # Neither survives in list_active (the rule-management view).
+    assert await ec.list_active(w["id"]) == []
+
+
+async def test_clear_restart_duration_leaves_other_durations(ec, ws, user):
+    # forever / time-bounded (5m) / once are governed by their own lifetime,
+    # not the container's -- left untouched.
+    w = await ws.create_workspace(user["id"], "clr-keep")
+    fa = await ec.create_request(w["id"], "forever-allow.com")
+    await ec.decide(
+        fa["id"], DECISION_ALLOWED, SCOPE_WORKSPACE, user["id"], "forever"
+    )
+    fd = await ec.create_request(w["id"], "forever-deny.com")
+    await ec.decide(fd["id"], DECISION_DENIED, None, user["id"], "forever")
+    tb = await ec.create_request(w["id"], "timed.com")
+    await ec.decide(tb["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "5m")
+    once = await ec.create_request(w["id"], "once.com")
+    await ec.decide(
+        once["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "once"
+    )
+    # one restart row to clear, to confirm only it is reaped.
+    ra = await ec.create_request(w["id"], "restart.com")
+    await ec.decide(
+        ra["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
+    )
+
+    count = await ec.clear_restart_duration(w["id"])
+    assert count == 1
+    # forever (allow + deny) + the fresh 5m are still in effect; once excluded.
+    hosts = {r["dest_host"] for r in await ec.list_active(w["id"])}
+    assert hosts == {"forever-allow.com", "forever-deny.com", "timed.com"}
+
+
+async def test_clear_restart_duration_leaves_pending_and_static(ec, ws, user):
+    # Pending requests + static policy denials are not restart verdicts.
+    w = await ws.create_workspace(user["id"], "clr-pend")
+    await ec.create_request(w["id"], "pending.com", 443)  # stays pending
+    await ec.record_static_denial(w["id"], "static.com", 443)
+    count = await ec.clear_restart_duration(w["id"])
+    assert count == 0
+    # Both rows still present (list_active excludes them, so check list_requests).
+    hosts = {r["dest_host"] for r in await ec.list_requests(w["id"])}
+    assert hosts == {"pending.com", "static.com"}
+
+
+async def test_clear_restart_duration_is_scoped_to_workspace(ec, ws, user):
+    # Only the named workspace's restart rows are reaped.
+    w1 = await ws.create_workspace(user["id"], "clr-a")
+    w2 = await ws.create_workspace(user["id"], "clr-b")
+    a = await ec.create_request(w1["id"], "a.com", 443)
+    await ec.decide(
+        a["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
+    )
+    b = await ec.create_request(w2["id"], "b.com", 443)
+    await ec.decide(
+        b["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
+    )
+    count = await ec.clear_restart_duration(w1["id"])
+    assert count == 1
+    # w2's restart row survives.
+    assert {r["dest_host"] for r in await ec.list_active(w2["id"])} == {
+        "b.com"
+    }
+    assert await ec.list_active(w1["id"]) == []
+
+
+async def test_clear_restart_duration_no_rows_is_zero(ec, ws, user):
+    # First-ever start: no restart rows -> no-op, returns 0.
+    w = await ws.create_workspace(user["id"], "clr-empty")
+    assert await ec.clear_restart_duration(w["id"]) == 0
+
+
 # -- DB-level integrity (CHECK constraints + partial unique index) --
 #
 # The CHECK constraints + partial unique index are the structural backstop:

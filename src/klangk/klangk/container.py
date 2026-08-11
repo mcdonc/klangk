@@ -2009,6 +2009,16 @@ class ContainerRegistry:
                     self._ws_with_network_sidecar.add(workspace_id)
                 return result
 
+        # A fresh container (re)start means no `restart`-duration consent
+        # verdict can still be in effect -- the sidecar's in-memory rules
+        # (learned ACCEPT for an allow, REJECT for a deny) died with the
+        # previous container. Reap those rows so list_active (#2335) matches
+        # the enforced set (#2346). Safe on a first-ever start (no rows yet);
+        # `forever`/time-bounded/`once`/pending/static rows are left alone.
+        await self.app.state.model.egress_consent.clear_restart_duration(
+            workspace_id
+        )
+
         # Allocate host ports.
         t_ports = time.monotonic()
         host_ports = await self._reconcile_ports(workspace_id, num_ports)

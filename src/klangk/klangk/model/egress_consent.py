@@ -233,13 +233,11 @@ class EgressConsentModel:
         - ``once`` -> excluded (consumed by the single connection).
         - ``5m``/``15m``/``1h``/``1d``/``1w`` -> in effect iff
           ``decided_at + duration`` > now.
-        - ``restart`` -> recorded in effect (container lifetime). CAVEAT: the
-          sidecar's in-memory rule does NOT survive a sidecar/container
-          restart, but this row does, so a recorded ``restart`` allow may be
-          not-enforced after a restart until re-triggered. Reaping ``restart``
-          rows on container restart is a follow-up (out of scope for slice A);
-          until then this view reports the *recorded* set, not the live-enforced
-          one.
+        - ``restart`` -> in effect (container lifetime). Reaped when the
+          workspace container (re)starts (:meth:`clear_restart_duration`,
+          #2346), so the recorded set matches what the sidecar enforces across
+          container restarts; a sidecar-only restart (no container restart)
+          is the one residual gap.
         - ``forever`` -> in effect (workspace lifetime; cross-restart
           persistence lands with #2328).
 
@@ -434,6 +432,38 @@ class EgressConsentModel:
             cursor = await db.execute(
                 "DELETE FROM egress_consent WHERE workspace_id = ?",
                 (workspace_id,),
+            )
+            return cursor.rowcount
+
+    async def clear_restart_duration(self, workspace_id: str) -> int:
+        """Delete decided ``restart``-duration verdicts for a workspace (#2346).
+
+        A ``restart`` verdict means "for the workspace container's lifetime" --
+        the sidecar honors it via an in-memory rule (a learned ACCEPT for an
+        allow, a REJECT for a deny) that dies when the sidecar/container
+        restarts. But this row persists, so without reaping :meth:`list_active`
+        would keep returning stale ``restart`` verdicts as in effect after a
+        restart (the rule-management view would show rules no longer enforced).
+        Called from the container (re)start path.
+
+        - Clears **both** allows and denies (a ``restart`` deny's REJECT dies
+          with the container too).
+        - Leaves ``forever`` (intended to survive restarts -- re-applied by
+          klangkd once #2328 lands), time-bounded (``5m``..``1w``) and ``once``
+          rows (governed by their own expiry), ``pending`` rows, and static
+          policy denials (``decided_by`` NULL, duration NULL). Returns count.
+        """
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "DELETE FROM egress_consent"
+                " WHERE workspace_id = ? AND duration = ?"
+                " AND decision IN (?, ?)",
+                (
+                    workspace_id,
+                    DURATION_RESTART,
+                    DECISION_ALLOWED,
+                    DECISION_DENIED,
+                ),
             )
             return cursor.rowcount
 
