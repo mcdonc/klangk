@@ -681,3 +681,239 @@ class TestNetworkSidecarE2E:
         finally:
             _podman("rm", "-f", ws, nc, check=False, timeout=60)
             _podman("network", "rm", net, check=False, timeout=60)
+
+
+# ---------------------------------------------------------------------------
+# SYN consent gate e2e (#2327), driven by #2336: concurrent flows must both
+# produce consent requests at the verifier concurrently -- not one held behind
+# the other (the pre-#2331 blocking-consumer serialization).
+# ---------------------------------------------------------------------------
+
+# Fake upstream that resolves two NON-allow-listed hosts (so they hit consent).
+_CONSENT_UPSTREAM_PY = """\
+import socket
+import dns.message
+import dns.rrset
+import dns.rcode
+
+RESOLVE = {"repoze.test": "1.1.1.1", "ford.test": "2.2.2.2"}
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(("0.0.0.0", 53))
+while True:
+    data, addr = s.recvfrom(65535)
+    try:
+        q = dns.message.from_wire(data)
+        name = q.question[0].name
+        lname = name.to_text().rstrip(".").lower()
+        resp = dns.message.make_response(q)
+        if lname in RESOLVE:
+            resp.answer.append(
+                dns.rrset.from_text(name, 60, "IN", "A", RESOLVE[lname])
+            )
+        else:
+            resp.set_rcode(dns.rcode.NXDOMAIN)
+        s.sendto(resp.to_wire(), addr)
+    except Exception:
+        pass
+"""
+
+# Stub consent verifier: accepts the sidecar's egress-sidecar WS, records each
+# egress frame's dst to stdout, and NEVER sends a verdict (holds forever) -- so
+# a serialized sidecar would only ever report the first flow.
+_CONSENT_VERIFIER_PY = """\
+import asyncio
+import json
+import websockets
+
+async def handler(ws):
+    print("CONNECTED", flush=True)
+    try:
+        async for raw in ws:
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            if msg.get("type") == "egress":
+                print(f"EGRESS {msg.get('dst')}", flush=True)
+    except websockets.ConnectionClosed:
+        pass
+
+async def main():
+    async with websockets.serve(handler, "0.0.0.0", 8995):
+        await asyncio.Future()
+
+asyncio.run(main())
+"""
+
+# Workspace trigger: resolve two hosts (via the sidecar DNS) + open TCP
+# connections to both concurrently. The SYNs hit NFQUEUE + are held for consent.
+# Blocks (the connects hang while held) for the test duration.
+_CONSENT_TRIGGER_PY = """\
+import socket
+import threading
+
+def connect(host):
+    try:
+        infos = socket.getaddrinfo(host, 80)
+        for family, type_, proto, canon, sockaddr in infos:
+            s = socket.socket(family, type_, proto)
+            s.settimeout(60)
+            try:
+                s.connect(sockaddr)  # SYN -> NFQUEUE -> held for consent
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+t1 = threading.Thread(target=connect, args=("repoze.test",))
+t2 = threading.Thread(target=connect, args=("ford.test",))
+t1.start()
+t2.start()
+t1.join()
+t2.join()
+"""
+
+
+def _wait_log(name, needle, timeout=20):
+    """Poll ``podman logs <name>`` for ``needle`` or fail with the logs."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        logs = _podman("logs", name, check=False).stdout
+        if needle in logs:
+            return
+        time.sleep(0.5)
+    pytest.fail(
+        f"{needle!r} not in {name} logs within {timeout}s\\n"
+        f"logs:\\n{_podman('logs', name, check=False).stdout}"
+    )
+
+
+@pytest.fixture
+def consent_stack(env):
+    """Fake upstream (resolves repoze.test+ford.test) + a stub consent verifier
+    (WS) + the sidecar pointed at it. Yields a dict with the container names +
+    the trigger script path + image."""
+    _require_platform()
+    tmp = tempfile.mkdtemp(prefix="consent-e2e-")
+    fu = os.path.join(tmp, "consent_upstream.py")
+    ver = os.path.join(tmp, "consent_verifier.py")
+    trig = os.path.join(tmp, "consent_trigger.py")
+    tok = os.path.join(tmp, "workspace-token")
+    with open(fu, "w") as fh:
+        fh.write(_CONSENT_UPSTREAM_PY)
+    with open(ver, "w") as fh:
+        fh.write(_CONSENT_VERIFIER_PY)
+    with open(trig, "w") as fh:
+        fh.write(_CONSENT_TRIGGER_PY)
+    with open(tok, "w") as fh:
+        fh.write("dummy-token")
+    net = f"consent-e2e-{uuid.uuid4().hex[:8]}"
+    fu_c = f"consent-fu-{uuid.uuid4().hex[:8]}"
+    ver_c = f"consent-ver-{uuid.uuid4().hex[:8]}"
+    nc = f"consent-nc-{uuid.uuid4().hex[:8]}"
+    _podman("network", "create", net)
+    try:
+        _podman(
+            "run",
+            "-d",
+            "--name",
+            fu_c,
+            "--network",
+            net,
+            "--entrypoint",
+            "python3",
+            "-v",
+            f"{fu}:/fu.py:ro",
+            env["image"],
+            "/fu.py",
+        )
+        fu_ip = _ip_of(fu_c)
+        assert fu_ip, f"fake upstream {fu_c} has no IP"
+        _podman(
+            "run",
+            "-d",
+            "--name",
+            ver_c,
+            "--network",
+            net,
+            "--entrypoint",
+            "python3",
+            "-v",
+            f"{ver}:/ver.py:ro",
+            env["image"],
+            "/ver.py",
+        )
+        ver_ip = _ip_of(ver_c)
+        assert ver_ip, f"verifier {ver_c} has no IP"
+        _podman(
+            "run",
+            "-d",
+            "--name",
+            nc,
+            "--network",
+            net,
+            "--cap-add",
+            "net_admin",
+            "--dns",
+            "1.1.1.1",
+            "-v",
+            f"{tok}:/run/klangk/workspace-token:ro",
+            "-e",
+            f"KLANGKNETWORK_EGRESS_UPSTREAM={fu_ip}",
+            # Allow the consent WS to the verifier (else its own SYN is NFQUEUE'd
+            # -> the consumer holds the consent client's own connection: deadlock).
+            "-e",
+            f"KLANGKNETWORK_EGRESS_ALLOW=allowed.test,{ver_ip}/32:8995",
+            "-e",
+            f"KLANGKNETWORK_EGRESS_CONSENT_URL=http://{ver_ip}:8995",
+            env["image"],
+        )
+        _wait_ready(nc)
+        yield {
+            "stub": ver_c,
+            "sidecar": nc,
+            "trigger": trig,
+            "image": env["image"],
+        }
+    finally:
+        for c in (nc, ver_c, fu_c):
+            _podman("rm", "-f", c, check=False, timeout=60)
+        _podman("network", "rm", net, check=False, timeout=60)
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestConsentConcurrentFlows:
+    """#2336: distinct concurrent flows must both reach the consent verifier
+    while both are still pending (the verifier never verdicts). A serialized
+    sidecar would only report the first flow -> this fails."""
+
+    def test_two_concurrent_connections_both_reported(self, consent_stack):
+        stub = consent_stack["stub"]
+        nc = consent_stack["sidecar"]
+        # The sidecar's consent WS must connect to the verifier first.
+        _wait_log(stub, "CONNECTED", timeout=30)
+        # Trigger two concurrent connections from a workspace sharing the
+        # sidecar's netns. Both SYNs hit NFQUEUE + are held for consent.
+        trig_c = f"consent-trig-{uuid.uuid4().hex[:8]}"
+        try:
+            _podman(
+                "run",
+                "-d",
+                "--name",
+                trig_c,
+                "--network",
+                f"container:{nc}",
+                "--entrypoint",
+                "python3",
+                "-v",
+                f"{consent_stack['trigger']}:/trig.py:ro",
+                consent_stack["image"],
+                "/trig.py",
+            )
+            # Both egress frames must arrive WITHOUT the verifier verdicting
+            # either (it never does). A serialized sidecar would never send the
+            # 2nd -> the _wait_log times out -> this test fails (#2336).
+            _wait_log(stub, "EGRESS repoze.test", timeout=30)
+            _wait_log(stub, "EGRESS ford.test", timeout=30)
+        finally:
+            _podman("rm", "-f", trig_c, check=False, timeout=60)
