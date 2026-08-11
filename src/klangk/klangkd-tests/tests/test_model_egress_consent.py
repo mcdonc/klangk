@@ -12,8 +12,6 @@ from klangk.model.egress_consent import (
     DECISION_PENDING,
     DECISION_REVOKED,
     DURATIONS,
-    SCOPE_ONCE,
-    SCOPE_WORKSPACE,
 )
 from klangk.model.workspaces import (
     EGRESS_MODE_DEFAULT,
@@ -175,7 +173,7 @@ async def test_create_request_after_decision_allows_new_pending(ec, ws, user):
     """After a request is decided, a new pending for the same dest is allowed."""
     w = await ws.create_workspace(user["id"], "re-request")
     req = await ec.create_request(w["id"], "a.com", 443)
-    await ec.decide(req["id"], DECISION_DENIED, None, user["id"])
+    await ec.decide(req["id"], DECISION_DENIED, user["id"])
     # The old one is no longer pending, so a new one should succeed
     new = await ec.create_request(w["id"], "a.com", 443)
     assert new is not None
@@ -207,7 +205,7 @@ async def test_list_requests(ec, ws, user):
 async def test_list_requests_filtered(ec, ws, user):
     w = await ws.create_workspace(user["id"], "filter-ws")
     req = await ec.create_request(w["id"], "a.com", 443)
-    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"])
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"])
     await ec.create_request(w["id"], "b.com", 80)
 
     pending = await ec.list_requests(w["id"], decision=DECISION_PENDING)
@@ -245,11 +243,8 @@ async def test_has_pending_no_port(ec, ws, user):
 async def test_decide_allow(ec, ws, user):
     w = await ws.create_workspace(user["id"], "decide-ws")
     req = await ec.create_request(w["id"], "api.com", 443)
-    result = await ec.decide(
-        req["id"], DECISION_ALLOWED, SCOPE_WORKSPACE, user["id"]
-    )
+    result = await ec.decide(req["id"], DECISION_ALLOWED, user["id"])
     assert result["decision"] == DECISION_ALLOWED
-    assert result["scope"] == SCOPE_WORKSPACE
     assert result["decided_by"] == user["id"]
     assert result["decided_at"] is not None
 
@@ -257,7 +252,7 @@ async def test_decide_allow(ec, ws, user):
 async def test_decide_deny(ec, ws, user):
     w = await ws.create_workspace(user["id"], "deny-ws")
     req = await ec.create_request(w["id"], "bad.com", 443)
-    result = await ec.decide(req["id"], DECISION_DENIED, None, user["id"])
+    result = await ec.decide(req["id"], DECISION_DENIED, user["id"])
     assert result["decision"] == DECISION_DENIED
 
 
@@ -265,13 +260,13 @@ async def test_decide_invalid_decision_raises(ec, ws, user):
     w = await ws.create_workspace(user["id"], "bad-decision")
     req = await ec.create_request(w["id"], "a.com", 443)
     with pytest.raises(ValueError, match="Invalid decision"):
-        await ec.decide(req["id"], "bogus", SCOPE_ONCE, user["id"])
+        await ec.decide(req["id"], "bogus", user["id"])
 
 
 async def test_decide_records_duration(ec, ws, user):
     w = await ws.create_workspace(user["id"], "dur-ws")
     req = await ec.create_request(w["id"], "a.com", 443)
-    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "1d")
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "1d")
     row = await ec.app.state.db.fetchone(
         "SELECT duration FROM egress_consent WHERE id = ?", (req["id"],)
     )
@@ -281,7 +276,7 @@ async def test_decide_records_duration(ec, ws, user):
 async def test_decide_default_duration_is_restart(ec, ws, user):
     w = await ws.create_workspace(user["id"], "dur-default")
     req = await ec.create_request(w["id"], "a.com", 443)
-    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"])
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"])
     row = await ec.app.state.db.fetchone(
         "SELECT duration FROM egress_consent WHERE id = ?", (req["id"],)
     )
@@ -292,9 +287,7 @@ async def test_decide_invalid_duration_raises(ec, ws, user):
     w = await ws.create_workspace(user["id"], "bad-dur")
     req = await ec.create_request(w["id"], "a.com", 443)
     with pytest.raises(ValueError, match="Invalid duration"):
-        await ec.decide(
-            req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "2d"
-        )
+        await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "2d")
 
 
 async def test_decide_pending_not_allowed_as_decision(ec, ws, user):
@@ -302,7 +295,7 @@ async def test_decide_pending_not_allowed_as_decision(ec, ws, user):
     w = await ws.create_workspace(user["id"], "pend-decide")
     req = await ec.create_request(w["id"], "a.com", 443)
     with pytest.raises(ValueError, match="Invalid decision"):
-        await ec.decide(req["id"], DECISION_PENDING, None, user["id"])
+        await ec.decide(req["id"], DECISION_PENDING, user["id"])
 
 
 async def test_decide_expired_not_allowed_as_decision(ec, ws, user):
@@ -310,29 +303,20 @@ async def test_decide_expired_not_allowed_as_decision(ec, ws, user):
     w = await ws.create_workspace(user["id"], "exp-decide")
     req = await ec.create_request(w["id"], "a.com", 443)
     with pytest.raises(ValueError, match="Invalid decision"):
-        await ec.decide(req["id"], DECISION_EXPIRED, None, user["id"])
-
-
-async def test_decide_invalid_scope_raises(ec, ws, user):
-    w = await ws.create_workspace(user["id"], "bad-scope")
-    req = await ec.create_request(w["id"], "a.com", 443)
-    with pytest.raises(ValueError, match="Invalid scope"):
-        await ec.decide(req["id"], DECISION_ALLOWED, "nonsense", user["id"])
+        await ec.decide(req["id"], DECISION_EXPIRED, user["id"])
 
 
 async def test_decide_already_decided(ec, ws, user):
     w = await ws.create_workspace(user["id"], "double-ws")
     req = await ec.create_request(w["id"], "api.com", 443)
-    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"])
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"])
     # Second decide on same request returns None (no longer pending)
-    result = await ec.decide(req["id"], DECISION_DENIED, None, user["id"])
+    result = await ec.decide(req["id"], DECISION_DENIED, user["id"])
     assert result is None
 
 
 async def test_decide_missing(ec, user):
-    result = await ec.decide(
-        "no-such-id", DECISION_ALLOWED, SCOPE_ONCE, user["id"]
-    )
+    result = await ec.decide("no-such-id", DECISION_ALLOWED, user["id"])
     assert result is None
 
 
@@ -360,7 +344,7 @@ async def test_expire_all_pending_reaps_only_pending(ec, ws, user):
     p1 = await ec.create_request(w1["id"], "a.com", 443)
     p2 = await ec.create_request(w2["id"], "b.com", 80)
     decided = await ec.create_request(w1["id"], "c.com", 443)
-    await ec.decide(decided["id"], DECISION_DENIED, SCOPE_ONCE, user["id"])
+    await ec.decide(decided["id"], DECISION_DENIED, user["id"])
     assert await ec.expire_all_pending() == 2
     assert (await ec.get_request(p1["id"]))["decision"] == DECISION_EXPIRED
     assert (await ec.get_request(p2["id"]))["decision"] == DECISION_EXPIRED
@@ -373,7 +357,7 @@ async def test_expire_distinct_from_deny(ec, ws, user):
     r1 = await ec.create_request(w["id"], "a.com", 443)
     r2 = await ec.create_request(w["id"], "b.com", 80)
     await ec.expire_pending(r1["id"])
-    await ec.decide(r2["id"], DECISION_DENIED, None, user["id"])
+    await ec.decide(r2["id"], DECISION_DENIED, user["id"])
 
     g1 = await ec.get_request(r1["id"])
     g2 = await ec.get_request(r2["id"])
@@ -386,7 +370,7 @@ async def test_expire_distinct_from_deny(ec, ws, user):
 async def test_expire_already_decided(ec, ws, user):
     w = await ws.create_workspace(user["id"], "expire2-ws")
     req = await ec.create_request(w["id"], "fast.com", 443)
-    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"])
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"])
     assert not await ec.expire_pending(req["id"])
 
 
@@ -412,11 +396,9 @@ async def test_cascade_delete_on_workspace_delete(ec, ws, user):
 async def test_list_active_groups_allowed_and_denied(ec, ws, user):
     w = await ws.create_workspace(user["id"], "active-grp")
     a = await ec.create_request(w["id"], "allow.com", 443)
-    await ec.decide(
-        a["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
-    )
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "restart")
     d = await ec.create_request(w["id"], "deny.com", 443)
-    await ec.decide(d["id"], DECISION_DENIED, None, user["id"], "forever")
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], "forever")
     rows = await ec.list_active(w["id"])
     decisions = {r["dest_host"]: r["decision"] for r in rows}
     assert decisions == {
@@ -433,7 +415,7 @@ async def test_list_active_excludes_once(ec, ws, user):
     # `once` is consumed by the single connection — never in effect.
     w = await ws.create_workspace(user["id"], "active-once")
     a = await ec.create_request(w["id"], "once.com")
-    await ec.decide(a["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "once")
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "once")
     assert await ec.list_active(w["id"]) == []
 
 
@@ -442,13 +424,9 @@ async def test_list_active_time_bounded_within_and_past_window(
 ):
     w = await ws.create_workspace(user["id"], "active-timed")
     fresh = await ec.create_request(w["id"], "fresh.com")
-    await ec.decide(
-        fresh["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "5m"
-    )
+    await ec.decide(fresh["id"], DECISION_ALLOWED, user["id"], "5m")
     stale = await ec.create_request(w["id"], "stale.com")
-    await ec.decide(
-        stale["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "5m"
-    )
+    await ec.decide(stale["id"], DECISION_ALLOWED, user["id"], "5m")
     # Backdate the stale row past its 5m window.
     async with app_state.state.db.transaction() as conn:
         await conn.execute(
@@ -502,11 +480,9 @@ async def test_clear_restart_duration_clears_allow_and_deny(ec, ws, user):
     # A restart allow AND a restart deny both die with the container.
     w = await ws.create_workspace(user["id"], "clr-rst")
     a = await ec.create_request(w["id"], "allow.com", 443)
-    await ec.decide(
-        a["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
-    )
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "restart")
     d = await ec.create_request(w["id"], "deny.com", 443)
-    await ec.decide(d["id"], DECISION_DENIED, None, user["id"], "restart")
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], "restart")
     count = await ec.clear_restart_duration(w["id"])
     assert count == 2
     # Neither survives in list_active (the rule-management view).
@@ -518,22 +494,16 @@ async def test_clear_restart_duration_leaves_other_durations(ec, ws, user):
     # not the container's -- left untouched.
     w = await ws.create_workspace(user["id"], "clr-keep")
     fa = await ec.create_request(w["id"], "forever-allow.com")
-    await ec.decide(
-        fa["id"], DECISION_ALLOWED, SCOPE_WORKSPACE, user["id"], "forever"
-    )
+    await ec.decide(fa["id"], DECISION_ALLOWED, user["id"], "forever")
     fd = await ec.create_request(w["id"], "forever-deny.com")
-    await ec.decide(fd["id"], DECISION_DENIED, None, user["id"], "forever")
+    await ec.decide(fd["id"], DECISION_DENIED, user["id"], "forever")
     tb = await ec.create_request(w["id"], "timed.com")
-    await ec.decide(tb["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "5m")
+    await ec.decide(tb["id"], DECISION_ALLOWED, user["id"], "5m")
     once = await ec.create_request(w["id"], "once.com")
-    await ec.decide(
-        once["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "once"
-    )
+    await ec.decide(once["id"], DECISION_ALLOWED, user["id"], "once")
     # one restart row to clear, to confirm only it is reaped.
     ra = await ec.create_request(w["id"], "restart.com")
-    await ec.decide(
-        ra["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
-    )
+    await ec.decide(ra["id"], DECISION_ALLOWED, user["id"], "restart")
 
     count = await ec.clear_restart_duration(w["id"])
     assert count == 1
@@ -559,13 +529,9 @@ async def test_clear_restart_duration_is_scoped_to_workspace(ec, ws, user):
     w1 = await ws.create_workspace(user["id"], "clr-a")
     w2 = await ws.create_workspace(user["id"], "clr-b")
     a = await ec.create_request(w1["id"], "a.com", 443)
-    await ec.decide(
-        a["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
-    )
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "restart")
     b = await ec.create_request(w2["id"], "b.com", 443)
-    await ec.decide(
-        b["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
-    )
+    await ec.decide(b["id"], DECISION_ALLOWED, user["id"], "restart")
     count = await ec.clear_restart_duration(w1["id"])
     assert count == 1
     # w2's restart row survives.
@@ -587,9 +553,7 @@ async def test_clear_restart_duration_no_rows_is_zero(ec, ws, user):
 async def test_revoke_flips_active_allow(ec, ws, user):
     w = await ws.create_workspace(user["id"], "revoke-allow")
     req = await ec.create_request(w["id"], "allow.com", 443)
-    await ec.decide(
-        req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
-    )
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "restart")
     row = await ec.revoke(req["id"], user["id"])
     assert row["decision"] == DECISION_REVOKED
     assert row["revoked_at"] is not None
@@ -602,7 +566,7 @@ async def test_revoke_flips_active_allow(ec, ws, user):
 async def test_revoke_flips_active_deny(ec, ws, user):
     w = await ws.create_workspace(user["id"], "revoke-deny")
     req = await ec.create_request(w["id"], "deny.com")
-    await ec.decide(req["id"], DECISION_DENIED, None, user["id"], "forever")
+    await ec.decide(req["id"], DECISION_DENIED, user["id"], "forever")
     assert (await ec.revoke(req["id"], user["id"]))[
         "decision"
     ] == DECISION_REVOKED
@@ -626,9 +590,7 @@ async def test_revoke_unknown_returns_none(ec, ws, user):
 async def test_revoke_idempotent_second_call_returns_none(ec, ws, user):
     w = await ws.create_workspace(user["id"], "revoke-idem")
     req = await ec.create_request(w["id"], "idem.com")
-    await ec.decide(
-        req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
-    )
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "restart")
     assert await ec.revoke(req["id"], user["id"]) is not None
     assert await ec.revoke(req["id"], user["id"]) is None  # already revoked
 
@@ -636,9 +598,7 @@ async def test_revoke_idempotent_second_call_returns_none(ec, ws, user):
 async def test_list_active_excludes_revoked(ec, ws, user):
     w = await ws.create_workspace(user["id"], "revoke-excluded")
     req = await ec.create_request(w["id"], "rev.com")
-    await ec.decide(
-        req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
-    )
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "restart")
     assert len(await ec.list_active(w["id"])) == 1
     await ec.revoke(req["id"], user["id"])
     assert await ec.list_active(w["id"]) == []
@@ -648,7 +608,7 @@ async def test_list_active_excludes_revoked(ec, ws, user):
 #
 # The CHECK constraints + partial unique index are the structural backstop:
 # a code path that bypasses EgressConsentModel (raw SQL) still can't land a
-# bad decision/scope or a duplicate pending prompt. These prove the
+# bad decision or a duplicate pending prompt. These prove the
 # constraints are enforced at the storage layer, independent of decide()'s
 # Python validation (#2251). They mirror the idiom in
 # test_main.test_users_handle_has_unique_constraint.
@@ -686,37 +646,6 @@ async def test_db_check_rejects_invalid_decision_on_update(
                 ("r2",),
             )
     assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
-
-
-async def test_db_check_rejects_invalid_scope(ws, user, db, app_state):
-    w = await ws.create_workspace(user["id"], "chk-scope-ws")
-    async with app_state.state.db.transaction() as conn:
-        await conn.execute(
-            "INSERT INTO egress_consent"
-            " (id, workspace_id, dest_host, requested_at)"
-            " VALUES (?, ?, ?, ?)",
-            ("r3", w["id"], "a.com", 0.0),
-        )
-        with pytest.raises(SAIntegrityError) as exc_info:
-            await conn.execute(
-                "UPDATE egress_consent SET scope = 'nonsense' WHERE id = ?",
-                ("r3",),
-            )
-    assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
-
-
-async def test_db_check_accepts_null_and_legal_scopes(ws, user, db, app_state):
-    """scope NULL (the default) + each legal value pass the CHECK."""
-    w = await ws.create_workspace(user["id"], "chk-scope-ok")
-    legal = [None, "once", "workspace", "deploy"]
-    async with app_state.state.db.transaction() as conn:
-        for i, scope in enumerate(legal):
-            await conn.execute(
-                "INSERT INTO egress_consent"
-                " (id, workspace_id, dest_host, scope, requested_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (f"ok-{i}", w["id"], f"h{i}.com", scope, 0.0),
-            )
 
 
 async def test_db_check_accepts_null_and_legal_durations(
@@ -800,7 +729,7 @@ async def test_init_db_rebuilds_egress_consent_to_add_duration_check(
             "CREATE TABLE egress_consent ("
             " id TEXT PRIMARY KEY, workspace_id TEXT, dest_host TEXT,"
             " dest_port INTEGER, pid INTEGER, process_name TEXT,"
-            " decision TEXT, scope TEXT, duration TEXT,"
+            " decision TEXT, duration TEXT,"
             " requested_at REAL, decided_at REAL, decided_by TEXT)"
         )
         await conn.execute(

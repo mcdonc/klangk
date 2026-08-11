@@ -166,7 +166,6 @@ class ConsentCoordinator:
         self,
         request_id: str,
         decision: str,
-        scope: str | None,
         decided_by: str,
         duration: str = DURATION_DEFAULT,
         *,
@@ -196,7 +195,7 @@ class ConsentCoordinator:
         hold["task"].cancel()
         try:
             row = await self.app.state.model.egress_consent.decide(
-                request_id, decision, scope, decided_by, duration
+                request_id, decision, decided_by, duration
             )
         except Exception:
             # decide() failed (DB error). The hold's own timeout is already

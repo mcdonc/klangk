@@ -84,10 +84,6 @@ from .egress_consent import (
     DECISION_EXPIRED,
     DECISION_PENDING,
     DECISIONS,
-    SCOPE_DEPLOY,
-    SCOPE_ONCE,
-    SCOPE_WORKSPACE,
-    SCOPES,
 )
 from .invitations import ADMIN_INVITATION_SORT_COLUMNS
 
@@ -147,16 +143,12 @@ __all__ = (
     "MSG_SYSTEM",
     "MSG_USER",
     "MENTION_RE",
-    # egress consent — decision/scope constants
+    # egress consent — decision constants
     "DECISION_ALLOWED",
     "DECISION_DENIED",
     "DECISION_EXPIRED",
     "DECISION_PENDING",
     "DECISIONS",
-    "SCOPE_DEPLOY",
-    "SCOPE_ONCE",
-    "SCOPE_WORKSPACE",
-    "SCOPES",
     # invitations — sort columns
     "ADMIN_INVITATION_SORT_COLUMNS",
 )

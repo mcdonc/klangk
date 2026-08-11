@@ -294,7 +294,7 @@ class TestConsentCoordinatorFanout:
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.consent_deciders.broadcast.reset_mock()
-        await coord.resolve("rid-1", "allowed", "once", "a@x")
+        await coord.resolve("rid-1", "allowed", "a@x")
         # the egress_resolved frame is among the broadcasts (resolve also pushes
         # a refreshed egress_rules frame, #2335 slice A)
         frames = [
@@ -325,7 +325,7 @@ class TestConsentCoordinatorFanout:
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.consent_deciders.broadcast.reset_mock()
-        await coord.resolve("rid-1", "allowed", "once", "a@x")
+        await coord.resolve("rid-1", "allowed", "a@x")
         app.state.model.egress_consent.list_active.assert_awaited_once_with(
             FULL_WS
         )
@@ -350,7 +350,7 @@ class TestConsentCoordinatorFanout:
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         verdict = await coord.resolve(
-            "rid-1", "allowed", "once", "a@x", decider_workspace="other-ws"
+            "rid-1", "allowed", "a@x", decider_workspace="other-ws"
         )
         assert verdict is None
         assert "rid-1" in coord._holds  # hold untouched
@@ -378,7 +378,7 @@ class TestConsentCoordinatorFanout:
             side_effect=RuntimeError("db gone")
         )
         # must not raise -- the verdict path is unaffected by the refresh
-        verdict = await coord.resolve("rid-1", "allowed", "once", "a@x")
+        verdict = await coord.resolve("rid-1", "allowed", "a@x")
         assert verdict["decision"] == "allow"
 
     async def test_snapshot_replays_pending_requests(self):
@@ -475,9 +475,7 @@ class TestConsentCoordinatorResolve:
         app = _app(request=_request(), decide_row=row)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
-        verdict = await coord.resolve(
-            "rid-1", "allowed", "workspace", "a@x", duration="1d"
-        )
+        verdict = await coord.resolve("rid-1", "allowed", "a@x", duration="1d")
         assert verdict == {
             "decision": "allow",
             "reason": "decided",
@@ -489,7 +487,7 @@ class TestConsentCoordinatorResolve:
             "duration": "1d",
         }
         app.state.model.egress_consent.decide.assert_awaited_once_with(
-            "rid-1", "allowed", "workspace", "a@x", "1d"
+            "rid-1", "allowed", "a@x", "1d"
         )
         assert coord._holds == {}
 
@@ -499,9 +497,7 @@ class TestConsentCoordinatorResolve:
         app = _app(request=_request(), decide_row=row)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
-        verdict = await coord.resolve(
-            "rid-1", "denied", "once", "a@x", duration="15m"
-        )
+        verdict = await coord.resolve("rid-1", "denied", "a@x", duration="15m")
         assert verdict == {
             "decision": "deny",
             "reason": "decided",
@@ -512,7 +508,7 @@ class TestConsentCoordinatorResolve:
     async def test_resolve_unknown_returns_none(self):
         app = _app(request=_request())
         coord = ConsentCoordinator(app)
-        assert await coord.resolve("nope", "allowed", "once", "a@x") is None
+        assert await coord.resolve("nope", "allowed", "a@x") is None
 
     async def test_resolve_after_decide_returns_none_fail_closes(self):
         # decide() returns None (row no longer pending -- concurrent expiry):
@@ -520,7 +516,7 @@ class TestConsentCoordinatorResolve:
         app = _app(request=_request(), decide_row=None)
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
-        verdict = await coord.resolve("rid-1", "allowed", "once", "a@x")
+        verdict = await coord.resolve("rid-1", "allowed", "a@x")
         assert verdict == {"decision": "deny", "reason": "gone"}
         assert fut.result()["decision"] == "deny"
 
@@ -528,7 +524,7 @@ class TestConsentCoordinatorResolve:
         app = _app(timeout=0.05, request=_request(), decide_row=_request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
-        await coord.resolve("rid-1", "allowed", "once", "a@x")
+        await coord.resolve("rid-1", "allowed", "a@x")
         await asyncio.sleep(0.12)  # past the would-be timeout
         # timeout cancelled -> the row was NOT expired
         app.state.model.egress_consent.expire_pending.assert_not_awaited()
@@ -544,7 +540,7 @@ class TestConsentCoordinatorResolve:
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         app.state.consent_deciders.broadcast.reset_mock()
-        verdict = await coord.resolve("rid-1", "allowed", "once", "a@x")
+        verdict = await coord.resolve("rid-1", "allowed", "a@x")
         assert verdict == {"decision": "deny", "reason": "error"}
         assert fut.done() and fut.result()["decision"] == "deny"
         ws_arg, frame = app.state.consent_deciders.broadcast.call_args.args
@@ -561,8 +557,8 @@ class TestConsentCoordinatorResolve:
         coord = ConsentCoordinator(app)
         await coord.hold(FULL_WS, "1.2.3.4", 443)
         v1, v2 = await asyncio.gather(
-            coord.resolve("rid-1", "allowed", "once", "a@x"),
-            coord.resolve("rid-1", "denied", "once", "b@x"),
+            coord.resolve("rid-1", "allowed", "a@x"),
+            coord.resolve("rid-1", "denied", "b@x"),
         )
         winners = [v for v in (v1, v2) if v is not None]
         assert len(winners) == 1  # exactly one winner
@@ -592,7 +588,7 @@ class TestConsentCoordinatorTimeout:
         app = _app(timeout=0.05, request=_request(), decide_row=_request())
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
-        await coord.resolve("rid-1", "allowed", "once", "a@x")
+        await coord.resolve("rid-1", "allowed", "a@x")
         await asyncio.sleep(0.12)
         app.state.model.egress_consent.expire_pending.assert_not_awaited()
         assert fut.result()["decision"] == "allow"
