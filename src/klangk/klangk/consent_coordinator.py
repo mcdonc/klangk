@@ -49,6 +49,11 @@ logger = logging.getLogger(__name__)
 VERDICT_ALLOW = "allow"
 VERDICT_DENY = "deny"
 
+# How long revoke() waits for the sidecar's drop-rule ack before giving up
+# (fail-closed: leave the row enforced). The sidecar's rule-drop is a single
+# iptables delete, so this is generous.
+_REVOKE_ACK_TIMEOUT = 5.0
+
 
 class ConsentCoordinator:
     """In-process holds for egress requests awaiting a verdict (#2311).
@@ -228,6 +233,60 @@ class ConsentCoordinator:
             # rule-management view (#2335 slice A) without a reconnect.
             await self._broadcast_rules(hold["workspace_id"])
         return verdict
+
+    async def revoke(
+        self,
+        request_id: str,
+        revoked_by: str,
+        *,
+        decider_workspace: str | None = None,
+    ) -> bool:
+        """Revoke an active consent verdict (#2339).
+
+        Drops the sidecar's learned rule for the verdict's host (immediate,
+        not waiting for the duration/restart) and marks the row ``revoked``.
+        Returns True if revoked; False if the request isn't an active verdict,
+        is outside the decider's workspace (``decider_workspace``), or the
+        sidecar never acked the drop. Fail-closed: a connected-but-
+        unresponsive sidecar leaves the row enforced rather than falsely
+        marking it revoked (the view must not claim "not in effect" while the
+        rule still fires).
+        """
+        row = await self.app.state.model.egress_consent.get_request(request_id)
+        if row is None or row["decision"] not in (
+            DECISION_ALLOWED,
+            DECISION_DENIED,
+        ):
+            return False
+        workspace_id = row["workspace_id"]
+        if decider_workspace is not None and workspace_id != decider_workspace:
+            return False
+        host = row["dest_host"]
+        decision = row["decision"]
+        # Ask the sidecar to drop its rule for this host+decision. No live
+        # sidecar -> nothing is enforced (its in-memory rules die with it), so
+        # proceed to mark revoked. A live sidecar must ack first: else a
+        # connected-but-unresponsive sidecar could keep enforcing after the
+        # view says "revoked".
+        fut = self.app.state.sidecar_connections.send_drop(
+            workspace_id, host, decision
+        )
+        if fut is not None:
+            try:
+                ok = await asyncio.wait_for(fut, _REVOKE_ACK_TIMEOUT)
+            except asyncio.TimeoutError:
+                ok = False
+            if not ok:
+                return False
+        if (
+            await self.app.state.model.egress_consent.revoke(
+                request_id, revoked_by
+            )
+            is None
+        ):
+            return False
+        await self._broadcast_rules(workspace_id)
+        return True
 
     async def _timeout(self, request_id: str) -> None:
         """Auto-expire a held request after the timeout; fail-close on wake.

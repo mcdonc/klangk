@@ -15,8 +15,15 @@ DECISION_PENDING = "pending"
 DECISION_ALLOWED = "allowed"
 DECISION_DENIED = "denied"
 DECISION_EXPIRED = "expired"  # auto-denied on timeout, distinct from user deny
+DECISION_REVOKED = "revoked"  # a prior allow/deny undone by a decider (#2339)
 DECISIONS = frozenset(
-    {DECISION_PENDING, DECISION_ALLOWED, DECISION_DENIED, DECISION_EXPIRED}
+    {
+        DECISION_PENDING,
+        DECISION_ALLOWED,
+        DECISION_DENIED,
+        DECISION_EXPIRED,
+        DECISION_REVOKED,
+    }
 )
 
 # Scope values for an allow/deny decision.
@@ -53,6 +60,14 @@ DURATIONS = frozenset(
     }
 )
 DURATION_DEFAULT = DURATION_RESTART
+
+# Canonical column list for SELECTs + _row_to_dict, so the read shape cannot
+# drift from the schema (a column added to the table is added here once).
+_EC_COLUMNS = (
+    "id, workspace_id, dest_host, dest_port, pid, process_name,"
+    " decision, scope, duration, requested_at, decided_at, decided_by,"
+    " revoked_at, revoked_by"
+)
 
 
 class EgressConsentModel:
@@ -168,10 +183,7 @@ class EgressConsentModel:
     async def get_request(self, request_id: str) -> dict | None:
         """Get a single consent request by ID."""
         row = await self.app.state.db.fetchone(
-            "SELECT id, workspace_id, dest_host, dest_port,"
-            " pid, process_name,"
-            " decision, scope, duration, requested_at, decided_at, decided_by"
-            " FROM egress_consent WHERE id = ?",
+            f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE id = ?",
             (request_id,),
         )
         if row is None:
@@ -188,22 +200,14 @@ class EgressConsentModel:
         async with self.app.state.db.transaction() as db:
             if decision is not None:
                 cursor = await db.execute(
-                    "SELECT id, workspace_id, dest_host, dest_port,"
-                    " pid, process_name,"
-                    " decision, scope, duration, requested_at, decided_at,"
-                    " decided_by"
-                    " FROM egress_consent"
+                    f"SELECT {_EC_COLUMNS} FROM egress_consent"
                     " WHERE workspace_id = ? AND decision = ?"
                     " ORDER BY requested_at DESC LIMIT ?",
                     (workspace_id, decision, limit),
                 )
             else:
                 cursor = await db.execute(
-                    "SELECT id, workspace_id, dest_host, dest_port,"
-                    " pid, process_name,"
-                    " decision, scope, duration, requested_at, decided_at,"
-                    " decided_by"
-                    " FROM egress_consent"
+                    f"SELECT {_EC_COLUMNS} FROM egress_consent"
                     " WHERE workspace_id = ?"
                     " ORDER BY requested_at DESC LIMIT ?",
                     (workspace_id, limit),
@@ -250,11 +254,7 @@ class EgressConsentModel:
         now = time.time()
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
-                "SELECT id, workspace_id, dest_host, dest_port,"
-                " pid, process_name,"
-                " decision, scope, duration, requested_at, decided_at,"
-                " decided_by"
-                " FROM egress_consent"
+                f"SELECT {_EC_COLUMNS} FROM egress_consent"
                 " WHERE workspace_id = ? AND decision IN (?, ?)"
                 " AND decided_by IS NOT NULL"
                 " ORDER BY decided_at DESC",
@@ -371,10 +371,40 @@ class EgressConsentModel:
             # Re-read inside the same transaction so the result is
             # consistent even if the row is deleted concurrently.
             cursor = await db.execute(
-                "SELECT id, workspace_id, dest_host, dest_port,"
-                " pid, process_name,"
-                " decision, scope, duration, requested_at, decided_at, decided_by"
-                " FROM egress_consent WHERE id = ?",
+                f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE id = ?",
+                (request_id,),
+            )
+            row = await cursor.fetchone()
+            return _row_to_dict(row) if row else None
+
+    async def revoke(self, request_id: str, revoked_by: str) -> dict | None:
+        """Mark a prior allow/deny verdict revoked (#2339).
+
+        Only flips a row that is currently an active verdict (``allowed`` or
+        ``denied``); pending/expired/already-revoked rows are untouched
+        (returns None). Stamps ``revoked_at`` + ``revoked_by`` for audit (the
+        original ``decided_*`` is preserved as the verdict's provenance).
+        Returns the updated row, or None.
+        """
+        now = time.time()
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "UPDATE egress_consent"
+                " SET decision = ?, revoked_at = ?, revoked_by = ?"
+                " WHERE id = ? AND decision IN (?, ?)",
+                (
+                    DECISION_REVOKED,
+                    now,
+                    revoked_by,
+                    request_id,
+                    DECISION_ALLOWED,
+                    DECISION_DENIED,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+            cursor = await db.execute(
+                f"SELECT {_EC_COLUMNS} FROM egress_consent WHERE id = ?",
                 (request_id,),
             )
             row = await cursor.fetchone()
@@ -482,4 +512,6 @@ def _row_to_dict(row) -> dict:
         "requested_at": row["requested_at"],
         "decided_at": row["decided_at"],
         "decided_by": row["decided_by"],
+        "revoked_at": row["revoked_at"],
+        "revoked_by": row["revoked_by"],
     }

@@ -31,6 +31,7 @@ from . import (
     nix,
     podman,
     netfilter,
+    sidecar_connections,
     ssl_trust,
     terminal,
     util as util_mod,
@@ -477,6 +478,7 @@ class Lifecycle:
             "consent_monitor",
             "consent_coordinator",
             "consent_deciders",
+            "sidecar_connections",
             "proxy_watchdog",
             "llm_router",
             "terminal",
@@ -709,6 +711,7 @@ async def lifespan(app: FastAPI):
     app.state.consent_monitor.start()
     app.state.consent_coordinator.start()
     app.state.consent_deciders.start()
+    app.state.sidecar_connections.start()
     # Start the proxy (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.proxy_watchdog.start()
@@ -730,6 +733,7 @@ async def lifespan(app: FastAPI):
         await app.state.consent_monitor.stop()
         await app.state.consent_coordinator.stop()
         await app.state.consent_deciders.stop()
+        await app.state.sidecar_connections.stop()
         await app.state.proxy_watchdog.stop()
         await app.state.lifecycle.runtime_shutdown()
         await app.state.lifecycle.process_shutdown()
@@ -912,6 +916,9 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.consent_monitor = consent.EgressConsentMonitor(app)
     app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(app)
     app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(app)
+    # #2339: live network-sidecar sockets by workspace, so a revoke can push a
+    # rule-drop to a workspace's sidecar + correlate the ack.
+    app.state.sidecar_connections = sidecar_connections.SidecarConnections(app)
     # #2201: per-workspace nix store via a btrfs snapshot or fuse overlay
     # (off unless KLANGKD_NIX_SEED__PATH names a seed; see nix.Nix).
     app.state.nix = nix.Nix(app)

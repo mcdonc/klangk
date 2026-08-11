@@ -74,6 +74,11 @@ def _app(
         has_decider=lambda workspace_id: has_decider,
         broadcast=Mock(return_value=0),
     )
+    # #2339: the revoke path pushes a drop-rule to a workspace's sidecar via
+    # this registry. Default send_drop -> None (no live sidecar).
+    app.state.sidecar_connections = types.SimpleNamespace(
+        send_drop=Mock(return_value=None)
+    )
     return app
 
 
@@ -86,6 +91,122 @@ def _denial():
         "decision": "denied",
         "decided_by": None,
     }
+
+
+def _active_row(req_id="rid-1", decision="allowed", host="1.2.3.4"):
+    """An in-effect verdict row for revoke tests (#2339)."""
+    return {
+        "id": req_id,
+        "workspace_id": FULL_WS,
+        "dest_host": host,
+        "dest_port": 443,
+        "decision": decision,
+        "duration": "restart",
+    }
+
+
+class TestConsentCoordinatorRevoke:
+    async def test_revoke_no_sidecar_marks_revoked(self):
+        # No live sidecar -> nothing to drop -> mark revoked + refresh the view.
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row()
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.egress_consent.revoke.assert_awaited_once_with(
+            "rid-1", "a@x"
+        )
+        app.state.sidecar_connections.send_drop.assert_called_once_with(
+            FULL_WS, "1.2.3.4", "allowed"
+        )
+
+    async def test_revoke_sidecar_acked_marks_revoked(self):
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row()
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        fut = asyncio.get_running_loop().create_future()
+        fut.set_result(True)
+        app.state.sidecar_connections.send_drop = Mock(return_value=fut)
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+
+    async def test_revoke_sidecar_no_ack_returns_false(self):
+        # A connected sidecar that doesn't ack ok -> leave enforced (fail-closed).
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row()
+        )
+        fut = asyncio.get_running_loop().create_future()
+        fut.set_result(False)
+        app.state.sidecar_connections.send_drop = Mock(return_value=fut)
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is False
+        app.state.model.egress_consent.revoke.assert_not_awaited()
+
+    async def test_revoke_sidecar_ack_timeout_returns_false(self, monkeypatch):
+        # A sidecar that never acks -> wait_for times out -> leave enforced.
+        import klangk.consent_coordinator as cc
+
+        monkeypatch.setattr(cc, "_REVOKE_ACK_TIMEOUT", 0.05)
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row()
+        )
+        # a Future that never resolves
+        app.state.sidecar_connections.send_drop = Mock(
+            return_value=asyncio.get_running_loop().create_future()
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is False
+        app.state.model.egress_consent.revoke.assert_not_awaited()
+
+    async def test_revoke_unknown_request_returns_false(self):
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=None
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("nope", "a@x") is False
+        app.state.sidecar_connections.send_drop.assert_not_called()
+
+    async def test_revoke_not_active_verdict_returns_false(self):
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row(decision="pending")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is False
+        app.state.sidecar_connections.send_drop.assert_not_called()
+
+    async def test_revoke_outside_decider_workspace_returns_false(self):
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row()
+        )
+        coord = ConsentCoordinator(app)
+        assert (
+            await coord.revoke("rid-1", "a@x", decider_workspace="other")
+            is False
+        )
+        app.state.sidecar_connections.send_drop.assert_not_called()
+
+    async def test_revoke_model_returns_none_returns_false(self):
+        # race: the row changed under us -> model.revoke returns None
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row()
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(return_value=None)
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is False
 
 
 class TestConsentCoordinatorGate:
@@ -575,6 +696,9 @@ def _sidecar_app(token_result=FULL_WS):
     app.state.auth = types.SimpleNamespace(decode_workspace_token=_decode)
     coord = AsyncMock()
     app.state.consent_coordinator = coord
+    # #2339: the handler registers/deregisters the sidecar socket + resolves
+    # drop-acks via this registry.
+    app.state.sidecar_connections = Mock()
     return app, coord
 
 
@@ -612,6 +736,25 @@ class TestEgressSidecarWS:
         )
         await asyncio.sleep(0.05)
         coord.hold.assert_awaited_once_with(FULL_WS, "1.2.3.4", 443)
+        await ws.feed(WebSocketDisconnect())
+        await handler
+
+    async def test_drop_ack_resolves_pending(self):
+        # a drop_ack frame from the sidecar -> resolve_ack on the registry (#2339)
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.sidecar import handle_egress_sidecar
+
+        app, _ = _sidecar_app()
+        ws = _FakeWS({"token": FULL_WS})
+        handler = asyncio.create_task(handle_egress_sidecar(ws, app))
+        await ws.feed(
+            json.dumps({"type": "drop_ack", "id": "ack-1", "ok": True})
+        )
+        await asyncio.sleep(0.02)
+        app.state.sidecar_connections.resolve_ack.assert_called_once_with(
+            "ack-1", True
+        )
         await ws.feed(WebSocketDisconnect())
         await handler
 

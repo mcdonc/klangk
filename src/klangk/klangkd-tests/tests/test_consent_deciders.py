@@ -232,6 +232,7 @@ def _ws_app(
         snapshot=AsyncMock(return_value=snapshot or []),
         resolve=AsyncMock(return_value=None),
         rules_frame=AsyncMock(return_value=rules_frame),
+        revoke=AsyncMock(return_value=True),
     )
     return app
 
@@ -382,6 +383,32 @@ class TestConsentDeciderWS:
         app.state.consent_coordinator.resolve.assert_awaited_once_with(
             "rid", "allowed", "once", "u1", duration="1w", decider_workspace=WS
         )
+
+    async def test_revoke_frame_calls_coordinator_and_acks(self):
+        # #2339: a revoke frame -> coordinator.revoke(decider_workspace guard)
+        # + a revoke_ack back to the decider.
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        app.state.consent_coordinator.revoke = AsyncMock(return_value=True)
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            ['{"type":"revoke","request_id":"r1"}', WebSocketDisconnect()],
+        )
+        await handle_consent_decider(ws, app)
+        app.state.consent_coordinator.revoke.assert_awaited_once()
+        args, kwargs = app.state.consent_coordinator.revoke.call_args
+        assert args[0] == "r1"  # request_id
+        assert kwargs["decider_workspace"] == WS  # defense-in-depth scope
+        acks = [
+            json.loads(m)
+            for m in ws.sent
+            if json.loads(m).get("type") == "revoke_ack"
+        ]
+        assert acks and acks[0]["ok"] is True
+        assert acks[0]["request_id"] == "r1"
 
     async def test_verdict_invalid_decision_sends_error(self):
         from fastapi import WebSocketDisconnect

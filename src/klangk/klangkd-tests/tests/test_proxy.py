@@ -701,7 +701,7 @@ class TestConsentForward:
         assert frame["type"] == "egress"
         assert frame["dst"] == "evil.test"
         assert frame["dport"] == 443
-        c._dispatch(
+        await c._dispatch(
             json.dumps(
                 {"type": "verdict", "id": frame["id"], "decision": "allow"}
             )
@@ -722,7 +722,7 @@ class TestConsentForward:
         task = asyncio.create_task(c.request("evil.test", None))
         await asyncio.sleep(0)
         frame = json.loads(sent[0])
-        c._dispatch(
+        await c._dispatch(
             json.dumps(
                 {"type": "verdict", "id": frame["id"], "decision": "deny"}
             )
@@ -743,7 +743,7 @@ class TestConsentForward:
         task = asyncio.create_task(c.request("evil.test", None))
         await asyncio.sleep(0)
         frame = json.loads(sent[0])
-        c._dispatch(
+        await c._dispatch(
             json.dumps(
                 {"type": "verdict", "id": frame["id"], "decision": "expired"}
             )
@@ -778,18 +778,20 @@ class TestConsentForward:
         assert await c.request("evil.test", None) == ("deny", "once")
         assert c._pending == {}
 
-    def test_dispatch_ignores_non_verdict_and_bad_id(self, proxy, tmp_path):
+    async def test_dispatch_ignores_non_verdict_and_bad_id(
+        self, proxy, tmp_path
+    ):
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
-        c._dispatch("not-json")
-        c._dispatch(json.dumps({"type": "egress"}))  # wrong type
-        c._dispatch(
+        await c._dispatch("not-json")
+        await c._dispatch(json.dumps({"type": "egress"}))  # wrong type
+        await c._dispatch(
             json.dumps({"type": "verdict", "decision": "allow"})
         )  # no id
-        c._dispatch(
+        await c._dispatch(
             json.dumps({"type": "verdict", "id": 123, "decision": "allow"})
         )  # non-str id
         # a verdict for an unknown id is a no-op (already popped/timed out)
-        c._dispatch(
+        await c._dispatch(
             json.dumps({"type": "verdict", "id": "nope", "decision": "allow"})
         )
 
@@ -797,7 +799,7 @@ class TestConsentForward:
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
         fut = asyncio.get_running_loop().create_future()
         c._pending["abc"] = fut
-        c._dispatch(
+        await c._dispatch(
             json.dumps({"type": "verdict", "id": "abc", "decision": "allow"})
         )
         assert fut.result() == ("allow", "once")
@@ -1226,3 +1228,152 @@ class TestHandlePacket:
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_not_called()  # dropped, no response
         fwd.assert_not_awaited()
+
+
+class TestDropForHost:
+    """Revoke rule-drop (#2339): drop_for_host + the drop_rule dispatch/ack."""
+
+    def test_allowed_removes_learned_accept(self, proxy, monkeypatch):
+        proxy._LEARNED.clear()
+        proxy._REJECTED.clear()
+        runs = []
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: (
+                runs.append(a[0]) or types.SimpleNamespace(returncode=0)
+            ),
+        )
+        proxy._LEARNED["1.2.3.4"] = {
+            "expire": 9999.0,
+            "ports": {443, None},
+            "host": "evil.test",
+        }
+        proxy.drop_for_host("evil.test", "allowed")
+        assert "1.2.3.4" not in proxy._LEARNED
+        # an ACCEPT rule delete per port
+        assert sum(1 for r in runs if "-D" in r and "ACCEPT" in r) == 2
+
+    def test_denied_removes_rejects(self, proxy, monkeypatch):
+        proxy._LEARNED.clear()
+        proxy._REJECTED.clear()
+        runs = []
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: (
+                runs.append(a[0]) or types.SimpleNamespace(returncode=0)
+            ),
+        )
+        # the denied IP was DNS-recorded (host set) + has a REJECT rule
+        proxy._LEARNED["5.6.7.8"] = {
+            "expire": 9999.0,
+            "ports": set(),
+            "host": "bad.test",
+        }
+        proxy._REJECTED[("5.6.7.8", 443)] = 9999.0
+        proxy.drop_for_host("bad.test", "denied")
+        assert ("5.6.7.8", 443) not in proxy._REJECTED
+        assert any("-D" in r and "REJECT" in r for r in runs)
+
+    def test_denied_direct_ip_match(self, proxy, monkeypatch):
+        # a direct-IP deny (host == ip, never DNS host-recorded) is still dropped
+        proxy._LEARNED.clear()
+        proxy._REJECTED.clear()
+        runs = []
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: (
+                runs.append(a[0]) or types.SimpleNamespace(returncode=0)
+            ),
+        )
+        proxy._REJECTED[("9.9.9.9", 80)] = 9999.0
+        proxy.drop_for_host("9.9.9.9", "denied")
+        assert ("9.9.9.9", 80) not in proxy._REJECTED
+
+    def test_no_match_is_noop(self, proxy, monkeypatch):
+        proxy._LEARNED.clear()
+        proxy._REJECTED.clear()
+        ran = []
+        monkeypatch.setattr(
+            proxy.subprocess, "run", lambda *a, **k: ran.append(a[0])
+        )
+        proxy._LEARNED["1.2.3.4"] = {
+            "expire": 9.0,
+            "ports": {443},
+            "host": "other.test",
+        }
+        proxy.drop_for_host("evil.test", "allowed")
+        assert "1.2.3.4" in proxy._LEARNED  # untouched
+        assert ran == []
+
+    def test_unknown_decision_is_noop(self, proxy, monkeypatch):
+        proxy._LEARNED.clear()
+        proxy._REJECTED.clear()
+        ran = []
+        monkeypatch.setattr(
+            proxy.subprocess, "run", lambda *a, **k: ran.append(a[0])
+        )
+        proxy._LEARNED["1.2.3.4"] = {
+            "expire": 9.0,
+            "ports": {443},
+            "host": "h.test",
+        }
+        proxy.drop_for_host("h.test", "bogus")
+        assert "1.2.3.4" in proxy._LEARNED
+        assert ran == []
+
+    async def test_dispatch_drop_rule_acks_ok(
+        self, proxy, tmp_path, monkeypatch
+    ):
+        proxy._LEARNED.clear()
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=0),
+        )
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        await c._dispatch(
+            json.dumps(
+                {
+                    "type": "drop_rule",
+                    "id": "ack-1",
+                    "host": "h.test",
+                    "decision": "allowed",
+                }
+            )
+        )
+        ack = json.loads(sent[0])
+        assert ack["type"] == "drop_ack"
+        assert ack["id"] == "ack-1"
+        assert ack["ok"] is True
+
+    async def test_dispatch_drop_rule_bad_payload_acks_false(
+        self, proxy, tmp_path
+    ):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        # missing host + bogus decision -> drop skipped, ack ok=False
+        await c._dispatch(
+            json.dumps(
+                {"type": "drop_rule", "id": "ack-2", "decision": "bogus"}
+            )
+        )
+        ack = json.loads(sent[0])
+        assert ack["ok"] is False
