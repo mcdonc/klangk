@@ -38,8 +38,7 @@ operators or integrators to act when upgrading.
   leaves the list immediately. A failed revoke (sidecar unreachable / no ack)
   flashes `revoke failed — still in effect` and leaves the row enforced — a
   still-active rule is never silently hidden. Static allow-list rows are not
-  revocable from this screen (edit them in workspace settings). Closes the
-  #2335 rule-management view.
+  revocable from this screen (edit them in workspace settings).
 
 - **Read-only rules screen in `consent-decide` (#2340).** Press `r` in the
   `consent-decide` TUI to switch from the held-request queue to a second,
