@@ -93,11 +93,6 @@ class TestConsentDecideTuiE2E:
     """#2336: two concurrent connections must both appear in the consent-decide
     TUI while both are still pending (not serialized behind the first)."""
 
-    @pytest.mark.skip(
-        "Needs the sidecar's upstream DNS resolver reachable in the e2e env "
-        "(real hosts don't resolve -> no SYN -> no consent). The stub-verifier "
-        "test in test_network_sidecar_e2e.py confirms the concurrency."
-    )
     @pytest.mark.asyncio
     async def test_two_concurrent_flows_both_appear(
         self, server, auth, workspace
@@ -124,21 +119,24 @@ class TestConsentDecideTuiE2E:
                 )
 
                 # Trigger two concurrent connections to non-allowed hosts.
-                # Real hosts resolve via the sidecar's DNS proxy -> upstream;
-                # the SYNs hit the consent gate (not in allowed_domains).
+                # Real hosts resolve via the sidecar's DNS proxy; the SYNs hit
+                # the consent gate (not in allowed_domains) -> held -> consent
+                # request fanned out to this decider. Command is an argv LIST
+                # (a string gets iterated char-by-char -> crun "p" not found).
                 await ws_conn.send(
                     json.dumps(
                         {
                             "cmd": "exec_start",
-                            "command": (
-                                'python3 -c "'
-                                "import socket,time,threading;"
-                                "threading.Thread(target=lambda:socket.create_connection"
-                                "('example.com',80),daemon=True).start();"
-                                "threading.Thread(target=lambda:socket.create_connection"
-                                "('ford.com',80),daemon=True).start();"
-                                'time.sleep(10)"'
-                            ),
+                            "command": [
+                                "python3",
+                                "-c",
+                                "import socket,threading,time;"
+                                "[threading.Thread("
+                                "target=lambda h=h:socket.create_connection"
+                                "((h,80),timeout=8),daemon=True).start()"
+                                " for h in ('example.com','ford.com')];"
+                                "time.sleep(10)",
+                            ],
                         }
                     )
                 )
