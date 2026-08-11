@@ -208,6 +208,7 @@ def _ws_app(
     *,
     allowed: bool = True,
     snapshot=None,
+    rules_frame=None,
 ):
     """App with mocked auth + acl + coordinator, and a real registry."""
     app = types.SimpleNamespace()
@@ -230,6 +231,7 @@ def _ws_app(
     app.state.consent_coordinator = types.SimpleNamespace(
         snapshot=AsyncMock(return_value=snapshot or []),
         resolve=AsyncMock(return_value=None),
+        rules_frame=AsyncMock(return_value=rules_frame),
     )
     return app
 
@@ -329,6 +331,31 @@ class TestConsentDeciderWS:
             json.loads(m).get("type") == "egress_request" for m in ws.sent
         )
         app.state.consent_coordinator.snapshot.assert_awaited_once_with(WS)
+
+    async def test_rules_frame_pushed_on_connect(self):
+        # On connect the in-effect rules snapshot is pushed too (#2335 slice
+        # A), right after the pending-request snapshot.
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        rules = {
+            "type": "egress_rules",
+            "workspace_id": WS,
+            "allow_list": ["static.example.com"],
+            "allowed": [],
+            "denied": [],
+            "paused": None,
+        }
+        app = _ws_app({"id": "u1", "email": "a@x"}, rules_frame=rules)
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS}, [WebSocketDisconnect()]
+        )
+        await handle_consent_decider(ws, app)
+        assert any(
+            json.loads(m).get("type") == "egress_rules" for m in ws.sent
+        )
+        app.state.consent_coordinator.rules_frame.assert_awaited_once_with(WS)
 
     async def test_verdict_resolves_the_hold(self):
         from fastapi import WebSocketDisconnect

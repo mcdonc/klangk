@@ -36,6 +36,8 @@ import logging
 
 from .consent import workspace_is_interactive
 from .model.egress_consent import (
+    DECISION_ALLOWED,
+    DECISION_DENIED,
     DECISION_PENDING,
     DURATION_DEFAULT,
     DURATION_ONCE,
@@ -221,6 +223,10 @@ class ConsentCoordinator:
         if not hold["future"].done():
             hold["future"].set_result(verdict)
         self._broadcast_resolved(request_id, hold["workspace_id"], resolved)
+        if resolved in ("allowed", "denied"):
+            # A new verdict entered the in-effect set: refresh the deciders'
+            # rule-management view (#2335 slice A) without a reconnect.
+            await self._broadcast_rules(hold["workspace_id"])
         return verdict
 
     async def _timeout(self, request_id: str) -> None:
@@ -307,6 +313,34 @@ class ConsentCoordinator:
         )
         return [self._request_frame(row) for row in rows]
 
+    async def rules_frame(self, workspace_id: str | None) -> dict | None:
+        """Build an ``egress_rules`` snapshot for a workspace (#2335 slice A).
+
+        The in-effect consent verdicts (grouped allow/deny) + the static
+        allow-list, for the decider's rule-management view. Returns None for a
+        missing/deleted workspace (the caller skips the frame); deploy-wide
+        deciders (workspace None) get no frame for now (a cross-workspace view
+        is a follow-up, matching :meth:`snapshot`).
+        """
+        if workspace_id is None:
+            return None
+        ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
+        if ws is None:
+            return None
+        rows = await self.app.state.model.egress_consent.list_active(
+            workspace_id
+        )
+        return {
+            "type": "egress_rules",
+            "workspace_id": workspace_id,
+            "allow_list": ws.get("allowed_domains") or [],
+            "allowed": [r for r in rows if r["decision"] == DECISION_ALLOWED],
+            "denied": [r for r in rows if r["decision"] == DECISION_DENIED],
+            # #2332 (pause control) not yet landed: no transient pause state
+            # exists, so this is always None until that work adds it.
+            "paused": None,
+        }
+
     @staticmethod
     def _request_frame(request: dict) -> dict:
         """Build an ``egress_request`` frame from a consent-request row."""
@@ -333,6 +367,23 @@ class ConsentCoordinator:
                 "decision": decision,
             },
         )
+
+    async def _broadcast_rules(self, workspace_id: str) -> None:
+        """Push a refreshed ``egress_rules`` frame to the workspace's deciders.
+
+        Called after a verdict lands (and, in slice C, after a revoke) so the
+        deciders' rule-management view reflects the new in-effect set without a
+        reconnect. Best-effort: a refresh failure (DB read) is logged +
+        swallowed so it can never break the verdict path that called this --
+        the sidecar already has its verdict.
+        """
+        try:
+            frame = await self.rules_frame(workspace_id)
+        except Exception:
+            logger.exception("consent: rules refresh broadcast failed")
+            return
+        if frame is not None:
+            self.app.state.consent_deciders.broadcast(workspace_id, frame)
 
     async def _is_interactive(self, workspace_id: str) -> bool:
         """Interactive iff the workspace opted in AND a live decider exists (#2308)."""

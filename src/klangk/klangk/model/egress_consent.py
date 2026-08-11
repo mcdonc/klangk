@@ -170,7 +170,7 @@ class EgressConsentModel:
         row = await self.app.state.db.fetchone(
             "SELECT id, workspace_id, dest_host, dest_port,"
             " pid, process_name,"
-            " decision, scope, requested_at, decided_at, decided_by"
+            " decision, scope, duration, requested_at, decided_at, decided_by"
             " FROM egress_consent WHERE id = ?",
             (request_id,),
         )
@@ -190,7 +190,8 @@ class EgressConsentModel:
                 cursor = await db.execute(
                     "SELECT id, workspace_id, dest_host, dest_port,"
                     " pid, process_name,"
-                    " decision, scope, requested_at, decided_at, decided_by"
+                    " decision, scope, duration, requested_at, decided_at,"
+                    " decided_by"
                     " FROM egress_consent"
                     " WHERE workspace_id = ? AND decision = ?"
                     " ORDER BY requested_at DESC LIMIT ?",
@@ -200,7 +201,8 @@ class EgressConsentModel:
                 cursor = await db.execute(
                     "SELECT id, workspace_id, dest_host, dest_port,"
                     " pid, process_name,"
-                    " decision, scope, requested_at, decided_at, decided_by"
+                    " decision, scope, duration, requested_at, decided_at,"
+                    " decided_by"
                     " FROM egress_consent"
                     " WHERE workspace_id = ?"
                     " ORDER BY requested_at DESC LIMIT ?",
@@ -208,6 +210,85 @@ class EgressConsentModel:
                 )
             rows = await cursor.fetchall()
             return [_row_to_dict(row) for row in rows]
+
+    # Duration string -> seconds, for the time-bounded in-effect window
+    # (#2328). `once`/`restart`/`forever` are not time-bounded (handled
+    # separately in :meth:`_duration_in_effect`), so they're absent here.
+    _DURATION_SECONDS = {
+        DURATION_5M: 300,
+        DURATION_15M: 900,
+        DURATION_1H: 3600,
+        DURATION_1D: 86400,
+        DURATION_1W: 604800,
+    }
+
+    async def list_active(self, workspace_id: str) -> list[dict]:
+        """Consent verdicts still in effect for a workspace (#2335 slice A).
+
+        Returns allowed/denied rows whose duration hasn't elapsed, so a
+        rule-management view can show "what's currently affecting networking".
+        Each row carries its ``decision`` so the caller can group allows vs
+        denies.
+
+        - ``once`` -> excluded (consumed by the single connection).
+        - ``5m``/``15m``/``1h``/``1d``/``1w`` -> in effect iff
+          ``decided_at + duration`` > now.
+        - ``restart`` -> recorded in effect (container lifetime). CAVEAT: the
+          sidecar's in-memory rule does NOT survive a sidecar/container
+          restart, but this row does, so a recorded ``restart`` allow may be
+          not-enforced after a restart until re-triggered. Reaping ``restart``
+          rows on container restart is a follow-up (out of scope for slice A);
+          until then this view reports the *recorded* set, not the live-enforced
+          one.
+        - ``forever`` -> in effect (workspace lifetime; cross-restart
+          persistence lands with #2328).
+
+        Only **verdict** decisions are returned (``decided_by`` not NULL):
+        static policy denials (``record_static_denial``, ``decided_by`` NULL)
+        are the complement of the allow-list, infinite in number, and not
+        actionable in the rules view. Expired / pending / revoked rows are
+        never in effect.
+        """
+        now = time.time()
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "SELECT id, workspace_id, dest_host, dest_port,"
+                " pid, process_name,"
+                " decision, scope, duration, requested_at, decided_at,"
+                " decided_by"
+                " FROM egress_consent"
+                " WHERE workspace_id = ? AND decision IN (?, ?)"
+                " AND decided_by IS NOT NULL"
+                " ORDER BY decided_at DESC",
+                (workspace_id, DECISION_ALLOWED, DECISION_DENIED),
+            )
+            rows = await cursor.fetchall()
+        out = []
+        for row in rows:
+            if self._duration_in_effect(
+                row["duration"], row["decided_at"], now
+            ):
+                out.append(_row_to_dict(row))
+        return out
+
+    @classmethod
+    def _duration_in_effect(
+        cls, duration: str | None, decided_at: float | None, now: float
+    ) -> bool:
+        """Whether a decision is still in effect at ``now`` (#2335 slice A)."""
+        if decided_at is None:
+            return False
+        if duration in (DURATION_RESTART, DURATION_FOREVER):
+            return True
+        if duration == DURATION_ONCE:
+            return False
+        secs = cls._DURATION_SECONDS.get(duration)
+        if secs is None:
+            # Unknown / NULL duration: a verdict always sets one, so this only
+            # hits a NULL (e.g. a future migration). Treat as not in effect
+            # (fail-safe: don't claim an effect we can't bound).
+            return False
+        return decided_at + secs > now
 
     async def count_pending(self, workspace_id: str) -> int:
         """Count pending requests for a workspace.
@@ -294,7 +375,7 @@ class EgressConsentModel:
             cursor = await db.execute(
                 "SELECT id, workspace_id, dest_host, dest_port,"
                 " pid, process_name,"
-                " decision, scope, requested_at, decided_at, decided_by"
+                " decision, scope, duration, requested_at, decided_at, decided_by"
                 " FROM egress_consent WHERE id = ?",
                 (request_id,),
             )
@@ -367,6 +448,7 @@ def _row_to_dict(row) -> dict:
         "process_name": row["process_name"],
         "decision": row["decision"],
         "scope": row["scope"],
+        "duration": row["duration"],
         "requested_at": row["requested_at"],
         "decided_at": row["decided_at"],
         "decided_by": row["decided_by"],

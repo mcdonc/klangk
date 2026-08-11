@@ -101,6 +101,12 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         # to never miss.
         for frame in await app.state.consent_coordinator.snapshot(workspace):
             safe_ws.send_json(frame)
+        # The in-effect rules snapshot (#2335 slice A): lets a decider joining
+        # mid-flight see what's currently allowed/denied, not just holds. None
+        # for a deploy-wide decider (no single workspace) — matches snapshot().
+        rules = await app.state.consent_coordinator.rules_frame(workspace)
+        if rules is not None:
+            safe_ws.send_json(rules)
         while True:
             # Starlette raises RuntimeError ("WebSocket is not connected...")
             # on a client disconnect during receive_text(); treat it the same

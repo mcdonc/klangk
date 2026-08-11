@@ -10,6 +10,7 @@ from klangk.model.egress_consent import (
     DECISION_DENIED,
     DECISION_EXPIRED,
     DECISION_PENDING,
+    DURATIONS,
     SCOPE_ONCE,
     SCOPE_WORKSPACE,
 )
@@ -404,6 +405,95 @@ async def test_cascade_delete_on_workspace_delete(ec, ws, user):
     assert await ec.list_requests(w["id"]) == []
 
 
+# -- list_active (in-effect computation, #2335 slice A) --
+
+
+async def test_list_active_groups_allowed_and_denied(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "active-grp")
+    a = await ec.create_request(w["id"], "allow.com", 443)
+    await ec.decide(
+        a["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
+    )
+    d = await ec.create_request(w["id"], "deny.com", 443)
+    await ec.decide(d["id"], DECISION_DENIED, None, user["id"], "forever")
+    rows = await ec.list_active(w["id"])
+    decisions = {r["dest_host"]: r["decision"] for r in rows}
+    assert decisions == {
+        "allow.com": DECISION_ALLOWED,
+        "deny.com": DECISION_DENIED,
+    }
+    # each row carries its duration (the read fix, #2338)
+    by_host = {r["dest_host"]: r for r in rows}
+    assert by_host["allow.com"]["duration"] == "restart"
+    assert by_host["deny.com"]["duration"] == "forever"
+
+
+async def test_list_active_excludes_once(ec, ws, user):
+    # `once` is consumed by the single connection — never in effect.
+    w = await ws.create_workspace(user["id"], "active-once")
+    a = await ec.create_request(w["id"], "once.com")
+    await ec.decide(a["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "once")
+    assert await ec.list_active(w["id"]) == []
+
+
+async def test_list_active_time_bounded_within_and_past_window(
+    ec, ws, user, app_state
+):
+    w = await ws.create_workspace(user["id"], "active-timed")
+    fresh = await ec.create_request(w["id"], "fresh.com")
+    await ec.decide(
+        fresh["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "5m"
+    )
+    stale = await ec.create_request(w["id"], "stale.com")
+    await ec.decide(
+        stale["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "5m"
+    )
+    # Backdate the stale row past its 5m window.
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "UPDATE egress_consent SET decided_at = ? WHERE id = ?",
+            (0.0, stale["id"]),
+        )
+    hosts = {r["dest_host"] for r in await ec.list_active(w["id"])}
+    assert hosts == {"fresh.com"}
+
+
+async def test_list_active_excludes_static_denial(ec, ws, user):
+    # Static policy denials (decided_by NULL) are the allow-list's complement,
+    # not actionable verdicts — excluded from the in-effect view.
+    w = await ws.create_workspace(user["id"], "active-static")
+    await ec.record_static_denial(w["id"], "evil.com", 443)
+    assert await ec.list_active(w["id"]) == []
+
+
+async def test_list_active_excludes_pending_and_expired(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "active-other")
+    pending = await ec.create_request(w["id"], "pending.com")  # stays pending
+    to_expire = await ec.create_request(w["id"], "expired.com")
+    await ec.expire_pending(to_expire["id"])  # pending -> expired (no verdict)
+    assert pending is not None
+    # neither pending nor expired rows are in-effect verdicts
+    assert await ec.list_active(w["id"]) == []
+
+
+def test_duration_in_effect_unknown_and_null_duration():
+    # Unknown / NULL duration: a verdict always sets one, so this only hits a
+    # NULL (future migration) — fail-safe to not-in-effect.
+    from klangk.model.egress_consent import EgressConsentModel
+
+    assert EgressConsentModel._duration_in_effect(None, 1.0, 2.0) is False
+    assert EgressConsentModel._duration_in_effect("bogus", 1.0, 2.0) is False
+    # decided_at None (no decision recorded) -> not in effect.
+    assert EgressConsentModel._duration_in_effect("5m", None, 2.0) is False
+    # restart/forever are event-bounded, not time-bounded -> always in effect.
+    assert (
+        EgressConsentModel._duration_in_effect("restart", 0.0, 999.0) is True
+    )
+    assert (
+        EgressConsentModel._duration_in_effect("forever", 0.0, 999.0) is True
+    )
+
+
 # -- DB-level integrity (CHECK constraints + partial unique index) --
 #
 # The CHECK constraints + partial unique index are the structural backstop:
@@ -479,6 +569,41 @@ async def test_db_check_accepts_null_and_legal_scopes(ws, user, db, app_state):
             )
 
 
+async def test_db_check_accepts_null_and_legal_durations(
+    ws, user, db, app_state
+):
+    """duration NULL (pending/static rows) + each legal value pass the CHECK."""
+    w = await ws.create_workspace(user["id"], "chk-dur-ok")
+    # iterate the single source of truth so the test cannot drift from the
+    # CHECK (which is itself generated from DURATIONS, #2338)
+    legal = [None, *DURATIONS]
+    async with app_state.state.db.transaction() as conn:
+        for i, duration in enumerate(legal):
+            await conn.execute(
+                "INSERT INTO egress_consent"
+                " (id, workspace_id, dest_host, duration, requested_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (f"ok-d-{i}", w["id"], f"h{i}.com", duration, 0.0),
+            )
+
+
+async def test_db_check_rejects_invalid_duration(ws, user, db, app_state):
+    w = await ws.create_workspace(user["id"], "chk-dur-ws")
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "INSERT INTO egress_consent"
+            " (id, workspace_id, dest_host, requested_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("rd1", w["id"], "a.com", 0.0),
+        )
+        with pytest.raises(SAIntegrityError) as exc_info:
+            await conn.execute(
+                "UPDATE egress_consent SET duration = '99d' WHERE id = ?",
+                ("rd1",),
+            )
+    assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
+
+
 async def test_db_partial_unique_index_rejects_duplicate_pending(
     ws, user, db, app_state
 ):
@@ -499,5 +624,68 @@ async def test_db_partial_unique_index_rejects_duplicate_pending(
                 " (id, workspace_id, dest_host, dest_port, requested_at)"
                 " VALUES (?, ?, ?, ?, ?)",
                 ("u2", w["id"], "a.com", 443, 0.0),
+            )
+    assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
+
+
+async def test_init_db_rebuilds_egress_consent_to_add_duration_check(
+    ws, user, app_state
+):
+    """A pre-existing egress_consent lacking the duration CHECK is rebuilt
+    in place (#2338) — data preserved, constraint attached.
+
+    Simulates the stale shape (duration column from an earlier ALTER, no
+    CHECK) by dropping the well-formed table and recreating it without the
+    constraint, then re-running init_db. The rebuild path copies the row
+    across and attaches the CHECK; a bad duration is then rejected at the DB.
+    """
+    w = await ws.create_workspace(user["id"], "rebuild-ws")
+    db = app_state.state.db
+    # Replace the well-formed table with a stale shape (no duration CHECK),
+    # keeping one real row referencing the real workspace + user (so the
+    # rebuild's FK copy satisfies foreign_keys if enforced).
+    async with db.transaction() as conn:
+        await conn.execute("DROP TABLE egress_consent")
+        await conn.execute(
+            "CREATE TABLE egress_consent ("
+            " id TEXT PRIMARY KEY, workspace_id TEXT, dest_host TEXT,"
+            " dest_port INTEGER, pid INTEGER, process_name TEXT,"
+            " decision TEXT, scope TEXT, duration TEXT,"
+            " requested_at REAL, decided_at REAL, decided_by TEXT)"
+        )
+        await conn.execute(
+            "INSERT INTO egress_consent"
+            " (id, workspace_id, dest_host, decision, duration,"
+            "  requested_at, decided_at, decided_by)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "keep-1",
+                w["id"],
+                "preserved.com",
+                "allowed",
+                "1d",
+                1.0,
+                2.0,
+                user["id"],
+            ),
+        )
+    # Re-run init_db: the rebuild fires (no CHECK in sqlite_master), attaches
+    # the CHECK, and copies the row across.
+    await app_state.state.model.init_db()
+    async with db.transaction() as conn:
+        cur = await conn.execute(
+            "SELECT dest_host, duration FROM egress_consent WHERE id = ?",
+            ("keep-1",),
+        )
+        row = await cur.fetchone()
+    assert row is not None
+    assert row["dest_host"] == "preserved.com"
+    assert row["duration"] == "1d"
+    # The CHECK is now enforced.
+    async with db.transaction() as conn:
+        with pytest.raises(SAIntegrityError) as exc_info:
+            await conn.execute(
+                "UPDATE egress_consent SET duration = '99d' WHERE id = ?",
+                ("keep-1",),
             )
     assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
