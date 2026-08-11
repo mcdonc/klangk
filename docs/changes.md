@@ -32,6 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`forever` egress-consent allow persists across container restarts (#2368).**
+  An allow with `duration=forever` now appends the consented `host:port` to
+  the workspace's `allowed_domains`, which the network sidecar re-reads on
+  (re)start, so the allow survives a workspace container restart without
+  re-prompting. The deciding connection still gets its in-memory ACCEPT
+  immediately; the persisted entry is port-scoped (the port the decider was
+  shown) and de-duplicated. The `forever` deny counterpart is a follow-up
+  (#2369).
+
 - **Revoke action in `consent-decide` (#2341).** On the rules screen
   (`r`), focus an active consent allow/deny row and press `x` to revoke it:
   klangkd drops the sidecar rule and marks the verdict spent, so the row
@@ -160,7 +169,7 @@ operators or integrators to act when upgrading.
   consumer is the `consent-decide` client (#2310).
 - **Sidecar consent gates the connection SYN (#2311, #2324).** The network
   sidecar holds a non-allow-listed connection's SYN (NFQUEUE) pending the
-  consent verdict instead of the DNS query: a denied name now _resolves_ (the
+  consent verdict instead of the DNS query: a denied name now resolves (the
   workspace gets the IP) and the first packet to that IP is queued -- `allow`
   learns the IP + lets it proceed, `deny`/timeout/WS-down fail-closes -- a
   denied connection gets a RST via a temporary REJECT (tcp-reset) rule so it
@@ -695,7 +704,7 @@ users(id)`, so the decider handler passing the decider's email violated the
 - **Egress-site `forward_auth` no longer breaks WebSocket upgrades
   (#2319, #2322).** Caddy's site-level `forward_auth` copied the WS
   `Upgrade` headers onto its auth subrequest, so uvicorn treated the
-  (HTTP) `verify-workspace-token` check _itself_ as a websocket — no ws
+  (HTTP) `verify-workspace-token` check itself as a websocket — no ws
   route at that path → the catch-all `StaticFiles` asserted
   `scope["type"] == "http"` → HTTP 500. Every WS through the container-egress
   port (the sidecar's `/ws/egress-sidecar`) failed this way even after #2321

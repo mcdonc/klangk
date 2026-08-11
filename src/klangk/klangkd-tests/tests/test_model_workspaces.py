@@ -241,6 +241,55 @@ async def test_allowed_domains_updateable(ws, user):
     assert got["allowed_domains"] is None
 
 
+async def test_add_allowed_domain_appends_lowercased_deduped(ws, user):
+    # A forever consent allow persists by mutating allowed_domains (#2368).
+    # New entries are lowercased + de-duplicated; an existing entry (even with
+    # different case) is a no-op (idempotent).
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "forever", allowed_domains=["PyPI.org:443"]
+    )
+    assert await ws.add_allowed_domain(ws_row["id"], "github.com:443") is True
+    assert (
+        await ws.add_allowed_domain(ws_row["id"], "GITHUB.COM:443") is True
+    )  # case-insensitive dedup -> no duplicate
+    assert (
+        await ws.add_allowed_domain(ws_row["id"], "github.com:443") is True
+    )  # exact dup -> still True (idempotent)
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    # Original entry preserved as-typed; new entry lowercased; no dup.
+    assert got["allowed_domains"] == ["PyPI.org:443", "github.com:443"]
+
+
+async def test_add_allowed_domain_from_empty(ws, user):
+    # No allowed_domains yet (NULL) -> a single-element list.
+    ws_row = await ws.create_workspace(user["id"], "fresh")
+    assert await ws.add_allowed_domain(ws_row["id"], "example.com:443") is True
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["allowed_domains"] == ["example.com:443"]
+
+
+async def test_add_allowed_domain_missing_workspace(ws):
+    assert await ws.add_allowed_domain("nope", "example.com:443") is False
+
+
+async def test_add_allowed_domain_rejects_malformed(ws, user):
+    # A malformed entry is skipped (returns False), never raises -- the
+    # verdict path must not break on persistence.
+    ws_row = await ws.create_workspace(user["id"], "strict")
+    assert await ws.add_allowed_domain(ws_row["id"], "not a domain!") is False
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["allowed_domains"] is None
+
+
+async def test_add_allowed_domain_ignores_blank(ws, user):
+    # A blank entry normalizes to nothing (parse_allowed_domains drops it) ->
+    # no append, returns False, never raises.
+    ws_row = await ws.create_workspace(user["id"], "blank")
+    assert await ws.add_allowed_domain(ws_row["id"], "   ") is False
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["allowed_domains"] is None
+
+
 async def test_transfer_workspace(ws, app_state, user):
     new_owner = await app_state.state.model.users.create_user("new@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(user["id"], "transfer-me")

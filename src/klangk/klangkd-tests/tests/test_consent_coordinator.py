@@ -67,6 +67,7 @@ def _app(
             else None
         )
     )
+    workspaces.add_allowed_domain = AsyncMock(return_value=True)
     app.state.model = types.SimpleNamespace(
         egress_consent=egress_consent, workspaces=workspaces
     )
@@ -565,6 +566,89 @@ class TestConsentCoordinatorResolve:
         assert (
             app.state.model.egress_consent.decide.await_count == 1
         )  # one DB write
+
+    async def test_forever_allow_appends_host_port_to_allowed_domains(self):
+        # A `forever` allow persists by appending the consented host:port to
+        # the workspace's allowed_domains (#2368) -- least-privilege (the port
+        # the decider was shown), lowercased + deduped by the model.
+        row = _request()  # host 1.2.3.4, port 443
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "allowed", "a@x", duration="forever"
+        )
+        assert verdict == {
+            "decision": "allow",
+            "reason": "decided",
+            "duration": "forever",
+        }
+        assert fut.result()["decision"] == "allow"
+        app.state.model.workspaces.add_allowed_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
+
+    async def test_timed_allow_does_not_mutate_allowed_domains(self):
+        # Only `forever` mutates allowed_domains; a timed allow ("1d") is a
+        # plain in-memory learn (no list mutation).
+        row = _request()
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        await coord.resolve("rid-1", "allowed", "a@x", duration="1d")
+        app.state.model.workspaces.add_allowed_domain.assert_not_awaited()
+
+    async def test_forever_allow_persist_failure_does_not_break_verdict(self):
+        # A persistence failure (model raises) is swallowed: the verdict is
+        # still allow and the rules refresh still fires (best-effort
+        # durability; the session's in-memory ACCEPT already covers it).
+        row = _request()
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        app.state.model.workspaces.add_allowed_domain = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "allowed", "a@x", duration="forever"
+        )
+        assert verdict["decision"] == "allow"
+        app.state.model.workspaces.add_allowed_domain.assert_awaited_once()
+
+    async def test_forever_allow_missing_host_skips_persist(self):
+        # No host in the row -> nothing to persist; the verdict still lands
+        # (best-effort durability; the session's in-memory ACCEPT covers it).
+        row = _request()
+        row["decision"] = "allowed"
+        row["dest_host"] = None
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "allowed", "a@x", duration="forever"
+        )
+        assert verdict["decision"] == "allow"
+        app.state.model.workspaces.add_allowed_domain.assert_not_awaited()
+
+    async def test_forever_allow_not_persisted_still_succeeds(self):
+        # add_allowed_domain returns False (workspace missing / malformed):
+        # logged as a warning, but the verdict still lands.
+        row = _request()
+        row["decision"] = "allowed"
+        app = _app(request=_request(), decide_row=row)
+        app.state.model.workspaces.add_allowed_domain = AsyncMock(
+            return_value=False
+        )
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "allowed", "a@x", duration="forever"
+        )
+        assert verdict["decision"] == "allow"
+        app.state.model.workspaces.add_allowed_domain.assert_awaited_once()
 
 
 class TestConsentCoordinatorTimeout:
