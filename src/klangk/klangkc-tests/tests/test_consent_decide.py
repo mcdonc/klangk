@@ -25,9 +25,14 @@ from klangk.cli.tui.consent import (
     IGNORED,
     PONG,
     RESOLVED,
+    RULES,
     ConsentDeciderApp,
     ConsentDeciderController,
     ConsentRequest,
+    ConsentRule,
+    EgressRules,
+    PauseState,
+    RulesScreen,
     make_ping,
     make_verdict,
 )
@@ -88,6 +93,55 @@ def _req_frame(rid="r1", host="evil.example.com", port=443, **extra):
     }
     req.update(extra)
     return json.dumps({"type": "egress_request", "request": req})
+
+
+def _rule(
+    rid="a1",
+    *,
+    host="evil.example.com",
+    port=443,
+    decision="allowed",
+    duration="5m",
+    decided_at=100.0,
+    process=None,
+    decided_by="u@x",
+):
+    """One row of an egress_rules frame's allowed/denied list."""
+    return {
+        "id": rid,
+        "workspace_id": "wsid",
+        "dest_host": host,
+        "dest_port": port,
+        "pid": None,
+        "process_name": process,
+        "decision": decision,
+        "scope": "once",
+        "duration": duration,
+        "requested_at": 90.0,
+        "decided_at": decided_at,
+        "decided_by": decided_by,
+    }
+
+
+def _rules_frame(
+    *,
+    allow_list=("static.example.com",),
+    allowed=(),
+    denied=(),
+    paused=None,
+    workspace_id="wsid",
+):
+    """An egress_rules frame (#2335 slice A) as the server sends it."""
+    return json.dumps(
+        {
+            "type": "egress_rules",
+            "workspace_id": workspace_id,
+            "allow_list": list(allow_list),
+            "allowed": list(allowed),
+            "denied": list(denied),
+            "paused": paused,
+        }
+    )
 
 
 def _make_app(**kw):
@@ -968,3 +1022,690 @@ async def test_pump_repoulates_from_snapshot_after_reset():
         await app._pump(FakeWS([_req_frame("live", host="new.com")]))
         await pilot.pause()
         assert set(app.controller.pending) == {"live"}
+
+
+# ---------------------------------------------------------------------------
+# Controller: egress_rules parsing + ordering + expiry (#2335 slice B)
+# ---------------------------------------------------------------------------
+
+
+class TestControllerRulesParsing:
+    def test_rules_frame_stored_and_returned(self):
+        c = ConsentDeciderController()
+        action, payload = c.apply_frame(
+            _rules_frame(allow_list=["a.com", "b.com"])
+        )
+        assert action == RULES
+        assert isinstance(payload, EgressRules)
+        assert c.rules is payload
+        assert payload.workspace_id == "wsid"
+        assert payload.allow_list == ("a.com", "b.com")
+        assert payload.allowed == ()
+        assert payload.denied == ()
+        assert payload.paused is None  # #2332 not landed
+
+    def test_rules_parse_rows_into_consentrule(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(
+                allowed=[_rule("a1", host="x.com", port=443, duration="1h")],
+                denied=[
+                    _rule("d1", host="y.com", port=None, decision="denied")
+                ],
+            )
+        )
+        assert len(payload.allowed) == 1
+        rule = payload.allowed[0]
+        assert isinstance(rule, ConsentRule)
+        assert rule.dest_host == "x.com"
+        assert rule.dest_port == 443
+        assert rule.duration == "1h"
+        assert rule.decision == "allowed"
+        assert len(payload.denied) == 1
+        assert payload.denied[0].dest_port is None
+
+    def test_rules_missing_workspace_id_ignored(self):
+        c = ConsentDeciderController()
+        bad = json.dumps(
+            {"type": "egress_rules", "allow_list": ["a.com"]}
+        )  # no workspace_id
+        assert c.apply_frame(bad) == (IGNORED, None)
+        assert c.rules is None
+
+    def test_rules_missing_fields_degrade_to_empty(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            json.dumps({"type": "egress_rules", "workspace_id": "wsid"})
+        )
+        assert payload.allow_list == ()
+        assert payload.allowed == ()
+        assert payload.denied == ()
+        assert payload.paused is None
+
+    def test_rules_allow_list_non_list_degrades(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            json.dumps(
+                {
+                    "type": "egress_rules",
+                    "workspace_id": "wsid",
+                    "allow_list": "not-a-list",
+                }
+            )
+        )
+        assert payload.allow_list == ()
+
+    def test_rules_malformed_row_skipped(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(
+                allowed=[
+                    _rule("good"),
+                    "not-a-dict",  # skipped
+                    {"id": "no-host"},  # kept (host defaults to "")
+                ]
+            )
+        )
+        assert [r.id for r in payload.allowed] == ["good", "no-host"]
+
+    def test_rules_port_bool_excluded(self):
+        # bool is an int subclass; a bool port must not coerce to 1.
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(allowed=[_rule("a1", port=True)])
+        )
+        assert payload.allowed[0].dest_port is None
+
+    def test_rules_paased_none_yields_none_pause(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(_rules_frame(paused=None))
+        assert payload.paused is None
+
+    def test_rules_paased_true_with_until_parsed(self):
+        # Forward-looking: #2332 will send {"paused": true, "until": epoch}.
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(paused={"paused": True, "until": 200.0})
+        )
+        assert payload.paused == PauseState(until=200.0)
+
+    def test_rules_paased_false_yields_none(self):
+        # Not paused -> no pause section renders.
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(paused={"paused": False, "until": 200.0})
+        )
+        assert payload.paused is None
+
+    def test_rules_paased_until_non_numeric_is_none(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(paused={"paused": True, "until": "soon"})
+        )
+        assert payload.paused == PauseState(until=None)
+
+    def test_rules_non_dict_paused_yields_none(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(_rules_frame(paused="yes"))
+        assert payload.paused is None
+
+
+class TestControllerRulesOrdering:
+    def test_allowed_newest_decided_first(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(
+                allowed=[
+                    _rule("old", decided_at=100.0),
+                    _rule("new", decided_at=300.0),
+                    _rule("mid", decided_at=200.0),
+                ]
+            )
+        )
+        assert [r.id for r in payload.allowed] == ["new", "mid", "old"]
+
+    def test_denied_newest_decided_first(self):
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(
+                denied=[
+                    _rule("d_old", decided_at=100.0, decision="denied"),
+                    _rule("d_new", decided_at=300.0, decision="denied"),
+                ]
+            )
+        )
+        assert [r.id for r in payload.denied] == ["d_new", "d_old"]
+
+    def test_undecided_rows_sort_last(self):
+        # A NULL decided_at (future migration) sorts after decided rows.
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(
+                allowed=[
+                    _rule("undecided", decided_at=None),
+                    _rule("decided", decided_at=100.0),
+                ]
+            )
+        )
+        assert [r.id for r in payload.allowed] == ["decided", "undecided"]
+
+    def test_ordering_stable_for_ties(self):
+        # Equal decided_at preserves insertion order (stable sort).
+        c = ConsentDeciderController()
+        _, payload = c.apply_frame(
+            _rules_frame(
+                allowed=[
+                    _rule("first", decided_at=100.0),
+                    _rule("second", decided_at=100.0),
+                ]
+            )
+        )
+        assert [r.id for r in payload.allowed] == ["first", "second"]
+
+
+class TestControllerRulesExpiry:
+    def test_rule_remaining_timed(self):
+        c = ConsentDeciderController(clock=lambda: 130.0)
+        rule = ConsentRule(
+            id="a1",
+            dest_host="h",
+            dest_port=1,
+            process_name=None,
+            decision="allowed",
+            duration="5m",
+            decided_at=100.0,
+            decided_by=None,
+        )  # 300s window -> 100+300=400; at 130 -> 270s left
+        assert c.rule_remaining(rule) == 270.0
+
+    def test_rule_remaining_clamps_at_zero(self):
+        c = ConsentDeciderController(clock=lambda: 9999.0)
+        rule = ConsentRule(
+            id="a1",
+            dest_host="h",
+            dest_port=1,
+            process_name=None,
+            decision="allowed",
+            duration="5m",
+            decided_at=100.0,
+            decided_by=None,
+        )
+        assert c.rule_remaining(rule) == 0.0
+
+    def test_rule_remaining_restart_is_none(self):
+        c = ConsentDeciderController()
+        rule = ConsentRule(
+            id="a1",
+            dest_host="h",
+            dest_port=1,
+            process_name=None,
+            decision="allowed",
+            duration="restart",
+            decided_at=100.0,
+            decided_by=None,
+        )
+        assert c.rule_remaining(rule) is None
+
+    def test_rule_remaining_forever_is_none(self):
+        c = ConsentDeciderController()
+        rule = ConsentRule(
+            id="a1",
+            dest_host="h",
+            dest_port=1,
+            process_name=None,
+            decision="allowed",
+            duration="forever",
+            decided_at=100.0,
+            decided_by=None,
+        )
+        assert c.rule_remaining(rule) is None
+
+    def test_rule_remaining_unknown_duration_is_none(self):
+        c = ConsentDeciderController()
+        rule = ConsentRule(
+            id="a1",
+            dest_host="h",
+            dest_port=1,
+            process_name=None,
+            decision="allowed",
+            duration="3fortnights",
+            decided_at=100.0,
+            decided_by=None,
+        )
+        assert c.rule_remaining(rule) is None
+
+    def test_rule_remaining_null_decided_at_is_none(self):
+        c = ConsentDeciderController()
+        rule = ConsentRule(
+            id="a1",
+            dest_host="h",
+            dest_port=1,
+            process_name=None,
+            decision="allowed",
+            duration="5m",
+            decided_at=None,
+            decided_by=None,
+        )
+        assert c.rule_remaining(rule) is None
+
+    def test_pause_remaining_timed(self):
+        c = ConsentDeciderController(clock=lambda: 150.0)
+        rules = EgressRules(
+            workspace_id="wsid",
+            allow_list=(),
+            allowed=(),
+            denied=(),
+            paused=PauseState(until=200.0),
+        )
+        assert c.pause_remaining(rules) == 50.0
+
+    def test_pause_remaining_indefinite_is_none(self):
+        c = ConsentDeciderController()
+        rules = EgressRules(
+            workspace_id="wsid",
+            allow_list=(),
+            allowed=(),
+            denied=(),
+            paused=PauseState(until=None),
+        )
+        assert c.pause_remaining(rules) is None
+
+    def test_pause_remaining_not_paused_is_none(self):
+        c = ConsentDeciderController()
+        rules = EgressRules(
+            workspace_id="wsid",
+            allow_list=(),
+            allowed=(),
+            denied=(),
+            paused=None,
+        )
+        assert c.pause_remaining(rules) is None
+
+
+def test_fmt_duration_tiers():
+    assert tui_consent._fmt_duration(5) == "5s"
+    assert tui_consent._fmt_duration(45) == "45s"
+    assert tui_consent._fmt_duration(90) == "1m"
+    assert tui_consent._fmt_duration(300) == "5m"
+    assert tui_consent._fmt_duration(3600) == "1h"
+    assert tui_consent._fmt_duration(7200) == "2h"
+    assert tui_consent._fmt_duration(86400) == "1d"
+    assert tui_consent._fmt_duration(604800) == "1w"
+    assert tui_consent._fmt_duration(1209600) == "2w"
+
+
+def test_reset_clears_rules():
+    """reset() drops the cached rules snapshot too (called on reconnect)."""
+    c = ConsentDeciderController()
+    c.apply_frame(_rules_frame(allow_list=["a.com"]))
+    assert c.rules is not None
+    c.reset()
+    assert c.rules is None
+    assert c.pending == {}
+
+
+# ---------------------------------------------------------------------------
+# Rules screen: render, refresh, switch, WS worker stays connected (#2335 B)
+# ---------------------------------------------------------------------------
+
+
+class TestRulesScreen:
+    async def test_r_opens_screen_and_q_returns(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            assert not isinstance(app.screen, RulesScreen)
+            app.action_rules()
+            await pilot.pause()
+            assert isinstance(app.screen, RulesScreen)
+            # `q` on the rules screen pops back (does NOT quit the app).
+            app.screen.action_back()
+            await pilot.pause()
+            assert not isinstance(app.screen, RulesScreen)
+            assert app.is_running
+
+    async def test_escape_returns(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.action_rules()
+            await pilot.pause()
+            assert isinstance(app.screen, RulesScreen)
+            app.screen.action_back()
+            await pilot.pause()
+            assert not isinstance(app.screen, RulesScreen)
+
+    async def test_r_does_not_stack_a_second_screen(self):
+        # Guard: pressing r while already on the rules screen is a no-op.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.action_rules()
+            await pilot.pause()
+            screen = app.screen
+            app.action_rules()  # already viewing rules -> ignored
+            await pilot.pause()
+            assert app.screen is screen
+            assert len(app.screen_stack) == 2  # default + rules (no 3rd)
+
+    async def test_screen_renders_all_sections(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(
+                _rules_frame(
+                    allow_list=["static.example.com"],
+                    allowed=[
+                        _rule("a1", host="allow.example.com", duration="1h"),
+                    ],
+                    denied=[
+                        _rule(
+                            "d1",
+                            host="deny.example.com",
+                            decision="denied",
+                            duration="15m",
+                        ),
+                    ],
+                )
+            )
+            app.action_rules()
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "Static allow-list" in body
+            assert "static.example.com" in body
+            assert "Active allows (1)" in body
+            assert "allow.example.com:443" in body
+            assert "expires in" in body
+            assert "Active denies (1)" in body
+            assert "deny.example.com:443" in body
+            assert "left" in body
+            # #2332 not landed -> no pause section.
+            assert "Pause" not in body
+
+    async def test_screen_empty_state(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.action_rules()
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "(none)" in body  # empty allow-list + allows + denies
+
+    async def test_screen_no_rules_yet(self):
+        # Before the first egress_rules frame lands, show a placeholder.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.action_rules()
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "no rules received yet" in body
+
+    async def test_screen_shows_forever_and_restart_labels(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(
+                _rules_frame(
+                    allowed=[
+                        _rule("a1", duration="forever"),
+                        _rule("a2", duration="restart"),
+                    ],
+                )
+            )
+            app.action_rules()
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "forever" in body
+            assert "until restart" in body
+
+    async def test_screen_shows_pause_section_when_paused(self):
+        # Forward-looking (#2332): a real pause dict renders the section.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(
+                _rules_frame(
+                    paused={"paused": True, "until": time.time() + 120.0},
+                )
+            )
+            app.action_rules()
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "Pause" in body
+            assert "Filtering paused" in body
+
+    async def test_screen_shows_indefinite_pause(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(
+                _rules_frame(paused={"paused": True, "until": None}),
+            )
+            app.action_rules()
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "paused until restart" in body
+
+    async def test_screen_status_shows_held_count(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app.controller.apply_frame(_rules_frame(allow_list=["a.com"]))
+            app.action_rules()
+            await pilot.pause()
+            status = str(app.screen.query_one("#rules-status", Static).content)
+            assert "wsname" in status
+            assert "1 held" in status
+            assert "rules" in status
+
+    async def test_refresh_rules_live_updates_on_frame(self):
+        # A new egress_rules frame (e.g. a co-decider allowed a request) shows
+        # up on the already-open rules screen without popping/re-pushing.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_rules_frame(allow_list=["a.com"]))
+            app.action_rules()
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "Active allows (0)" in body
+            # A refreshed frame arrives over the shared WS pump:
+            app.controller.apply_frame(
+                _rules_frame(
+                    allow_list=["a.com"],
+                    allowed=[_rule("a1", host="new.example.com")],
+                )
+            )
+            app._refresh()  # the 1s tick also refreshes the active screen
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "Active allows (1)" in body
+            assert "new.example.com:443" in body
+
+    async def test_ws_worker_survives_switch_and_delivers_frame(
+        self, monkeypatch
+    ):
+        # Real acceptance criterion: pushing/popping the rules screen must NOT
+        # tear down or reconnect the WS worker, AND a frame delivered over the
+        # still-open socket while the rules screen is up must reach it. Drives
+        # the real _ws_loop (not the autouse no-op stub) with a blocking WS that
+        # stays connected so we can feed a frame mid-stream.
+        delivered = asyncio.Queue()
+
+        class LiveWS:
+            sent = []
+
+            async def recv(self):
+                return await delivered.get()
+
+            async def send(self, d):
+                self.sent.append(d)
+
+        ws = LiveWS()
+        monkeypatch.setattr(
+            tui_consent, "ws_connect", lambda *a, **k: FakeCM(ws)
+        )
+        app = _make_app(reconnect_delays=(0.0,))
+        async with app.run_test() as pilot:
+            task = asyncio.create_task(_real_ws_loop(app))
+            try:
+                await pilot.pause()
+                await asyncio.sleep(0.05)
+                assert app._connected is True  # the real loop connected
+
+                # Switch to the rules screen mid-stream.
+                app.action_rules()
+                await pilot.pause()
+                assert isinstance(app.screen, RulesScreen)
+                body = str(
+                    app.screen.query_one("#rules-content", Static).content
+                )
+                assert "no rules received yet" in body  # nothing delivered yet
+
+                # A frame arrives over the SAME connection while viewing rules.
+                await delivered.put(
+                    _rules_frame(
+                        allow_list=["a.com"],
+                        allowed=[_rule("a1", host="new.example.com")],
+                    )
+                )
+                await pilot.pause()
+                await asyncio.sleep(0.05)
+                body = str(
+                    app.screen.query_one("#rules-content", Static).content
+                )
+                assert "a.com" in body
+                assert "Active allows (1)" in body
+                assert "new.example.com:443" in body
+
+                # Pop back; the worker is still on the same connection.
+                app.screen.action_back()
+                await pilot.pause()
+                assert app._connected is True
+            finally:
+                app._stop = True
+                # Unblock the parked recv() so the loop can exit cleanly.
+                await delivered.put(_rules_frame())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+    async def test_refresh_rules_before_mount_is_noop(self):
+        screen = RulesScreen()
+        # Not mounted -> refresh_rules must not raise.
+        screen.refresh_rules()
+
+    async def test_allow_keypress_on_rules_screen_is_safe_noop(self):
+        # `a` from the rules screen must not crash (no focused request there);
+        # it resolves no queue row because the rules screen has focus.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app.action_rules()
+            await pilot.pause()
+            app.action_allow()  # must not raise
+            await pilot.pause()
+            assert ws.sent == []  # nothing decided from the rules screen
+
+
+async def test_deny_keypress_on_rules_screen_is_safe_noop():
+    # `d` from the rules screen must not decide a hidden queue row either.
+    app = _make_app()
+    async with app.run_test() as pilot:
+        ws = FakeWS([])
+        app._ws = ws
+        app.controller.apply_frame(_req_frame("r1", host="a.com"))
+        app._refresh()
+        await pilot.pause()
+        app.query_one("#requests", ListView).index = 0  # highlight r1
+        await pilot.pause()
+        app.action_rules()
+        await pilot.pause()
+        app.action_deny()  # on rules screen -> guarded no-op
+        await pilot.pause()
+        assert ws.sent == []
+
+
+async def test_rules_screen_empty_allow_list_shows_none():
+    # rules present but allow_list empty -> "(none)" (not "no rules received").
+    app = _make_app()
+    async with app.run_test() as pilot:
+        app.controller.apply_frame(
+            _rules_frame(allow_list=[], allowed=[_rule("a1")])
+        )
+        app.action_rules()
+        await pilot.pause()
+        body = str(app.screen.query_one("#rules-content", Static).content)
+        assert "(none)" in body  # empty allow-list section
+        assert "Active allows (1)" in body
+
+
+async def test_refresh_isolates_rules_render_failure(monkeypatch):
+    # A render bug in the rules screen must never propagate out of _refresh
+    # (which the 1s interval calls) -- mirrors the _pump render isolation.
+    app = _make_app()
+    async with app.run_test() as pilot:
+        app.controller.apply_frame(_rules_frame(allow_list=["a.com"]))
+        app.action_rules()
+        await pilot.pause()
+
+        def boom(self):
+            raise RuntimeError("rules render broke")
+
+        monkeypatch.setattr(RulesScreen, "refresh_rules", boom)
+        app._refresh()  # must not raise
+        await pilot.pause()
+
+
+async def test_q_and_escape_keypress_pop_back_via_pilot():
+    # The actual `q`/Esc keypress on the rules screen must pop back (screen
+    # binding) rather than trigger the app-level `q` -> quit. Locks down the
+    # binding-preference behavior so the screen can't accidentally quit the app.
+    app = _make_app()
+    async with app.run_test() as pilot:
+        app.action_rules()
+        await pilot.pause()
+        assert isinstance(app.screen, RulesScreen)
+        await pilot.press("q")
+        await pilot.pause()
+        assert not isinstance(app.screen, RulesScreen)
+        assert app.is_running  # did NOT quit
+        # And Escape works the same way.
+        app.action_rules()
+        await pilot.pause()
+        assert isinstance(app.screen, RulesScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, RulesScreen)
+        assert app.is_running
+
+
+async def test_deny_with_null_decided_at_renders_without_crash():
+    # Regression: the deny branch of _rule_line once formatted rem before
+    # checking it for None, so a timed deny with a null decided_at (or an
+    # unknown duration) hit _fmt_duration(None) -> TypeError. The parser
+    # permits these rows, so rendering must degrade to a blank label rather
+    # than crash (which would silently stale the whole rules body).
+    app = _make_app()
+    async with app.run_test() as pilot:
+        app.controller.apply_frame(
+            _rules_frame(
+                denied=[
+                    _rule(
+                        "d1",
+                        host="deny.example.com",
+                        decision="denied",
+                        duration="5m",
+                        decided_at=None,
+                    ),
+                    _rule(
+                        "d2",
+                        host="deny2.example.com",
+                        decision="denied",
+                        duration="3fortnights",  # unknown -> rem None
+                    ),
+                ],
+            )
+        )
+        app.action_rules()
+        await pilot.pause()
+        body = str(app.screen.query_one("#rules-content", Static).content)
+        assert "deny.example.com:443" in body
+        assert "deny2.example.com:443" in body
+        assert "Active denies (2)" in body
