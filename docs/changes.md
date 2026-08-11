@@ -564,6 +564,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`restart`-duration consent verdicts are now reaped when a workspace
+  container (re)starts (#2346).** A `restart` verdict means "for the
+  container's lifetime" -- the sidecar honors it via an in-memory rule that
+  dies on restart, but the `egress_consent` row persisted, so the
+  in-effect view (`list_active`) reported stale `restart` allows/denies after
+  a restart. They are now deleted on container (re)start (the create path,
+  not the already-running reconnect), so the recorded set matches what the
+  sidecar actually enforces. `forever`/time-bounded/`once`/pending/static
+  rows are left untouched.
+
 - **`consent-decide` no longer crashes when a held request arrives while a
   row is mid-mount (#2327).** `_refresh`'s in-place diff treats a just-appended
   row (its `request_id` is set synchronously) as "existing" on the very next
