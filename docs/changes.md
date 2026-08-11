@@ -556,6 +556,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`consent-decide` no longer crashes when a held request arrives while a
+  row is mid-mount (#2327).** `_refresh`'s in-place diff treats a just-appended
+  row (its `request_id` is set synchronously) as "existing" on the very next
+  refresh, but the row's child widgets mount asynchronously -- so repainting
+  it could fire `query_one(".req-host")` before mount and raise `NoMatches`,
+  aborting the refresh. The repaint now tolerates the mount gap (the next tick
+  finishes it once mounted). Surfaced under rapid concurrent requests.
+
 - **`consent-decide` rows are now compact, so multiple held requests show
   at once (#2327).** Each held-request `ListItem` defaulted to `height:
 auto`, which expanded to fill the whole `ListView`, so with two or more

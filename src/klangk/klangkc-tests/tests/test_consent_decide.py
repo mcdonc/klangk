@@ -427,6 +427,26 @@ class TestAppRender:
         item = app._render_item(req)
         assert item.request_id == "r1"
 
+    async def test_update_item_survives_unmounted_row(self):
+        # Regression: _refresh's diff treats a just-appended row (request_id
+        # set synchronously) as "existing" on the very next refresh, but its
+        # child widgets mount asynchronously -- so _update_item's query_one
+        # (".req-host") can fire before the row is mounted. It must not crash
+        # (NoMatches is swallowed; the next tick repaints once mounted).
+        app = _make_app()
+        req = ConsentRequest(
+            id="r1",
+            workspace_id="wsid",
+            dest_host="h.example.com",
+            dest_port=443,
+            process_name=None,
+            pid=None,
+            requested_at=0.0,
+        )
+        item = app._render_item(req)  # built but NOT mounted
+        # Must not raise NoMatches.
+        app._update_item(item, req)
+
 
 class TestAppPump:
     async def test_pump_applies_frames(self):
