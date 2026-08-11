@@ -259,14 +259,6 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     # Public (root_router — no prefix)
     ("GET", "/health", None, None),
     ("GET", "/empty", None, None),  # OAuth callback landing page
-    # Internal: sidecar egress-consent receiver (#2242). Bearer-token gated;
-    # the fuzzer has no token so these 401 (no consent requests created).
-    (
-        "POST",
-        "/internal/egress-consent/events",
-        {"workspace": "string", "dst": "string", "dport": 1},
-        None,
-    ),
     # Public (router — /api/v1 prefix)
     ("GET", f"{P}/version", None, None),
     ("GET", f"{P}/config", None, None),
