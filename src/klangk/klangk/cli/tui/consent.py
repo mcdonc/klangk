@@ -34,6 +34,7 @@ import websockets
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.widgets import Button, Footer, Header, ListItem, ListView, Static
 
 from ..auth import refresh_token
@@ -507,7 +508,15 @@ class ConsentDeciderApp(App):
 
     def _update_item(self, item: ListItem, req: ConsentRequest) -> None:
         """Repaint only the host/countdown line of a surviving row."""
-        item.query_one(".req-host", Static).update(self._host_line(req))
+        try:
+            item.query_one(".req-host", Static).update(self._host_line(req))
+        except NoMatches:
+            # The row was appended (its ``request_id`` is set synchronously)
+            # but its child widgets aren't mounted yet -- a refresh fired in
+            # that mount gap. The host line was already set at render time, so
+            # skip this repaint; the next tick finds it mounted and refreshes
+            # the countdown normally.
+            pass
 
     def _focused_request_id(self) -> str | None:
         child = self.query_one("#requests", ListView).highlighted_child
