@@ -51,6 +51,14 @@ operators or integrators to act when upgrading.
   and the list updates live from the `egress_rules` frame (#2338). Revoking a
   row is a separate follow-up (#2339/#2341).
 
+- **Interactive egress-consent banner in the web UI (#2246).** Workspaces
+  in `interactive` egress mode now show a banner on the workspace page listing
+  pending held egress requests (host:port, process, countdown) with a global
+  duration selector + per-row Allow/Deny, mirroring the `consent-decide`
+  TUI; verdicts go live over the `/ws/consent-decider` stream. Server error
+  frames, verdict send failures, and verdicts attempted while disconnected
+  surface as a transient flash so a rejected/lost verdict is never silent.
+
 - **Per-request duration for egress-consent verdicts (#2328).** A verdict
   now carries a `duration` (`once` | `5m` | `15m` | `1h` | `1d` | `1w` |
   `restart` | `forever`, default `restart`). The `consent-decide` TUI shows a
