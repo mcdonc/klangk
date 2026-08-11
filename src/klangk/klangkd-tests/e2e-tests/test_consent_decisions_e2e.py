@@ -8,12 +8,15 @@ make, and asserts the resulting end state.
 
   1. allow              -> the connection succeeds (curl exit 0), request resolves
   2. deny               -> the connection does NOT succeed, request resolves
-  3. allow ONCE         -> a *second* connection re-prompts (the IP isn't learned)
+  3. allow one host     -> a *different* host is still independently held
+                          (per-host isolation; decisions aren't global)
   4. no decision        -> the consent timeout auto-denies; request auto-removes
                            and the connection does NOT succeed (no silent allow)
+  5. two concurrent     -> both held at once; allow one + deny the other -> each
+                          gets its own verdict's outcome (no cross-talk)
 
 Tests 1-2 state the hypothesized end state first, then drive to it.
-Tests 3-4 drive the interactions first, then assert the hypothesized end state.
+Tests 3-5 drive the interactions first, then assert the hypothesized end state.
 
 Run: devenv shell -- test-backend-e2e -k TestConsentDecisionEndStates
 """
@@ -412,6 +415,68 @@ class TestConsentDecisionEndStates:
             )
             assert "EXIT:0" not in result, (
                 f"a timed-out connection should not succeed, got: {result!r}"
+            )
+        finally:
+            await ws_conn.close()
+
+    # ====================================================================
+    # Test 5 — CODE FIRST (drive the interactions), then assert the
+    # hypothesized end state. Two requests in flight simultaneously.
+    # ====================================================================
+    @pytest.mark.asyncio
+    async def test_concurrent_allow_one_deny_other(
+        self, server, auth, workspace
+    ):
+        ws_id = workspace
+        ws_conn = await ws_connect(server, auth, ws_id)
+        try:
+            container = _container_for_workspace(ws_id)
+            app = ConsentDeciderApp(
+                server_url=server["url"],
+                token=auth["token"],
+                workspace_id=ws_id,
+                workspace_name="concurrent-test",
+                hold_timeout=_CONSENT_TIMEOUT,
+            )
+            async with app.run_test() as pilot:
+                await _wait_connected(app)
+
+                # Fire TWO connections concurrently; both are held at once.
+                _trigger(container, "example.com", "/tmp/conc_allow.out")
+                _trigger(container, "cloudflare.com", "/tmp/conc_deny.out")
+                rid_allow = await _wait_for_request(app, "example.com")
+                rid_deny = await _wait_for_request(app, "cloudflare.com")
+                assert rid_allow != rid_deny, (
+                    "the two hosts must produce distinct request ids"
+                )
+                # Both are still pending -- genuinely in flight simultaneously.
+                assert rid_allow in app.controller.pending
+                assert rid_deny in app.controller.pending
+
+                # The user allows one and denies the OTHER while both are held.
+                app._decide_id(rid_allow, DECISION_ALLOWED, DURATION_RESTART)
+                app._decide_id(rid_deny, DECISION_DENIED, DURATION_RESTART)
+                await _wait_resolved(app, rid_allow)
+                await _wait_resolved(app, rid_deny)
+                await pilot.pause()
+
+                res_allow = await _wait_result(
+                    container, "/tmp/conc_allow.out"
+                )
+                res_deny = await _wait_result(container, "/tmp/conc_deny.out")
+
+            # HYPOTHESIZED END STATE: each connection got its OWN verdict's
+            # outcome -- the allowed host succeeded, the denied host did not.
+            # This confirms verdicts route to the correct request under
+            # concurrency (allowing one does not allow the other; denying one
+            # does not deny the other).
+            assert "EXIT:0" in res_allow, (
+                f"the allowed host (example.com) should succeed, got: "
+                f"{res_allow!r}"
+            )
+            assert "EXIT:0" not in res_deny, (
+                f"the denied host (cloudflare.com) should not succeed, got: "
+                f"{res_deny!r}"
             )
         finally:
             await ws_conn.close()
