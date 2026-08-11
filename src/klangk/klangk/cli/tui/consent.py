@@ -33,8 +33,9 @@ from dataclasses import dataclass
 import websockets
 from rich.markup import escape
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
+from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, ListItem, ListView, Static
 
 from ..auth import refresh_token
@@ -69,6 +70,33 @@ DURATIONS = (
 )
 DURATION_DEFAULT = DURATION_RESTART
 
+# Seconds each *timed* duration adds to ``decided_at`` (mirror of the server's
+# ``_DURATION_SECONDS``; duplicated per CLI isolation). ``once`` is consumed by
+# the single connection and ``restart``/``forever`` have no fixed expiry, so
+# they are absent -- a rule with one of those (or None) has no countdown.
+_DURATION_SECONDS = {
+    DURATION_5M: 300,
+    DURATION_15M: 900,
+    DURATION_1H: 3600,
+    DURATION_1D: 86400,
+    DURATION_1W: 604800,
+}
+
+
+def _fmt_duration(secs: float) -> str:
+    """Compact remaining-time label: ``5m``, ``2h``, ``3d``, ``1w`` (#2335 B)."""
+    s = int(secs)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    if s < 86400:
+        return f"{s // 3600}h"
+    if s < 604800:
+        return f"{s // 86400}d"
+    return f"{s // 604800}w"
+
+
 # Pings must beat the server's consent_decider_timeout (45s) or the decider is
 # reaped and the workspace reverts to static. 15s leaves margin. NOTE: if an
 # operator lowers KLANGKD_CONSENT_DECIDER_TIMEOUT below ~20s this can no longer
@@ -89,6 +117,7 @@ ADDED = (
 RESOLVED = (
     "resolved"  # request gone (decided/timed out); payload = (id, decision)
 )
+RULES = "rules"  # refreshed in-effect rules snapshot; payload = EgressRules
 PONG = "pong"
 ERROR = "error"  # server rejected a verdict; payload = message str
 IGNORED = "ignore"  # non-JSON / unknown frame
@@ -105,6 +134,49 @@ class ConsentRequest:
     process_name: str | None
     pid: int | None
     requested_at: float
+
+
+@dataclass(frozen=True, slots=True)
+class ConsentRule:
+    """One in-effect consent verdict (allow or deny) for the rules view (#2335)."""
+
+    id: str
+    dest_host: str
+    dest_port: int | None
+    process_name: str | None
+    decision: str
+    duration: str | None
+    decided_at: float | None
+    decided_by: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PauseState:
+    """Pause window from the ``egress_rules`` frame (#2332, not yet landed).
+
+    ``until`` is the epoch second the pause ends, or None for an indefinite
+    pause (e.g. until restart). The frame's ``paused`` field is None today;
+    when #2332 lands it is expected to be ``{"paused": True, "until": ...}``.
+    """
+
+    until: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class EgressRules:
+    """Parsed ``egress_rules`` frame: the workspace's in-effect decisions.
+
+    ``allowed``/``denied`` are ordered newest-decided-first (matching the
+    backend's ``list_active`` ``ORDER BY decided_at DESC``); ``allow_list`` is
+    the static ``allowed_domains`` config, order preserved; ``paused`` is None
+    unless filtering is actually paused (#2332).
+    """
+
+    workspace_id: str
+    allow_list: tuple[str, ...]
+    allowed: tuple[ConsentRule, ...]
+    denied: tuple[ConsentRule, ...]
+    paused: PauseState | None
 
 
 def make_verdict(
@@ -150,6 +222,10 @@ class ConsentDeciderController:
         self.hold_timeout = hold_timeout
         self._clock = clock
         self.pending: dict[str, ConsentRequest] = {}
+        # Latest in-effect rules snapshot (#2335 slice A frame). None until the
+        # first ``egress_rules`` frame lands (on connect) -- the rules screen
+        # renders an empty state until then.
+        self.rules: EgressRules | None = None
 
     def apply_frame(self, raw: str) -> tuple[str, object]:
         """Parse + apply one inbound server frame.
@@ -178,6 +254,12 @@ class ConsentDeciderController:
             if isinstance(rid, str):
                 self.pending.pop(rid, None)
             return RESOLVED, (rid, msg.get("decision"))
+        if mtype == "egress_rules":
+            rules = _parse_rules(msg)
+            if rules is None:
+                return IGNORED, None
+            self.rules = rules
+            return RULES, rules
         if mtype == "pong":
             return PONG, None
         if mtype == "error":
@@ -192,16 +274,38 @@ class ConsentDeciderController:
         """Seconds until this hold's countdown hits zero (clamped at 0)."""
         return max(0.0, req.requested_at + self.hold_timeout - self._clock())
 
-    def reset(self) -> None:
-        """Drop all pending requests.
+    def rule_remaining(self, rule: ConsentRule) -> float | None:
+        """Seconds left on a timed verdict, or None if it has no fixed expiry.
 
-        Called at the start of each (re)connection: the server's snapshot
-        that immediately follows is authoritative for currently-held
-        requests, so rows that resolved while we were disconnected -- and
-        thus never sent us an ``egress_resolved`` -- must not linger as
-        ``(0s)`` ghosts after a reconnect or a klangkd restart.
+        None covers ``restart``/``forever`` (open-ended), ``once`` (consumed,
+        never in ``list_active``), and unknown/NULL durations -- the rules view
+        shows ``until restart``/``forever`` for those instead of a countdown.
+        """
+        if rule.decided_at is None:
+            return None
+        secs = _DURATION_SECONDS.get(rule.duration)
+        if secs is None:
+            return None
+        return max(0.0, rule.decided_at + secs - self._clock())
+
+    def pause_remaining(self, rules: EgressRules) -> float | None:
+        """Seconds left in the pause window, or None if not paused / indefinite."""
+        if rules.paused is None or rules.paused.until is None:
+            return None
+        return max(0.0, rules.paused.until - self._clock())
+
+    def reset(self) -> None:
+        """Drop all pending requests + the cached rules snapshot.
+
+        Called at the start of each (re)connection: the server's snapshot (and
+        the ``egress_rules`` frame that follows it) is authoritative for
+        currently-held requests and in-effect rules, so rows that resolved /
+        elapsed while we were disconnected -- and thus never sent us an
+        ``egress_resolved`` / refreshed ``egress_rules`` -- must not linger as
+        stale entries after a reconnect or a klangkd restart.
         """
         self.pending.clear()
+        self.rules = None
 
 
 def _parse_request(obj: object) -> ConsentRequest | None:
@@ -234,6 +338,88 @@ def _parse_request(obj: object) -> ConsentRequest | None:
     )
 
 
+def _parse_rules(msg: dict) -> EgressRules | None:
+    """Build an :class:`EgressRules` from an ``egress_rules`` frame (#2335).
+
+    Returns ``None`` only if the frame lacks a ``workspace_id`` (unusable); a
+    missing/malformed ``allow_list``/``allowed``/``denied`` degrades to empty
+    rather than dropping the whole frame. Rows that fail to parse are skipped.
+    """
+    wid = msg.get("workspace_id")
+    if not isinstance(wid, str):
+        return None
+    raw_allow = msg.get("allow_list")
+    allow_list = (
+        tuple(str(d) for d in raw_allow) if isinstance(raw_allow, list) else ()
+    )
+    allowed = [
+        r for r in (_parse_rule(o) for o in msg.get("allowed") or []) if r
+    ]
+    denied = [
+        r for r in (_parse_rule(o) for o in msg.get("denied") or []) if r
+    ]
+    # Newest-decided-first (matches backend list_active ORDER BY decided_at
+    # DESC); rows with no decided_at sort last. Stable for ties.
+    allowed.sort(key=_rule_sort_key)
+    denied.sort(key=_rule_sort_key)
+    return EgressRules(
+        workspace_id=wid,
+        allow_list=allow_list,
+        allowed=tuple(allowed),
+        denied=tuple(denied),
+        paused=_parse_pause(msg.get("paused")),
+    )
+
+
+def _parse_rule(obj: object) -> ConsentRule | None:
+    """Build a :class:`ConsentRule` from one row of an ``egress_rules`` frame."""
+    if not isinstance(obj, dict):
+        return None
+    decided_at = obj.get("decided_at")
+    port = obj.get("dest_port")
+    duration = obj.get("duration")
+    return ConsentRule(
+        id=str(obj.get("id") or ""),
+        dest_host=str(obj.get("dest_host") or ""),
+        dest_port=int(port)
+        if isinstance(port, (int, float)) and not isinstance(port, bool)
+        else None,
+        process_name=obj.get("process_name"),
+        decision=str(obj.get("decision") or ""),
+        duration=duration if isinstance(duration, str) else None,
+        decided_at=float(decided_at)
+        if isinstance(decided_at, (int, float))
+        and not isinstance(decided_at, bool)
+        else None,
+        decided_by=obj.get("decided_by"),
+    )
+
+
+def _parse_pause(obj: object) -> PauseState | None:
+    """Parse the ``paused`` field of an ``egress_rules`` frame (#2332).
+
+    The field is None today (pause control not landed). When #2332 lands it is
+    expected to be ``{"paused": bool, "until": epoch|None}``; this returns
+    None unless filtering is actually paused, so the rules screen renders no
+    pause section until then (graceful degradation).
+    """
+    if not isinstance(obj, dict) or obj.get("paused") is not True:
+        return None
+    until = obj.get("until")
+    return PauseState(
+        until=float(until)
+        if isinstance(until, (int, float)) and not isinstance(until, bool)
+        else None
+    )
+
+
+def _rule_sort_key(rule: ConsentRule) -> tuple[int, float]:
+    """Sort key: decided rows first (newest first), undecided last."""
+    if rule.decided_at is None:
+        return (1, 0.0)
+    return (0, -rule.decided_at)
+
+
 class ConsentDeciderApp(App):
     """Textual app: live queue of held egress requests + accept/deny.
 
@@ -259,6 +445,7 @@ class ConsentDeciderApp(App):
     BINDINGS = [
         ("a", "allow", "Allow"),
         ("d", "deny", "Deny"),
+        ("r", "rules", "Rules"),
         ("q", "quit", "Quit"),
     ]
 
@@ -449,7 +636,22 @@ class ConsentDeciderApp(App):
         resolved/expired rows, repaint the countdown text of survivors in
         place, and append genuinely-new ones. Order is stable (oldest-first
         by requested_at), so we never have to reorder.
+
+        Also keeps the rules screen live when it is the active screen, so its
+        countdowns tick and a freshly-arrived ``egress_rules`` frame shows up
+        without waiting for its own timer (#2335 slice B).
         """
+        # Refresh the rules screen first (if up) so a queue-query hiccup can
+        # never starve it -- the WS worker is shared across the switch.
+        try:
+            screen = self.screen
+        except Exception:
+            screen = None  # not mounted yet (pre-mount / no screen stack)
+        if isinstance(screen, RulesScreen):
+            try:
+                screen.refresh_rules()
+            except Exception:
+                logger.exception("consent-decide rules render failed")
         try:
             lv = self.query_one("#requests", ListView)
             status = self.query_one("#status", Static)
@@ -572,11 +774,23 @@ class ConsentDeciderApp(App):
         button.add_class("dur-sel")
 
     def action_allow(self) -> None:
-        # `a` key -> the highlighted row (keyboard path).
+        # `a` key -> the highlighted row (keyboard path). No-op on the rules
+        # screen so a/d can't decide a queue row that isn't visible there.
+        if isinstance(self.screen, RulesScreen):
+            return
         self._decide(DECISION_ALLOWED)
 
     def action_deny(self) -> None:
+        if isinstance(self.screen, RulesScreen):
+            return
         self._decide(DECISION_DENIED)
+
+    def action_rules(self) -> None:
+        # `r` opens the read-only rules screen (#2335 slice B). Guard against
+        # pushing a second one if `r` is pressed while already viewing rules.
+        if isinstance(self.screen, RulesScreen):
+            return
+        self.push_screen(RulesScreen())
 
     def _decide(self, decision: str) -> None:
         rid = self._focused_request_id()
@@ -603,3 +817,125 @@ class ConsentDeciderApp(App):
             await ws.send(make_verdict(rid, decision, duration))
         except Exception:
             self._flash("verdict send failed — reconnecting")
+
+
+class RulesScreen(Screen):
+    """Read-only view of the workspace's in-effect egress decisions.
+
+    The second screen of :class:`ConsentDeciderApp`, pushed from the held-
+    request queue with ``r`` and popped with ``q``/``Esc`` (#2335 slice B). It
+    reads ``app.controller.rules`` (the latest ``egress_rules`` frame), kept
+    live by the app's shared WS pump + 1s refresh, so the WS worker is **not**
+    torn down/reconnected on the switch -- only the view changes. This screen
+    only displays; revoking a row is #2339 + slice D (#2341).
+    """
+
+    CSS = """
+    RulesScreen { layout: vertical; }
+    #rules-status { padding: 0 1; background: $panel; color: $text-muted; }
+    #rules-body { padding: 0 1; }
+    """
+
+    BINDINGS = [
+        ("escape", "back", "Back"),
+        ("q", "back", "Back"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        yield Static(id="rules-status")
+        with VerticalScroll(id="rules-body"):
+            yield Static(id="rules-content")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.refresh_rules()
+
+    def action_back(self) -> None:
+        """``q``/``Esc`` returns to the held-request queue."""
+        self.app.pop_screen()
+
+    def refresh_rules(self) -> None:
+        """Re-render the body from the controller's latest ``egress_rules``."""
+        try:
+            status = self.query_one("#rules-status", Static)
+            content = self.query_one("#rules-content", Static)
+        except NoMatches:
+            return  # not mounted yet
+        app = self.app  # ConsentDeciderApp
+        controller = app.controller  # type: ignore[attr-defined]
+        rules = controller.rules
+        conn = "connected" if app._connected else "reconnecting"  # type: ignore[attr-defined]
+        held = len(controller.pending)
+        status.update(
+            f" {app.workspace_name}  ·  {conn}  ·  {held} held  ·  rules"  # type: ignore[attr-defined]
+        )
+        content.update(self._render_body(rules, controller))
+
+    def _render_body(self, rules: EgressRules | None, controller) -> str:
+        """Build the grouped rich-markup body (allow-list, allows, denies, pause)."""
+        lines: list[str] = []
+        n_allowed = len(rules.allowed) if rules else 0
+        n_denied = len(rules.denied) if rules else 0
+
+        lines.append("[bold]Static allow-list[/bold]")
+        if rules is None:
+            lines.append("  [dim](no rules received yet)[/dim]")
+        elif rules.allow_list:
+            for d in rules.allow_list:
+                lines.append(f"  {escape(d)}")
+        else:
+            lines.append("  [dim](none)[/dim]")
+        lines.append("")
+
+        lines.append(f"[bold]Active allows ({n_allowed})[/bold]")
+        if rules and rules.allowed:
+            for r in rules.allowed:
+                lines.append("  " + self._rule_line(r, controller, deny=False))
+        else:
+            lines.append("  [dim](none)[/dim]")
+        lines.append("")
+
+        lines.append(f"[bold]Active denies ({n_denied})[/bold]")
+        if rules and rules.denied:
+            for r in rules.denied:
+                lines.append("  " + self._rule_line(r, controller, deny=True))
+        else:
+            lines.append("  [dim](none)[/dim]")
+
+        # Pause window (#2332; absent today -> section hidden).
+        if rules is not None and rules.paused is not None:
+            lines.append("")
+            lines.append("[bold]Pause[/bold]")
+            rem = controller.pause_remaining(rules)
+            if rem is None:
+                lines.append(
+                    "  [yellow]Filtering paused until restart[/yellow]"
+                )
+            else:
+                lines.append(
+                    "  [yellow]Filtering paused "
+                    f"(resumes in {_fmt_duration(rem)})[/yellow]"
+                )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _rule_line(rule: ConsentRule, controller, *, deny: bool) -> str:
+        host = rule.dest_host
+        if rule.dest_port is not None:
+            host = f"{host}:{rule.dest_port}"
+        proc = f"  ({rule.process_name})" if rule.process_name else ""
+        if rule.duration == DURATION_FOREVER:
+            label = "forever"
+        elif rule.duration == DURATION_RESTART:
+            label = "until restart"
+        else:
+            rem = controller.rule_remaining(rule)
+            label = (
+                f"{_fmt_duration(rem)} left"
+                if deny
+                else f"expires in {_fmt_duration(rem)}"
+                if rem is not None
+                else ""
+            )
+        return f"{escape(host)}{escape(proc)}  [dim]{escape(label)}[/dim]"

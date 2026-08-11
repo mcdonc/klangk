@@ -32,6 +32,17 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Read-only rules screen in `consent-decide` (#2340).** Press `r` in the
+  `consent-decide` TUI to switch from the held-request queue to a second,
+  read-only screen listing every egress decision currently in effect for the
+  workspace: the static allow-list, active consent allows (with expiry such
+  as `expires in 5m` / `until restart` / `forever`), active denies (with
+  remaining deny window), and the pause window when filtering is paused
+  (#2332; hidden until that lands). `q`/`Esc` returns to the queue. The
+  WebSocket worker stays connected across the switch, so holds keep arriving
+  and the list updates live from the `egress_rules` frame (#2338). Revoking a
+  row is a separate follow-up (#2339/#2341).
+
 - **Per-request duration for egress-consent verdicts (#2328).** A verdict
   now carries a `duration` (`once` | `5m` | `15m` | `1h` | `1d` | `1w` |
   `restart` | `forever`, default `restart`). The `consent-decide` TUI shows a
