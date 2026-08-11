@@ -1,12 +1,14 @@
 """Database schema creation and in-place migrations (``init_db``)."""
 
 from .acl import PRINCIPAL_USER
-from .egress_consent import DURATIONS
+from .egress_consent import DECISIONS, DURATIONS
 from .users import AGENT_USER_ID, backfill_handles
 
-# The duration CHECK value list is generated from the single source of truth
-# (DURATIONS) so the DB constraint cannot drift from the Python enum (#2338).
+# The duration + decision CHECK value lists are generated from the single
+# sources of truth (DURATIONS / DECISIONS) so the DB constraints cannot drift
+# from the Python enums (#2338, #2339).
 _DURATION_CHECK_VALUES = ", ".join(f"'{d}'" for d in sorted(DURATIONS))
+_DECISION_CHECK_VALUES = ", ".join(f"'{d}'" for d in sorted(DECISIONS))
 
 
 async def init_db(db) -> None:
@@ -353,7 +355,7 @@ async def init_db(db) -> None:
                 pid INTEGER,
                 process_name TEXT,
                 decision TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (decision IN ('pending', 'allowed', 'denied', 'expired')),
+                    CHECK (decision IN ({_DECISION_CHECK_VALUES})),
                 scope TEXT
                     CHECK (scope IS NULL OR scope IN ('once', 'workspace', 'deploy')),
                 duration TEXT
@@ -361,25 +363,24 @@ async def init_db(db) -> None:
                         ({_DURATION_CHECK_VALUES})),
                 requested_at REAL NOT NULL,
                 decided_at REAL,
-                decided_by TEXT REFERENCES users(id) ON DELETE SET NULL
+                decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+                revoked_at REAL,
+                revoked_by TEXT REFERENCES users(id) ON DELETE SET NULL
             )
         """)
-        # egress_consent: attach a CHECK on `duration` (#2338). The column may
-        # already exist from an earlier ALTER (without the constraint) or be
-        # absent in an older dev DB; rebuild the table either way so the
-        # constraint is universal. Detected via sqlite_master (PRAGMA
-        # table_info doesn't expose CHECK). Data is copied across (mirrors the
-        # users rebuild above); the partial unique indexes are recreated by
-        # the CREATE INDEX statements below. No deployments to preserve.
+        # egress_consent: add the `revoked` decision (#2339) + the
+        # `revoked_at`/`revoked_by` audit columns (and attach the CHECKs). The
+        # table may already exist from #2338 (has the duration CHECK but not
+        # `revoked`); rebuild it either way so the shape is universal. Detected
+        # via sqlite_master (PRAGMA table_info doesn't expose CHECK/columns).
+        # Data is copied across (mirrors the users rebuild above); the partial
+        # unique indexes are recreated by the CREATE INDEX statements below.
         ec_sql_cur = await db.execute(
             "SELECT sql FROM sqlite_master"
             " WHERE type='table' AND name='egress_consent'"
         )
         ec_sql_row = await ec_sql_cur.fetchone()
-        if (
-            ec_sql_row
-            and "duration IS NULL OR duration IN" not in ec_sql_row[0]
-        ):
+        if ec_sql_row and "revoked_at" not in ec_sql_row[0]:
             await db.execute(f"""
                 CREATE TABLE egress_consent_new (
                     id TEXT PRIMARY KEY,
@@ -389,7 +390,7 @@ async def init_db(db) -> None:
                     pid INTEGER,
                     process_name TEXT,
                     decision TEXT NOT NULL DEFAULT 'pending'
-                        CHECK (decision IN ('pending', 'allowed', 'denied', 'expired')),
+                        CHECK (decision IN ({_DECISION_CHECK_VALUES})),
                     scope TEXT
                         CHECK (scope IS NULL OR scope IN ('once', 'workspace', 'deploy')),
                     duration TEXT
@@ -397,7 +398,9 @@ async def init_db(db) -> None:
                             ({_DURATION_CHECK_VALUES})),
                     requested_at REAL NOT NULL,
                     decided_at REAL,
-                    decided_by TEXT REFERENCES users(id) ON DELETE SET NULL
+                    decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+                    revoked_at REAL,
+                    revoked_by TEXT REFERENCES users(id) ON DELETE SET NULL
                 )
             """)
             ec_info = await db.execute("PRAGMA table_info(egress_consent)")
@@ -417,6 +420,8 @@ async def init_db(db) -> None:
                     "requested_at",
                     "decided_at",
                     "decided_by",
+                    "revoked_at",
+                    "revoked_by",
                 )
                 if c in ec_old_cols
             ]

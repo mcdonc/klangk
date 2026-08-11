@@ -422,6 +422,62 @@ def reject(ip: str, port: int, ttl: float) -> None:
         _REJECTED[(ip, port)] = max(_REJECTED.get((ip, port), 0.0), expire)
 
 
+def drop_for_host(host: str, decision: str) -> None:
+    """Drop the sidecar's rules for a host (revocation, #2339).
+
+    ``allowed``: remove the learned ACCEPT rules (+ ``_LEARNED`` records) for
+    the host's IPs (revert to default/allow-list filtering).
+    ``denied``: remove the temporary REJECT rules for the host's IPs (stop
+    force-rejecting; the host is again subject to the allow-list).
+
+    Host->IP comes from ``_LEARNED[ip]["host"]`` (set by ``_record_hosts`` for
+    every resolved name, allow-listed or not), so a deny's IPs are found too;
+    the host string itself is also a candidate IP (a direct-IP connect that
+    never went through DNS, and a direct-IP allow whose ``host`` is ``None``).
+    Best-effort: a failed delete drops one rule, not the whole revoke. Sync
+    (forks iptables) — run off the loop; under ``_LOCK`` like allow/sweep.
+
+    L3/L4 limit (co-resident hosts): the egress rules are per IP+port, so two
+    DNS names that resolve to the SAME IP share one rule and cannot be revoked
+    individually — revoking one name removes the shared rule, affecting the
+    other too. A correct per-host revoke for co-resident hosts (CDN/S3/Cloudflare
+    fronted sites) needs L7/SNI filtering, which is a separate feature (#2352).
+    """
+    host_l = host.lower()
+    with _LOCK:
+        ips = [
+            ip
+            for ip, rec in _LEARNED.items()
+            if (rec.get("host") or "").lower() == host_l
+        ]
+        if decision == "allowed":
+            # IPs that resolved to this host, plus the host itself if it's a
+            # direct-IP allow (allow() records host=None, so the scan above
+            # misses it).
+            targets = {ip for ip in ips}
+            targets.add(host_l)
+            targets.add(host)
+            for ip in [i for i in targets if i in _LEARNED]:
+                for port in list(_LEARNED[ip]["ports"]):
+                    try:
+                        _remove(ip, port)
+                    except Exception:
+                        pass
+                del _LEARNED[ip]
+        elif decision == "denied":
+            # IPs that resolved to this host, plus the host itself if it's a
+            # direct-IP connect (never DNS host-recorded).
+            targets = {ip for ip in ips}
+            targets.add(host_l)
+            targets.add(host)
+            for key in [k for k in _REJECTED if k[0] in targets]:
+                try:
+                    _remove_reject(*key)
+                except Exception:
+                    pass
+                del _REJECTED[key]
+
+
 def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
     """Remove learned IPs whose TTL has elapsed; return ``(ip, ports)`` removed.
 
@@ -707,7 +763,7 @@ class SidecarConsentClient:
                     if DEBUG:
                         print(f"consent: connected to {self._url}", flush=True)
                     async for raw in ws:
-                        self._dispatch(raw)
+                        await self._dispatch(raw)
             except Exception as exc:
                 # Log the exception TYPE only -- the connection carries the
                 # workspace JWT (Authorization header), and a websockets
@@ -731,13 +787,20 @@ class SidecarConsentClient:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 15.0)  # capped exponential backoff
 
-    def _dispatch(self, raw: str | bytes) -> None:
+    async def _dispatch(self, raw: str | bytes) -> None:
         try:
             msg = json.loads(raw)
         except Exception:
             return
-        if not isinstance(msg, dict) or msg.get("type") != "verdict":
+        if not isinstance(msg, dict):
             return
+        mtype = msg.get("type")
+        if mtype == "verdict":
+            self._apply_verdict(msg)
+        elif mtype == "drop_rule":
+            await self._handle_drop_rule(msg)
+
+    def _apply_verdict(self, msg: dict) -> None:
         vid = msg.get("id")
         decision = msg.get("decision")
         if not isinstance(vid, str):
@@ -748,6 +811,32 @@ class SidecarConsentClient:
             token = decision if decision == "allow" else "deny"
             duration = msg.get("duration") or "once"
             fut.set_result((token, duration))
+
+    async def _handle_drop_rule(self, msg: dict) -> None:
+        """klangkd asked us to drop a host's rules (revocation, #2339).
+
+        Runs :func:`drop_for_host` off the loop (it forks iptables) and acks
+        back so klangkd marks the verdict revoked only once the rule is gone.
+        """
+        ack_id = msg.get("id")
+        host = msg.get("host")
+        decision = msg.get("decision")
+        ok = False
+        if isinstance(host, str) and decision in ("allowed", "denied"):
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, drop_for_host, host, decision
+                )
+                ok = True
+            except Exception:
+                ok = False
+        if isinstance(ack_id, str) and self._ws is not None:
+            try:
+                await self._ws.send(
+                    json.dumps({"type": "drop_ack", "id": ack_id, "ok": ok})
+                )
+            except Exception:
+                pass
 
     async def request(self, dst: str, dport: int | None) -> tuple[str, str]:
         """Send an egress frame + await the verdict. Fail-close -> ``("deny",

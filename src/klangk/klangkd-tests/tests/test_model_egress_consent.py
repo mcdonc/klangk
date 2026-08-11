@@ -10,6 +10,7 @@ from klangk.model.egress_consent import (
     DECISION_DENIED,
     DECISION_EXPIRED,
     DECISION_PENDING,
+    DECISION_REVOKED,
     DURATIONS,
     SCOPE_ONCE,
     SCOPE_WORKSPACE,
@@ -578,6 +579,69 @@ async def test_clear_restart_duration_no_rows_is_zero(ec, ws, user):
     # First-ever start: no restart rows -> no-op, returns 0.
     w = await ws.create_workspace(user["id"], "clr-empty")
     assert await ec.clear_restart_duration(w["id"]) == 0
+
+
+# -- revoke (#2339) --
+
+
+async def test_revoke_flips_active_allow(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "revoke-allow")
+    req = await ec.create_request(w["id"], "allow.com", 443)
+    await ec.decide(
+        req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
+    )
+    row = await ec.revoke(req["id"], user["id"])
+    assert row["decision"] == DECISION_REVOKED
+    assert row["revoked_at"] is not None
+    assert row["revoked_by"] == user["id"]
+    # original verdict provenance preserved
+    assert row["decided_by"] == user["id"]
+    assert (await ec.get_request(req["id"]))["decision"] == DECISION_REVOKED
+
+
+async def test_revoke_flips_active_deny(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "revoke-deny")
+    req = await ec.create_request(w["id"], "deny.com")
+    await ec.decide(req["id"], DECISION_DENIED, None, user["id"], "forever")
+    assert (await ec.revoke(req["id"], user["id"]))[
+        "decision"
+    ] == DECISION_REVOKED
+
+
+async def test_revoke_returns_none_for_non_verdict(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "revoke-pending")
+    req = await ec.create_request(w["id"], "pending.com")  # still pending
+    to_expire = await ec.create_request(w["id"], "expired.com")
+    await ec.expire_pending(to_expire["id"])
+    assert await ec.revoke(req["id"], user["id"]) is None  # pending
+    assert await ec.revoke(to_expire["id"], user["id"]) is None  # expired
+    assert (await ec.get_request(req["id"]))["decision"] == DECISION_PENDING
+
+
+async def test_revoke_unknown_returns_none(ec, ws, user):
+    await ws.create_workspace(user["id"], "revoke-unknown")  # schema setup
+    assert await ec.revoke("nope", user["id"]) is None
+
+
+async def test_revoke_idempotent_second_call_returns_none(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "revoke-idem")
+    req = await ec.create_request(w["id"], "idem.com")
+    await ec.decide(
+        req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
+    )
+    assert await ec.revoke(req["id"], user["id"]) is not None
+    assert await ec.revoke(req["id"], user["id"]) is None  # already revoked
+
+
+async def test_list_active_excludes_revoked(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "revoke-excluded")
+    req = await ec.create_request(w["id"], "rev.com")
+    await ec.decide(
+        req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "restart"
+    )
+    assert len(await ec.list_active(w["id"])) == 1
+    await ec.revoke(req["id"], user["id"])
+    assert await ec.list_active(w["id"]) == []
 
 
 # -- DB-level integrity (CHECK constraints + partial unique index) --

@@ -59,6 +59,9 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
     coordinator = app.state.consent_coordinator
     safe = SafeWebSocket(websocket)
     safe.start_sender()
+    # #2339: record this workspace's live sidecar socket so a revoke can push
+    # a drop-rule to it + correlate the ack.
+    app.state.sidecar_connections.register(workspace_id, safe)
     relay_tasks: set[asyncio.Task] = set()
     try:
         while True:
@@ -75,7 +78,15 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
                 continue
             if not isinstance(msg, dict):
                 continue
-            if msg.get("type") != "egress":
+            mtype = msg.get("type")
+            if mtype == "drop_ack":
+                # Sidecar confirmed a rule-drop (revocation, #2339): resolve
+                # the awaiting revoke's ack Future.
+                app.state.sidecar_connections.resolve_ack(
+                    msg.get("id"), bool(msg.get("ok", False))
+                )
+                continue
+            if mtype != "egress":
                 continue
             local_id = msg.get("id")
             dst = msg.get("dst")
@@ -97,9 +108,9 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
             relay_tasks.add(task)
             task.add_done_callback(relay_tasks.discard)
     finally:
-        # Sidecar gone (disconnect/restart/crash): cancel in-flight relays.
-        # The sidecar's own held connections die with it (fail-close); the
-        # coordinator's per-hold timeout expires the orphaned pending rows.
+        # Sidecar gone (disconnect/restart/crash): drop its registration (any
+        # in-flight revoke ack fails at once) + cancel in-flight relays.
+        app.state.sidecar_connections.deregister(workspace_id)
         for task in list(relay_tasks):
             task.cancel()
         await safe.stop_sender()

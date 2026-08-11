@@ -22,6 +22,7 @@ from klangk import (
     consent,
     consent_coordinator,
     consent_deciders,
+    sidecar_connections,
     emailsvc as emailsvc_mod,
     files as files_mod,
     ssl_trust as ssl_trust_mod,
@@ -815,6 +816,9 @@ class TestLifespan:
         app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
             app
         )
+        app.state.sidecar_connections = sidecar_connections.SidecarConnections(
+            app
+        )
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
@@ -868,6 +872,9 @@ class TestLifespan:
             app
         )
         app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
+            app
+        )
+        app.state.sidecar_connections = sidecar_connections.SidecarConnections(
             app
         )
         app.state.oidc = oidc.OIDC(app)
@@ -1403,6 +1410,9 @@ class TestStartupShutdownRestart:
             app
         )
         app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
+            app
+        )
+        app.state.sidecar_connections = sidecar_connections.SidecarConnections(
             app
         )
         app.state.oidc = oidc.OIDC(app)

@@ -52,6 +52,16 @@ operators or integrators to act when upgrading.
   `egress_consent.duration` column is now read back and constrained by a DB
   `CHECK` to the documented duration values (mirroring `DURATIONS`).
 
+- **Revoking a consent verdict (#2339).** A decider can revoke an active
+  allow/deny so its effect is immediate (not waiting for the duration/restart):
+  klangkd pushes a `drop_rule` to the workspace's network sidecar, which drops
+  the learned ACCEPT/REJECT rule for the host and acks back, and only then is
+  the `egress_consent` row flipped to `revoked` (fail-closed -- a connected
+  but unresponsive sidecar leaves the row enforced rather than falsely marking
+  it revoked). A `revoke` decision + `revoked_at`/`revoked_by` audit columns are
+  added (the `decision` `CHECK` is now generated from `DECISIONS`, like
+  `duration`).
+
 - **`klangk consent-decide <workspace>` (#2310).** A live Textual client that
   connects to a workspace's consent-decider stream and shows its held egress
   requests (blocked destinations the network sidecar is holding for a

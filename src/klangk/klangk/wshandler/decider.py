@@ -130,6 +130,22 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
                     await _handle_verdict(
                         app, safe_ws, msg, workspace, user["id"]
                     )
+                elif mtype == "revoke":
+                    # #2339: drop the sidecar rule + mark the verdict revoked.
+                    # ok=False if it's not an active verdict, is outside this
+                    # decider's workspace, or the sidecar never acked the drop.
+                    ok = await app.state.consent_coordinator.revoke(
+                        msg.get("request_id"),
+                        user["id"],
+                        decider_workspace=workspace,
+                    )
+                    safe_ws.send_json(
+                        {
+                            "type": "revoke_ack",
+                            "request_id": msg.get("request_id"),
+                            "ok": ok,
+                        }
+                    )
                 # unknown types are ignored
             except SlowClientError:
                 # Outbound queue full -- the client can't keep up. Drop it
