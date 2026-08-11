@@ -1323,17 +1323,58 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy, "reject", lambda *a: None)
         monkeypatch.setattr(proxy, "_RST_SOCK", None)
         self._bind(proxy, monkeypatch, client)
-        pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
-        pkt2 = _FakePkt(_ip_payload("1.2.3.4", 443))  # retransmit during hold
-        proxy._cb(pkt1, client)  # spawns the task; flow is now in-flight
+        pkt1 = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 1))
+        pkt2 = _FakePkt(
+            _syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 1)
+        )  # retransmit during hold
+        flow = ("10.0.0.5", 50000, "1.2.3.4", 443)
+        proxy._cb(pkt1, client)  # spawns the task; connection is now in-flight
         proxy._cb(pkt2, client)  # in-flight -> drop, no new task
         assert pkt2.verdict == "drop"  # the retransmit is dropped
         assert len(proxy._BG_TASKS) == 1  # only ONE verdict task
-        assert ("1.2.3.4", 443) in proxy._INFLIGHT  # still held
+        assert flow in proxy._INFLIGHT  # still held (connection-level key)
         gate.set()  # release the verdict
         await asyncio.gather(*proxy._BG_TASKS)
         assert len(started) == 1  # only ONE request to the decider
-        assert ("1.2.3.4", 443) not in proxy._INFLIGHT  # cleared after verdict
+        assert flow not in proxy._INFLIGHT  # cleared after verdict
+
+    async def test_distinct_source_port_re_prompts_after_allow_once(
+        self, proxy, monkeypatch
+    ):
+        # #2361: a NEW connection (new source port) to the same (dst, port) is a
+        # distinct flow, so an allow-once does NOT carry over -- the 2nd SYN is
+        # a cache miss and re-prompts. (A retransmit -- same source port -- DOES
+        # reuse the verdict; that's test_retransmit_during_hold_* above and the
+        # cache-reuse tests.) This is the unit-level grounding of the
+        # connection-keyed verdict cache.
+        requests = []
+
+        async def fast_request(host, port):
+            requests.append((host, port))
+            return ("allow", "once")
+
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(side_effect=fast_request)
+        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        self._bind(proxy, monkeypatch, client)
+        # Connection A (sport 50000) -> allow/once -> cached for flow A only.
+        proxy._cb(
+            _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 1)),
+            client,
+        )
+        await asyncio.gather(*proxy._BG_TASKS)
+        # Connection B (sport 50001, same dst) -> DISTINCT flow -> cache MISS
+        # -> re-prompts (a 2nd request), NOT a silent reuse of A's allow.
+        proxy._cb(
+            _FakePkt(_syn_payload("10.0.0.5", 50001, "1.2.3.4", 443, 1)),
+            client,
+        )
+        await asyncio.gather(*proxy._BG_TASKS)
+        assert len(requests) == 2, (
+            "a new connection (new source port) must re-prompt after an "
+            "allow-once, not reuse the prior verdict"
+        )
 
 
 def test_duration_ttl_mapping(proxy):

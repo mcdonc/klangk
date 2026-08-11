@@ -35,6 +35,8 @@ from klangk.cli.tui.consent import (
     ConsentDeciderApp,
     DECISION_ALLOWED,
     DECISION_DENIED,
+    DURATION_FOREVER,
+    DURATION_ONCE,
     DURATION_RESTART,
 )
 
@@ -474,5 +476,214 @@ class TestConsentDecisionEndStates:
                 f"the denied host (cloudflare.com) should not succeed, got: "
                 f"{res_deny!r}"
             )
+        finally:
+            await ws_conn.close()
+
+    @pytest.mark.asyncio
+    async def test_once_reprompts_each_subsequent_connection(
+        self, server, auth, workspace
+    ):
+        # #2361: an allow with duration=once must re-prompt EVERY subsequent
+        # connection to the same host. The sidecar's verdict cache is keyed on
+        # the connection (source port), so a new connection (new source port)
+        # is a cache miss and re-prompts -- a prior allow-once never carries
+        # over to a later connection.
+        ws_id = workspace
+        ws_conn = await ws_connect(server, auth, ws_id)
+        try:
+            container = _container_for_workspace(ws_id)
+            app = ConsentDeciderApp(
+                server_url=server["url"],
+                token=auth["token"],
+                workspace_id=ws_id,
+                workspace_name="once-test",
+                hold_timeout=_CONSENT_TIMEOUT,
+            )
+            async with app.run_test() as pilot:
+                await _wait_connected(app)
+                seen_rids = []
+                for i in range(3):
+                    outfile = f"/tmp/r_once_{i}.out"
+                    _trigger(container, "example.com", outfile)
+                    rid = await _wait_for_request(app, "example.com")
+                    # Each new connection produces a DISTINCT prompt -- a
+                    # prior allow-once must not be reused for a later curl.
+                    assert rid not in seen_rids, (
+                        f"iteration {i} reused prior request {rid}; "
+                        "once must re-prompt each new connection"
+                    )
+                    seen_rids.append(rid)
+                    app._decide_id(rid, DECISION_ALLOWED, DURATION_ONCE)
+                    await _wait_resolved(app, rid)
+                    await pilot.pause()
+                results = [
+                    await _wait_result(container, f"/tmp/r_once_{i}.out")
+                    for i in range(3)
+                ]
+            # Every allow-once connection was released and succeeded.
+            assert all("EXIT:0" in r for r in results), (
+                f"each allow-once connection should succeed; got: {results!r}"
+            )
+        finally:
+            await ws_conn.close()
+
+    @pytest.mark.asyncio
+    async def test_forever_deny_persists_without_reprompting(
+        self, server, auth, workspace
+    ):
+        # Inverse of test_once_reprompts_each_subsequent_connection: a deny
+        # with duration=forever PERSISTS across connections. A later curl to
+        # the same host is refused fast (ECONNREFUSED, exit 7) WITHOUT a new
+        # consent prompt -- the sidecar's long-lived REJECT rule (top of
+        # OUTPUT, ahead of NFQUEUE) catches the new SYN. This pins that
+        # connection-keying the verdict cache (#2361) did not break
+        # duration-bounded persistence: "forever" still holds across
+        # connections via the rule, even though the per-connection cache no
+        # longer reuses the verdict for a new source port.
+        ws_id = workspace
+        ws_conn = await ws_connect(server, auth, ws_id)
+        try:
+            container = _container_for_workspace(ws_id)
+            app = ConsentDeciderApp(
+                server_url=server["url"],
+                token=auth["token"],
+                workspace_id=ws_id,
+                workspace_name="forever-deny-test",
+                hold_timeout=_CONSENT_TIMEOUT,
+            )
+            async with app.run_test() as pilot:
+                await _wait_connected(app)
+                # 1st connection: held, then denied forever.
+                _trigger(container, "example.com", "/tmp/r_forever_0.out")
+                rid = await _wait_for_request(app, "example.com")
+                app._decide_id(rid, DECISION_DENIED, DURATION_FOREVER)
+                await _wait_resolved(app, rid)
+                await pilot.pause()
+                # Wait for the 1st curl to fail fast (ECONNREFUSED via the forged
+                # RST -- confirms the sidecar processed the verdict) and let the
+                # forever-REJECT rule settle into OUTPUT before the 2nd curl: the
+                # rule installs in a worker thread that lags the decider's
+                # egress_resolved broadcast, so an instant 2nd SYN would race it.
+                res0 = await _wait_result(container, "/tmp/r_forever_0.out")
+                assert "EXIT:7" in res0, (
+                    f"the denied connection should be refused fast, got: {res0!r}"
+                )
+                await asyncio.sleep(2)
+                # 2nd connection: the forever-deny REJECT rule must refuse it
+                # fast with NO new prompt. Watch the decider's in-memory
+                # pending set for a short window (no blocking subprocess in the
+                # loop, so the decider WS stays alive); a prompt here is the
+                # regression. The new SYN never reaches NFQUEUE (the REJECT
+                # rule, top of OUTPUT, RSTs it first), so no prompt arrives.
+                _trigger(container, "example.com", "/tmp/r_forever_1.out")
+                prompted = False
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    if any(
+                        "example.com" in (r.dest_host or "")
+                        for r in app.controller.pending.values()
+                    ):
+                        prompted = True
+                        break
+                    await asyncio.sleep(0.3)
+                res1 = await _wait_result(container, "/tmp/r_forever_1.out")
+            assert not prompted, (
+                "forever-deny must not re-prompt a later connection "
+                "(persistence is via the REJECT rule, not the verdict cache)"
+            )
+            assert "EXIT:7" in res1, (
+                f"the later connection should be refused fast (ECONNREFUSED) "
+                f"by the forever-deny REJECT rule, got: {res1!r}"
+            )
+        finally:
+            await ws_conn.close()
+
+    @pytest.mark.asyncio
+    async def test_restart_deny_persists_then_clears_on_container_restart(
+        self, server, auth, workspace
+    ):
+        # A deny with duration=restart is bounded to the workspace container's
+        # lifetime: it persists while the container runs (a later curl is
+        # auto-rejected, no re-prompt) but does NOT survive a container
+        # restart -- the sidecar's in-memory REJECT rule dies with the old
+        # container and klangkd reaps the row (clear_restart_duration, #2346).
+        # After a restart, a curl re-prompts.
+        ws_id = workspace
+        ws_conn = await ws_connect(server, auth, ws_id)
+        try:
+            container = _container_for_workspace(ws_id)
+            app = ConsentDeciderApp(
+                server_url=server["url"],
+                token=auth["token"],
+                workspace_id=ws_id,
+                workspace_name="restart-deny-test",
+                hold_timeout=_CONSENT_TIMEOUT,
+            )
+            async with app.run_test() as pilot:
+                await _wait_connected(app)
+                # 1st connection: held, then denied until restart.
+                _trigger(container, "example.com", "/tmp/r_restart_0.out")
+                rid = await _wait_for_request(app, "example.com")
+                app._decide_id(rid, DECISION_DENIED, DURATION_RESTART)
+                await _wait_resolved(app, rid)
+                await pilot.pause()
+                res0 = await _wait_result(container, "/tmp/r_restart_0.out")
+                assert "EXIT:7" in res0, (
+                    f"the denied connection should be refused fast, "
+                    f"got: {res0!r}"
+                )
+                await asyncio.sleep(2)
+                # 2nd connection: the restart-deny REJECT rule persists for
+                # the container's lifetime -> refused fast, NO new prompt.
+                _trigger(container, "example.com", "/tmp/r_restart_1.out")
+                prompted = False
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    if any(
+                        "example.com" in (r.dest_host or "")
+                        for r in app.controller.pending.values()
+                    ):
+                        prompted = True
+                        break
+                    await asyncio.sleep(0.3)
+                res1 = await _wait_result(container, "/tmp/r_restart_1.out")
+                assert not prompted, (
+                    "restart-deny must not re-prompt while the container runs"
+                )
+                assert "EXIT:7" in res1, (
+                    f"2nd connection should be refused by the persisted "
+                    f"REJECT rule, got: {res1!r}"
+                )
+                # Restart the workspace container. stop_and_remove tears down
+                # the sidecar (its in-memory REJECT rule dies); start_container
+                # starts a fresh sidecar + reaps restart-duration rows (#2346).
+                # Run the blocking POST in a thread so the decider's WS loop
+                # stays alive (a ~30s blocking call would trip its keepalive).
+                restart = await asyncio.to_thread(
+                    server["client"].post,
+                    f"/api/v1/workspaces/{ws_id}/restart",
+                    headers=auth["headers"],
+                    timeout=120,
+                )
+                assert restart.status_code == 200, restart.text
+                # The pre-restart workspace WS is stale; wait on a fresh one
+                # for the new container + sidecar to come back.
+                await ws_conn.close()
+                ws_conn = await ws_connect(server, auth, ws_id)
+                await asyncio.sleep(
+                    2
+                )  # let the fresh sidecar's dns-proxy settle
+                container = _container_for_workspace(ws_id)
+                # 3rd connection: the restart-deny did NOT survive the restart
+                # -> a fresh egress request is held for a decision.
+                _trigger(container, "example.com", "/tmp/r_restart_2.out")
+                rid2 = await _wait_for_request(app, "example.com")
+                assert rid2 != rid, (
+                    "a connection after restart must produce a fresh prompt, "
+                    "not reuse the reaped request"
+                )
+                # Clean up: deny so the held connection doesn't outlive the test.
+                app._decide_id(rid2, DECISION_DENIED, DURATION_RESTART)
+                await _wait_resolved(app, rid2)
         finally:
             await ws_conn.close()

@@ -624,6 +624,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   focused, leaving the selected (`dur-sel`) button as the only one with a
   background.
 
+- **`duration=once` consent verdicts now re-prompt every subsequent
+  connection (#2361).** The sidecar's SYN verdict cache was keyed on
+  (destination, port), so an allow-once was reused for a later connection to
+  the same destination (the 2nd+ `curl` passed without re-prompting). The cache
+  - in-flight set are now keyed on the connection (source IP+port + dest), so a
+    SYN retransmit still reuses the verdict but a new connection (new source
+    port) is a cache miss and re-prompts. Non-`once` persistence is unchanged
+    (an allow learns the IP; a deny installs a REJECT rule -- both per-destination
+    rules ahead of NFQUEUE).
+
 - **A reconnecting consent decider no longer re-shows an already-resolved
   request (#2345).** The decider (re)connect snapshot read pending requests
   from the DB, so a request whose `egress_resolved` broadcast was lost on
