@@ -61,7 +61,6 @@ from . import (
     auth as _auth_routes,
     browser_delegate as _browser_routes,
     chat as _chat_routes,
-    consent as _consent_routes,
     files as _files_routes,
     images as _images_routes,
     llm_proxy as _llm_proxy_routes,
@@ -338,9 +337,6 @@ router.include_router(_admin_routes.router)
 # LLM proxy routes live at /llm-proxy/ (outside /api/v1/) so they are
 # mounted on root_router, not on the api-prefixed router.  #2072
 root_router.include_router(_llm_proxy_routes.router)
-# Sidecar egress-consent event receiver — unprefixed (sidecar reaches it at
-# host.containers.internal:<port>/internal/egress-consent/events, #2242).
-root_router.include_router(_consent_routes.router)
 
 
 __all__ = (

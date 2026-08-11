@@ -1,7 +1,7 @@
-"""Unit tests for :mod:`klangk.consent` (the monitor) + the receive endpoint
-(#2242). The monitor dispatches on the workspace's egress_mode: static ->
-record_static_denial (denied, no human, immediate); interactive ->
-create_request (pending) + timeout.
+"""Unit tests for :mod:`klangk.consent` (the monitor) (#2242). The monitor
+dispatches on the workspace's egress_mode: static -> record_static_denial
+(denied, no human, immediate); interactive -> create_request (pending) +
+timeout.
 """
 
 from __future__ import annotations
@@ -10,11 +10,7 @@ import asyncio
 import types
 from unittest.mock import AsyncMock
 
-import pytest
-from fastapi import HTTPException
-
 from klangk import consent
-from klangk.api import consent as consent_api
 
 FULL_WS = "aaaa1111bbbb-cccc-dddd-eeee-ffffffffffff"
 
@@ -248,53 +244,3 @@ class TestEgressConsentMonitor:
         mon = consent.EgressConsentMonitor(_app())
         await mon.stop()
         assert mon._task is None
-
-
-class _FakeRequest:
-    def __init__(self, json_body=None, json_exc=False):
-        self.app = types.SimpleNamespace(
-            state=types.SimpleNamespace(
-                consent_monitor=types.SimpleNamespace(submit=lambda *a: None)
-            )
-        )
-        self._json = json_body or {}
-        self._json_exc = json_exc
-
-    async def json(self):
-        if self._json_exc:
-            raise ValueError("bad json")
-        return self._json
-
-
-class TestConsentEndpoint:
-    """post_egress_event — body parse + submit. Auth is require_workspace_token
-    (a reused dependency, exercised elsewhere); the workspace id is passed in
-    directly here."""
-
-    async def test_valid_body_submits(self):
-        req = _FakeRequest(json_body={"dst": "1.2.3.4", "dport": 80})
-        assert await consent_api.post_egress_event(
-            req, workspace_id=FULL_WS
-        ) == {"ok": True}
-
-    async def test_domain_event_dport_optional(self):
-        req = _FakeRequest(json_body={"dst": "evil.com"})
-        await consent_api.post_egress_event(req, workspace_id=FULL_WS)
-
-    async def test_bad_json_is_400(self):
-        req = _FakeRequest(json_exc=True)
-        with pytest.raises(HTTPException) as ei:
-            await consent_api.post_egress_event(req, workspace_id=FULL_WS)
-        assert ei.value.status_code == 400
-
-    async def test_missing_dst_is_400(self):
-        req = _FakeRequest(json_body={"dport": 80})
-        with pytest.raises(HTTPException) as ei:
-            await consent_api.post_egress_event(req, workspace_id=FULL_WS)
-        assert ei.value.status_code == 400
-
-    async def test_non_int_dport_is_400(self):
-        req = _FakeRequest(json_body={"dst": "1.2.3.4", "dport": "80"})
-        with pytest.raises(HTTPException) as ei:
-            await consent_api.post_egress_event(req, workspace_id=FULL_WS)
-        assert ei.value.status_code == 400
