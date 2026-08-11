@@ -556,6 +556,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`consent-decide` rows are now compact, so multiple held requests show
+  at once (#2327).** Each held-request `ListItem` defaulted to `height:
+auto`, which expanded to fill the whole `ListView`, so with two or more
+  concurrent requests only the first was visible and the rest lurked below
+  the fold (you had to scroll the list to see them). Rows are now fixed at
+  two lines (host line + Allow/Deny), so the queue shows every pending
+  request without scrolling.
+
 - **Orphaned pending egress-consent requests no longer replay after a
   klangkd restart.** On startup every still-`pending` row is an orphan (its
   in-memory hold died with the prior process), so they're reaped to `expired`
