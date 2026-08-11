@@ -32,6 +32,18 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Per-request duration for egress-consent verdicts (#2328).** A verdict
+  now carries a `duration` (`once` | `5m` | `15m` | `1h` | `1d` | `1w` |
+  `restart` | `forever`, default `restart`). The `consent-decide` TUI shows a
+  per-row duration selector (click to choose; selecting does NOT submit -- only
+  Allow/Deny submit with the chosen duration). The sidecar honors it: an allow
+  learns the IP for that long (`once` = this connection only, no learn); a deny
+  REJECTs (tcp-reset) for that long. `restart` = the workspace container's
+  lifetime; `forever` = the workspace's lifetime (persists across container
+  restarts via klangkd -- the cross-restart persistence is a follow-up; at the
+  sidecar level it maps to a long in-memory TTL). Recorded on the
+  `egress_consent` row.
+
 - **`klangk consent-decide <workspace>` (#2310).** A live Textual client that
   connects to a workspace's consent-decider stream and shows its held egress
   requests (blocked destinations the network sidecar is holding for a

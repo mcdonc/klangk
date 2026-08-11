@@ -46,6 +46,27 @@ logger = logging.getLogger(__name__)
 DECISION_ALLOWED = "allowed"
 DECISION_DENIED = "denied"
 SCOPE_ONCE = "once"
+# Duration tokens mirror the server (model/egress_consent.py); duplicated here
+# per CLI isolation. Ordered for the TUI selector; default is `restart` (#2328).
+DURATION_ONCE = "once"
+DURATION_5M = "5m"
+DURATION_15M = "15m"
+DURATION_1H = "1h"
+DURATION_1D = "1d"
+DURATION_1W = "1w"
+DURATION_RESTART = "restart"
+DURATION_FOREVER = "forever"
+DURATIONS = (
+    DURATION_ONCE,
+    DURATION_5M,
+    DURATION_15M,
+    DURATION_1H,
+    DURATION_1D,
+    DURATION_1W,
+    DURATION_RESTART,
+    DURATION_FOREVER,
+)
+DURATION_DEFAULT = DURATION_RESTART
 
 # Pings must beat the server's consent_decider_timeout (45s) or the decider is
 # reaped and the workspace reverts to static. 15s leaves margin. NOTE: if an
@@ -86,7 +107,7 @@ class ConsentRequest:
 
 
 def make_verdict(
-    request_id: str, decision: str, scope: str = SCOPE_ONCE
+    request_id: str, decision: str, duration: str = DURATION_DEFAULT
 ) -> str:
     """Build an outbound verdict frame (JSON string) for a held request."""
     return json.dumps(
@@ -94,7 +115,8 @@ def make_verdict(
             "type": "verdict",
             "request_id": request_id,
             "decision": decision,
-            "scope": scope,
+            "scope": SCOPE_ONCE,
+            "duration": duration,
         }
     )
 
@@ -227,6 +249,9 @@ class ConsentDeciderApp(App):
     #empty { padding: 1 2; color: $text-muted; }
     .req-host { color: $text; }
     #requests Button { height: 1; border: none; padding: 0 1; }
+    #duration-selector { width: auto; height: 1; }
+    #duration-selector Button { width: auto; min-width: 0; height: 1; border: none; padding: 0 1; }
+    .dur-sel { background: $accent; color: $background; }
     """
 
     BINDINGS = [
@@ -261,14 +286,30 @@ class ConsentDeciderApp(App):
         self._stop = False
         self._flash_msg = ""
         self._flash_until = 0.0
+        self._duration = DURATION_DEFAULT
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static(id="status")
+        # Global duration selector (default `restart`): click to choose; selecting
+        # does NOT submit -- only a row's Allow/Deny submits with this duration.
+        yield Horizontal(*self._duration_buttons(), id="duration-selector")
         with Vertical():
             yield ListView(id="requests")
             yield Static("No held requests — connected, waiting.", id="empty")
         yield Footer()
+
+    def _duration_buttons(self) -> list[Button]:
+        btns = []
+        for d in DURATIONS:
+            b = Button(
+                d,
+                id=f"dur-{d}",
+                classes=("dur-sel" if d == self._duration else ""),
+            )
+            b.duration = d  # type: ignore[attr-defined]
+            btns.append(b)
+        return btns
 
     def on_mount(self) -> None:
         self.title = f"consent-decide · {self.workspace_name}"
@@ -450,9 +491,9 @@ class ConsentDeciderApp(App):
         return escape(f"{host}{proc}  ({secs}s)")
 
     def _render_item(self, req: ConsentRequest) -> ListItem:
-        # Host+time is a direct child of the ListItem (renders horizontally);
-        # the per-row Allow/Deny buttons sit in a Horizontal below it so they
-        # never fight the host for width. Each button id encodes the request id.
+        # Host line + per-row Allow/Deny (the only submit actions). The duration
+        # is chosen once via the global selector above the list (#2328), so the
+        # row stays compact.
         item = ListItem(
             Static(self._host_line(req), classes="req-host"),
             Horizontal(
@@ -496,14 +537,29 @@ class ConsentDeciderApp(App):
     # -- actions -----------------------------------------------------------
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        # Each row carries its own Allow/Deny button whose id encodes the
-        # request id (``allow-<rid>`` / ``deny-<rid>``), so a click decides
-        # THAT request unambiguously -- not a separate "focused" one.
         bid = event.button.id or ""
-        if bid.startswith("allow-"):
-            self._decide_id(bid.removeprefix("allow-"), DECISION_ALLOWED)
+        if bid.startswith("dur-"):
+            # Selecting a duration does NOT submit -- it only sets the global
+            # choice (Allow/Deny submit with it).
+            self._select_duration(event.button)
+        elif bid.startswith("allow-"):
+            self._decide_id(
+                bid.removeprefix("allow-"), DECISION_ALLOWED, self._duration
+            )
         elif bid.startswith("deny-"):
-            self._decide_id(bid.removeprefix("deny-"), DECISION_DENIED)
+            self._decide_id(
+                bid.removeprefix("deny-"), DECISION_DENIED, self._duration
+            )
+
+    def _select_duration(self, button: Button) -> None:
+        """Set the global selected duration + highlight it (no submit)."""
+        d = getattr(button, "duration", None)
+        if d is None:
+            return
+        self._duration = d
+        for b in self.query(".dur-sel"):
+            b.remove_class("dur-sel")
+        button.add_class("dur-sel")
 
     def action_allow(self) -> None:
         # `a` key -> the highlighted row (keyboard path).
@@ -516,9 +572,9 @@ class ConsentDeciderApp(App):
         rid = self._focused_request_id()
         if rid is None:
             return
-        self._decide_id(rid, decision)
+        self._decide_id(rid, decision, self._duration)
 
-    def _decide_id(self, rid: str, decision: str) -> None:
+    def _decide_id(self, rid: str, decision: str, duration: str) -> None:
         ws = self._ws
         if ws is None:
             self._flash("disconnected — reconnecting")
@@ -528,10 +584,12 @@ class ConsentDeciderApp(App):
         # would otherwise silently lose the verdict). Do not optimistically
         # drop the row: a duplicate/no-op verdict must not hide a still-held
         # request (the server's egress_resolved frame removes it).
-        asyncio.create_task(self._send_verdict(ws, rid, decision))
+        asyncio.create_task(self._send_verdict(ws, rid, decision, duration))
 
-    async def _send_verdict(self, ws, rid: str, decision: str) -> None:
+    async def _send_verdict(
+        self, ws, rid: str, decision: str, duration: str
+    ) -> None:
         try:
-            await ws.send(make_verdict(rid, decision))
+            await ws.send(make_verdict(rid, decision, duration))
         except Exception:
             self._flash("verdict send failed — reconnecting")

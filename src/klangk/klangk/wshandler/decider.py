@@ -45,6 +45,8 @@ from .safe_websocket import SafeWebSocket, SlowClientError
 from ..model.egress_consent import (
     DECISION_ALLOWED,
     DECISION_DENIED,
+    DURATIONS,
+    DURATION_DEFAULT,
     SCOPES,
 )
 
@@ -155,6 +157,12 @@ async def _handle_verdict(app, safe_ws, msg, workspace, user_id) -> None:
             {"type": "error", "message": f"invalid scope: {scope!r}"}
         )
         return
+    duration = msg.get("duration") or DURATION_DEFAULT
+    if duration not in DURATIONS:
+        safe_ws.send_json(
+            {"type": "error", "message": f"invalid duration: {duration!r}"}
+        )
+        return
     request_id = msg.get("request_id")
     if not isinstance(request_id, str):
         safe_ws.send_json(
@@ -169,5 +177,6 @@ async def _handle_verdict(app, safe_ws, msg, workspace, user_id) -> None:
         # users(id); the email is volatile + not a key). Never NULL for a human
         # decision -- NULL means "no human" (the static/expired case).
         user_id,
+        duration=duration,
         decider_workspace=workspace,
     )

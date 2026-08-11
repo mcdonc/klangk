@@ -681,7 +681,7 @@ class TestConsentForward:
         # WS down -> "deny" at once, no frame sent (today's static behavior).
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
         assert c.connected is False
-        assert await c.request("evil.test", None) == "deny"
+        assert await c.request("evil.test", None) == ("deny", "once")
 
     async def test_request_sends_frame_and_resolves_on_verdict(
         self, proxy, tmp_path
@@ -706,7 +706,7 @@ class TestConsentForward:
                 {"type": "verdict", "id": frame["id"], "decision": "allow"}
             )
         )
-        assert await task == "allow"
+        assert await task == ("allow", "once")
         assert c._pending == {}  # cleaned up
 
     async def test_request_deny_verdict(self, proxy, tmp_path):
@@ -727,7 +727,7 @@ class TestConsentForward:
                 {"type": "verdict", "id": frame["id"], "decision": "deny"}
             )
         )
-        assert await task == "deny"
+        assert await task == ("deny", "once")
 
     async def test_request_non_allow_verdict_is_deny(self, proxy, tmp_path):
         # expired/malformed decision -> deny (fail-close)
@@ -748,7 +748,7 @@ class TestConsentForward:
                 {"type": "verdict", "id": frame["id"], "decision": "expired"}
             )
         )
-        assert await task == "deny"
+        assert await task == ("deny", "once")
 
     async def test_request_timeout_fail_close(self, proxy, tmp_path):
         # no verdict within HOLD_TIMEOUT -> "deny"; slot cleaned up
@@ -762,7 +762,7 @@ class TestConsentForward:
                 pass
 
         c._ws = _FakeWS()
-        assert await c.request("evil.test", None) == "deny"
+        assert await c.request("evil.test", None) == ("deny", "once")
         assert c._pending == {}
 
     async def test_request_send_error_fail_close(self, proxy, tmp_path):
@@ -775,7 +775,7 @@ class TestConsentForward:
                 raise OSError("connection gone")
 
         c._ws = _FakeWS()
-        assert await c.request("evil.test", None) == "deny"
+        assert await c.request("evil.test", None) == ("deny", "once")
         assert c._pending == {}
 
     def test_dispatch_ignores_non_verdict_and_bad_id(self, proxy, tmp_path):
@@ -800,7 +800,7 @@ class TestConsentForward:
         c._dispatch(
             json.dumps({"type": "verdict", "id": "abc", "decision": "allow"})
         )
-        assert fut.result() == "allow"
+        assert fut.result() == ("allow", "once")
         assert "abc" not in c._pending
 
     async def test_fail_close_pending_resolves_deny_and_clears_cache(
@@ -813,7 +813,7 @@ class TestConsentForward:
         proxy._VERDICT_CACHE.clear()
         proxy._VERDICT_CACHE[("1.2.3.4", 443)] = ("allow", 9999999.0)
         c._fail_close_pending()
-        assert fut.result() == "deny"
+        assert fut.result() == ("deny", "once")
         assert c._pending == {}
         assert (
             proxy._VERDICT_CACHE == {}
@@ -952,7 +952,7 @@ class TestNfqueueCallback:
     ):
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value="allow")
+        client.request = AsyncMock(return_value=("allow", "restart"))
         learned = []
         monkeypatch.setattr(
             proxy,
@@ -967,13 +967,13 @@ class TestNfqueueCallback:
             "1.2.3.4", 443
         )  # host=IP (no record)
         assert learned == [
-            ("1.2.3.4", None, proxy.MIN_TTL)
+            ("1.2.3.4", None, proxy._DURATION_FOREVER)
         ]  # learned all-ports
 
     async def test_allow_names_host_from_ip_map(self, proxy, monkeypatch):
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value="allow")
+        client.request = AsyncMock(return_value=("allow", "restart"))
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._record_hosts(
@@ -991,7 +991,7 @@ class TestNfqueueCallback:
         # gets RST'd (ECONNREFUSED), not a ~127s tcp_syn_retries wait.
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value="deny")
+        client.request = AsyncMock(return_value=("deny", "once"))
         rejected = []
         monkeypatch.setattr(
             proxy,
@@ -1039,7 +1039,7 @@ class TestNfqueueCallback:
     async def test_unparseable_dest_drops(self, proxy, monkeypatch):
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value="allow")
+        client.request = AsyncMock(return_value=("allow", "restart"))
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(b"\x00" * 24)  # version nibble 0 -> parse_dest ("", 0)
         await self._decide(proxy, pkt, client)
@@ -1053,7 +1053,7 @@ class TestNfqueueCallback:
         # cached verdict so it doesn't re-prompt the decider.
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value="allow")
+        client.request = AsyncMock(return_value=("allow", "restart"))
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
@@ -1094,6 +1094,83 @@ class TestNfqueueCallback:
         assert set(started) == {("1.2.3.4", 443), ("5.6.7.8", 80)}
         gate.set()  # release both
         await asyncio.gather(*proxy._BG_TASKS)
+
+    async def test_allow_once_does_not_learn(self, proxy, monkeypatch):
+        # `once` allow -> no ACCEPT rule (just this connection; reconnect
+        # re-prompts).
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "once"))
+        learned = []
+        monkeypatch.setattr(proxy, "allow", lambda *a: learned.append(a))
+        self._bind(proxy, monkeypatch, client)
+        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        await self._decide(proxy, pkt, client)
+        assert pkt.verdict == "accept"
+        assert learned == []  # no learn for `once`
+
+    async def test_allow_timed_duration_learns_for_ttl(
+        self, proxy, monkeypatch
+    ):
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "1h"))
+        learned = []
+        monkeypatch.setattr(
+            proxy,
+            "allow",
+            lambda ip, port, ttl: learned.append((ip, port, ttl)),
+        )
+        self._bind(proxy, monkeypatch, client)
+        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        await self._decide(proxy, pkt, client)
+        assert pkt.verdict == "accept"
+        assert learned == [("1.2.3.4", None, 3600)]  # 1h -> 3600s
+
+    async def test_deny_timed_duration_rejects_for_ttl(
+        self, proxy, monkeypatch
+    ):
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "15m"))
+        rejected = []
+        monkeypatch.setattr(
+            proxy,
+            "reject",
+            lambda ip, port, ttl: rejected.append((ip, port, ttl)),
+        )
+        self._bind(proxy, monkeypatch, client)
+        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        await self._decide(proxy, pkt, client)
+        assert pkt.verdict == "drop"
+        assert rejected == [("1.2.3.4", 443, 900)]  # 15m -> 900s
+
+    async def test_deny_once_uses_short_fail_close_ttl(
+        self, proxy, monkeypatch
+    ):
+        # `once` deny -> the short CONSENT_REJECT_TTL (fail-close this conn).
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "once"))
+        rejected = []
+        monkeypatch.setattr(
+            proxy, "reject", lambda ip, port, ttl: rejected.append(ttl)
+        )
+        self._bind(proxy, monkeypatch, client)
+        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        await self._decide(proxy, pkt, client)
+        assert pkt.verdict == "drop"
+        assert rejected == [proxy.CONSENT_REJECT_TTL]
+
+
+def test_duration_ttl_mapping(proxy):
+    assert proxy._duration_ttl("once") is None
+    assert proxy._duration_ttl("5m") == 300
+    assert proxy._duration_ttl("1h") == 3600
+    assert proxy._duration_ttl("1w") == 604800
+    assert proxy._duration_ttl("restart") == proxy._DURATION_FOREVER
+    assert proxy._duration_ttl("forever") == proxy._DURATION_FOREVER
+    assert proxy._duration_ttl("bogus") is None  # unknown -> None
 
 
 class TestHandlePacket:

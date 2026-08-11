@@ -266,6 +266,35 @@ async def test_decide_invalid_decision_raises(ec, ws, user):
         await ec.decide(req["id"], "bogus", SCOPE_ONCE, user["id"])
 
 
+async def test_decide_records_duration(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "dur-ws")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "1d")
+    row = await ec.app.state.db.fetchone(
+        "SELECT duration FROM egress_consent WHERE id = ?", (req["id"],)
+    )
+    assert row["duration"] == "1d"
+
+
+async def test_decide_default_duration_is_restart(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "dur-default")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    await ec.decide(req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"])
+    row = await ec.app.state.db.fetchone(
+        "SELECT duration FROM egress_consent WHERE id = ?", (req["id"],)
+    )
+    assert row["duration"] == "restart"
+
+
+async def test_decide_invalid_duration_raises(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "bad-dur")
+    req = await ec.create_request(w["id"], "a.com", 443)
+    with pytest.raises(ValueError, match="Invalid duration"):
+        await ec.decide(
+            req["id"], DECISION_ALLOWED, SCOPE_ONCE, user["id"], "2d"
+        )
+
+
 async def test_decide_pending_not_allowed_as_decision(ec, ws, user):
     """Can't 'decide' to set decision back to pending."""
     w = await ws.create_workspace(user["id"], "pend-decide")
@@ -312,6 +341,11 @@ async def test_expire_pending(ec, ws, user):
     got = await ec.get_request(req["id"])
     assert got["decision"] == DECISION_EXPIRED
     assert got["decided_by"] is None  # auto-expired, no user
+    # a timeout is a non-persistent deny: duration=once (#2328)
+    row = await ec.app.state.db.fetchone(
+        "SELECT duration FROM egress_consent WHERE id = ?", (req["id"],)
+    )
+    assert row["duration"] == "once"
 
 
 async def test_expire_all_pending_reaps_only_pending(ec, ws, user):

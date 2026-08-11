@@ -303,11 +303,17 @@ class TestFrameBuilders:
             "request_id": "r1",
             "decision": "allowed",
             "scope": "once",
+            "duration": "restart",
         }
+
+    def test_make_verdict_carries_duration(self):
+        msg = json.loads(make_verdict("r1", "allowed", "1d"))
+        assert msg["duration"] == "1d"
 
     def test_make_verdict_denied(self):
         msg = json.loads(make_verdict("r1", "denied"))
         assert msg["decision"] == "denied"
+        assert msg["duration"] == "restart"
 
     def test_make_ping(self):
         assert json.loads(make_ping()) == {"type": "ping"}
@@ -598,6 +604,74 @@ class TestAppActions:
             )
             await pilot.pause()
             assert any('"denied"' in s and '"r1"' in s for s in ws.sent)
+
+    async def test_duration_selection_does_not_submit(self):
+        # Clicking a global duration button selects it (highlights + stores) but
+        # sends NO verdict -- only Allow/Deny submit (#2328).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            btn = app.query_one("#dur-1d", Button)
+            app.on_button_pressed(types.SimpleNamespace(button=btn))
+            await pilot.pause()
+            assert ws.sent == []  # selecting a duration does NOT submit
+            assert app._duration == "1d"
+            assert btn.has_class("dur-sel")
+
+    async def test_allow_submits_with_selected_duration(self):
+        # Allow sends the verdict carrying the global selected duration.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            app.on_button_pressed(
+                types.SimpleNamespace(button=app.query_one("#dur-1h", Button))
+            )
+            app.on_button_pressed(
+                types.SimpleNamespace(
+                    button=types.SimpleNamespace(id="allow-r1")
+                )
+            )
+            await pilot.pause()
+            assert any(
+                '"allowed"' in s and '"r1"' in s and '"1h"' in s
+                for s in ws.sent
+            ), ws.sent
+
+    async def test_duration_defaults_to_restart(self):
+        # A fresh row defaults to `restart`; Allow without changing it sends
+        # `restart`.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            app.on_button_pressed(
+                types.SimpleNamespace(
+                    button=types.SimpleNamespace(id="allow-r1")
+                )
+            )
+            await pilot.pause()
+            assert any('"restart"' in s for s in ws.sent), ws.sent
+
+    async def test_duration_selector_guards(self):
+        # Defensive guard: a button without a duration attr is a no-op.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            app._select_duration(types.SimpleNamespace(duration=None))
+            assert app._duration == "restart"  # unchanged (default)
 
 
 class TestWsLoop:
