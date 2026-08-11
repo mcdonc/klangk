@@ -205,29 +205,32 @@ async def _wait_for_request(
 
 
 async def _wait_resolved(
-    app: ConsentDeciderApp, rid: str, timeout: float = 15
+    app: ConsentDeciderApp, rid: str, timeout: float = 15, settle: float = 2.5
 ) -> None:
+    """Wait until ``rid`` is gone from pending AND stays gone.
+
+    A single absent poll passes falsely on a decider reconnect: ``reset()``
+    clears pending, then the server's snapshot re-adds still-held rows. We
+    require CONTINUOUS absence for ``settle`` seconds (past a reconnect-
+    snapshot cycle), so only a genuine resolve satisfies this -- once the
+    row leaves the coordinator's ``_holds`` the snapshot can't replay it, so
+    its absence is permanent; a reset-clear's absence is transient (the
+    snapshot re-adds it, resetting the timer).
+    """
     deadline = time.time() + timeout
+    absent_since: float | None = None
     while time.time() < deadline:
         if rid not in app.controller.pending:
-            return
+            if absent_since is None:
+                absent_since = time.time()
+            if time.time() - absent_since >= settle:
+                return
+        else:
+            absent_since = None  # reappeared (reconnect snapshot re-added it)
         await asyncio.sleep(0.2)
     raise AssertionError(
         f"request {rid} not resolved within {timeout}s "
         f"(pending={list(app.controller.pending)})"
-    )
-
-
-async def _wait_pending_empty(
-    app: ConsentDeciderApp, timeout: float = 10
-) -> None:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not app.controller.pending:
-            return
-        await asyncio.sleep(0.3)
-    raise AssertionError(
-        f"pending not empty within {timeout}s ({dict(app.controller.pending)})"
     )
 
 
@@ -390,19 +393,22 @@ class TestConsentDecisionEndStates:
 
                 # Wait past the consent timeout for the server to auto-deny.
                 await _wait_resolved(app, rid, timeout=_CONSENT_TIMEOUT + 10)
-                await _wait_pending_empty(app, timeout=5)
                 await pilot.pause()
 
                 result = await _wait_result(container, "/tmp/r_timeout.out")
 
             # HYPOTHESIZED END STATE: with no human decision, the server
-            # auto-denies (fail-close) at the timeout -> the request is gone
-            # from the decider AND the connection did NOT succeed (no silent
-            # allow). Timeout surfaces as refuse or connect-timeout depending
-            # on the retransmit race; either way exit != 0.
-            assert not app.controller.pending, (
-                "request should have auto-expired out of the decider"
-            )
+            # auto-denies (fail-close) at the timeout -> the original request
+            # is gone from the decider AND the connection did NOT succeed (no
+            # silent allow). Timeout surfaces as refuse or connect-timeout
+            # depending on the retransmit race; either way exit != 0.
+            #
+            # We assert on the ORIGINAL request's resolution (_wait_resolved
+            # above), not the whole pending list: the forged RST (#2345) makes
+            # curl fail-fast on each resolved IP, so a multi-IP host (example.com
+            # is a CDN) cascades -- IP1 denied -> curl tries IP2 -> a SECOND
+            # held request -- each timing out on its own. Those cascade rows
+            # are expected per-IP behavior, not a leak of the original.
             assert "EXIT:0" not in result, (
                 f"a timed-out connection should not succeed, got: {result!r}"
             )

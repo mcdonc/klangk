@@ -568,11 +568,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   request (#2345).** The decider (re)connect snapshot read pending requests
   from the DB, so a request whose `egress_resolved` broadcast was lost on
   the prior (dead) connection could be replayed + linger with no further
-  resolve to clear it (surfaced as a flaky timeout e2e). The snapshot now
-  intersects DB-pending rows with the coordinator's in-memory hold set
-  (`_holds`), which `resolve` pops synchronously before the DB write +
-  broadcast -- so a resolved request is never replayed, regardless of
-  broadcast loss.
+  resolve to clear it. The snapshot now intersects DB-pending rows with the
+  coordinator's in-memory hold set (`_holds`), which `resolve` pops
+  synchronously before the DB write + broadcast -- so a resolved request is
+  never replayed, regardless of broadcast loss.
 
 - **Denied egress connections now fail fast reliably (#2345).** A denied
   held connection was meant to return `ECONNREFUSED` at once via a temporary
