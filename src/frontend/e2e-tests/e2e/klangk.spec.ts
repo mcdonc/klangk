@@ -1357,13 +1357,19 @@ test.describe("Klangk E2E", () => {
       data: { email: memberEmail },
     });
 
-    // Inject a WebSocket capture script that stores a reference to
-    // the WS so we can send chat commands from page.evaluate.
+    // Inject a WebSocket capture script that stores a reference to the
+    // main /ws socket so we can send chat commands from page.evaluate.
+    // The Flutter app also opens a /ws/consent-decider socket per workspace
+    // (#2244); capture only the main socket, or chat_send lands on a socket
+    // that ignores it (the order the two connect is racy -> intermittent).
     const wsCaptureScript = `(() => {
       const Orig = window.WebSocket;
       window.WebSocket = function(...args) {
         const ws = new Orig(...args);
-        window.__klangkWs = ws;
+        const url = String(args[0] || '');
+        if (!url.includes('consent-decider')) {
+          window.__klangkWs = ws;
+        }
         return ws;
       };
       window.WebSocket.prototype = Orig.prototype;
@@ -1397,23 +1403,38 @@ test.describe("Klangk E2E", () => {
       waitForTerminal: true,
     });
 
-    // Send chat message from page1 via the captured WebSocket
+    // Wait for the chat (main /ws) socket to be open, then send -- avoids
+    // silently dropping the send if the socket isn't ready yet.
+    await page1.waitForFunction(
+      () => {
+        const ws = (window as any).__klangkWs;
+        return !!ws && ws.readyState === 1; // WebSocket.OPEN
+      },
+      { timeout: 10_000 },
+    );
     await page1.evaluate(() => {
       const ws = (window as any).__klangkWs;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({ cmd: "chat_send", message: "hello from e2e" }),
-        );
-      }
+      ws.send(JSON.stringify({ cmd: "chat_send", message: "hello from e2e" }));
     });
 
-    await page2.waitForTimeout(2000);
+    // Wait for the broadcast to reach page2 (async); poll instead of a fixed
+    // timeout so a slow CI runner doesn't flake.
+    await expect
+      .poll(
+        async () =>
+          memberChatMessages
+            .map((s) => JSON.parse(s))
+            .filter(
+              (m: any) => m.type === "chat_message" && m.message_type !== 2,
+            ).length,
+        { timeout: 10_000, intervals: [100, 250, 500] },
+      )
+      .toBeGreaterThan(0);
 
     // Filter out system messages (message_type 2 = join/leave)
     const userMessages = memberChatMessages
       .map((s) => JSON.parse(s))
       .filter((m: any) => m.type === "chat_message" && m.message_type !== 2);
-    expect(userMessages.length).toBeGreaterThan(0);
     const received = userMessages[0];
     expect(received.type).toBe("chat_message");
     expect(received.message).toBe("hello from e2e");
@@ -1540,12 +1561,17 @@ test.describe("Klangk E2E", () => {
     );
     expect(initialEmails).toContain(memberEmail);
 
-    // Capture WS on owner page to send commands
+    // Capture the main /ws socket on the owner page to send commands. Skip the
+    // /ws/consent-decider socket (#2244) so chat_send targets the chat socket
+    // regardless of which connects last.
     const wsCaptureScript = `(() => {
       const Orig = window.WebSocket;
       window.WebSocket = function(...args) {
         const ws = new Orig(...args);
-        window.__klangkWs = ws;
+        const url = String(args[0] || '');
+        if (!url.includes('consent-decider')) {
+          window.__klangkWs = ws;
+        }
         return ws;
       };
       window.WebSocket.prototype = Orig.prototype;
@@ -1588,26 +1614,42 @@ test.describe("Klangk E2E", () => {
     );
     expect(updatedEmails).toContain(lateEmail);
 
-    // Send a chat message with @mention and verify mentions field
+    // Wait for the chat (main /ws) socket to be open, then send.
+    await page1.waitForFunction(
+      () => {
+        const ws = (window as any).__klangkWs;
+        return !!ws && ws.readyState === 1; // WebSocket.OPEN
+      },
+      { timeout: 10_000 },
+    );
     await page1.evaluate((email: string) => {
       const ws = (window as any).__klangkWs;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            cmd: "chat_send",
-            message: `hey @${email} check this`,
-          }),
-        );
-      }
+      ws.send(
+        JSON.stringify({
+          cmd: "chat_send",
+          message: `hey @${email} check this`,
+        }),
+      );
     }, memberEmail);
 
-    await page1.waitForTimeout(2000);
+    // Wait for the broadcast to echo back on the owner page (async); poll
+    // instead of a fixed timeout so a slow CI runner doesn't flake.
+    await expect
+      .poll(
+        async () =>
+          ownerChatMessages
+            .map((s) => JSON.parse(s))
+            .filter(
+              (m: any) => m.type === "chat_message" && m.message_type !== 2,
+            ).length,
+        { timeout: 10_000, intervals: [100, 250, 500] },
+      )
+      .toBeGreaterThan(0);
 
     // Filter out system messages (message_type 2 = join/leave)
     const userChatMsgs = ownerChatMessages
       .map((s) => JSON.parse(s))
       .filter((m: any) => m.type === "chat_message" && m.message_type !== 2);
-    expect(userChatMsgs.length).toBeGreaterThan(0);
     const chatMsg = userChatMsgs[0];
     expect(chatMsg.type).toBe("chat_message");
     expect(chatMsg.message).toContain(`@${memberEmail}`);
