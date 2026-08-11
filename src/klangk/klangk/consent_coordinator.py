@@ -370,7 +370,19 @@ class ConsentCoordinator:
         rows = await self.app.state.model.egress_consent.list_requests(
             workspace_id, decision=DECISION_PENDING
         )
-        return [self._request_frame(row) for row in rows]
+        # Only rows still currently held: a request pending in the DB but
+        # already popped from ``_holds`` (resolve/timeout in flight) must not
+        # be replayed to a reconnecting decider -- its ``egress_resolved``
+        # broadcast may have been lost on the prior (dead) connection, and
+        # replaying it would re-add an already-resolved request that then
+        # lingers with no further resolve to clear it (#2345 e2e flake).
+        # ``_holds.pop`` is synchronous in resolve/timeout (before the DB
+        # write + broadcast), so this membership check is race-free.
+        return [
+            self._request_frame(row)
+            for row in rows
+            if row["id"] in self._holds
+        ]
 
     async def rules_frame(self, workspace_id: str | None) -> dict | None:
         """Build an ``egress_rules`` snapshot for a workspace (#2335 slice A).

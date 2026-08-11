@@ -582,6 +582,26 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **A reconnecting consent decider no longer re-shows an already-resolved
+  request (#2345).** The decider (re)connect snapshot read pending requests
+  from the DB, so a request whose `egress_resolved` broadcast was lost on
+  the prior (dead) connection could be replayed + linger with no further
+  resolve to clear it. The snapshot now intersects DB-pending rows with the
+  coordinator's in-memory hold set (`_holds`), which `resolve` pops
+  synchronously before the DB write + broadcast -- so a resolved request is
+  never replayed, regardless of broadcast loss.
+
+- **Denied egress connections now fail fast reliably (#2345).** A denied
+  held connection was meant to return `ECONNREFUSED` at once via a temporary
+  `REJECT --reject-with tcp-reset` rule, but the rule often never fired: the
+  original SYN, NFQUEUE'd then dropped, left an unconfirmed conntrack entry
+  that entangled the kernel's SYN retransmit, so the connection instead hung
+  for its full timeout (curl exit 28) instead of being refused (exit 7). The
+  network sidecar now forges the RST directly from the queue callback (it gets
+  `CAP_NET_RAW`, and `rp_filter` is disabled in its netns), so `connect()` gets
+  `ECONNREFUSED` immediately, independent of the race. A SYN retransmit during
+  the consent hold no longer spawns a duplicate request. The REJECT rule stays
+  as a backstop.
 - **`restart`-duration consent verdicts are now reaped when a workspace
   container (re)starts (#2346).** A `restart` verdict means "for the
   container's lifetime" -- the sidecar honors it via an in-memory rule that

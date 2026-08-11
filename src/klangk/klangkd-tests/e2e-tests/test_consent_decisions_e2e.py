@@ -7,7 +7,8 @@ the held request arrive in the decider, performs a decision a user would
 make, and asserts the resulting end state.
 
   1. allow              -> the connection succeeds (curl exit 0), request resolves
-  2. deny               -> the connection does NOT succeed, request resolves
+  2. deny               -> connection refused fast (curl exit 7, ECONNREFUSED
+                         via the forged RST #2345), request resolves
   3. allow one host     -> a *different* host is still independently held
                           (per-host isolation; decisions aren't global)
   4. no decision        -> the consent timeout auto-denies; request auto-removes
@@ -156,13 +157,17 @@ def _result(container: str, outfile: str) -> str:
 async def _wait_result(
     container: str, outfile: str, timeout: float = 30
 ) -> str:
-    """Poll the result file until curl has written something (the connection
-    completed, was refused, or hit --max-time). Outlasts curl's 25s max-time."""
+    """Poll the result file until curl has exited (its ``EXIT:$?`` line is
+    written), then return the full output. The progress meter is flushed to
+    the file *before* curl exits, so waiting for content alone races -- a
+    denied connection's fast ECONNREFUSED (#2345) made curl write the meter
+    before the test read it. Require the ``EXIT:`` marker so the exit code is
+    present. Outlasts curl's 25s max-time."""
     deadline = time.time() + timeout
     last = ""
     while time.time() < deadline:
         last = _result(container, outfile)
-        if last.strip():
+        if "EXIT:" in last:
             return last
         await asyncio.sleep(0.5)
     return last
@@ -200,29 +205,32 @@ async def _wait_for_request(
 
 
 async def _wait_resolved(
-    app: ConsentDeciderApp, rid: str, timeout: float = 15
+    app: ConsentDeciderApp, rid: str, timeout: float = 15, settle: float = 2.5
 ) -> None:
+    """Wait until ``rid`` is gone from pending AND stays gone.
+
+    A single absent poll passes falsely on a decider reconnect: ``reset()``
+    clears pending, then the server's snapshot re-adds still-held rows. We
+    require CONTINUOUS absence for ``settle`` seconds (past a reconnect-
+    snapshot cycle), so only a genuine resolve satisfies this -- once the
+    row leaves the coordinator's ``_holds`` the snapshot can't replay it, so
+    its absence is permanent; a reset-clear's absence is transient (the
+    snapshot re-adds it, resetting the timer).
+    """
     deadline = time.time() + timeout
+    absent_since: float | None = None
     while time.time() < deadline:
         if rid not in app.controller.pending:
-            return
+            if absent_since is None:
+                absent_since = time.time()
+            if time.time() - absent_since >= settle:
+                return
+        else:
+            absent_since = None  # reappeared (reconnect snapshot re-added it)
         await asyncio.sleep(0.2)
     raise AssertionError(
         f"request {rid} not resolved within {timeout}s "
         f"(pending={list(app.controller.pending)})"
-    )
-
-
-async def _wait_pending_empty(
-    app: ConsentDeciderApp, timeout: float = 10
-) -> None:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not app.controller.pending:
-            return
-        await asyncio.sleep(0.3)
-    raise AssertionError(
-        f"pending not empty within {timeout}s ({dict(app.controller.pending)})"
     )
 
 
@@ -277,13 +285,12 @@ class TestConsentDecisionEndStates:
     # ====================================================================
     @pytest.mark.asyncio
     async def test_deny_resolves_and_blocks(self, server, auth, workspace):
-        # HYPOTHESIS: when the user denies a held request, the connection never
-        # succeeds (the SYN is dropped + a REJECT/reset is installed) and the
-        # request is cleared from the decider. End state: the request is gone
-        # from pending AND curl did NOT exit 0 (contrast with test 1's allow,
-        # which exits 0). Whether the denial surfaces as ECONNREFUSED (exit 7)
-        # or a connect timeout (exit 28) depends on the NFQUEUE/conntrack/
-        # retransmit race; either way a denied connection does not succeed.
+        # HYPOTHESIS: when the user denies a held request, the connection is
+        # refused fast (the sidecar forges a RST directly #2345, so connect()
+        # gets ECONNREFUSED at once rather than the ~127s tcp_syn_retries)
+        # and the request is cleared from the decider. End state: the request
+        # is gone from pending AND curl exited 7 (Connection refused) -- not
+        # exit 0 (success) and not exit 28 (connect timeout).
         ws_id = workspace
         ws_conn = await ws_connect(server, auth, ws_id)
         try:
@@ -307,9 +314,11 @@ class TestConsentDecisionEndStates:
 
                 result = await _wait_result(container, "/tmp/r_deny.out")
 
-            # END STATE: request resolved + the connection did NOT succeed.
-            assert "EXIT:0" not in result, (
-                f"a denied connection should not succeed, got: {result!r}"
+            # END STATE: request resolved + the connection was refused fast
+            # (ECONNREFUSED, exit 7) -- the forged RST (#2345), not a timeout.
+            assert "EXIT:7" in result, (
+                f"a denied connection should be refused fast (exit 7), "
+                f"got: {result!r}"
             )
         finally:
             await ws_conn.close()
@@ -384,19 +393,22 @@ class TestConsentDecisionEndStates:
 
                 # Wait past the consent timeout for the server to auto-deny.
                 await _wait_resolved(app, rid, timeout=_CONSENT_TIMEOUT + 10)
-                await _wait_pending_empty(app, timeout=5)
                 await pilot.pause()
 
                 result = await _wait_result(container, "/tmp/r_timeout.out")
 
             # HYPOTHESIZED END STATE: with no human decision, the server
-            # auto-denies (fail-close) at the timeout -> the request is gone
-            # from the decider AND the connection did NOT succeed (no silent
-            # allow). Timeout surfaces as refuse or connect-timeout depending
-            # on the retransmit race; either way exit != 0.
-            assert not app.controller.pending, (
-                "request should have auto-expired out of the decider"
-            )
+            # auto-denies (fail-close) at the timeout -> the original request
+            # is gone from the decider AND the connection did NOT succeed (no
+            # silent allow). Timeout surfaces as refuse or connect-timeout
+            # depending on the retransmit race; either way exit != 0.
+            #
+            # We assert on the ORIGINAL request's resolution (_wait_resolved
+            # above), not the whole pending list: the forged RST (#2345) makes
+            # curl fail-fast on each resolved IP, so a multi-IP host (example.com
+            # is a CDN) cascades -- IP1 denied -> curl tries IP2 -> a SECOND
+            # held request -- each timing out on its own. Those cascade rows
+            # are expected per-IP behavior, not a leak of the original.
             assert "EXIT:0" not in result, (
                 f"a timed-out connection should not succeed, got: {result!r}"
             )

@@ -619,6 +619,69 @@ class TestConsentForward:
         assert proxy.parse_dest(bytes(10)) == ("", 0)
         assert proxy.parse_dest(b"\xff" * 20) == ("", 0)  # not IPv4
 
+    # --- parse_syn_tuple + build_rst_packet: the forged eager-deny RST (#2345) ---
+
+    def test_parse_syn_tuple_tcp(self, proxy):
+        assert proxy.parse_syn_tuple(
+            _syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111)
+        ) == ("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111)
+
+    def test_parse_syn_tuple_ethernet_prefixed(self, proxy):
+        eth = bytes(14)  # 14-byte L2 header before the IP packet
+        assert proxy.parse_syn_tuple(
+            eth + _syn_payload("1.1.1.1", 7, "2.2.2.2", 80, 5)
+        ) == ("1.1.1.1", 7, "2.2.2.2", 80, 5)
+
+    def test_parse_syn_tuple_rejects_non_tcp(self, proxy):
+        # UDP -> all-zero tuple (a RST is TCP-only).
+        udp = _syn_payload("1.1.1.1", 7, "2.2.2.2", 80, 5)
+        udp = bytearray(udp)
+        udp[9] = 17  # UDP
+        assert proxy.parse_syn_tuple(bytes(udp)) == ("", 0, "", 0, 0)
+
+    def test_parse_syn_tuple_malformed(self, proxy):
+        assert proxy.parse_syn_tuple(b"") == ("", 0, "", 0, 0)
+        assert proxy.parse_syn_tuple(bytes(10)) == ("", 0, "", 0, 0)
+        assert proxy.parse_syn_tuple(b"\xff" * 20) == ("", 0, "", 0, 0)
+
+    def test_build_rst_packet_layout_and_checksum(self, proxy):
+        import socket as _sock
+        import struct as _st
+
+        pkt = proxy.build_rst_packet("1.2.3.4", 443, "10.0.0.5", 50000, 0x1111)
+        assert len(pkt) == 40  # 20 IP + 20 TCP
+        vi, tos, total, ident, frags, ttl, proto, ipck, src, dst = _st.unpack(
+            "!BBHHHBBH4s4s", pkt[:20]
+        )
+        assert (vi & 0xF0) == 0x40 and proto == 6 and total == 40
+        assert _sock.inet_ntoa(src) == "1.2.3.4"  # denied host is the source
+        assert _sock.inet_ntoa(dst) == "10.0.0.5"  # workspace is the dest
+        sport, dport, seq, ack, doff_flags, win, cksum, urg = _st.unpack(
+            "!HHIIHHHH", pkt[20:]
+        )
+        assert sport == 443 and dport == 50000
+        assert seq == 0  # RST seq is 0
+        assert ack == 0x1112  # SYN seq + 1 (SYN consumes one sequence number)
+        assert (doff_flags & 0x1FF) == 0x14  # RST + ACK
+        assert doff_flags >> 12 == 5  # 20-byte TCP header (no options)
+        # TCP checksum recomputes over the pseudo-header + TCP header (#2345:
+        # the kernel validates it on INPUT, so it must be correct).
+        tcp_zero = pkt[20:36] + b"\x00\x00" + pkt[38:40]
+        pseudo = (
+            _sock.inet_aton("1.2.3.4")
+            + _sock.inet_aton("10.0.0.5")
+            + _st.pack("!BBH", 0, 6, 20)
+        )
+        assert proxy._ones_checksum(pseudo + tcp_zero) == cksum
+
+    def test_build_rst_packet_ack_wraps(self, proxy):
+        import struct as _st
+
+        # SYN seq 0xFFFFFFFF -> ack wraps to 0 (no overflow).
+        pkt = proxy.build_rst_packet("1.2.3.4", 443, "10.0.0.5", 1, 0xFFFFFFFF)
+        _ack = _st.unpack("!I", pkt[28:32])[0]
+        assert _ack == 0
+
     # --- _ws_url: derive the WS URL from the consent HTTP URL (#2311) ---
 
     def test_ws_url_http_to_ws(self, proxy):
@@ -912,6 +975,23 @@ def _ip_payload(dst: str, dport: int, proto: int = 6) -> bytes:
     return bytes(b)
 
 
+def _syn_payload(
+    src: str, sport: int, dst: str, dport: int, seq: int
+) -> bytes:
+    """A minimal IPv4 TCP SYN (20-byte IP + 20-byte TCP) with src IP + seq
+    for parse_syn_tuple / RST-forging tests (#2345)."""
+    b = bytearray(40)
+    b[0] = 0x45
+    b[9] = 6  # TCP
+    b[12:16] = bytes(int(x) for x in src.split("."))  # src IP
+    b[16:20] = bytes(int(x) for x in dst.split("."))  # dst IP
+    b[20:22] = sport.to_bytes(2, "big")
+    b[22:24] = dport.to_bytes(2, "big")
+    b[24:28] = seq.to_bytes(4, "big")
+    b[33] = 0x02  # SYN flag
+    return bytes(b)
+
+
 class _FakePkt:
     def __init__(self, payload: bytes) -> None:
         self._payload = payload
@@ -940,6 +1020,7 @@ class TestNfqueueCallback:
     def _bind(self, proxy, monkeypatch, client):
         """Clear module state (the ``proxy`` fixture is module-scoped)."""
         proxy._VERDICT_CACHE.clear()
+        proxy._INFLIGHT.clear()
         proxy._LEARNED.clear()
         proxy._BG_TASKS.clear()
 
@@ -1163,6 +1244,96 @@ class TestNfqueueCallback:
         await self._decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         assert rejected == [proxy.CONSENT_REJECT_TTL]
+
+    # --- the forged eager-deny RST (#2345): connect() gets ECONNREFUSED at
+    # once, independent of the conntrack/retransmit race. ---
+
+    async def test_deny_verdict_forges_rst(self, proxy, monkeypatch):
+        # deny -> forge the RST directly (ECONNREFUSED at once) + install the
+        # REJECT backstop. The RST is sourced from the denied host and routed
+        # to the workspace's local address.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "once"))
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        sock = MagicMock()
+        monkeypatch.setattr(proxy, "_RST_SOCK", sock)
+        self._bind(proxy, monkeypatch, client)
+        pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
+        await self._decide(proxy, pkt, client)
+        assert pkt.verdict == "drop"
+        sock.sendto.assert_called_once_with(
+            proxy.build_rst_packet("1.2.3.4", 443, "10.0.0.5", 50000, 0x1111),
+            ("10.0.0.5", 0),
+        )
+
+    async def test_deny_no_rst_socket_falls_back_to_reject(
+        self, proxy, monkeypatch
+    ):
+        # No RST socket (NET_RAW absent / consent off) -> only the REJECT rule;
+        # no exception, still drops.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "once"))
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        self._bind(proxy, monkeypatch, client)
+        pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
+        await self._decide(proxy, pkt, client)
+        assert pkt.verdict == "drop"
+
+    async def test_cache_hit_deny_forges_rst(self, proxy, monkeypatch):
+        # A retried connect() to a denied flow reuses the cached verdict and
+        # also forges the RST (fails fast), not just drops.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "once"))
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        sock = MagicMock()
+        monkeypatch.setattr(proxy, "_RST_SOCK", sock)
+        self._bind(proxy, monkeypatch, client)
+        pkt1 = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 1))
+        await self._decide(proxy, pkt1, client)  # populates the cache
+        assert sock.sendto.call_count == 1  # original deny forged an RST
+        pkt2 = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 2))
+        proxy._cb(pkt2, client)  # cache hit -> inline forge + drop
+        assert pkt2.verdict == "drop"
+        client.request.assert_awaited_once()  # NOT re-requested
+        assert sock.sendto.call_count == 2  # the retry also got an RST
+
+    async def test_retransmit_during_hold_does_not_re_prompt(
+        self, proxy, monkeypatch
+    ):
+        # A SYN retransmit that arrives WHILE the first is still held (before
+        # any verdict) must not spawn a second consent request -- the in-flight
+        # task resolves the flow. Without the _INFLIGHT dedup, each retransmit
+        # piled up a pending request that lingered past the first's resolution
+        # (#2345 e2e flake).
+        started = []
+        gate = asyncio.Event()
+
+        async def slow_request(host, port):
+            started.append((host, port))
+            await gate.wait()
+            return "deny"
+
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(side_effect=slow_request)
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        self._bind(proxy, monkeypatch, client)
+        pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
+        pkt2 = _FakePkt(_ip_payload("1.2.3.4", 443))  # retransmit during hold
+        proxy._cb(pkt1, client)  # spawns the task; flow is now in-flight
+        proxy._cb(pkt2, client)  # in-flight -> drop, no new task
+        assert pkt2.verdict == "drop"  # the retransmit is dropped
+        assert len(proxy._BG_TASKS) == 1  # only ONE verdict task
+        assert ("1.2.3.4", 443) in proxy._INFLIGHT  # still held
+        gate.set()  # release the verdict
+        await asyncio.gather(*proxy._BG_TASKS)
+        assert len(started) == 1  # only ONE request to the decider
+        assert ("1.2.3.4", 443) not in proxy._INFLIGHT  # cleared after verdict
 
 
 def test_duration_ttl_mapping(proxy):

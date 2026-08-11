@@ -782,7 +782,8 @@ class TestStartContainer:
         assert cid == "new-cid"
         kwargs = p.create_container.call_args.kwargs
         assert p.create_container.call_args.args[0].startswith("klangk-net-")
-        assert kwargs["cap_add"] == ["NET_ADMIN"]
+        # NET_RAW forges the eager-deny RST (#2345).
+        assert kwargs["cap_add"] == ["NET_ADMIN", "NET_RAW"]
         assert kwargs["dns"] == ["1.1.1.1"]
         assert "KLANGKNETWORK_EGRESS_ALLOW=github.com:443" in kwargs["env"]
         assert "KLANGKNETWORK_EGRESS_UPSTREAM=8.8.8.8" in kwargs["env"]
@@ -1255,7 +1256,8 @@ class TestStartContainer:
             )
         assert len(creates) == 2
         assert creates[0]["name"].startswith("klangk-net-")
-        assert creates[0]["cap_add"] == ["NET_ADMIN"]
+        # NET_RAW forges the eager-deny RST (#2345).
+        assert creates[0]["cap_add"] == ["NET_ADMIN", "NET_RAW"]
         assert "KLANGKNETWORK_EGRESS_ALLOW=github.com:443" in creates[0]["env"]
         assert any(
             e.startswith("KLANGKNETWORK_EGRESS_BACKEND_PORT=")

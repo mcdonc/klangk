@@ -385,12 +385,29 @@ class TestConsentCoordinatorFanout:
         rows = [_request("a"), _request("b")]
         app = _app(pending_rows=rows)
         coord = ConsentCoordinator(app)
+        # Only DB-pending rows that are also currently held are replayed (a
+        # row popped from _holds mid-resolve must not re-linger on a
+        # reconnect, #2345). Seed _holds with both so they're considered held.
+        coord._holds.update({"a": {}, "b": {}})
         frames = await coord.snapshot(FULL_WS)
         assert [f["request"]["id"] for f in frames] == ["a", "b"]
         assert all(f["type"] == "egress_request" for f in frames)
         app.state.model.egress_consent.list_requests.assert_awaited_once_with(
             FULL_WS, decision="pending"
         )
+
+    async def test_snapshot_excludes_resolved_rows_not_in_holds(self):
+        # A row still pending in the DB but popped from _holds (resolve/timeout
+        # in flight -- its egress_resolved broadcast may be lost on a dead
+        # connection) must NOT be replayed to a reconnecting decider, or it
+        # lingers as already-resolved (#2345 e2e flake). _holds.pop is
+        # synchronous in resolve, so the membership check is race-free.
+        rows = [_request("a"), _request("b")]
+        app = _app(pending_rows=rows)
+        coord = ConsentCoordinator(app)
+        coord._holds.update({"a": {}})  # only "a" still held; "b" resolved
+        frames = await coord.snapshot(FULL_WS)
+        assert [f["request"]["id"] for f in frames] == ["a"]
 
     async def test_snapshot_deploy_wide_is_empty(self):
         app = _app()

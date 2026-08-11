@@ -1334,8 +1334,14 @@ class ContainerRegistry:
         # backstop for orphans; this just keeps a restart from deadlocking.
         await self._remove_network_sidecar(workspace_id)
         try:
+            # NET_RAW lets the proxy forge the eager-deny RST directly from
+            # the NFQUEUE callback (#2345) so a denied connect() gets
+            # ECONNREFUSED at once, independent of the conntrack/retransmit
+            # race that made the iptables REJECT rule flaky. Safe to grant
+            # here (unlike on the workspace): the sidecar runs only klangk's
+            # own proxy, no untrusted code.
             sidecar_kwargs = dict(
-                cap_add=["NET_ADMIN"],
+                cap_add=["NET_ADMIN", "NET_RAW"],
                 dns=["1.1.1.1"],
                 env=env,
                 labels=labels,

@@ -39,6 +39,15 @@ if [ -w /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
   echo 1 >/proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null ||
     echo "egress-sidecar: could not disable IPv6 stack (relying on ip6tables DROP)" >&2
 fi
+# Disable rp_filter (reverse-path) in this netns so the proxy's forged eager-deny
+# RST (#2345) is delivered: the RST is sourced from the denied host's IP and
+# looped back to the local stack so connect() gets ECONNREFUSED at once; a
+# foreign-source packet arriving on lo can trip rp_filter and be silently
+# dropped. This is a single-uplink isolated netns with no multipath asymmetry,
+# so disabling rp_filter is safe. Best-effort (rootless per-netns writability).
+for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
+  echo 0 >"$f" 2>/dev/null || true
+done
 # Loopback by *destination* (not -o lo): REDIRECT keeps the packet's original
 # output interface, so -o lo misses the redirected :53 packet under a DROP policy.
 $IPT -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
@@ -88,9 +97,10 @@ esac
 # not the DNS query: non-allow-listed names resolve (the workspace gets the IP),
 # and the first packet to that IP is queued here pending a verdict (allow ->
 # pkt.accept() + learn the IP, then conntrack's ESTABLISHED,RELATED rule passes
-# the rest; deny/timeout/WS-down -> pkt.drop() + a temporary REJECT
-# (tcp-reset) rule so the retransmit fails connect() at once (ECONNREFUSED), not
-# after tcp_syn_retries ~127s); klangkd records the decision.
+# the rest); deny/timeout/WS-down -> the proxy forges a RST directly from the
+# queue callback so connect() gets ECONNREFUSED at once (#2345), with a
+# temporary iptables REJECT (tcp-reset) rule as a backstop); klangkd records the
+# decision.
 # Gating the SYN (not the DNS query) gives the human the kernel's connect
 # timeout (~127s) instead of a DNS resolver's <=30s getaddrinfo cap. The sidecar
 # is the netns owner with NET_ADMIN, so it reads its own NFQUEUE -- no host-side
