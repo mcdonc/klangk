@@ -22,6 +22,7 @@ import 'package:http/http.dart' as http;
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../debug/debug_panel.dart';
+import '../consent/consent_overlay.dart';
 import 'workspace_settings_panel.dart';
 import 'workspace_sharing_panel.dart';
 import 'terminal_tabs_view.dart';
@@ -442,6 +443,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
           for (final feature in _features)
             if (feature.buildOverlay(context) != null)
               feature.buildOverlay(context)!,
+          // Egress-consent verdict overlay (#2333): anchored in the page Stack
+          // (not the terminal view) so it surfaces held requests on every
+          // workspace-page tab. Sits below the full-screen status overlays so
+          // those cover it when active.
+          ConsentOverlay(workspaceId: widget.workspaceId),
           if (_containerStopped)
             buildContainerStoppedOverlay(
               restarting: _restarting,

@@ -32,6 +32,17 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Flutter egress-consent verdict overlay (#2333).** The workspace page
+  now shows a live consent overlay (anchored in the page `Stack`, so it appears
+  on every tab, not just the terminal) that mirrors the `consent-decide` TUI.
+  It connects to `/ws/consent-decider` for its own workspace, pings to stay
+  registered, shows held egress requests with destination host:port, process,
+  and auto-deny countdown, and sends Allow/Deny verdicts (`scope=once`) over the
+  held connection. A compact collapsed chip is shown when idle; the panel
+  auto-expands when a decision is pending and collapses when none remain. While
+  disconnected the overlay warns that holds auto-deny (fail-closed). No backend
+  protocol change.
+
 - **Per-request duration for egress-consent verdicts (#2328).** A verdict
   now carries a `duration` (`once` | `5m` | `15m` | `1h` | `1d` | `1w` |
   `restart` | `forever`, default `restart`). The `consent-decide` TUI shows a
