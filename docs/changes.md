@@ -715,6 +715,18 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Network sidecar now stops promptly on SIGTERM (#2400).** The sidecar
+  runs as PID 1 (`entrypoint.sh` execs `python3 /proxy.py`), and the Linux
+  kernel ignores the default SIGTERM disposition for PID-namespace init (a
+  handler must be installed), so every sidecar removal fell back to SIGKILL
+  after the full 5s `podman stop -t 5` window — and occasionally wedged in
+  `Stopping`, leaking a NET_ADMIN container. The sidecar now installs an
+  explicit SIGTERM handler that cancels its event loop for a clean teardown
+  (closes the consent WebSocket, unbinds NFQUEUE, closes the DNS socket); the
+  teardown is bounded so it completes well within the stop timeout rather than
+  re-introducing the 5s window. Workspace teardown and klangkd shutdown are no
+  longer gated on the 5s SIGKILL fallback per filtered workspace.
+
 - **`consent-decide` duration selector no longer shows two highlighted
   buttons at first render (#2360).** The first duration button ("once")
   grabbed initial focus on mount and rendered with the default focus
