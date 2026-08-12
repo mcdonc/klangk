@@ -550,6 +550,31 @@ class SmokeTest:
         finally:
             client.close()
 
+    @staticmethod
+    def _create_static_workspace(server: dict, auth: dict) -> str:
+        """A workspace with ``egress_mode='static'`` and no running container
+        (auto_start=False). Used by the #2395 refusal check: such a workspace
+        must refuse consent-decider registration. No container -> no sidecar."""
+        client = httpx.Client(
+            base_url=server["url"], headers=auth["headers"], timeout=120
+        )
+        try:
+            r = client.post(
+                "/api/v1/workspaces",
+                json={
+                    "name": f"smoke-static-{int(time.time() * 1000) % 100000}",
+                    "egress_mode": "static",
+                    "auto_start": False,
+                },
+            )
+            if r.status_code != 200:
+                raise RuntimeError(
+                    f"static workspace create failed: {r.status_code} {r.text}"
+                )
+            return r.json()["id"]
+        finally:
+            client.close()
+
     async def _wait_container_ready(self) -> None:
         # Open the workspace terminal WS: confirms container_ready AND keeps
         # the workspace from idle-stopping during the run.
@@ -1291,6 +1316,87 @@ class SmokeTest:
         await _wait_result(self.container, of_a, timeout=10.0)
         await _wait_result(self.container, of_b, timeout=10.0)
 
+    async def run_static_refusal_phase(self) -> None:
+        """#2395: a workspace with ``egress_mode='static'`` must refuse
+        consent-decider registration (a 4003 close), so a decider can't flip a
+        static workspace interactive merely by connecting."""
+        if not self.args.static_refusal:
+            return
+        print(
+            "\n--- #2395: a static workspace refuses consent-decider "
+            "registration ---"
+        )
+        step = _Step(
+            self.summary.total,
+            "(static ws)",
+            "n/a",
+            False,
+            "static-refusal",
+            "-",
+        )
+        static_ws = await asyncio.to_thread(
+            self._create_static_workspace, self.server, self.auth
+        )
+        try:
+            url = (
+                f"/ws/consent-decider?token={self.auth['token']}"
+                f"&workspace={static_ws}"
+            )
+            try:
+                ws = await ws_connect(self.server, url, open_timeout=15)
+            except Exception as e:  # noqa: BLE001
+                self._record_probe(
+                    step,
+                    "decider->static",
+                    "refused(handshake)",
+                    None,
+                    PASS,
+                    f"registration refused at the handshake: {e!r}",
+                )
+                return
+            try:
+                try:
+                    await asyncio.wait_for(ws.recv(), timeout=5.0)
+                    # A frame (the snapshot) arrived -> the decider registered
+                    # against a static workspace (#2395 violation).
+                    self._record_probe(
+                        step,
+                        "decider->static",
+                        "attached(!)",
+                        None,
+                        MISMATCH,
+                        "a decider registered against a static workspace",
+                    )
+                except Exception as e:  # noqa: BLE001  (ConnectionClosed / timeout)
+                    if "Closed" in type(e).__name__:
+                        code = getattr(e, "code", None)
+                        self._record_probe(
+                            step,
+                            "decider->static",
+                            f"refused({code})",
+                            None,
+                            PASS,
+                            "registration refused (connection closed)",
+                        )
+                    else:
+                        self._record_probe(
+                            step,
+                            "decider->static",
+                            "no-close",
+                            None,
+                            FINDING,
+                            f"neither a frame nor a close: {e!r}",
+                        )
+            finally:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+        finally:
+            await asyncio.to_thread(
+                self._delete_workspace, self.server, self.auth, static_ws
+            )
+
     async def run_fail_closed_phase(self, pilot) -> None:
         """#2308 fail-closed guarantee: with a request held pending, the decider
         disconnects -> the hold auto-denies on the consent timeout and the
@@ -1439,6 +1545,8 @@ class SmokeTest:
         self._abort = False
         stop = False
         try:
+            if self.args.static_refusal:
+                await self.run_static_refusal_phase()
             async with self.app.run_test() as pilot:
                 await _wait_connected(self.app)
                 for step in plan:
@@ -1616,11 +1724,16 @@ def main() -> int:
         "decider reconnect it needs)",
     )
     p.add_argument(
-        "--static-phase",
+        "--no-static-phase",
         dest="static_phase",
-        action="store_true",
-        help="enable the no-decider static-mode phase (DEFAULT OFF: "
-        "static-mode semantics are being hardened by #2395)",
+        action="store_false",
+        help="skip the no-decider static-mode phase (off-list must be denied)",
+    )
+    p.add_argument(
+        "--no-static-refusal",
+        dest="static_refusal",
+        action="store_false",
+        help="skip the #2395 static-workspace-refuses-decider check",
     )
     p.add_argument(
         "--expiry-wait",
