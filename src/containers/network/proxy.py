@@ -1402,8 +1402,27 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         dst, port = tdst, tport
     else:  # non-TCP (UDP/other): no source port -> destination granularity
         dst, port = parse_dest(payload)
-    if not dst or client is None or not client.connected:
-        pkt.drop()  # unparseable / no consent / WS down -> fail-close
+    if not dst or client is None:
+        pkt.drop()  # unparseable / pure-static (no consent configured) -> drop
+        return
+    if not client.connected:
+        # Consent WS down: consent is unavailable, so fail the off-list SYN
+        # FAST (ECONNREFUSED) like a deny verdict -- NOT a bare drop. A bare
+        # drop makes the kernel retransmit the SYN for ~127s (tcp_syn_retries),
+        # dangling the connection (#2308: no consent available -> a clean,
+        # prompt denial, not a hang). Forge the eager-deny RST inline
+        # (non-blocking sendto) so THIS connect() gets ECONNREFUSED at once,
+        # + a short REJECT (tcp-reset) backstop off-loop so retransmits are
+        # RST'd above NFQUEUE, then drop. On-list egress is unaffected
+        # (learned ACCEPT rules sit above NFQUEUE); once the WS reconnects,
+        # fresh off-list egress prompts again. The REJECT TTL is short, so no
+        # rule lingers past the outage (#2413).
+        if port:
+            _send_rst(payload)
+            asyncio.get_running_loop().run_in_executor(
+                None, reject, dst, port, CONSENT_REJECT_TTL
+            )
+        pkt.drop()
         return
     flow = (src_ip, src_port, dst, port)
     now = time.time()

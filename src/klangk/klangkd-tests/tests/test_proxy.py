@@ -1415,15 +1415,35 @@ class TestNfqueueCallback:
         await self._decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
 
-    async def test_ws_down_drops_without_request(self, proxy, monkeypatch):
+    async def test_ws_down_fails_fast_not_hang(self, proxy, monkeypatch):
+        # WS down -> consent unavailable -> fail the off-list SYN FAST
+        # (ECONNREFUSED via a forged RST + a short REJECT backstop), not a
+        # bare drop the kernel retransmits for ~127s (#2308/#2413: no consent
+        # -> clean prompt denial, not a dangling connection). On-list egress
+        # is unaffected (learned ACCEPT rules sit above NFQUEUE).
         client = MagicMock()
         client.connected = False
         client.request = AsyncMock()
+        rejected = []
+        monkeypatch.setattr(
+            proxy,
+            "reject",
+            lambda ip, port, ttl: rejected.append((ip, port, ttl)),
+        )
+        rst = []
+        monkeypatch.setattr(
+            proxy, "_send_rst", lambda payload: rst.append(payload)
+        )
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
-        await self._decide(proxy, pkt, client)  # _cb drops inline (no task)
+        proxy._cb(pkt, client)  # _cb fails fast inline (no _BG_TASK)
+        await asyncio.sleep(0.05)  # let the off-loop REJECT install run
         assert pkt.verdict == "drop"
         client.request.assert_not_awaited()
+        assert rst  # eager-deny RST forged so connect() gets ECONNREFUSED
+        assert rejected == [
+            ("1.2.3.4", 443, proxy.CONSENT_REJECT_TTL)
+        ]  # retransmit backstop (above NFQUEUE)
 
     async def test_unparseable_dest_drops(self, proxy, monkeypatch):
         client = MagicMock()
