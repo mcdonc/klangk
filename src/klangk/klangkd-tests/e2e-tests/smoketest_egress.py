@@ -1037,10 +1037,11 @@ class SmokeTest:
             )
 
     async def _connect_raw_decider(self, attempts: int = 2) -> RawDecider:
-        # The TCP proxy fronting klangkd can make a rapid reconnect's WS
-        # handshake time out; retry once with a generous open timeout. Bounded
-        # so a persistent proxy issue fails fast (the caller records a finding)
-        # rather than hanging the run.
+        # Retry once with a generous open timeout as a safety net against a
+        # transient accept hiccup; bounded so a persistent issue fails fast
+        # (the caller records a finding) rather than hanging the run.
+        # (Was framed as a TCP-proxy flakiness workaround; that premise was
+        # disproven — the proxy is reliable at this concurrency, #2398.)
         url = (
             f"/ws/consent-decider?token={self.auth['token']}"
             f"&workspace={self.ws_id}"
@@ -1066,8 +1067,8 @@ class SmokeTest:
 
     async def _get_shared_decider(self) -> RawDecider:
         """One raw second decider shared across the multi-decider + snapshot
-        phases, so the proxy only ever sees a single extra decider WS (a 3rd
-        rapid raw reconnect's handshake times out through the TCP proxy)."""
+        phases — one extra decider connection rather than opening/closing
+        one per phase."""
         if self._shared_d2 is None:
             self._shared_d2 = await self._connect_raw_decider()
             await self._shared_d2.settle()
@@ -1915,9 +1916,10 @@ def main() -> int:
         "--snapshot",
         dest="snapshot",
         action="store_true",
-        help="enable the reconnect snapshot-replay phase (DEFAULT OFF: "
-        "blocked by #2398 — the TCP proxy flakes on the "
-        "decider reconnect it needs)",
+        help="enable the reconnect snapshot-replay phase (DEFAULT OFF: with "
+        "real multi-IP hosts the result is indeterminate — a "
+        "resolved-while-away row is indistinguishable from a CDN "
+        "IP-cascade respawn — so it records a finding, not a pass/fail)",
     )
     p.add_argument(
         "--no-revoke",
