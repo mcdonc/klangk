@@ -37,7 +37,7 @@ from klangk.cli.tui.consent import (
     DECISION_DENIED,
     DURATION_FOREVER,
     DURATION_ONCE,
-    DURATION_RESTART,
+    DURATION_TILRESTART,
 )
 
 # Short consent timeout so test 4 (no-decision -> timeout) doesn't keep the
@@ -266,7 +266,7 @@ class TestConsentDecisionEndStates:
 
                 rid = await _wait_for_request(app, "example.com")
                 # The user allows (default duration).
-                app._decide_id(rid, DECISION_ALLOWED, DURATION_RESTART)
+                app._decide_id(rid, DECISION_ALLOWED, DURATION_TILRESTART)
                 await _wait_resolved(app, rid)
                 await pilot.pause()
 
@@ -310,7 +310,7 @@ class TestConsentDecisionEndStates:
 
                 rid = await _wait_for_request(app, "example.com")
                 # The user denies.
-                app._decide_id(rid, DECISION_DENIED, DURATION_RESTART)
+                app._decide_id(rid, DECISION_DENIED, DURATION_TILRESTART)
                 await _wait_resolved(app, rid)
                 await pilot.pause()
 
@@ -350,7 +350,7 @@ class TestConsentDecisionEndStates:
                 # Allow a connection to example.com.
                 _trigger(container, "example.com", "/tmp/iso1.out")
                 rid1 = await _wait_for_request(app, "example.com")
-                app._decide_id(rid1, DECISION_ALLOWED, DURATION_RESTART)
+                app._decide_id(rid1, DECISION_ALLOWED, DURATION_TILRESTART)
                 await _wait_resolved(app, rid1)
                 await pilot.pause()
 
@@ -452,8 +452,10 @@ class TestConsentDecisionEndStates:
                 assert rid_deny in app.controller.pending
 
                 # The user allows one and denies the OTHER while both are held.
-                app._decide_id(rid_allow, DECISION_ALLOWED, DURATION_RESTART)
-                app._decide_id(rid_deny, DECISION_DENIED, DURATION_RESTART)
+                app._decide_id(
+                    rid_allow, DECISION_ALLOWED, DURATION_TILRESTART
+                )
+                app._decide_id(rid_deny, DECISION_DENIED, DURATION_TILRESTART)
                 await _wait_resolved(app, rid_allow)
                 await _wait_resolved(app, rid_deny)
                 await pilot.pause()
@@ -624,7 +626,7 @@ class TestConsentDecisionEndStates:
                 # 1st connection: held, then denied until restart.
                 _trigger(container, "example.com", "/tmp/r_restart_0.out")
                 rid = await _wait_for_request(app, "example.com")
-                app._decide_id(rid, DECISION_DENIED, DURATION_RESTART)
+                app._decide_id(rid, DECISION_DENIED, DURATION_TILRESTART)
                 await _wait_resolved(app, rid)
                 await pilot.pause()
                 res0 = await _wait_result(container, "/tmp/r_restart_0.out")
@@ -683,7 +685,7 @@ class TestConsentDecisionEndStates:
                     "not reuse the reaped request"
                 )
                 # Clean up: deny so the held connection doesn't outlive the test.
-                app._decide_id(rid2, DECISION_DENIED, DURATION_RESTART)
+                app._decide_id(rid2, DECISION_DENIED, DURATION_TILRESTART)
                 await _wait_resolved(app, rid2)
         finally:
             await ws_conn.close()

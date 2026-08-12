@@ -2,7 +2,7 @@
 ///
 /// A compact banner shown above the workspace body when [ConsentDeciderService]
 /// has pending held requests (interactive `egress_mode` only). The header
-/// carries a single *global* duration selector (default `restart`); each row
+/// carries a single *global* duration selector (default `tilrestart`); each row
 /// shows the destination host:port (+ process + a countdown) and Allow/Deny
 /// buttons that send a `verdict` frame carrying the selected duration. Mirrors
 /// the standalone `klangk consent-decide` TUI (one `#duration-selector` for the
@@ -42,7 +42,7 @@ class ConsentBanner extends StatefulWidget {
 
 class _ConsentBannerState extends State<ConsentBanner> {
   /// The chosen verdict duration, applied to whichever row's Allow/Deny is
-  /// tapped. One selector for the whole banner (default `restart`), mirroring
+  /// tapped. One selector for the whole banner (default `tilrestart`), mirroring
   /// the TUI's single global `#duration-selector` -- not a per-row choice.
   String _duration = kConsentDurationDefault;
   Timer? _tick;
@@ -51,11 +51,13 @@ class _ConsentBannerState extends State<ConsentBanner> {
   void initState() {
     super.initState();
     widget.service.addListener(_onChange);
+    // coverage:ignore-start
     // 1s countdown refresh while requests are held (the server is the source
     // of truth; this only repaints the remaining-seconds hint).
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted && widget.service.pending.isNotEmpty) _onChange();
     });
+    // coverage:ignore-end
   }
 
   @override

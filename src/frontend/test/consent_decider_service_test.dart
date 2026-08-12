@@ -192,6 +192,43 @@ void main() {
     });
   });
 
+  group('PendingRequest equality', () {
+    final a = PendingRequest(
+        id: 'r1',
+        destHost: 'h',
+        destPort: 443,
+        processName: 'curl',
+        requestedAt: 1.0);
+
+    test('equal on all fields, with matching hashCode', () {
+      final b = PendingRequest(
+          id: 'r1',
+          destHost: 'h',
+          destPort: 443,
+          processName: 'curl',
+          requestedAt: 1.0);
+      expect(a, equals(b));
+      expect(a.hashCode, b.hashCode);
+      expect(a, equals(a)); // identical
+    });
+
+    test('any differing field breaks equality', () {
+      expect(
+          a,
+          isNot(equals(PendingRequest(
+              id: 'r1',
+              destHost: 'h',
+              destPort: 443,
+              processName: 'curl',
+              requestedAt: 2.0)))); // requestedAt differs
+      expect(
+          a,
+          isNot(equals(PendingRequest(
+              id: 'r2', destHost: 'h', requestedAt: 1.0)))); // id differs
+      expect(a, isNot(equals('not a request'))); // wrong type
+    });
+  });
+
   group('ConsentDeciderService', () {
     late _FakeChannel channel;
 
@@ -321,6 +358,39 @@ void main() {
       );
       final req = PendingRequest(id: 'r', destHost: 'h', requestedAt: 1000.0);
       expect(svc.remainingSeconds(req), 120);
+      svc.dispose();
+    });
+
+    test('pong and unknown frames are no-ops through the live socket',
+        () async {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      channel.serverSend({'type': 'egress_request', 'request': _request()});
+      await Future.delayed(Duration.zero);
+      expect(svc.pending, hasLength(1));
+      // A pong and an unknown frame neither mutate pending nor throw.
+      channel.serverSend({'type': 'pong'});
+      channel.serverSend({'type': 'egress_rules', 'rules': []});
+      await Future.delayed(Duration.zero);
+      expect(svc.pending, hasLength(1));
+      svc.dispose();
+    });
+
+    test('a non-auth close clears connected and schedules a reconnect',
+        () async {
+      final svc = ConsentDeciderService(
+        workspaceId: 'ws',
+        token: 't',
+        // Long delay so the reconnect Timer never fires during the test
+        // (dispose cancels it regardless).
+        reconnectDelays: const [Duration(minutes: 5)],
+      );
+      svc.connect();
+      expect(svc.connected, isTrue);
+      channel.serverClose(); // clean close, no code -> not an auth failure
+      await Future.delayed(Duration.zero);
+      expect(svc.connected, isFalse);
+      expect(svc.authFailed, isFalse);
       svc.dispose();
     });
   });

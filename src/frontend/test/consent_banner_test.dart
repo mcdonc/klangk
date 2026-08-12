@@ -149,7 +149,8 @@ void main() {
     svc.dispose();
   });
 
-  testWidgets('Allow carries the default duration (restart)', (tester) async {
+  testWidgets('Allow carries the default duration (tilrestart)',
+      (tester) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
     svc.connect();
@@ -168,7 +169,7 @@ void main() {
     await tester.tap(find.text('Allow'));
     await tester.pump();
     final out = jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
-    expect(out['duration'], 'restart');
+    expect(out['duration'], 'tilrestart');
     svc.dispose();
   });
 
@@ -191,7 +192,7 @@ void main() {
     await tester.pump();
     // Exactly one duration selector (global, in the header) -- not one per row.
     expect(find.byType(DropdownButton<String>), findsOneWidget);
-    expect(find.text('restart'), findsOneWidget);
+    expect(find.text('tilrestart'), findsOneWidget);
     svc.dispose();
   });
 
@@ -258,6 +259,40 @@ void main() {
     await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
     await tester.pumpAndSettle();
     expect(find.textContaining('please log in again'), findsOneWidget);
+    svc.dispose();
+  });
+
+  testWidgets('shows "reconnecting…" when disconnected mid-hold',
+      (tester) async {
+    final channel = _FakeChannel();
+    ConsentDeciderService.testChannelFactory = (_) => channel;
+    final svc = ConsentDeciderService(
+      workspaceId: 'ws',
+      token: 't',
+      // Long delay so the reconnect Timer never fires during the test
+      // (dispose cancels it regardless).
+      reconnectDelays: const [Duration(minutes: 5)],
+      clock: () =>
+          DateTime.fromMillisecondsSinceEpoch(2000 * 1000, isUtc: true),
+    );
+    svc.connect();
+    channel.serverSend({
+      'type': 'egress_request',
+      'request': {
+        'id': 'r1',
+        'workspace_id': 'ws',
+        'dest_host': 'example.com',
+        'dest_port': 443,
+        'requested_at': 2000.0,
+      },
+    });
+    await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
+    await tester.pump();
+    expect(find.text('reconnecting…'), findsNothing); // still connected
+    channel.serverClose(); // clean drop, no code -> not an auth failure
+    await tester.pump(); // flush onDone -> notifyListeners -> rebuild
+    await tester.pump();
+    expect(find.text('reconnecting…'), findsOneWidget);
     svc.dispose();
   });
 }

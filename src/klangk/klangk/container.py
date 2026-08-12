@@ -2021,7 +2021,7 @@ class ContainerRegistry:
         # previous container. Reap those rows so list_active (#2335) matches
         # the enforced set (#2346). Safe on a first-ever start (no rows yet);
         # `forever`/time-bounded/`once`/pending/static rows are left alone.
-        await self.app.state.model.egress_consent.clear_restart_duration(
+        await self.app.state.model.egress_consent.clear_tilrestart_duration(
             workspace_id
         )
 

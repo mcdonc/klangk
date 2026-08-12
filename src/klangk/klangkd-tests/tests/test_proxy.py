@@ -1087,7 +1087,7 @@ class TestNfqueueCallback:
     ):
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value=("allow", "restart"))
+        client.request = AsyncMock(return_value=("allow", "tilrestart"))
         learned = []
         monkeypatch.setattr(
             proxy,
@@ -1108,7 +1108,7 @@ class TestNfqueueCallback:
     async def test_allow_names_host_from_ip_map(self, proxy, monkeypatch):
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value=("allow", "restart"))
+        client.request = AsyncMock(return_value=("allow", "tilrestart"))
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._record_hosts(
@@ -1194,7 +1194,7 @@ class TestNfqueueCallback:
         # allow is a plain in-memory IP learn (no domain-level coverage).
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value=("allow", "restart"))
+        client.request = AsyncMock(return_value=("allow", "tilrestart"))
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._record_hosts([("1.2.3.4", 60)], "example.com")
@@ -1255,7 +1255,7 @@ class TestNfqueueCallback:
     async def test_unparseable_dest_drops(self, proxy, monkeypatch):
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value=("allow", "restart"))
+        client.request = AsyncMock(return_value=("allow", "tilrestart"))
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(b"\x00" * 24)  # version nibble 0 -> parse_dest ("", 0)
         await self._decide(proxy, pkt, client)
@@ -1269,7 +1269,7 @@ class TestNfqueueCallback:
         # cached verdict so it doesn't re-prompt the decider.
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value=("allow", "restart"))
+        client.request = AsyncMock(return_value=("allow", "tilrestart"))
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
@@ -1515,7 +1515,7 @@ def test_duration_ttl_mapping(proxy):
     assert proxy._duration_ttl("5m") == 300
     assert proxy._duration_ttl("1h") == 3600
     assert proxy._duration_ttl("1w") == 604800
-    assert proxy._duration_ttl("restart") == proxy._DURATION_FOREVER
+    assert proxy._duration_ttl("tilrestart") == proxy._DURATION_FOREVER
     assert proxy._duration_ttl("forever") == proxy._DURATION_FOREVER
     assert proxy._duration_ttl("bogus") is None  # unknown -> None
 

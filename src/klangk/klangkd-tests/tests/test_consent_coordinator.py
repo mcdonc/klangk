@@ -102,7 +102,7 @@ def _active_row(req_id="rid-1", decision="allowed", host="1.2.3.4"):
         "dest_host": host,
         "dest_port": 443,
         "decision": decision,
-        "duration": "restart",
+        "duration": "tilrestart",
     }
 
 
@@ -315,7 +315,7 @@ class TestConsentCoordinatorFanout:
         row = _request()
         row["decision"] = "allowed"
         row["duration"] = (
-            "restart"  # a real in-effect duration (once would be excluded)
+            "tilrestart"  # a real in-effect duration (once would be excluded)
         )
         app = _app(
             request=_request(),
@@ -425,7 +425,7 @@ class TestConsentCoordinatorRules:
             "dest_host": "allow.com",
             "dest_port": 443,
             "decision": "allowed",
-            "duration": "restart",
+            "duration": "tilrestart",
         }
         denied = {
             "id": "d1",
