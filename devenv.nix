@@ -376,9 +376,9 @@ in
   '';
 
   # Bare `playwright` command that always uses the LOCAL binary pinned in
-  # src/frontend/e2e-tests/package.json (@playwright/test 1.60.0). Use this
+  # src/frontend/e2e-tests/package.json (@playwright/test 1.59.1). Use this
   # instead of `npx playwright`, which resolves to a newer cached version
-  # (1.61.x) and fails with "two different versions of @playwright/test".
+  # (1.60.x) and fails with "two different versions of @playwright/test".
   # All extra args are forwarded. e.g.
   #   devenv shell -- playwright test \
   #     --config=src/frontend/e2e-tests/demo/playwright.demo.config.ts -g clanker
