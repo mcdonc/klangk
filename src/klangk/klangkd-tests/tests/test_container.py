@@ -1540,6 +1540,46 @@ class TestStartContainer:
         assert len(creates) == 1  # degraded to unrestricted, no sidecar
         assert workspace["id"] not in self.registry._ws_with_network_sidecar
 
+    async def test_allow_workspace_passes_rejected_domains_to_sidecar(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2406: allow mode is default-permit but rejected_domains is STILL
+        # enforced -- the reject list is NXDOMAIN'd at the sidecar DNS layer
+        # (proxy rejected_for), upstream of the consent allow path. Pin that an
+        # allow-mode workspace passes KLANGKNETWORK_EGRESS_REJECT into the
+        # sidecar env so the proxy can enforce it (a regression here would let
+        # allow mode silently drop the deny-list).
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                egress_mode="allow",
+                rejected_domains=["evil.com:443"],
+            )
+        assert len(creates) == 2  # sidecar + workspace
+        assert creates[0]["name"].startswith("klangk-net-")
+        assert "KLANGKNETWORK_EGRESS_REJECT=evil.com:443" in creates[0]["env"]
+        assert creates[1]["network"] == "container:net-cid"
+
     async def test_interactive_workspace_without_sidecar_image_refuses_to_start(
         self, workspace, tmp_path, monkeypatch
     ):
