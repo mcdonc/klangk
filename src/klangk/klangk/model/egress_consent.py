@@ -36,6 +36,11 @@ DECISIONS = frozenset(
 # mutation means the allow won't survive restart despite the audit row here;
 # the deny counterpart (`rejected_domains`) is #2369.
 DURATION_ONCE = "once"
+# Test-only short duration (#2363, subsumed by #2392): accepted by the
+# validator + honored by the sidecar so a timed verdict's expiry can be
+# exercised in seconds, but deliberately kept OUT of the human-facing
+# duration selectors (CLI TUI + Flutter). Programmatic/test callers only.
+DURATION_5S = "5s"
 DURATION_5M = "5m"
 DURATION_15M = "15m"
 DURATION_1H = "1h"
@@ -46,6 +51,7 @@ DURATION_FOREVER = "forever"
 DURATIONS = frozenset(
     {
         DURATION_ONCE,
+        DURATION_5S,
         DURATION_5M,
         DURATION_15M,
         DURATION_1H,
@@ -213,6 +219,7 @@ class EgressConsentModel:
     # (#2328). `once`/`tilrestart`/`forever` are not time-bounded (handled
     # separately in :meth:`_duration_in_effect`), so they're absent here.
     _DURATION_SECONDS = {
+        DURATION_5S: 5,
         DURATION_5M: 300,
         DURATION_15M: 900,
         DURATION_1H: 3600,

@@ -1287,6 +1287,17 @@ class ContainerRegistry:
             # explicitly so the two can't diverge.
             f"KLANGKNETWORK_EGRESS_MARK={_NETWORK_SIDECAR_MARK}",
         ]
+        # Forward the learned-IP TTL floor + sweep cadence when the operator
+        # (or a test) sets them. The sidecar defaults (MIN_TTL=30s, sweep=5s,
+        # proxy.py) floor any verdict TTL, so the egress smoketest lowers both
+        # to make a short timed verdict expire in seconds. Absent -> defaults.
+        for _opt in (
+            "KLANGKNETWORK_EGRESS_MIN_TTL",
+            "KLANGKNETWORK_EGRESS_SWEEP_INTERVAL",
+        ):
+            _v = os.environ.get(_opt)
+            if _v:
+                env.append(f"{_opt}={_v}")
         binds = []
         # #2242: consent recording (deny + record) runs for every filtered
         # workspace when the monitor is wired, regardless of egress_mode -- the

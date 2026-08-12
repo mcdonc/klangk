@@ -954,7 +954,7 @@ class TestAppActions:
             await pilot.pause()
             opaque = [
                 d
-                for d in tui_consent.DURATIONS
+                for d in tui_consent.SELECTABLE_DURATIONS
                 if app.query_one(f"#dur-{d}", Button).styles.background.a != 0
             ]
             assert opaque == [tui_consent.DURATION_DEFAULT], (
