@@ -1321,6 +1321,196 @@ class TestStartContainer:
         ), creates[0]["env"]
         assert creates[1]["network"] == "container:net-cid"
 
+    async def test_interactive_workspace_starts_sidecar_without_lists(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2325: a workspace in interactive mode gets the network sidecar EVEN
+        # WITH EMPTY allowed_domains/rejected_domains -- every not-yet-
+        # approved egress is held for a consent decision (the "ask first"
+        # default posture). The sidecar gets an empty ALLOW (nothing
+        # pre-approved) and an empty REJECT; the proxy + NFQUEUE hold do the
+        # rest. The workspace runs --network container:<sidecar> just like a
+        # list-filtered workspace.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                egress_mode="interactive",
+            )
+        assert len(creates) == 2  # sidecar + workspace
+        assert creates[0]["name"].startswith("klangk-net-")
+        # Empty allow/reject lists: nothing pre-approved, nothing pre-rejected.
+        assert any(
+            e == "KLANGKNETWORK_EGRESS_ALLOW=" for e in creates[0]["env"]
+        ), creates[0]["env"]
+        assert any(
+            e == "KLANGKNETWORK_EGRESS_REJECT=" for e in creates[0]["env"]
+        ), creates[0]["env"]
+        assert creates[1]["network"] == "container:net-cid"
+        # Tracked so a later stop tears the sidecar down.
+        assert workspace["id"] in self.registry._ws_with_network_sidecar
+
+    async def test_static_workspace_no_lists_starts_unrestricted(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2325: static mode with NO lists is the one case that still starts
+        # unrestricted (no filtering requested). Only one container is
+        # created (the workspace) -- no network sidecar.
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                egress_mode="static",
+            )
+        assert len(creates) == 1  # workspace only, no sidecar
+        assert not creates[0]["name"].startswith("klangk-net-")
+        # No sidecar => the workspace is not --network container:<sidecar>.
+        assert not creates[0].get("network", "").startswith("container:")
+        assert workspace["id"] not in self.registry._ws_with_network_sidecar
+
+    async def test_interactive_workspace_without_sidecar_image_refuses_to_start(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2325: an interactive workspace needs the sidecar (it asked for "ask
+        # first"), so a missing sidecar image must fail-closed -- NEVER start
+        # unrestricted (that would silently disable the interactive posture).
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "network_sidecar_image", ""
+        )
+        with patch_podman(self.registry):
+            with pytest.raises(podman.PodmanError):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    egress_mode="interactive",
+                )
+
+    async def test_interactive_workspace_refuses_empty_userns(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2325: an interactive workspace runs behind the same sidecar, so the
+        # #2264 SO_MARK-bypass userns-isolation guard applies to it too. An
+        # empty KLANGKD_USERNS would share the sidecar's userns and reopen the
+        # bypass -- fail-closed.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        monkeypatch.setattr(self.registry.app.state.settings, "userns", "")
+        with patch_podman(self.registry):
+            with pytest.raises(podman.PodmanError) as exc:
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    egress_mode="interactive",
+                )
+        assert "KLANGKD_USERNS" in str(exc.value)
+
+    async def test_interactive_workspace_with_allow_sudo_drops_net_raw(
+        self, workspace, tmp_path, monkeypatch, caplog
+    ):
+        # #2325 + #2276 (B): an interactive workspace is egress-filtered (every
+        # connection held), so the sudo->root net_raw/SO_MARK defense-in-depth
+        # applies: net_raw is dropped, not added.
+        import logging
+
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            with caplog.at_level(logging.INFO, logger="klangk.container"):
+                await self.registry.start_container(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    egress_mode="interactive",
+                )
+        ws = creates[1]  # creates[0] is the network sidecar
+        assert ws["cap_drop"] == ["net_raw"]
+        assert "net_raw" not in ws.get("cap_add", [])
+
+    async def test_reuse_running_interactive_container_retracks_sidecar(
+        self, workspace, monkeypatch
+    ):
+        # #2325: reconnecting to a running INTERACTIVE workspace (no lists)
+        # must re-track its sidecar so a later stop tears it down instead of
+        # leaking it. Mirror of the filtered re-track test, but via egress_mode.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        assert workspace["id"] not in self.registry._ws_with_network_sidecar
+        with patch_podman(
+            self.registry, inspect_container=_running(True)
+        ) as p:
+            cid, status = await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                existing_container_id="existing-cid",
+                egress_mode="interactive",
+            )
+        assert cid == "existing-cid"
+        assert status == "connected"
+        p.create_container.assert_not_awaited()
+        assert workspace["id"] in self.registry._ws_with_network_sidecar
+
     async def test_filtered_workspace_publishes_host_ports_on_sidecar(
         self, workspace, tmp_path, monkeypatch
     ):

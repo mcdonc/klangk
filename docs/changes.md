@@ -32,6 +32,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Interactive egress consent no longer gated on `allowed_domains` (#2325).**
+  A workspace in `egress_mode=interactive` (the default) now always runs the
+  FQDN network sidecar and holds every not-yet-approved egress for a consent
+  decision, even with an empty `allowed_domains`; `allowed_domains` now means
+  "pre-approved, skip consent" rather than the prerequisite for consent to
+  exist. Static mode with no lists stays unrestricted. Because every
+  interactive workspace now needs a sidecar, an interactive workspace
+  **fails closed** (refuses to start) if `network_sidecar_image` is unset or
+  `KLANGKD_USERNS` is empty, instead of starting unrestricted.
+
 - **`rejected_domains` workspace setting + sidecar enforcement (#2367).**
   The deny counterpart to `allowed_domains`: a persisted, host-only list whose
   names the network sidecar NXDOMAINs unconditionally (no resolution, no SYN,

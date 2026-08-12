@@ -8,6 +8,7 @@ import time
 
 from . import podman
 from . import workspace_settings as ws_settings
+from .model.workspaces import EGRESS_MODE_INTERACTIVE
 from .podman import PodmanError
 
 logger = logging.getLogger(__name__)
@@ -1998,6 +1999,18 @@ class ContainerRegistry:
                 f"list: {sorted(self.allowed_images)}"
             )
 
+        # #2325: a workspace needs the FQDN network sidecar whenever it is
+        # egress-filtered. That's either (a) it declares an allow/reject list
+        # (the sidecar NXDOMAINs/holds those names), or (b) it is in
+        # interactive mode, which holds EVERY not-yet-approved egress for a
+        # consent decision even with empty lists (the "ask first" default
+        # posture). Static mode with no lists stays unrestricted (no point
+        # filtering nothing). Used by both the reconnect re-track below and
+        # the create-path sidecar start further down.
+        needs_sidecar = egress_mode == EGRESS_MODE_INTERACTIVE or bool(
+            allowed_domains or rejected_domains
+        )
+
         # Reuse a running container or remove a stopped one.
         if existing_container_id:
             result = await self._handle_existing_container(
@@ -2009,14 +2022,14 @@ class ContainerRegistry:
                 setup_state=setup_state,
             )
             if result is not None:
-                # Re-track a filtered workspace's network sidecar on reconnect.
+                # Re-track a sidecar'd workspace's network sidecar on reconnect.
                 # _ws_with_network_sidecar is in-memory and lost on a process
                 # restart; without this, a reconnect-then-stop would skip
                 # _stop_network_sidecar (only the create path added it before)
                 # and leak the sidecar until the next start's force-remove or
-                # the instance reaper. A filtered workspace always has a live
-                # sidecar (fail-closed), so allowed_domains set => re-track.
-                if allowed_domains or rejected_domains:
+                # the instance reaper. A sidecar'd workspace always has a live
+                # sidecar (fail-closed), so needs_sidecar => re-track.
+                if needs_sidecar:
                     self._ws_with_network_sidecar.add(workspace_id)
                 return result
 
@@ -2131,31 +2144,33 @@ class ContainerRegistry:
         # Egress filtering (#1365): the FQDN network sidecar is the only egress
         # model. The OCI-hook "static" model was dropped (#2254 review) —
         # maintaining two complete models was more complexity than value. A
-        # filtered workspace (allowed_domains or rejected_domains set) runs
+        # sidecar'd workspace (needs_sidecar: interactive mode, or an
+        # allow/reject list set) runs
         # --network container:<network sidecar> (the network sidecar's proxy owns the rules;
         # the workspace is unprivileged). Fail-CLOSED (#2254 review B2): a
-        # workspace that declared an allow-list never starts unrestricted —
+        # workspace that needs filtering never starts unrestricted —
         # silently ignoring it would disable a security control the user
-        # requested, so a missing/unstartable network sidecar raises
-        # instead. With neither allowed_domains nor rejected_domains the
-        # workspace starts
-        # unrestricted (no filtering requested).
+        # requested (an interactive workspace asked for "ask first"; an
+        # allow-listed one asked for filtering), so a missing/unstartable
+        # network sidecar raises instead. Static mode with no lists is the
+        # one case that starts unrestricted (no filtering requested) (#2325).
         # #2276 (B): whether net_raw must be dropped for this workspace. A
-        # filtered workspace whose user can sudo to root would let root use the
+        # sidecar'd workspace whose user can sudo to root would let root use the
         # net_raw that enable_ping grants to setsockopt(SO_MARK) and bypass the
         # egress filter; dropping net_raw (from the bounding set) closes that
         # for root too. Applied in the cap_add/cap_drop logic after this branch.
         drop_net_raw = False
-        if allowed_domains or rejected_domains:
+        if needs_sidecar:
             if not self._network_sidecar_enabled():
                 raise podman.PodmanError(
                     500,
-                    f"workspace {workspace_id[:8]} declares allowed_domains "
-                    "or rejected_domains but the network sidecar is not "
+                    f"workspace {workspace_id[:8]} is egress-filtered "
+                    "(interactive mode, or allowed_domains/rejected_domains "
+                    "set) but the network sidecar is not "
                     "configured "
                     "(network_sidecar_image is empty); refusing to start "
-                    "unfiltered. Clear allowed_domains/rejected_domains or "
-                    "configure "
+                    "unfiltered. Switch the workspace to static mode with no "
+                    "lists, or configure "
                     "network_sidecar_image.",
                 )
             # The #2264 SO_MARK-bypass guard is user-namespace isolation: the
@@ -2169,15 +2184,16 @@ class ContainerRegistry:
             if not self.app.state.settings.userns:
                 raise podman.PodmanError(
                     500,
-                    f"workspace {workspace_id[:8]} declares allowed_domains "
-                    "or rejected_domains (egress filtering), which requires a "
+                    f"workspace {workspace_id[:8]} is egress-filtered "
+                    "(interactive mode, or allowed_domains/rejected_domains "
+                    "set), which requires a "
                     "non-empty "
                     "KLANGKD_USERNS so the workspace runs in a user namespace "
                     "distinct from the network sidecar's. An empty userns would "
                     "share the sidecar's userns and reopen the SO_MARK egress "
                     "bypass. Set KLANGKD_USERNS (default "
-                    "keep-id:uid=1000,gid=1000) or clear "
-                    "allowed_domains/rejected_domains.",
+                    "keep-id:uid=1000,gid=1000) or switch the workspace to "
+                    "static mode with no lists.",
                 )
             network_sidecar_id = await self._start_network_sidecar(
                 workspace_id,
