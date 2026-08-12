@@ -260,7 +260,8 @@ class ConsentCoordinator:
         still works; only the cross-restart durability is at risk.
 
         Port-less verdicts (``dest_port`` falsy, e.g. an ICMP ping) are NOT
-        persisted -- a bare host would broaden to all-ports + subdomains.
+        persisted -- a port-less bare host would broaden to all-ports (apex
+        only, since bare is now exact).
         Direct-IP ``dest_host`` values are likewise poor candidates (the
         DNS-based allow-list never re-matches an IP literal after restart),
         but are left as-is here rather than special-cased.
@@ -276,9 +277,9 @@ class ConsentCoordinator:
         if not port:
             # Port-scoped only (#2368): a port-less verdict (e.g. an ICMP
             # ping, dest_port 0) must not be persisted as a bare host -- the
-            # sidecar treats a port-less spec as all-ports + apex/subdomains,
-            # durably broadening one connection's consent to everything on
-            # that name. The deciding connection still gets its in-memory
+            # sidecar treats a port-less spec as all-ports on the apex (bare is
+            # exact), durably broadening one connection's consent to every port
+            # on that host. The deciding connection still gets its in-memory
             # ACCEPT for this session; durability is simply withheld.
             logger.info(
                 "consent: forever allow of port-less dest %s ws=%s not "

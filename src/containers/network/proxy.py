@@ -227,7 +227,7 @@ SPECS = parse_specs()
 # (in-memory); the persisted allowed_domains entry (#2368) covers the next
 # restart. Touched only on the event-loop thread (the NFQUEUE consumer is
 # loop-driven, and ports_for runs in the DNS loop) -- no lock, like SPECS.
-_FOREVER_HOSTS: list[tuple[str, int | None, bool]] = []
+_FOREVER_HOSTS: list[tuple[str, int | None, str]] = []
 
 # Learned IPs: {ip: {"expire": epoch, "ports": set[int | None], "host": str}}.
 # ``ports`` holds the ACCEPT rule ports (a ``None`` is all-ports); ``host`` is
@@ -313,9 +313,9 @@ def _host_matches(qname: str, host: str, mode: str) -> bool:
     """
     if mode == _SUBDOMAINS:
         return qname.endswith("." + host)
-    if mode == _EXACT:
-        return qname == host
-    return qname == host or qname.endswith("." + host)  # _INCLUSIVE
+    if mode == _INCLUSIVE:
+        return qname == host or qname.endswith("." + host)
+    return qname == host  # _EXACT (and the safe default for an unknown mode)
 
 
 def ports_for(qname: str) -> set[int] | None:
