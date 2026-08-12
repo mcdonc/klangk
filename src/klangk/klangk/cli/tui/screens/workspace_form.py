@@ -53,6 +53,22 @@ def _collect_settings(screen: Screen) -> dict | None:
     return settings or None
 
 
+# Egress-mode picker options for the create/edit Netfilter tab (#2409).
+# The CLI is an isolated client (AGENTS.md "CLI subpackage isolation") and
+# cannot import the server's EGRESS_MODE_* constants, so the mode strings are
+# duplicated here -- they are part of the public HTTP API contract
+# (api/workspaces.py CreateWorkspaceRequest / UpdateWorkspaceRequest).
+EGRESS_MODE_INTERACTIVE = "interactive"
+EGRESS_MODE_STATIC = "static"
+EGRESS_MODE_ALLOW = "allow"
+EGRESS_MODE_DEFAULT = EGRESS_MODE_INTERACTIVE
+_EGRESS_MODE_OPTIONS = [
+    (Text("interactive (ask first)"), EGRESS_MODE_INTERACTIVE),
+    (Text("static (deny + record)"), EGRESS_MODE_STATIC),
+    (Text("allow (default-permit)"), EGRESS_MODE_ALLOW),
+]
+
+
 class CreateWorkspaceScreen(TabSkipMixin, Screen):
     """Full-screen workspace create form (parity with Flutter
     ``CreateWorkspaceDialog``).
@@ -83,6 +99,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "nix",
         "mount_input",
         "env_input",
+        "egress_mode",
         "allow_input",
         "reject_input",
         "idle_timeout",
@@ -106,7 +123,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "general_pane": "name",
         "mounts_pane": "mount_input",
         "env_pane": "env_input",
-        "netfilter_pane": "allow_input",
+        "netfilter_pane": "egress_mode",
         "resources_pane": "idle_timeout",
         "advanced_pane": "command",
     }
@@ -202,6 +219,15 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                     )
                     yield OptionList(id="env_list", classes="editor-list")
                 with TabPane("Netfilter", id="netfilter_pane"):
+                    yield Horizontal(
+                        Static("Egress mode"),
+                        Select(
+                            _EGRESS_MODE_OPTIONS,
+                            value=EGRESS_MODE_DEFAULT,
+                            id="egress_mode",
+                        ),
+                        classes="field-row",
+                    )
                     yield Static(
                         "Allowed Domains  "
                         "(host or host:port; empty = unrestricted)",
@@ -515,6 +541,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
         rejected_domains = list(self._rejected_domains) or None
+        egress_mode = self.query_one("#egress_mode", Select).value
         settings = _collect_settings(self)
         if self._nix_available and self.query_one("#nix", Checkbox).value:
             settings = {**(settings or {}), "nix": True}
@@ -530,6 +557,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                 allowed_domains,
                 rejected_domains,
                 settings,
+                egress_mode,
             ),
             exit_on_error=False,
         )
@@ -546,6 +574,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         allowed_domains,
         rejected_domains,
         settings,
+        egress_mode,
     ) -> None:
         try:
             ws = await asyncio.to_thread(
@@ -560,6 +589,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                 allowed_domains=allowed_domains,
                 rejected_domains=rejected_domains,
                 settings=settings,
+                egress_mode=egress_mode,
             )
         except AuthError:
             self.app.session_expired()
@@ -655,6 +685,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "nix",
         "mount_input",
         "env_input",
+        "egress_mode",
         "allow_input",
         "reject_input",
         "idle_timeout",
@@ -678,7 +709,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "general_pane": "name",
         "mounts_pane": "mount_input",
         "env_pane": "env_input",
-        "netfilter_pane": "allow_input",
+        "netfilter_pane": "egress_mode",
         "resources_pane": "idle_timeout",
         "advanced_pane": "command",
     }
@@ -715,6 +746,9 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         self._rejected_domains: list[str] = list(
             workspace.rejected_domains or []
         )
+        # #2409: the workspace's egress mode, seeded for the Netfilter
+        # picker. Falls back to the deploy default when unset.
+        self._egress_mode: str = workspace.egress_mode or EGRESS_MODE_DEFAULT
         # In-place editor state (#1778): when set, the next Add *replaces*
         # the item at this index/key instead of appending. Cleared on Add.
         self._editing_mount: int | None = None
@@ -795,6 +829,15 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
                     )
                     yield OptionList(id="env_list", classes="editor-list")
                 with TabPane("Netfilter", id="netfilter_pane"):
+                    yield Horizontal(
+                        Static("Egress mode"),
+                        Select(
+                            _EGRESS_MODE_OPTIONS,
+                            value=self._egress_mode,
+                            id="egress_mode",
+                        ),
+                        classes="field-row",
+                    )
                     yield Static(
                         "Allowed Domains  "
                         "(host or host:port; empty = unrestricted)",
@@ -1217,6 +1260,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
         rejected_domains = list(self._rejected_domains) or None
+        egress_mode = self.query_one("#egress_mode", Select).value
         settings = _collect_settings(self)
         # #2233: emit an explicit nix value (True/False) whenever the
         # toggle is shown. PUT settings is a full-replace bag, so we must
@@ -1241,6 +1285,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             "env": env,
             "allowed_domains": allowed_domains,
             "rejected_domains": rejected_domains,
+            "egress_mode": egress_mode,
         }
         if settings is not None:
             body["settings"] = settings
@@ -1256,6 +1301,9 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             or (command or None) != (ws.service_command or None)
             or allowed_domains != orig_domains
             or rejected_domains != orig_rejected
+            # #2409: egress_mode is a container-create-time field (it sets
+            # up --network container:<sidecar>), so a change needs a restart.
+            or egress_mode != (ws.egress_mode or EGRESS_MODE_DEFAULT)
             # #2233: the per-workspace /nix mount is set up at create
             # time, so toggling it on a running workspace needs a restart.
             or (

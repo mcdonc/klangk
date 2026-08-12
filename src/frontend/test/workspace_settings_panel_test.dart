@@ -1217,6 +1217,97 @@ void main() {
     });
   });
 
+  group('egress mode (#2409)', () {
+    testWidgets('seeds the picker from the workspace and saves a change',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                'id': _wsId,
+                'name': 'my-ws',
+                'image': 'klangk-pi',
+                'service_command': 'pi',
+                'mounts': <String>['/host:/cont'],
+                'env': <String, String>{'FOO': 'bar'},
+                'egress_mode': 'static',
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Seeded from the workspace (static), not the default interactive.
+      expect(find.text('static (deny + record)'), findsOneWidget);
+      // Open the egress picker and switch to allow.
+      await _scrollToAndTap(tester, find.text('static (deny + record)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('allow (default-permit)').last);
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['egress_mode'], 'allow');
+      // Drain the 2s auto-clear timer.
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'changing egress mode on a running container shows the restart notice',
+        (tester) async {
+      testAuthHttpClientOverride = _client(
+        workspace: {
+          ..._workspace,
+          'running': true,
+          'egress_mode': 'interactive',
+        },
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Switch interactive -> static (a create-time change).
+      await _scrollToAndTap(tester, find.text('interactive (ask first)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('static (deny + record)').last);
+      await tester.pumpAndSettle();
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Settings saved'), findsOneWidget);
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
   group('auto start', () {
     testWidgets('hides the checkbox when auto-start is not allowed',
         (tester) async {

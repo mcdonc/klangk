@@ -72,6 +72,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _rejectedDomains = <String>[];
   bool _autoStart = false;
   bool _nixEnabled = false;
+  // #2409: per-workspace egress mode. 'interactive' is the server default for
+  // new workspaces (consent-gated egress on out of the box).
+  String _egressMode = 'interactive';
   String? _errorMessage;
   String? _mountError;
   String? _envError;
@@ -223,6 +226,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     if (_rejectedDomains.isNotEmpty) {
       body['rejected_domains'] = List<String>.from(_rejectedDomains);
     }
+    body['egress_mode'] = _egressMode;
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
     }
@@ -368,6 +372,34 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                       icon: Icons.shield,
                       title: 'Netfilter',
                       children: [
+                        DropdownButtonFormField<String>(
+                          initialValue: _egressMode,
+                          decoration: InputDecoration(
+                            labelText: 'Egress Mode',
+                            labelStyle: _labelStyle,
+                            floatingLabelStyle: _labelStyle,
+                            floatingLabelBehavior: FloatingLabelBehavior.always,
+                            border: const OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'interactive',
+                              child: Text('interactive (ask first)'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'static',
+                              child: Text('static (deny + record)'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'allow',
+                              child: Text('allow (default-permit)'),
+                            ),
+                          ],
+                          onChanged: (v) => setState(
+                            () => _egressMode = v ?? 'interactive',
+                          ),
+                        ),
+                        const SizedBox(height: 16),
                         ..._buildAllowedDomainsEditor(),
                         const SizedBox(height: 16),
                         ..._buildRejectedDomainsEditor(),

@@ -1747,6 +1747,31 @@ class TestWorkspaceRoutes:
         assert data["name"] == "test-ws"
         assert "id" in data
 
+    async def test_create_with_allow_egress_mode(self, client, user):
+        # #2409: 'allow' is a valid egress_mode at create time and is
+        # persisted on the workspace.
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "allow-ws", "egress_mode": "allow"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["egress_mode"] == "allow"
+
+    async def test_create_with_unknown_egress_mode_rejected(
+        self, client, user
+    ):
+        # #2409: the Literal is allow/static/interactive; anything else is a
+        # 422 (pydantic validation), not a silent accept.
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "bad", "egress_mode": "permissive"},
+        )
+        assert resp.status_code == 422
+
     async def test_create_duplicate(self, client, user):
         headers = await _auth_headers(client)
         await client.post(
@@ -2485,6 +2510,35 @@ class TestWorkspaceRoutes:
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["name"] == "renamed"
         assert match[0]["service_command"] == "pi"
+
+    async def test_update_workspace_egress_mode(self, client, user):
+        # #2409: egress_mode is editable (PUT), taking effect on next start.
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "mode-ws"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        # Default is interactive; switch to allow, then static.
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"egress_mode": "allow"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["egress_mode"] == "allow"
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"egress_mode": "static"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["egress_mode"] == "static"
 
     async def test_update_workspace_allowed_domains(self, client, user):
         headers = await _auth_headers(client)

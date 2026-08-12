@@ -44,6 +44,13 @@ operators or integrators to act when upgrading.
   set up, so it never fail-closes. `klangk sandbox` now creates `allow`-mode
   workspaces instead of the prior static-no-list-unrestricted degenerate case.
 
+- **Egress-mode picker in the TUI + Flutter create/edit dialogs (#2409).** The
+  workspace create and edit forms now expose an egress-mode selector
+  (allow / static / interactive, default `interactive`), so the mode is
+  settable from the clients rather than API-only; a change on a running
+  workspace applies on the next start/restart (both clients prompt). The
+  `allow` mode itself landed in #2406.
+
 - **`rejected_domains` in the TUI + Flutter workspace dialogs (#2386).** The
   static deny-list is now editable end to end, mirroring `allowed_domains`:
   the TUI create/edit forms (a second list editor in the Netfilter pane, with

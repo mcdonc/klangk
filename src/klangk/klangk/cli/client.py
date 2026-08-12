@@ -176,6 +176,7 @@ class Workspace:
     health_check: str | None = None
     allowed_domains: list[str] | None = None
     rejected_domains: list[str] | None = None
+    egress_mode: str | None = None
     owner_email: str | None = None
     running: bool = False
     health: str | None = None
@@ -484,6 +485,7 @@ class KlangkClient:
             health_message=w.get("health_message"),
             allowed_domains=w.get("allowed_domains"),
             rejected_domains=w.get("rejected_domains"),
+            egress_mode=w.get("egress_mode"),
             service_started_at=w.get("service_started_at"),
             settings=w.get("settings"),
         )

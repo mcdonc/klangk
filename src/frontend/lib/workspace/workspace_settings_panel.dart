@@ -231,6 +231,12 @@ bool _hasCreateTimeFieldChanged(
       prev['rejected_domains'], fields['rejected_domains'])) {
     return true;
   }
+  // egress_mode — the network sidecar is set up at container create
+  // time, so switching modes takes effect on the next start/restart (#2409).
+  if ((fields['egress_mode'] ?? 'interactive') !=
+      (prev['egress_mode'] ?? 'interactive')) {
+    return true;
+  }
   // nix — the per-workspace /nix mount is set up at container create
   // time, so toggling it won't take effect until restart (#2233). Only
   // compare when this save actually emitted a nix value (the toggle was
@@ -314,6 +320,8 @@ class _SettingsFormState extends State<_SettingsForm> {
   late Map<String, String> _envVars;
   late List<String> _allowedDomains;
   late List<String> _rejectedDomains;
+  // #2409: per-workspace egress mode, seeded from the workspace.
+  late String _egressMode;
   bool _autoStart = false;
   // #2233: per-workspace nix toggle (Mount /nix dir). Only meaningful
   // when the server has a nix backend (widget.nixAvailable).
@@ -375,6 +383,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       (widget.workspace['rejected_domains'] as List?)?.cast<String>() ??
           <String>[],
     );
+    _egressMode = (widget.workspace['egress_mode'] as String?) ?? 'interactive';
     _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
     final settings =
         (widget.workspace['settings'] as Map<String, dynamic>?) ?? {};
@@ -455,6 +464,11 @@ class _SettingsFormState extends State<_SettingsForm> {
             <String>[],
       );
     }
+    if (old.workspace['egress_mode'] != widget.workspace['egress_mode']) {
+      // coverage:ignore-start
+      _egressMode =
+          (widget.workspace['egress_mode'] as String?) ?? 'interactive';
+    } // coverage:ignore-end
   }
 
   @override
@@ -516,6 +530,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       'env': _envVars.isNotEmpty ? _envVars : null,
       'allowed_domains': _allowedDomains.isNotEmpty ? _allowedDomains : null,
       'rejected_domains': _rejectedDomains.isNotEmpty ? _rejectedDomains : null,
+      'egress_mode': _egressMode,
       if (widget.allowAutostart) 'auto_start': _autoStart,
       if (settings.isNotEmpty) 'settings': settings,
     });
@@ -811,6 +826,33 @@ class _SettingsFormState extends State<_SettingsForm> {
       icon: Icons.shield,
       title: 'Netfilter',
       children: [
+        DropdownButtonFormField<String>(
+          initialValue: _egressMode,
+          decoration: InputDecoration(
+            labelText: 'Egress Mode',
+            labelStyle: labelStyle,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            border: const OutlineInputBorder(),
+          ),
+          items: const [
+            DropdownMenuItem(
+              value: 'interactive',
+              child: Text('interactive (ask first)'),
+            ),
+            DropdownMenuItem(
+              value: 'static',
+              child: Text('static (deny + record)'),
+            ),
+            DropdownMenuItem(
+              value: 'allow',
+              child: Text('allow (default-permit)'),
+            ),
+          ],
+          onChanged: (v) => setState(
+            () => _egressMode = v ?? 'interactive',
+          ),
+        ),
+        const SizedBox(height: 16),
         _buildAllowedDomainsEditor(labelStyle),
         const SizedBox(height: 16),
         _buildRejectedDomainsEditor(labelStyle),
