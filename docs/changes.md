@@ -762,6 +762,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace export/import now round-trips `egress_mode` (#2402).** The
+  export endpoint previously omitted `egress_mode` from the serialized
+  metadata, and import did not read it, so a `static` (or `allow`)
+  workspace silently imported as the deploy default `interactive` —
+  starting a network sidecar and gating egress on consent with no
+  indication. Export now serializes `egress_mode`; import restores it,
+  validating it against the allowed `EGRESS_MODES` (`static` |
+  `interactive` | `allow`) and falling back to the deploy default on an
+  unknown or missing value.
 - **A timed consent `allow` no longer outlives its verdict (#2408).** The
   network sidecar tracked one TTL per learned IP, shared between the consent
   rule's lifetime and the DNS host-mapping's lifetime. A re-resolution (every
