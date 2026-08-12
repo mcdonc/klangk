@@ -1888,50 +1888,32 @@ class TestDropForHost:
         # resolved IP + the host string itself (direct-IP-allow candidate)
         assert ips == {"1.2.3.4", "evil.test"}
 
-    def test_clear_forever_state_allow_drops_forever_hosts_and_cache(
-        self, proxy
-    ):
-        # An allowed revoke clears _FOREVER_HOSTS (in-session coverage from
-        # #2372) + cached verdicts for the host's IPs.
+    def test_drop_forever_hosts_removes_host_entries(self, proxy):
+        # An allowed revoke drops the host's _FOREVER_HOSTS coverage (in-session
+        # forever-allow from #2372); other hosts are left intact.
         proxy._FOREVER_HOSTS.clear()
-        proxy._VERDICT_CACHE.clear()
         proxy._FOREVER_HOSTS[:] = [
             ("evil.test", 443, proxy._EXACT),
             ("other.test", 80, proxy._EXACT),
         ]
-        # _VERDICT_CACHE keyed by (src_ip, src_port, dst, port); dst is key[2].
+        proxy._drop_forever_hosts("Evil.TEST")  # case-insensitive
+        assert proxy._FOREVER_HOSTS == [("other.test", 80, proxy._EXACT)]
+
+    def test_clear_verdict_cache_drops_host_entries(self, proxy):
+        # Cached verdicts keyed by (src_ip, src_port, dst, port); dst is key[2].
+        # Only the revoked host's IPs are cleared; an unrelated IP is kept.
+        proxy._VERDICT_CACHE.clear()
         proxy._VERDICT_CACHE[("10.0.0.1", 1, "1.2.3.4", 443)] = ("allow", 9e9)
         proxy._VERDICT_CACHE[("10.0.0.1", 2, "5.6.7.8", 443)] = ("deny", 9e9)
-        proxy._clear_forever_state(
-            "evil.test", "allowed", {"1.2.3.4", "evil.test"}
-        )
-        assert proxy._FOREVER_HOSTS == [("other.test", 80, proxy._EXACT)]
+        proxy._clear_verdict_cache({"1.2.3.4", "evil.test"})
         assert ("10.0.0.1", 1, "1.2.3.4", 443) not in proxy._VERDICT_CACHE
-        # an unrelated IP's cached verdict is left intact
         assert ("10.0.0.1", 2, "5.6.7.8", 443) in proxy._VERDICT_CACHE
 
-    def test_clear_forever_state_deny_clears_cache_only(self, proxy):
-        # A denied revoke clears cached verdicts for the host's IPs; _FOREVER_HOSTS
-        # is left untouched (deny has no forever-host entry, but is not cleared).
-        proxy._FOREVER_HOSTS.clear()
+    def test_clear_verdict_cache_empty_ips_is_noop(self, proxy):
+        # No resolved IPs (host never seen / swept) -> nothing to clear.
         proxy._VERDICT_CACHE.clear()
-        proxy._FOREVER_HOSTS.append(("evil.test", 443, proxy._EXACT))
-        proxy._VERDICT_CACHE[("10.0.0.1", 1, "1.2.3.4", 443)] = ("deny", 9e9)
-        proxy._clear_forever_state(
-            "evil.test", "denied", {"1.2.3.4", "evil.test"}
-        )
-        assert proxy._FOREVER_HOSTS == [("evil.test", 443, proxy._EXACT)]
-        assert proxy._VERDICT_CACHE == {}
-
-    def test_clear_forever_state_empty_ips_is_noop(self, proxy):
-        # No resolved IPs (host never seen) -> nothing to clear from the cache;
-        # _FOREVER_HOSTS still cleared for an allow.
-        proxy._FOREVER_HOSTS.clear()
-        proxy._VERDICT_CACHE.clear()
-        proxy._FOREVER_HOSTS.append(("ghost.test", 443, proxy._EXACT))
         proxy._VERDICT_CACHE[("10.0.0.1", 1, "9.9.9.9", 443)] = ("allow", 9e9)
-        proxy._clear_forever_state("ghost.test", "allowed", set())
-        assert proxy._FOREVER_HOSTS == []
+        proxy._clear_verdict_cache(set())
         assert proxy._VERDICT_CACHE == {
             ("10.0.0.1", 1, "9.9.9.9", 443): ("allow", 9e9)
         }
@@ -1940,8 +1922,9 @@ class TestDropForHost:
         self, proxy, tmp_path, monkeypatch
     ):
         # End-to-end (#2370): a forever-allow revoke's drop_rule clears the
-        # in-session _FOREVER_HOSTS + _VERDICT_CACHE (via the loop-side
-        # _clear_forever_state), else the next DNS resolution re-learns the host.
+        # in-session _FOREVER_HOSTS (BEFORE the iptables fork, so a racing SYN
+        # can't re-install a fresh ACCEPT during the window) + _VERDICT_CACHE
+        # (after), else the next DNS resolution re-learns the host.
         proxy._LEARNED.clear()
         proxy._FOREVER_HOSTS.clear()
         proxy._VERDICT_CACHE.clear()
