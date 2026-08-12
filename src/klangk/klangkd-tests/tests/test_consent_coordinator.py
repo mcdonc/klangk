@@ -49,6 +49,7 @@ def _app(
     pending_rows=None,
     active_rows=None,
     allowed_domains=None,
+    rejected_domains=None,
 ):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
@@ -70,13 +71,19 @@ def _app(
     workspaces = AsyncMock()
     workspaces.get_workspace = AsyncMock(
         return_value=(
-            {"egress_mode": egress_mode, "allowed_domains": allowed_domains}
+            {
+                "egress_mode": egress_mode,
+                "allowed_domains": allowed_domains,
+                "rejected_domains": rejected_domains,
+            }
             if workspace_exists
             else None
         )
     )
     workspaces.add_allowed_domain = AsyncMock(return_value=True)
     workspaces.add_rejected_domain = AsyncMock(return_value=True)
+    workspaces.remove_allowed_domain = AsyncMock(return_value=True)
+    workspaces.remove_rejected_domain = AsyncMock(return_value=True)
     # #2332: consent-pause state. Defaults: not paused (None), set succeeds.
     workspaces.get_consent_pause = AsyncMock(return_value=None)
     workspaces.set_consent_pause = AsyncMock(return_value=True)
@@ -220,6 +227,130 @@ class TestConsentCoordinatorRevoke:
         app.state.model.egress_consent.revoke = AsyncMock(return_value=None)
         coord = ConsentCoordinator(app)
         assert await coord.revoke("rid-1", "a@x") is False
+
+    async def test_revoke_forever_allow_retracts_allowed_domains(self):
+        # #2370: revoking a forever allow retracts the durable allowed_domains
+        # entry (host:port) so it does not re-apply on the next sidecar restart.
+        # The in-memory rules were cleared by the drop (mocked None here).
+        app = _app()
+        row = _active_row(decision="allowed")
+        row["duration"] = "forever"
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=row
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
+        app.state.model.workspaces.remove_rejected_domain.assert_not_awaited()
+
+    async def test_revoke_forever_deny_retracts_rejected_domains(self):
+        # The deny mirror: revoking a forever deny retracts rejected_domains.
+        app = _app()
+        row = _active_row(decision="denied")
+        row["duration"] = "forever"
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=row
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_rejected_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
+        app.state.model.workspaces.remove_allowed_domain.assert_not_awaited()
+
+    async def test_revoke_forever_deny_portless_retracts_bare_host(self):
+        # A port-less forever deny was persisted as a bare host; retract that.
+        app = _app()
+        row = _active_row(decision="denied")
+        row["duration"] = "forever"
+        row["dest_port"] = 0
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=row
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_rejected_domain.assert_awaited_once_with(
+            FULL_WS,
+            "1.2.3.4",  # bare host (no port)
+        )
+
+    async def test_revoke_forever_allow_portless_skips_retract(self):
+        # A port-less forever allow was never persisted (resolve skips it), so
+        # revoke has nothing to retract -- but the revoke still succeeds.
+        app = _app()
+        row = _active_row(decision="allowed")
+        row["duration"] = "forever"
+        row["dest_port"] = 0
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=row
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_not_awaited()
+        app.state.model.workspaces.remove_rejected_domain.assert_not_awaited()
+
+    async def test_revoke_forever_retract_failure_does_not_break_revoke(self):
+        # Best-effort: a persistence failure is logged + swallowed; the row is
+        # already revoked, so the revoke still returns True.
+        app = _app()
+        row = _active_row(decision="allowed")
+        row["duration"] = "forever"
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=row
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        app.state.model.workspaces.remove_allowed_domain = AsyncMock(
+            side_effect=RuntimeError("db down")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+
+    async def test_revoke_non_forever_does_not_retract(self):
+        # A tilrestart/once verdict has no durable entry -- nothing to retract.
+        app = _app()
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=_active_row()  # duration tilrestart
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_not_awaited()
+        app.state.model.workspaces.remove_rejected_domain.assert_not_awaited()
+
+    async def test_revoke_forever_missing_host_skips_retract(self):
+        # Defensive: a forever row missing dest_host retracts nothing, but the
+        # revoke still succeeds (the row is revoked; only durability is skipped).
+        app = _app()
+        row = _active_row(decision="allowed")
+        row["duration"] = "forever"
+        row["dest_host"] = None
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=row
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.revoke("rid-1", "a@x") is True
+        app.state.model.workspaces.remove_allowed_domain.assert_not_awaited()
 
 
 class TestConsentCoordinatorGate:
@@ -450,6 +581,7 @@ class TestConsentCoordinatorRules:
         app = _app(
             active_rows=[allowed, denied],
             allowed_domains=["static.example.com"],
+            rejected_domains=["bad.example.com"],
         )
         coord = ConsentCoordinator(app)
         frame = await coord.rules_frame(FULL_WS)
@@ -457,6 +589,7 @@ class TestConsentCoordinatorRules:
             "type": "egress_rules",
             "workspace_id": FULL_WS,
             "allow_list": ["static.example.com"],
+            "reject_list": ["bad.example.com"],
             "allowed": [allowed],
             "denied": [denied],
             "paused": None,

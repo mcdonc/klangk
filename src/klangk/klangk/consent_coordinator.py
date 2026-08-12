@@ -473,6 +473,53 @@ class ConsentCoordinator:
                 str(workspace_id)[:8],
             )
 
+    async def _retract_forever_entry(self, row: dict, decision: str) -> None:
+        """Retract the durable list entry a ``forever`` verdict added (#2370).
+
+        The inverse of :meth:`_persist_forever_allow` /
+        :meth:`_persist_forever_deny`: removes the consented host from
+        ``allowed_domains`` (allow) or ``rejected_domains`` (deny) so the
+        verdict does not re-apply on the next sidecar restart. The deciding
+        connection's in-memory ACCEPT/REJECT + ``_FOREVER_HOSTS``/
+        ``_VERDICT_CACHE`` were already cleared by the drop the caller sent.
+
+        Best-effort (failures logged + swallowed): the row is already revoked,
+        so a persistence failure only risks the entry re-applying on restart,
+        not a broken revoke. A port-less allow was never persisted
+        (:meth:`_persist_forever_allow` skips it), so there is nothing to
+        retract; a port-less deny was persisted as a bare host, so retract that.
+        """
+        host = row.get("dest_host")
+        port = row.get("dest_port")
+        workspace_id = row.get("workspace_id")
+        if not host or not workspace_id:
+            return
+        if decision == DECISION_ALLOWED:
+            if not port:
+                return  # port-less allow was never persisted
+            entry = f"{host}:{port}"
+            remove = self.app.state.model.workspaces.remove_allowed_domain
+        else:
+            entry = f"{host}:{port}" if port else host
+            remove = self.app.state.model.workspaces.remove_rejected_domain
+        try:
+            retracted = await remove(workspace_id, entry)
+        except Exception:
+            logger.exception(
+                "consent: forever-%s retract failed (%s) ws=%s",
+                decision,
+                entry,
+                str(workspace_id)[:8],
+            )
+            return
+        if retracted:
+            logger.info(
+                "consent: forever %s retracted from list (%s) ws=%s",
+                decision,
+                entry,
+                str(workspace_id)[:8],
+            )
+
     async def revoke(
         self,
         request_id: str,
@@ -502,11 +549,12 @@ class ConsentCoordinator:
             return False
         host = row["dest_host"]
         decision = row["decision"]
-        # NOTE (#2370): a `forever` allow also lives in the workspace's
-        # allowed_domains (added in resolve, #2368), which the sidecar re-reads
-        # on restart. Dropping only the in-memory rule + marking the row
-        # revoked does NOT remove that durable entry, so the allow would
-        # re-apply on the next container restart. Removing it is #2370.
+        # NOTE (#2370): a `forever` verdict also lives in the workspace's
+        # allowed_domains/rejected_domains (added in resolve, #2368/#2369),
+        # which the sidecar re-reads on restart. The drop above cleared the
+        # in-memory rules + _FOREVER_HOSTS/_VERDICT_CACHE; retract the durable
+        # entry too (after the row is marked revoked) so the verdict does not
+        # re-apply on the next sidecar restart.
         # Ask the sidecar to drop its rule for this host+decision. No live
         # sidecar -> nothing is enforced (its in-memory rules die with it), so
         # proceed to mark revoked. A live sidecar must ack first: else a
@@ -529,6 +577,13 @@ class ConsentCoordinator:
             is None
         ):
             return False
+        # #2370: retract the durable list entry a `forever` verdict added so it
+        # does not re-apply on the next sidecar restart. Best-effort (failures
+        # logged + swallowed): the row is already revoked and the in-memory
+        # rules already dropped, so a failure only risks re-application on
+        # restart, not a broken revoke.
+        if row.get("duration") == DURATION_FOREVER:
+            await self._retract_forever_entry(row, decision)
         await self._broadcast_rules(workspace_id)
         return True
 
@@ -658,6 +713,8 @@ class ConsentCoordinator:
             "type": "egress_rules",
             "workspace_id": workspace_id,
             "allow_list": ws.get("allowed_domains") or [],
+            # #2370: surface the reject list alongside the allow list (#2340).
+            "reject_list": ws.get("rejected_domains") or [],
             "allowed": [r for r in rows if r["decision"] == DECISION_ALLOWED],
             "denied": [r for r in rows if r["decision"] == DECISION_DENIED],
             # #2332 (pause control): the live pause window, or None when not

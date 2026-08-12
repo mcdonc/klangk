@@ -527,7 +527,7 @@ def reject(ip: str, port: int, ttl: float) -> None:
         _REJECTED[(ip, port)] = max(_REJECTED.get((ip, port), 0.0), expire)
 
 
-def drop_for_host(host: str, decision: str) -> None:
+def drop_for_host(host: str, decision: str) -> set[str]:
     """Drop the sidecar's rules for a host (revocation, #2339).
 
     ``allowed``: remove the learned ACCEPT rules (+ ``_LEARNED`` records) for
@@ -535,16 +535,24 @@ def drop_for_host(host: str, decision: str) -> None:
     ``denied``: remove the temporary REJECT rules for the host's IPs (stop
     force-rejecting; the host is again subject to the allow-list).
 
+    Returns the set of candidate IPs (the host's resolved IPs + the host
+    string itself, for a direct-IP connect) so the caller --
+    :meth:`SidecarConsentClient._handle_drop_rule`, on the event loop -- can
+    clear the loop-only ``_FOREVER_HOSTS``/``_VERDICT_CACHE`` state via
+    :func:`_clear_forever_state`. Those structures are documented loop-only
+    (no lock) and must NOT be mutated here, since this function runs off the
+    loop in the executor.
+
     Host->IP comes from ``_LEARNED[ip]["host"]`` (set by ``_record_hosts`` for
     every resolved name, allow-listed or not), so a deny's IPs are found too;
     the host string itself is also a candidate IP (a direct-IP connect that
     never went through DNS, and a direct-IP allow whose ``host`` is ``None``).
     Best-effort: a failed delete drops one rule, not the whole revoke. Sync
-    (forks iptables) — run off the loop; under ``_LOCK`` like allow/sweep.
+    (forks iptables) -- run off the loop; under ``_LOCK`` like allow/sweep.
 
     L3/L4 limit (co-resident hosts): the egress rules are per IP+port, so two
     DNS names that resolve to the SAME IP share one rule and cannot be revoked
-    individually — revoking one name removes the shared rule, affecting the
+    individually -- revoking one name removes the shared rule, affecting the
     other too. A correct per-host revoke for co-resident hosts (CDN/S3/Cloudflare
     fronted sites) needs L7/SNI filtering, which is a separate feature (#2352).
     """
@@ -555,13 +563,13 @@ def drop_for_host(host: str, decision: str) -> None:
             for ip, rec in _LEARNED.items()
             if (rec.get("host") or "").lower() == host_l
         ]
+        # IPs that resolved to this host, plus the host itself if it's a
+        # direct-IP connect/allow (the scan above misses a direct-IP allow,
+        # whose host record is None).
+        targets = {ip for ip in ips}
+        targets.add(host_l)
+        targets.add(host)
         if decision == "allowed":
-            # IPs that resolved to this host, plus the host itself if it's a
-            # direct-IP allow (allow() records host=None, so the scan above
-            # misses it).
-            targets = {ip for ip in ips}
-            targets.add(host_l)
-            targets.add(host)
             for ip in [i for i in targets if i in _LEARNED]:
                 for port in list(_LEARNED[ip]["ports"]):
                     try:
@@ -570,17 +578,38 @@ def drop_for_host(host: str, decision: str) -> None:
                         pass
                 del _LEARNED[ip]
         elif decision == "denied":
-            # IPs that resolved to this host, plus the host itself if it's a
-            # direct-IP connect (never DNS host-recorded).
-            targets = {ip for ip in ips}
-            targets.add(host_l)
-            targets.add(host)
             for key in [k for k in _REJECTED if k[0] in targets]:
                 try:
                     _remove_reject(*key)
                 except Exception:
                     pass
                 del _REJECTED[key]
+    return targets
+
+
+def _clear_forever_state(host: str, decision: str, ips: set[str]) -> None:
+    """Clear the in-session ``forever``-verdict state for a revoked host (#2370).
+
+    Called on the event-loop thread by
+    :meth:`SidecarConsentClient._handle_drop_rule` AFTER :func:`drop_for_host`
+    (which cleared the learned iptables rules + per-IP records under
+    :data:`_LOCK` in the executor and returned ``ips``). ``_FOREVER_HOSTS`` and
+    ``_VERDICT_CACHE`` are documented loop-only (no lock), so they must be
+    touched here -- never inside :func:`drop_for_host` (executor thread).
+
+    For an ``allowed`` revoke, ``_FOREVER_HOSTS`` is the in-session coverage a
+    ``forever`` allow added (#2372): without clearing it, the next DNS
+    resolution for the host re-learns the IP with an ACCEPT -- the allow would
+    persist in-session. ``_VERDICT_CACHE`` holds the per-connection SYN
+    verdicts (both decisions); without clearing the revoked host's entries, a
+    retransmit reuses the stale verdict for up to the cache TTL.
+    """
+    if decision == "allowed":
+        hl = host.lower()
+        _FOREVER_HOSTS[:] = [t for t in _FOREVER_HOSTS if t[0].lower() != hl]
+    if ips:
+        for key in [c for c in _VERDICT_CACHE if c[2] in ips]:
+            del _VERDICT_CACHE[key]
 
 
 def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
@@ -959,9 +988,15 @@ class SidecarConsentClient:
         ok = False
         if isinstance(host, str) and decision in ("allowed", "denied"):
             try:
-                await asyncio.get_running_loop().run_in_executor(
+                ips = await asyncio.get_running_loop().run_in_executor(
                     None, drop_for_host, host, decision
                 )
+                # Clear the loop-only in-session state (#2370) ON the event
+                # loop -- _FOREVER_HOSTS/_VERDICT_CACHE must not be touched
+                # inside drop_for_host (executor thread). Without this a
+                # `forever`-allow revoke would keep re-learning the host via
+                # _FOREVER_HOSTS, and cached verdicts would persist til TTL.
+                _clear_forever_state(host, decision, ips)
                 ok = True
             except Exception:
                 ok = False
