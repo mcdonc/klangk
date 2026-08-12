@@ -29,6 +29,29 @@ class TestCreateWorkspace:
         assert users_dir.exists()
         assert users_dir.is_dir()
 
+    async def test_default_workspace_flows_interactive_to_start(
+        self, user, app_state, monkeypatch
+    ):
+        # #2325: a workspace created via the model picks up the deploy default
+        # egress_mode (interactive) and start_workspace forwards it to the
+        # container registry. This pins the wiring the container tests (which
+        # call start_container directly with an explicit egress_mode) can't
+        # catch -- a regression that dropped the kwarg at workspaces.py's
+        # start_workspace, or flipped its .get() default back to "static",
+        # would silently start the workspace unrestricted with every other
+        # test still green.
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "ws-interactive"
+        )
+        # The model default is interactive (EGRESS_MODE_DEFAULT).
+        assert ws["egress_mode"] == "interactive"
+        registry = app_state.state.container_registry
+        fake = AsyncMock(return_value=("cid", "created"))
+        monkeypatch.setattr(registry, "start_container", fake)
+        await app_state.state.workspaces.start_workspace(ws)
+        fake.assert_awaited_once()
+        assert fake.call_args.kwargs["egress_mode"] == "interactive"
+
     async def test_allocates_ports(self, user, app_state):
         ws = await app_state.state.workspaces.create_workspace(
             user["id"], "ported"

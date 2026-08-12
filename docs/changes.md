@@ -32,20 +32,6 @@ operators or integrators to act when upgrading.
 
 ### Added
 
-- **Interactive egress consent no longer gated on `allowed_domains` (#2325).**
-  A workspace in `egress_mode=interactive` (the default) now always runs the
-  FQDN network sidecar and holds every not-yet-approved egress for a consent
-  decision, even with an empty `allowed_domains`; `allowed_domains` now means
-  "pre-approved, skip consent" rather than the prerequisite for consent to
-  exist. Static mode with no lists stays unrestricted. Because every
-  interactive workspace now needs a sidecar, an interactive workspace
-  **fails closed** (refuses to start) if `network_sidecar_image` is unset or
-  `KLANGKD_USERNS` is empty, instead of starting unrestricted. The
-  `klangk sandbox` command now creates its workspace in `static` mode so
-  automated installs (npm/git/…) keep their unrestricted egress —
-  interactive would hold every install connection for a consent decision
-  with no decider present.
-
 - **`rejected_domains` workspace setting + sidecar enforcement (#2367).**
   The deny counterpart to `allowed_domains`: a persisted, host-only list whose
   names the network sidecar NXDOMAINs unconditionally (no resolution, no SYN,
@@ -511,6 +497,15 @@ operators or integrators to act when upgrading.
   affected if it matches the revoked verdict's host, and clears on the next
   restart as with any list edit.
 
+- **Interactive egress consent no longer gated on `allowed_domains` (#2325).**
+  A workspace in `egress_mode=interactive` (the default) now always runs the
+  FQDN network sidecar and holds every not-yet-approved egress for a consent
+  decision, even with an empty `allowed_domains`; `allowed_domains` now means
+  "pre-approved, skip consent" rather than the prerequisite for consent to
+  exist. Static mode with no lists stays unrestricted. `klangk sandbox` now
+  creates its workspace in `static` mode so its automated installs keep
+  unrestricted egress.
+
 - **Egress-consent duration token `restart` renamed to `tilrestart` (#2357).**
   The verdict `duration` value `restart` is now `tilrestart` ("until restart")
   everywhere — the model constant, the wire/DB token, the `consent-decide` TUI
@@ -699,6 +694,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   custom `features.yaml` if present.
 
 ### Breaking
+
+- **Interactive workspaces now require the network sidecar (#2325).** Every
+  `egress_mode=interactive` workspace (the default) spawns a network sidecar
+  and holds each new outbound host for a consent decision. On upgrade, an
+  existing interactive workspace's next start requires a configured
+  `network_sidecar_image` and a non-empty `KLANGKD_USERNS`; if either is
+  missing it **fails closed** (refuses to start) instead of egressing
+  unrestricted. An interactive workspace with `allow_sudo` also has `net_raw`
+  dropped (defense-in-depth against the SO_MARK bypass), disabling setuid
+  `ping` for it. Static workspaces with no allow/reject lists are unaffected.
 
 - **(#1653)** Environment variables renamed to `KLANGKD_*` / `KLANGKBUILD_*` /
   `KLANGKWS_*` / `KLANGK_*`. Old `KLANGK_*` names are not accepted. Update

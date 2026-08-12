@@ -496,6 +496,7 @@ async def duplicate_workspace(
             allowed_domains=source.get("allowed_domains"),
             rejected_domains=source.get("rejected_domains"),
             settings=source.get("settings"),
+            egress_mode=source.get("egress_mode"),
         )
     except SAIntegrityError:
         raise HTTPException(
