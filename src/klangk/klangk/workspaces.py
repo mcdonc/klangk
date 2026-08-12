@@ -206,6 +206,8 @@ class Workspaces:
             "rejected_domains": ws.get("rejected_domains"),
             "settings": ws.get("settings"),
             "num_ports": ws.get("num_ports", 5),
+            # Preserve egress posture across export -> import (#2402).
+            "egress_mode": ws.get("egress_mode"),
         }
 
     # --- path helpers (close over root) ---

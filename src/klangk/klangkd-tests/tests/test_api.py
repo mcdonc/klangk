@@ -7197,6 +7197,7 @@ class TestWorkspaceMetadata:
             "rejected_domains": None,
             "settings": None,
             "num_ports": 3,
+            "egress_mode": None,
         }
 
     def test_defaults_num_ports(self):
@@ -7709,6 +7710,96 @@ class TestWorkspaceExportImport:
         resp = await client.get("/api/v1/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["settings"] == {"idle_timeout": 300, "cpu_limit": 1.5}
+
+    async def test_export_serializes_egress_mode(
+        self, client, admin_user, user
+    ):
+        """egress_mode is included in the exported metadata (#2402)."""
+        import io
+        import json
+        import tarfile
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "egress-export", "egress_mode": "static"},
+        )
+        assert resp.status_code == 200
+        ws = resp.json()
+
+        admin_headers = await self._admin_headers(client)
+        export_resp = await client.get(
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert export_resp.status_code == 200
+
+        buf = io.BytesIO(export_resp.content)
+        with tarfile.open(fileobj=buf, mode="r:gz") as tar:
+            metadata = json.loads(tar.extractfile("workspace.json").read())
+        assert metadata["egress_mode"] == "static"
+
+    async def test_import_roundtrips_egress_mode(self, client, user):
+        """egress_mode survives export -> import (#2402)."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                self._meta(name="egress-roundtrip", egress_mode="static")
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["egress_mode"] == "static"
+
+    async def test_import_invalid_egress_mode_falls_back(self, client, user):
+        """An unknown/missing egress_mode falls back to the deploy default."""
+        import io
+        import json
+        import tarfile
+
+        from klangk.model import EGRESS_MODE_DEFAULT
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                self._meta(name="egress-fallback", egress_mode="bogus")
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["egress_mode"] == EGRESS_MODE_DEFAULT
 
     async def test_import_notifies_importer(self, client, user, sockets):
         import io

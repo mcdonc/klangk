@@ -39,6 +39,7 @@ from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
     EGRESS_MODE_DEFAULT,
+    EGRESS_MODES,
     PRINCIPAL_GROUP,
     PRINCIPAL_USER,
 )
@@ -932,6 +933,14 @@ async def _extract_archive_metadata(
     else:
         env = None
 
+    # Preserve egress posture across export -> import (#2402). Validate
+    # against the allowed EGRESS_MODES; an unknown/missing value falls back
+    # to the deploy default so a tampered or stale archive cannot smuggle in
+    # a less restrictive posture than the instance ships with.
+    egress_mode = metadata.get("egress_mode")
+    if egress_mode not in EGRESS_MODES:
+        egress_mode = EGRESS_MODE_DEFAULT
+
     return {
         "name": ws_name,
         "image": image,
@@ -943,6 +952,7 @@ async def _extract_archive_metadata(
         "allowed_domains": metadata.get("allowed_domains"),
         "rejected_domains": metadata.get("rejected_domains"),
         "settings": metadata.get("settings"),
+        "egress_mode": egress_mode,
     }
 
 
@@ -1031,6 +1041,7 @@ async def import_workspace(
                 allowed_domains=allowed_domains,
                 rejected_domains=rejected_domains,
                 settings=settings,
+                egress_mode=meta["egress_mode"],
             )
         except SAIntegrityError:
             raise HTTPException(
