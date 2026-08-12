@@ -27,6 +27,7 @@ jobs:
             e2e:
               - 'src/klangk/**'
               - 'src/containers/workspace/**'
+              - 'src/containers/network/**'
               - 'devenv.nix'
               - 'devenv.yaml'
               - '.github/workflows/cli-e2e-tests.yml'
@@ -34,7 +35,7 @@ jobs:
       - uses: ./.github/actions/devenv-setup
         if: steps.filter.outputs.e2e == 'true'
         with:
-          build-tasks: klangk:build-workspace-image
+          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar
 
       - name: Run CLI E2E tests
         if: steps.filter.outputs.e2e == 'true'
