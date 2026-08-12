@@ -220,6 +220,68 @@ class EgressConsentModel:
         DURATION_1W: 604800,
     }
 
+    async def active_verdict_for(
+        self,
+        workspace_id: str,
+        dest_host: str,
+        dest_port: int | None,
+    ) -> dict | None:
+        """The newest IN-EFFECT verdict for an exact (host, port), or None (#2332).
+
+        Used by the consent-pause path (:meth:`ConsentCoordinator.hold`) to
+        respect a recorded verdict while prompting is paused: a destination
+        with an in-effect DENY is still blocked (not auto-allowed); everything
+        else is auto-allowed. Returns the newest verdict whose duration has
+        not elapsed, skipping elapsed ones, so a newer-but-elapsed allow does
+        NOT mask an older in-effect deny (mirrors :meth:`list_active`'s
+        in-effect filtering, scoped to one destination). Only verdict decisions
+        (``decided_by`` not NULL) are considered -- static policy denials are
+        the complement of the allow-list and not actionable here. Port is
+        matched exactly (NULL port matches NULL port).
+        """
+        if dest_port is not None:
+            query = (
+                f"SELECT {_EC_COLUMNS} FROM egress_consent"
+                " WHERE workspace_id = ? AND dest_host = ?"
+                " AND dest_port = ? AND decision IN (?, ?)"
+                " AND decided_by IS NOT NULL"
+                " ORDER BY decided_at DESC"
+            )
+            params = (
+                workspace_id,
+                dest_host,
+                dest_port,
+                DECISION_ALLOWED,
+                DECISION_DENIED,
+            )
+        else:
+            query = (
+                f"SELECT {_EC_COLUMNS} FROM egress_consent"
+                " WHERE workspace_id = ? AND dest_host = ?"
+                " AND dest_port IS NULL AND decision IN (?, ?)"
+                " AND decided_by IS NOT NULL"
+                " ORDER BY decided_at DESC"
+            )
+            params = (
+                workspace_id,
+                dest_host,
+                DECISION_ALLOWED,
+                DECISION_DENIED,
+            )
+        now = time.time()
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(query, params)
+            rows = await cursor.fetchall()
+        # Newest-first: return the first verdict still in effect. An elapsed
+        # newer verdict (e.g. an expired timed allow) is skipped so it can't
+        # hide an older in-effect deny -- the pause must keep blocking a host
+        # the user previously denied.
+        for row in rows:
+            d = _row_to_dict(row)
+            if self._duration_in_effect(d["duration"], d["decided_at"], now):
+                return d
+        return None
+
     async def list_active(self, workspace_id: str) -> list[dict]:
         """Consent verdicts still in effect for a workspace (#2335 slice A).
 

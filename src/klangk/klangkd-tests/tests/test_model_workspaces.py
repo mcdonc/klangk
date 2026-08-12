@@ -58,6 +58,36 @@ async def test_existing_workspace_ids(ws, user):
     assert b["id"] in ids_after
 
 
+# -- consent pause (#2332) --
+
+
+async def test_get_consent_pause_default_none(ws, user):
+    row = await ws.create_workspace(user["id"], "pause-default")
+    assert await ws.get_consent_pause(row["id"]) is None
+
+
+async def test_set_and_get_consent_pause(ws, user):
+    row = await ws.create_workspace(user["id"], "pause-set")
+    assert await ws.set_consent_pause(row["id"], 1234.5) is True
+    assert await ws.get_consent_pause(row["id"]) == 1234.5
+
+
+async def test_set_consent_pause_clear_with_none(ws, user):
+    row = await ws.create_workspace(user["id"], "pause-clear")
+    await ws.set_consent_pause(row["id"], 9999.0)
+    assert await ws.get_consent_pause(row["id"]) == 9999.0
+    assert await ws.set_consent_pause(row["id"], None) is True
+    assert await ws.get_consent_pause(row["id"]) is None
+
+
+async def test_set_consent_pause_missing_workspace_false(ws):
+    assert await ws.set_consent_pause("no-such-ws", 1234.0) is False
+
+
+async def test_get_consent_pause_missing_workspace_none(ws):
+    assert await ws.get_consent_pause("no-such-ws") is None
+
+
 async def test_create_workspace_with_acl_rejects_agent(ws):
     with pytest.raises(AgentPrincipalError):
         await ws.create_workspace_with_acl(AGENT_USER_ID, "agent-owned")

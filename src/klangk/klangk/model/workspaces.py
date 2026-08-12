@@ -810,6 +810,41 @@ class WorkspacesModel:
             )
             return cursor.rowcount > 0
 
+    async def get_consent_pause(self, workspace_id: str) -> float | None:
+        """The epoch second consent prompting is paused until, or None (#2332).
+
+        Returns the raw stored value WITHOUT an expiry check; the caller
+        compares it against ``now`` (a value in the past means the pause has
+        elapsed and the workspace is effectively not paused). None means not
+        paused, or the workspace does not exist.
+        """
+        row = await self.app.state.db.fetchone(
+            "SELECT consent_paused_until FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        )
+        if row is None:
+            return None
+        val = row["consent_paused_until"]
+        return float(val) if isinstance(val, (int, float)) else None
+
+    async def set_consent_pause(
+        self, workspace_id: str, until: float | None
+    ) -> bool:
+        """Set (or clear, when ``until`` is None) the consent-pause window (#2332).
+
+        ``until`` is an epoch second (``now + window``), or None to clear an
+        active pause. Returns True if the workspace exists (a row was
+        updated), else False. No expiry math here: a past ``until`` is a valid
+        store (read as "not paused" by :meth:`get_consent_pause`); the caller
+        computes the window.
+        """
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "UPDATE workspaces SET consent_paused_until = ? WHERE id = ?",
+                (until, workspace_id),
+            )
+            return cursor.rowcount > 0
+
     async def add_allowed_domain(self, workspace_id: str, entry: str) -> bool:
         """Append ``entry`` (``host[:port]``) to a workspace's
         ``allowed_domains`` (#2368).

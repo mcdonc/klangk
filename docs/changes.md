@@ -57,6 +57,17 @@ operators or integrators to act when upgrading.
   safe unit of a deny. Best-effort (failures swallowed). Revoking must clear
   both the list entry and the audit row (#2370).
 
+- **Pause egress-consent filtering (#2332).** A workspace-level control in
+  the `consent-decide` TUI (`Pause: 15m | 1h | 1d | Cancel`) silences ALL
+  consent prompts for the workspace for the chosen window: a destination with
+  no allow-list rule and no in-effect recorded verdict is auto-allowed (no
+  hold) instead of prompting. The pause does not bypass policy —
+  `allowed_domains`/`rejected_domains` rules and existing `egress_consent`
+  verdicts (a recorded deny still blocks) keep applying. The window
+  self-expires (the gate re-checks on every connection), the status line
+  shows the remaining time, and a refreshed `egress_rules` frame carries the
+  live `paused` window to every decider.
+
 - **`forever` egress-consent allow persists across connections and restarts
   (#2368, #2372).** An allow with `duration=forever` allow-lists the host for
   the rest of the session AND across container restarts: the sidecar treats the

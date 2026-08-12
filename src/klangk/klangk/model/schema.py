@@ -171,6 +171,12 @@ async def init_db(db) -> None:
                 -- and the behavioral allowed_domains) stay as their own
                 -- columns.
                 settings TEXT,
+                -- #2332: epoch second until which interactive consent
+                -- prompting is paused workspace-wide (NULL = not paused).
+                -- While now < this, a destination with no allow-list rule
+                -- and no in-effect recorded verdict is auto-allowed instead
+                -- of held for a decider; a recorded deny still blocks.
+                consent_paused_until REAL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(user_id, name),
                 -- (C) the system agent must never own a workspace.
@@ -246,6 +252,13 @@ async def init_db(db) -> None:
             await db.execute(
                 "ALTER TABLE workspaces"
                 " ADD COLUMN egress_mode TEXT NOT NULL DEFAULT 'static'"
+            )
+        # Migration: add consent_paused_until column (#2332). NULL by default
+        # so existing workspaces keep prompting normally; the pause is opt-in
+        # via the decider TUI control.
+        if "consent_paused_until" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces ADD COLUMN consent_paused_until REAL"
             )
         await db.execute("""
             CREATE TABLE IF NOT EXISTS port_allocations (
