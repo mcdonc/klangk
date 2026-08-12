@@ -8,7 +8,7 @@ import time
 
 from . import podman
 from . import workspace_settings as ws_settings
-from .model.workspaces import EGRESS_MODE_INTERACTIVE
+from .model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from .podman import PodmanError
 
 logger = logging.getLogger(__name__)
@@ -2018,9 +2018,24 @@ class ContainerRegistry:
         # posture). Static mode with no lists stays unrestricted (no point
         # filtering nothing). Used by both the reconnect re-track below and
         # the create-path sidecar start further down.
-        needs_sidecar = egress_mode == EGRESS_MODE_INTERACTIVE or bool(
+        #
+        # #2406: ``allow`` mode requests permissiveness, not filtering -- it
+        # runs the sidecar WHEN one is configured (so off-list egress is logged
+        # via the consent pipeline and ``rejected_domains`` is enforced at the
+        # sidecar DNS layer), but degrades to unrestricted when filtering isn't
+        # set up. Fail-closing an allow-mode workspace would be wrong (it never
+        # asked to be locked down), so allow is best-effort, not mandatory --
+        # unlike interactive / list-declaring workspaces, which fail-closed.
+        sidecar_required = egress_mode == EGRESS_MODE_INTERACTIVE or bool(
             allowed_domains or rejected_domains
         )
+        sidecar_optional = (
+            egress_mode == EGRESS_MODE_ALLOW
+            and not sidecar_required
+            and self._network_sidecar_enabled()
+            and bool(self.app.state.settings.userns)
+        )
+        needs_sidecar = sidecar_required or sidecar_optional
 
         # Reuse a running container or remove a stopped one.
         if existing_container_id:
@@ -2172,39 +2187,45 @@ class ContainerRegistry:
         # for root too. Applied in the cap_add/cap_drop logic after this branch.
         drop_net_raw = False
         if needs_sidecar:
-            if not self._network_sidecar_enabled():
-                raise podman.PodmanError(
-                    500,
-                    f"workspace {workspace_id[:8]} is egress-filtered "
-                    "(interactive mode, or allowed_domains/rejected_domains "
-                    "set) but egress filtering is disabled "
-                    "(netfilter_enabled is off or network_sidecar_image is "
-                    "unset); refusing to start "
-                    "unfiltered. Switch the workspace to static mode with no "
-                    "lists, or enable egress filtering.",
-                )
-            # The #2264 SO_MARK-bypass guard is user-namespace isolation: the
-            # workspace must run in a user namespace DISTINCT from the one that
-            # owns the network sidecar's netns. The sidecar is launched with no
-            # --userns (podman's default), so an empty KLANGKD_USERNS here would
-            # emit no --userns either, putting the workspace in that same default
-            # userns and reopening the bypass (review #2). Fail-closed: require
-            # an explicit, non-empty userns. (Default keep-id:uid=1000,gid=1000
-            # satisfies this; pinned by test_filtered_workspace_userns_isolates_netns.)
-            if not self.app.state.settings.userns:
-                raise podman.PodmanError(
-                    500,
-                    f"workspace {workspace_id[:8]} is egress-filtered "
-                    "(interactive mode, or allowed_domains/rejected_domains "
-                    "set), which requires a "
-                    "non-empty "
-                    "KLANGKD_USERNS so the workspace runs in a user namespace "
-                    "distinct from the network sidecar's. An empty userns would "
-                    "share the sidecar's userns and reopen the SO_MARK egress "
-                    "bypass. Set KLANGKD_USERNS (default "
-                    "keep-id:uid=1000,gid=1000) or switch the workspace to "
-                    "static mode with no lists.",
-                )
+            # Interactive / list-declaring workspaces REQUEST filtering, so a
+            # missing/unstartable sidecar is fail-closed (silently starting
+            # unrestricted would disable a security control the user asked
+            # for). ``allow`` mode is best-effort (sidecar_optional already
+            # gated on these), so it never reaches this fail-close (#2406).
+            if sidecar_required:
+                if not self._network_sidecar_enabled():
+                    raise podman.PodmanError(
+                        500,
+                        f"workspace {workspace_id[:8]} is egress-filtered "
+                        "(interactive mode, or allowed_domains/rejected_domains "
+                        "set) but egress filtering is disabled "
+                        "(netfilter_enabled is off or network_sidecar_image is "
+                        "unset); refusing to start "
+                        "unfiltered. Switch the workspace to static mode with no "
+                        "lists, or enable egress filtering.",
+                    )
+                # The #2264 SO_MARK-bypass guard is user-namespace isolation: the
+                # workspace must run in a user namespace DISTINCT from the one that
+                # owns the network sidecar's netns. The sidecar is launched with no
+                # --userns (podman's default), so an empty KLANGKD_USERNS here would
+                # emit no --userns either, putting the workspace in that same default
+                # userns and reopening the bypass (review #2). Fail-closed: require
+                # an explicit, non-empty userns. (Default keep-id:uid=1000,gid=1000
+                # satisfies this; pinned by test_filtered_workspace_userns_isolates_netns.)
+                if not self.app.state.settings.userns:
+                    raise podman.PodmanError(
+                        500,
+                        f"workspace {workspace_id[:8]} is egress-filtered "
+                        "(interactive mode, or allowed_domains/rejected_domains "
+                        "set), which requires a "
+                        "non-empty "
+                        "KLANGKD_USERNS so the workspace runs in a user namespace "
+                        "distinct from the network sidecar's. An empty userns would "
+                        "share the sidecar's userns and reopen the SO_MARK egress "
+                        "bypass. Set KLANGKD_USERNS (default "
+                        "keep-id:uid=1000,gid=1000) or switch the workspace to "
+                        "static mode with no lists.",
+                    )
             network_sidecar_id = await self._start_network_sidecar(
                 workspace_id,
                 allowed_domains,

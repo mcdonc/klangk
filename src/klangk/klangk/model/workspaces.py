@@ -59,13 +59,19 @@ SETUP_STATES = frozenset(
 
 # egress_mode values (#2239). 'static' = deny + record denied attempts (no
 # human prompt); 'interactive' = a pending request a human can allow/deny via
-# the consent-decide client (#2310). The default for NEW workspaces is
-# 'interactive' so consent-gated egress is on out of the box; set a workspace
-# to 'static' to opt back into silent deny + record.
+# the consent-decide client (#2310); 'allow' = default-permit -- every host is
+# reachable except names in rejected_domains (NXDOMAIN'd), off-list egress is
+# recorded (logged) + auto-allowed with no consent prompt (#2406). The default
+# for NEW workspaces is 'interactive' so consent-gated egress is on out of the
+# box; set a workspace to 'static' to opt back into silent deny + record, or
+# 'allow' for permit-with-deny-list.
 EGRESS_MODE_STATIC = "static"
 EGRESS_MODE_INTERACTIVE = "interactive"
+EGRESS_MODE_ALLOW = "allow"
 EGRESS_MODE_DEFAULT = EGRESS_MODE_INTERACTIVE
-EGRESS_MODES = frozenset({EGRESS_MODE_STATIC, EGRESS_MODE_INTERACTIVE})
+EGRESS_MODES = frozenset(
+    {EGRESS_MODE_STATIC, EGRESS_MODE_INTERACTIVE, EGRESS_MODE_ALLOW}
+)
 
 # Whitelisted sort columns for workspace list queries. Values are the
 # real column names; the prefix (e.g. "w.") is applied by the caller.

@@ -108,7 +108,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
             return
         if ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
             await websocket.close(
-                code=4003, reason="workspace egress mode is static"
+                code=4003, reason="workspace egress mode is not interactive"
             )
             return
 

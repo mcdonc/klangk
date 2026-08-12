@@ -316,7 +316,21 @@ class TestConsentDeciderWS:
         app = _ws_app({"id": "u1", "email": "a@x"}, egress_mode="static")
         ws = _FakeWS({"token": "tok", "workspace": WS}, [])
         await handle_consent_decider(ws, app)
-        assert ws.closed == (4003, "workspace egress mode is static")
+        assert ws.closed == (4003, "workspace egress mode is not interactive")
+        assert ws.accepted is False
+        assert app.state.consent_deciders.has_decider(WS) is False
+
+    async def test_allow_workspace_scoped_decider_is_forbidden(self):
+        # #2406: an allow-mode workspace is default-permit and auto-allows
+        # off-list egress (no consent prompt), so it must refuse a
+        # workspace-scoped consent decider at registration just like static --
+        # the decider TUI must never offer to decide for an allow workspace.
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"}, egress_mode="allow")
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        await handle_consent_decider(ws, app)
+        assert ws.closed == (4003, "workspace egress mode is not interactive")
         assert ws.accepted is False
         assert app.state.consent_deciders.has_decider(WS) is False
 

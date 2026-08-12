@@ -249,7 +249,9 @@ class CreateWorkspaceRequest(BaseModel):
     allowed_domains: list[str] | None = None
     rejected_domains: list[str] | None = None
     settings: dict | None = None
-    egress_mode: Literal["static", "interactive"] = EGRESS_MODE_DEFAULT
+    egress_mode: Literal["static", "interactive", "allow"] = (
+        EGRESS_MODE_DEFAULT
+    )
 
 
 @router.post("/workspaces")
@@ -342,7 +344,7 @@ class UpdateWorkspaceRequest(BaseModel):
     # egress_mode (like allowed_domains) is enforced by the network
     # sidecar at container start, so a change here takes effect on the
     # next start/restart, not on the live container (PR #2248 review N3).
-    egress_mode: Literal["static", "interactive"] | None = None
+    egress_mode: Literal["static", "interactive", "allow"] | None = None
 
 
 @router.put("/workspaces/{workspace_id}")

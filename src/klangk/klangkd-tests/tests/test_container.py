@@ -1428,6 +1428,158 @@ class TestStartContainer:
         assert not creates[0].get("network", "").startswith("container:")
         assert workspace["id"] not in self.registry._ws_with_network_sidecar
 
+    async def test_allow_workspace_starts_sidecar_when_configured(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2406: allow mode is default-permit but still runs the sidecar WHEN
+        # one is configured (so off-list egress is logged via the consent
+        # pipeline and rejected_domains is enforced at the sidecar DNS layer).
+        # The workspace runs --network container:<sidecar> like an interactive /
+        # list-filtered workspace.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                egress_mode="allow",
+            )
+        assert len(creates) == 2  # sidecar + workspace
+        assert creates[0]["name"].startswith("klangk-net-")
+        assert creates[1]["network"] == "container:net-cid"
+        # Tracked so a later stop tears the sidecar down.
+        assert workspace["id"] in self.registry._ws_with_network_sidecar
+
+    async def test_allow_workspace_degrades_to_unrestricted_without_sidecar(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2406: allow mode requests permissiveness, not filtering, so it NEVER
+        # fail-closes -- unlike interactive / list-declaring workspaces. With
+        # the sidecar image unset it degrades to plain unrestricted (one
+        # container, no sidecar), the same surface a static-no-list workspace
+        # gets. This is what keeps `klangk sandbox` working on deployments
+        # without the network sidecar configured.
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "network_sidecar_image", ""
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                egress_mode="allow",
+            )
+        assert len(creates) == 1  # workspace only, no sidecar
+        assert not creates[0]["name"].startswith("klangk-net-")
+        assert not creates[0].get("network", "").startswith("container:")
+        assert workspace["id"] not in self.registry._ws_with_network_sidecar
+
+    async def test_allow_workspace_degrades_to_unrestricted_without_userns(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2406: an empty userns would reopen the #2264 SO_MARK bypass for a
+        # FILTERED workspace, so interactive/lists fail-close on it. Allow
+        # mode instead degrades to unrestricted (no sidecar) -- it never asked
+        # to be filtered, so it does not insist on the sidecar's isolation.
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        monkeypatch.setattr(self.registry.app.state.settings, "userns", "")
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                egress_mode="allow",
+            )
+        assert len(creates) == 1  # degraded to unrestricted, no sidecar
+        assert workspace["id"] not in self.registry._ws_with_network_sidecar
+
+    async def test_allow_workspace_passes_rejected_domains_to_sidecar(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2406: allow mode is default-permit but rejected_domains is STILL
+        # enforced -- the reject list is NXDOMAIN'd at the sidecar DNS layer
+        # (proxy rejected_for), upstream of the consent allow path. Pin that an
+        # allow-mode workspace passes KLANGKNETWORK_EGRESS_REJECT into the
+        # sidecar env so the proxy can enforce it (a regression here would let
+        # allow mode silently drop the deny-list).
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                egress_mode="allow",
+                rejected_domains=["evil.com:443"],
+            )
+        assert len(creates) == 2  # sidecar + workspace
+        assert creates[0]["name"].startswith("klangk-net-")
+        assert "KLANGKNETWORK_EGRESS_REJECT=evil.com:443" in creates[0]["env"]
+        assert creates[1]["network"] == "container:net-cid"
+
     async def test_interactive_workspace_without_sidecar_image_refuses_to_start(
         self, workspace, tmp_path, monkeypatch
     ):

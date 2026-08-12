@@ -17,6 +17,7 @@ from klangk.model.egress_consent import (
     DURATION_TILRESTART,
 )
 from klangk.model.workspaces import (
+    EGRESS_MODE_ALLOW,
     EGRESS_MODE_DEFAULT,
     EGRESS_MODE_INTERACTIVE,
 )
@@ -50,6 +51,16 @@ async def test_workspace_create_interactive_mode(ws, user):
     assert got["egress_mode"] == EGRESS_MODE_INTERACTIVE
 
 
+async def test_workspace_create_allow_mode(ws, user):
+    # #2406: "allow" is a valid egress_mode (default-permit).
+    row = await ws.create_workspace(
+        user["id"], "allow-mode", egress_mode=EGRESS_MODE_ALLOW
+    )
+    assert row["egress_mode"] == EGRESS_MODE_ALLOW
+    got = await ws.get_workspace(row["id"])
+    assert got["egress_mode"] == EGRESS_MODE_ALLOW
+
+
 async def test_workspace_create_invalid_egress_mode(ws, user):
     with pytest.raises(ValueError, match="Invalid egress_mode"):
         await ws.create_workspace(user["id"], "bad-mode", egress_mode="bogus")
@@ -71,6 +82,17 @@ async def test_workspace_update_egress_mode(ws, user):
     assert updated
     got = await ws.get_workspace(row["id"])
     assert got["egress_mode"] == EGRESS_MODE_INTERACTIVE
+
+
+async def test_workspace_update_egress_mode_to_allow(ws, user):
+    # #2406: a workspace can be switched to allow mode via update.
+    row = await ws.create_workspace(user["id"], "update-to-allow")
+    updated = await ws.update_workspace(
+        row["id"], user["id"], egress_mode=EGRESS_MODE_ALLOW
+    )
+    assert updated
+    got = await ws.get_workspace(row["id"])
+    assert got["egress_mode"] == EGRESS_MODE_ALLOW
 
 
 async def test_workspace_update_invalid_egress_mode(ws, user):
@@ -155,6 +177,40 @@ async def test_record_static_denial_dedup_per_destination(ec, ws, user):
     second = await ec.record_static_denial(w["id"], "evil.com", 443)
     assert first is not None
     assert second is None
+
+
+async def test_record_static_allow_inserts_allowed_no_human(ec, ws, user):
+    # #2406: allow mode records an off-list destination as allowed, no human,
+    # immediately (the logging side effect of default-permit egress).
+    w = await ws.create_workspace(user["id"], "static-allow-ws")
+    req = await ec.record_static_allow(w["id"], "registry.npmjs.org", 443)
+    assert req["decision"] == DECISION_ALLOWED
+    assert req["decided_by"] is None  # no human
+    assert req["decided_at"] is not None  # decided immediately
+    row = await ec.get_request(req["id"])
+    assert row["decision"] == DECISION_ALLOWED
+    assert row["decided_by"] is None
+
+
+async def test_record_static_allow_dedup_per_destination(ec, ws, user):
+    # One allow-mode allow per (workspace, host, port); a second returns None.
+    w = await ws.create_workspace(user["id"], "static-allow-dedup-ws")
+    first = await ec.record_static_allow(w["id"], "registry.npmjs.org", 443)
+    second = await ec.record_static_allow(w["id"], "registry.npmjs.org", 443)
+    assert first is not None
+    assert second is None
+
+
+async def test_record_static_allow_distinct_from_denial(ec, ws, user):
+    # The allow and denial static rows are independent (distinct dedup indexes):
+    # the same (workspace, host, port) can carry both an allow-mode allow and
+    # a static denial without colliding.
+    w = await ws.create_workspace(user["id"], "static-allow-vs-deny-ws")
+    allow = await ec.record_static_allow(w["id"], "dual.example", 443)
+    denial = await ec.record_static_denial(w["id"], "dual.example", 443)
+    assert allow is not None
+    assert denial is not None
+    assert allow["id"] != denial["id"]
 
 
 async def test_create_request_dedup_no_port(ec, ws, user):

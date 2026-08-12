@@ -32,6 +32,18 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`egress_mode: "allow"` — default-permit egress (#2406).** A third
+  egress mode alongside `static` (default-deny) and `interactive`
+  (consent-gated). An `allow` workspace permits every host except names in
+  `rejected_domains` (NXDOMAIN'd at the sidecar DNS layer); off-list egress is
+  recorded through the consent pipeline for observability and auto-allowed
+  with no consent prompt, behaving as if an internal always-allow decider were
+  registered. External consent deciders are refused (as with `static`). The
+  network sidecar runs when one is configured (for logging + reject-list
+  enforcement) but degrades to plain unrestricted egress when filtering isn't
+  set up, so it never fail-closes. `klangk sandbox` now creates `allow`-mode
+  workspaces instead of the prior static-no-list-unrestricted degenerate case.
+
 - **`rejected_domains` in the TUI + Flutter workspace dialogs (#2386).** The
   static deny-list is now editable end to end, mirroring `allowed_domains`:
   the TUI create/edit forms (a second list editor in the Netfilter pane, with
