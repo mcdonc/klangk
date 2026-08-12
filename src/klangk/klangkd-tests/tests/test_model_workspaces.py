@@ -290,6 +290,48 @@ async def test_add_allowed_domain_ignores_blank(ws, user):
     assert got["allowed_domains"] is None
 
 
+async def test_add_rejected_domain_appends_lowercased_deduped(ws, user):
+    # A forever consent deny persists by mutating rejected_domains (#2369) --
+    # the mirror of add_allowed_domain. New entries lowercased + de-duplicated.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "forever-deny", rejected_domains=["PyPI.org:443"]
+    )
+    assert await ws.add_rejected_domain(ws_row["id"], "evil.com:443") is True
+    assert (
+        await ws.add_rejected_domain(ws_row["id"], "EVIL.COM:443") is True
+    )  # case-insensitive dedup -> no duplicate
+    assert (
+        await ws.add_rejected_domain(ws_row["id"], "evil.com:443") is True
+    )  # exact dup -> still True (idempotent)
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["rejected_domains"] == ["PyPI.org:443", "evil.com:443"]
+
+
+async def test_add_rejected_domain_from_empty(ws, user):
+    ws_row = await ws.create_workspace(user["id"], "fresh-deny")
+    assert await ws.add_rejected_domain(ws_row["id"], "evil.com:443") is True
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["rejected_domains"] == ["evil.com:443"]
+
+
+async def test_add_rejected_domain_missing_workspace(ws):
+    assert await ws.add_rejected_domain("nope", "evil.com:443") is False
+
+
+async def test_add_rejected_domain_rejects_malformed(ws, user):
+    ws_row = await ws.create_workspace(user["id"], "strict-deny")
+    assert await ws.add_rejected_domain(ws_row["id"], "not a domain!") is False
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["rejected_domains"] is None
+
+
+async def test_add_rejected_domain_ignores_blank(ws, user):
+    ws_row = await ws.create_workspace(user["id"], "blank-deny")
+    assert await ws.add_rejected_domain(ws_row["id"], "   ") is False
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["rejected_domains"] is None
+
+
 async def test_transfer_workspace(ws, app_state, user):
     new_owner = await app_state.state.model.users.create_user("new@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(user["id"], "transfer-me")

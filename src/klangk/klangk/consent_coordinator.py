@@ -195,6 +195,7 @@ class ConsentCoordinator:
         hold = self._holds.pop(request_id)
         hold["task"].cancel()
         forever_allow_row: dict | None = None
+        forever_deny_row: dict | None = None
         try:
             row = await self.app.state.model.egress_consent.decide(
                 request_id, decision, decided_by, duration
@@ -234,11 +235,17 @@ class ConsentCoordinator:
                     "duration": duration,
                 }
                 resolved = "denied"
+                # A `forever` deny persists by mutating the workspace's
+                # deny-list (#2369) -- the mirror of the allow side above.
+                if duration == DURATION_FOREVER:
+                    forever_deny_row = row
         if not hold["future"].done():
             hold["future"].set_result(verdict)
         self._broadcast_resolved(request_id, hold["workspace_id"], resolved)
         if forever_allow_row is not None:
             await self._persist_forever_allow(forever_allow_row)
+        if forever_deny_row is not None:
+            await self._persist_forever_deny(forever_deny_row)
         if resolved in ("allowed", "denied"):
             # A new verdict entered the in-effect set: refresh the deciders'
             # rule-management view (#2335 slice A) without a reconnect.
@@ -310,6 +317,62 @@ class ConsentCoordinator:
         else:
             logger.warning(
                 "consent: forever allow not persisted (%s) ws=%s "
+                "(workspace missing or malformed); session unaffected",
+                entry,
+                str(workspace_id)[:8],
+            )
+
+    async def _persist_forever_deny(self, row: dict) -> None:
+        """Persist a ``forever`` deny by appending ``host:port`` to the
+        workspace's ``rejected_domains`` (#2369) -- the mirror of
+        :meth:`_persist_forever_allow`.
+
+        The network sidecar re-reads ``rejected_domains`` on (re)start and
+        NXDOMAINs a rejected name unconditionally, so a forever deny survives
+        a container/sidecar restart (the deciding connection already got its
+        in-memory REJECT from the verdict). Same port-scoped format as the
+        allow side; note the sidecar's reject enforcement is name-level (the
+        port is ignored), so the durable deny blocks the whole name.
+
+        Best-effort (failures logged + swallowed) and port-scoped-only, exactly
+        like the allow side: a port-less verdict is not persisted. A ``forever``
+        deny also lives in an ``egress_consent`` audit row; revoking it must
+        remove both (#2370).
+        """
+        host = row.get("dest_host")
+        port = row.get("dest_port")
+        workspace_id = row.get("workspace_id")
+        if not host or not workspace_id:
+            return
+        if not port:
+            logger.info(
+                "consent: forever deny of port-less dest %s ws=%s not "
+                "persisted; session still works",
+                host,
+                str(workspace_id)[:8],
+            )
+            return
+        entry = f"{host}:{port}"
+        try:
+            added = await self.app.state.model.workspaces.add_rejected_domain(
+                workspace_id, entry
+            )
+        except Exception:
+            logger.exception(
+                "consent: forever-deny persist failed (%s) ws=%s",
+                entry,
+                str(workspace_id)[:8],
+            )
+            return
+        if added:
+            logger.info(
+                "consent: forever deny -> rejected_domains %s ws=%s",
+                entry,
+                str(workspace_id)[:8],
+            )
+        else:
+            logger.warning(
+                "consent: forever deny not persisted (%s) ws=%s "
                 "(workspace missing or malformed); session unaffected",
                 entry,
                 str(workspace_id)[:8],
