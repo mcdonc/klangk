@@ -182,6 +182,29 @@ class TestPortsFor:
         monkeypatch.setattr(proxy, "SPECS", [("github.com", None, False)])
         assert proxy.ports_for("GitHub.Com") == set()
 
+    def test_forever_hosts_consulted_alongside_specs(self, proxy, monkeypatch):
+        # A `forever` consent verdict adds the host to _FOREVER_HOSTS (#2372);
+        # ports_for must treat it as allow-listed (apex + subdomain, port-scoped)
+        # just like a static spec, so a later CDN-rotated IP re-resolves and is
+        # allowed without re-prompting.
+        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(
+            proxy, "_FOREVER_HOSTS", [("example.com", 443, False)]
+        )
+        assert proxy.ports_for("example.com") == {443}
+        assert proxy.ports_for("api.example.com") == {443}
+        assert proxy.ports_for("other.com") == set()
+
+    def test_add_forever_host_dedups(self, proxy):
+        proxy._FOREVER_HOSTS.clear()
+        proxy._add_forever_host("example.com", 443)
+        proxy._add_forever_host("example.com", 443)  # dup -> one entry
+        proxy._add_forever_host("example.com", 8443)  # different port -> added
+        assert proxy._FOREVER_HOSTS == [
+            ("example.com", 443, False),
+            ("example.com", 8443, False),
+        ]
+
 
 class TestRuleArgs:
     """The iptables rule shape: port-scoped vs all-ports (#2256)."""
@@ -1022,6 +1045,7 @@ class TestNfqueueCallback:
         proxy._VERDICT_CACHE.clear()
         proxy._INFLIGHT.clear()
         proxy._LEARNED.clear()
+        proxy._FOREVER_HOSTS.clear()
         proxy._BG_TASKS.clear()
 
     async def _decide(self, proxy, pkt, client):
@@ -1068,6 +1092,43 @@ class TestNfqueueCallback:
         client.request.assert_awaited_once_with(
             "evil.test", 443
         )  # host, not IP
+
+    async def test_forever_allow_adds_host_to_session_allowlist(
+        self, proxy, monkeypatch
+    ):
+        # A `forever` allow approves the host (not just the resolved IP): the
+        # sidecar adds it to _FOREVER_HOSTS so ports_for treats it as
+        # allow-listed for the session -- a later CDN-rotated IP re-resolves
+        # and is allowed without re-prompting (#2372).
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "forever"))
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        proxy._record_hosts([("1.2.3.4", 60)], "example.com")
+        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        await self._decide(proxy, pkt, client)
+        assert pkt.verdict == "accept"
+        assert ("example.com", 443, False) in proxy._FOREVER_HOSTS
+        # ports_for now treats the host as allow-listed (apex + subdomain).
+        monkeypatch.setattr(proxy, "SPECS", [])
+        assert proxy.ports_for("example.com") == {443}
+        assert proxy.ports_for("api.example.com") == {443}
+
+    async def test_restart_allow_does_not_add_session_allowlist(
+        self, proxy, monkeypatch
+    ):
+        # Only `forever` mutates the in-session allow-list; a restart/timed
+        # allow is a plain in-memory IP learn (no domain-level coverage).
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "restart"))
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        proxy._record_hosts([("1.2.3.4", 60)], "example.com")
+        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        await self._decide(proxy, pkt, client)
+        assert proxy._FOREVER_HOSTS == []
 
     async def test_deny_verdict_drops_and_rejects(self, proxy, monkeypatch):
         # deny -> drop the SYN + install a REJECT (tcp-reset) so the retransmit
