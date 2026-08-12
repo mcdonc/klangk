@@ -57,6 +57,7 @@ from klangk.cli.tui.consent import (  # noqa: E402
     DURATION_1H,
     DURATION_ONCE,
     DURATION_TILRESTART,
+    make_revoke,
     make_verdict,
 )
 
@@ -1397,6 +1398,99 @@ class SmokeTest:
                 self._delete_workspace, self.server, self.auth, static_ws
             )
 
+    async def run_revoke_phase(self, pilot) -> None:
+        """#2339/#2396: revoking an in-effect verdict drops its rule, so the next
+        connection to that host re-prompts. Uses a deny (its within-retry
+        reliably holds, unlike an allow per #2399) so 'covered' is provable
+        before the revoke. Driven over the app's own decider WS (no 2nd WS)."""
+        if not self.args.revoke:
+            return
+        print(
+            "\n--- revoke: a dropped verdict re-prompts the next connection ---"
+        )
+        host = "aws.amazon.com"  # fresh: untouched by any other phase
+        canon = _canonical(host)
+        step = _Step(self.summary.total, host, "domain", False, "revoke", "-")
+        of1 = f"/tmp/smoke_rv_{self.summary.total}.out"
+        _trigger(self.container, host, of1)
+        rid = await _wait_for_request(self.app, canon, timeout=12.0)
+        if rid is None:
+            text = await _wait_result(self.container, of1, timeout=10.0)
+            ec = _parse_exit(text)
+            self._record_probe(
+                step,
+                "hold",
+                "no-request(!)",
+                ec,
+                FINDING if ec is None else MISMATCH,
+                "off-list host was not held for consent",
+            )
+            if ec is not None and not self.args.continue_run:
+                self._abort = True
+            return
+        # Deny/tilrestart -> covered (a deny persists across a retry).
+        self.app._decide_id(rid, DECISION_DENIED, DURATION_TILRESTART)
+        await pilot.pause()
+        await _wait_resolved(self.app, rid, timeout=15.0)
+        pr = await self._probe(
+            pilot,
+            step,
+            canon,
+            "deny within-retry",
+            expect_request=False,
+            expect_conn=EXPECT_REFUSED,
+        )
+        if pr == MISMATCH and not self.args.continue_run:
+            self._abort = True
+            return
+        # Revoke the verdict -> the server drops the rule (sidecar REJECT gone).
+        try:
+            if self.app._ws is not None:
+                await self.app._ws.send(make_revoke(rid))
+        except Exception:
+            pass
+        await pilot.pause()
+        await asyncio.sleep(2.0)  # let the server + sidecar process the drop
+        # The next connection must re-prompt (the deny no longer covers it).
+        of2 = f"/tmp/smoke_rv2_{self.summary.total}.out"
+        _trigger(self.container, host, of2)
+        rid2 = await _wait_for_request(self.app, canon, timeout=12.0)
+        if rid2 is not None:
+            self.app._decide_id(rid2, DECISION_DENIED, DURATION_ONCE)
+            await pilot.pause()
+            await _wait_resolved(self.app, rid2, timeout=15.0)
+            ec2 = _parse_exit(await _wait_result(self.container, of2))
+            self._record_probe(
+                step,
+                "revoke->re-prompt",
+                "re-prompt",
+                ec2,
+                PASS,
+                "deny revoked -> fresh re-prompt",
+            )
+        else:
+            ec2 = _parse_exit(
+                await _wait_result(self.container, of2, timeout=10.0)
+            )
+            if ec2 is None:
+                status = FINDING
+                detail = "post-revoke connection hung (NFQUEUE/DNS)"
+            else:
+                status = MISMATCH
+                detail = (
+                    f"no re-prompt after revoke (rule not dropped, exit {ec2})"
+                )
+            self._record_probe(
+                step,
+                "revoke->re-prompt",
+                "no-reprompt(!)",
+                ec2,
+                status,
+                detail,
+            )
+            if status == MISMATCH and not self.args.continue_run:
+                self._abort = True
+
     async def run_fail_closed_phase(self, pilot) -> None:
         """#2308 fail-closed guarantee: with a request held pending, the decider
         disconnects -> the hold auto-denies on the consent timeout and the
@@ -1486,10 +1580,15 @@ class SmokeTest:
         # server a beat to process the disconnect before probing.
         await asyncio.sleep(3.0)
         cases = [
-            ("example.com", True, "domain"),  # allow-list -> connects
+            ("example.com", True, "domain"),  # allow-list apex -> connects
             ("duckduckgo.com", False, "domain"),  # FRESH off-list -> denied
             ("news.ycombinator.com", False, "domain"),
         ]
+        # NOTE: bare-host = exact (#2377) can't be asserted here with real
+        # domains -- a subdomain (e.g. www.example.com) shares the apex's IP,
+        # and the sidecar's allow rule is L3/L4 (per IP), so the subdomain is
+        # allowed regardless of the hostname spec. Asserting it needs controlled
+        # DNS (the fake-upstream pattern), out of scope for this real-domain run.
         for host, allowed, kind in cases:
             if self._abort:
                 return
@@ -1580,6 +1679,8 @@ class SmokeTest:
                     await self.run_multi_decider_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_snapshot_replay_phase(pilot)
+                if not stop and not self._abort:
+                    await self.run_revoke_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_fail_closed_phase(pilot)
             # run_test exited -> the decider WS dropped -> the server deregistered
@@ -1722,6 +1823,12 @@ def main() -> int:
         help="enable the reconnect snapshot-replay phase (DEFAULT OFF: "
         "blocked by #2398 — the TCP proxy flakes on the "
         "decider reconnect it needs)",
+    )
+    p.add_argument(
+        "--no-revoke",
+        dest="revoke",
+        action="store_false",
+        help="skip the revoke-verdict phase (#2339/#2396)",
     )
     p.add_argument(
         "--no-static-phase",
