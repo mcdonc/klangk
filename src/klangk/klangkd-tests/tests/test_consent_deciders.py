@@ -494,6 +494,85 @@ class TestConsentDeciderWS:
         ]
         assert acks and acks[0]["ok"] is False
 
+    async def test_pause_requires_share_terminals_not_just_terminal(self):
+        # I1 (#2332): pause is a workspace-wide policy change, so it needs
+        # share-terminals (collaborators + owners), not just the terminal
+        # access that gates the connection. A terminal-only member (e.g. a
+        # spectator) may connect + decide requests but NOT pause.
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "spec@x"})
+
+        async def check(resource, principals, perm):
+            return perm == "terminal"  # terminal yes, share-terminals no
+
+        app.state.acl.check_permission = AsyncMock(side_effect=check)
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            ['{"type":"pause","duration":"15m"}', WebSocketDisconnect()],
+        )
+        await handle_consent_decider(ws, app)
+        app.state.consent_coordinator.pause.assert_not_awaited()
+        acks = [
+            json.loads(m)
+            for m in ws.sent
+            if json.loads(m).get("type") == "pause_ack"
+        ]
+        assert acks and acks[0]["ok"] is False
+
+    async def test_unpause_requires_share_terminals(self):
+        # Same higher bar applies to unpause (a workspace-wide state change).
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "spec@x"})
+
+        async def check(resource, principals, perm):
+            return perm == "terminal"
+
+        app.state.acl.check_permission = AsyncMock(side_effect=check)
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            ['{"type":"unpause"}', WebSocketDisconnect()],
+        )
+        await handle_consent_decider(ws, app)
+        app.state.consent_coordinator.unpause.assert_not_awaited()
+        acks = [
+            json.loads(m)
+            for m in ws.sent
+            if json.loads(m).get("type") == "pause_ack"
+        ]
+        assert acks and acks[0]["ok"] is False
+
+    async def test_pause_allowed_with_share_terminals(self):
+        # A collaborator (share-terminals) can pause; the coordinator is called
+        # and a success pause_ack comes back.
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "collab@x"})
+
+        async def check(resource, principals, perm):
+            return perm in ("terminal", "share-terminals")
+
+        app.state.acl.check_permission = AsyncMock(side_effect=check)
+        ws = _FakeWS(
+            {"token": "tok", "workspace": WS},
+            ['{"type":"pause","duration":"1h"}', WebSocketDisconnect()],
+        )
+        await handle_consent_decider(ws, app)
+        app.state.consent_coordinator.pause.assert_awaited_once_with(WS, "1h")
+        acks = [
+            json.loads(m)
+            for m in ws.sent
+            if json.loads(m).get("type") == "pause_ack"
+        ]
+        assert acks and acks[0]["ok"] is True
+
     async def test_verdict_invalid_decision_sends_error(self):
         from fastapi import WebSocketDisconnect
 

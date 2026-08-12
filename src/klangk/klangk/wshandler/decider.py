@@ -149,10 +149,12 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
                     # #2332: pause interactive consent prompting for this
                     # decider's workspace for a window. A deploy-wide decider
                     # (workspace None) has no single workspace to pause -> nack.
-                    await _handle_pause(app, safe_ws, msg, workspace)
+                    await _handle_pause(
+                        app, safe_ws, msg, workspace, principals
+                    )
                 elif mtype == "unpause":
                     # #2332: clear an active pause for this decider's workspace.
-                    await _handle_unpause(app, safe_ws, workspace)
+                    await _handle_unpause(app, safe_ws, workspace, principals)
                 # unknown types are ignored
             except SlowClientError:
                 # Outbound queue full -- the client can't keep up. Drop it
@@ -172,10 +174,26 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         await safe_ws.stop_sender()
 
 
-async def _handle_pause(app, safe_ws, msg, workspace) -> None:
-    """Pause consent prompting for the decider's workspace (#2332)."""
+async def _can_pause(app, workspace, principals) -> bool:
+    """Pause/unpause authz (#2332, review I1).
+
+    Pause silences ALL consent prompts workspace-wide for a window (a
+    workspace-wide policy change, broader than deciding one request), so it
+    needs a higher bar than the connection's ``terminal`` gate: the
+    ``share-terminals`` permission (collaborators + owners). Spectators and
+    coders (terminal only) may still connect and decide individual requests.
+    """
     if workspace is None:
-        # A deploy-wide (admin) decider has no single workspace to pause.
+        return False  # deploy-wide decider has no single workspace to pause
+    return await app.state.acl.check_permission(
+        f"/workspaces/{workspace}", principals, "share-terminals"
+    )
+
+
+async def _handle_pause(app, safe_ws, msg, workspace, principals) -> None:
+    """Pause consent prompting for the decider's workspace (#2332)."""
+    if not await _can_pause(app, workspace, principals):
+        # Missing share-terminals, or a deploy-wide decider with no target.
         safe_ws.send_json({"type": "pause_ack", "ok": False, "until": None})
         return
     result = await app.state.consent_coordinator.pause(
@@ -190,9 +208,9 @@ async def _handle_pause(app, safe_ws, msg, workspace) -> None:
     )
 
 
-async def _handle_unpause(app, safe_ws, workspace) -> None:
+async def _handle_unpause(app, safe_ws, workspace, principals) -> None:
     """Clear an active consent pause for the decider's workspace (#2332)."""
-    if workspace is None:
+    if not await _can_pause(app, workspace, principals):
         safe_ws.send_json({"type": "pause_ack", "ok": False, "until": None})
         return
     result = await app.state.consent_coordinator.unpause(workspace)
