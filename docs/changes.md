@@ -47,6 +47,16 @@ operators or integrators to act when upgrading.
   TUI/Flutter dialogs are a follow-up (#2386); the `forever` **deny** verdict
   that mutates this list at runtime is #2369.
 
+- **`forever` egress-consent deny persists across restarts (#2369).** The deny
+  counterpart of the forever-allow: a `deny` with `duration=forever` appends
+  the host to the workspace's `rejected_domains`, which the sidecar re-reads on
+  (re)start and NXDOMAINs unconditionally. The deciding connection still gets
+  its immediate in-memory REJECT; the list mutation makes the deny durable.
+  Unlike the allow side, a port-less deny (e.g. ICMP) is persisted as a bare
+  host -- reject enforcement is name-level, so blocking the whole host is the
+  safe unit of a deny. Best-effort (failures swallowed). Revoking must clear
+  both the list entry and the audit row (#2370).
+
 - **`forever` egress-consent allow persists across connections and restarts
   (#2368, #2372).** An allow with `duration=forever` allow-lists the host for
   the rest of the session AND across container restarts: the sidecar treats the

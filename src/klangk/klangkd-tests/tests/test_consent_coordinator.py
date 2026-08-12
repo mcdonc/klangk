@@ -68,6 +68,7 @@ def _app(
         )
     )
     workspaces.add_allowed_domain = AsyncMock(return_value=True)
+    workspaces.add_rejected_domain = AsyncMock(return_value=True)
     app.state.model = types.SimpleNamespace(
         egress_consent=egress_consent, workspaces=workspaces
     )
@@ -588,6 +589,7 @@ class TestConsentCoordinatorResolve:
         app.state.model.workspaces.add_allowed_domain.assert_awaited_once_with(
             FULL_WS, "1.2.3.4:443"
         )
+        app.state.model.workspaces.add_rejected_domain.assert_not_awaited()
 
     async def test_timed_allow_does_not_mutate_allowed_domains(self):
         # Only `forever` mutates allowed_domains; a timed allow ("1d") is a
@@ -650,16 +652,95 @@ class TestConsentCoordinatorResolve:
         assert verdict["decision"] == "allow"
         app.state.model.workspaces.add_allowed_domain.assert_awaited_once()
 
-    async def test_forever_deny_does_not_mutate_allowed_domains(self):
-        # `forever` mutates allowed_domains only for an ALLOW; a deny never
-        # touches the list (deny-forever is #2369, via rejected_domains).
-        row = _request()
+    async def test_forever_deny_appends_host_port_to_rejected_domains(self):
+        # A `forever` deny persists by appending the consented host:port to
+        # the workspace's rejected_domains (#2369) -- the mirror of the allow
+        # side. It must NOT touch allowed_domains (a deny is never an allow).
+        row = _request()  # host 1.2.3.4, port 443
         row["decision"] = "denied"
         app = _app(request=_request(), decide_row=row)
         coord = ConsentCoordinator(app)
-        await coord.hold(FULL_WS, "1.2.3.4", 443)
-        await coord.resolve("rid-1", "denied", "a@x", duration="forever")
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "denied", "a@x", duration="forever"
+        )
+        assert verdict == {
+            "decision": "deny",
+            "reason": "decided",
+            "duration": "forever",
+        }
+        assert fut.result()["decision"] == "deny"
+        app.state.model.workspaces.add_rejected_domain.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4:443"
+        )
         app.state.model.workspaces.add_allowed_domain.assert_not_awaited()
+
+    async def test_forever_deny_persist_failure_does_not_break_verdict(self):
+        # Mirror of the allow side: a persistence failure (model raises) is
+        # swallowed -- the verdict is still deny (best-effort durability).
+        row = _request()
+        row["decision"] = "denied"
+        app = _app(request=_request(), decide_row=row)
+        app.state.model.workspaces.add_rejected_domain = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "denied", "a@x", duration="forever"
+        )
+        assert verdict["decision"] == "deny"
+        app.state.model.workspaces.add_rejected_domain.assert_awaited_once()
+
+    async def test_forever_deny_missing_host_skips_persist(self):
+        row = _request()
+        row["decision"] = "denied"
+        row["dest_host"] = None
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "denied", "a@x", duration="forever"
+        )
+        assert verdict["decision"] == "deny"
+        app.state.model.workspaces.add_rejected_domain.assert_not_awaited()
+
+    async def test_forever_deny_not_persisted_still_succeeds(self):
+        # add_rejected_domain returns False (workspace missing/malformed):
+        # logged as a warning, but the verdict still lands.
+        row = _request()
+        row["decision"] = "denied"
+        app = _app(request=_request(), decide_row=row)
+        app.state.model.workspaces.add_rejected_domain = AsyncMock(
+            return_value=False
+        )
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "denied", "a@x", duration="forever"
+        )
+        assert verdict["decision"] == "deny"
+        app.state.model.workspaces.add_rejected_domain.assert_awaited_once()
+
+    async def test_forever_deny_portless_persists_bare_host(self):
+        # Unlike the allow side, a port-less deny IS persisted -- as a bare
+        # host: reject enforcement is name-level (port ignored), so blocking
+        # the whole host is the safe, natural unit of a deny, and withholding
+        # it would make a `forever` deny silently non-durable across restart.
+        row = _request()
+        row["decision"] = "denied"
+        row["dest_port"] = 0
+        app = _app(request=_request(), decide_row=row)
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = await coord.resolve(
+            "rid-1", "denied", "a@x", duration="forever"
+        )
+        assert verdict["decision"] == "deny"
+        app.state.model.workspaces.add_rejected_domain.assert_awaited_once_with(
+            FULL_WS,
+            "1.2.3.4",  # bare host (no port)
+        )
 
     async def test_forever_allow_portless_not_persisted(self):
         # A port-less verdict (e.g. ICMP, dest_port 0) is NOT persisted -- a

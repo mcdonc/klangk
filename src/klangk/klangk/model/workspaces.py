@@ -860,6 +860,58 @@ class WorkspacesModel:
                     return True
         return False  # pragma: no cover - CAS exhausted under contention
 
+    async def add_rejected_domain(self, workspace_id: str, entry: str) -> bool:
+        """Append ``entry`` (``host[:port]``) to a workspace's
+        ``rejected_domains`` (#2369).
+
+        The deny counterpart of :meth:`add_allowed_domain`: a ``forever``
+        egress-consent deny persists by mutating the workspace's deny-list,
+        which the network sidecar re-reads on (re)start and NXDOMAINs
+        unconditionally -- so the deny survives a container/sidecar restart
+        (the deciding connection already got its in-memory REJECT from the
+        verdict). Like :meth:`add_allowed_domain` this is a server-internal
+        mutation with no owner-user gate, compare-and-swap on the JSON blob,
+        lowercased + de-duplicated case-insensitively. Returns True if the
+        workspace exists and ``entry`` is in the list afterwards; False if the
+        workspace is missing or ``entry`` is malformed.
+
+        Note: the sidecar's reject enforcement is name-level (a rejected name
+        is NXDOMAIN'd before resolution, regardless of port), so a
+        ``host:port`` entry blocks the whole name; the port is retained for
+        symmetry with :meth:`add_allowed_domain` and the audit row, not for
+        scoping.
+        """
+        try:
+            normalized = parse_allowed_domains([entry])
+        except ValueError:
+            return False
+        if not normalized:
+            return False
+        spec = normalized[0].lower()
+        for _ in range(_SETTINGS_CAS_RETRIES):
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "SELECT rejected_domains FROM workspaces WHERE id = ?",
+                    (workspace_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return False
+                old_blob = row["rejected_domains"]
+                current = json.loads(old_blob) if old_blob else []
+                if spec in (s.lower() for s in current):
+                    return True  # already present (idempotent)
+                current.append(spec)
+                new_blob = json.dumps(current)
+                cursor = await db.execute(
+                    "UPDATE workspaces SET rejected_domains = ?"
+                    " WHERE id = ? AND rejected_domains IS ?",
+                    (new_blob, workspace_id, old_blob),
+                )
+                if cursor.rowcount == 1:
+                    return True
+        return False  # pragma: no cover - CAS exhausted under contention
+
     async def transfer_workspace(
         self,
         workspace_id: str,
