@@ -50,6 +50,10 @@ DECISION_DENIED = "denied"
 # Duration tokens mirror the server (model/egress_consent.py); duplicated here
 # per CLI isolation. Ordered for the TUI selector; default is `tilrestart` (#2328).
 DURATION_ONCE = "once"
+# Test-only short duration (#2363, subsumed by #2392): recognized for in-effect
+# math (a `5s` verdict in a rules snapshot counts down correctly) but kept
+# OUT of the human-facing selector via SELECTABLE_DURATIONS below.
+DURATION_5S = "5s"
 DURATION_5M = "5m"
 DURATION_15M = "15m"
 DURATION_1H = "1h"
@@ -57,8 +61,11 @@ DURATION_1D = "1d"
 DURATION_1W = "1w"
 DURATION_TILRESTART = "tilrestart"
 DURATION_FOREVER = "forever"
+# Full set the CLI recognizes (mirrors the server's DURATIONS, incl. the
+# test-only 5s). Drives in-effect/countdown math, not the selector.
 DURATIONS = (
     DURATION_ONCE,
+    DURATION_5S,
     DURATION_5M,
     DURATION_15M,
     DURATION_1H,
@@ -67,6 +74,10 @@ DURATIONS = (
     DURATION_TILRESTART,
     DURATION_FOREVER,
 )
+# Human-facing duration selector: every duration a user can pick. The
+# test-only 5s is deliberately excluded so it never appears in the UI
+# (#2363); it remains valid when sent by a programmatic/test caller.
+SELECTABLE_DURATIONS = tuple(d for d in DURATIONS if d != DURATION_5S)
 DURATION_DEFAULT = DURATION_TILRESTART
 
 # Seconds each *timed* duration adds to ``decided_at`` (mirror of the server's
@@ -74,6 +85,7 @@ DURATION_DEFAULT = DURATION_TILRESTART
 # the single connection and ``tilrestart``/``forever`` have no fixed expiry, so
 # they are absent -- a rule with one of those (or None) has no countdown.
 _DURATION_SECONDS = {
+    DURATION_5S: 5,
     DURATION_5M: 300,
     DURATION_15M: 900,
     DURATION_1H: 3600,
@@ -578,7 +590,7 @@ class ConsentDeciderApp(App):
 
     def _duration_buttons(self) -> list[Button]:
         btns = []
-        for d in DURATIONS:
+        for d in SELECTABLE_DURATIONS:
             b = Button(
                 d,
                 id=f"dur-{d}",

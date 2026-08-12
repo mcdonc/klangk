@@ -149,6 +149,7 @@ CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10
 # persistence is #2368's `forever`-allow sub-piece; the deny counterpart is
 # #2369.)
 _DURATION_SECONDS = {
+    "5s": 5,  # test-only (#2363, subsumed by #2392); honored but never UI-offered
     "5m": 300,
     "15m": 900,
     "1h": 3600,

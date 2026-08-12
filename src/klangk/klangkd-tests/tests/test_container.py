@@ -799,6 +799,32 @@ class TestStartContainer:
         assert kwargs["labels"]["klangk.role"] == "network-sidecar"
         p.start_container.assert_awaited_once_with("new-cid", hooks_dir=None)
 
+    async def test_start_network_sidecar_forwards_ttl_tuning(
+        self, monkeypatch
+    ):
+        # The learned-IP TTL floor + sweep cadence are forwarded to the sidecar
+        # when set (absent -> the sidecar's own defaults). Lets a deployment or
+        # test shorten them: the egress smoketest lowers both so a 5s verdict
+        # expires in seconds rather than the 30s floor (#2363, subsumed by #2392).
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_MIN_TTL", "1")
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_SWEEP_INTERVAL", "1")
+        with patch_podman(self.registry) as p:
+            await self.registry._start_network_sidecar(
+                ws_id, ["github.com:443"]
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert "KLANGKNETWORK_EGRESS_MIN_TTL=1" in kwargs["env"]
+        assert "KLANGKNETWORK_EGRESS_SWEEP_INTERVAL=1" in kwargs["env"]
+
     async def test_start_network_sidecar_publishes_host_ports(
         self, monkeypatch
     ):
