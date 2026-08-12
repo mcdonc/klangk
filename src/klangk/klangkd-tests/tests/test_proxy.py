@@ -205,6 +205,18 @@ class TestPortsFor:
             ("example.com", 8443, False),
         ]
 
+    def test_forever_host_allows(self, proxy, monkeypatch):
+        # The NFQUEUE-gate predicate (#2372): apex + subdomain match, port must
+        # match, wrong host/port denied.
+        monkeypatch.setattr(
+            proxy, "_FOREVER_HOSTS", [("example.com", 443, False)]
+        )
+        assert proxy._forever_host_allows("example.com", 443)
+        assert proxy._forever_host_allows("api.example.com", 443)  # subdomain
+        assert not proxy._forever_host_allows("example.com", 80)  # wrong port
+        assert not proxy._forever_host_allows("other.com", 443)  # wrong host
+        assert not proxy._forever_host_allows("", 443)  # no host
+
 
 class TestRuleArgs:
     """The iptables rule shape: port-scoped vs all-ports (#2256)."""
@@ -1114,6 +1126,28 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy, "SPECS", [])
         assert proxy.ports_for("example.com") == {443}
         assert proxy.ports_for("api.example.com") == {443}
+
+    async def test_cb_auto_allows_syn_to_forever_host_ip(
+        self, proxy, monkeypatch
+    ):
+        # A SYN to an IP whose host was allowed forever is auto-allowed at the
+        # NFQUEUE gate (no consent prompt), even though no ACCEPT rule covered
+        # it -- covers a CDN-rotated / resolver-cached IP that no fresh DNS
+        # resolution re-learned (#2372). _decide_and_verdict populated
+        # _FOREVER_HOSTS on the deciding connection; this LATER SYN to a
+        # different recorded IP of the same host is auto-allowed here.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "forever"))
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        proxy._add_forever_host("example.com", 443)
+        proxy._record_hosts([("2.2.2.2", 60)], "example.com")
+        pkt = _FakePkt(_ip_payload("2.2.2.2", 443))
+        proxy._cb(pkt, client)  # sync: auto-allows inline, no task
+        assert pkt.verdict == "accept"
+        client.request.assert_not_awaited()  # no consent prompt
+        assert not proxy._BG_TASKS  # no verdict task spawned
 
     async def test_restart_allow_does_not_add_session_allowlist(
         self, proxy, monkeypatch

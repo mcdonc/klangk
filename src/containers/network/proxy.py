@@ -327,6 +327,26 @@ def _add_forever_host(host: str, port: int) -> None:
         _FOREVER_HOSTS.append(spec)
 
 
+def _forever_host_allows(host: str, port: int) -> bool:
+    """Does a `forever` verdict allow-list ``host`` on ``port`` (#2372)?
+
+    Used by :func:`_cb` as the last-chance gate before prompting: a SYN to a
+    host:port the user allowed forever is auto-allowed even when no fresh DNS
+    resolution re-ACCEPTed the (CDN-rotated or resolver-cached) IP. Mirrors
+    :func:`ports_for`'s apex+subdomain matching but tests a specific port.
+    """
+    if not host:
+        return False
+    for h, p, is_wildcard in _FOREVER_HOSTS:
+        if is_wildcard:
+            matched = host.endswith("." + h)
+        else:
+            matched = host == h or host.endswith("." + h)
+        if matched and (p == port or p is None):
+            return True
+    return False
+
+
 def _rule_args(ip: str, port: int | None) -> list[str]:
     """iptables OUTPUT rule args for ``ACCEPT`` to ``ip`` (optionally scoped)."""
     args = ["-d", ip]
@@ -1264,6 +1284,19 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         pkt.drop()
         return
     host = _host_for(dst)  # DNS name if resolved here, else the IP
+    # A `forever` allow covers the whole domain (#2372): a SYN to a host:port
+    # the user already allowed forever -- including a CDN-rotated or
+    # resolver-cached IP that no fresh DNS resolution re-ACCEPTed -- is
+    # auto-allowed here, the last gate before prompting, so the user isn't
+    # re-asked for a domain they allowed forever.
+    if port and _forever_host_allows(host, port):
+        try:
+            allow(dst, port, _DURATION_FOREVER)
+        except Exception:
+            pass
+        pkt.accept()
+        _VERDICT_CACHE[flow] = ("allow", now + VERDICT_CACHE_TTL)
+        return
     pkt.retain()  # keep the payload valid past this callback (deferred verdict)
     _INFLIGHT.add(flow)
     t = asyncio.create_task(_decide_and_verdict(pkt, flow, dst, port, host, client))
