@@ -49,12 +49,13 @@ operators or integrators to act when upgrading.
 
 - **`forever` egress-consent deny persists across restarts (#2369).** The deny
   counterpart of the forever-allow: a `deny` with `duration=forever` appends
-  the consented `host:port` to the workspace's `rejected_domains`, which the
-  sidecar re-reads on (re)start and NXDOMAINs unconditionally. The deciding
-  connection still gets its immediate in-memory REJECT; the list mutation makes
-  the deny durable. Port-scoped + best-effort (failures swallowed), mirroring
-  the allow side (#2368). Revoking it must clear both the list and the audit
-  row (#2370).
+  the host to the workspace's `rejected_domains`, which the sidecar re-reads on
+  (re)start and NXDOMAINs unconditionally. The deciding connection still gets
+  its immediate in-memory REJECT; the list mutation makes the deny durable.
+  Unlike the allow side, a port-less deny (e.g. ICMP) is persisted as a bare
+  host -- reject enforcement is name-level, so blocking the whole host is the
+  safe unit of a deny. Best-effort (failures swallowed). Revoking must clear
+  both the list entry and the audit row (#2370).
 
 - **`forever` egress-consent allow persists across connections and restarts
   (#2368, #2372).** An allow with `duration=forever` allow-lists the host for

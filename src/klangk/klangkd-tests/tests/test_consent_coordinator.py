@@ -589,6 +589,7 @@ class TestConsentCoordinatorResolve:
         app.state.model.workspaces.add_allowed_domain.assert_awaited_once_with(
             FULL_WS, "1.2.3.4:443"
         )
+        app.state.model.workspaces.add_rejected_domain.assert_not_awaited()
 
     async def test_timed_allow_does_not_mutate_allowed_domains(self):
         # Only `forever` mutates allowed_domains; a timed allow ("1d") is a
@@ -721,9 +722,11 @@ class TestConsentCoordinatorResolve:
         assert verdict["decision"] == "deny"
         app.state.model.workspaces.add_rejected_domain.assert_awaited_once()
 
-    async def test_forever_deny_portless_not_persisted(self):
-        # A port-less deny verdict is not persisted (mirror of the allow side:
-        # port-scoped-only). The deciding connection still gets its REJECT.
+    async def test_forever_deny_portless_persists_bare_host(self):
+        # Unlike the allow side, a port-less deny IS persisted -- as a bare
+        # host: reject enforcement is name-level (port ignored), so blocking
+        # the whole host is the safe, natural unit of a deny, and withholding
+        # it would make a `forever` deny silently non-durable across restart.
         row = _request()
         row["decision"] = "denied"
         row["dest_port"] = 0
@@ -734,7 +737,10 @@ class TestConsentCoordinatorResolve:
             "rid-1", "denied", "a@x", duration="forever"
         )
         assert verdict["decision"] == "deny"
-        app.state.model.workspaces.add_rejected_domain.assert_not_awaited()
+        app.state.model.workspaces.add_rejected_domain.assert_awaited_once_with(
+            FULL_WS,
+            "1.2.3.4",  # bare host (no port)
+        )
 
     async def test_forever_allow_portless_not_persisted(self):
         # A port-less verdict (e.g. ICMP, dest_port 0) is NOT persisted -- a

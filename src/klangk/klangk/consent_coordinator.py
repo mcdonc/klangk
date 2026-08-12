@@ -330,12 +330,17 @@ class ConsentCoordinator:
         The network sidecar re-reads ``rejected_domains`` on (re)start and
         NXDOMAINs a rejected name unconditionally, so a forever deny survives
         a container/sidecar restart (the deciding connection already got its
-        in-memory REJECT from the verdict). Same port-scoped format as the
-        allow side; note the sidecar's reject enforcement is name-level (the
-        port is ignored), so the durable deny blocks the whole name.
+        in-memory REJECT from the verdict).
 
-        Best-effort (failures logged + swallowed) and port-scoped-only, exactly
-        like the allow side: a port-less verdict is not persisted. A ``forever``
+        Unlike the allow side, a *port-less* deny IS persisted (as a bare host),
+        not skipped: the sidecar's reject enforcement is name-level
+        (:func:`rejected_for` ignores port -- a rejected name is NXDOMAIN'd
+        before resolution), so the whole host is the natural unit of a deny, and
+        "block more" is the safe direction (no over-privilege concern, unlike
+        an all-ports allow). Withholding a port-less deny would make a
+        ``forever`` deny silently non-durable across restart. A ported verdict
+        is stored as ``host:port`` (port retained for symmetry + the audit row,
+        not scoping). Best-effort (failures logged + swallowed). A ``forever``
         deny also lives in an ``egress_consent`` audit row; revoking it must
         remove both (#2370).
         """
@@ -344,15 +349,7 @@ class ConsentCoordinator:
         workspace_id = row.get("workspace_id")
         if not host or not workspace_id:
             return
-        if not port:
-            logger.info(
-                "consent: forever deny of port-less dest %s ws=%s not "
-                "persisted; session still works",
-                host,
-                str(workspace_id)[:8],
-            )
-            return
-        entry = f"{host}:{port}"
+        entry = f"{host}:{port}" if port else host
         try:
             added = await self.app.state.model.workspaces.add_rejected_domain(
                 workspace_id, entry
