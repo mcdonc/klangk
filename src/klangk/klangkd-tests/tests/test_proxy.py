@@ -1437,7 +1437,12 @@ class TestNfqueueCallback:
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         proxy._cb(pkt, client)  # _cb fails fast inline (no _BG_TASK)
-        await asyncio.sleep(0.05)  # let the off-loop REJECT install run
+        # poll (not a fixed sleep) for the off-loop REJECT install to land --
+        # robust under CI load; the RST is forged inline so it's already in.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 1.0
+        while not rejected and loop.time() < deadline:
+            await asyncio.sleep(0.01)
         assert pkt.verdict == "drop"
         client.request.assert_not_awaited()
         assert rst  # eager-deny RST forged so connect() gets ECONNREFUSED
