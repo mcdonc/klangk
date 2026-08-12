@@ -93,6 +93,12 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     # as defense-in-depth). Reads the same egress_mode the coordinator does.
     # Deploy-wide deciders (workspace None) are unaffected -- they cover
     # interactive workspaces without flipping a static one.
+    #
+    # NB: these closes run before websocket.accept(), so the ASGI server
+    # (uvicorn) answers the handshake with a bare HTTP 403 -- the close code
+    # and reason are NOT transmitted to the client (same as the authz close
+    # above). The distinct reason string is still worth setting: it lands in
+    # the server log for debugging why a connection was refused.
     if workspace is not None:
         ws = await app.state.model.workspaces.get_workspace(workspace)
         if ws is None:
