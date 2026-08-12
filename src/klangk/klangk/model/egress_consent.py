@@ -30,7 +30,10 @@ DECISIONS = frozenset(
 # honors it (allow learns the IP for T; deny REJECTs for T). `once` = this
 # connection only; `restart` = the workspace container's lifetime (the sidecar's
 # in-memory rules); `forever` = the workspace's lifetime -- persists across
-# container/sidecar restarts (klangkd stores + re-applies it on reconnect).
+# container/sidecar restarts: an allow persists via an `allowed_domains`
+# mutation the sidecar re-reads on start (#2368) -- best-effort, so a failed
+# mutation means the allow won't survive restart despite the audit row here;
+# the deny counterpart (`rejected_domains`) is #2369.
 DURATION_ONCE = "once"
 DURATION_5M = "5m"
 DURATION_15M = "15m"
@@ -232,8 +235,9 @@ class EgressConsentModel:
           #2346), so the recorded set matches what the sidecar enforces across
           container restarts; a sidecar-only restart (no container restart)
           is the one residual gap.
-        - ``forever`` -> in effect (workspace lifetime; cross-restart
-          persistence lands with #2328).
+        - ``forever`` -> in effect (workspace lifetime). An allow's
+          cross-restart enforcement is via ``allowed_domains`` (#2368); the
+          row itself is the audit record.
 
         Only **verdict** decisions are returned (``decided_by`` not NULL):
         static policy denials (``record_static_denial``, ``decided_by`` NULL)
@@ -464,8 +468,9 @@ class EgressConsentModel:
 
         - Clears **both** allows and denies (a ``restart`` deny's REJECT dies
           with the container too).
-        - Leaves ``forever`` (intended to survive restarts -- re-applied by
-          klangkd once #2328 lands), time-bounded (``5m``..``1w``) and ``once``
+        - Leaves ``forever`` (intended to survive restarts -- an allow
+          persists via ``allowed_domains`` which the sidecar re-reads on
+          start, #2368), time-bounded (``5m``..``1w``) and ``once"
           rows (governed by their own expiry), ``pending`` rows, and static
           policy denials (``decided_by`` NULL, duration NULL). Returns count.
         """

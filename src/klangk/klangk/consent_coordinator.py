@@ -40,6 +40,7 @@ from .model.egress_consent import (
     DECISION_DENIED,
     DECISION_PENDING,
     DURATION_DEFAULT,
+    DURATION_FOREVER,
     DURATION_ONCE,
 )
 
@@ -193,6 +194,7 @@ class ConsentCoordinator:
             return None
         hold = self._holds.pop(request_id)
         hold["task"].cancel()
+        forever_allow_row: dict | None = None
         try:
             row = await self.app.state.model.egress_consent.decide(
                 request_id, decision, decided_by, duration
@@ -217,6 +219,14 @@ class ConsentCoordinator:
                     "duration": duration,
                 }
                 resolved = "allowed"
+                # A `forever` allow persists by mutating the workspace's
+                # allow-list (#2368) so it survives a container/sidecar
+                # restart. Captured here, persisted after the Future is
+                # resolved (the deciding connection gets its in-memory ACCEPT
+                # first) and before the rules refresh (so the view reflects
+                # the new entry).
+                if duration == DURATION_FOREVER:
+                    forever_allow_row = row
             else:
                 verdict = {
                     "decision": VERDICT_DENY,
@@ -227,11 +237,82 @@ class ConsentCoordinator:
         if not hold["future"].done():
             hold["future"].set_result(verdict)
         self._broadcast_resolved(request_id, hold["workspace_id"], resolved)
+        if forever_allow_row is not None:
+            await self._persist_forever_allow(forever_allow_row)
         if resolved in ("allowed", "denied"):
             # A new verdict entered the in-effect set: refresh the deciders'
             # rule-management view (#2335 slice A) without a reconnect.
             await self._broadcast_rules(hold["workspace_id"])
         return verdict
+
+    async def _persist_forever_allow(self, row: dict) -> None:
+        """Persist a ``forever`` allow by appending ``host:port`` to the
+        workspace's ``allowed_domains`` (#2368).
+
+        The network sidecar re-reads ``allowed_domains`` on (re)start, so a
+        forever allow survives a container/sidecar restart (the deciding
+        connection already got its in-memory ACCEPT from the verdict). The
+        entry is the consented ``host:port`` (the port the decider was shown;
+        least-privilege -- a durable record is not broadened to all-ports).
+
+        Best-effort: any failure is logged + swallowed so it can never break
+        the verdict path or the post-verdict rules refresh -- the session
+        still works; only the cross-restart durability is at risk.
+
+        Port-less verdicts (``dest_port`` falsy, e.g. an ICMP ping) are NOT
+        persisted -- a bare host would broaden to all-ports + subdomains.
+        Direct-IP ``dest_host`` values are likewise poor candidates (the
+        DNS-based allow-list never re-matches an IP literal after restart),
+        but are left as-is here rather than special-cased.
+
+        A ``forever`` allow now lives in BOTH ``allowed_domains`` and an
+        ``egress_consent`` audit row; revoking it must remove both (#2370).
+        """
+        host = row.get("dest_host")
+        port = row.get("dest_port")
+        workspace_id = row.get("workspace_id")
+        if not host or not workspace_id:
+            return
+        if not port:
+            # Port-scoped only (#2368): a port-less verdict (e.g. an ICMP
+            # ping, dest_port 0) must not be persisted as a bare host -- the
+            # sidecar treats a port-less spec as all-ports + apex/subdomains,
+            # durably broadening one connection's consent to everything on
+            # that name. The deciding connection still gets its in-memory
+            # ACCEPT for this session; durability is simply withheld.
+            logger.info(
+                "consent: forever allow of port-less dest %s ws=%s not "
+                "persisted (a bare host would broaden to all-ports); "
+                "session still works",
+                host,
+                str(workspace_id)[:8],
+            )
+            return
+        entry = f"{host}:{port}"
+        try:
+            added = await self.app.state.model.workspaces.add_allowed_domain(
+                workspace_id, entry
+            )
+        except Exception:
+            logger.exception(
+                "consent: forever-allow persist failed (%s) ws=%s",
+                entry,
+                str(workspace_id)[:8],
+            )
+            return
+        if added:
+            logger.info(
+                "consent: forever allow -> allowed_domains %s ws=%s",
+                entry,
+                str(workspace_id)[:8],
+            )
+        else:
+            logger.warning(
+                "consent: forever allow not persisted (%s) ws=%s "
+                "(workspace missing or malformed); session unaffected",
+                entry,
+                str(workspace_id)[:8],
+            )
 
     async def revoke(
         self,
@@ -262,6 +343,11 @@ class ConsentCoordinator:
             return False
         host = row["dest_host"]
         decision = row["decision"]
+        # NOTE (#2370): a `forever` allow also lives in the workspace's
+        # allowed_domains (added in resolve, #2368), which the sidecar re-reads
+        # on restart. Dropping only the in-memory rule + marking the row
+        # revoked does NOT remove that durable entry, so the allow would
+        # re-apply on the next container restart. Removing it is #2370.
         # Ask the sidecar to drop its rule for this host+decision. No live
         # sidecar -> nothing is enforced (its in-memory rules die with it), so
         # proceed to mark revoked. A live sidecar must ack first: else a

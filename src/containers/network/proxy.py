@@ -143,8 +143,11 @@ CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10
 # learn; a short deny). `restart` = the container's lifetime (the sidecar's
 # in-memory rules); `forever` = the workspace's lifetime -- at the sidecar level
 # both map to a long in-memory TTL, but `forever`'s real distinction is that
-# klangkd persists it across sidecar restarts (re-applied on reconnect). That
-# cross-restart persistence is #2328's `forever` sub-piece (not yet wired).
+# klangkd persists it across sidecar restarts: an allow is appended to the
+# workspace's `allowed_domains`, which this sidecar re-reads on start
+# (#2368), so the allow survives a container restart. (That cross-restart
+# persistence is #2368's `forever`-allow sub-piece; the deny counterpart is
+# #2369.)
 _DURATION_SECONDS = {
     "5m": 300,
     "15m": 900,

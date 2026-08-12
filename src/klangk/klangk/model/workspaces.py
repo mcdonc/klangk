@@ -4,6 +4,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+from ..netfilter import parse_allowed_domains
 from .acl import ACTION_ALLOW, PRINCIPAL_GROUP, PRINCIPAL_USER
 from .users import AGENT_USER_ID, AgentPrincipalError
 
@@ -779,6 +780,56 @@ class WorkspacesModel:
                 values,
             )
             return cursor.rowcount > 0
+
+    async def add_allowed_domain(self, workspace_id: str, entry: str) -> bool:
+        """Append ``entry`` (``host[:port]``) to a workspace's
+        ``allowed_domains`` (#2368).
+
+        A ``forever`` egress-consent allow persists by mutating the workspace's
+        allow-list, which the network sidecar re-reads on (re)start -- so the
+        allow survives a container/sidecar restart (the deciding connection
+        already got its in-memory ACCEPT from the verdict). Unlike
+        :meth:`update_workspace` this is a server-internal mutation with no
+        owner-user gate: the consent verdict already authorized it.
+
+        Compare-and-swap on the JSON blob (like
+        :meth:`update_workspace_settings`) so two concurrent appends can't lose
+        one. Normalizes ``entry`` to lowercase and de-duplicates
+        case-insensitively. Returns True if the workspace exists and ``entry``
+        is in the list afterwards (added or already present); False if the
+        workspace is missing or ``entry`` is malformed (the caller -- the
+        verdict path -- must not break on a persistence failure).
+        """
+        try:
+            normalized = parse_allowed_domains([entry])
+        except ValueError:
+            return False
+        if not normalized:
+            return False
+        spec = normalized[0].lower()
+        for _ in range(_SETTINGS_CAS_RETRIES):
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "SELECT allowed_domains FROM workspaces WHERE id = ?",
+                    (workspace_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return False
+                old_blob = row["allowed_domains"]
+                current = json.loads(old_blob) if old_blob else []
+                if spec in (s.lower() for s in current):
+                    return True  # already present (idempotent)
+                current.append(spec)
+                new_blob = json.dumps(current)
+                cursor = await db.execute(
+                    "UPDATE workspaces SET allowed_domains = ?"
+                    " WHERE id = ? AND allowed_domains IS ?",
+                    (new_blob, workspace_id, old_blob),
+                )
+                if cursor.rowcount == 1:
+                    return True
+        return False  # pragma: no cover - CAS exhausted under contention
 
     async def transfer_workspace(
         self,
