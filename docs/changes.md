@@ -32,11 +32,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
-- **`forever` egress-consent allow persists across container restarts (#2368).**
-  An allow with `duration=forever` now appends the consented `host:port` to
-  the workspace's `allowed_domains`, which the network sidecar re-reads on
-  (re)start, so the allow survives a workspace container restart without
-  re-prompting. The deciding connection still gets its in-memory ACCEPT
+- **`forever` egress-consent allow persists across connections and restarts
+  (#2368, #2372).** An allow with `duration=forever` allow-lists the host for
+  the rest of the session AND across container restarts: the sidecar treats the
+  host as live allow-listed (so a later connection that resolves to a
+  CDN-rotated IP passes without re-prompting, #2372), and klangkd appends the
+  consented `host:port` to `allowed_domains`, which the sidecar re-reads on
+  (re)start (#2368). The deciding connection still gets its in-memory ACCEPT
   immediately; the persisted entry is port-scoped (the port the decider was
   shown) and de-duplicated. The `forever` deny counterpart is a follow-up
   (#2369).

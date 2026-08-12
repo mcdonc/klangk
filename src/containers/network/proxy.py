@@ -204,6 +204,17 @@ def parse_specs() -> list[tuple[str, int | None, bool]]:
 
 SPECS = parse_specs()
 
+# Hosts allow-listed in-session by a `forever` consent verdict (#2372): each
+# entry is (host, port, is_wildcard), mirroring SPECS. On a forever allow,
+# _decide_and_verdict adds the consented host:port here so ports_for treats it
+# as allow-listed for the rest of the session -- the DNS path then learns every
+# resolved IP and allows it without NFQUEUE, so a CDN-rotated IP does NOT
+# re-prompt seconds after the user said "allow forever." Dies with the sidecar
+# (in-memory); the persisted allowed_domains entry (#2368) covers the next
+# restart. Touched only on the event-loop thread (the NFQUEUE consumer is
+# loop-driven, and ports_for runs in the DNS loop) -- no lock, like SPECS.
+_FOREVER_HOSTS: list[tuple[str, int | None, bool]] = []
+
 # Learned IPs: {ip: {"expire": epoch, "ports": set[int | None], "host": str}}.
 # ``ports`` holds the ACCEPT rule ports (a ``None`` is all-ports); ``host`` is
 # the DNS name that resolved to this IP (named in the consent request). An
@@ -288,7 +299,7 @@ def ports_for(qname: str) -> set[int] | None:
     ``pypi.org`` are distinct, non-redundant scopes) (#2256).
     """
     ports: set[int] = set()
-    for host, port, is_wildcard in SPECS:
+    for host, port, is_wildcard in (*SPECS, *_FOREVER_HOSTS):
         if is_wildcard:
             matched = qname.endswith("." + host)
         else:
@@ -299,6 +310,21 @@ def ports_for(qname: str) -> set[int] | None:
             return None  # an all-ports spec dominates
         ports.add(port)
     return ports
+
+
+def _add_forever_host(host: str, port: int) -> None:
+    """Allow-list ``host:port`` in-session for a `forever` consent verdict (#2372).
+
+    Adds ``(host, port, False)`` to :data:`_FOREVER_HOSTS` so :func:`ports_for`
+    treats the host as allow-listed for the rest of the session -- the DNS path
+    then learns every resolved IP and allows it without NFQUEUE, so a
+    CDN-rotated IP no longer re-prompts seconds after the user allowed the
+    domain. Deduped; port-scoped (callers gate on a real port -- a port-less
+    entry would broaden to all-ports).
+    """
+    spec = (host, port, False)
+    if all(s != spec for s in _FOREVER_HOSTS):
+        _FOREVER_HOSTS.append(spec)
 
 
 def _rule_args(ip: str, port: int | None) -> list[str]:
@@ -1291,6 +1317,13 @@ async def _decide_and_verdict(
                 except Exception:
                     pass
             pkt.accept()
+            if duration == "forever" and port:
+                # In-session domain coverage (#2372): a forever allow approves
+                # the host, so any later resolution of it (including a
+                # CDN-rotated IP) is allow-listed and passes without
+                # re-prompting. _FOREVER_HOSTS is read by ports_for alongside
+                # the static allow-list.
+                _add_forever_host(host, port)
         else:
             # Forge a RST directly so connect() fails fast (ECONNREFUSED) at once,
             # independent of the conntrack/retransmit race that made the REJECT
