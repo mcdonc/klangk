@@ -82,26 +82,32 @@ def learned(proxy):
 
 
 class TestParseSpecs:
-    """Env parsing → ``(host, port|None, is_wildcard)`` triples. CIDRs are
-    skipped (the entrypoint applies those statically); the grammar mirrors
-    ``klangk.netfilter.parse_allowed_domains`` (#2256)."""
+    """Env parsing → ``(host, port|None, mode)`` triples. CIDRs are skipped
+    (the entrypoint applies those statically); the grammar mirrors
+    ``klangk.netfilter.parse_allowed_domains`` (#2377 nginx-style scopes)."""
 
-    def test_ports_wildcards_cidr_skip(self, proxy, monkeypatch):
+    def test_bare_is_exact_dot_is_inclusive_wildcard_is_subdomains(
+        self, proxy, monkeypatch
+    ):
         monkeypatch.setenv(
             "KLANGKNETWORK_EGRESS_ALLOW",
-            "github.com:443,*.pypi.org,pypi.org,"
-            "10.0.0.0/8,10.0.0.0/8:53,bare.com:8443",
+            "github.com:443,*.pypi.org,.pypi.org,bare.com:8443,"
+            "10.0.0.0/8,10.0.0.0/8:53",
         )
         assert proxy.parse_specs() == [
-            ("github.com", 443, False),
-            ("pypi.org", None, True),  # *.pypi.org
-            ("pypi.org", None, False),
-            ("bare.com", 8443, False),
+            ("github.com", 443, proxy._EXACT),  # bare -> exact
+            ("pypi.org", None, proxy._SUBDOMAINS),  # *.pypi.org
+            ("pypi.org", None, proxy._INCLUSIVE),  # .pypi.org
+            ("bare.com", 8443, proxy._EXACT),
         ]
 
     def test_wildcard_with_port(self, proxy, monkeypatch):
         monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", "*.pypi.org:443")
-        assert proxy.parse_specs() == [("pypi.org", 443, True)]
+        assert proxy.parse_specs() == [("pypi.org", 443, proxy._SUBDOMAINS)]
+
+    def test_inclusive_with_port(self, proxy, monkeypatch):
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", ".pypi.org:443")
+        assert proxy.parse_specs() == [("pypi.org", 443, proxy._INCLUSIVE)]
 
     def test_empty_env(self, proxy, monkeypatch):
         monkeypatch.delenv("KLANGKNETWORK_EGRESS_ALLOW", raising=False)
@@ -109,45 +115,56 @@ class TestParseSpecs:
 
 
 class TestPortsFor:
-    """``ports_for`` is the allow gate. Returns ``None`` (all ports), a port
-    ``set`` (scoped allow), or ``set()`` (deny). A suffix-match regression here
-    (e.g. a bare ``endswith(h)``) would wrongly admit ``evilgithub.com`` for an
-    allow-listed ``github.com``. Pin the exact / subdomain / wildcard / port
-    semantics so a refactor can't silently weaken it (#2256)."""
+    """``ports_for`` is the allow gate (#2377 nginx-style scopes). Returns
+    ``None`` (all ports), a port ``set`` (scoped allow), or ``set()`` (deny).
+    Bare host = EXACT (apex only); ``.host`` = INCLUSIVE (apex + subdomains);
+    ``*.host`` = SUBDOMAINS only. Pin the boundaries so a refactor can't
+    silently weaken them."""
 
-    @pytest.mark.parametrize(
-        "qname, expected",
-        [
-            ("github.com", None),  # exact -> all ports
-            ("api.github.com", None),  # subdomain -> all ports
-            ("evilgithub.com", set()),  # boundary: NOT a subdomain
-            ("github.com.attacker.test", set()),  # prefix-of, not a suffix
-        ],
-    )
-    def test_suffix_boundary(self, proxy, monkeypatch, qname, expected):
-        # The dot boundary ("." + h) stops evilgithub.com matching github.com.
-        monkeypatch.setattr(proxy, "SPECS", [("github.com", None, False)])
-        assert proxy.ports_for(qname) == expected
+    def test_bare_host_is_exact_apex_only(self, proxy, monkeypatch):
+        # bare github.com -> EXACT (#2377): apex only, NOT subdomains.
+        monkeypatch.setattr(
+            proxy, "SPECS", [("github.com", None, proxy._EXACT)]
+        )
+        assert proxy.ports_for("github.com") is None  # apex
+        assert proxy.ports_for("api.github.com") == set()  # subdomain denied
+        assert proxy.ports_for("evilgithub.com") == set()  # boundary
+        assert proxy.ports_for("github.com.attacker.test") == set()
 
-    def test_port_scope_applies_to_apex_and_subdomain(
-        self, proxy, monkeypatch
-    ):
-        monkeypatch.setattr(proxy, "SPECS", [("github.com", 443, False)])
-        assert proxy.ports_for("github.com") == {443}
-        assert proxy.ports_for("api.github.com") == {443}
+    def test_inclusive_matches_apex_and_subdomains(self, proxy, monkeypatch):
+        # .github.com -> apex + subdomains (any depth) -- the old bare behavior.
+        monkeypatch.setattr(
+            proxy, "SPECS", [("github.com", None, proxy._INCLUSIVE)]
+        )
+        assert proxy.ports_for("github.com") is None
+        assert proxy.ports_for("api.github.com") is None
+        assert proxy.ports_for("a.b.github.com") is None
+        assert proxy.ports_for("evilgithub.com") == set()  # boundary
 
     def test_wildcard_excludes_apex(self, proxy, monkeypatch):
-        # *.pypi.org matches subdomains only, NOT pypi.org itself — distinct
-        # from a bare pypi.org (apex + subdomains).
-        monkeypatch.setattr(proxy, "SPECS", [("pypi.org", None, True)])
+        # *.pypi.org -> subdomains only, NOT the apex.
+        monkeypatch.setattr(
+            proxy, "SPECS", [("pypi.org", None, proxy._SUBDOMAINS)]
+        )
         assert proxy.ports_for("pypi.org") == set()
         assert proxy.ports_for("a.pypi.org") is None
         assert proxy.ports_for("a.b.pypi.org") is None
 
     def test_wildcard_with_port(self, proxy, monkeypatch):
-        monkeypatch.setattr(proxy, "SPECS", [("pypi.org", 443, True)])
+        monkeypatch.setattr(
+            proxy, "SPECS", [("pypi.org", 443, proxy._SUBDOMAINS)]
+        )
         assert proxy.ports_for("pypi.org") == set()
         assert proxy.ports_for("x.pypi.org") == {443}
+
+    def test_port_scope_exact(self, proxy, monkeypatch):
+        monkeypatch.setattr(
+            proxy, "SPECS", [("github.com", 443, proxy._EXACT)]
+        )
+        assert proxy.ports_for("github.com") == {443}
+        assert (
+            proxy.ports_for("api.github.com") == set()
+        )  # exact -> no subdomain
 
     def test_all_ports_spec_dominates(self, proxy, monkeypatch):
         # github.com (all ports) + github.com:443 -> all ports win.
@@ -155,8 +172,8 @@ class TestPortsFor:
             proxy,
             "SPECS",
             [
-                ("github.com", None, False),
-                ("github.com", 443, False),
+                ("github.com", None, proxy._EXACT),
+                ("github.com", 443, proxy._EXACT),
             ],
         )
         assert proxy.ports_for("github.com") is None
@@ -165,7 +182,10 @@ class TestPortsFor:
         monkeypatch.setattr(
             proxy,
             "SPECS",
-            [("github.com", 443, False), ("github.com", 8443, False)],
+            [
+                ("github.com", 443, proxy._EXACT),
+                ("github.com", 8443, proxy._EXACT),
+            ],
         )
         assert proxy.ports_for("github.com") == {443, 8443}
 
@@ -177,22 +197,24 @@ class TestPortsFor:
         self, proxy, monkeypatch
     ):
         # ports_for compares verbatim; parse_specs/query_name lowercase at the
-        # edges. Pin that contract: a mixed-case qname does NOT match a
-        # lowercased spec, so the lowercasing must not be dropped upstream.
-        monkeypatch.setattr(proxy, "SPECS", [("github.com", None, False)])
+        # edges. A mixed-case qname does NOT match a lowercased spec.
+        monkeypatch.setattr(
+            proxy, "SPECS", [("github.com", None, proxy._EXACT)]
+        )
         assert proxy.ports_for("GitHub.Com") == set()
 
     def test_forever_hosts_consulted_alongside_specs(self, proxy, monkeypatch):
-        # A `forever` consent verdict adds the host to _FOREVER_HOSTS (#2372);
-        # ports_for must treat it as allow-listed (apex + subdomain, port-scoped)
-        # just like a static spec, so a later CDN-rotated IP re-resolves and is
-        # allowed without re-prompting.
+        # A `forever` consent verdict adds the host (EXACT) to _FOREVER_HOSTS
+        # (#2372, #2377): ports_for treats that exact host as allow-listed, so a
+        # later CDN-rotated IP re-resolves and is allowed without re-prompting.
         monkeypatch.setattr(proxy, "SPECS", [])
         monkeypatch.setattr(
-            proxy, "_FOREVER_HOSTS", [("example.com", 443, False)]
+            proxy, "_FOREVER_HOSTS", [("example.com", 443, proxy._EXACT)]
         )
         assert proxy.ports_for("example.com") == {443}
-        assert proxy.ports_for("api.example.com") == {443}
+        assert (
+            proxy.ports_for("api.example.com") == set()
+        )  # exact -> no subdomain
         assert proxy.ports_for("other.com") == set()
 
     def test_add_forever_host_dedups(self, proxy):
@@ -201,35 +223,27 @@ class TestPortsFor:
         proxy._add_forever_host("example.com", 443)  # dup -> one entry
         proxy._add_forever_host("example.com", 8443)  # different port -> added
         assert proxy._FOREVER_HOSTS == [
-            ("example.com", 443, False),
-            ("example.com", 8443, False),
+            ("example.com", 443, proxy._EXACT),
+            ("example.com", 8443, proxy._EXACT),
         ]
 
     def test_forever_host_allows(self, proxy, monkeypatch):
-        # The NFQUEUE-gate predicate (#2372): apex + subdomain match, port must
-        # match, wrong host/port denied. Mirrors ports_for's matching (shared
-        # via _host_matches) -- pin the boundary cases ports_for is pinned on.
+        # The NFQUEUE-gate predicate (#2372): forever entries are EXACT (#2377),
+        # so only the approved host (not its subdomains) matches; port must
+        # match. Mirrors ports_for via the shared _host_matches.
         monkeypatch.setattr(
-            proxy, "_FOREVER_HOSTS", [("example.com", 443, False)]
+            proxy, "_FOREVER_HOSTS", [("example.com", 443, proxy._EXACT)]
         )
         assert proxy._forever_host_allows("example.com", 443)
-        assert proxy._forever_host_allows("api.example.com", 443)  # subdomain
+        assert not proxy._forever_host_allows("api.example.com", 443)  # exact
         assert not proxy._forever_host_allows("example.com", 80)  # wrong port
         assert not proxy._forever_host_allows("other.com", 443)  # wrong host
         assert not proxy._forever_host_allows("evilexample.com", 443)  # suffix
         assert not proxy._forever_host_allows("", 443)  # no host
-        # wildcard: subdomains only, NOT the apex.
-        monkeypatch.setattr(
-            proxy, "_FOREVER_HOSTS", [("example.com", 443, True)]
-        )
-        assert proxy._forever_host_allows("a.example.com", 443)
-        assert not proxy._forever_host_allows(
-            "example.com", 443
-        )  # apex excluded
         # all-ports entry (p is None) matches any port -- defensive (forever
         # entries are added port-scoped, but the predicate tolerates None).
         monkeypatch.setattr(
-            proxy, "_FOREVER_HOSTS", [("example.com", None, False)]
+            proxy, "_FOREVER_HOSTS", [("example.com", None, proxy._EXACT)]
         )
         assert proxy._forever_host_allows("example.com", 8080)
 
@@ -1137,11 +1151,13 @@ class TestNfqueueCallback:
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await self._decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
-        assert ("example.com", 443, False) in proxy._FOREVER_HOSTS
-        # ports_for now treats the host as allow-listed (apex + subdomain).
+        assert ("example.com", 443, proxy._EXACT) in proxy._FOREVER_HOSTS
+        # ports_for now treats the host as allow-listed (EXACT -- apex only).
         monkeypatch.setattr(proxy, "SPECS", [])
         assert proxy.ports_for("example.com") == {443}
-        assert proxy.ports_for("api.example.com") == {443}
+        assert (
+            proxy.ports_for("api.example.com") == set()
+        )  # exact -> no subdomain
 
     async def test_cb_auto_allows_syn_to_forever_host_ip(
         self, proxy, monkeypatch

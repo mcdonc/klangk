@@ -64,6 +64,10 @@ class TestParseAllowedDomains:
             "*.pypi.org:443",
             "*.double.example.com",  # wildcard on a multi-label base
             "*.pypi.org:65535",  # wildcard + max port
+            # #2377: leading "." inclusive scope (apex + subdomains).
+            ".pypi.org",
+            ".pypi.org:443",
+            ".double.example.com",
             # #1935: IPv4 CIDR ranges (with and without a port scope).
             "10.0.0.0/8",
             "10.0.0.0/8:443",
@@ -95,6 +99,7 @@ class TestParseAllowedDomains:
             "*pypi.org",  # missing the dot after *
             "*",  # bare wildcard — nothing to match
             "*.",  # wildcard with empty base
+            ".",  # inclusive (leading dot) with empty base
             "a*.pypi.org",  # wildcard not at the leading position
             "pypi.org.*",  # wildcard at the wrong end
             # #1935: malformed CIDR specs.
