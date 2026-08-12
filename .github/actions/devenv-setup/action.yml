@@ -45,6 +45,24 @@ runs:
           /usr/local/powershell /usr/local/.ghcup \
           /usr/local/julia* &
 
+    - name: Install podman
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        # klangk's build tasks + e2e suites invoke the system podman via
+        # KLANGKD_PODMAN_BIN=/usr/bin/podman (nix podman lacks SUID newuidmap,
+        # so rootless workspace containers need a real system build with the
+        # uidmap SUID helpers). The ubuntu-24.04 runner image ships podman via
+        # a non-apt method under a non-/usr/bin path, and has intermittently
+        # dropped /usr/bin/podman between image bumps (#2381), so install it
+        # explicitly here — every workflow that uses devenv-setup then gets a
+        # working rootless podman regardless of runner-image churn.
+        if [ ! -x /usr/bin/podman ]; then
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap
+        fi
+        /usr/bin/podman --version
+
     - name: Bootstrap
       shell: bash
       run: ./bootstrap --unattended --cachix-version v1.11.1
