@@ -841,6 +841,37 @@ async def test_active_verdict_for_most_recent_wins(ec, ws, user):
     assert row["decision"] == DECISION_DENIED
 
 
+async def test_active_verdict_for_elapsed_newer_allow_does_not_mask_older_deny(
+    ec, ws, user, app_state
+):
+    # B2 regression (#2332): a newer-but-elapsed ALLOW must NOT hide an older
+    # in-effect DENY -- the pause path must still see the deny and block. The
+    # naive "ORDER BY decided_at DESC LIMIT 1" + single-row in-effect check
+    # returned None here (auto-allowing a host the user denied).
+    import time
+
+    now = time.time()
+    w = await ws.create_workspace(user["id"], "avf-b2")
+    # older in-effect DENY (tilrestart), backdated to now-1000
+    d = await ec.create_request(w["id"], "flip.com", 443)
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], DURATION_TILRESTART)
+    # newer elapsed ALLOW (5m), backdated to now-500 -> past its window
+    a = await ec.create_request(w["id"], "flip.com", 443)
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], DURATION_5M)
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "UPDATE egress_consent SET decided_at = ? WHERE id = ?",
+            (now - 1000, d["id"]),
+        )
+        await conn.execute(
+            "UPDATE egress_consent SET decided_at = ? WHERE id = ?",
+            (now - 500, a["id"]),
+        )
+    row = await ec.active_verdict_for(w["id"], "flip.com", 443)
+    assert row is not None
+    assert row["decision"] == DECISION_DENIED
+
+
 async def test_active_verdict_for_excludes_static_denial(ec, ws, user):
     # A static policy denial (decided_by NULL) is not an actionable verdict.
     w = await ws.create_workspace(user["id"], "avf-static")

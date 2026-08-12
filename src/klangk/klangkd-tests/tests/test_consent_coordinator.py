@@ -1408,3 +1408,30 @@ class TestConsentCoordinatorPauseIntegration:
         # 5. a NEW hold after the resolve still auto-allows (pause durable)
         fut2 = await coord.hold(ws["id"], "other.example.com", 80)
         assert fut2.result()["reason"] == "paused"
+
+    async def test_paused_respects_a_real_recorded_deny(self, app_state, user):
+        # I2 (#2332): the security property -- a recorded in-effect deny still
+        # blocks while paused -- driven through the REAL model (not a mock).
+        # Records a deny, pauses, then holds the denied host and asserts the
+        # verdict is deny (paused_deny), NOT an auto-allow.
+        from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
+
+        _wire_coordinator_extras(app_state)
+        ws = await app_state.state.model.workspaces.create_workspace(
+            user["id"], "pause-deny-int", egress_mode=EGRESS_MODE_INTERACTIVE
+        )
+        ec = app_state.state.model.egress_consent
+        coord = ConsentCoordinator(app_state)
+        # record an in-effect deny for evil.example.com:443
+        req = await ec.create_request(ws["id"], "evil.example.com", 443)
+        await ec.decide(req["id"], "denied", user["id"], "tilrestart")
+        # pause the workspace
+        assert (await coord.pause(ws["id"], PAUSE_15M))["ok"] is True
+        # hold the denied host -> deny (paused_deny), NOT auto-allowed
+        fut = await coord.hold(ws["id"], "evil.example.com", 443)
+        verdict = fut.result()
+        assert verdict["decision"] == "deny"
+        assert verdict["reason"] == "paused_deny"
+        # a different, never-decided host is still auto-allowed
+        fut2 = await coord.hold(ws["id"], "unseen.example.com", 443)
+        assert fut2.result()["reason"] == "paused"

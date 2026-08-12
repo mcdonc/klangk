@@ -217,7 +217,7 @@ def make_revoke(request_id: str) -> str:
 def make_pause(duration: str) -> str:
     """Build an outbound pause frame (JSON string) -- silence prompts (#2332).
 
-    ``duration`` is one of ``"5m"``/``"15m"``/``"1h"``. While paused, a
+    ``duration`` is one of ``"15m"``/``"1h"``/``"1d"``. While paused, a
     destination with no allow-list rule and no in-effect verdict is
     auto-allowed (no hold); a recorded deny still blocks. The server replies
     with a ``pause_ack`` and broadcasts a refreshed ``egress_rules`` frame.
