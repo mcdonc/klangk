@@ -304,6 +304,8 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             "rm_env",
             "add_allow",
             "rm_allow",
+            "add_reject",
+            "rm_reject",
         ):
             self.query_one(f"#{wid}").can_focus = False
 
@@ -680,14 +682,12 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "resources_pane": "idle_timeout",
         "advanced_pane": "command",
     }
-    # Delete/'e' act on the list under the active tab (#1891).
+    # Delete/'e' act on the list under the active tab (#1891). The
+    # netfilter pane holds two lists (allow + reject, #2386), so it is NOT
+    # in this table -- :meth:`_list_handlers` dispatches it on focus instead.
     _PANE_LIST_HANDLER = {
         "mounts_pane": ("_remove_mount", "_edit_mount"),
         "env_pane": ("_remove_env", "_edit_env"),
-        "netfilter_pane": (
-            "_remove_allowed_domain",
-            "_edit_allowed_domain",
-        ),
     }
 
     def __init__(
@@ -919,6 +919,8 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             "rm_env",
             "add_allow",
             "rm_allow",
+            "add_reject",
+            "rm_reject",
         ):
             self.query_one(f"#{wid}").can_focus = False
 
@@ -1172,6 +1174,11 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         """
         pane = self._active_tab()
         if pane == "netfilter_pane":
+            # Two lists share this pane (#2386): dispatch on the focused
+            # widget. Focus on a reject *input* (not the list) falls through
+            # to the allow default -- harmless, because an Input consumes
+            # Delete/'e' before the Screen binding fires, so these actions
+            # never run while typing in an input.
             focused = self.focused.id if self.focused else None
             if focused == "reject_list":
                 return ("_remove_rejected_domain", "_edit_rejected_domain")

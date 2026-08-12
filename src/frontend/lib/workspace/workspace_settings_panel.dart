@@ -191,9 +191,10 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   }
 }
 
-/// Compare two allowed_domains values (each a ``List?`` of ``String``) for
-/// order-independent equality, so the restart notice fires only on a real
-/// change — not a harmless reorder or the null/empty equivalence (#1365).
+/// Compare two domain-list values (``allowed_domains`` or ``rejected_domains``,
+/// each a ``List?`` of ``String``) for order-independent equality, so the
+/// restart notice fires only on a real change — not a harmless reorder or the
+/// null/empty equivalence (#1365, #2386).
 bool _domainListsEqual(Object? a, Object? b) {
   final la = (a is List ? a.cast<String>() : const <String>[]);
   final lb = (b is List ? b.cast<String>() : const <String>[]);
@@ -1004,7 +1005,12 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
         if (_allowedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
           const SizedBox(height: 8),
-          _buildEgressNotEnforcedNotice(),
+          _buildEgressNotEnforcedNotice(
+            listLabel: 'allowed-domains list',
+            consequence: 'This workspace will start with unrestricted '
+                'outbound network until an operator enables netfilter on the '
+                'server.',
+          ),
         ],
       ],
     );
@@ -1040,6 +1046,14 @@ class _SettingsFormState extends State<_SettingsForm> {
             fontSize: 12,
           ),
         ),
+        if (_rejectedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
+          const SizedBox(height: 8),
+          _buildEgressNotEnforcedNotice(
+            listLabel: 'rejected-domains list',
+            consequence: 'Hosts on this list will be reachable until an '
+                'operator enables netfilter on the server.',
+          ),
+        ],
       ],
     );
   }
@@ -1049,24 +1063,25 @@ class _SettingsFormState extends State<_SettingsForm> {
   /// container starts with unrestricted egress (deliberate fail-open).
   /// Surface the gap to the user who set the list (the party at risk);
   /// the server only logs the warning to operator logs otherwise.
-  Widget _buildEgressNotEnforcedNotice() {
+  Widget _buildEgressNotEnforcedNotice({
+    required String listLabel,
+    required String consequence,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: KColors.accentAmber.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.warning_amber, size: 18),
-          SizedBox(width: 8),
+          const Icon(Icons.warning_amber, size: 18),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               'Egress filtering is not active on this server — the '
-              'allowed-domains list above is NOT being enforced. This '
-              'workspace will start with unrestricted outbound network '
-              'until an operator enables netfilter on the server.',
+              '$listLabel above is NOT being enforced. $consequence',
             ),
           ),
         ],

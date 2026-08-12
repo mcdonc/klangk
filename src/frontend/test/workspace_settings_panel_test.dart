@@ -833,6 +833,30 @@ void main() {
     );
 
     testWidgets(
+      'shows the notice when rejected_domains are set and netfilter is off (#2386)',
+      (tester) async {
+        testAuthHttpClientOverride = _client(
+          workspace: {
+            ..._workspace,
+            'rejected_domains': <String>['blocked.example.com'],
+          },
+        );
+        await tester.pumpWidget(_buildPanel());
+        await tester.pumpAndSettle();
+
+        // The reject-list notice (distinct from the allow-list one).
+        expect(
+          find.textContaining('rejected-domains list'),
+          findsOneWidget,
+        );
+        expect(
+          find.textContaining('will be reachable'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'hides the notice when netfilter is enabled (allow-list enforced)',
       (tester) async {
         testAuthHttpClientOverride = _client(

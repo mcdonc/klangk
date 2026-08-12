@@ -806,6 +806,30 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
           ),
         ],
       ),
+      if (_rejectedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.amber.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.warning_amber, size: 18),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Egress filtering is not active on this server — the '
+                  'rejected-domains list will NOT be enforced until an '
+                  'operator enables netfilter.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     ];
   }
 }

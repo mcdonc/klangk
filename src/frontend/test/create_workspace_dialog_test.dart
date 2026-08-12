@@ -703,6 +703,28 @@ void main() {
       expect(find.textContaining('NOT be enforced'), findsOneWidget);
     });
 
+    testWidgets(
+      'shows not-enforced notice for rejected domains when netfilter disabled (#2386)',
+      (tester) async {
+        testAuthHttpClientOverride =
+            mockClient((_) async => http.Response('Not found', 404));
+        await tester.pumpWidget(buildDialog(netfilterEnabled: false));
+        await tester.pump();
+        await tester.pump();
+
+        final input = find.widgetWithText(TextField, 'evil.example.com');
+        await tester.ensureVisible(input);
+        await tester.enterText(input, 'blocked.example.com');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pump();
+
+        expect(
+          find.textContaining('rejected-domains list will NOT be enforced'),
+          findsOneWidget,
+        );
+      },
+    );
+
     testWidgets('hides not-enforced notice when netfilter enabled',
         (tester) async {
       testAuthHttpClientOverride = mockClient(
