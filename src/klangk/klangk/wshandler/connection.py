@@ -300,7 +300,9 @@ class Connection:
             allowed_domains=workspace.get("allowed_domains"),
             rejected_domains=workspace.get("rejected_domains"),
             workspace_settings=workspace.get("settings"),
-            egress_mode=workspace.get("egress_mode", "static"),
+            egress_mode=workspace.get(
+                "egress_mode", model.EGRESS_MODE_INTERACTIVE
+            ),
         )
         self.container_status = container_status
         self.workspace_id = workspace_id

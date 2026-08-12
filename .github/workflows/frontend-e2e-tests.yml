@@ -42,6 +42,7 @@ jobs:
               - 'src/klangk/**'
               - 'src/frontend/**'
               - 'src/containers/workspace/**'
+              - 'src/containers/network/**'
               - 'features/**'
               - 'devenv.nix'
               - 'devenv.yaml'
@@ -50,7 +51,7 @@ jobs:
       - uses: ./.github/actions/devenv-setup
         if: steps.filter.outputs.e2e == 'true'
         with:
-          build-tasks: klangk:build-workspace-image klangk:flutter-build
+          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar klangk:flutter-build
 
       - name: Run E2E tests (chromium + API)
         if: steps.filter.outputs.e2e == 'true'

@@ -1146,6 +1146,22 @@ class TestKlangkClient:
             assert cfg["netfilter_default_domains"] == ["github.com:443"]
             client.get.assert_called_once_with("/api/v1/config")
 
+    def test_create_workspace_includes_egress_mode(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "id": "ws-1",
+            "name": "n",
+            "created_at": "x",
+        }
+        with patch.object(client, "post", return_value=mock_resp):
+            client.create_workspace("n", egress_mode="static")
+            body = client.post.call_args.kwargs["json"]
+            assert body["egress_mode"] == "static"
+            # Omitted when not provided (server applies the deploy default).
+            client.create_workspace("n2")
+            assert "egress_mode" not in client.post.call_args.kwargs["json"]
+
     def test_create_workspace_includes_allowed_domains(self):
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock(status_code=200)

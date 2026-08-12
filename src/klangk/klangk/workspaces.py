@@ -377,7 +377,7 @@ class Workspaces:
         allowed_domains: list[str] | None = None,
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
-        egress_mode: str = model.EGRESS_MODE_STATIC,
+        egress_mode: str = model.EGRESS_MODE_DEFAULT,
     ) -> dict:
         workspace = (
             await self.app.state.model.workspaces.create_workspace_with_acl(
@@ -536,7 +536,7 @@ class Workspaces:
             allowed_domains=ws.get("allowed_domains"),
             rejected_domains=ws.get("rejected_domains"),
             workspace_settings=ws.get("settings"),
-            egress_mode=ws.get("egress_mode", "static"),
+            egress_mode=ws.get("egress_mode", model.EGRESS_MODE_INTERACTIVE),
         )
         # Apply the per-workspace idle-timeout override from the settings
         # bag (#864), *only* when the workspace actually declares one.
