@@ -35,6 +35,7 @@ from klangk.cli.tui.consent import (
     ConsentDeciderApp,
     DECISION_ALLOWED,
     DECISION_DENIED,
+    DURATION_5M,
     DURATION_FOREVER,
     DURATION_ONCE,
     DURATION_TILRESTART,
@@ -596,6 +597,77 @@ class TestConsentDecisionEndStates:
             assert "EXIT:7" in res1, (
                 f"the later connection should be refused fast (ECONNREFUSED) "
                 f"by the forever-deny REJECT rule, got: {res1!r}"
+            )
+        finally:
+            await ws_conn.close()
+
+    @pytest.mark.asyncio
+    async def test_timed_allow_persists_without_reprompting(
+        self, server, auth, workspace
+    ):
+        # #2399 Finding 1: a TIMED allow (5m/1h/5s) must cover a later
+        # connection to the same host WITHOUT re-prompting -- the same way a
+        # timed deny does. Unlike `forever` (covered by the in-session
+        # _FOREVER_HOSTS gate in _cb + the DNS path), a timed allow has NO
+        # Python gate: a new connection is covered ONLY by the learned
+        # iptables ACCEPT rule (top of OUTPUT, ahead of NFQUEUE) installed by
+        # allow(dst, None, ttl). This test pins that path.
+        ws_id = workspace
+        ws_conn = await ws_connect(server, auth, ws_id)
+        try:
+            container = _container_for_workspace(ws_id)
+            app = ConsentDeciderApp(
+                server_url=server["url"],
+                token=auth["token"],
+                workspace_id=ws_id,
+                workspace_name="timed-allow-test",
+                hold_timeout=_CONSENT_TIMEOUT,
+            )
+            async with app.run_test() as pilot:
+                await _wait_connected(app)
+                # 1st connection: held, then allowed for 5m (timed). A raw IP
+                # (1.1.1.1) is used so DNS/CDN rotation can't change the dst
+                # between connections -- a re-prompt here is unambiguously the
+                # learned ACCEPT rule failing to cover the 2nd SYN (#2399).
+                _trigger(container, "1.1.1.1", "/tmp/r_tallow_0.out")
+                rid = await _wait_for_request(app, "1.1.1.1")
+                app._decide_id(rid, DECISION_ALLOWED, DURATION_5M)
+                await _wait_resolved(app, rid)
+                await pilot.pause()
+                # Wait for the 1st curl to succeed (confirms the verdict was
+                # applied) and let the learned ACCEPT rule settle into OUTPUT
+                # before the 2nd curl: the rule installs in a worker thread
+                # that lags the decider's egress_resolved broadcast, so an
+                # instant 2nd SYN would race it.
+                res0 = await _wait_result(container, "/tmp/r_tallow_0.out")
+                assert "EXIT:0" in res0, (
+                    f"the allowed connection should succeed, got: {res0!r}"
+                )
+                await asyncio.sleep(2)
+                # 2nd connection: the timed-allow ACCEPT rule must pass it
+                # with NO new prompt. Watch the decider's in-memory pending
+                # set for a short window; a prompt here is the regression
+                # (#2399: the new SYN reached NFQUEUE because the learned
+                # ACCEPT did not cover it).
+                _trigger(container, "1.1.1.1", "/tmp/r_tallow_1.out")
+                prompted = False
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    if any(
+                        "1.1.1.1" in (r.dest_host or "")
+                        for r in app.controller.pending.values()
+                    ):
+                        prompted = True
+                        break
+                    await asyncio.sleep(0.3)
+                res1 = await _wait_result(container, "/tmp/r_tallow_1.out")
+            assert not prompted, (
+                "timed-allow must not re-prompt a later connection "
+                "(persistence is via the learned ACCEPT rule, #2399)"
+            )
+            assert "EXIT:0" in res1, (
+                f"the later connection should succeed under the timed-allow "
+                f"ACCEPT rule, got: {res1!r}"
             )
         finally:
             await ws_conn.close()
