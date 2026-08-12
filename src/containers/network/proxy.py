@@ -287,6 +287,20 @@ def nxdomain_for(wire: bytes) -> bytes:
     return resp.to_wire()
 
 
+def _host_matches(qname: str, host: str, is_wildcard: bool) -> bool:
+    """Apex+subdomain (bare host) vs subdomain-only (``*.host`` wildcard) match.
+
+    Shared by :func:`ports_for` (the DNS gate) and :func:`_forever_host_allows`
+    (the NFQUEUE gate) so the rule can't drift between them (#2256, #2372). A
+    bare host matches the apex + subdomains; a ``*.host`` wildcard matches
+    subdomains only (apex excluded). The suffix check requires a leading dot,
+    so ``evilexample.com`` does NOT match ``example.com``.
+    """
+    if is_wildcard:
+        return qname.endswith("." + host)
+    return qname == host or qname.endswith("." + host)
+
+
 def ports_for(qname: str) -> set[int] | None:
     """The ports a queried name is allowed on under :data:`SPECS`.
 
@@ -300,11 +314,7 @@ def ports_for(qname: str) -> set[int] | None:
     """
     ports: set[int] = set()
     for host, port, is_wildcard in (*SPECS, *_FOREVER_HOSTS):
-        if is_wildcard:
-            matched = qname.endswith("." + host)
-        else:
-            matched = qname == host or qname.endswith("." + host)
-        if not matched:
+        if not _host_matches(qname, host, is_wildcard):
             continue
         if port is None:
             return None  # an all-ports spec dominates
@@ -338,11 +348,7 @@ def _forever_host_allows(host: str, port: int) -> bool:
     if not host:
         return False
     for h, p, is_wildcard in _FOREVER_HOSTS:
-        if is_wildcard:
-            matched = host.endswith("." + h)
-        else:
-            matched = host == h or host.endswith("." + h)
-        if matched and (p == port or p is None):
+        if _host_matches(host, h, is_wildcard) and (p == port or p is None):
             return True
     return False
 
@@ -1290,12 +1296,22 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
     # auto-allowed here, the last gate before prompting, so the user isn't
     # re-asked for a domain they allowed forever.
     if port and _forever_host_allows(host, port):
-        try:
-            allow(dst, port, _DURATION_FOREVER)
-        except Exception:
-            pass
+        # allow() forks iptables under _LOCK -- run it off the loop thread (the
+        # file's invariant; every other allow/learn/reject call is in the
+        # executor). Fire-and-forget: conntrack ESTABLISHED,RELATED carries THIS
+        # connection after pkt.accept(); the ACCEPT rule only helps FUTURE
+        # connections, and the _VERDICT_CACHE write below covers retransmits.
+        # Port-scoped (the consented port) -- deliberately stricter than the
+        # consent-allow path's all-ports learn (allow(dst, None, ...)).
+        asyncio.get_running_loop().run_in_executor(
+            None, allow, dst, port, _DURATION_FOREVER
+        )
         pkt.accept()
         _VERDICT_CACHE[flow] = ("allow", now + VERDICT_CACHE_TTL)
+        # NOTE (#2370): revoking a forever verdict must also drop this host
+        # from _FOREVER_HOSTS and clear _VERDICT_CACHE, or a revoked
+        # forever-allow keeps passing (ports_for re-allow-lists it + this
+        # cache reuses the verdict). Wired with the revoke path in #2370.
         return
     pkt.retain()  # keep the payload valid past this callback (deferred verdict)
     _INFLIGHT.add(flow)
@@ -1334,6 +1350,12 @@ async def _decide_and_verdict(
     if len(_VERDICT_CACHE) > 4096:
         _VERDICT_CACHE.clear()
     _VERDICT_CACHE[flow] = (decision, now + VERDICT_CACHE_TTL)
+    # Populate the in-session allow-list BEFORE the iptables fork below (which
+    # yields to the executor): a SYN to a different IP of this host arriving
+    # during that yield would otherwise miss _FOREVER_HOSTS and re-prompt. Both
+    # gates (ports_for + _cb) read it (#2372).
+    if decision == "allow" and duration == "forever" and port:
+        _add_forever_host(host, port)
     # Run the iptables fork (allow/reject) in the executor so it doesn't block
     # the loop thread -- matches the DNS path's _learn_all, which also runs
     # off the loop. The packet is retained, so verdicting after the await is
@@ -1350,13 +1372,6 @@ async def _decide_and_verdict(
                 except Exception:
                     pass
             pkt.accept()
-            if duration == "forever" and port:
-                # In-session domain coverage (#2372): a forever allow approves
-                # the host, so any later resolution of it (including a
-                # CDN-rotated IP) is allow-listed and passes without
-                # re-prompting. _FOREVER_HOSTS is read by ports_for alongside
-                # the static allow-list.
-                _add_forever_host(host, port)
         else:
             # Forge a RST directly so connect() fails fast (ECONNREFUSED) at once,
             # independent of the conntrack/retransmit race that made the REJECT
