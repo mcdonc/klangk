@@ -1279,6 +1279,48 @@ class TestStartContainer:
         assert "dns" not in creates[1]
         assert "dns_search" not in creates[1]
 
+    async def test_reject_only_workspace_starts_network_sidecar(
+        self, workspace, tmp_path, monkeypatch
+    ):
+        # #2367: a workspace with rejected_domains but NO allowed_domains still
+        # starts the network sidecar (the reject list is enforced by NXDOMAIN in
+        # the sidecar's proxy), so the trigger is `allowed_domains OR
+        # rejected_domains`. The sidecar gets KLANGKNETWORK_EGRESS_REJECT and an
+        # empty ALLOW (allowed_domains is None here, so the join must tolerate it).
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                rejected_domains=["evil.com:443"],
+            )
+        assert len(creates) == 2
+        assert creates[0]["name"].startswith("klangk-net-")
+        assert "KLANGKNETWORK_EGRESS_REJECT=evil.com:443" in creates[0]["env"]
+        assert any(
+            e == "KLANGKNETWORK_EGRESS_ALLOW=" for e in creates[0]["env"]
+        ), creates[0]["env"]
+        assert creates[1]["network"] == "container:net-cid"
+
     async def test_filtered_workspace_publishes_host_ports_on_sidecar(
         self, workspace, tmp_path, monkeypatch
     ):

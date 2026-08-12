@@ -99,6 +99,50 @@ def _validate_allowed_domains(
     return domains
 
 
+def _validate_rejected_domains(
+    values: list[str] | None, app
+) -> list[str] | None:
+    """Validate + normalize a workspace's ``rejected_domains`` list (#2367).
+
+    The deny counterpart to :func:`_validate_allowed_domains`. Reuses
+    :func:`klangk.netfilter.parse_allowed_domains` so the host grammar matches
+    (bare = exact apex, ``.host`` = apex + subdomains, ``*.host`` = subdomains
+    only, #2377). Host-only: a CIDR spec is rejected up front -- the network
+    sidecar NXDOMAINs a rejected name *before* resolution, which has no
+    IP/CIDR dimension, and a deny-list must not silently ignore an entry an
+    operator believed was blocking something. Raises HTTP 400 on a malformed
+    entry or a CIDR. Only warns -- never rejects -- when the network sidecar
+    is not configured (the value is persisted for when filtering is re-enabled).
+    """
+    if not values:
+        return None
+    for raw in values:
+        spec = raw.strip()
+        if spec and "/" in spec:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "rejected_domains does not support CIDR specs (a rejected"
+                    f" name is NXDOMAIN'd before resolution): {raw!r}."
+                    " Use a host/domain spec instead."
+                ),
+            )
+    try:
+        domains = netfilter_mod.parse_allowed_domains(
+            values, label="rejected_domains"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not app.state.netfilter.enabled():
+        logger.warning(
+            "Workspace configured rejected_domains=%s but the network "
+            "sidecar is disabled on this server; the value is persisted "
+            "but takes effect only once filtering is re-enabled (#2367).",
+            domains,
+        )
+    return domains
+
+
 def _annotate_running(items: list[dict], container_registry) -> list[dict]:
     """Annotate each workspace dict with live container/health state.
 
@@ -203,6 +247,7 @@ class CreateWorkspaceRequest(BaseModel):
     setup_state: Literal["pending", "complete", "failed"] | None = None
     health_check: str | None = None
     allowed_domains: list[str] | None = None
+    rejected_domains: list[str] | None = None
     settings: dict | None = None
     egress_mode: Literal["static", "interactive"] = EGRESS_MODE_DEFAULT
 
@@ -233,6 +278,7 @@ async def create_workspace(
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
     allowed_domains = _validate_allowed_domains(body.allowed_domains, app)
+    rejected_domains = _validate_rejected_domains(body.rejected_domains, app)
     try:
         settings = validate_settings(body.settings)
     except ValueError as exc:
@@ -249,6 +295,7 @@ async def create_workspace(
             setup_state=body.setup_state or "complete",
             health_check=body.health_check,
             allowed_domains=allowed_domains,
+            rejected_domains=rejected_domains,
             settings=settings,
             egress_mode=body.egress_mode,
         )
@@ -290,6 +337,7 @@ class UpdateWorkspaceRequest(BaseModel):
     setup_state: Literal["pending", "complete", "failed"] | None = None
     health_check: str | None = None
     allowed_domains: list[str] | None = None
+    rejected_domains: list[str] | None = None
     settings: dict | None = None
     # egress_mode (like allowed_domains) is enforced by the network
     # sidecar at container start, so a change here takes effect on the
@@ -327,6 +375,10 @@ async def update_workspace(
     if "allowed_domains" in fields:
         fields["allowed_domains"] = _validate_allowed_domains(
             fields["allowed_domains"], app
+        )
+    if "rejected_domains" in fields:
+        fields["rejected_domains"] = _validate_rejected_domains(
+            fields["rejected_domains"], app
         )
     # settings is a full-replace on PUT (None = clear the whole bag).
     # ``exclude_unset=True`` means the key is present only when the client
@@ -442,6 +494,7 @@ async def duplicate_workspace(
             env=source.get("env"),
             health_check=source.get("health_check"),
             allowed_domains=source.get("allowed_domains"),
+            rejected_domains=source.get("rejected_domains"),
             settings=source.get("settings"),
         )
     except SAIntegrityError:
@@ -885,6 +938,7 @@ async def _extract_archive_metadata(
         "env": env,
         "health_check": metadata.get("health_check"),
         "allowed_domains": metadata.get("allowed_domains"),
+        "rejected_domains": metadata.get("rejected_domains"),
         "settings": metadata.get("settings"),
     }
 
@@ -947,6 +1001,9 @@ async def import_workspace(
         allowed_domains = _validate_allowed_domains(
             meta.get("allowed_domains"), app
         )
+        rejected_domains = _validate_rejected_domains(
+            meta.get("rejected_domains"), app
+        )
         # Re-validate imported settings — an archive from this instance is
         # trusted, but the bag may predate a schema change or carry a value
         # the current deploy rejects. Validate rather than persist blindly.
@@ -969,6 +1026,7 @@ async def import_workspace(
                 env=meta["env"],
                 health_check=meta["health_check"],
                 allowed_domains=allowed_domains,
+                rejected_domains=rejected_domains,
                 settings=settings,
             )
         except SAIntegrityError:

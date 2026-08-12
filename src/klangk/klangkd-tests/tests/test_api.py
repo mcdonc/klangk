@@ -1820,6 +1820,66 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 400
         assert "Invalid allowed_domains" in resp.json()["detail"]
 
+    async def test_create_with_rejected_domains_persists(
+        self, client, app, user, caplog
+    ):
+        # rejected_domains is the deny counterpart (#2367): host-only grammar
+        # mirroring allowed_domains (bare = exact, ``.host`` = inclusive),
+        # de-duplicated + order-preserved, and warned (not rejected) when the
+        # sidecar is off so it takes effect once filtering is re-enabled.
+        app.state.settings.network_sidecar_image = ""
+        headers = await _auth_headers(client)
+        with caplog.at_level("WARNING"):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={
+                    "name": "blocked",
+                    "rejected_domains": [
+                        "evil.com:443",
+                        "evil.com:443",
+                        ".malicious.net",
+                    ],
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["rejected_domains"] == [
+            "evil.com:443",
+            ".malicious.net",
+        ]
+        assert any(
+            "network sidecar is disabled" in r.message for r in caplog.records
+        )
+
+    async def test_create_with_invalid_rejected_domains_rejected(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "bad", "rejected_domains": ["bad spec"]},
+        )
+        assert resp.status_code == 400
+        assert "Invalid rejected_domains" in resp.json()["detail"]
+
+    async def test_create_with_rejected_domains_cidr_rejected(
+        self, client, user
+    ):
+        # A CIDR is rejected up front: the sidecar NXDOMAINs a rejected name
+        # *before* resolution (no IP/CIDR dimension), and a deny-list must not
+        # silently ignore an entry an operator believed was blocking (#2367).
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "bad-cidr", "rejected_domains": ["10.0.0.0/8"]},
+        )
+        assert resp.status_code == 400
+        assert (
+            "rejected_domains does not support CIDR" in resp.json()["detail"]
+        )
+
     async def test_create_auto_start_rejected_without_env(self, client, user):
         headers = await _auth_headers(client)
         with patch.dict(os.environ, {}, clear=False):
@@ -2443,6 +2503,24 @@ class TestWorkspaceRoutes:
         resp = await client.get("/api/v1/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["allowed_domains"] == ["github.com:443"]
+
+    async def test_update_workspace_rejected_domains(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "rej-ws"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"rejected_domains": ["evil.com:443"]},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["rejected_domains"] == ["evil.com:443"]
 
     async def test_create_workspace_with_settings(self, client, user):
         headers = await _auth_headers(client)
@@ -7116,6 +7194,7 @@ class TestWorkspaceMetadata:
             "env": {"FOO": "bar"},
             "health_check": None,
             "allowed_domains": None,
+            "rejected_domains": None,
             "settings": None,
             "num_ports": 3,
         }

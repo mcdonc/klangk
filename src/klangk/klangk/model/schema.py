@@ -155,6 +155,10 @@ async def init_db(db) -> None:
                 -- comma-joined host[:port] specs; NULL = unrestricted
                 -- egress (#1365)
                 allowed_domains TEXT,
+                -- comma-joined host[:port] specs; NULL = no static
+                -- deny-list (#2367). A rejected name is NXDOMAIN'd
+                -- unconditionally (no resolution, no SYN, no prompt).
+                rejected_domains TEXT,
                 -- egress filtering mode: 'static' (immutable allow-list
                 -- at create time, the default) or 'interactive'
                 -- (prompt on first connection to unknown host, #2239).
@@ -219,6 +223,13 @@ async def init_db(db) -> None:
         if "allowed_domains" not in ws_cols:
             await db.execute(
                 "ALTER TABLE workspaces ADD COLUMN allowed_domains TEXT"
+            )
+        # Migration: add rejected_domains column (#2367). NULL by default
+        # so existing workspaces keep no static deny-list; the operator opts
+        # in per workspace.
+        if "rejected_domains" not in ws_cols:
+            await db.execute(
+                "ALTER TABLE workspaces ADD COLUMN rejected_domains TEXT"
             )
         # Migration: add settings column (#864). NULL by default so
         # existing workspaces keep inheriting every deploy-wide default

@@ -183,8 +183,10 @@ _INCLUSIVE = "inclusive"
 _SUBDOMAINS = "subdomains"
 
 
-def parse_specs() -> list[tuple[str, int | None, str]]:
-    """Structured allow-list specs from ``KLANGKNETWORK_EGRESS_ALLOW`` (#2377).
+def parse_specs(
+    env_var: str = "KLANGKNETWORK_EGRESS_ALLOW",
+) -> list[tuple[str, int | None, str]]:
+    """Structured host specs from ``env_var`` (#2377, #2367).
 
     Each entry is ``(host, port, mode)``: ``mode`` is :data:`_EXACT` (bare host,
     apex only), :data:`_INCLUSIVE` (``.host``, apex + subdomains), or
@@ -193,7 +195,7 @@ def parse_specs() -> list[tuple[str, int | None, str]]:
     those statically. The grammar mirrors ``klangk.netfilter.parse_allowed_domains``.
     """
     out: list[tuple[str, int | None, str]] = []
-    for spec in os.environ.get("KLANGKNETWORK_EGRESS_ALLOW", "").split(","):
+    for spec in os.environ.get(env_var, "").split(","):
         spec = spec.strip()
         if not spec or "/" in spec:
             continue
@@ -217,6 +219,9 @@ def parse_specs() -> list[tuple[str, int | None, str]]:
 
 
 SPECS = parse_specs()
+# Static deny-list specs from ``KLANGKNETWORK_EGRESS_REJECT`` (#2367): a name
+# matching one of these is NXDOMAIN'd unconditionally (see :func:`rejected_for`).
+REJECT_SPECS = parse_specs("KLANGKNETWORK_EGRESS_REJECT")
 
 # Hosts allow-listed in-session by a `forever` consent verdict (#2372): each
 # entry is (host, port, mode), mirroring SPECS. On a forever allow,
@@ -337,6 +342,17 @@ def ports_for(qname: str) -> set[int] | None:
             return None  # an all-ports spec dominates
         ports.add(port)
     return ports
+
+
+def rejected_for(qname: str) -> bool:
+    """Does ``qname`` match a :data:`REJECT_SPECS` entry (#2367)?
+
+    Parallel to :func:`ports_for` for the deny-list, but boolean -- a rejected
+    name is NXDOMAIN'd unconditionally, so there is no port dimension. Matches
+    via :func:`_host_matches` (nginx-style scope): bare = apex only, ``.host`` =
+    apex + subdomains, ``*.host`` = subdomains only.
+    """
+    return any(_host_matches(qname, host, mode) for host, _port, mode in REJECT_SPECS)
 
 
 def _add_forever_host(host: str, port: int) -> None:
@@ -1434,6 +1450,14 @@ async def _handle_packet(
         qname = query_name(data)
     except Exception:
         return  # malformed/unparseable query -> drop
+    # Static deny-list (#2367): a rejected name is NXDOMAIN'd unconditionally,
+    # in BOTH static and interactive modes, and takes precedence over the
+    # allow-list + consent (a name in both allowed + rejected is rejected).
+    if rejected_for(qname):
+        if DEBUG:
+            print(f"reject {qname}", flush=True)
+        _send_nxdomain(s, data, addr)
+        return
     ports = ports_for(qname)
     deny, port_set = _decision(qname, ports)
     if deny:

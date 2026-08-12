@@ -118,13 +118,15 @@ def _valid_cidr_spec(spec: str) -> bool:
     return True
 
 
-def parse_allowed_domains(values: list[str]) -> list[str]:
+def parse_allowed_domains(
+    values: list[str], label: str = "allowed_domains"
+) -> list[str]:
     """Validate + normalize a list of ``host[:port]`` or IPv4 CIDR specs.
 
     Strips whitespace, drops empties, and de-duplicates while preserving
-    first-seen order. Raises :class:`ValueError` listing every invalid
-    spec so the API surfaces a precise error instead of a silent skip.
-    A ``/0`` CIDR (e.g. ``0.0.0.0/0``) is *valid* but matches all of
+    first-seen order. Raises :class:`ValueError` (prefixed with ``label``)
+    listing every invalid spec so the API surfaces a precise error instead of
+    a silent skip. A ``/0`` CIDR (e.g. ``0.0.0.0/0``) is *valid* but matches all of
     IPv4 — effectively disabling the filter — so it earns a loud warning
     (not a rejection) so an operator who stumbles into it can't do so
     silently. "No allowed_domains" is the documented way to run
@@ -145,7 +147,7 @@ def parse_allowed_domains(values: list[str]) -> list[str]:
             out.append(spec)
     if invalid:
         raise ValueError(
-            "Invalid allowed_domains entry/entries: "
+            f"Invalid {label} entry/entries: "
             + ", ".join(repr(s) for s in invalid)
         )
     _warn_allow_all_cidrs(out)

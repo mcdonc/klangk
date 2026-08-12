@@ -203,6 +203,7 @@ class Workspaces:
             "env": ws.get("env"),
             "health_check": ws.get("health_check"),
             "allowed_domains": ws.get("allowed_domains"),
+            "rejected_domains": ws.get("rejected_domains"),
             "settings": ws.get("settings"),
             "num_ports": ws.get("num_ports", 5),
         }
@@ -374,6 +375,7 @@ class Workspaces:
         setup_state: str | None = None,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str = model.EGRESS_MODE_STATIC,
     ) -> dict:
@@ -389,6 +391,7 @@ class Workspaces:
                 setup_state=setup_state or model.SETUP_STATE_COMPLETE,
                 health_check=health_check,
                 allowed_domains=allowed_domains,
+                rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=egress_mode,
             )
@@ -531,6 +534,7 @@ class Workspaces:
             setup_state=ws.get("setup_state"),
             service_command=ws.get("service_command"),
             allowed_domains=ws.get("allowed_domains"),
+            rejected_domains=ws.get("rejected_domains"),
             workspace_settings=ws.get("settings"),
             egress_mode=ws.get("egress_mode", "static"),
         )
