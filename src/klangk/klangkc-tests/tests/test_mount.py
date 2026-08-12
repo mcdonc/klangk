@@ -123,3 +123,26 @@ class TestValidateAllowedDomainSpec:
     def test_strips_whitespace(self):
         assert validate_allowed_domain_spec("  github.com:443  ") is None
         assert validate_allowed_domain_spec("  10.0.0.0/8  ") is None
+
+    def test_allow_cidr_false_rejects_cidr_for_rejected_domains(self):
+        # #2386: rejected_domains is name-level (NXDOMAIN), so a CIDR is
+        # meaningless and is rejected up front when allow_cidr=False.
+        err = validate_allowed_domain_spec("10.0.0.0/8", allow_cidr=False)
+        assert err is not None
+        assert "CIDR" in err
+        assert validate_allowed_domain_spec("10.0.0.0/8:443", allow_cidr=False)
+        # A plain host / host:port is still accepted.
+        assert (
+            validate_allowed_domain_spec("evil.example.com", allow_cidr=False)
+            is None
+        )
+        assert (
+            validate_allowed_domain_spec(
+                "evil.example.com:443", allow_cidr=False
+            )
+            is None
+        )
+
+    def test_allow_cidr_default_true_unchanged(self):
+        # The default (allow) still accepts CIDRs.
+        assert validate_allowed_domain_spec("10.0.0.0/8") is None

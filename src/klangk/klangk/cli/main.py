@@ -632,6 +632,14 @@ def create(
         "--allow",
         help="Allowed egress domain, repeatable (e.g. github.com:443, pypi.org)",
     ),
+    reject: list[str] | None = typer.Option(
+        None,
+        "--reject",
+        help=(
+            "Rejected egress domain (NXDOMAIN'd), repeatable "
+            "(e.g. evil.example.com). CIDR ranges are not supported."
+        ),
+    ),
     idle_timeout: int | None = typer.Option(
         None,
         "--idle-timeout",
@@ -661,6 +669,13 @@ def create(
             if err:
                 _err.print(f"[red]{err}[/red]")
                 raise typer.Exit(code=1)
+    if isinstance(reject, list):
+        for spec in reject:
+            # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+            err = validate_allowed_domain_spec(spec, allow_cidr=False)
+            if err:
+                _err.print(f"[red]{err}[/red]")
+                raise typer.Exit(code=1)
     env_dict = _parse_env_list(env) if isinstance(env, list) else None
     settings = _build_settings(
         idle_timeout, cpu_limit, memory_limit, pids_limit
@@ -675,6 +690,7 @@ def create(
             env=env_dict,
             health_check=health_check,
             allowed_domains=allow or None,
+            rejected_domains=reject or None,
             settings=settings,
         )
     except httpx.HTTPStatusError as exc:
@@ -997,6 +1013,14 @@ def edit(
         "--allow",
         help="Allowed egress domain, repeatable (e.g. github.com:443, pypi.org)",
     ),
+    reject: list[str] | None = typer.Option(
+        None,
+        "--reject",
+        help=(
+            "Rejected egress domain (NXDOMAIN'd), repeatable "
+            "(e.g. evil.example.com). CIDR ranges are not supported."
+        ),
+    ),
     idle_timeout: int | None = typer.Option(
         None,
         "--idle-timeout",
@@ -1034,6 +1058,7 @@ def edit(
         or isinstance(mount, list)
         or isinstance(env, list)
         or isinstance(allow, list)
+        or isinstance(reject, list)
         or idle_timeout is not None
         or cpu_limit is not None
         or memory_limit is not None
@@ -1177,6 +1202,49 @@ def edit(
 
             break  # both add and remove were skipped
 
+        # Interactive rejected-domains editing loop (#2386)
+        current_rejected = list(ws.rejected_domains or [])
+        rejected_changed = False
+        while True:
+            if current_rejected:
+                typer.echo("\nRejected egress domains (NXDOMAIN'd):")
+                for i, d in enumerate(current_rejected, 1):
+                    typer.echo(f"  {i}. {d}")
+            else:
+                typer.echo("\nNo egress denylist.")
+
+            add = input(
+                "\nAdd rejected domain (e.g. evil.example.com, or Enter to skip): "
+            ).strip()
+            if add:
+                # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+                err = validate_allowed_domain_spec(add, allow_cidr=False)
+                if err:
+                    typer.echo(err)
+                    continue
+                current_rejected.append(add)
+                rejected_changed = True
+                continue
+
+            if current_rejected:
+                rm = input("Remove domain number (or Enter to skip): ").strip()
+                if rm:
+                    try:
+                        idx = int(rm) - 1
+                        if 0 <= idx < len(current_rejected):
+                            removed = current_rejected.pop(idx)
+                            typer.echo(f"Removed: {removed}")
+                            rejected_changed = True
+                            continue
+                        else:
+                            typer.echo("Invalid number.")
+                            continue
+                    except ValueError:
+                        typer.echo("Invalid number.")
+                        continue
+
+            break  # both add and remove were skipped
+
         body: dict = {}
         if new_name is not _SENTINEL:
             body["name"] = new_name or ws.name  # don't allow empty name
@@ -1192,6 +1260,8 @@ def edit(
             body["env"] = current_env or None
         if domains_changed:
             body["allowed_domains"] = current_domains or None
+        if rejected_changed:
+            body["rejected_domains"] = current_rejected or None
     else:
         # Flags mode — only send provided fields
         body = {}
@@ -1221,6 +1291,14 @@ def edit(
                     _err.print(f"[red]{err}[/red]")
                     raise typer.Exit(code=1)
             body["allowed_domains"] = allow or None
+        if isinstance(reject, list):
+            for spec in reject:
+                # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+                err = validate_allowed_domain_spec(spec, allow_cidr=False)
+                if err:
+                    _err.print(f"[red]{err}[/red]")
+                    raise typer.Exit(code=1)
+            body["rejected_domains"] = reject or None
         edit_settings = _build_settings(
             idle_timeout, cpu_limit, memory_limit, pids_limit
         )
@@ -1241,6 +1319,7 @@ def edit(
         "env",
         "service_command",
         "allowed_domains",
+        "rejected_domains",
     }
     restart_needed = ws.running and bool(body.keys() & _CREATE_TIME_KEYS)
 

@@ -97,5 +97,22 @@ void main() {
       expect(validateAllowedDomainSpec('0.0.0.0/0'), isNull);
       expect(validateAllowedDomainSpec('0.0.0.0'), isNull);
     });
+
+    // #2386: rejected_domains is name-level (NXDOMAIN), so a CIDR is
+    // meaningless and is rejected when allowCidr is false.
+    test('allowCidr=false rejects CIDR for rejected domains', () {
+      expect(
+          validateAllowedDomainSpec('10.0.0.0/8', allowCidr: false), isNotNull);
+      expect(validateAllowedDomainSpec('10.0.0.0/8:443', allowCidr: false),
+          isNotNull);
+      // A plain host / host:port is still accepted.
+      expect(validateAllowedDomainSpec('evil.example.com', allowCidr: false),
+          isNull);
+      expect(
+          validateAllowedDomainSpec('evil.example.com:443', allowCidr: false),
+          isNull);
+      // The default still accepts CIDRs.
+      expect(validateAllowedDomainSpec('10.0.0.0/8'), isNull);
+    });
   });
 }

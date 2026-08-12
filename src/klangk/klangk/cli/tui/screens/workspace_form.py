@@ -84,6 +84,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "mount_input",
         "env_input",
         "allow_input",
+        "reject_input",
         "idle_timeout",
         "cpu_limit",
         "memory_limit",
@@ -97,6 +98,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "mount_list": "mount_input",
         "env_list": "env_input",
         "allow_list": "allow_input",
+        "reject_list": "reject_input",
     }
     # Spatial nav around the form tab strip (#1891): the first focusable
     # field of each pane — Down from the strip lands here, Up returns.
@@ -116,6 +118,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         default: str,
         allow_autostart: bool,
         default_allowed_domains: list[str] | None = None,
+        default_rejected_domains: list[str] | None = None,
         nix_available: bool = False,
     ) -> None:
         super().__init__()
@@ -131,6 +134,11 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         # (KLANGKD_NETFILTER_DEFAULT_DOMAINS) so the TUI create form matches
         # the Flutter dialog — a starting set the user can edit/remove (#1931).
         self._allowed_domains: list[str] = list(default_allowed_domains or [])
+        # #2386: the static deny-list (rejected_domains), mirroring the
+        # allow-list editor. No deploy default (only allow has one).
+        self._rejected_domains: list[str] = list(
+            default_rejected_domains or []
+        )
         if self._allowed:
             # Select tuples are (prompt, value). Prompts are rich Text so an
             # image name containing brackets can't trigger markup parsing.
@@ -205,6 +213,19 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                         Button("Remove", id="rm_allow"),
                     )
                     yield OptionList(id="allow_list", classes="editor-list")
+                    yield Static(
+                        "Rejected Domains  "
+                        "(host or host:port; NXDOMAIN'd unconditionally)",
+                        classes="editor-label",
+                    )
+                    yield Horizontal(
+                        Input(
+                            id="reject_input", placeholder="evil.example.com"
+                        ),
+                        Button("Add", id="add_reject"),
+                        Button("Remove", id="rm_reject"),
+                    )
+                    yield OptionList(id="reject_list", classes="editor-list")
                 with TabPane("Resources", id="resources_pane"):
                     yield Horizontal(
                         Static("Idle timeout (s)"),
@@ -264,6 +285,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()
+        self._render_rejected_domains()
         # General tab is active on entry — focus Name so the user can start
         # typing immediately (the tab strip is one Up away, #1891).
         self.query_one("#name", Input).focus()
@@ -282,6 +304,8 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             "rm_env",
             "add_allow",
             "rm_allow",
+            "add_reject",
+            "rm_reject",
         ):
             self.query_one(f"#{wid}").can_focus = False
 
@@ -392,6 +416,41 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         del self._allowed_domains[idx]
         self._render_allowed_domains()
 
+    # --- rejected-domains list editor (#2386, mirrors allowed-domains) ---
+
+    def _render_rejected_domains(self) -> None:
+        ol = self.query_one("#reject_list", OptionList)
+        ol.clear_options()
+        if not self._rejected_domains:
+            ol.add_option(Option(Text("(none)"), id="", disabled=True))
+            return
+        for i, d in enumerate(self._rejected_domains):
+            ol.add_option(Option(Text(d), id=f"r{i}"))
+
+    def _add_rejected_domain(self) -> None:
+        inp = self.query_one("#reject_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+        err = validate_allowed_domain_spec(v, allow_cidr=False)
+        if err:
+            self._msg(err, error=True)
+            return
+        if v not in self._rejected_domains:
+            self._rejected_domains.append(v)
+        inp.value = ""
+        self._msg("")
+        self._render_rejected_domains()
+
+    def _remove_rejected_domain(self) -> None:
+        ol = self.query_one("#reject_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._rejected_domains):
+            return
+        del self._rejected_domains[idx]
+        self._render_rejected_domains()
+
     # --- tab + keyboard navigation (#1891) ---
 
     def _active_tab(self) -> str:
@@ -455,6 +514,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         mounts = list(self._mounts) or None
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
+        rejected_domains = list(self._rejected_domains) or None
         settings = _collect_settings(self)
         if self._nix_available and self.query_one("#nix", Checkbox).value:
             settings = {**(settings or {}), "nix": True}
@@ -468,6 +528,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                 env,
                 health_check,
                 allowed_domains,
+                rejected_domains,
                 settings,
             ),
             exit_on_error=False,
@@ -483,6 +544,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         env,
         health_check,
         allowed_domains,
+        rejected_domains,
         settings,
     ) -> None:
         try:
@@ -496,6 +558,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                 env=env,
                 health_check=health_check,
                 allowed_domains=allowed_domains,
+                rejected_domains=rejected_domains,
                 settings=settings,
             )
         except AuthError:
@@ -533,6 +596,10 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             self._add_allowed_domain()
         elif bid == "rm_allow":
             self._remove_allowed_domain()
+        elif bid == "add_reject":
+            self._add_rejected_domain()
+        elif bid == "rm_reject":
+            self._remove_rejected_domain()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         eid = event.input.id
@@ -542,6 +609,8 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             self._add_env()
         elif eid == "allow_input":
             self._add_allowed_domain()
+        elif eid == "reject_input":
+            self._add_rejected_domain()
         elif eid in (
             "name",
             "command",
@@ -587,6 +656,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "mount_input",
         "env_input",
         "allow_input",
+        "reject_input",
         "idle_timeout",
         "cpu_limit",
         "memory_limit",
@@ -600,6 +670,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "mount_list": "mount_input",
         "env_list": "env_input",
         "allow_list": "allow_input",
+        "reject_list": "reject_input",
     }
     # Spatial nav around the form tab strip (#1891): the first focusable
     # field of each pane — Down from the strip lands here, Up returns.
@@ -611,14 +682,12 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "resources_pane": "idle_timeout",
         "advanced_pane": "command",
     }
-    # Delete/'e' act on the list under the active tab (#1891).
+    # Delete/'e' act on the list under the active tab (#1891). The
+    # netfilter pane holds two lists (allow + reject, #2386), so it is NOT
+    # in this table -- :meth:`_list_handlers` dispatches it on focus instead.
     _PANE_LIST_HANDLER = {
         "mounts_pane": ("_remove_mount", "_edit_mount"),
         "env_pane": ("_remove_env", "_edit_env"),
-        "netfilter_pane": (
-            "_remove_allowed_domain",
-            "_edit_allowed_domain",
-        ),
     }
 
     def __init__(
@@ -642,11 +711,16 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         self._allowed_domains: list[str] = list(
             workspace.allowed_domains or []
         )
+        # #2386: the static deny-list, seeded from the workspace.
+        self._rejected_domains: list[str] = list(
+            workspace.rejected_domains or []
+        )
         # In-place editor state (#1778): when set, the next Add *replaces*
         # the item at this index/key instead of appending. Cleared on Add.
         self._editing_mount: int | None = None
         self._editing_env: str | None = None
         self._editing_allow: int | None = None
+        self._editing_reject: int | None = None
         # Image picker: include the workspace's current image even if it
         # isn't in the server's allowed list, pre-selected (untouched = no
         # change). Prompts are rich Text so bracket-laden names can't crash.
@@ -732,6 +806,19 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
                         Button("Remove", id="rm_allow"),
                     )
                     yield OptionList(id="allow_list", classes="editor-list")
+                    yield Static(
+                        "Rejected Domains  "
+                        "(host or host:port; NXDOMAIN'd unconditionally)",
+                        classes="editor-label",
+                    )
+                    yield Horizontal(
+                        Input(
+                            id="reject_input", placeholder="evil.example.com"
+                        ),
+                        Button("Add", id="add_reject"),
+                        Button("Remove", id="rm_reject"),
+                    )
+                    yield OptionList(id="reject_list", classes="editor-list")
                 with TabPane("Resources", id="resources_pane"):
                     _s = self._ws.settings or {}
                     yield Horizontal(
@@ -813,6 +900,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         self._render_mounts()
         self._render_env()
         self._render_allowed_domains()
+        self._render_rejected_domains()
         # General tab is active on entry — focus Name so the user can start
         # typing immediately (the tab strip is one Up away, #1891).
         self.query_one("#name", Input).focus()
@@ -831,6 +919,8 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             "rm_env",
             "add_allow",
             "rm_allow",
+            "add_reject",
+            "rm_reject",
         ):
             self.query_one(f"#{wid}").can_focus = False
 
@@ -990,6 +1080,57 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         inp.focus()
         self._msg("Editing allowed-domain — press Add to update.")
 
+    # --- rejected-domains list editor (#2386, mirrors allowed-domains) ---
+
+    def _render_rejected_domains(self) -> None:
+        ol = self.query_one("#reject_list", OptionList)
+        ol.clear_options()
+        if not self._rejected_domains:
+            ol.add_option(Option(Text("(none)"), id="", disabled=True))
+            return
+        for i, d in enumerate(self._rejected_domains):
+            ol.add_option(Option(Text(d), id=f"r{i}"))
+
+    def _add_rejected_domain(self) -> None:
+        inp = self.query_one("#reject_input", Input)
+        v = inp.value.strip()
+        if not v:
+            return
+        # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+        err = validate_allowed_domain_spec(v, allow_cidr=False)
+        if err:
+            self._msg(err, error=True)
+            return
+        idx = self._editing_reject
+        if idx is not None and 0 <= idx < len(self._rejected_domains):
+            self._rejected_domains[idx] = v
+            self._editing_reject = None
+        elif v not in self._rejected_domains:
+            self._rejected_domains.append(v)
+        inp.value = ""
+        self._msg("")
+        self._render_rejected_domains()
+
+    def _remove_rejected_domain(self) -> None:
+        ol = self.query_one("#reject_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._rejected_domains):
+            return
+        del self._rejected_domains[idx]
+        self._editing_reject = None
+        self._render_rejected_domains()
+
+    def _edit_rejected_domain(self) -> None:
+        ol = self.query_one("#reject_list", OptionList)
+        idx = ol.highlighted
+        if idx is None or not 0 <= idx < len(self._rejected_domains):
+            return
+        self._editing_reject = idx
+        inp = self.query_one("#reject_input", Input)
+        inp.value = self._rejected_domains[idx]
+        inp.focus()
+        self._msg("Editing rejected-domain — press Add to update.")
+
     # --- tab + keyboard navigation (#1891) ---
 
     def _active_tab(self) -> str:
@@ -1023,13 +1164,34 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
 
     # --- keyboard remove/edit of the active tab's list (#1778, #1891) ---
 
+    def _list_handlers(self) -> tuple[str, str] | None:
+        """(remove, edit) handlers for the active pane's focused list.
+
+        Most panes hold one list, so :data:`_PANE_LIST_HANDLER` keys on the
+        pane. The netfilter pane holds TWO (#2386: allow + reject), so dispatch
+        on the focused widget -- Delete/'e' acts on whichever list owns focus,
+        defaulting to the allow list (the pane's first field).
+        """
+        pane = self._active_tab()
+        if pane == "netfilter_pane":
+            # Two lists share this pane (#2386): dispatch on the focused
+            # widget. Focus on a reject *input* (not the list) falls through
+            # to the allow default -- harmless, because an Input consumes
+            # Delete/'e' before the Screen binding fires, so these actions
+            # never run while typing in an input.
+            focused = self.focused.id if self.focused else None
+            if focused == "reject_list":
+                return ("_remove_rejected_domain", "_edit_rejected_domain")
+            return ("_remove_allowed_domain", "_edit_allowed_domain")
+        return self._PANE_LIST_HANDLER.get(pane)
+
     def action_remove_item(self) -> None:
-        handler = self._PANE_LIST_HANDLER.get(self._active_tab())
+        handler = self._list_handlers()
         if handler:
             getattr(self, handler[0])()
 
     def action_edit_item(self) -> None:
-        handler = self._PANE_LIST_HANDLER.get(self._active_tab())
+        handler = self._list_handlers()
         if handler:
             getattr(self, handler[1])()
 
@@ -1054,6 +1216,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         mounts = list(self._mounts) or None
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
+        rejected_domains = list(self._rejected_domains) or None
         settings = _collect_settings(self)
         # #2233: emit an explicit nix value (True/False) whenever the
         # toggle is shown. PUT settings is a full-replace bag, so we must
@@ -1077,6 +1240,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             "mounts": mounts,
             "env": env,
             "allowed_domains": allowed_domains,
+            "rejected_domains": rejected_domains,
         }
         if settings is not None:
             body["settings"] = settings
@@ -1084,12 +1248,14 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         orig_mounts = list(ws.mounts or []) or None
         orig_env = dict(ws.env or {}) or None
         orig_domains = list(ws.allowed_domains or []) or None
+        orig_rejected = list(ws.rejected_domains or []) or None
         restart_needed = bool(ws.running) and (
             (image or None) != (ws.image or None)
             or mounts != orig_mounts
             or env != orig_env
             or (command or None) != (ws.service_command or None)
             or allowed_domains != orig_domains
+            or rejected_domains != orig_rejected
             # #2233: the per-workspace /nix mount is set up at create
             # time, so toggling it on a running workspace needs a restart.
             or (
@@ -1175,6 +1341,10 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             self._add_allowed_domain()
         elif bid == "rm_allow":
             self._remove_allowed_domain()
+        elif bid == "add_reject":
+            self._add_rejected_domain()
+        elif bid == "rm_reject":
+            self._remove_rejected_domain()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         eid = event.input.id
@@ -1184,6 +1354,8 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             self._add_env()
         elif eid == "allow_input":
             self._add_allowed_domain()
+        elif eid == "reject_input":
+            self._add_rejected_domain()
         elif eid in (
             "name",
             "command",

@@ -394,6 +394,31 @@ void main() {
         expect(find.byIcon(Icons.warning_amber), findsOneWidget);
       });
 
+      testWidgets('badges a workspace with rejected_domains only (#2386)',
+          (tester) async {
+        testAuthHttpClientOverride = withPermissions((request) async {
+          if (request.url.path == '/api/v1/workspaces') {
+            return http.Response(
+              jsonEncode(_envelope([
+                {
+                  'id': 'ws-1',
+                  'name': 'Filtered',
+                  'container_id': null,
+                  'created_at': '2026-01-15 14:30:00',
+                  'rejected_domains': ['evil.example.com'],
+                },
+              ])),
+              200,
+            );
+          }
+          return http.Response('Not found', 404);
+        });
+        await tester.pumpWidget(buildPage());
+        await tester.pumpAndSettle();
+
+        expect(find.byIcon(Icons.warning_amber), findsOneWidget);
+      });
+
       testWidgets('no badge when netfilter is enabled (allow-list enforced)',
           (tester) async {
         testAuthHttpClientOverride = withPermissions(
@@ -1148,7 +1173,7 @@ void main() {
       expect(
           find.descendant(
               of: find.byType(AlertDialog), matching: find.byType(TextField)),
-          findsNWidgets(10));
+          findsNWidgets(11));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 

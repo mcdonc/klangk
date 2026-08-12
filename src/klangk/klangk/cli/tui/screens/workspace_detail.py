@@ -356,6 +356,13 @@ class WorkspaceDetailScreen(Screen):
                     "\n".join(str(d) for d in ws.allowed_domains),
                 )
             )
+        if ws.rejected_domains:
+            rows.append(
+                (
+                    "rejected domains",
+                    "\n".join(str(d) for d in ws.rejected_domains),
+                )
+            )
         if ws.owner_email:
             rows.append(("owner", ws.owner_email))
         return rows

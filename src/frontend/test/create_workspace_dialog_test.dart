@@ -106,7 +106,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(10));
+      expect(find.byType(TextField), findsNWidgets(11));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -436,6 +436,82 @@ void main() {
       expect(postedBody!['allowed_domains'], ['github.com:443']);
     });
 
+    testWidgets('includes rejected domains in body', (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump();
+      await tester.pump();
+
+      final input = find.widgetWithText(TextField, 'evil.example.com');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'evil.example.com');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      await tester.enterText(_nameField(), 'Filtered');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody!['rejected_domains'], ['evil.example.com']);
+    });
+
+    testWidgets('rejects a CIDR for rejected domains', (tester) async {
+      await tester.pumpWidget(buildDialog());
+      await tester.pump();
+      await tester.pump();
+
+      final input = find.widgetWithText(TextField, 'evil.example.com');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, '10.0.0.0/8');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      // CIDR is meaningless for a name-level NXDOMAIN deny-list.
+      expect(
+          find.textContaining('CIDR ranges are not supported'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && (w.data ?? '') == '10.0.0.0/8',
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('removes a rejected domain via its close button',
+        (tester) async {
+      await tester.pumpWidget(buildDialog());
+      await tester.pump();
+      await tester.pump();
+
+      // Use a value distinct from the input's hint ('evil.example.com') so
+      // find.text matches only the list chip, not the rendered hint.
+      final input = find.widgetWithText(TextField, 'evil.example.com');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'blocked.example.com');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(find.text('blocked.example.com'), findsOneWidget);
+
+      // The rejected chip's close icon is the last one on screen.
+      final closeIcons = find.byIcon(Icons.close);
+      await tester.ensureVisible(closeIcons.last);
+      await tester.tap(closeIcons.last);
+      await tester.pump();
+
+      expect(find.text('blocked.example.com'), findsNothing);
+    });
+
     testWidgets('pre-fills allowed domains from the deploy default',
         (tester) async {
       // #1365: the editor inherits KLANGKD_NETFILTER_DEFAULT_DOMAINS so a
@@ -626,6 +702,28 @@ void main() {
 
       expect(find.textContaining('NOT be enforced'), findsOneWidget);
     });
+
+    testWidgets(
+      'shows not-enforced notice for rejected domains when netfilter disabled (#2386)',
+      (tester) async {
+        testAuthHttpClientOverride =
+            mockClient((_) async => http.Response('Not found', 404));
+        await tester.pumpWidget(buildDialog(netfilterEnabled: false));
+        await tester.pump();
+        await tester.pump();
+
+        final input = find.widgetWithText(TextField, 'evil.example.com');
+        await tester.ensureVisible(input);
+        await tester.enterText(input, 'blocked.example.com');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pump();
+
+        expect(
+          find.textContaining('rejected-domains list will NOT be enforced'),
+          findsOneWidget,
+        );
+      },
+    );
 
     testWidgets('hides not-enforced notice when netfilter enabled',
         (tester) async {

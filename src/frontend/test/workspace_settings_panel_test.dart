@@ -26,6 +26,9 @@ Finder _envInput() => find.byWidgetPredicate(
 Finder _allowedDomainsInput() => find.byWidgetPredicate(
       (w) => w is TextField && w.decoration?.hintText == 'github.com:443',
     );
+Finder _rejectedDomainsInput() => find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.hintText == 'evil.example.com',
+    );
 
 /// JWT with sub=test-user (logged in) so AuthService.isLoggedIn is true.
 String _jwt() {
@@ -702,6 +705,110 @@ void main() {
     });
   });
 
+  // #2386: the rejected-domains editor mirrors allowed-domains.
+  group('rejected domains editor', () {
+    testWidgets('adds a valid host', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Use a value distinct from the input's hint ('evil.example.com').
+      await tester.enterText(_rejectedDomainsInput(), 'blocked.example.com');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      expect(find.text('blocked.example.com'), findsOneWidget);
+    });
+
+    testWidgets('rejects a CIDR (name-level NXDOMAIN)', (tester) async {
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      await tester.enterText(_rejectedDomainsInput(), '10.0.0.0/8');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      // 'for rejected domains' appears only in the error, not the help text.
+      expect(find.textContaining('for rejected domains'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SelectableText && (w.data ?? '') == '10.0.0.0/8',
+        ),
+        findsNothing,
+      );
+    });
+
+    testWidgets('removes a rejected domain via its close button',
+        (tester) async {
+      testAuthHttpClientOverride = _client(workspace: {
+        ..._workspace,
+        'mounts': <String>[],
+        'env': <String, String>{},
+        'allowed_domains': null,
+        'rejected_domains': <String>['blocked.example.com'],
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(find.text('blocked.example.com'), findsOneWidget);
+      // Only the rejected chip is on screen (mounts/env/allowed empty), so
+      // the single close icon belongs to it.
+      await tester.ensureVisible(find.byIcon(Icons.close));
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pump();
+
+      expect(find.text('blocked.example.com'), findsNothing);
+    });
+
+    testWidgets('reload after save re-reads rejected_domains from server',
+        (tester) async {
+      // didUpdateWidget must re-read rejected_domains (#2386) so the editor
+      // tracks server state instead of holding a stale local copy.
+      List<String>? rejected = ['old.example.com'];
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/workspaces') {
+          final ws = <String, dynamic>{..._workspace};
+          if (rejected != null)
+            ws['rejected_domains'] = List<String>.from(rejected!);
+          return http.Response(jsonEncode([ws]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi', 'other:latest'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          rejected = null;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+      expect(find.text('old.example.com'), findsOneWidget);
+
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // After the post-save reload the server no longer carries
+      // rejected_domains, so didUpdateWidget refreshed _rejectedDomains to
+      // empty and the chip is gone.
+      expect(find.text('old.example.com'), findsNothing);
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
   // #1769: a workspace that declares allowed_domains while the deploy has
   // netfilter disabled starts unrestricted (fail-open). The gap must be
   // surfaced to the user who set the list, not just operator logs.
@@ -720,6 +827,30 @@ void main() {
 
         expect(
           find.textContaining('NOT being enforced'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'shows the notice when rejected_domains are set and netfilter is off (#2386)',
+      (tester) async {
+        testAuthHttpClientOverride = _client(
+          workspace: {
+            ..._workspace,
+            'rejected_domains': <String>['blocked.example.com'],
+          },
+        );
+        await tester.pumpWidget(_buildPanel());
+        await tester.pumpAndSettle();
+
+        // The reject-list notice (distinct from the allow-list one).
+        expect(
+          find.textContaining('rejected-domains list'),
+          findsOneWidget,
+        );
+        expect(
+          find.textContaining('will be reachable'),
           findsOneWidget,
         );
       },

@@ -60,6 +60,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _mountController = TextEditingController();
   final _envController = TextEditingController();
   final _allowedDomainsController = TextEditingController();
+  final _rejectedDomainsController = TextEditingController();
   final _idleTimeoutController = TextEditingController();
   final _cpuLimitController = TextEditingController();
   final _memoryLimitController = TextEditingController();
@@ -68,12 +69,14 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _mounts = <String>[];
   final _envVars = <String, String>{};
   final _allowedDomains = <String>[];
+  final _rejectedDomains = <String>[];
   bool _autoStart = false;
   bool _nixEnabled = false;
   String? _errorMessage;
   String? _mountError;
   String? _envError;
   String? _allowedDomainsError;
+  String? _rejectedDomainsError;
 
   // Section anchors for the section-nav strip (#2229): each key is attached
   // to the pane that opens the section so tapping a nav label scrolls it
@@ -108,6 +111,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     _mountController.dispose();
     _envController.dispose();
     _allowedDomainsController.dispose();
+    _rejectedDomainsController.dispose();
     _idleTimeoutController.dispose();
     _cpuLimitController.dispose();
     _memoryLimitController.dispose();
@@ -162,6 +166,22 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     });
   }
 
+  void _tryAddRejectedDomain() {
+    final v = _rejectedDomainsController.text.trim();
+    if (v.isEmpty) return;
+    // CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+    final err = validateAllowedDomainSpec(v, allowCidr: false);
+    if (err != null) {
+      setState(() => _rejectedDomainsError = err);
+      return;
+    }
+    setState(() {
+      if (!_rejectedDomains.contains(v)) _rejectedDomains.add(v);
+      _rejectedDomainsController.clear();
+      _rejectedDomainsError = null;
+    });
+  }
+
   static String? _validateEnvEntry(String input) {
     if (!input.contains('=')) return 'Expected KEY=VALUE format';
     final key = input.substring(0, input.indexOf('='));
@@ -199,6 +219,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     }
     if (_allowedDomains.isNotEmpty) {
       body['allowed_domains'] = List<String>.from(_allowedDomains);
+    }
+    if (_rejectedDomains.isNotEmpty) {
+      body['rejected_domains'] = List<String>.from(_rejectedDomains);
     }
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
@@ -344,7 +367,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                       key: _netfilterKey,
                       icon: Icons.shield,
                       title: 'Netfilter',
-                      children: _buildAllowedDomainsEditor(),
+                      children: [
+                        ..._buildAllowedDomainsEditor(),
+                        const SizedBox(height: 16),
+                        ..._buildRejectedDomainsEditor(),
+                      ],
                     ),
                     const SizedBox(height: 16),
                     WorkspaceSectionPane(
@@ -707,6 +734,95 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                 child: Text(
                   'Egress filtering is not active on this server — the '
                   'allowed-domains list will NOT be enforced until an '
+                  'operator enables netfilter.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _buildRejectedDomainsEditor() {
+    return [
+      Text('Rejected Domains', style: _labelStyle),
+      const SizedBox(height: 4),
+      Text(
+        'Hosts NXDOMAIN\'d unconditionally (no resolution, no consent).',
+        style: const TextStyle(fontSize: 12, color: KColors.textSecondary),
+      ),
+      const SizedBox(height: 8),
+      ..._rejectedDomains.asMap().entries.map(
+            (e) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      e.value,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () =>
+                        setState(() => _rejectedDomains.removeAt(e.key)),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      if (_rejectedDomainsError != null) ...[
+        Text(
+          _rejectedDomainsError!,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.error,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 4),
+      ],
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _rejectedDomainsController,
+              decoration: const InputDecoration(
+                hintText: 'evil.example.com',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              style: const TextStyle(fontSize: 13),
+              onSubmitted: (_) => _tryAddRejectedDomain(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: _tryAddRejectedDomain,
+          ),
+        ],
+      ),
+      if (_rejectedDomains.isNotEmpty && !widget.netfilterEnabled) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.amber.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.warning_amber, size: 18),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Egress filtering is not active on this server — the '
+                  'rejected-domains list will NOT be enforced until an '
                   'operator enables netfilter.',
                 ),
               ),

@@ -32,6 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`rejected_domains` in the TUI + Flutter workspace dialogs (#2386).** The
+  static deny-list is now editable end to end, mirroring `allowed_domains`:
+  the TUI create/edit forms (a second list editor in the Netfilter pane, with
+  focus-aware Delete/'e' for either list), the Flutter create + settings
+  dialogs, and the `klangk create/edit --reject` CLI flags. The shared
+  validator rejects CIDR specs for `rejected_domains` up front (NXDOMAIN is
+  name-level), matching the API. The list page also badges a workspace whose
+  `rejected_domains` is set but netfilter is disabled.
+
 - **`rejected_domains` workspace setting + sidecar enforcement (#2367).**
   The deny counterpart to `allowed_domains`: a persisted, host-only list whose
   names the network sidecar NXDOMAINs unconditionally (no resolution, no SYN,

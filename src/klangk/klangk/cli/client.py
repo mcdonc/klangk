@@ -175,6 +175,7 @@ class Workspace:
     env: dict[str, str] | None = None
     health_check: str | None = None
     allowed_domains: list[str] | None = None
+    rejected_domains: list[str] | None = None
     owner_email: str | None = None
     running: bool = False
     health: str | None = None
@@ -482,6 +483,7 @@ class KlangkClient:
             health=w.get("health"),
             health_message=w.get("health_message"),
             allowed_domains=w.get("allowed_domains"),
+            rejected_domains=w.get("rejected_domains"),
             service_started_at=w.get("service_started_at"),
             settings=w.get("settings"),
         )
@@ -498,6 +500,7 @@ class KlangkClient:
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
         egress_mode: str | None = None,
+        rejected_domains: list[str] | None = None,
         settings: dict | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
@@ -519,6 +522,8 @@ class KlangkClient:
             body["allowed_domains"] = allowed_domains
         if egress_mode:
             body["egress_mode"] = egress_mode
+        if rejected_domains:
+            body["rejected_domains"] = rejected_domains
         if settings:
             body["settings"] = settings
         resp = self.post("/api/v1/workspaces", json=body)
