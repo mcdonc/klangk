@@ -205,6 +205,34 @@ class TestPortsFor:
             ("example.com", 8443, False),
         ]
 
+    def test_forever_host_allows(self, proxy, monkeypatch):
+        # The NFQUEUE-gate predicate (#2372): apex + subdomain match, port must
+        # match, wrong host/port denied. Mirrors ports_for's matching (shared
+        # via _host_matches) -- pin the boundary cases ports_for is pinned on.
+        monkeypatch.setattr(
+            proxy, "_FOREVER_HOSTS", [("example.com", 443, False)]
+        )
+        assert proxy._forever_host_allows("example.com", 443)
+        assert proxy._forever_host_allows("api.example.com", 443)  # subdomain
+        assert not proxy._forever_host_allows("example.com", 80)  # wrong port
+        assert not proxy._forever_host_allows("other.com", 443)  # wrong host
+        assert not proxy._forever_host_allows("evilexample.com", 443)  # suffix
+        assert not proxy._forever_host_allows("", 443)  # no host
+        # wildcard: subdomains only, NOT the apex.
+        monkeypatch.setattr(
+            proxy, "_FOREVER_HOSTS", [("example.com", 443, True)]
+        )
+        assert proxy._forever_host_allows("a.example.com", 443)
+        assert not proxy._forever_host_allows(
+            "example.com", 443
+        )  # apex excluded
+        # all-ports entry (p is None) matches any port -- defensive (forever
+        # entries are added port-scoped, but the predicate tolerates None).
+        monkeypatch.setattr(
+            proxy, "_FOREVER_HOSTS", [("example.com", None, False)]
+        )
+        assert proxy._forever_host_allows("example.com", 8080)
+
 
 class TestRuleArgs:
     """The iptables rule shape: port-scoped vs all-ports (#2256)."""
@@ -1114,6 +1142,50 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy, "SPECS", [])
         assert proxy.ports_for("example.com") == {443}
         assert proxy.ports_for("api.example.com") == {443}
+
+    async def test_cb_auto_allows_syn_to_forever_host_ip(
+        self, proxy, monkeypatch
+    ):
+        # A SYN to an IP whose host was allowed forever is auto-allowed at the
+        # NFQUEUE gate (no consent prompt), even though no ACCEPT rule covered
+        # it -- covers a CDN-rotated / cached IP that no fresh DNS resolution
+        # re-learned (#2372). allow() runs off the loop in the executor; the
+        # verdict is cached for retransmits.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "forever"))
+        allowed = []
+        monkeypatch.setattr(proxy, "allow", lambda *a: allowed.append(a))
+        self._bind(proxy, monkeypatch, client)
+        proxy._add_forever_host("example.com", 443)
+        proxy._record_hosts([("2.2.2.2", 60)], "example.com")
+        pkt = _FakePkt(_ip_payload("2.2.2.2", 443))
+        proxy._cb(pkt, client)  # sync: auto-allows inline, no task
+        await asyncio.sleep(0.1)  # let the executor run allow()
+        assert pkt.verdict == "accept"
+        client.request.assert_not_awaited()  # no consent prompt
+        assert not proxy._BG_TASKS  # no verdict task spawned
+        # allow() called port-scoped, in the executor, with the forever TTL.
+        assert allowed == [("2.2.2.2", 443, proxy._DURATION_FOREVER)]
+        # Verdict cached so a retransmit reuses it without re-prompting.
+        assert any(v[0] == "allow" for v in proxy._VERDICT_CACHE.values())
+
+    async def test_cb_does_not_auto_allow_wrong_port(self, proxy, monkeypatch):
+        # The gate is host+port scoped end-to-end: a SYN to a forever host on a
+        # DIFFERENT port (the allow was :443; this SYN is :80) is NOT
+        # auto-allowed -- it reaches the consent prompt (the security property,
+        # exercised through _cb, not just the predicate).
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "once"))
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        proxy._add_forever_host("example.com", 443)
+        proxy._record_hosts([("2.2.2.2", 60)], "example.com")
+        proxy._cb(_FakePkt(_ip_payload("2.2.2.2", 80)), client)
+        await asyncio.gather(*proxy._BG_TASKS)  # the prompt task ran
+        client.request.assert_awaited_once_with("example.com", 80)
 
     async def test_restart_allow_does_not_add_session_allowlist(
         self, proxy, monkeypatch
