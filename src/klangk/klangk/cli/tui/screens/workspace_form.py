@@ -65,7 +65,7 @@ EGRESS_MODE_DEFAULT = EGRESS_MODE_INTERACTIVE
 _EGRESS_MODE_OPTIONS = [
     (Text("interactive (ask first)"), EGRESS_MODE_INTERACTIVE),
     (Text("static (deny + record)"), EGRESS_MODE_STATIC),
-    (Text("allow (unrestricted)"), EGRESS_MODE_ALLOW),
+    (Text("allow (default-permit)"), EGRESS_MODE_ALLOW),
 ]
 
 

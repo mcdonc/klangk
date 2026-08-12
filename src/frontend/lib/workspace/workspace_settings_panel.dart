@@ -845,7 +845,7 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
             DropdownMenuItem(
               value: 'allow',
-              child: Text('allow (unrestricted)'),
+              child: Text('allow (default-permit)'),
             ),
           ],
           onChanged: (v) => setState(

@@ -374,7 +374,7 @@ void main() {
       await tester.ensureVisible(egressDropdown);
       await tester.tap(egressDropdown);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('allow (unrestricted)').last);
+      await tester.tap(find.text('allow (default-permit)').last);
       await tester.pump();
 
       await tester.enterText(_nameField(), 'Allow');

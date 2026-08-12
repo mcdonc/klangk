@@ -1263,7 +1263,7 @@ void main() {
       // Open the egress picker and switch to allow.
       await _scrollToAndTap(tester, find.text('static (deny + record)'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('allow (unrestricted)').last);
+      await tester.tap(find.text('allow (default-permit)').last);
       await tester.pumpAndSettle();
 
       await _scrollToAndTap(tester, find.text('Save'));

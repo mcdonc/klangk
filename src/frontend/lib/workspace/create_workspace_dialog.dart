@@ -392,7 +392,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             ),
                             DropdownMenuItem(
                               value: 'allow',
-                              child: Text('allow (unrestricted)'),
+                              child: Text('allow (default-permit)'),
                             ),
                           ],
                           onChanged: (v) => setState(
