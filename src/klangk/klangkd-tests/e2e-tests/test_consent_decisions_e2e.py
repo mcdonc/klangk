@@ -689,3 +689,113 @@ class TestConsentDecisionEndStates:
                 await _wait_resolved(app, rid2)
         finally:
             await ws_conn.close()
+
+    @pytest.mark.asyncio
+    async def test_forever_allow_persists_across_container_restart(
+        self, server, auth, workspace
+    ):
+        # #2364: an allow with duration=forever persists across a workspace
+        # container restart. Unlike `restart` (bounded to the container's
+        # lifetime -- its in-memory rule dies and the row is reaped on restart,
+        # see test_restart_deny_persists_then_clears_on_container_restart), a
+        # `forever` allow mutates the workspace's allowed_domains (#2368),
+        # which the fresh sidecar re-reads on start. So a post-restart curl to
+        # the same host is allowed WITHOUT a new consent prompt.
+        ws_id = workspace
+        ws_conn = await ws_connect(server, auth, ws_id)
+        try:
+            container = _container_for_workspace(ws_id)
+            app = ConsentDeciderApp(
+                server_url=server["url"],
+                token=auth["token"],
+                workspace_id=ws_id,
+                workspace_name="forever-allow-test",
+                hold_timeout=_CONSENT_TIMEOUT,
+            )
+            async with app.run_test() as pilot:
+                await _wait_connected(app)
+                # 1st connection: held, then allowed forever. The deciding
+                # connection succeeds (in-memory ACCEPT); #2368 also appends
+                # example.com:443 to the workspace's allowed_domains.
+                _trigger(container, "example.com", "/tmp/r_fa_0.out")
+                rid = await _wait_for_request(app, "example.com")
+                app._decide_id(rid, DECISION_ALLOWED, DURATION_FOREVER)
+                await _wait_resolved(app, rid)
+                await pilot.pause()
+                res0 = await _wait_result(container, "/tmp/r_fa_0.out")
+                assert "EXIT:0" in res0, (
+                    f"the allowed connection should succeed, got: {res0!r}"
+                )
+                # 2nd connection (pre-restart): a `forever` allow approves the
+                # whole domain, so a later curl -- even one that resolves to a
+                # CDN-rotated IP -- must NOT re-prompt (#2372: the sidecar
+                # allow-lists the host in-session via _FOREVER_HOSTS, so the DNS
+                # path learns every resolved IP and allows it without NFQUEUE).
+                await asyncio.sleep(2)
+                _trigger(container, "example.com", "/tmp/r_fa_1.out")
+                prompted = False
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    if any(
+                        "example.com" in (r.dest_host or "")
+                        for r in app.controller.pending.values()
+                    ):
+                        prompted = True
+                        break
+                    await asyncio.sleep(0.3)
+                res1 = await _wait_result(container, "/tmp/r_fa_1.out")
+                assert not prompted, (
+                    "a forever-allow must not re-prompt a later connection to "
+                    "the same domain (a rotated IP included) -- #2372"
+                )
+                assert "EXIT:0" in res1, (
+                    f"2nd connection should succeed without a re-prompt, "
+                    f"got: {res1!r}"
+                )
+                # Restart the workspace container. The sidecar dies (its
+                # in-memory learned ACCEPT dies with it) and a fresh sidecar
+                # starts, which re-reads allowed_domains -- now containing
+                # example.com:443 (#2368). Run the blocking POST in a thread
+                # so the decider's WS loop stays alive.
+                restart = await asyncio.to_thread(
+                    server["client"].post,
+                    f"/api/v1/workspaces/{ws_id}/restart",
+                    headers=auth["headers"],
+                    timeout=120,
+                )
+                assert restart.status_code == 200, restart.text
+                await ws_conn.close()
+                ws_conn = await ws_connect(server, auth, ws_id)
+                await asyncio.sleep(
+                    2
+                )  # let the fresh sidecar's dns-proxy settle
+                container = _container_for_workspace(ws_id)
+                # 3rd connection (post-restart): the forever-allow SURVIVED the
+                # restart via allowed_domains -> allowed WITHOUT a new prompt.
+                # The fresh sidecar allow-lists example.com by NAME (whatever
+                # IP DNS returns), so this is robust to CDN rotation. Pre-#2368
+                # this re-prompted: the learned ACCEPT died and nothing
+                # re-applied it.
+                _trigger(container, "example.com", "/tmp/r_fa_2.out")
+                prompted2 = False
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    if any(
+                        "example.com" in (r.dest_host or "")
+                        for r in app.controller.pending.values()
+                    ):
+                        prompted2 = True
+                        break
+                    await asyncio.sleep(0.3)
+                res2 = await _wait_result(container, "/tmp/r_fa_2.out")
+                assert not prompted2, (
+                    "forever-allow must persist across a container restart "
+                    "(via allowed_domains, #2368) -- a post-restart curl must "
+                    "not re-prompt"
+                )
+                assert "EXIT:0" in res2, (
+                    f"the post-restart connection should succeed without a "
+                    f"prompt (allowed_domains survived), got: {res2!r}"
+                )
+        finally:
+            await ws_conn.close()
