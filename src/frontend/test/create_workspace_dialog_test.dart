@@ -107,7 +107,7 @@ void main() {
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
       expect(find.byType(TextField), findsNWidgets(11));
-      expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
+      expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
     });
 
     testWidgets('does not submit with empty name', (tester) async {
@@ -348,6 +348,43 @@ void main() {
       expect(find.text('/a:/b'), findsOneWidget);
     });
 
+    testWidgets(
+        'egress mode dropdown defaults to interactive and sends selection (#2409)',
+        (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      // Default selection is interactive (the server default).
+      expect(find.text('interactive (ask first)'), findsOneWidget);
+      // The egress-mode picker is the second DropdownButtonFormField
+      // (after the image picker in the General section).
+      final egressDropdown = find.byType(DropdownButtonFormField<String>).at(1);
+      await tester.ensureVisible(egressDropdown);
+      await tester.tap(egressDropdown);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('allow (unrestricted)').last);
+      await tester.pump();
+
+      await tester.enterText(_nameField(), 'Allow');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody!['egress_mode'], 'allow');
+    });
+
     testWidgets('image dropdown changes selection', (tester) async {
       Map<String, dynamic>? postedBody;
       testAuthHttpClientOverride = mockClient((request) async {
@@ -366,8 +403,11 @@ void main() {
 
       // Open dropdown and select non-default (now near the dialog's
       // bottom after the field reordering, so scroll it into view first).
-      await tester.ensureVisible(find.byType(DropdownButtonFormField<String>));
-      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      // The image picker is the first DropdownButtonFormField (the second
+      // is the egress-mode picker added in #2409).
+      final imageDropdown = find.byType(DropdownButtonFormField<String>).at(0);
+      await tester.ensureVisible(imageDropdown);
+      await tester.tap(imageDropdown);
       await tester.pumpAndSettle();
       await tester.tap(find.text('klangk-full').last);
       await tester.pump();

@@ -1174,7 +1174,8 @@ void main() {
           find.descendant(
               of: find.byType(AlertDialog), matching: find.byType(TextField)),
           findsNWidgets(11));
-      expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
+      // Image picker + egress-mode picker (#2409).
+      expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
     });
 
     testWidgets('cancel button closes create dialog', (tester) async {
@@ -1635,9 +1636,12 @@ void main() {
       expect(find.text('Klangk'), findsWidgets);
 
       // Select non-default image (dropdown is near the dialog's bottom
-      // after the field reorder, so scroll it into view first).
-      await tester.ensureVisible(find.byType(DropdownButtonFormField<String>));
-      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      // after the field reorder, so scroll it into view first). The image
+      // picker is the first DropdownButtonFormField (the second is the
+      // egress-mode picker added in #2409).
+      final imageDropdown = find.byType(DropdownButtonFormField<String>).at(0);
+      await tester.ensureVisible(imageDropdown);
+      await tester.tap(imageDropdown);
       await tester.pumpAndSettle();
       await tester.tap(find.text('klangk-custom').last);
       await tester.pumpAndSettle();

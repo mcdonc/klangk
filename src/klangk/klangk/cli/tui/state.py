@@ -225,6 +225,7 @@ class TuiState:
         allowed_domains: list[str] | None = None,
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
+        egress_mode: str | None = None,
     ) -> Workspace:
         return self.client().create_workspace(
             name,
@@ -237,6 +238,7 @@ class TuiState:
             allowed_domains=allowed_domains,
             rejected_domains=rejected_domains,
             settings=settings,
+            egress_mode=egress_mode,
         )
 
     def update_workspace(self, workspace_id: str, **fields) -> None:

@@ -2105,6 +2105,7 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
         allowed_domains=None,
         rejected_domains=None,
         settings=None,
+        egress_mode=None,
     )
     fake.list_images.assert_called_once_with()
 
@@ -7387,6 +7388,36 @@ async def test_create_screen_renders_defaults(monkeypatch):
         assert cs.query_one("#image", Select).value == "base"  # server default
 
 
+async def test_create_screen_egress_mode_default_and_selectable(monkeypatch):
+    """#2409: the Netfilter tab has an egress-mode picker (interactive by
+    default), and the chosen mode reaches the create request body."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        # Default is interactive (the server default for new workspaces).
+        assert cs.query_one("#egress_mode", Select).value == "interactive"
+        # Switch to allow and submit; the selection reaches the request.
+        cs.query_one("#egress_mode", Select).value = "allow"
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        await app.workers.wait_for_complete()
+        assert captured["k"]["egress_mode"] == "allow"
+
+
 async def test_create_screen_autostart_hidden_when_not_allowed(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -8164,6 +8195,61 @@ async def test_edit_screen_allowed_domains_editor(monkeypatch):
         es.query_one("#allow_list").highlighted = 0
         es._remove_allowed_domain()
         assert es._allowed_domains == ["pypi.org:443"]
+
+
+async def test_edit_screen_egress_mode_pre_populates_and_saves(monkeypatch):
+    """#2409: the edit form seeds the picker from the workspace's current
+    egress_mode and sends a change through the update body."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj("alpha", egress_mode="static", running=False)
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # Seeded from the workspace (static), not the default interactive.
+        assert es.query_one("#egress_mode", Select).value == "static"
+        es.query_one("#egress_mode", Select).value = "allow"
+        es._save()
+        await app.workers.wait_for_complete()
+        assert captured["egress_mode"] == "allow"
+        # Not running => no restart offer.
+        assert not isinstance(app.screen, ConfirmScreen)
+
+
+async def test_edit_screen_restart_needed_when_egress_mode_changed(
+    monkeypatch,
+):
+    """#2409: egress_mode is a container-create-time field, so changing it on
+    a running workspace offers a restart (parity with image/mounts)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    restarted = []
+    ws = _wsobj("alpha", egress_mode="interactive", running=True)
+    app = KlangkApp(
+        _edit_state(ws, restart=lambda *a, **k: restarted.append(a))
+    )
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#egress_mode", Select).value = "static"
+        es._save()
+        await app.workers.wait_for_complete()
+        assert isinstance(app.screen, ConfirmScreen)  # restart offered
 
 
 async def test_edit_screen_save_calls_update(monkeypatch):
