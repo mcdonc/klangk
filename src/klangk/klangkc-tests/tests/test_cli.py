@@ -1182,6 +1182,24 @@ class TestKlangkClient:
                 "allowed_domains" not in client.post.call_args.kwargs["json"]
             )
 
+    def test_create_workspace_includes_rejected_domains(self):
+        # #2386: rejected_domains threads through to the create POST body.
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "id": "ws-1",
+            "name": "n",
+            "created_at": "x",
+        }
+        with patch.object(client, "post", return_value=mock_resp):
+            client.create_workspace("n", rejected_domains=["evil.example.com"])
+            body = client.post.call_args.kwargs["json"]
+            assert body["rejected_domains"] == ["evil.example.com"]
+            client.create_workspace("n2")
+            assert (
+                "rejected_domains" not in client.post.call_args.kwargs["json"]
+            )
+
     def test_update_workspace_puts_fields(self):
         client = KlangkClient("http://test:8995", "token")
         with patch.object(
@@ -1202,10 +1220,12 @@ class TestKlangkClient:
                 "name": "n",
                 "created_at": "x",
                 "allowed_domains": ["github.com:443"],
+                "rejected_domains": ["evil.example.com"],
             },
             shared=False,
         )
         assert ws.allowed_domains == ["github.com:443"]
+        assert ws.rejected_domains == ["evil.example.com"]
         # Absent key -> None (unrestricted).
         ws2 = KlangkClient._workspace_from_json(
             {"id": "ws-2", "name": "n2", "created_at": "x"}, shared=False

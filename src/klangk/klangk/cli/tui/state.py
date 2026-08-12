@@ -223,6 +223,7 @@ class TuiState:
         env: dict[str, str] | None = None,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        rejected_domains: list[str] | None = None,
         settings: dict | None = None,
     ) -> Workspace:
         return self.client().create_workspace(
@@ -234,6 +235,7 @@ class TuiState:
             env=env,
             health_check=health_check,
             allowed_domains=allowed_domains,
+            rejected_domains=rejected_domains,
             settings=settings,
         )
 

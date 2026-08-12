@@ -1921,7 +1921,8 @@ class TestMainCLI:
         # keep name, keep image, change command, skip add mount, skip add env
         with patch.object(main, "_client", return_value=client):
             with patch(
-                "builtins.input", side_effect=["", "", "pi", "", "", "", ""]
+                "builtins.input",
+                side_effect=["", "", "pi", "", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -1953,7 +1954,16 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "curl -sf http://x/h", "", "", ""],
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "curl -sf http://x/h",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
@@ -1983,7 +1993,16 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["renamed", "klangk-custom", "pi", "", "", "", ""],
+                side_effect=[
+                    "renamed",
+                    "klangk-custom",
+                    "pi",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
@@ -2023,6 +2042,7 @@ class TestMainCLI:
                     "",
                     "",
                     "",
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2051,7 +2071,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "1", "", "", "", ""],
+                side_effect=["", "", "", "", "", "1", "", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2094,6 +2114,7 @@ class TestMainCLI:
                     "",
                     "",
                     "",
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2138,6 +2159,7 @@ class TestMainCLI:
                     "",
                     "",
                     "",
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2168,7 +2190,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "1", "", "", ""],
+                side_effect=["", "", "", "", "", "1", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2198,7 +2220,19 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "bad", "/a:/b", "", "", "", ""],
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "",
+                    "bad",
+                    "/a:/b",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
@@ -2300,6 +2334,53 @@ class TestMainCLI:
             "/data:/mnt/data:ro",
         ]
 
+    def test_edit_with_reject_flag(self, logged_in_cfg, monkeypatch):
+        # #2386: --reject threads rejected_domains into the edit PUT body.
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--reject", "evil.example.com"],
+            )
+            assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["rejected_domains"] == ["evil.example.com"]
+
+    def test_edit_with_reject_cidr_rejected(self, logged_in_cfg, monkeypatch):
+        # A CIDR is meaningless for a name-level NXDOMAIN deny-list.
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        monkeypatch.setattr(main, "_client", lambda: client)
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main.app, ["edit", "my-ws", "--reject", "10.0.0.0/8"]
+        )
+        assert result.exit_code == 1
+        client.put.assert_not_called()
+
     def test_edit_interactive_no_changes(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
@@ -2314,7 +2395,7 @@ class TestMainCLI:
         # keep name, image, command; skip add mount (no mounts, no remove prompt)
         with patch.object(main, "_client", return_value=client):
             with patch(
-                "builtins.input", side_effect=["", "", "", "", "", "", ""]
+                "builtins.input", side_effect=["", "", "", "", "", "", "", ""]
             ):
                 from typer.testing import CliRunner
 
@@ -2341,7 +2422,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "FOO=bar", "", "", ""],
+                side_effect=["", "", "", "", "", "FOO=bar", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2370,7 +2451,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "bad", "A=1", "", "", ""],
+                side_effect=["", "", "", "", "", "bad", "A=1", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2408,6 +2489,7 @@ class TestMainCLI:
             env={"FOO": "bar", "X": "1"},
             health_check=None,
             allowed_domains=None,
+            rejected_domains=None,
             settings=None,
         )
 
@@ -2435,6 +2517,7 @@ class TestMainCLI:
             env=None,
             health_check=None,
             allowed_domains=None,
+            rejected_domains=None,
             settings=None,
         )
 
@@ -2485,8 +2568,58 @@ class TestMainCLI:
             env=None,
             health_check=None,
             allowed_domains=["github.com:443", "pypi.org"],
+            rejected_domains=None,
             settings=None,
         )
+
+    def test_create_with_reject_flag(self, logged_in_cfg, monkeypatch):
+        # #2386: --reject threads rejected_domains through to create_workspace.
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client = MagicMock()
+        client.create_workspace.return_value = ws
+        monkeypatch.setattr(main, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main.app,
+            ["create", "ws", "--reject", "evil.example.com"],
+        )
+        assert result.exit_code == 0
+        client.create_workspace.assert_called_once_with(
+            "ws",
+            image=None,
+            service_command=None,
+            auto_start=False,
+            mounts=None,
+            env=None,
+            health_check=None,
+            allowed_domains=None,
+            rejected_domains=["evil.example.com"],
+            settings=None,
+        )
+
+    def test_create_with_reject_cidr_rejected(
+        self, logged_in_cfg, monkeypatch
+    ):
+        # A CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+        from klangk.cli import main
+
+        client = MagicMock()
+        monkeypatch.setattr(main, "_client", lambda: client)
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main.app, ["create", "ws", "--reject", "10.0.0.0/8"]
+        )
+        assert result.exit_code == 1
+        client.create_workspace.assert_not_called()
 
     def test_create_with_settings_flags(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
@@ -2526,6 +2659,7 @@ class TestMainCLI:
             env=None,
             health_check=None,
             allowed_domains=None,
+            rejected_domains=None,
             settings={
                 "idle_timeout": 600,
                 "cpu_limit": 1.5,
@@ -2629,6 +2763,7 @@ class TestMainCLI:
                     "github.com:443",  # domain add
                     "",  # domain add (skip)
                     "",  # done
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2639,6 +2774,133 @@ class TestMainCLI:
 
         body = client.put.call_args[1]["json"]
         assert body["allowed_domains"] == ["github.com:443"]
+
+    def test_edit_interactive_add_rejected_domain(
+        self, logged_in_cfg, monkeypatch
+    ):
+        # #2386: the interactive rejected-domains loop appends to rejected_domains.
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=[
+                    "",  # name
+                    "",  # image
+                    "",  # command
+                    "",  # health_check
+                    "",  # mount add
+                    "",  # env add
+                    "",  # allowed-domains add (skip)
+                    "10.0.0.0/8",  # rejected-domains add (CIDR -> error)
+                    "evil.example.com",  # rejected-domains add
+                    "",  # rejected-domains add (skip)
+                    "",  # rejected-domains remove (skip)
+                ],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["rejected_domains"] == ["evil.example.com"]
+
+    def test_edit_interactive_remove_rejected_domain(
+        self, logged_in_cfg, monkeypatch
+    ):
+        # #2386: the interactive rejected-domains remove path.
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            rejected_domains=["old.example.com"],
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=[
+                    "",  # name
+                    "",  # image
+                    "",  # command
+                    "",  # health_check
+                    "",  # mount add
+                    "",  # env add
+                    "",  # allowed-domains add (skip)
+                    "",  # rejected-domains add (skip)
+                    "1",  # rejected-domains remove number
+                    "",  # rejected-domains add (skip)
+                ],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["rejected_domains"] is None  # removed -> empty -> None
+
+    def test_edit_interactive_invalid_rejected_remove_number(
+        self, logged_in_cfg, monkeypatch
+    ):
+        # #2386: invalid remove numbers in the rejected-domains loop are
+        # rejected with a message (out-of-range + non-numeric).
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            rejected_domains=["old.example.com"],
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(main, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=[
+                    "",  # name
+                    "",  # image
+                    "",  # command
+                    "",  # health_check
+                    "",  # mount add
+                    "",  # env add
+                    "",  # allowed-domains add (skip)
+                    "",  # rejected-domains add (skip)
+                    "99",  # invalid number (out of range)
+                    "",  # rejected-domains add (skip)
+                    "abc",  # non-numeric
+                    "",  # rejected-domains add (skip)
+                    "",  # rejected-domains remove (skip)
+                ],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+
+        # No valid change was made -> "No changes", no PUT.
+        client.put.assert_not_called()
 
     def test_edit_interactive_add_domain_with_existing(
         self, logged_in_cfg, monkeypatch
@@ -2669,6 +2931,7 @@ class TestMainCLI:
                     "",  # domain add (skip)
                     "",  # domain remove (skip)
                     "",  # done
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2709,6 +2972,7 @@ class TestMainCLI:
                     "",  # domain add (skip)
                     "",  # domain remove (skip)
                     "",  # done
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2749,6 +3013,7 @@ class TestMainCLI:
                     "github.com",  # valid domain
                     "",  # domain add (skip)
                     "",  # done
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2792,6 +3057,7 @@ class TestMainCLI:
                     "",  # domain add (skip)
                     "",  # domain remove (skip)
                     "",  # done
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2819,7 +3085,7 @@ class TestMainCLI:
         with patch.object(main, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "", "1", "", "", ""],
+                side_effect=["", "", "", "", "", "", "1", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2862,6 +3128,7 @@ class TestMainCLI:
                     "",
                     "",
                     "",
+                    "",  # rejected-domains add (skip)
                 ],
             ):
                 from typer.testing import CliRunner

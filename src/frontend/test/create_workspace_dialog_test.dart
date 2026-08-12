@@ -106,7 +106,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(10));
+      expect(find.byType(TextField), findsNWidgets(11));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 
@@ -434,6 +434,36 @@ void main() {
       await tester.pump();
 
       expect(postedBody!['allowed_domains'], ['github.com:443']);
+    });
+
+    testWidgets('includes rejected domains in body', (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump();
+      await tester.pump();
+
+      final input = find.widgetWithText(TextField, 'evil.example.com');
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'evil.example.com');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      await tester.enterText(_nameField(), 'Filtered');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody!['rejected_domains'], ['evil.example.com']);
     });
 
     testWidgets('pre-fills allowed domains from the deploy default',

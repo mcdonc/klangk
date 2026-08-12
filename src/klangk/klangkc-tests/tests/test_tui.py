@@ -2103,6 +2103,7 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
         env=None,
         health_check=None,
         allowed_domains=None,
+        rejected_domains=None,
         settings=None,
     )
     fake.list_images.assert_called_once_with()
@@ -4659,7 +4660,11 @@ async def test_detail_renders_allowed_domains(monkeypatch):
         return None
 
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
-    a = _wsobj("alpha", allowed_domains=["github.com:443", "pypi.org"])
+    a = _wsobj(
+        "alpha",
+        allowed_domains=["github.com:443", "pypi.org"],
+        rejected_domains=["evil.example.com"],
+    )
     st = _ws()
     st.find_workspace = lambda n: a
     app = KlangkApp(st)
@@ -4670,6 +4675,8 @@ async def test_detail_renders_allowed_domains(monkeypatch):
         assert _detail_value(body, "allowed domains") is not None
         assert "github.com:443" in body
         assert "pypi.org" in body
+        assert _detail_value(body, "rejected domains") is not None
+        assert "evil.example.com" in body
 
 
 async def test_detail_renders_aligned_two_column_table(monkeypatch):
@@ -10991,6 +10998,153 @@ async def test_create_screen_editor_add_buttons_clickable(monkeypatch):
         assert captured["k"]["health_check"] == "curl localhost"
 
 
+async def test_create_screen_rejected_domains_editor(monkeypatch):
+    """#2386: the create form's rejected-domains editor reaches create_workspace."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def fake_create(*a, **k):
+        captured["k"] = k
+        return _wsobj("zzz")
+
+    app = KlangkApp(_create_state(create=fake_create))
+    async with app.run_test() as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name", Input).value = "myws"
+        tabs = cs.query_one("#form_tabs", TabbedContent)
+        tabs.active = "netfilter_pane"
+        await pilot.pause()
+        # Add a rejected domain via the Add button handler (#2386).
+        cs.query_one("#reject_input", Input).value = "evil.example.com"
+        cs.on_button_pressed(FakeBtnPress("add_reject"))
+        await pilot.pause()
+        assert cs._rejected_domains == ["evil.example.com"]
+        # A CIDR is rejected client-side (name-level NXDOMAIN deny-list).
+        cs.query_one("#reject_input", Input).value = "10.0.0.0/8"
+        cs.on_button_pressed(FakeBtnPress("add_reject"))
+        await pilot.pause()
+        assert cs._rejected_domains == ["evil.example.com"]  # unchanged
+        assert cs.query_one("#reject_input", Input).value == "10.0.0.0/8"
+        # Remove via the Remove button handler, then re-add.
+        cs.query_one("#reject_list", OptionList).highlighted = 0
+        cs.on_button_pressed(FakeBtnPress("rm_reject"))
+        await pilot.pause()
+        assert cs._rejected_domains == []
+        cs.query_one("#reject_input", Input).value = "bad.example.com"
+        cs.on_button_pressed(FakeBtnPress("add_reject"))
+        await pilot.pause()
+        # Edge branches: empty input is a no-op; Enter in the input adds too.
+        cs.query_one("#reject_input", Input).value = ""
+        cs._add_rejected_domain()
+        assert cs._rejected_domains == ["bad.example.com"]
+        rinp = cs.query_one("#reject_input", Input)
+        rinp.value = "extra.example.com"
+        cs.on_input_submitted(Input.Submitted(input=rinp, value=rinp.value))
+        await pilot.pause()
+        assert cs._rejected_domains == ["bad.example.com", "extra.example.com"]
+        # Remove with nothing highlighted is a no-op; then remove index 0.
+        cs.query_one("#reject_list", OptionList).highlighted = None
+        cs.on_button_pressed(FakeBtnPress("rm_reject"))
+        assert cs._rejected_domains == ["bad.example.com", "extra.example.com"]
+        cs.query_one("#reject_list", OptionList).highlighted = 0
+        cs.on_button_pressed(FakeBtnPress("rm_reject"))
+        await pilot.pause()
+        assert cs._rejected_domains == ["extra.example.com"]
+        # Create from a shorter pane so #create is in view (#1891).
+        tabs.active = "advanced_pane"
+        await pilot.pause()
+        assert await pilot.click("#create")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+    assert captured["k"]["rejected_domains"] == ["extra.example.com"]
+
+
+async def test_edit_screen_rejected_domains_editor(monkeypatch):
+    """#2386: the edit form's rejected-domains editor (add/remove/edit) reaches
+    the PUT body, and the focus-aware Delete/Edit dispatches to the reject list."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", running=False, rejected_domains=["old.example.com"])
+    captured = {}
+
+    def fake_update(*a, **k):
+        captured["k"] = k
+
+    app = KlangkApp(_edit_state(ws, update=fake_update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        assert es._rejected_domains == ["old.example.com"]
+        tabs = es.query_one("#form_tabs", TabbedContent)
+        tabs.active = "netfilter_pane"
+        await pilot.pause()
+        # Edit-in-place: 'e' on the focused reject list loads the entry.
+        rl = es.query_one("#reject_list", OptionList)
+        rl.highlighted = 0
+        rl.focus()
+        await pilot.pause()
+        # Focus-aware dispatch: _list_handlers picks the reject pair when the
+        # reject list owns focus; 'e' then runs _edit_rejected_domain.
+        assert es._list_handlers() == (
+            "_remove_rejected_domain",
+            "_edit_rejected_domain",
+        )
+        es.action_edit_item()
+        await pilot.pause()
+        assert es._editing_reject == 0
+        assert es.query_one("#reject_input", Input).value == "old.example.com"
+        es.query_one("#reject_input", Input).value = "new.example.com"
+        es.on_button_pressed(FakeBtnPress("add_reject"))  # Add replaces it
+        await pilot.pause()
+        assert es._rejected_domains == ["new.example.com"]
+        # Edge branches: empty input no-op; a CIDR is rejected; a plain append
+        # (no edit in progress) hits the append branch; Enter in the input adds.
+        es.query_one("#reject_input", Input).value = ""
+        es._add_rejected_domain()
+        assert es._rejected_domains == ["new.example.com"]
+        es.query_one("#reject_input", Input).value = "10.0.0.0/8"
+        es._add_rejected_domain()
+        assert es._rejected_domains == ["new.example.com"]  # CIDR rejected
+        erinp = es.query_one("#reject_input", Input)
+        erinp.value = "added.example.com"
+        es.on_input_submitted(Input.Submitted(input=erinp, value=erinp.value))
+        await pilot.pause()
+        assert es._rejected_domains == ["new.example.com", "added.example.com"]
+        # Remove/edit with nothing highlighted are no-ops; then button-remove.
+        es.query_one("#reject_list", OptionList).highlighted = None
+        es._remove_rejected_domain()
+        es._edit_rejected_domain()
+        assert es._rejected_domains == ["new.example.com", "added.example.com"]
+        es.query_one("#reject_list", OptionList).highlighted = 0
+        es.on_button_pressed(FakeBtnPress("rm_reject"))
+        await pilot.pause()
+        assert es._rejected_domains == ["added.example.com"]
+        # Delete (focus-aware) removes the focused reject entry.
+        es.query_one("#reject_list", OptionList).highlighted = 0
+        es.query_one("#reject_list", OptionList).focus()  # reclaim focus
+        await pilot.pause()
+        es.action_remove_item()
+        await pilot.pause()
+        assert es._rejected_domains == []
+        es.query_one("#save").scroll_visible()
+        await pilot.pause()
+        assert await pilot.click("#save")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+    assert captured["k"]["rejected_domains"] is None
+
+
 async def test_edit_screen_editor_add_buttons_clickable(monkeypatch):
     """Regression (#1891): same as the create-screen case but for the edit
     form — Add buttons inside each editor tab must be clickable and the
@@ -11029,6 +11183,8 @@ async def test_edit_screen_editor_add_buttons_clickable(monkeypatch):
         es.query_one("#allow_input", Input).value = "github.com:443"
         await pilot.pause()
         assert await pilot.click("#add_allow")
+        await pilot.pause()
+        es.query_one("#save").scroll_visible()
         await pilot.pause()
         assert await pilot.click("#save")
         await app.workers.wait_for_complete()

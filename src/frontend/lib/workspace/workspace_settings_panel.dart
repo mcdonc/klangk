@@ -225,6 +225,11 @@ bool _hasCreateTimeFieldChanged(
   if (!_domainListsEqual(prev['allowed_domains'], fields['allowed_domains'])) {
     return true;
   }
+  // rejected_domains — set comparison (#2386)
+  if (!_domainListsEqual(
+      prev['rejected_domains'], fields['rejected_domains'])) {
+    return true;
+  }
   // nix — the per-workspace /nix mount is set up at container create
   // time, so toggling it won't take effect until restart (#2233). Only
   // compare when this save actually emitted a nix value (the toggle was
@@ -298,6 +303,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   final _mountCtrl = TextEditingController();
   final _envCtrl = TextEditingController();
   final _allowedDomainsCtrl = TextEditingController();
+  final _rejectedDomainsCtrl = TextEditingController();
   late TextEditingController _idleTimeoutCtrl;
   late TextEditingController _cpuLimitCtrl;
   late TextEditingController _memoryLimitCtrl;
@@ -306,6 +312,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   late List<String> _mounts;
   late Map<String, String> _envVars;
   late List<String> _allowedDomains;
+  late List<String> _rejectedDomains;
   bool _autoStart = false;
   // #2233: per-workspace nix toggle (Mount /nix dir). Only meaningful
   // when the server has a nix backend (widget.nixAvailable).
@@ -313,6 +320,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   String? _mountError;
   String? _envError;
   String? _allowedDomainsError;
+  String? _rejectedDomainsError;
   bool _saving = false;
   bool _exporting = false;
 
@@ -360,6 +368,10 @@ class _SettingsFormState extends State<_SettingsForm> {
     );
     _allowedDomains = List<String>.from(
       (widget.workspace['allowed_domains'] as List?)?.cast<String>() ??
+          <String>[],
+    );
+    _rejectedDomains = List<String>.from(
+      (widget.workspace['rejected_domains'] as List?)?.cast<String>() ??
           <String>[],
     );
     _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
@@ -435,6 +447,13 @@ class _SettingsFormState extends State<_SettingsForm> {
             <String>[],
       );
     }
+    if (old.workspace['rejected_domains'] !=
+        widget.workspace['rejected_domains']) {
+      _rejectedDomains = List<String>.from(
+        (widget.workspace['rejected_domains'] as List?)?.cast<String>() ??
+            <String>[],
+      );
+    }
   }
 
   @override
@@ -445,6 +464,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     _mountCtrl.dispose();
     _envCtrl.dispose();
     _allowedDomainsCtrl.dispose();
+    _rejectedDomainsCtrl.dispose();
     _idleTimeoutCtrl.dispose();
     _cpuLimitCtrl.dispose();
     _memoryLimitCtrl.dispose();
@@ -494,6 +514,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       'mounts': _mounts.isNotEmpty ? _mounts : null,
       'env': _envVars.isNotEmpty ? _envVars : null,
       'allowed_domains': _allowedDomains.isNotEmpty ? _allowedDomains : null,
+      'rejected_domains': _rejectedDomains.isNotEmpty ? _rejectedDomains : null,
       if (widget.allowAutostart) 'auto_start': _autoStart,
       if (settings.isNotEmpty) 'settings': settings,
     });
@@ -546,6 +567,22 @@ class _SettingsFormState extends State<_SettingsForm> {
       if (!_allowedDomains.contains(v)) _allowedDomains.add(v);
       _allowedDomainsCtrl.clear();
       _allowedDomainsError = null;
+    });
+  }
+
+  void _tryAddRejectedDomain() {
+    final v = _rejectedDomainsCtrl.text.trim();
+    if (v.isEmpty) return;
+    // CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+    final err = validateAllowedDomainSpec(v, allowCidr: false);
+    if (err != null) {
+      setState(() => _rejectedDomainsError = err);
+      return;
+    }
+    setState(() {
+      if (!_rejectedDomains.contains(v)) _rejectedDomains.add(v);
+      _rejectedDomainsCtrl.clear();
+      _rejectedDomainsError = null;
     });
   }
 
@@ -772,7 +809,11 @@ class _SettingsFormState extends State<_SettingsForm> {
       key: _netfilterKey,
       icon: Icons.shield,
       title: 'Netfilter',
-      children: [_buildAllowedDomainsEditor(labelStyle)],
+      children: [
+        _buildAllowedDomainsEditor(labelStyle),
+        const SizedBox(height: 16),
+        _buildRejectedDomainsEditor(labelStyle),
+      ],
     );
   }
 
@@ -934,6 +975,8 @@ class _SettingsFormState extends State<_SettingsForm> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Text('Allowed Domains', style: labelStyle),
+        const SizedBox(height: 4),
         _buildEditableList(
           labelStyle: labelStyle,
           hint: 'github.com:443',
@@ -963,6 +1006,40 @@ class _SettingsFormState extends State<_SettingsForm> {
           const SizedBox(height: 8),
           _buildEgressNotEnforcedNotice(),
         ],
+      ],
+    );
+  }
+
+  Widget _buildRejectedDomainsEditor(TextStyle labelStyle) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Rejected Domains', style: labelStyle),
+        const SizedBox(height: 4),
+        _buildEditableList(
+          labelStyle: labelStyle,
+          hint: 'evil.example.com',
+          controller: _rejectedDomainsCtrl,
+          error: _rejectedDomainsError,
+          onAdd: _tryAddRejectedDomain,
+          items: _rejectedDomains.asMap().entries.map(
+                (e) => _buildEditableListItem(
+                  text: e.value,
+                  onCopy: e.value,
+                  onRemove: () =>
+                      setState(() => _rejectedDomains.removeAt(e.key)),
+                ),
+              ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Hosts NXDOMAIN\'d unconditionally (no resolution, no consent). '
+          'CIDR ranges are not supported.',
+          style: TextStyle(
+            color: KColors.textSecondary,
+            fontSize: 12,
+          ),
+        ),
       ],
     );
   }

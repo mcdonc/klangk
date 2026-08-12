@@ -62,17 +62,23 @@ _ALLOWED_DOMAIN_RE = re.compile(
 )
 
 
-def validate_allowed_domain_spec(spec: str) -> str | None:
-    """Validate an egress allowed-domain entry.
+def validate_allowed_domain_spec(
+    spec: str, *, allow_cidr: bool = True
+) -> str | None:
+    """Validate an egress allowed/rejected-domain entry.
 
     Returns None if valid, or an error message. Accepts a DNS name, an IPv4
-    address (optionally followed by ``:port``), or an IPv4 CIDR range
-    (``10.0.0.0/8``, optionally scoped to a port as ``10.0.0.0/8:443``).
-    Empty / whitespace / IPv6 literals (``[::1]``) / IPv6 CIDRs are rejected
-    — IPv6 is disabled inside filtered containers (#1936), so a v6
-    destination is neither reachable nor enforceable. Mirrors the Flutter
+    address (optionally followed by ``:port``), or -- when ``allow_cidr`` is
+    True -- an IPv4 CIDR range (``10.0.0.0/8``, optionally scoped to a port as
+    ``10.0.0.0/8:443``). Empty / whitespace / IPv6 literals (``[::1]``) / IPv6
+    CIDRs are rejected — IPv6 is disabled inside filtered containers (#1936),
+    so a v6 destination is neither reachable nor enforceable. Mirrors the Flutter
     ``validateAllowedDomainSpec`` and the TUI editor; the server does the
     authoritative validation (#1365, #1745, #1935).
+
+    ``allow_cidr=False`` is used for ``rejected_domains`` (#2367): NXDOMAIN
+    enforcement is name-level (no IP dimension), so a CIDR is meaningless there
+    and is rejected up front rather than round-tripping to the API.
     """
     s = spec.strip()
     if not s:
@@ -80,6 +86,11 @@ def validate_allowed_domain_spec(spec: str) -> str | None:
     # A "/" denotes an IPv4 CIDR range; route it to the CIDR check before
     # the host regex (which excludes "/").
     if "/" in s:
+        if not allow_cidr:
+            return (
+                f"Invalid rejected-domain {spec!r}: CIDR ranges are not "
+                "supported (NXDOMAIN is name-level)"
+            )
         return _validate_cidr_domain_spec(spec, s)
     if not _ALLOWED_DOMAIN_RE.match(s):
         return (

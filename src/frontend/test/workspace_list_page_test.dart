@@ -1148,7 +1148,7 @@ void main() {
       expect(
           find.descendant(
               of: find.byType(AlertDialog), matching: find.byType(TextField)),
-          findsNWidgets(10));
+          findsNWidgets(11));
       expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
     });
 

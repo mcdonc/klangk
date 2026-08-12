@@ -49,7 +49,11 @@ String? validateMountSpec(String spec) {
 /// failure, ``null`` on success. The server validates definitively; this
 /// catches typos at the boundary (#1935 added CIDR support, #2256 added
 /// wildcards).
-String? validateAllowedDomainSpec(String spec) {
+///
+/// ``allowCidr`` is ``false`` for ``rejected_domains`` (#2386): NXDOMAIN
+/// enforcement is name-level (no IP dimension), so a CIDR is meaningless and
+/// is rejected up front rather than round-tripping to the API.
+String? validateAllowedDomainSpec(String spec, {bool allowCidr = true}) {
   if (spec.contains(' ')) {
     return 'Expected host, host:port, or *.domain';
   }
@@ -57,6 +61,10 @@ String? validateAllowedDomainSpec(String spec) {
   // 10.0.0.0/8:443). Validate it separately — the host regex below
   // excludes "/", and a CIDR isn't a hostname (#1935).
   if (spec.contains('/')) {
+    if (!allowCidr) {
+      return 'CIDR ranges are not supported for rejected domains '
+          '(NXDOMAIN is name-level)';
+    }
     return _validateCidrDomainSpec(spec);
   }
   // Wildcard: a leading "*." matches subdomains only (NOT the apex) —
@@ -739,14 +747,16 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     );
   }
 
-  /// #1769: true when this workspace declares allowed_domains but the
-  /// deploy has netfilter disabled, so the allow-list is NOT enforced
-  /// (deliberate fail-open). Used to badge such workspaces in the list —
-  /// the gap is otherwise visible only in operator logs.
+  /// #1769: true when this workspace declares allowed_domains or
+  /// rejected_domains but the deploy has netfilter disabled, so the list is
+  /// NOT enforced (deliberate fail-open). Used to badge such workspaces in
+  /// the list — the gap is otherwise visible only in operator logs.
   bool _hasUnenforcedEgress(Map<String, dynamic> ws) {
     if (_auth.netfilterEnabled) return false;
-    final domains = ws['allowed_domains'] as List?;
-    return domains != null && domains.isNotEmpty;
+    final allowed = ws['allowed_domains'] as List?;
+    final rejected = ws['rejected_domains'] as List?;
+    return (allowed != null && allowed.isNotEmpty) ||
+        (rejected != null && rejected.isNotEmpty);
   }
 
   Widget _buildTabBody(_Section section) {
