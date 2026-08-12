@@ -357,7 +357,7 @@ class TestFrameBuilders:
             "type": "verdict",
             "request_id": "r1",
             "decision": "allowed",
-            "duration": "restart",
+            "duration": "tilrestart",
         }
 
     def test_make_verdict_carries_duration(self):
@@ -367,7 +367,7 @@ class TestFrameBuilders:
     def test_make_verdict_denied(self):
         msg = json.loads(make_verdict("r1", "denied"))
         assert msg["decision"] == "denied"
-        assert msg["duration"] == "restart"
+        assert msg["duration"] == "tilrestart"
 
     def test_make_ping(self):
         assert json.loads(make_ping()) == {"type": "ping"}
@@ -758,9 +758,9 @@ class TestAppActions:
                 for s in ws.sent
             ), ws.sent
 
-    async def test_duration_defaults_to_restart(self):
-        # A fresh row defaults to `restart`; Allow without changing it sends
-        # `restart`.
+    async def test_duration_defaults_to_tilrestart(self):
+        # A fresh row defaults to `tilrestart`; Allow without changing it sends
+        # `tilrestart`.
         app = _make_app()
         async with app.run_test() as pilot:
             ws = FakeWS([])
@@ -774,7 +774,7 @@ class TestAppActions:
                 )
             )
             await pilot.pause()
-            assert any('"restart"' in s for s in ws.sent), ws.sent
+            assert any('"tilrestart"' in s for s in ws.sent), ws.sent
 
     async def test_duration_selector_guards(self):
         # Defensive guard: a button without a duration attr is a no-op.
@@ -784,13 +784,13 @@ class TestAppActions:
             app._refresh()
             await pilot.pause()
             app._select_duration(types.SimpleNamespace(duration=None))
-            assert app._duration == "restart"  # unchanged (default)
+            assert app._duration == "tilrestart"  # unchanged (default)
 
     async def test_only_selected_duration_has_background_at_first_render(self):
         # Regression (#2360): the first duration button ("once") grabbed
         # initial focus on mount and, with no explicit transparent :focus,
         # rendered the white focus background -- so it read as "selected"
-        # alongside the real ``dur-sel`` default (``restart``). Only the
+        # alongside the real ``dur-sel`` default (``tilrestart``). Only the
         # selected button may carry a background; every other (focused or
         # not) must be transparent at first render. Asserted opacity-only so
         # it holds across light/dark themes (the exact accent hue is the
@@ -828,11 +828,11 @@ class TestAppActions:
                 f"selected+focused button lost its background "
                 f"(got {btn.styles.background!r})"
             )
-            restart = app.query_one(
+            default_btn = app.query_one(
                 f"#dur-{tui_consent.DURATION_DEFAULT}", Button
             )
-            assert not restart.has_class("dur-sel")
-            assert restart.styles.background.a == 0
+            assert not default_btn.has_class("dur-sel")
+            assert default_btn.styles.background.a == 0
 
 
 class TestWsLoop:
@@ -1287,7 +1287,7 @@ class TestControllerRulesExpiry:
         )
         assert c.rule_remaining(rule) == 0.0
 
-    def test_rule_remaining_restart_is_none(self):
+    def test_rule_remaining_tilrestart_is_none(self):
         c = ConsentDeciderController()
         rule = ConsentRule(
             id="a1",
@@ -1295,7 +1295,7 @@ class TestControllerRulesExpiry:
             dest_port=1,
             process_name=None,
             decision="allowed",
-            duration="restart",
+            duration="tilrestart",
             decided_at=100.0,
             decided_by=None,
         )
@@ -1564,7 +1564,7 @@ class TestRulesScreen:
                 _rules_frame(
                     allowed=[
                         _rule("a1", duration="forever"),
-                        _rule("a2", duration="restart"),
+                        _rule("a2", duration="tilrestart"),
                     ],
                 )
             )

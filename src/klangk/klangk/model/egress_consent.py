@@ -28,8 +28,9 @@ DECISIONS = frozenset(
 
 # Duration values for an allow/deny decision (#2328): how long the sidecar
 # honors it (allow learns the IP for T; deny REJECTs for T). `once` = this
-# connection only; `restart` = the workspace container's lifetime (the sidecar's
-# in-memory rules); `forever` = the workspace's lifetime -- persists across
+# connection only; `tilrestart` ("until restart") = the workspace container's
+# lifetime (the sidecar's in-memory rules); `forever` = the workspace's lifetime
+# -- persists across
 # container/sidecar restarts: an allow persists via an `allowed_domains`
 # mutation the sidecar re-reads on start (#2368) -- best-effort, so a failed
 # mutation means the allow won't survive restart despite the audit row here;
@@ -40,7 +41,7 @@ DURATION_15M = "15m"
 DURATION_1H = "1h"
 DURATION_1D = "1d"
 DURATION_1W = "1w"
-DURATION_RESTART = "restart"
+DURATION_TILRESTART = "tilrestart"
 DURATION_FOREVER = "forever"
 DURATIONS = frozenset(
     {
@@ -50,11 +51,11 @@ DURATIONS = frozenset(
         DURATION_1H,
         DURATION_1D,
         DURATION_1W,
-        DURATION_RESTART,
+        DURATION_TILRESTART,
         DURATION_FOREVER,
     }
 )
-DURATION_DEFAULT = DURATION_RESTART
+DURATION_DEFAULT = DURATION_TILRESTART
 
 # Canonical column list for SELECTs + _row_to_dict, so the read shape cannot
 # drift from the schema (a column added to the table is added here once).
@@ -209,7 +210,7 @@ class EgressConsentModel:
             return [_row_to_dict(row) for row in rows]
 
     # Duration string -> seconds, for the time-bounded in-effect window
-    # (#2328). `once`/`restart`/`forever` are not time-bounded (handled
+    # (#2328). `once`/`tilrestart`/`forever` are not time-bounded (handled
     # separately in :meth:`_duration_in_effect`), so they're absent here.
     _DURATION_SECONDS = {
         DURATION_5M: 300,
@@ -230,8 +231,8 @@ class EgressConsentModel:
         - ``once`` -> excluded (consumed by the single connection).
         - ``5m``/``15m``/``1h``/``1d``/``1w`` -> in effect iff
           ``decided_at + duration`` > now.
-        - ``restart`` -> in effect (container lifetime). Reaped when the
-          workspace container (re)starts (:meth:`clear_restart_duration`,
+        - ``tilrestart`` -> in effect (container lifetime). Reaped when the
+          workspace container (re)starts (:meth:`clear_tilrestart_duration`,
           #2346), so the recorded set matches what the sidecar enforces across
           container restarts; a sidecar-only restart (no container restart)
           is the one residual gap.
@@ -270,7 +271,7 @@ class EgressConsentModel:
         """Whether a decision is still in effect at ``now`` (#2335 slice A)."""
         if decided_at is None:
             return False
-        if duration in (DURATION_RESTART, DURATION_FOREVER):
+        if duration in (DURATION_TILRESTART, DURATION_FOREVER):
             return True
         if duration == DURATION_ONCE:
             return False
@@ -409,7 +410,7 @@ class EgressConsentModel:
         Uses ``DECISION_EXPIRED`` so the audit trail distinguishes a
         human deny from an unattended timeout. The duration is ``once`` -- a
         timeout is a non-persistent deny (just this connection), distinct from
-        an active deny (which defaults to `restart`).
+        an active deny (which defaults to `tilrestart`).
         """
         decided_at = time.time()
         async with self.app.state.db.transaction() as db:
@@ -455,10 +456,11 @@ class EgressConsentModel:
             )
             return cursor.rowcount
 
-    async def clear_restart_duration(self, workspace_id: str) -> int:
-        """Delete decided ``restart``-duration verdicts for a workspace (#2346).
+    async def clear_tilrestart_duration(self, workspace_id: str) -> int:
+        """Delete decided ``tilrestart``-duration verdicts for a workspace (#2346).
 
-        A ``restart`` verdict means "for the workspace container's lifetime" --
+        A ``tilrestart`` ("until restart") verdict means "for the workspace
+        container's lifetime" --
         the sidecar honors it via an in-memory rule (a learned ACCEPT for an
         allow, a REJECT for a deny) that dies when the sidecar/container
         restarts. But this row persists, so without reaping :meth:`list_active`
@@ -481,7 +483,7 @@ class EgressConsentModel:
                 " AND decision IN (?, ?)",
                 (
                     workspace_id,
-                    DURATION_RESTART,
+                    DURATION_TILRESTART,
                     DECISION_ALLOWED,
                     DECISION_DENIED,
                 ),

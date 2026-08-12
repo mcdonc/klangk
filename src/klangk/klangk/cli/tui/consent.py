@@ -48,14 +48,14 @@ logger = logging.getLogger(__name__)
 DECISION_ALLOWED = "allowed"
 DECISION_DENIED = "denied"
 # Duration tokens mirror the server (model/egress_consent.py); duplicated here
-# per CLI isolation. Ordered for the TUI selector; default is `restart` (#2328).
+# per CLI isolation. Ordered for the TUI selector; default is `tilrestart` (#2328).
 DURATION_ONCE = "once"
 DURATION_5M = "5m"
 DURATION_15M = "15m"
 DURATION_1H = "1h"
 DURATION_1D = "1d"
 DURATION_1W = "1w"
-DURATION_RESTART = "restart"
+DURATION_TILRESTART = "tilrestart"
 DURATION_FOREVER = "forever"
 DURATIONS = (
     DURATION_ONCE,
@@ -64,14 +64,14 @@ DURATIONS = (
     DURATION_1H,
     DURATION_1D,
     DURATION_1W,
-    DURATION_RESTART,
+    DURATION_TILRESTART,
     DURATION_FOREVER,
 )
-DURATION_DEFAULT = DURATION_RESTART
+DURATION_DEFAULT = DURATION_TILRESTART
 
 # Seconds each *timed* duration adds to ``decided_at`` (mirror of the server's
 # ``_DURATION_SECONDS``; duplicated per CLI isolation). ``once`` is consumed by
-# the single connection and ``restart``/``forever`` have no fixed expiry, so
+# the single connection and ``tilrestart``/``forever`` have no fixed expiry, so
 # they are absent -- a rule with one of those (or None) has no countdown.
 _DURATION_SECONDS = {
     DURATION_5M: 300,
@@ -308,7 +308,7 @@ class ConsentDeciderController:
     def rule_remaining(self, rule: ConsentRule) -> float | None:
         """Seconds left on a timed verdict, or None if it has no fixed expiry.
 
-        None covers ``restart``/``forever`` (open-ended), ``once`` (consumed,
+        None covers ``tilrestart``/``forever`` (open-ended), ``once`` (consumed,
         never in ``list_active``), and unknown/NULL durations -- the rules view
         shows ``until restart``/``forever`` for those instead of a countdown.
         """
@@ -472,7 +472,7 @@ class ConsentDeciderApp(App):
     /* Non-selected duration buttons carry no background -- not even when focused
     (#2360). The first button grabs initial focus on mount; without an explicit
     transparent :focus it rendered with the white focus background, so it read
-    as "selected" alongside the real ``dur-sel`` default (``restart``). The
+    as "selected" alongside the real ``dur-sel`` default (``tilrestart``). The
     ``dur-sel`` rules are qualified under ``#duration-selector`` so they outrank
     these ID-based transparent rules on specificity (an unqualified ``.dur-sel``
     loses to ``#duration-selector Button:focus`` and the accent vanishes). */
@@ -520,7 +520,7 @@ class ConsentDeciderApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static(id="status")
-        # Global duration selector (default `restart`): click to choose; selecting
+        # Global duration selector (default `tilrestart`): click to choose; selecting
         # does NOT submit -- only a row's Allow/Deny submits with this duration.
         yield Horizontal(*self._duration_buttons(), id="duration-selector")
         with Vertical():
@@ -1091,7 +1091,7 @@ class RulesScreen(Screen):
         proc = f"  ({rule.process_name})" if rule.process_name else ""
         if rule.duration == DURATION_FOREVER:
             label = "forever"
-        elif rule.duration == DURATION_RESTART:
+        elif rule.duration == DURATION_TILRESTART:
             label = "until restart"
         else:
             rem = controller.rule_remaining(rule)

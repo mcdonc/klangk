@@ -159,10 +159,10 @@ _DURATION_FOREVER = 365 * 86400  # ~a year; practically until restart
 
 
 def _duration_ttl(duration: str) -> float | None:
-    """Seconds for a timed/restart/forever duration, or None for ``once``."""
+    """Seconds for a timed/tilrestart/forever duration, or None for ``once``."""
     if duration in _DURATION_SECONDS:
         return _DURATION_SECONDS[duration]
-    if duration in ("restart", "forever"):
+    if duration in ("tilrestart", "forever"):
         return _DURATION_FOREVER
     return None  # "once" or unknown -> caller handles (no learn / short reject)
 

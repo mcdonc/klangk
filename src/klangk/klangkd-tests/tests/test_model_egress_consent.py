@@ -280,7 +280,7 @@ async def test_decide_default_duration_is_restart(ec, ws, user):
     row = await ec.app.state.db.fetchone(
         "SELECT duration FROM egress_consent WHERE id = ?", (req["id"],)
     )
-    assert row["duration"] == "restart"
+    assert row["duration"] == "tilrestart"
 
 
 async def test_decide_invalid_duration_raises(ec, ws, user):
@@ -396,7 +396,7 @@ async def test_cascade_delete_on_workspace_delete(ec, ws, user):
 async def test_list_active_groups_allowed_and_denied(ec, ws, user):
     w = await ws.create_workspace(user["id"], "active-grp")
     a = await ec.create_request(w["id"], "allow.com", 443)
-    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "restart")
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "tilrestart")
     d = await ec.create_request(w["id"], "deny.com", 443)
     await ec.decide(d["id"], DECISION_DENIED, user["id"], "forever")
     rows = await ec.list_active(w["id"])
@@ -407,7 +407,7 @@ async def test_list_active_groups_allowed_and_denied(ec, ws, user):
     }
     # each row carries its duration (the read fix, #2338)
     by_host = {r["dest_host"]: r for r in rows}
-    assert by_host["allow.com"]["duration"] == "restart"
+    assert by_host["allow.com"]["duration"] == "tilrestart"
     assert by_host["deny.com"]["duration"] == "forever"
 
 
@@ -466,30 +466,31 @@ def test_duration_in_effect_unknown_and_null_duration():
     assert EgressConsentModel._duration_in_effect("5m", None, 2.0) is False
     # restart/forever are event-bounded, not time-bounded -> always in effect.
     assert (
-        EgressConsentModel._duration_in_effect("restart", 0.0, 999.0) is True
+        EgressConsentModel._duration_in_effect("tilrestart", 0.0, 999.0)
+        is True
     )
     assert (
         EgressConsentModel._duration_in_effect("forever", 0.0, 999.0) is True
     )
 
 
-# -- clear_restart_duration (container-restart reaping, #2346) --
+# -- clear_tilrestart_duration (container-restart reaping, #2346) --
 
 
-async def test_clear_restart_duration_clears_allow_and_deny(ec, ws, user):
+async def test_clear_tilrestart_duration_clears_allow_and_deny(ec, ws, user):
     # A restart allow AND a restart deny both die with the container.
     w = await ws.create_workspace(user["id"], "clr-rst")
     a = await ec.create_request(w["id"], "allow.com", 443)
-    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "restart")
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "tilrestart")
     d = await ec.create_request(w["id"], "deny.com", 443)
-    await ec.decide(d["id"], DECISION_DENIED, user["id"], "restart")
-    count = await ec.clear_restart_duration(w["id"])
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], "tilrestart")
+    count = await ec.clear_tilrestart_duration(w["id"])
     assert count == 2
     # Neither survives in list_active (the rule-management view).
     assert await ec.list_active(w["id"]) == []
 
 
-async def test_clear_restart_duration_leaves_other_durations(ec, ws, user):
+async def test_clear_tilrestart_duration_leaves_other_durations(ec, ws, user):
     # forever / time-bounded (5m) / once are governed by their own lifetime,
     # not the container's -- left untouched.
     w = await ws.create_workspace(user["id"], "clr-keep")
@@ -503,36 +504,38 @@ async def test_clear_restart_duration_leaves_other_durations(ec, ws, user):
     await ec.decide(once["id"], DECISION_ALLOWED, user["id"], "once")
     # one restart row to clear, to confirm only it is reaped.
     ra = await ec.create_request(w["id"], "restart.com")
-    await ec.decide(ra["id"], DECISION_ALLOWED, user["id"], "restart")
+    await ec.decide(ra["id"], DECISION_ALLOWED, user["id"], "tilrestart")
 
-    count = await ec.clear_restart_duration(w["id"])
+    count = await ec.clear_tilrestart_duration(w["id"])
     assert count == 1
     # forever (allow + deny) + the fresh 5m are still in effect; once excluded.
     hosts = {r["dest_host"] for r in await ec.list_active(w["id"])}
     assert hosts == {"forever-allow.com", "forever-deny.com", "timed.com"}
 
 
-async def test_clear_restart_duration_leaves_pending_and_static(ec, ws, user):
+async def test_clear_tilrestart_duration_leaves_pending_and_static(
+    ec, ws, user
+):
     # Pending requests + static policy denials are not restart verdicts.
     w = await ws.create_workspace(user["id"], "clr-pend")
     await ec.create_request(w["id"], "pending.com", 443)  # stays pending
     await ec.record_static_denial(w["id"], "static.com", 443)
-    count = await ec.clear_restart_duration(w["id"])
+    count = await ec.clear_tilrestart_duration(w["id"])
     assert count == 0
     # Both rows still present (list_active excludes them, so check list_requests).
     hosts = {r["dest_host"] for r in await ec.list_requests(w["id"])}
     assert hosts == {"pending.com", "static.com"}
 
 
-async def test_clear_restart_duration_is_scoped_to_workspace(ec, ws, user):
+async def test_clear_tilrestart_duration_is_scoped_to_workspace(ec, ws, user):
     # Only the named workspace's restart rows are reaped.
     w1 = await ws.create_workspace(user["id"], "clr-a")
     w2 = await ws.create_workspace(user["id"], "clr-b")
     a = await ec.create_request(w1["id"], "a.com", 443)
-    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "restart")
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], "tilrestart")
     b = await ec.create_request(w2["id"], "b.com", 443)
-    await ec.decide(b["id"], DECISION_ALLOWED, user["id"], "restart")
-    count = await ec.clear_restart_duration(w1["id"])
+    await ec.decide(b["id"], DECISION_ALLOWED, user["id"], "tilrestart")
+    count = await ec.clear_tilrestart_duration(w1["id"])
     assert count == 1
     # w2's restart row survives.
     assert {r["dest_host"] for r in await ec.list_active(w2["id"])} == {
@@ -541,10 +544,10 @@ async def test_clear_restart_duration_is_scoped_to_workspace(ec, ws, user):
     assert await ec.list_active(w1["id"]) == []
 
 
-async def test_clear_restart_duration_no_rows_is_zero(ec, ws, user):
+async def test_clear_tilrestart_duration_no_rows_is_zero(ec, ws, user):
     # First-ever start: no restart rows -> no-op, returns 0.
     w = await ws.create_workspace(user["id"], "clr-empty")
-    assert await ec.clear_restart_duration(w["id"]) == 0
+    assert await ec.clear_tilrestart_duration(w["id"]) == 0
 
 
 # -- revoke (#2339) --
@@ -553,7 +556,7 @@ async def test_clear_restart_duration_no_rows_is_zero(ec, ws, user):
 async def test_revoke_flips_active_allow(ec, ws, user):
     w = await ws.create_workspace(user["id"], "revoke-allow")
     req = await ec.create_request(w["id"], "allow.com", 443)
-    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "restart")
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "tilrestart")
     row = await ec.revoke(req["id"], user["id"])
     assert row["decision"] == DECISION_REVOKED
     assert row["revoked_at"] is not None
@@ -590,7 +593,7 @@ async def test_revoke_unknown_returns_none(ec, ws, user):
 async def test_revoke_idempotent_second_call_returns_none(ec, ws, user):
     w = await ws.create_workspace(user["id"], "revoke-idem")
     req = await ec.create_request(w["id"], "idem.com")
-    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "restart")
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "tilrestart")
     assert await ec.revoke(req["id"], user["id"]) is not None
     assert await ec.revoke(req["id"], user["id"]) is None  # already revoked
 
@@ -598,7 +601,7 @@ async def test_revoke_idempotent_second_call_returns_none(ec, ws, user):
 async def test_list_active_excludes_revoked(ec, ws, user):
     w = await ws.create_workspace(user["id"], "revoke-excluded")
     req = await ec.create_request(w["id"], "rev.com")
-    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "restart")
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], "tilrestart")
     assert len(await ec.list_active(w["id"])) == 1
     await ec.revoke(req["id"], user["id"])
     assert await ec.list_active(w["id"]) == []

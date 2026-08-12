@@ -427,6 +427,15 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Egress-consent duration token `restart` renamed to `tilrestart` (#2357).**
+  The verdict `duration` value `restart` is now `tilrestart` ("until restart")
+  everywhere — the model constant, the wire/DB token, the `consent-decide` TUI
+  selector, the web consent banner, and the network sidecar. The semantics are
+  unchanged (the verdict holds for the workspace container's lifetime and is
+  cleared on restart); only the token name changes. `restart` reads ambiguously
+  (valid _until_ restart vs. starting _at_ restart), `tilrestart` states the
+  window directly.
+
 - **New workspaces default to `egress_mode=interactive`.** The default is
   `interactive`, so held egress requests reach a decider out of the box without
   a manual per-workspace flip (`EGRESS_MODE_DEFAULT` in `model/workspaces.py`);

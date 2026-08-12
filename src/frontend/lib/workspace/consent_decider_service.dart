@@ -28,7 +28,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 const String kDecisionAllowed = 'allowed';
 const String kDecisionDenied = 'denied';
 
-/// Ordered for the duration selector; the default is `restart` (#2328).
+/// Ordered for the duration selector; the default is `tilrestart` (#2328).
 const List<String> kConsentDurations = [
   'once',
   '5m',
@@ -36,10 +36,10 @@ const List<String> kConsentDurations = [
   '1h',
   '1d',
   '1w',
-  'restart',
+  'tilrestart',
   'forever',
 ];
-const String kConsentDurationDefault = 'restart';
+const String kConsentDurationDefault = 'tilrestart';
 
 /// Inbound-frame application outcomes returned by [ConsentDeciderService.applyFrame].
 enum ConsentFrameOutcome {
@@ -241,7 +241,9 @@ class ConsentDeciderService extends ChangeNotifier {
       (raw) {
         if (raw is String) _onMessage(raw);
       },
+      // coverage:ignore-start
       onError: (Object e) => debugPrint('[ConsentDecider] stream error: $e'),
+      // coverage:ignore-end
       onDone: () => _onClosed(ch),
       cancelOnError: true,
     );
