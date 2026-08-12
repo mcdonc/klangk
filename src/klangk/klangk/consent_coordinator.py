@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from .consent import workspace_is_interactive
 from .model.egress_consent import (
@@ -54,6 +55,16 @@ VERDICT_DENY = "deny"
 # (fail-closed: leave the row enforced). The sidecar's rule-drop is a single
 # iptables delete, so this is generous.
 _REVOKE_ACK_TIMEOUT = 5.0
+
+# Consent-pause durations (#2332): how long interactive prompting is silenced
+# workspace-wide. While paused, a destination with no allow-list rule and no
+# in-effect recorded verdict is auto-allowed (no hold, no prompt); a recorded
+# deny still blocks. A focused set for the TUI control; ``unpause`` clears it.
+PAUSE_15M = "15m"
+PAUSE_1H = "1h"
+PAUSE_1D = "1d"
+PAUSE_DURATIONS = frozenset({PAUSE_15M, PAUSE_1H, PAUSE_1D})
+_PAUSE_SECONDS = {PAUSE_15M: 900, PAUSE_1H: 3600, PAUSE_1D: 86400}
 
 
 class ConsentCoordinator:
@@ -116,6 +127,18 @@ class ConsentCoordinator:
         """
         loop = asyncio.get_running_loop()
         try:
+            if await self._is_paused(workspace_id):
+                # #2332: prompting is paused workspace-wide. A destination
+                # with an in-effect recorded DENY is still blocked (the pause
+                # does not override existing verdicts); everything else is
+                # auto-allowed (no hold, no prompt, no row -- the sidecar
+                # learns/accepts the SYN like a static allow). Allow-list
+                # rules are enforced earlier at the sidecar DNS layer, so a
+                # host reaching this gate is already not allow-listed.
+                verdict = await self._paused_verdict(workspace_id, dst, dport)
+                fut = loop.create_future()
+                fut.set_result(verdict)
+                return fut
             if not await self._is_interactive(workspace_id):
                 await self.app.state.model.egress_consent.record_static_denial(
                     workspace_id, dst, dport
@@ -147,6 +170,81 @@ class ConsentCoordinator:
             fut = loop.create_future()
             fut.set_result({"decision": VERDICT_DENY, "reason": "error"})
             return fut
+
+    async def pause(self, workspace_id: str, duration: str) -> dict:
+        """Pause interactive consent prompting workspace-wide for ``duration`` (#2332).
+
+        While paused, :meth:`hold` auto-allows any destination that has no
+        allow-list rule and no in-effect recorded verdict (instead of holding
+        it for a decider); a recorded deny still blocks. Sets
+        ``consent_paused_until`` on the workspace to ``now + duration`` and
+        broadcasts a refreshed ``egress_rules`` frame so every decider sees
+        the pause window. Returns ``{"ok": bool, "until": float | None}`` --
+        ``ok`` is False for an unknown duration or a missing workspace.
+        """
+        secs = _PAUSE_SECONDS.get(duration)
+        if secs is None:
+            return {"ok": False, "until": None}
+        until = time.time() + secs
+        if not await self.app.state.model.workspaces.set_consent_pause(
+            workspace_id, until
+        ):
+            return {"ok": False, "until": None}
+        await self._broadcast_rules(workspace_id)
+        return {"ok": True, "until": until}
+
+    async def unpause(self, workspace_id: str) -> dict:
+        """Clear the consent-pause window (#2332).
+
+        Returns ``{"ok": bool}`` -- False if the workspace is missing. Always
+        broadcasts a refreshed ``egress_rules`` frame on success so deciders
+        drop the pause indicator.
+        """
+        ok = await self.app.state.model.workspaces.set_consent_pause(
+            workspace_id, None
+        )
+        if ok:
+            await self._broadcast_rules(workspace_id)
+        return {"ok": ok}
+
+    async def _is_paused(self, workspace_id: str) -> bool:
+        """Is consent prompting paused for the workspace right now (#2332)?
+
+        Reads ``consent_paused_until`` live and compares against ``now``, so a
+        pause self-expires the moment its window elapses (no sweep needed for
+        correctness -- the gate re-evaluates on every hold).
+        """
+        until = await self.app.state.model.workspaces.get_consent_pause(
+            workspace_id
+        )
+        return until is not None and until > time.time()
+
+    async def _paused_verdict(
+        self, workspace_id: str, dst: str, dport: int | None
+    ) -> dict:
+        """Verdict for a held SYN while prompting is paused (#2332).
+
+        A destination with an in-effect recorded DENY is still blocked (the
+        pause respects existing verdicts); everything else is auto-allowed
+        with a ``once`` duration -- the sidecar accepts the SYN (conntrack
+        carries the connection) without learning the IP, so each NEW
+        connection re-gates: once the pause elapses, new connections to the
+        same host prompt again (none linger auto-allowed past the window).
+        """
+        row = await self.app.state.model.egress_consent.active_verdict_for(
+            workspace_id, dst, dport
+        )
+        if row is not None and row["decision"] == DECISION_DENIED:
+            return {
+                "decision": VERDICT_DENY,
+                "reason": "paused_deny",
+                "duration": DURATION_ONCE,
+            }
+        return {
+            "decision": VERDICT_ALLOW,
+            "reason": "paused",
+            "duration": DURATION_ONCE,
+        }
 
     def _register_hold(self, request: dict) -> asyncio.Future:
         """Register a held request + arm its timeout + fan out (interactive path)."""
@@ -547,15 +645,24 @@ class ConsentCoordinator:
         rows = await self.app.state.model.egress_consent.list_active(
             workspace_id
         )
+        until = await self.app.state.model.workspaces.get_consent_pause(
+            workspace_id
+        )
+        now = time.time()
+        paused = (
+            {"paused": True, "until": until}
+            if until is not None and until > now
+            else None
+        )
         return {
             "type": "egress_rules",
             "workspace_id": workspace_id,
             "allow_list": ws.get("allowed_domains") or [],
             "allowed": [r for r in rows if r["decision"] == DECISION_ALLOWED],
             "denied": [r for r in rows if r["decision"] == DECISION_DENIED],
-            # #2332 (pause control) not yet landed: no transient pause state
-            # exists, so this is always None until that work adds it.
-            "paused": None,
+            # #2332 (pause control): the live pause window, or None when not
+            # paused (read fresh so a self-expired pause shows as cleared).
+            "paused": paused,
         }
 
     @staticmethod

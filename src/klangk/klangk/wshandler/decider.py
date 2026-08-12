@@ -145,6 +145,14 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
                             "ok": ok,
                         }
                     )
+                elif mtype == "pause":
+                    # #2332: pause interactive consent prompting for this
+                    # decider's workspace for a window. A deploy-wide decider
+                    # (workspace None) has no single workspace to pause -> nack.
+                    await _handle_pause(app, safe_ws, msg, workspace)
+                elif mtype == "unpause":
+                    # #2332: clear an active pause for this decider's workspace.
+                    await _handle_unpause(app, safe_ws, workspace)
                 # unknown types are ignored
             except SlowClientError:
                 # Outbound queue full -- the client can't keep up. Drop it
@@ -162,6 +170,33 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         # registration so the workspace reverts to static (#2308).
         registry.deregister(decider_id)
         await safe_ws.stop_sender()
+
+
+async def _handle_pause(app, safe_ws, msg, workspace) -> None:
+    """Pause consent prompting for the decider's workspace (#2332)."""
+    if workspace is None:
+        # A deploy-wide (admin) decider has no single workspace to pause.
+        safe_ws.send_json({"type": "pause_ack", "ok": False, "until": None})
+        return
+    result = await app.state.consent_coordinator.pause(
+        workspace, msg.get("duration")
+    )
+    safe_ws.send_json(
+        {
+            "type": "pause_ack",
+            "ok": result["ok"],
+            "until": result["until"],
+        }
+    )
+
+
+async def _handle_unpause(app, safe_ws, workspace) -> None:
+    """Clear an active consent pause for the decider's workspace (#2332)."""
+    if workspace is None:
+        safe_ws.send_json({"type": "pause_ack", "ok": False, "until": None})
+        return
+    result = await app.state.consent_coordinator.unpause(workspace)
+    safe_ws.send_json({"type": "pause_ack", "ok": result["ok"], "until": None})
 
 
 async def _handle_verdict(app, safe_ws, msg, workspace, user_id) -> None:

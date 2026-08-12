@@ -123,6 +123,9 @@ IGNORED = "ignore"  # non-JSON / unknown frame
 REVOKE_ACK = (  # server replied to a revoke (#2339/#2341); payload=(id, ok)
     "revoke_ack"
 )
+PAUSE_ACK = (  # server replied to a pause/unpause (#2332); payload=(ok, until)
+    "pause_ack"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +214,22 @@ def make_revoke(request_id: str) -> str:
     return json.dumps({"type": "revoke", "request_id": request_id})
 
 
+def make_pause(duration: str) -> str:
+    """Build an outbound pause frame (JSON string) -- silence prompts (#2332).
+
+    ``duration`` is one of ``"5m"``/``"15m"``/``"1h"``. While paused, a
+    destination with no allow-list rule and no in-effect verdict is
+    auto-allowed (no hold); a recorded deny still blocks. The server replies
+    with a ``pause_ack`` and broadcasts a refreshed ``egress_rules`` frame.
+    """
+    return json.dumps({"type": "pause", "duration": duration})
+
+
+def make_unpause() -> str:
+    """Build an outbound unpause frame (JSON string) -- resume prompting (#2332)."""
+    return json.dumps({"type": "unpause"})
+
+
 class ConsentDeciderController:
     """Pure state machine over the consent-decider WS protocol (#2310).
 
@@ -290,6 +309,20 @@ class ConsentDeciderController:
             return REVOKE_ACK, (
                 rid if isinstance(rid, str) else None,
                 ok,
+            )
+        if mtype == "pause_ack":
+            # #2332: server replied to a pause/unpause. The pause window itself
+            # arrives in the subsequent refreshed ``egress_rules`` frame (the
+            # server broadcasts one on every pause/unpause); this ack only
+            # signals success/failure so the view can flash on a nack. ``until``
+            # is None for an unpause or a failed pause.
+            until = msg.get("until")
+            return PAUSE_ACK, (
+                bool(msg.get("ok")),
+                float(until)
+                if isinstance(until, (int, float))
+                and not isinstance(until, bool)
+                else None,
             )
         if mtype == "pong":
             return PONG, None
@@ -480,6 +513,14 @@ class ConsentDeciderApp(App):
     #duration-selector Button:focus { background: transparent; }
     #duration-selector .dur-sel { background: $accent; color: $background; }
     #duration-selector .dur-sel:focus { background: $accent; color: $background; }
+    /* #2332 pause control bar: a compact top-bar that silences ALL prompts for
+    the workspace for a window. Flagged yellow so it reads as "filtering off". */
+    #pause-bar { height: 1; background: $panel; }
+    #pause-bar Static { width: auto; padding: 0 1; color: $text-muted; }
+    #pause-bar Button { width: auto; min-width: 0; height: 1; border: none; padding: 0 1; background: transparent; }
+    #pause-bar Button:focus { background: transparent; }
+    #pause-bar .pause-active { background: $warning; color: $background; }
+    #pause-bar .pause-active:focus { background: $warning; color: $background; }
     """
 
     BINDINGS = [
@@ -523,6 +564,13 @@ class ConsentDeciderApp(App):
         # Global duration selector (default `tilrestart`): click to choose; selecting
         # does NOT submit -- only a row's Allow/Deny submits with this duration.
         yield Horizontal(*self._duration_buttons(), id="duration-selector")
+        # #2332 pause control: silences ALL prompts for the workspace for a
+        # window. Flagged yellow; the status line shows the remaining window.
+        yield Horizontal(
+            Static("Pause:", id="pause-label"),
+            *self._pause_buttons(),
+            id="pause-bar",
+        )
         with Vertical():
             yield ListView(id="requests")
             yield Static("No held requests — connected, waiting.", id="empty")
@@ -538,6 +586,27 @@ class ConsentDeciderApp(App):
             )
             b.duration = d  # type: ignore[attr-defined]
             btns.append(b)
+        return btns
+
+    def _pause_buttons(self) -> list[Button]:
+        """The pause-control buttons (#2332): 5m / 15m / 1h / Cancel.
+
+        ``pause_duration`` on each button is the window token, or None for the
+        Cancel button (clears an active pause). Highlighted via ``pause-active``
+        when a pause is live so the bar reads as "filtering off".
+        """
+        btns: list[Button] = []
+        for label, dur in (
+            (DURATION_15M, DURATION_15M),
+            (DURATION_1H, DURATION_1H),
+            (DURATION_1D, DURATION_1D),
+        ):
+            b = Button(label, id=f"pause-{dur}")
+            b.pause_duration = dur  # type: ignore[attr-defined]
+            btns.append(b)
+        cancel = Button("Cancel", id="pause-cancel")
+        cancel.pause_duration = None  # type: ignore[attr-defined]
+        btns.append(cancel)
         return btns
 
     def on_mount(self) -> None:
@@ -650,6 +719,14 @@ class ConsentDeciderApp(App):
                         if not ok:
                             self._flash("revoke failed — still in effect")
                         self._refresh()
+                    elif action == PAUSE_ACK:
+                        # payload = (ok, until). A failed pause/unpause flashes;
+                        # success is reflected by the refreshed egress_rules
+                        # frame the server broadcasts (no flash needed).
+                        ok, _until = payload  # type: ignore[misc]
+                        if not ok:
+                            self._flash("pause failed")
+                        self._refresh()
                     else:
                         self._refresh()
                 except Exception:
@@ -731,9 +808,22 @@ class ConsentDeciderApp(App):
             status.update(self._flash_msg)
         else:
             conn = "connected" if self._connected else "reconnecting"
-            status.update(
-                f" {escape(self.workspace_name)}  ·  {conn}  ·  {len(ordered)} held"
+            line = (
+                f" {escape(self.workspace_name)}  ·  {conn}"
+                f"  ·  {len(ordered)} held"
             )
+            # #2332: surface an active pause window in the status line so the
+            # "silences ALL prompts" state is always visible while queuing.
+            rules = self.controller.rules
+            if rules is not None and rules.paused is not None:
+                rem = self.controller.pause_remaining(rules)
+                if rem is None:
+                    line += "  ·  paused until restart"
+                else:
+                    line += f"  ·  paused {_fmt_duration(rem)}"
+            status.update(line)
+        # Reflect an active pause on the control bar (highlight the window).
+        self._refresh_pause_highlight()
 
     def _host_line(self, req: ConsentRequest) -> str:
         host = req.dest_host
@@ -813,6 +903,8 @@ class ConsentDeciderApp(App):
             # Selecting a duration does NOT submit -- it only sets the global
             # choice (Allow/Deny submit with it).
             self._select_duration(event.button)
+        elif bid.startswith("pause-"):
+            self._handle_pause_button(event.button)
         elif bid.startswith("allow-"):
             self._decide_id(
                 bid.removeprefix("allow-"), DECISION_ALLOWED, self._duration
@@ -831,6 +923,42 @@ class ConsentDeciderApp(App):
         for b in self.query(".dur-sel"):
             b.remove_class("dur-sel")
         button.add_class("dur-sel")
+
+    def _handle_pause_button(self, button: Button) -> None:
+        """Send a pause (window token) or unpause (Cancel) frame (#2332)."""
+        ws = self._ws
+        if ws is None:
+            self._flash("disconnected — reconnecting")
+            return
+        dur = getattr(button, "pause_duration", None)
+        if dur is None:
+            asyncio.create_task(self._send_unpause(ws))
+        else:
+            asyncio.create_task(self._send_pause(ws, dur))
+
+    async def _send_pause(self, ws, duration: str) -> None:
+        try:
+            await ws.send(make_pause(duration))
+        except Exception:
+            self._flash("pause send failed — reconnecting")
+
+    async def _send_unpause(self, ws) -> None:
+        try:
+            await ws.send(make_unpause())
+        except Exception:
+            self._flash("unpause send failed — reconnecting")
+
+    def _refresh_pause_highlight(self) -> None:
+        """Flag the pause bar while a pause window is active (#2332).
+
+        The pause ``until`` carries no "which button" info, so the whole bar is
+        flagged (the status line + rules screen show the exact remaining
+        window) rather than guessing the pressed button from remaining time.
+        """
+        label = self.query_one("#pause-label", Static)
+        rules = self.controller.rules
+        paused = rules is not None and rules.paused is not None
+        label.set_class(paused, "pause-active")
 
     def action_allow(self) -> None:
         # `a` key -> the highlighted row (keyboard path). No-op on the rules

@@ -12,6 +12,9 @@ from klangk.model.egress_consent import (
     DECISION_PENDING,
     DECISION_REVOKED,
     DURATIONS,
+    DURATION_5M,
+    DURATION_FOREVER,
+    DURATION_TILRESTART,
 )
 from klangk.model.workspaces import (
     EGRESS_MODE_DEFAULT,
@@ -771,3 +774,87 @@ async def test_init_db_rebuilds_egress_consent_to_add_duration_check(
                 ("keep-1",),
             )
     assert isinstance(exc_info.value.orig, sqlite3.IntegrityError)
+
+
+# -- active_verdict_for (consent-pause "respect existing verdict", #2332) --
+
+
+async def test_active_verdict_for_returns_in_effect_deny(ec, ws, user):
+    # A recorded in-effect deny for an exact (host, port) is returned so the
+    # pause path can keep blocking it (the pause does not override verdicts).
+    w = await ws.create_workspace(user["id"], "avf-deny")
+    d = await ec.create_request(w["id"], "deny.com", 443)
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], DURATION_TILRESTART)
+    row = await ec.active_verdict_for(w["id"], "deny.com", 443)
+    assert row is not None
+    assert row["decision"] == DECISION_DENIED
+    assert row["dest_host"] == "deny.com"
+
+
+async def test_active_verdict_for_returns_in_effect_allow(ec, ws, user):
+    w = await ws.create_workspace(user["id"], "avf-allow")
+    a = await ec.create_request(w["id"], "allow.com", 443)
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], DURATION_FOREVER)
+    row = await ec.active_verdict_for(w["id"], "allow.com", 443)
+    assert row is not None
+    assert row["decision"] == DECISION_ALLOWED
+
+
+async def test_active_verdict_for_none_when_no_verdict(ec, ws, user):
+    # No recorded verdict -> None (the pause path auto-allows).
+    w = await ws.create_workspace(user["id"], "avf-none")
+    assert await ec.active_verdict_for(w["id"], "unseen.com", 443) is None
+
+
+async def test_active_verdict_for_port_exact(ec, ws, user):
+    # A verdict for host:443 does NOT match a lookup for host:80 (least
+    # privilege: a deny on one port does not block another).
+    w = await ws.create_workspace(user["id"], "avf-port")
+    d = await ec.create_request(w["id"], "deny.com", 443)
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], DURATION_TILRESTART)
+    assert await ec.active_verdict_for(w["id"], "deny.com", 80) is None
+    assert await ec.active_verdict_for(w["id"], "deny.com", 443) is not None
+
+
+async def test_active_verdict_for_excludes_expired(ec, ws, user, app_state):
+    # A verdict whose timed window has elapsed is not in effect -> None.
+    w = await ws.create_workspace(user["id"], "avf-expired")
+    a = await ec.create_request(w["id"], "stale.com", 443)
+    await ec.decide(a["id"], DECISION_DENIED, user["id"], DURATION_5M)
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "UPDATE egress_consent SET decided_at = ? WHERE id = ?",
+            (0.0, a["id"]),
+        )
+    assert await ec.active_verdict_for(w["id"], "stale.com", 443) is None
+
+
+async def test_active_verdict_for_most_recent_wins(ec, ws, user):
+    # A later verdict for the same host:port overrides an earlier one (an
+    # allow then a deny -> the deny is current).
+    w = await ws.create_workspace(user["id"], "avf-recent")
+    a = await ec.create_request(w["id"], "flip.com", 443)
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], DURATION_TILRESTART)
+    d = await ec.create_request(w["id"], "flip.com", 443)
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], DURATION_TILRESTART)
+    row = await ec.active_verdict_for(w["id"], "flip.com", 443)
+    assert row["decision"] == DECISION_DENIED
+
+
+async def test_active_verdict_for_excludes_static_denial(ec, ws, user):
+    # A static policy denial (decided_by NULL) is not an actionable verdict.
+    w = await ws.create_workspace(user["id"], "avf-static")
+    await ec.record_static_denial(w["id"], "policy.com", 443)
+    assert await ec.active_verdict_for(w["id"], "policy.com", 443) is None
+
+
+async def test_active_verdict_for_no_port(ec, ws, user):
+    # A port-less verdict (NULL port) matches a port-less lookup.
+    w = await ws.create_workspace(user["id"], "avf-noport")
+    d = await ec.create_request(w["id"], "noport.com")  # dest_port NULL
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], DURATION_FOREVER)
+    row = await ec.active_verdict_for(w["id"], "noport.com", None)
+    assert row is not None
+    assert row["decision"] == DECISION_DENIED
+    # a port-specific lookup does not match a port-less verdict
+    assert await ec.active_verdict_for(w["id"], "noport.com", 443) is None

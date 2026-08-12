@@ -16,7 +16,12 @@ from unittest.mock import AsyncMock, Mock
 from fastapi import WebSocketDisconnect
 
 from klangk import auth
-from klangk.consent_coordinator import ConsentCoordinator
+from klangk.consent_coordinator import (
+    ConsentCoordinator,
+    PAUSE_15M,
+    PAUSE_1D,
+    PAUSE_1H,
+)
 
 FULL_WS = "aaaa1111bbbb-cccc-dddd-eeee-ffffffffffff"
 
@@ -59,6 +64,9 @@ def _app(
     egress_consent.expire_pending = AsyncMock(return_value=True)
     egress_consent.list_requests = AsyncMock(return_value=pending_rows or [])
     egress_consent.list_active = AsyncMock(return_value=active_rows or [])
+    # #2332: the pause path's "respect existing verdict" lookup. Default None
+    # (no in-effect verdict) so the existing not-paused behavior is unchanged.
+    egress_consent.active_verdict_for = AsyncMock(return_value=None)
     workspaces = AsyncMock()
     workspaces.get_workspace = AsyncMock(
         return_value=(
@@ -69,6 +77,9 @@ def _app(
     )
     workspaces.add_allowed_domain = AsyncMock(return_value=True)
     workspaces.add_rejected_domain = AsyncMock(return_value=True)
+    # #2332: consent-pause state. Defaults: not paused (None), set succeeds.
+    workspaces.get_consent_pause = AsyncMock(return_value=None)
+    workspaces.set_consent_pause = AsyncMock(return_value=True)
     app.state.model = types.SimpleNamespace(
         egress_consent=egress_consent, workspaces=workspaces
     )
@@ -468,6 +479,207 @@ class TestConsentCoordinatorRules:
         # matching snapshot().
         app.state.model.workspaces.get_workspace.assert_not_awaited()
         app.state.model.egress_consent.list_active.assert_not_awaited()
+
+    async def test_rules_frame_includes_active_pause_window(self):
+        # #2332: a live pause window is surfaced in the egress_rules frame so
+        # deciders render the pause indicator + remaining time.
+        import time
+
+        app = _app()
+        until = time.time() + 900
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=until
+        )
+        coord = ConsentCoordinator(app)
+        frame = await coord.rules_frame(FULL_WS)
+        assert frame["paused"] == {"paused": True, "until": until}
+
+    async def test_rules_frame_expired_pause_is_none(self):
+        # A pause whose window has elapsed reads as not-paused (self-expiry).
+        app = _app()
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=1.0  # far in the past
+        )
+        coord = ConsentCoordinator(app)
+        frame = await coord.rules_frame(FULL_WS)
+        assert frame["paused"] is None
+
+
+class TestConsentCoordinatorPause:
+    async def test_pause_sets_window_and_broadcasts(self):
+        # pause("15m") -> set_consent_pause(now+900) + a refreshed rules frame.
+        import time
+
+        before = time.time()
+        app = _app()
+        coord = ConsentCoordinator(app)
+        result = await coord.pause(FULL_WS, PAUSE_15M)
+        after = time.time()
+        assert result["ok"] is True
+        assert before + 900 <= result["until"] <= after + 900
+        app.state.model.workspaces.set_consent_pause.assert_awaited_once()
+        args = app.state.model.workspaces.set_consent_pause.call_args.args
+        assert args[0] == FULL_WS
+        assert before + 900 <= args[1] <= after + 900
+        # a refreshed egress_rules frame was broadcast to the deciders
+        frames = [
+            c.args[1]
+            for c in app.state.consent_deciders.broadcast.call_args_list
+        ]
+        assert any(f["type"] == "egress_rules" for f in frames)
+
+    async def test_pause_1d_sets_a_day_window(self):
+        # The TUI's largest window (1d) maps to 86400s.
+        import time
+
+        before = time.time()
+        app = _app()
+        coord = ConsentCoordinator(app)
+        result = await coord.pause(FULL_WS, PAUSE_1D)
+        assert result["ok"] is True
+        assert before + 86400 <= result["until"] <= before + 86400 + 5
+
+    async def test_pause_unknown_duration_nacks(self):
+        app = _app()
+        coord = ConsentCoordinator(app)
+        result = await coord.pause(FULL_WS, "2h")
+        assert result == {"ok": False, "until": None}
+        app.state.model.workspaces.set_consent_pause.assert_not_awaited()
+        app.state.consent_deciders.broadcast.assert_not_called()
+
+    async def test_pause_missing_workspace_nacks(self):
+        # set_consent_pause returns False (workspace missing) -> nack, no
+        # broadcast.
+        app = _app()
+        app.state.model.workspaces.set_consent_pause = AsyncMock(
+            return_value=False
+        )
+        coord = ConsentCoordinator(app)
+        result = await coord.pause(FULL_WS, PAUSE_1H)
+        assert result == {"ok": False, "until": None}
+        app.state.consent_deciders.broadcast.assert_not_called()
+
+    async def test_unpause_clears_and_broadcasts(self):
+        app = _app()
+        coord = ConsentCoordinator(app)
+        result = await coord.unpause(FULL_WS)
+        assert result == {"ok": True}
+        app.state.model.workspaces.set_consent_pause.assert_awaited_once_with(
+            FULL_WS, None
+        )
+        frames = [
+            c.args[1]
+            for c in app.state.consent_deciders.broadcast.call_args_list
+        ]
+        assert any(f["type"] == "egress_rules" for f in frames)
+
+    async def test_unpause_missing_workspace(self):
+        app = _app()
+        app.state.model.workspaces.set_consent_pause = AsyncMock(
+            return_value=False
+        )
+        coord = ConsentCoordinator(app)
+        assert await coord.unpause(FULL_WS) == {"ok": False}
+        app.state.consent_deciders.broadcast.assert_not_called()
+
+
+class TestConsentCoordinatorHoldPaused:
+    async def test_paused_auto_allows_no_hold(self):
+        # #2332: while paused, a destination with no in-effect verdict is
+        # auto-allowed at once -- no hold, no pending row, no static denial.
+        import time
+
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=time.time() + 600
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = fut.result()
+        assert verdict["decision"] == "allow"
+        assert verdict["reason"] == "paused"
+        app.state.model.egress_consent.create_request.assert_not_awaited()
+        app.state.model.egress_consent.record_static_denial.assert_not_awaited()
+        assert coord._holds == {}
+
+    async def test_paused_respects_recorded_deny(self):
+        # A recorded in-effect deny still blocks while paused (the pause does
+        # not override existing verdicts).
+        import time
+
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=time.time() + 600
+        )
+        app.state.model.egress_consent.active_verdict_for = AsyncMock(
+            return_value={
+                "id": "rid-1",
+                "workspace_id": FULL_WS,
+                "dest_host": "1.2.3.4",
+                "dest_port": 443,
+                "decision": "denied",
+            }
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = fut.result()
+        assert verdict["decision"] == "deny"
+        assert verdict["reason"] == "paused_deny"
+        app.state.model.egress_consent.active_verdict_for.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4", 443
+        )
+
+    async def test_paused_allow_verdict_still_allows(self):
+        # An in-effect ALLOW verdict is respected too (allow either way).
+        import time
+
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=time.time() + 600
+        )
+        app.state.model.egress_consent.active_verdict_for = AsyncMock(
+            return_value={
+                "id": "rid-1",
+                "workspace_id": FULL_WS,
+                "dest_host": "1.2.3.4",
+                "dest_port": 443,
+                "decision": "allowed",
+            }
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        assert fut.result()["decision"] == "allow"
+
+    async def test_expired_pause_falls_through_to_normal_gate(self):
+        # A pause whose window elapsed is not paused -> the normal interactive
+        # gate applies (here: a decider is present -> hold).
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=1.0  # past
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        assert not fut.done()  # held for a decider, not auto-allowed
+        assert "rid-1" in coord._holds
+        # the pause-path lookup was NOT consulted (pause did not engage)
+        app.state.model.egress_consent.active_verdict_for.assert_not_awaited()
+
+    async def test_paused_db_error_fail_closes_to_deny(self):
+        # A model failure in the pause path must not strand the hold -- the
+        # outer guard fail-closes to deny.
+        import time
+
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=time.time() + 600
+        )
+        app.state.model.egress_consent.active_verdict_for = AsyncMock(
+            side_effect=RuntimeError("db gone")
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        assert fut.result() == {"decision": "deny", "reason": "error"}
+        assert coord._holds == {}
 
 
 class TestConsentCoordinatorResolve:
@@ -1128,3 +1340,71 @@ class TestEgressSidecarWS:
         await handler
         assert ws.sent == []  # relay cancelled before it could send
         assert not fut.done()  # the coordinator's hold Future is untouched
+
+
+# --- pause integration: real model round-trip (#2332) ------------------------
+
+
+def _wire_coordinator_extras(app_state):
+    """Add the coordinator's non-model deps (settings, deciders, sidecar)."""
+    app_state.state.settings.egress_consent_timeout = 30.0
+    app_state.state.settings.egress_consent_rate_limit = 50
+    app_state.state.consent_deciders = types.SimpleNamespace(
+        has_decider=lambda workspace_id: True,
+        broadcast=Mock(return_value=0),
+    )
+    app_state.state.sidecar_connections = types.SimpleNamespace(
+        send_drop=Mock(return_value=None)
+    )
+
+
+class TestConsentCoordinatorPauseIntegration:
+    """Real DB + real model: pause persists and gates hold() end-to-end (#2332)."""
+
+    async def test_pause_then_hold_auto_allows(self, app_state, user):
+        # With a real DB, pause() must persist consent_paused_until so a later
+        # hold() reads it and auto-allows (no pending request created).
+        from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
+
+        _wire_coordinator_extras(app_state)
+        ws = await app_state.state.model.workspaces.create_workspace(
+            user["id"], "pause-int", egress_mode=EGRESS_MODE_INTERACTIVE
+        )
+        coord = ConsentCoordinator(app_state)
+        assert (await coord.pause(ws["id"], PAUSE_15M))["ok"] is True
+        fut = await coord.hold(ws["id"], "newhost.example.com", 443)
+        verdict = fut.result()
+        assert verdict["decision"] == "allow"
+        assert verdict["reason"] == "paused"
+        # no pending request row was created (the pause suppressed the hold)
+        pending = await app_state.state.model.egress_consent.list_requests(
+            ws["id"], decision="pending"
+        )
+        assert pending == []
+
+    async def test_pause_survives_a_verdict_resolve(self, app_state, user):
+        # #2332 regression: resolving a held request rebroadcasts egress_rules;
+        # the pause window must still be reported (the highlight must not
+        # clear). Hold first (not paused), pause, then resolve.
+        from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
+
+        _wire_coordinator_extras(app_state)
+        ws = await app_state.state.model.workspaces.create_workspace(
+            user["id"], "pause-resolve", egress_mode=EGRESS_MODE_INTERACTIVE
+        )
+        coord = ConsentCoordinator(app_state)
+        # 1. hold a destination (creates a pending request + in-memory hold)
+        fut = await coord.hold(ws["id"], "holdhost.example.com", 443)
+        assert not fut.done()  # held for a decider
+        held_id = next(iter(coord._holds))
+        # 2. pause (sets the window)
+        assert (await coord.pause(ws["id"], PAUSE_1H))["ok"] is True
+        # 3. resolve the held request -> rebroadcasts egress_rules
+        await coord.resolve(held_id, "allowed", user["id"], duration="1h")
+        # 4. the pause is still set: rules_frame reports it
+        frame = await coord.rules_frame(ws["id"])
+        assert frame["paused"] is not None
+        assert frame["paused"]["paused"] is True
+        # 5. a NEW hold after the resolve still auto-allows (pause durable)
+        fut2 = await coord.hold(ws["id"], "other.example.com", 80)
+        assert fut2.result()["reason"] == "paused"

@@ -23,6 +23,7 @@ from klangk.cli.tui.consent import (
     ADDED,
     ERROR,
     IGNORED,
+    PAUSE_ACK,
     PONG,
     RESOLVED,
     REVOKE_ACK,
@@ -34,8 +35,10 @@ from klangk.cli.tui.consent import (
     EgressRules,
     PauseState,
     RulesScreen,
+    make_pause,
     make_ping,
     make_revoke,
+    make_unpause,
     make_verdict,
 )
 
@@ -378,6 +381,17 @@ class TestFrameBuilders:
             "type": "revoke",
             "request_id": "r9",
         }
+
+    def test_make_pause(self):
+        # #2332: pause frame carries the window token.
+        assert json.loads(make_pause("15m")) == {
+            "type": "pause",
+            "duration": "15m",
+        }
+
+    def test_make_unpause(self):
+        # #2332: unpause frame clears the window (no payload).
+        assert json.loads(make_unpause()) == {"type": "unpause"}
 
 
 # ---------------------------------------------------------------------------
@@ -785,6 +799,146 @@ class TestAppActions:
             await pilot.pause()
             app._select_duration(types.SimpleNamespace(duration=None))
             assert app._duration == "tilrestart"  # unchanged (default)
+
+    async def test_pause_bar_mounts(self):
+        # #2332: the pause control bar mounts with a window button + Cancel.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.query_one("#pause-15m", Button) is not None
+            assert app.query_one("#pause-1h", Button) is not None
+            assert app.query_one("#pause-1d", Button) is not None
+            assert app.query_one("#pause-cancel", Button) is not None
+
+    async def test_pause_buttons_render_on_screen(self):
+        # Regression (#2332): the ``Pause:`` label must not expand to fill the
+        # bar (which pushed the window buttons off-screen). All four controls
+        # must sit within the viewport, in order, after the label.
+        app = _make_app()
+        async with app.run_test(size=(120, 24)) as pilot:
+            app._refresh()
+            await pilot.pause()
+            await pilot.pause()
+            lbl = app.query_one("#pause-label", Static)
+            assert (
+                lbl.outer_size.width < 20
+            )  # "Pause:" + padding, not full width
+            prev_x = lbl.region.x
+            for bid in (
+                "#pause-15m",
+                "#pause-1h",
+                "#pause-1d",
+                "#pause-cancel",
+            ):
+                b = app.query_one(bid, Button)
+                # each button starts where the previous ended and is on-screen
+                assert b.region.x >= prev_x
+                assert b.region.x + b.region.width <= 120, bid
+                assert b.region.width > 0
+                prev_x = b.region.x + b.region.width
+
+    async def test_pause_button_sends_pause_frame(self):
+        # Pressing a window button sends a pause frame for that window.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            await pilot.pause()
+            app.on_button_pressed(
+                types.SimpleNamespace(
+                    button=app.query_one("#pause-15m", Button)
+                )
+            )
+            await pilot.pause()
+            assert any('"pause"' in s and '"15m"' in s for s in ws.sent), (
+                ws.sent
+            )
+
+    async def test_cancel_button_sends_unpause_frame(self):
+        # The Cancel button clears an active pause.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            await pilot.pause()
+            app.on_button_pressed(
+                types.SimpleNamespace(
+                    button=app.query_one("#pause-cancel", Button)
+                )
+            )
+            await pilot.pause()
+            assert any('"unpause"' in s for s in ws.sent), ws.sent
+
+    async def test_pause_button_disconnected_flashes(self):
+        # No WS -> the press flashes instead of crashing.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.on_button_pressed(
+                types.SimpleNamespace(
+                    button=app.query_one("#pause-15m", Button)
+                )
+            )
+            await pilot.pause()
+            assert app._flash_until > 0  # a flash was set
+
+    async def test_pause_highlights_bar_when_active(self):
+        # An egress_rules frame with a live pause flags the bar label.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.controller.apply_frame(
+                _rules_frame(paused={"paused": True, "until": 9999.0})
+            )
+            app._refresh()
+            await pilot.pause()
+            label = app.query_one("#pause-label", Static)
+            assert label.has_class("pause-active")
+
+    async def test_status_shows_indefinite_pause(self):
+        # A pause with no fixed expiry (until=None) reads "paused until restart".
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.controller.apply_frame(
+                _rules_frame(paused={"paused": True, "until": None})
+            )
+            app._refresh()
+            await pilot.pause()
+            status = app.query_one("#status", Static)
+            assert "paused until restart" in str(status.content)
+
+    async def test_pump_flashes_failed_pause_ack(self):
+        # A pause_ack with ok=False flashes so the decider knows it didn't take.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([json.dumps({"type": "pause_ack", "ok": False})])
+            await app._pump(ws)
+            await pilot.pause()
+            status = app.query_one("#status", Static)
+            assert "pause failed" in str(status.content)
+
+    async def test_pause_send_failure_flashes(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([], send_fail=True)
+            app._ws = ws
+            await pilot.pause()
+            await app._send_pause(ws, "15m")
+            await pilot.pause()
+            status = app.query_one("#status", Static)
+            assert "pause send failed" in str(status.content)
+
+    async def test_unpause_send_failure_flashes(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([], send_fail=True)
+            app._ws = ws
+            await pilot.pause()
+            await app._send_unpause(ws)
+            await pilot.pause()
+            status = app.query_one("#status", Static)
+            assert "unpause send failed" in str(status.content)
 
     async def test_only_selected_duration_has_background_at_first_render(self):
         # Regression (#2360): the first duration button ("once") grabbed
@@ -1469,6 +1623,50 @@ class TestControllerRevokeAck:
         assert outcome == REVOKE_ACK
         assert payload == (None, True)
         assert [r.id for r in c.rules.allowed] == ["a1"]  # not removed
+
+
+class TestControllerPauseAck:
+    """``pause_ack`` frame handling (#2332)."""
+
+    def test_ok_carries_until(self):
+        c = ConsentDeciderController()
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "pause_ack", "ok": True, "until": 200.0})
+        )
+        assert outcome == PAUSE_ACK
+        assert payload == (True, 200.0)
+
+    def test_fail_returns_false_ok(self):
+        c = ConsentDeciderController()
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "pause_ack", "ok": False, "until": None})
+        )
+        assert outcome == PAUSE_ACK
+        assert payload == (False, None)
+
+    def test_missing_until_is_none(self):
+        c = ConsentDeciderController()
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "pause_ack", "ok": True})
+        )
+        assert outcome == PAUSE_ACK
+        assert payload == (True, None)
+
+    def test_non_numeric_until_is_none(self):
+        c = ConsentDeciderController()
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "pause_ack", "ok": True, "until": "soon"})
+        )
+        assert outcome == PAUSE_ACK
+        assert payload == (True, None)
+
+    def test_bool_until_rejected(self):
+        # isinstance(True, int) is True -- must not coerce True -> 1.0.
+        c = ConsentDeciderController()
+        outcome, payload = c.apply_frame(
+            json.dumps({"type": "pause_ack", "ok": True, "until": True})
+        )
+        assert payload == (True, None)
 
 
 class TestRulesScreen:
