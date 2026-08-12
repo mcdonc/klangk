@@ -452,9 +452,22 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
         _install(ip, port)
         rec = _LEARNED.get(ip)
         if rec is None:
-            _LEARNED[ip] = {"expire": expire, "ports": {port}, "host": None}
+            _LEARNED[ip] = {
+                "expire": expire,
+                "rule_expire": expire,
+                "ports": {port},
+                "host": None,
+            }
         else:
             rec["expire"] = max(rec["expire"], expire)
+            # rule_expire is the ACCEPT rule's lifetime, kept SEPARATE from the
+            # host-mapping expire so a re-resolve's longer DNS TTL can't extend
+            # a consent allow's rule past its verdict (#2408). max() preserves
+            # the longest across static re-learns (#2256); for a consent allow
+            # it is just the verdict's TTL (the pre-existing rule_expire is
+            # absent -- only _record_hosts has touched the record -- and `or
+            # 0.0` coerces the None).
+            rec["rule_expire"] = max(rec.get("rule_expire") or 0.0, expire)
             rec["ports"].add(port)
             # ``host`` (set by _record_hosts) is preserved across re-learn.
         # An all-ports allow (the consent path) supersedes any prior per-port
@@ -630,29 +643,48 @@ def _clear_verdict_cache(ips: set[str]) -> None:
 
 
 def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
-    """Remove learned IPs whose TTL has elapsed; return ``(ip, ports)`` removed.
+    """Remove ACCEPT rules whose TTL has elapsed; return ``(ip, ports)`` removed.
 
-    Removal runs **under** :data:`_LOCK` (see :func:`allow`): the rule delete
-    and the ``_LEARNED`` delete are atomic, so a concurrent :func:`allow`
-    can't re-record an IP whose kernel rule was just swept. Factored out of
-    :func:`_async_sweeper` so it is unit-testable with a mocked clock and iptables
-    (#2256).
+    Two lifetimes are tracked per learned IP (#2408):
+
+    * ``rule_expire`` -- the ACCEPT rule's lifetime (a consent allow's verdict,
+      or a static re-learn's DNS TTL). When it elapses the kernel ACCEPT rule
+      is deleted but the record is KEPT while its host-mapping ``expire`` is
+      still valid, so :func:`_host_for` can still name the host for a fresh
+      consent request.
+    * ``expire`` -- the host-mapping lifetime (the DNS TTL). When it elapses
+      AND no ACCEPT rule remains, the whole record is dropped.
+
+    Records without ``rule_expire`` (host-mapping-only entries from
+    :func:`_record_hosts`, or pre-#2408 records) fall back to ``expire`` for the
+    rule sweep, preserving the old single-expiry behavior. Removal runs under
+    :data:`_LOCK` (see :func:`allow`): the rule delete and the record delete are
+    atomic, so a concurrent :func:`allow` can't re-record an IP whose kernel
+    rule was just swept. Factored out of :func:`_async_sweeper` so it is
+    unit-testable with a mocked clock and iptables (#2256).
     """
     if now is None:
         now = time.time()
     expired: list[tuple[str, set]] = []
     with _LOCK:
         for ip, rec in list(_LEARNED.items()):
-            if rec["expire"] > now:
-                continue
-            ports = set(rec["ports"])
-            for port in ports:
-                try:
-                    _remove(ip, port)
-                except Exception:
-                    pass  # a transient failure drops one rule, not the sweep
-            del _LEARNED[ip]
-            expired.append((ip, ports))
+            # Rule sweep: the ACCEPT rule's lifetime is rule_expire when set
+            # (a consent allow, whose verdict must outlive the host-mapping's
+            # DNS TTL, #2408), else expire (static re-learn / backward compat).
+            rule_expire = rec.get("rule_expire", rec["expire"])
+            if rec["ports"] and rule_expire <= now:
+                ports = set(rec["ports"])
+                for port in ports:
+                    try:
+                        _remove(ip, port)
+                    except Exception:
+                        pass  # a transient failure drops one rule, not the sweep
+                expired.append((ip, ports))
+                rec["ports"] = set()  # rule gone; keep record for naming
+            # Record sweep: drop the host mapping once its own expire elapses
+            # and no ACCEPT rule remains.
+            if rec["expire"] <= now and not rec["ports"]:
+                del _LEARNED[ip]
         # also sweep temporary REJECT (tcp-reset) rules for denied connections
         for key in [k for k, exp in _REJECTED.items() if exp <= now]:
             try:
@@ -717,6 +749,12 @@ def _record_hosts(recs: list[tuple[str, int]], host: str) -> None:
     in the consent request. Sync; runs in the executor alongside allow/sweep
     (under _LOCK). The TTL refreshes on each resolve so a re-resolution extends
     the window in which a SYN names the right host.
+
+    Only the host-mapping ``expire`` is touched here -- never ``rule_expire``
+    (the ACCEPT rule's lifetime, set by :func:`allow`). Keeping the two
+    separate is what lets a consent allow's rule expire at its verdict while
+    the host mapping lives for the DNS TTL, so a re-resolve's longer DNS TTL
+    can't extend an allow past its verdict (#2408).
     """
     now = time.time()
     with _LOCK:

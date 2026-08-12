@@ -743,6 +743,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **A timed consent `allow` no longer outlives its verdict (#2408).** The
+  network sidecar tracked one TTL per learned IP, shared between the consent
+  rule's lifetime and the DNS host-mapping's lifetime. A re-resolution (every
+  new connection re-queries DNS) bumped that shared TTL to the DNS record's TTL
+  (often far longer than the verdict), so a short `allow` (e.g. `5s`) could keep
+  its ACCEPT rule for the DNS TTL instead of the consent duration — a
+  fail-open. The rule's lifetime (`rule_expire`) is now tracked separately from
+  the host mapping (`expire`), so the ACCEPT expires at the verdict while the
+  host mapping lives on for naming; latent for `5m+` allows (the verdict
+  usually exceeds the DNS TTL) but real for shorter allows or long-DNS-TTL
+  hosts.
 - **Network sidecar now stops promptly on SIGTERM (#2400).** The sidecar
   runs as PID 1 (`entrypoint.sh` execs `python3 /proxy.py`), and the Linux
   kernel ignores the default SIGTERM disposition for PID-namespace init (a
