@@ -520,6 +520,39 @@ class TestTTLAndSweep:
         learned.sweep_once(now=300.0)
         assert "1.2.3.4" not in learned._LEARNED
 
+    def test_consent_allow_rule_not_extended_by_re_resolve_regression(
+        self, learned, monkeypatch
+    ):
+        # #2408 exact-bug regression: a short consent allow's ACCEPT rule must
+        # expire at the verdict even when the host is re-resolved (each new
+        # connection re-queries DNS, bumping the host-mapping expire to the
+        # longer DNS TTL). allow(short) -> _record_hosts(long) -> sweep(at
+        # verdict) -> rule gone, host mapping retained.
+        monkeypatch.setattr(
+            learned.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=1),
+        )
+        removed = []
+        monkeypatch.setattr(
+            learned, "_remove", lambda ip, port: removed.append((ip, port))
+        )
+        monkeypatch.setattr(learned.time, "time", lambda: 0.0)
+        learned.allow("1.2.3.4", None, 5)  # consent allow (floored to MIN_TTL)
+        verdict = learned._LEARNED["1.2.3.4"]["rule_expire"]
+        # the re-resolve (long DNS TTL) must NOT extend the rule's lifetime.
+        learned._record_hosts([("1.2.3.4", 300)], "evil.test")
+        rec = learned._LEARNED["1.2.3.4"]
+        assert rec["rule_expire"] == verdict
+        assert rec["expire"] > verdict  # host mapping kept the DNS TTL
+        # sweep at the verdict -> rule removed, record retained for naming.
+        gone = learned.sweep_once(now=verdict)
+        assert gone == [("1.2.3.4", {None})]
+        assert removed == [("1.2.3.4", None)]
+        kept = learned._LEARNED["1.2.3.4"]
+        assert kept["ports"] == set()
+        assert kept["host"] == "evil.test"
+
     def test_reject_installs_reject_rule_and_records(
         self, learned, monkeypatch
     ):

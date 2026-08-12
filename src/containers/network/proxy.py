@@ -464,8 +464,9 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
             # host-mapping expire so a re-resolve's longer DNS TTL can't extend
             # a consent allow's rule past its verdict (#2408). max() preserves
             # the longest across static re-learns (#2256); for a consent allow
-            # it is just the verdict's TTL (the pre-existing rule_expire is 0
-            # when only _record_hosts has touched the record).
+            # it is just the verdict's TTL (the pre-existing rule_expire is
+            # absent -- only _record_hosts has touched the record -- and `or
+            # 0.0` coerces the None).
             rec["rule_expire"] = max(rec.get("rule_expire") or 0.0, expire)
             rec["ports"].add(port)
             # ``host`` (set by _record_hosts) is preserved across re-learn.
