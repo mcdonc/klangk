@@ -8,6 +8,7 @@ import types
 from unittest.mock import AsyncMock
 
 from klangk.consent_deciders import ConsentDeciderRegistry
+from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
 
 WS = "ws-aaaa1111-2222-3333-4444-555566667777"
 WS2 = "ws-bbbb2222-3333-4444-5555-666677778888"
@@ -209,11 +210,22 @@ def _ws_app(
     allowed: bool = True,
     snapshot=None,
     rules_frame=None,
+    egress_mode: str = EGRESS_MODE_INTERACTIVE,
 ):
     """App with mocked auth + acl + coordinator, and a real registry."""
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
     app.state.settings = types.SimpleNamespace(consent_decider_timeout=45.0)
+    # #2394: a workspace-scoped decider's egress_mode is checked at connect.
+    # Default interactive so existing connect/register tests keep working;
+    # pass egress_mode="static" to exercise the structural rejection.
+    app.state.model = types.SimpleNamespace(
+        workspaces=types.SimpleNamespace(
+            get_workspace=AsyncMock(
+                return_value={"id": WS, "egress_mode": egress_mode}
+            ),
+        ),
+    )
     app.state.consent_deciders = ConsentDeciderRegistry(app)
     app.state.auth = types.SimpleNamespace(
         get_user_from_token=AsyncMock(return_value=token_result)
@@ -293,6 +305,52 @@ class TestConsentDeciderWS:
         assert ws.closed == (4003, "Forbidden")
         assert ws.accepted is False
         assert app.state.consent_deciders.has_decider(WS) is False
+
+    async def test_static_workspace_scoped_decider_is_forbidden(self):
+        # #2394: a workspace with egress_mode=static must refuse a
+        # workspace-scoped consent decider at registration -- the
+        # static/interactive boundary is structural, not just the
+        # coordinator's hold-time gate.
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"}, egress_mode="static")
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        await handle_consent_decider(ws, app)
+        assert ws.closed == (4003, "workspace egress mode is static")
+        assert ws.accepted is False
+        assert app.state.consent_deciders.has_decider(WS) is False
+
+    async def test_missing_workspace_is_forbidden(self):
+        # A workspace that vanished between the authz check and the egress_mode
+        # read (a delete race) is refused just like an unauthorized one.
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        app.state.model.workspaces.get_workspace = AsyncMock(return_value=None)
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        await handle_consent_decider(ws, app)
+        assert ws.closed == (4003, "Forbidden")
+        assert ws.accepted is False
+        assert app.state.consent_deciders.has_decider(WS) is False
+
+    async def test_deploy_wide_decider_unaffected_by_static_mode(self):
+        # #2394: deploy-wide deciders (no ?workspace=) cover all interactive
+        # workspaces without flipping a static one's behavior, so the
+        # egress_mode check is skipped for them -- they register normally and
+        # the workspace model is never consulted.
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "admin@x"}, egress_mode="static")
+        ws = _FakeWS(
+            {"token": "tok"},  # no workspace -> deploy-wide
+            [WebSocketDisconnect()],
+        )
+        await handle_consent_decider(ws, app)
+        assert ws.accepted is True
+        assert ws.closed is None
+        app.state.model.workspaces.get_workspace.assert_not_awaited()
 
     async def test_non_admin_deploy_wide_is_forbidden(self):
         from klangk.wshandler.decider import handle_consent_decider

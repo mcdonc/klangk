@@ -48,6 +48,7 @@ from ..model.egress_consent import (
     DURATIONS,
     DURATION_DEFAULT,
 )
+from ..model.workspaces import EGRESS_MODE_INTERACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,27 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     if not allowed:
         await websocket.close(code=4003, reason="Forbidden")
         return
+
+    # #2394: a static-mode workspace never holds egress for a human decision
+    # (its non-allow-listed egress is denied immediately with a static
+    # verdict). Refuse a workspace-scoped decider at registration so the
+    # static/interactive boundary is structural (enforced here), not just
+    # behavioral (the coordinator's hold-time ``_is_interactive`` gate stays
+    # as defense-in-depth). Reads the same egress_mode the coordinator does.
+    # Deploy-wide deciders (workspace None) are unaffected -- they cover
+    # interactive workspaces without flipping a static one.
+    if workspace is not None:
+        ws = await app.state.model.workspaces.get_workspace(workspace)
+        if ws is None:
+            # Vanished between the authz check and now (a delete race) -- the
+            # workspace authz just passed against can no longer be registered.
+            await websocket.close(code=4003, reason="Forbidden")
+            return
+        if ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
+            await websocket.close(
+                code=4003, reason="workspace egress mode is static"
+            )
+            return
 
     await websocket.accept()
     safe_ws = SafeWebSocket(websocket)
