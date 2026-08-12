@@ -436,6 +436,15 @@ operators or integrators to act when upgrading.
   (valid _until_ restart vs. starting _at_ restart), `tilrestart` states the
   window directly.
 
+- **`allowed_domains` / forever-allow host matching is now exact-by-default
+  (nginx-style) (#2377).** A bare host (`example.com`) now matches the apex
+  **only**; prefix with a dot (`.example.com`) for apex + subdomains (the old
+  bare-host behavior); `*.example.com` remains subdomains only. This aligns
+  with the firewall mainstream (Cilium `matchName`, Pi-hole / hosts-file, nginx
+  `server_name`) and makes a `forever` consent allow least-privilege by default
+  — it covers exactly the host the user approved, not its subdomains. No
+  migration required (single deployment).
+
 - **New workspaces default to `egress_mode=interactive`.** The default is
   `interactive`, so held egress requests reach a decider out of the box without
   a manual per-workspace flip (`EGRESS_MODE_DEFAULT` in `model/workspaces.py`);

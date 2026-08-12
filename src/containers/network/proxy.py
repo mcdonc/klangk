@@ -173,16 +173,26 @@ def _duration_ttl(duration: str) -> float | None:
 WORKSPACE_TOKEN_PATH = "/run/klangk/workspace-token"
 
 
-def parse_specs() -> list[tuple[str, int | None, bool]]:
-    """Structured allow-list specs from ``KLANGKNETWORK_EGRESS_ALLOW``.
+# Host-scope modes for an allow-list spec, nginx-style (#2377): a bare host is
+# EXACT (apex only); a leading-dot ``.host`` is INCLUSIVE (apex + subdomains);
+# ``*.host`` is SUBDOMAINS only. (Bare = exact is the breaking flip from the
+# old "bare = apex+subdomains" model.) One definition shared by parse_specs /
+# ports_for / _forever_host_allows.
+_EXACT = "exact"
+_INCLUSIVE = "inclusive"
+_SUBDOMAINS = "subdomains"
 
-    Each entry is ``(host, port, is_wildcard)`` where ``port`` is ``None``
-    (all ports) and ``is_wildcard`` means ``*.host`` (subdomains only). CIDR
-    specs (``10.0.0.0/8``) are excluded — the entrypoint applies those
-    statically. The grammar mirrors ``klangk.netfilter.parse_allowed_domains``
-    so the API and the sidecar agree on what a spec means (#2256).
+
+def parse_specs() -> list[tuple[str, int | None, str]]:
+    """Structured allow-list specs from ``KLANGKNETWORK_EGRESS_ALLOW`` (#2377).
+
+    Each entry is ``(host, port, mode)``: ``mode`` is :data:`_EXACT` (bare host,
+    apex only), :data:`_INCLUSIVE` (``.host``, apex + subdomains), or
+    :data:`_SUBDOMAINS` (``*.host``, subdomains only). ``port`` is ``None`` for
+    all-ports. CIDR specs (``10.0.0.0/8``) are excluded — the entrypoint applies
+    those statically. The grammar mirrors ``klangk.netfilter.parse_allowed_domains``.
     """
-    out: list[tuple[str, int | None, bool]] = []
+    out: list[tuple[str, int | None, str]] = []
     for spec in os.environ.get("KLANGKNETWORK_EGRESS_ALLOW", "").split(","):
         spec = spec.strip()
         if not spec or "/" in spec:
@@ -193,19 +203,23 @@ def parse_specs() -> list[tuple[str, int | None, bool]]:
             if port_part.isdigit():
                 port = int(port_part)
                 spec = host_part
-        host = spec.lower()
-        is_wildcard = host.startswith("*.")
-        if is_wildcard:
-            host = host[2:]
-        if host:
-            out.append((host, port, is_wildcard))
+        s = spec.lower()
+        mode = _EXACT
+        if s.startswith("*."):
+            mode = _SUBDOMAINS
+            s = s[2:]
+        elif s.startswith("."):
+            mode = _INCLUSIVE
+            s = s[1:]
+        if s:
+            out.append((s, port, mode))
     return out
 
 
 SPECS = parse_specs()
 
 # Hosts allow-listed in-session by a `forever` consent verdict (#2372): each
-# entry is (host, port, is_wildcard), mirroring SPECS. On a forever allow,
+# entry is (host, port, mode), mirroring SPECS. On a forever allow,
 # _decide_and_verdict adds the consented host:port here so ports_for treats it
 # as allow-listed for the rest of the session -- the DNS path then learns every
 # resolved IP and allows it without NFQUEUE, so a CDN-rotated IP does NOT
@@ -287,34 +301,37 @@ def nxdomain_for(wire: bytes) -> bytes:
     return resp.to_wire()
 
 
-def _host_matches(qname: str, host: str, is_wildcard: bool) -> bool:
-    """Apex+subdomain (bare host) vs subdomain-only (``*.host`` wildcard) match.
+def _host_matches(qname: str, host: str, mode: str) -> bool:
+    """Does ``qname`` match ``host`` under nginx-style scope ``mode`` (#2377)?
 
     Shared by :func:`ports_for` (the DNS gate) and :func:`_forever_host_allows`
-    (the NFQUEUE gate) so the rule can't drift between them (#2256, #2372). A
-    bare host matches the apex + subdomains; a ``*.host`` wildcard matches
-    subdomains only (apex excluded). The suffix check requires a leading dot,
-    so ``evilexample.com`` does NOT match ``example.com``.
+    (the NFQUEUE gate) so the two can't drift. :data:`_EXACT` (bare host) matches
+    the apex only; :data:`_INCLUSIVE` (``.host``) matches apex + subdomains;
+    :data:`_SUBDOMAINS` (``*.host``) matches subdomains only. The suffix check
+    requires a leading dot, so ``evilexample.com`` does NOT match
+    ``example.com``.
     """
-    if is_wildcard:
+    if mode == _SUBDOMAINS:
         return qname.endswith("." + host)
-    return qname == host or qname.endswith("." + host)
+    if mode == _EXACT:
+        return qname == host
+    return qname == host or qname.endswith("." + host)  # _INCLUSIVE
 
 
 def ports_for(qname: str) -> set[int] | None:
-    """The ports a queried name is allowed on under :data:`SPECS`.
+    """The ports a queried name is allowed on under :data:`SPECS` (#2377).
 
     ``None``  — a port-less spec matched (allow all ports).
     ``set()`` — nothing matched (deny).
     ``{443, ...}`` — allow exactly these TCP ports.
 
-    A bare host matches the apex + subdomains; a ``*.host`` wildcard matches
-    subdomains only (the apex is deliberately excluded so ``*.pypi.org`` and
-    ``pypi.org`` are distinct, non-redundant scopes) (#2256).
+    Scope: a bare host is :data:`_EXACT` (apex only); ``.host`` is
+    :data:`_INCLUSIVE` (apex + subdomains); ``*.host`` is :data:`_SUBDOMAINS`
+    (subdomains only, apex excluded).
     """
     ports: set[int] = set()
-    for host, port, is_wildcard in (*SPECS, *_FOREVER_HOSTS):
-        if not _host_matches(qname, host, is_wildcard):
+    for host, port, mode in (*SPECS, *_FOREVER_HOSTS):
+        if not _host_matches(qname, host, mode):
             continue
         if port is None:
             return None  # an all-ports spec dominates
@@ -325,14 +342,16 @@ def ports_for(qname: str) -> set[int] | None:
 def _add_forever_host(host: str, port: int) -> None:
     """Allow-list ``host:port`` in-session for a `forever` consent verdict (#2372).
 
-    Adds ``(host, port, False)`` to :data:`_FOREVER_HOSTS` so :func:`ports_for`
+    Adds ``(host, port, _EXACT)`` to :data:`_FOREVER_HOSTS` so :func:`ports_for`
     treats the host as allow-listed for the rest of the session -- the DNS path
     then learns every resolved IP and allows it without NFQUEUE, so a
     CDN-rotated IP no longer re-prompts seconds after the user allowed the
-    domain. Deduped; port-scoped (callers gate on a real port -- a port-less
-    entry would broaden to all-ports).
+    host. EXACT scope: the user approved the specific qname they saw, so only
+    that host (not its subdomains) is opened (#2377). Deduped; port-scoped
+    (callers gate on a real port -- a port-less entry would broaden to
+    all-ports).
     """
-    spec = (host, port, False)
+    spec = (host, port, _EXACT)
     if all(s != spec for s in _FOREVER_HOSTS):
         _FOREVER_HOSTS.append(spec)
 
@@ -342,13 +361,14 @@ def _forever_host_allows(host: str, port: int) -> bool:
 
     Used by :func:`_cb` as the last-chance gate before prompting: a SYN to a
     host:port the user allowed forever is auto-allowed even when no fresh DNS
-    resolution re-ACCEPTed the (CDN-rotated or resolver-cached) IP. Mirrors
-    :func:`ports_for`'s apex+subdomain matching but tests a specific port.
+    resolution re-ACCEPTed the (CDN-rotated or resolver-cached) IP. Matches via
+    :func:`_host_matches` (nginx-style scope); forever entries are added EXACT
+    by :func:`_add_forever_host`, so only the approved host matches (#2377).
     """
     if not host:
         return False
-    for h, p, is_wildcard in _FOREVER_HOSTS:
-        if _host_matches(host, h, is_wildcard) and (p == port or p is None):
+    for h, p, mode in _FOREVER_HOSTS:
+        if _host_matches(host, h, mode) and (p == port or p is None):
             return True
     return False
 
