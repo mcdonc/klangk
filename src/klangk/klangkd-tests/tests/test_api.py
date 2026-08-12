@@ -1861,7 +1861,7 @@ class TestWorkspaceRoutes:
             json={"name": "bad", "rejected_domains": ["bad spec"]},
         )
         assert resp.status_code == 400
-        assert "Invalid allowed_domains" in resp.json()["detail"]
+        assert "Invalid rejected_domains" in resp.json()["detail"]
 
     async def test_create_with_rejected_domains_cidr_rejected(
         self, client, user

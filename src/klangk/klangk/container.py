@@ -1243,7 +1243,7 @@ class ContainerRegistry:
     async def _start_network_sidecar(
         self,
         workspace_id: str,
-        allowed_domains: list[str],
+        allowed_domains: list[str] | None,
         egress_mode: str = "static",
         rejected_domains: list[str] | None = None,
         publish: list[tuple[int, int]] | None = None,

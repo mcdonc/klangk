@@ -39,9 +39,11 @@ operators or integrators to act when upgrading.
   precedence over the allow-list and consent. The grammar mirrors
   `allowed_domains` (bare = exact apex, `.host` = apex + subdomains, `*.host` =
   subdomains only); CIDR specs are rejected at the API (NXDOMAIN is name-level).
-  Configurable via the create/update/clone/import workspace API. A workspace
-  with `rejected_domains` but no `allowed_domains` runs in default-allow
-  "static blocklist" mode (everything resolves except the reject list). The
+  Configurable via the create/update/clone/import workspace API. In static
+  mode a reject-only workspace (no `allowed_domains`) is deny-all
+  (fail-closed); the reject list is a useful blocklist alongside an allow-list
+  or in interactive mode. Static mode itself is being phased out in favor of
+  interactive-everywhere. The
   TUI/Flutter dialogs are a follow-up (#2386); the `forever` **deny** verdict
   that mutates this list at runtime is #2369.
 

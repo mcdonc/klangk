@@ -222,13 +222,6 @@ SPECS = parse_specs()
 # Static deny-list specs from ``KLANGKNETWORK_EGRESS_REJECT`` (#2367): a name
 # matching one of these is NXDOMAIN'd unconditionally (see :func:`rejected_for`).
 REJECT_SPECS = parse_specs("KLANGKNETWORK_EGRESS_REJECT")
-# True when there is no allow-list but there IS a reject-list: a static (no
-# consent client) workspace then forwards + learns every non-rejected name
-# (default-allow, the "static blocklist" model from #2367). With an allow-list
-# present the default-deny model holds (only allow-listed names resolve); in
-# interactive mode unknowns prompt regardless. Evaluated once at import (both
-# inputs are start-time env).
-REJECT_ONLY_MODE = not SPECS and bool(REJECT_SPECS)
 
 # Hosts allow-listed in-session by a `forever` consent verdict (#2372): each
 # entry is (host, port, mode), mirroring SPECS. On a forever allow,
@@ -1464,13 +1457,6 @@ async def _handle_packet(
         if DEBUG:
             print(f"reject {qname}", flush=True)
         _send_nxdomain(s, data, addr)
-        return
-    # Default-allow "static blocklist" mode (#2367): no allow-list but a
-    # reject-list, and no consent client -> forward + learn every non-rejected
-    # name (only the reject check above can NXDOMAIN). A consent client
-    # (interactive mode) skips this: unknowns still prompt.
-    if REJECT_ONLY_MODE and client is None:
-        await _forward_and_learn(s, data, addr, qname, None)
         return
     ports = ports_for(qname)
     deny, port_set = _decision(qname, ports)

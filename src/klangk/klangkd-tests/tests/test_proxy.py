@@ -280,23 +280,6 @@ class TestRejectedFor:
         proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
         assert proxy.rejected_for("anything.test") is False
 
-    def test_reject_only_mode_default_allow(self, proxy, monkeypatch):
-        # No allow-list but a reject-list -> REJECT_ONLY_MODE: a static (no
-        # consent client) workspace forwards + learns every non-rejected name
-        # (the "static blocklist" model, #2367). Derived from SPECS +
-        # REJECT_SPECS; recompute after setting the env.
-        monkeypatch.delenv("KLANGKNETWORK_EGRESS_ALLOW", raising=False)
-        monkeypatch.setenv("KLANGKNETWORK_EGRESS_REJECT", "evil.com")
-        proxy.SPECS = proxy.parse_specs()
-        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
-        proxy.REJECT_ONLY_MODE = not proxy.SPECS and bool(proxy.REJECT_SPECS)
-        assert proxy.REJECT_ONLY_MODE is True
-        # An allow-list present flips it back off (default-deny model holds).
-        monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", "good.com")
-        proxy.SPECS = proxy.parse_specs()
-        proxy.REJECT_ONLY_MODE = not proxy.SPECS and bool(proxy.REJECT_SPECS)
-        assert proxy.REJECT_ONLY_MODE is False
-
 
 class TestRuleArgs:
     """The iptables rule shape: port-scoped vs all-ports (#2256)."""
@@ -1676,25 +1659,25 @@ class TestHandlePacket:
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
         rec.assert_not_awaited()
 
-    async def test_reject_only_mode_forwards_non_rejected(
-        self, proxy, monkeypatch
-    ):
-        # No allow-list but a reject-list, static: default-allow -- a
-        # non-rejected name forwards + learns (only rejected names NXDOMAIN).
+    async def test_reject_only_static_denies_all(self, proxy, monkeypatch):
+        # No allow-list but a reject-list, static (no client): with the
+        # default-allow mode removed (#2367 review), a reject-only static
+        # workspace is DENY-ALL -- a non-rejected name NXDOMAINs (fail-closed,
+        # not fail-open). The reject list is a useful blocklist only in
+        # interactive mode (or alongside an allow-list); static mode is being
+        # phased out. ports_for on empty SPECS -> set() -> _decision denies.
         monkeypatch.setattr(proxy, "query_name", lambda wire: "benign.test")
         monkeypatch.setattr(proxy, "SPECS", [])
         monkeypatch.setattr(
             proxy, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
         )
-        monkeypatch.setattr(proxy, "REJECT_ONLY_MODE", True)
+        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
         fwd = AsyncMock()
         monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
-        fwd.assert_awaited_once_with(
-            s, b"q", ("1.2.3.4", 53), "benign.test", None
-        )
-        s.sendto.assert_not_called()
+        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+        fwd.assert_not_awaited()
 
     async def test_rejected_takes_precedence_over_allowed(
         self, proxy, monkeypatch

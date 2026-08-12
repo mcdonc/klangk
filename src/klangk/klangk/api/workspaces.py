@@ -128,7 +128,9 @@ def _validate_rejected_domains(
                 ),
             )
     try:
-        domains = netfilter_mod.parse_allowed_domains(values)
+        domains = netfilter_mod.parse_allowed_domains(
+            values, label="rejected_domains"
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not app.state.netfilter.enabled():
