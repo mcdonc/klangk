@@ -89,6 +89,7 @@ void main() {
     Widget? settings,
     Widget? sharing,
     Widget? debug,
+    Widget? consentRules,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -101,6 +102,7 @@ void main() {
             sharing: sharing,
             settings: settings,
             debug: debug ?? const Text('Debug'),
+            consentRules: consentRules,
           ),
         ),
       ),
@@ -265,6 +267,27 @@ void main() {
         settings: const Text('SETTINGS_CONTENT'),
       ));
       expect(find.text('Settings'), findsOneWidget);
+    });
+
+    testWidgets('has Rules tab when consentRules provided', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        consentRules: const Text('RULES_CONTENT'),
+      ));
+      expect(find.text('Rules'), findsOneWidget);
+    });
+
+    testWidgets('Rules tab content is visible after switch', (tester) async {
+      await tester.pumpWidget(buildLayout(
+        consentRules: const Text('RULES_CONTENT'),
+      ));
+      await tester.tap(find.text('Rules'));
+      await tester.pumpAndSettle();
+      expect(find.text('RULES_CONTENT'), findsOneWidget);
+    });
+
+    testWidgets('no Rules tab when consentRules is null', (tester) async {
+      await tester.pumpWidget(buildLayout());
+      expect(find.text('Rules'), findsNothing);
     });
 
     testWidgets('settings tab content is visible after switch', (tester) async {

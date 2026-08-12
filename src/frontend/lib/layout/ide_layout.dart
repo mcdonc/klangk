@@ -13,6 +13,10 @@ class IdeLayout extends StatefulWidget {
   final Widget? sharing;
   final Widget? debug;
 
+  /// Egress consent rules-management tab (#2387). Shown only for
+  /// interactive-egress workspaces (the caller passes null otherwise).
+  final Widget? consentRules;
+
   /// Feature-contributed workspace tabs (#1975). Each entry contributes a
   /// tab (title + icon + builder) to the strip; only active features' tabs
   /// are passed in (the active-set filter lives in main.dart, which registers
@@ -36,6 +40,7 @@ class IdeLayout extends StatefulWidget {
     this.settings,
     this.sharing,
     this.debug,
+    this.consentRules,
     this.featureTabs = const [],
     this.terminalKey,
     this.fileViewerKey,
@@ -266,6 +271,12 @@ class IdeLayoutState extends State<IdeLayout> {
             : null,
         badgeHighlight: badgeValue?.highlight ?? false,
       );
+    }
+    // Consent rules tab (#2387): only for interactive-egress workspaces
+    // (the caller passes null otherwise), mounted with the other management
+    // tabs before Sharing/Settings.
+    if (widget.consentRules != null) {
+      addTab('Rules', Icons.shield_outlined, widget.consentRules!);
     }
     if (widget.sharing != null) {
       addTab('Sharing', Icons.people_outline, widget.sharing!);
