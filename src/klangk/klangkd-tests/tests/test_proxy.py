@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import signal
 import sys
 import types
 from pathlib import Path
@@ -1962,3 +1963,247 @@ class TestDropForHost:
         assert proxy._FOREVER_HOSTS == []
         assert proxy._VERDICT_CACHE == {}
         assert json.loads(sent[0])["ok"] is True
+
+
+class TestSigtermShutdown:
+    """SIGTERM teardown (#2400): the sidecar is PID 1 (entrypoint.sh execs
+    python), and the kernel ignores default terminate dispositions for a
+    PID-namespace init (``SIGNAL_UNKILLABLE``: a fatal signal with no explicit
+    handler is skipped for init), so podman's ``stop`` SIGTERM was no-op'd and
+    every removal fell back to SIGKILL after the 5s timeout. ``proxy.py`` now
+    installs an explicit SIGTERM handler that cancels the main task -> clean
+    teardown (close the WS, unbind NFQUEUE, close the DNS socket) -> prompt exit."""
+
+    async def test_setup_nfq_consumer_returns_nfq_for_unbind(
+        self, proxy, monkeypatch
+    ):
+        # _setup_nfq_consumer returns the bound NFQUEUE so _shutdown can unbind
+        # it on SIGTERM (clean PID-1 teardown, #2400).
+        nfq = MagicMock()
+        nfq.get_fd = MagicMock(return_value=7)
+        fake_mod = types.SimpleNamespace(
+            NetfilterQueue=MagicMock(return_value=nfq)
+        )
+        monkeypatch.setitem(sys.modules, "netfilterqueue", fake_mod)
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(loop, "add_reader", MagicMock())
+        assert proxy._setup_nfq_consumer(None) is nfq
+        nfq.bind.assert_called_once()
+
+    async def test_setup_nfq_consumer_bind_failure_returns_none(
+        self, proxy, monkeypatch, capsys
+    ):
+        fake_mod = types.SimpleNamespace(
+            NetfilterQueue=MagicMock(side_effect=RuntimeError("bind boom"))
+        )
+        monkeypatch.setitem(sys.modules, "netfilterqueue", fake_mod)
+        assert proxy._setup_nfq_consumer(None) is None
+        assert "nfqueue consumer failed" in capsys.readouterr().out
+
+    async def test_shutdown_closes_socket_stops_client_unbinds_nfq(
+        self, proxy
+    ):
+        # _shutdown best-effort-closes every resource (#2400); a failure in one
+        # step must not skip the rest.
+        sock = MagicMock()
+        nfq = MagicMock()
+        nfq.get_fd = MagicMock(return_value=9)
+        client = MagicMock()
+        client.stop = AsyncMock()
+        sweep = asyncio.get_running_loop().create_task(asyncio.sleep(100))
+        await proxy._shutdown(client, nfq, sock, sweep)
+        client.stop.assert_awaited_once()
+        nfq.unbind.assert_called_once()
+        sock.close.assert_called_once()
+        assert sweep.cancelled()
+
+    async def test_sigterm_handler_cancels_main_and_runs_teardown(
+        self, proxy, monkeypatch
+    ):
+        # The sidecar is PID 1; the kernel ignores a default-disposition
+        # SIGTERM, so an explicit handler is what lets podman's `stop` prompt
+        # the exit (#2400). Registering the handler + cancelling the main task
+        # must unwind _async_main and run _shutdown (close the DNS socket).
+        monkeypatch.setattr(proxy, "CONSENT_URL", "")  # no WS client / NFQUEUE
+        monkeypatch.setattr(proxy, "check_mark", lambda: None)
+        fake_sock = MagicMock()
+        fake_sock.close = MagicMock()
+        monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: fake_sock)
+
+        loop = asyncio.get_running_loop()
+        handlers = {}
+
+        def fake_add_signal_handler(sig, cb, *args):
+            handlers[sig] = cb
+
+        monkeypatch.setattr(
+            loop, "add_signal_handler", fake_add_signal_handler
+        )
+
+        gate = asyncio.Event()
+
+        async def hang(*a, **k):
+            await gate.wait()
+            return b"", ("127.0.0.1", 0)
+
+        monkeypatch.setattr(loop, "sock_recvfrom", hang)
+
+        task = asyncio.create_task(proxy._async_main())
+        # Let the task run to its first await; the SIGTERM handler is registered
+        # synchronously before it.
+        for _ in range(100):
+            if signal.SIGTERM in handlers:
+                break
+            await asyncio.sleep(0.01)
+        assert signal.SIGTERM in handlers, "SIGTERM handler not registered"
+
+        # Simulate podman's SIGTERM arriving at PID 1.
+        handlers[signal.SIGTERM]()
+        await asyncio.wait_for(task, timeout=2)
+        assert task.done()
+        # Clean teardown ran: the DNS listen socket was closed.
+        fake_sock.close.assert_called()
+
+    async def test_sigterm_handler_registered_even_with_consent(
+        self, proxy, monkeypatch
+    ):
+        # The handler is installed on the consent path too (where NFQUEUE + the
+        # WS client must be torn down); only the registration is asserted, since
+        # fully driving the WS client + NFQUEUE is the e2e's job (#2327).
+        monkeypatch.setattr(
+            proxy, "CONSENT_URL", "http://klangkd/ws/egress-sidecar"
+        )
+        monkeypatch.setattr(proxy, "check_mark", lambda: None)
+        monkeypatch.setattr(proxy, "check_rst_socket", lambda: None)
+        started = []
+
+        class _FakeClient:
+            async def start(self):
+                started.append(True)
+
+        monkeypatch.setattr(
+            proxy, "SidecarConsentClient", lambda *a: _FakeClient()
+        )
+        fake_nfq = MagicMock()
+        monkeypatch.setattr(
+            proxy, "_setup_nfq_consumer", lambda client: fake_nfq
+        )
+        fake_sock = MagicMock()
+        fake_sock.close = MagicMock()
+        monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: fake_sock)
+
+        loop = asyncio.get_running_loop()
+        handlers = {}
+        monkeypatch.setattr(
+            loop,
+            "add_signal_handler",
+            lambda sig, cb, *a: handlers.__setitem__(sig, cb),
+        )
+        gate = asyncio.Event()
+        monkeypatch.setattr(
+            loop,
+            "sock_recvfrom",
+            lambda *a, **k: gate.wait(),
+        )
+
+        task = asyncio.create_task(proxy._async_main())
+        for _ in range(100):
+            if signal.SIGTERM in handlers:
+                break
+            await asyncio.sleep(0.01)
+        assert started  # consent client brought up
+        assert signal.SIGTERM in handlers
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_second_sigterm_does_not_abort_teardown(
+        self, proxy, monkeypatch
+    ):
+        # Regression (#2400 review): a second SIGTERM arriving while _shutdown
+        # is mid-await must NOT re-cancel the main task. The CancelledError is a
+        # BaseException, so _shutdown's `except Exception` guards don't catch
+        # it -- without the idempotency flag, nfq.unbind()/sock.close() get
+        # skipped and the clean teardown the PR exists to provide is aborted.
+        monkeypatch.setattr(proxy, "CONSENT_URL", "http://k/ev")
+        monkeypatch.setattr(proxy, "check_mark", lambda: None)
+        monkeypatch.setattr(proxy, "check_rst_socket", lambda: None)
+
+        in_stop = asyncio.Event()
+        release_stop = asyncio.Event()
+
+        class _BlockingClient:
+            async def start(self):
+                pass
+
+            async def stop(self):
+                in_stop.set()
+                await release_stop.wait()  # hold teardown mid-flight
+
+        monkeypatch.setattr(
+            proxy, "SidecarConsentClient", lambda *a: _BlockingClient()
+        )
+        nfq = MagicMock()
+        nfq.get_fd = MagicMock(return_value=11)
+        monkeypatch.setattr(proxy, "_setup_nfq_consumer", lambda client: nfq)
+        fake_sock = MagicMock()
+        fake_sock.close = MagicMock()
+        monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: fake_sock)
+
+        loop = asyncio.get_running_loop()
+        handlers = {}
+        monkeypatch.setattr(
+            loop,
+            "add_signal_handler",
+            lambda sig, cb, *a: handlers.__setitem__(sig, cb),
+        )
+        gate = asyncio.Event()
+        monkeypatch.setattr(loop, "sock_recvfrom", lambda *a, **k: gate.wait())
+
+        task = asyncio.create_task(proxy._async_main())
+        for _ in range(100):
+            if signal.SIGTERM in handlers:
+                break
+            await asyncio.sleep(0.01)
+        # First SIGTERM -> main task cancels -> _shutdown -> client.stop() blocks.
+        handlers[signal.SIGTERM]()
+        for _ in range(100):
+            if in_stop.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert in_stop.is_set()  # teardown reached client.stop()
+        # Second SIGTERM WHILE client.stop() is blocked. With the idempotency
+        # guard this is a no-op; without it the re-cancel aborts _shutdown.
+        handlers[signal.SIGTERM]()
+        await asyncio.sleep(0.05)  # let the (no-op) second signal settle
+        release_stop.set()  # unblock client.stop(); teardown must finish
+        await asyncio.wait_for(task, timeout=3)
+        assert task.done()
+        nfq.unbind.assert_called()  # teardown was NOT aborted
+        fake_sock.close.assert_called()
+
+    async def test_shutdown_bounds_a_slow_client_stop(
+        self, proxy, monkeypatch
+    ):
+        # _shutdown bounds client.stop() so a stalled WS close handshake (its
+        # close_timeout can be 5s, and the server may be going away during
+        # klangkd shutdown) can't re-introduce the 5s SIGKILL window (#2400).
+        monkeypatch.setattr(proxy, "_SHUTDOWN_CLIENT_TIMEOUT", 0.1)
+        nfq = MagicMock()
+        nfq.get_fd = MagicMock(return_value=11)
+        sock = MagicMock()
+
+        class _SlowClient:
+            async def stop(self):
+                await asyncio.sleep(100)  # never completes in time
+
+        loop = asyncio.get_running_loop()
+        sweep = loop.create_task(asyncio.sleep(100))
+        t0 = loop.time()
+        await proxy._shutdown(_SlowClient(), nfq, sock, sweep)
+        elapsed = loop.time() - t0
+        assert elapsed < 1.0  # bounded well under the 5s window
+        nfq.unbind.assert_called()  # teardown proceeded past the timed-out stop
+        sock.close.assert_called()
