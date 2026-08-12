@@ -41,6 +41,23 @@ const List<String> kConsentDurations = [
 ];
 const String kConsentDurationDefault = 'tilrestart';
 
+/// Seconds each *timed* duration adds to `decided_at` (mirror of the server's
+/// `_DURATION_SECONDS`; duplicated per client isolation). `once` is consumed by
+/// the single connection and `tilrestart`/`forever` have no fixed expiry, so
+/// they are absent -- a rule with one of those (or null) has no countdown.
+const Map<String, int> kConsentDurationSeconds = {
+  '5m': 300,
+  '15m': 900,
+  '1h': 3600,
+  '1d': 86400,
+  '1w': 604800,
+};
+
+/// Duration tokens that carry no fixed expiry (open-ended) -- the rules view
+/// renders a label, not a countdown, for these. Mirror of the TUI.
+const String kConsentDurationForever = 'forever';
+const String kConsentDurationTilrestart = 'tilrestart';
+
 /// Inbound-frame application outcomes returned by [ConsentDeciderService.applyFrame].
 enum ConsentFrameOutcome {
   /// A new held request (snapshot or live); [ConsentFrameResult.request] is set.
@@ -56,6 +73,14 @@ enum ConsentFrameOutcome {
   /// The server rejected a verdict; [ConsentFrameResult.message] is set.
   error,
 
+  /// A refreshed in-effect rules snapshot (#2387); [ConsentFrameResult.rules]
+  /// is set.
+  rules,
+
+  /// The server replied to a revoke (#2339/#2341); [ConsentFrameResult.revokeAckId]
+  /// and [ConsentFrameResult.revokeOk] are set.
+  revokeAck,
+
   /// Non-JSON / unknown frame (ignored).
   ignored,
 }
@@ -68,8 +93,24 @@ class ConsentFrameResult {
   final String? resolvedId;
   final String? message;
 
+  /// Parsed `egress_rules` snapshot (outcome == [ConsentFrameOutcome.rules]).
+  final EgressRules? rules;
+
+  /// The request id a `revoke_ack` refers to (outcome ==
+  /// [ConsentFrameOutcome.revokeAck]); null on a malformed frame.
+  final String? revokeAckId;
+
+  /// Whether a `revoke_ack` confirmed success (outcome ==
+  /// [ConsentFrameOutcome.revokeAck]).
+  final bool revokeOk;
+
   const ConsentFrameResult(this.outcome,
-      {this.request, this.resolvedId, this.message});
+      {this.request,
+      this.resolvedId,
+      this.message,
+      this.rules,
+      this.revokeAckId,
+      this.revokeOk = false});
 
   static const ignored = ConsentFrameResult(ConsentFrameOutcome.ignored);
 }
@@ -123,6 +164,188 @@ class PendingRequest {
   @override
   int get hashCode =>
       Object.hash(id, destHost, destPort, processName, requestedAt);
+}
+
+/// One in-effect consent verdict (allow or deny) for the rules view (#2387).
+/// Mirrors the TUI `ConsentRule` (``cli/tui/consent.py``).
+@immutable
+class ConsentRule {
+  final String id;
+  final String destHost;
+  final int? destPort;
+  final String? processName;
+
+  /// [kDecisionAllowed] or [kDecisionDenied].
+  final String decision;
+  final String? duration;
+
+  /// Epoch seconds the verdict was decided (for timed countdowns); null when
+  /// the server didn't send one.
+  final double? decidedAt;
+  final String? decidedBy;
+
+  const ConsentRule({
+    required this.id,
+    required this.destHost,
+    this.destPort,
+    this.processName,
+    required this.decision,
+    this.duration,
+    this.decidedAt,
+    this.decidedBy,
+  });
+
+  /// Parse one row of an `egress_rules` frame. Returns null on a non-map;
+  /// missing fields degrade to empty/null rather than failing the whole row.
+  static ConsentRule? fromJson(Object? obj) {
+    if (obj is! Map<String, dynamic>) return null;
+    final port = obj['dest_port'];
+    final decidedAt = obj['decided_at'];
+    final duration = obj['duration'];
+    return ConsentRule(
+      id: obj['id']?.toString() ?? '',
+      destHost: obj['dest_host']?.toString() ?? '',
+      destPort: port is int ? port : (port is num ? port.toInt() : null),
+      processName: obj['process_name']?.toString(),
+      decision: obj['decision']?.toString() ?? '',
+      duration: duration is String ? duration : null,
+      decidedAt: decidedAt is num ? decidedAt.toDouble() : null,
+      decidedBy: obj['decided_by']?.toString(),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ConsentRule &&
+          id == other.id &&
+          destHost == other.destHost &&
+          destPort == other.destPort &&
+          processName == other.processName &&
+          decision == other.decision &&
+          duration == other.duration &&
+          decidedAt == other.decidedAt &&
+          decidedBy == other.decidedBy;
+
+  @override
+  int get hashCode => Object.hash(id, destHost, destPort, processName, decision,
+      duration, decidedAt, decidedBy);
+}
+
+/// Pause window from the `egress_rules` frame (#2332; absent today). `until`
+/// is the epoch second the pause ends, or null for an indefinite pause (e.g.
+/// until restart). Mirrors the TUI `PauseState`.
+@immutable
+class EgressPause {
+  final double? until;
+
+  const EgressPause({this.until});
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) || other is EgressPause && until == other.until;
+
+  @override
+  int get hashCode => until.hashCode;
+}
+
+/// Parsed `egress_rules` frame: the workspace's in-effect decisions (#2387).
+/// `allowed`/`denied` are newest-decided-first (matching the backend's
+/// `list_active` `ORDER BY decided_at DESC`); `allowList` is the static
+/// `allowed_domains` config, order preserved; `paused` is null unless
+/// filtering is actually paused (#2332). Mirrors the TUI `EgressRules`.
+@immutable
+class EgressRules {
+  final String workspaceId;
+  final List<String> allowList;
+  final List<ConsentRule> allowed;
+  final List<ConsentRule> denied;
+  final EgressPause? paused;
+
+  const EgressRules({
+    required this.workspaceId,
+    required this.allowList,
+    required this.allowed,
+    required this.denied,
+    this.paused,
+  });
+
+  /// Build from an `egress_rules` frame. Returns null only if the frame lacks
+  /// a `workspace_id`; a missing/malformed `allow_list`/`allowed`/`denied`
+  /// degrades to empty rather than dropping the frame, and rows that fail to
+  /// parse are skipped. Mirrors the TUI `_parse_rules`.
+  static EgressRules? fromJson(Map<String, dynamic> msg) {
+    final wid = msg['workspace_id'];
+    if (wid is! String) return null;
+    final rawAllow = msg['allow_list'];
+    final allowList = <String>[
+      for (final d in (rawAllow is List ? rawAllow : <Object>[])) d.toString(),
+    ];
+    final allowed = <ConsentRule>[
+      for (final o
+          in (msg['allowed'] is List ? msg['allowed'] as List : <Object>[]))
+        if (ConsentRule.fromJson(o) case final r?) r,
+    ];
+    final denied = <ConsentRule>[
+      for (final o
+          in (msg['denied'] is List ? msg['denied'] as List : <Object>[]))
+        if (ConsentRule.fromJson(o) case final r?) r,
+    ];
+    // Newest-decided-first (mirror backend ORDER BY decided_at DESC); rows
+    // with no decided_at sort last. List.sort isn't stable, so use a stable
+    // helper that breaks ties by original index (matches the TUI's sorted()).
+    _sortRulesStable(allowed);
+    _sortRulesStable(denied);
+    return EgressRules(
+      workspaceId: wid,
+      allowList: allowList,
+      allowed: allowed,
+      denied: denied,
+      paused: _parsePause(msg['paused']),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is EgressRules &&
+          workspaceId == other.workspaceId &&
+          listEquals(allowList, other.allowList) &&
+          listEquals(allowed, other.allowed) &&
+          listEquals(denied, other.denied) &&
+          paused == other.paused;
+
+  @override
+  int get hashCode => Object.hash(workspaceId, Object.hashAll(allowList),
+      Object.hashAll(allowed), Object.hashAll(denied), paused);
+}
+
+/// Parse the `paused` field of an `egress_rules` frame (#2332). Returns null
+/// unless filtering is actually paused, so the rules view renders no pause
+/// section until then. Mirrors the TUI `_parse_pause`.
+EgressPause? _parsePause(Object? obj) {
+  if (obj is! Map<String, dynamic> || obj['paused'] != true) return null;
+  final until = obj['until'];
+  return EgressPause(until: until is num ? until.toDouble() : null);
+}
+
+/// Stable in-place ordering of consent rules: decided rows newest-first,
+/// rows with no `decided_at` last, ties broken by original index (Dart's
+/// [List.sort] isn't stable). Mirrors the TUI's `sorted(...)` over the frame.
+void _sortRulesStable(List<ConsentRule> rules) {
+  final indexed = [
+    for (var i = 0; i < rules.length; i++) (i, rules[i]),
+  ];
+  indexed.sort((a, b) {
+    final aT = a.$2.decidedAt;
+    final bT = b.$2.decidedAt;
+    if (aT == null && bT == null) return a.$1.compareTo(b.$1);
+    if (aT == null) return 1;
+    if (bT == null) return -1;
+    final c = bT.compareTo(aT); // descending
+    return c != 0 ? c : a.$1.compareTo(b.$1);
+  });
+  rules.setAll(0, [for (final e in indexed) e.$2]);
 }
 
 /// Manages the WebSocket to ``/ws/consent-decider`` for one workspace.
@@ -192,9 +415,17 @@ class ConsentDeciderService extends ChangeNotifier {
 
   final Map<String, PendingRequest> _pending = {};
 
+  /// Latest in-effect rules snapshot (#2387), or null until the first
+  /// `egress_rules` frame lands (on connect). Mirrors the TUI controller's
+  /// `rules`; the rules tab renders an empty state until then.
+  EgressRules? _rules;
+
   /// Pending requests, oldest-first (stable UI ordering by requested_at).
   List<PendingRequest> get pending => _pending.values.toList()
     ..sort((a, b) => a.requestedAt.compareTo(b.requestedAt));
+
+  /// The latest in-effect rules snapshot, or null before the first frame.
+  EgressRules? get rules => _rules;
 
   bool get connected => _connected;
 
@@ -230,6 +461,10 @@ class ConsentDeciderService extends ChangeNotifier {
     // disconnected -- and thus never sent us an `egress_resolved` -- must not
     // linger. The snapshot `egress_request` frames that follow repopulate.
     _pending.clear();
+    // The server re-sends the `egress_rules` snapshot on (re)connect, so a
+    // stale snapshot from a prior session must not linger -- mirrors the
+    // TUI controller's `reset()`.
+    _rules = null;
     _connected = true;
     _attempt = 0;
     _authFailed = false;
@@ -256,6 +491,13 @@ class ConsentDeciderService extends ChangeNotifier {
       case ConsentFrameOutcome.resolved:
         notifyListeners();
         break;
+      case ConsentFrameOutcome.rules:
+        _rules = res.rules;
+        notifyListeners();
+        break;
+      case ConsentFrameOutcome.revokeAck:
+        _applyRevokeAck(res.revokeAckId, res.revokeOk);
+        break;
       case ConsentFrameOutcome.error:
         // Surface the rejection to the user (the TUI flashes it); a verdict
         // the server refused must not vanish silently.
@@ -266,6 +508,28 @@ class ConsentDeciderService extends ChangeNotifier {
       case ConsentFrameOutcome.ignored:
         break;
     }
+  }
+
+  /// Apply a `revoke_ack`: on success drop the rule from the cached snapshot
+  /// (idempotent -- the server also pushes a refreshed `egress_rules`); on
+  /// failure leave it enforced and flash (a still-enforced rule must never be
+  /// hidden silently). Mirrors the TUI controller's `revoke_ack` handling.
+  void _applyRevokeAck(String? id, bool ok) {
+    if (!ok) {
+      _flash('revoke failed — still in effect');
+      return;
+    }
+    final r = _rules;
+    if (id != null && r != null) {
+      _rules = EgressRules(
+        workspaceId: r.workspaceId,
+        allowList: r.allowList,
+        allowed: r.allowed.where((e) => e.id != id).toList(),
+        denied: r.denied.where((e) => e.id != id).toList(),
+        paused: r.paused,
+      );
+    }
+    notifyListeners();
   }
 
   void _onClosed(WebSocketChannel ch) {
@@ -339,6 +603,24 @@ class ConsentDeciderService extends ChangeNotifier {
     }
   }
 
+  /// Revoke an active verdict (#2341). The row stays in the cached snapshot
+  /// until the server's `revoke_ack` confirms success -- never removed
+  /// optimistically, so a still-enforced rule is never hidden (mirrors the
+  /// TUI). Flashes (not silent) when disconnected or the send fails.
+  void sendRevoke(String requestId) {
+    final ch = _channel;
+    if (ch == null || !_connected) {
+      _flash('disconnected — reconnecting');
+      return;
+    }
+    try {
+      ch.sink.add(buildRevoke(requestId));
+    } catch (e) {
+      debugPrint('[ConsentDecider] revoke send failed: $e');
+      _flash('revoke send failed — reconnecting');
+    }
+  }
+
   @override
   void dispose() {
     _stopped = true;
@@ -393,6 +675,16 @@ class ConsentDeciderService extends ChangeNotifier {
       return ConsentFrameResult(ConsentFrameOutcome.error,
           message: msg['message']?.toString() ?? '');
     }
+    if (mtype == 'egress_rules') {
+      final rules = EgressRules.fromJson(msg);
+      if (rules == null) return ConsentFrameResult.ignored;
+      return ConsentFrameResult(ConsentFrameOutcome.rules, rules: rules);
+    }
+    if (mtype == 'revoke_ack') {
+      final rid = msg['request_id'];
+      return ConsentFrameResult(ConsentFrameOutcome.revokeAck,
+          revokeAckId: rid is String ? rid : null, revokeOk: msg['ok'] == true);
+    }
     return ConsentFrameResult.ignored;
   }
 
@@ -409,6 +701,14 @@ class ConsentDeciderService extends ChangeNotifier {
     });
   }
 
+  /// Build an outbound revoke frame (JSON string) for an active verdict
+  /// (#2341). Asks the server (#2339) to drop the verdict's sidecar rule and
+  /// mark the row revoked.
+  @visibleForTesting
+  static String buildRevoke(String requestId) {
+    return jsonEncode({'type': 'revoke', 'request_id': requestId});
+  }
+
   /// Seconds until this hold's countdown hits zero (clamped at 0). The server
   /// is the source of truth (it auto-denies at the real timeout); this is only
   /// a UX hint.
@@ -416,6 +716,30 @@ class ConsentDeciderService extends ChangeNotifier {
     final expire = req.requestedAt + holdTimeout.inSeconds;
     final now = clock().millisecondsSinceEpoch / 1000.0;
     final left = expire - now;
+    return left < 0 ? 0 : left.round();
+  }
+
+  /// Seconds left on a timed verdict, or null if it has no fixed expiry
+  /// (`forever`/`tilrestart`/`once`/unknown/missing `decided_at`). The rules
+  /// view shows a label, not a countdown, for the open-ended ones. Mirrors
+  /// the TUI `rule_remaining`.
+  int? ruleRemainingSeconds(ConsentRule rule) {
+    final decidedAt = rule.decidedAt;
+    if (decidedAt == null) return null;
+    final secs = kConsentDurationSeconds[rule.duration];
+    if (secs == null) return null;
+    final now = clock().millisecondsSinceEpoch / 1000.0;
+    final left = decidedAt + secs - now;
+    return left < 0 ? 0 : left.round();
+  }
+
+  /// Seconds left in the pause window, or null if not paused / indefinite.
+  /// Mirrors the TUI `pause_remaining`; used by the rules view's pause label.
+  int? pauseRemainingSeconds(EgressRules rules) {
+    final until = rules.paused?.until;
+    if (until == null) return null;
+    final now = clock().millisecondsSinceEpoch / 1000.0;
+    final left = until - now;
     return left < 0 ? 0 : left.round();
   }
 }

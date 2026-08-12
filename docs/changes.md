@@ -46,6 +46,16 @@ operators or integrators to act when upgrading.
   interactive-everywhere. The
   TUI/Flutter dialogs are a follow-up (#2386); the `forever` **deny** verdict
   that mutates this list at runtime is #2369.
+- **Consent rules-management tab in the Flutter workspace (#2387).**
+  Interactive-egress workspaces now show a **Rules** tab in the workspace
+  IDE tab strip (alongside Files/Terminal/Settings), the Flutter counterpart
+  of the TUI `consent-decide` rules screen. It lists the static allow-list,
+  active consent allows (with `expires in 5m` / `until restart` / `forever`
+  labels), and active denies (with remaining window), all live off the
+  existing `egress_rules` stream. Each active verdict has a **Revoke** action
+  (confirm → the row leaves once the server acks; a failed ack surfaces an
+  error and leaves the rule enforced). It mirrors the TUI exactly; static
+  allow-list entries are not revocable from this tab.
 
 - **`forever` egress-consent deny persists across restarts (#2369).** The deny
   counterpart of the forever-allow: a `deny` with `duration=forever` appends

@@ -84,6 +84,43 @@ Map<String, dynamic> _request(
       'requested_at': at,
     };
 
+Map<String, dynamic> _ruleJson({
+  String id = 'v1',
+  String host = 'a.io',
+  int port = 443,
+  String? proc = 'curl',
+  String decision = 'allowed',
+  String? duration = '5m',
+  double? decidedAt = 1000.0,
+  String? decidedBy = 'alice',
+}) =>
+    {
+      'id': id,
+      'dest_host': host,
+      'dest_port': port,
+      if (proc != null) 'process_name': proc,
+      'decision': decision,
+      if (duration != null) 'duration': duration,
+      if (decidedAt != null) 'decided_at': decidedAt,
+      if (decidedBy != null) 'decided_by': decidedBy,
+    };
+
+Map<String, dynamic> _rulesFrame({
+  String workspaceId = 'ws-1',
+  List<String> allowList = const [],
+  List<Map<String, dynamic>> allowed = const [],
+  List<Map<String, dynamic>> denied = const [],
+  Object? paused,
+}) =>
+    {
+      'type': 'egress_rules',
+      'workspace_id': workspaceId,
+      'allow_list': allowList,
+      'allowed': allowed,
+      'denied': denied,
+      if (paused != null) 'paused': paused,
+    };
+
 void main() {
   group('applyFrame', () {
     test('egress_request adds the request', () {
@@ -136,7 +173,7 @@ void main() {
 
     test('unknown type is ignored', () {
       final res = ConsentDeciderService.applyFrame(
-          {}, jsonEncode({'type': 'egress_rules', 'rules': []}));
+          {}, jsonEncode({'type': 'totally_unknown', 'x': 1}));
       expect(res.outcome, ConsentFrameOutcome.ignored);
     });
 
@@ -160,6 +197,278 @@ void main() {
         'scope': 'once',
         'duration': '5m',
       });
+    });
+  });
+
+  group('buildRevoke', () {
+    test('produces a well-formed revoke frame', () {
+      final msg = jsonDecode(ConsentDeciderService.buildRevoke('v1'))
+          as Map<String, dynamic>;
+      expect(msg, {'type': 'revoke', 'request_id': 'v1'});
+    });
+  });
+
+  group('ConsentRule.fromJson', () {
+    test('parses a full payload', () {
+      final r = ConsentRule.fromJson(_ruleJson())!;
+      expect(r.id, 'v1');
+      expect(r.destHost, 'a.io');
+      expect(r.destPort, 443);
+      expect(r.processName, 'curl');
+      expect(r.decision, 'allowed');
+      expect(r.duration, '5m');
+      expect(r.decidedAt, 1000.0);
+      expect(r.decidedBy, 'alice');
+    });
+
+    test('coerces a numeric (double) dest_port to int', () {
+      final r = ConsentRule.fromJson({..._ruleJson(), 'dest_port': 443.0})!;
+      expect(r.destPort, 443);
+    });
+
+    test(
+        'missing dest_port -> null; non-string duration -> null; '
+        'non-num decidedAt -> null', () {
+      final r = ConsentRule.fromJson({
+        'id': 'x',
+        'dest_host': 'h',
+        'decision': 'allowed',
+        'duration': 5,
+        'decided_at': 'nope',
+      })!;
+      expect(r.destPort, isNull);
+      expect(r.duration, isNull);
+      expect(r.decidedAt, isNull);
+    });
+
+    test('non-map / null -> null', () {
+      expect(ConsentRule.fromJson('nope'), isNull);
+      expect(ConsentRule.fromJson(null), isNull);
+    });
+  });
+
+  group('ConsentRule equality', () {
+    final a = ConsentRule(
+        id: 'v1',
+        destHost: 'h',
+        destPort: 443,
+        processName: 'curl',
+        decision: 'allowed',
+        duration: '5m',
+        decidedAt: 1.0,
+        decidedBy: 'alice');
+
+    test('equal on all fields with matching hashCode', () {
+      final b = ConsentRule(
+          id: 'v1',
+          destHost: 'h',
+          destPort: 443,
+          processName: 'curl',
+          decision: 'allowed',
+          duration: '5m',
+          decidedAt: 1.0,
+          decidedBy: 'alice');
+      expect(a, equals(b));
+      expect(a.hashCode, b.hashCode);
+    });
+
+    test('a differing field breaks equality', () {
+      expect(
+          a,
+          isNot(equals(
+              ConsentRule(id: 'v2', destHost: 'h', decision: 'allowed'))));
+      expect(
+          a,
+          isNot(equals(
+              ConsentRule(id: 'v1', destHost: 'h2', decision: 'allowed'))));
+      expect(a, isNot(equals('not a rule')));
+    });
+  });
+
+  group('EgressRules.fromJson', () {
+    test('returns null without a workspace_id', () {
+      expect(EgressRules.fromJson({'type': 'egress_rules', 'allow_list': []}),
+          isNull);
+    });
+
+    test('non-list allow_list/allowed/denied degrade to empty', () {
+      final r = EgressRules.fromJson({
+        'workspace_id': 'w',
+        'allow_list': 'oops',
+        'allowed': 'oops',
+        'denied': 3,
+      })!;
+      expect(r.workspaceId, 'w');
+      expect(r.allowList, isEmpty);
+      expect(r.allowed, isEmpty);
+      expect(r.denied, isEmpty);
+    });
+
+    test('skips rows that fail to parse', () {
+      final r = EgressRules.fromJson({
+        'workspace_id': 'w',
+        'allow_list': ['a.io'],
+        'allowed': [
+          {'id': 'ok', 'dest_host': 'h', 'decision': 'allowed'},
+          'badrow',
+          5
+        ],
+      })!;
+      expect(r.allowList, ['a.io']);
+      expect(r.allowed, hasLength(1));
+      expect(r.allowed.single.id, 'ok');
+    });
+
+    test('sorts decided newest-first; null decided_at last', () {
+      final r = EgressRules.fromJson({
+        'workspace_id': 'w',
+        'allowed': [
+          {
+            'id': 'old',
+            'dest_host': 'h',
+            'decision': 'allowed',
+            'decided_at': 10.0
+          },
+          {
+            'id': 'new',
+            'dest_host': 'h',
+            'decision': 'allowed',
+            'decided_at': 90.0
+          },
+          {'id': 'unknown', 'dest_host': 'h', 'decision': 'allowed'},
+        ],
+      })!;
+      expect(r.allowed.map((e) => e.id), ['new', 'old', 'unknown']);
+    });
+
+    test('stable: same decided_at keeps frame order; nulls keep order last',
+        () {
+      // List.sort isn't stable; ties (same decided_at, or both null) must keep
+      // the frame's relative order (matches the TUI's stable sorted()).
+      final r = EgressRules.fromJson({
+        'workspace_id': 'w',
+        'allowed': [
+          {
+            'id': 'first',
+            'dest_host': 'h',
+            'decision': 'allowed',
+            'decided_at': 50.0
+          },
+          {
+            'id': 'second',
+            'dest_host': 'h',
+            'decision': 'allowed',
+            'decided_at': 50.0
+          },
+          {'id': 'n1', 'dest_host': 'h', 'decision': 'allowed'},
+          {'id': 'n2', 'dest_host': 'h', 'decision': 'allowed'},
+        ],
+      })!;
+      expect(r.allowed.map((e) => e.id), ['first', 'second', 'n1', 'n2']);
+    });
+  });
+
+  group('EgressRules paused parsing', () {
+    test('absent / not paused -> null', () {
+      expect(EgressRules.fromJson({'workspace_id': 'w'})!.paused, isNull);
+      expect(
+          EgressRules.fromJson({
+            'workspace_id': 'w',
+            'paused': {'paused': false}
+          })!
+              .paused,
+          isNull);
+    });
+
+    test('paused true with until -> EgressPause(until); without -> null until',
+        () {
+      expect(
+          EgressRules.fromJson({
+            'workspace_id': 'w',
+            'paused': {'paused': true, 'until': 99.0}
+          })!
+              .paused!
+              .until,
+          99.0);
+      expect(
+          EgressRules.fromJson({
+            'workspace_id': 'w',
+            'paused': {'paused': true}
+          })!
+              .paused!
+              .until,
+          isNull);
+    });
+  });
+
+  group('EgressPause + EgressRules equality', () {
+    test('EgressPause equality', () {
+      expect(
+          const EgressPause(until: 1.0), equals(const EgressPause(until: 1.0)));
+      expect(const EgressPause(until: 1.0).hashCode,
+          const EgressPause(until: 1.0).hashCode);
+      expect(const EgressPause(until: 1.0),
+          isNot(equals(const EgressPause(until: 2.0))));
+      expect(const EgressPause(until: 1.0), isNot(equals(const EgressPause())));
+    });
+
+    test('EgressRules equality by content', () {
+      final a = EgressRules(
+          workspaceId: 'w',
+          allowList: ['a'],
+          allowed: [ConsentRule(id: '1', destHost: 'h', decision: 'allowed')],
+          denied: const [],
+          paused: const EgressPause(until: 1.0));
+      final b = EgressRules(
+          workspaceId: 'w',
+          allowList: ['a'],
+          allowed: [ConsentRule(id: '1', destHost: 'h', decision: 'allowed')],
+          denied: const [],
+          paused: const EgressPause(until: 1.0));
+      expect(a, equals(b));
+      expect(a.hashCode, b.hashCode);
+      expect(
+          a,
+          isNot(equals(EgressRules(
+              workspaceId: 'w2',
+              allowList: ['a'],
+              allowed: const [],
+              denied: const []))));
+      expect(
+          a,
+          isNot(equals(EgressRules(
+              workspaceId: 'w',
+              allowList: ['b'],
+              allowed: const [],
+              denied: const []))));
+    });
+  });
+
+  group('applyFrame egress_rules + revoke_ack', () {
+    test('egress_rules -> rules outcome with the snapshot', () {
+      final res = ConsentDeciderService.applyFrame(
+          {}, jsonEncode(_rulesFrame(allowList: ['a.io'])));
+      expect(res.outcome, ConsentFrameOutcome.rules);
+      expect(res.rules!.allowList, ['a.io']);
+    });
+
+    test('egress_rules without workspace_id -> ignored', () {
+      final res = ConsentDeciderService.applyFrame(
+          {}, jsonEncode({'type': 'egress_rules', 'allow_list': []}));
+      expect(res.outcome, ConsentFrameOutcome.ignored);
+    });
+
+    test('revoke_ack ok true/false and id coercion', () {
+      final ok = ConsentDeciderService.applyFrame({},
+          jsonEncode({'type': 'revoke_ack', 'request_id': 'v1', 'ok': true}));
+      expect(ok.outcome, ConsentFrameOutcome.revokeAck);
+      expect(ok.revokeAckId, 'v1');
+      expect(ok.revokeOk, isTrue);
+      final bad = ConsentDeciderService.applyFrame(
+          {}, jsonEncode({'type': 'revoke_ack', 'request_id': 5}));
+      expect(bad.outcome, ConsentFrameOutcome.revokeAck);
+      expect(bad.revokeAckId, isNull);
+      expect(bad.revokeOk, isFalse);
     });
   });
 
@@ -370,7 +679,7 @@ void main() {
       expect(svc.pending, hasLength(1));
       // A pong and an unknown frame neither mutate pending nor throw.
       channel.serverSend({'type': 'pong'});
-      channel.serverSend({'type': 'egress_rules', 'rules': []});
+      channel.serverSend({'type': 'totally_unknown', 'x': 1});
       await Future.delayed(Duration.zero);
       expect(svc.pending, hasLength(1));
       svc.dispose();
@@ -391,6 +700,175 @@ void main() {
       await Future.delayed(Duration.zero);
       expect(svc.connected, isFalse);
       expect(svc.authFailed, isFalse);
+      svc.dispose();
+    });
+
+    test('egress_rules frame populates service.rules (sorted, parsed)',
+        () async {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      channel.serverSend(_rulesFrame(
+        allowList: ['github.com', 'pypi.org'],
+        allowed: [
+          _ruleJson(id: 'a', decidedAt: 100, host: 'a.io'),
+          _ruleJson(id: 'b', decidedAt: 200, host: 'b.io'),
+        ],
+        denied: [
+          _ruleJson(id: 'd', decision: 'denied', host: 'x.io', decidedAt: 50)
+        ],
+      ));
+      await Future.delayed(Duration.zero);
+      expect(svc.rules, isNotNull);
+      expect(svc.rules!.allowList, ['github.com', 'pypi.org']);
+      expect(svc.rules!.allowed.map((r) => r.id), ['b', 'a']); // newest first
+      expect(svc.rules!.denied.single.id, 'd');
+      svc.dispose();
+    });
+
+    test('revoke_ack success removes the rule; failure flashes', () async {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      channel.serverSend(
+          _rulesFrame(allowed: [_ruleJson(id: 'a', decidedAt: 100)]));
+      await Future.delayed(Duration.zero);
+      expect(svc.rules!.allowed, hasLength(1));
+      channel.serverSend({'type': 'revoke_ack', 'request_id': 'a', 'ok': true});
+      await Future.delayed(Duration.zero);
+      expect(svc.rules!.allowed, isEmpty);
+      // failure leaves the row in place and flashes
+      channel.serverSend(_rulesFrame(
+          denied: [_ruleJson(id: 'd', decision: 'denied', decidedAt: 100)]));
+      await Future.delayed(Duration.zero);
+      channel
+          .serverSend({'type': 'revoke_ack', 'request_id': 'd', 'ok': false});
+      await Future.delayed(Duration.zero);
+      expect(svc.rules!.denied, hasLength(1));
+      expect(svc.flashMessage, contains('revoke failed'));
+      svc.dispose();
+    });
+
+    test('revoke_ack ok before any rules is a no-op (no crash)', () async {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      channel.serverSend({'type': 'revoke_ack', 'request_id': 'a', 'ok': true});
+      await Future.delayed(Duration.zero);
+      expect(svc.rules, isNull);
+      svc.dispose();
+    });
+
+    test('sendRevoke sends a revoke frame on the socket', () async {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      svc.sendRevoke('v1');
+      expect(channel.sent, isNotEmpty);
+      final out =
+          jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
+      expect(out, {'type': 'revoke', 'request_id': 'v1'});
+      svc.dispose();
+    });
+
+    test('sendRevoke flashes when disconnected', () {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.sendRevoke('v1');
+      expect(channel.sent, isEmpty);
+      expect(svc.flashMessage, contains('disconnected'));
+      svc.dispose();
+    });
+
+    test('sendRevoke flashes when the socket send throws', () {
+      ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      svc.sendRevoke('v1');
+      expect(svc.flashMessage, contains('revoke send failed'));
+      svc.dispose();
+    });
+
+    test(
+        'ruleRemainingSeconds: timed -> value; open-ended/unknown/missing -> null',
+        () {
+      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
+      final svc = ConsentDeciderService(
+          workspaceId: 'ws', token: 't', clock: () => now);
+      // decided at 1000s, 5m (300s) -> 300s left at now=1000s
+      expect(
+          svc.ruleRemainingSeconds(ConsentRule(
+              id: 'a',
+              destHost: 'h',
+              decision: 'allowed',
+              duration: '5m',
+              decidedAt: 1000.0)),
+          300);
+      // forever / tilrestart / unknown duration -> null
+      expect(
+          svc.ruleRemainingSeconds(ConsentRule(
+              id: 'b',
+              destHost: 'h',
+              decision: 'allowed',
+              duration: 'forever',
+              decidedAt: 1000.0)),
+          isNull);
+      expect(
+          svc.ruleRemainingSeconds(ConsentRule(
+              id: 'c',
+              destHost: 'h',
+              decision: 'allowed',
+              duration: 'tilrestart',
+              decidedAt: 1000.0)),
+          isNull);
+      expect(
+          svc.ruleRemainingSeconds(ConsentRule(
+              id: 'd',
+              destHost: 'h',
+              decision: 'allowed',
+              duration: 'bogus',
+              decidedAt: 1000.0)),
+          isNull);
+      // missing decided_at -> null
+      expect(
+          svc.ruleRemainingSeconds(ConsentRule(
+              id: 'e', destHost: 'h', decision: 'allowed', duration: '5m')),
+          isNull);
+      // clamped at 0 past expiry
+      expect(
+          svc.ruleRemainingSeconds(ConsentRule(
+              id: 'f',
+              destHost: 'h',
+              decision: 'allowed',
+              duration: '5m',
+              decidedAt: 100.0)),
+          0);
+      svc.dispose();
+    });
+
+    test(
+        'pauseRemainingSeconds: null when not paused / indefinite; value when set',
+        () {
+      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
+      final svc = ConsentDeciderService(
+          workspaceId: 'ws', token: 't', clock: () => now);
+      final base = EgressRules(
+          workspaceId: 'w',
+          allowList: const [],
+          allowed: const [],
+          denied: const []);
+      expect(svc.pauseRemainingSeconds(base), isNull); // paused null
+      expect(
+          svc.pauseRemainingSeconds(EgressRules(
+              workspaceId: 'w',
+              allowList: const [],
+              allowed: const [],
+              denied: const [],
+              paused: const EgressPause())),
+          isNull); // until null
+      expect(
+          svc.pauseRemainingSeconds(EgressRules(
+              workspaceId: 'w',
+              allowList: const [],
+              allowed: const [],
+              denied: const [],
+              paused: const EgressPause(until: 1300.0))),
+          300); // 1300 - 1000
       svc.dispose();
     });
   });

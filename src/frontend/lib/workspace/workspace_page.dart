@@ -20,6 +20,7 @@ import 'workspace_file_api.dart';
 import 'workspace_overlays.dart';
 import 'consent_banner.dart';
 import 'consent_decider_service.dart';
+import 'consent_rules_panel.dart';
 import 'package:http/http.dart' as http;
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
@@ -562,6 +563,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
       sharing: _hasPerm('share')
           ? WorkspaceSharingPanel(workspaceId: widget.workspaceId)
           : null,
+      consentRules:
+          _consent != null ? ConsentRulesPanel(service: _consent!) : null,
       terminalKey: _terminalKey,
       fileViewerKey: _fileViewerKey,
       initialFile: widget.initialFile,
