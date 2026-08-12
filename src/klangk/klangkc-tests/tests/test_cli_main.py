@@ -4221,10 +4221,13 @@ class TestSandboxCommand:
         client.create_workspace.assert_called_once()
         call_kwargs = client.create_workspace.call_args
         assert call_kwargs[0][0] == "myws"
-        # #2325: a sandbox is an automated install context needing unrestricted
-        # egress, so it creates a STATIC workspace (interactive would hold every
-        # install connection for consent with no decider present).
-        assert call_kwargs[1]["egress_mode"] == "static"
+        # #2325 / #2406: a sandbox is an automated install context needing
+        # unrestricted egress, so it creates an ALLOW-mode workspace
+        # (default-permit: installs proceed, off-list egress logged, no consent
+        # decider needed; degrades to plain unrestricted if the server has no
+        # network sidecar). Interactive would hold every install connection for
+        # consent with no decider present.
+        assert call_kwargs[1]["egress_mode"] == "allow"
         assert "Creating workspace" in result.output
         assert "klangk shell" in result.output
 

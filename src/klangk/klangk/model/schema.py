@@ -475,6 +475,15 @@ async def init_db(db) -> None:
             ON egress_consent(workspace_id, dest_host, COALESCE(dest_port, -1))
             WHERE decision = 'denied' AND decided_by IS NULL
         """)
+        # At most one allow-mode allow per (workspace, host, port). Allow mode
+        # (#2406) permits off-list egress by policy with no human (decided_by
+        # NULL) + records it; dedup so a flooding workspace can't spam allow
+        # rows (mirrors the static-denial dedup above).
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_egress_consent_static_allow_dedup
+            ON egress_consent(workspace_id, dest_host, COALESCE(dest_port, -1))
+            WHERE decision = 'allowed' AND decided_by IS NULL
+        """)
         # Migration: drop legacy role and workspace_access tables
         for table in ("user_roles", "roles", "workspace_access"):
             await db.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608

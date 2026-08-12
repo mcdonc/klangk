@@ -1891,13 +1891,17 @@ def sandbox(
             if resolve_setup_command(config, handle)
             else None,
             health_check=config.health_check,
-            # #2325: a sandbox is an automated install context (setup.sh runs
-            # npm/git/... that need unrestricted outbound network). Default
-            # workspaces are now interactive (hold every egress for consent),
-            # which would block the install with no decider present. Create the
-            # sandbox workspace as static so its egress is unrestricted -- the
-            # pre-#2325 behavior this automated path has always relied on.
-            egress_mode="static",
+            # #2325 / #2406: a sandbox is an automated install context
+            # (setup.sh runs npm/git/... that need unrestricted outbound
+            # network). Default workspaces are interactive (hold every egress
+            # for consent), which would block the install with no decider
+            # present. Create the sandbox workspace in ``allow`` mode so its
+            # egress is default-permit (installs proceed), with off-list
+            # destinations recorded through the consent pipeline for
+            # observability and rejected_domains still enforced. Allow mode
+            # degrades to plain unrestricted when the server has no network
+            # sidecar configured, so the sandbox keeps working everywhere.
+            egress_mode="allow",
         )
         _err.print(f"Workspace [bold]{workspace}[/bold] created.")
         created = True

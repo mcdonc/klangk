@@ -44,6 +44,7 @@ from .model.egress_consent import (
     DURATION_FOREVER,
     DURATION_ONCE,
 )
+from .model.workspaces import EGRESS_MODE_ALLOW
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,31 @@ class ConsentCoordinator:
         """
         loop = asyncio.get_running_loop()
         try:
+            if await self._is_allow(workspace_id):
+                # #2406: egress_mode == allow is default-permit. Record the
+                # off-list destination (logging -- mirrors how static records
+                # a denial via record_static_denial) and allow at once -- no
+                # hold, no prompt. Behaves as if an internal always-allow
+                # decider were registered, but is a short-circuit branch (no
+                # decider object, no consent round-trip beyond the verdict).
+                # rejected_domains is enforced earlier at the sidecar DNS layer
+                # (rejected_for -> NXDOMAIN), so a host reaching this gate is
+                # already not rejected. duration=tilrestart (DURATION_DEFAULT)
+                # so the sidecar learns the IP all-ports for its lifetime (no
+                # per-connection re-prompt); nothing persists to
+                # allowed_domains (this branch bypasses resolve()).
+                await self.app.state.model.egress_consent.record_static_allow(
+                    workspace_id, dst, dport
+                )
+                fut = loop.create_future()
+                fut.set_result(
+                    {
+                        "decision": VERDICT_ALLOW,
+                        "reason": "allow_mode",
+                        "duration": DURATION_DEFAULT,
+                    }
+                )
+                return fut
             if await self._is_paused(workspace_id):
                 # #2332: prompting is paused workspace-wide. A destination
                 # with an in-effect recorded DENY is still blocked (the pause
@@ -769,3 +795,8 @@ class ConsentCoordinator:
     async def _is_interactive(self, workspace_id: str) -> bool:
         """Interactive iff the workspace opted in AND a live decider exists (#2308)."""
         return await workspace_is_interactive(self.app, workspace_id)
+
+    async def _is_allow(self, workspace_id: str) -> bool:
+        """egress_mode == allow: default-permit (record + allow, no prompt) (#2406)."""
+        ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
+        return bool(ws) and ws.get("egress_mode") == EGRESS_MODE_ALLOW

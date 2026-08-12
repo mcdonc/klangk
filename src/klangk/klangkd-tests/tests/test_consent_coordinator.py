@@ -61,6 +61,7 @@ def _app(
     egress_consent.count_pending = AsyncMock(return_value=count_pending)
     egress_consent.create_request = AsyncMock(return_value=request)
     egress_consent.record_static_denial = AsyncMock(return_value=_denial())
+    egress_consent.record_static_allow = AsyncMock(return_value=_allow())
     egress_consent.decide = AsyncMock(return_value=decide_row)
     egress_consent.expire_pending = AsyncMock(return_value=True)
     egress_consent.list_requests = AsyncMock(return_value=pending_rows or [])
@@ -109,6 +110,18 @@ def _denial():
         "dest_host": "1.2.3.4",
         "dest_port": 443,
         "decision": "denied",
+        "decided_by": None,
+    }
+
+
+def _allow():
+    """A recorded allow-mode allow row (mirrors :func:`_denial`) (#2406)."""
+    return {
+        "id": "aid",
+        "workspace_id": FULL_WS,
+        "dest_host": "1.2.3.4",
+        "dest_port": 443,
+        "decision": "allowed",
         "decided_by": None,
     }
 
@@ -371,6 +384,41 @@ class TestConsentCoordinatorGate:
         coord = ConsentCoordinator(app)
         fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
         assert fut.result()["reason"] == "static"
+
+    async def test_allow_mode_records_and_allows_at_once(self):
+        # #2406: egress_mode == allow is default-permit. It records the
+        # off-list destination (logging) and allows at once -- no hold, no
+        # prompt -- behaving as if an internal always-allow decider were
+        # registered. rejected_domains is enforced earlier at the sidecar
+        # DNS layer, not here.
+        app = _app(egress_mode="allow", has_decider=False)
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = fut.result()
+        assert verdict["decision"] == "allow"
+        assert verdict["reason"] == "allow_mode"
+        # tilrestart so the sidecar learns the IP for its lifetime (no
+        # per-connection re-prompt).
+        assert verdict["duration"] == "tilrestart"
+        app.state.model.egress_consent.record_static_allow.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4", 443
+        )
+        app.state.model.egress_consent.create_request.assert_not_awaited()
+        app.state.model.egress_consent.record_static_denial.assert_not_awaited()
+        assert coord._holds == {}
+
+    async def test_allow_mode_ignores_presence_of_decider(self):
+        # A registered external decider is irrelevant to allow mode (allow
+        # mode refuses deciders; it auto-allows). Even with a live decider
+        # present, the gate short-circuits to allow + record, never holding.
+        app = _app(egress_mode="allow", has_decider=True, request=_request())
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        verdict = fut.result()
+        assert verdict["decision"] == "allow"
+        assert verdict["reason"] == "allow_mode"
+        app.state.model.egress_consent.create_request.assert_not_awaited()
+        assert coord._holds == {}
 
     async def test_rate_limited_denies_without_hold(self):
         app = _app(count_pending=50, rate_limit=50, request=_request())
