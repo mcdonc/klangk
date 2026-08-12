@@ -2166,12 +2166,11 @@ class ContainerRegistry:
                     500,
                     f"workspace {workspace_id[:8]} is egress-filtered "
                     "(interactive mode, or allowed_domains/rejected_domains "
-                    "set) but the network sidecar is not "
-                    "configured "
-                    "(network_sidecar_image is empty); refusing to start "
+                    "set) but egress filtering is disabled "
+                    "(netfilter_enabled is off or network_sidecar_image is "
+                    "unset); refusing to start "
                     "unfiltered. Switch the workspace to static mode with no "
-                    "lists, or configure "
-                    "network_sidecar_image.",
+                    "lists, or enable egress filtering.",
                 )
             # The #2264 SO_MARK-bypass guard is user-namespace isolation: the
             # workspace must run in a user namespace DISTINCT from the one that
