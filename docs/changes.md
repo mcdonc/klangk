@@ -94,6 +94,14 @@ operators or integrators to act when upgrading.
   shown) and de-duplicated. The `forever` deny counterpart is a follow-up
   (#2369).
 
+- **Static egress mode refuses consent deciders (#2394).** A workspace-scoped
+  consent decider connecting to a workspace with `egress_mode = "static"` is
+  now refused at registration with a `4003 Forbidden` close
+  (`workspace egress mode is static`), so the static/interactive boundary is
+  structural rather than only enforced at hold time. Deploy-wide deciders are
+  unaffected. The coordinator's existing `_is_interactive` gate remains as
+  defense-in-depth.
+
 - **Revoke action in `consent-decide` (#2341).** On the rules screen
   (`r`), focus an active consent allow/deny row and press `x` to revoke it:
   klangkd drops the sidecar rule and marks the verdict spent, so the row
