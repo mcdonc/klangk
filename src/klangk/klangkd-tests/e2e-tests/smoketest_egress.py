@@ -77,6 +77,11 @@ EXPECT_NOT0 = "not0"  # no-response (timeout) -> exit != 0
 # deterministically and a denied one reaches exit 7 (forged RST). example.com is
 # seeded onto the allow-list; the rest are off-list. Raw IPs are exploratory.
 _ALLOW_LIST = ["example.com"]
+# A workspace-level deny-list baked into the main workspace (#2367). A rejected
+# host is pre-emptively denied at the sidecar -- no consent request is ever
+# surfaced, even in interactive mode. kernel.org is fresh (not in the fuzz pool
+# or any other phase), so baking it in can't perturb the rest of the run.
+_REJECTED_LIST = ["kernel.org"]
 _POOL = [
     ("example.com", "domain", False),  # on the allow-list -> covered
     ("cloudflare.com", "domain", False),
@@ -539,6 +544,7 @@ class SmokeTest:
                 json={
                     "name": f"smoke-{int(time.time() * 1000) % 100000}",
                     "allowed_domains": _ALLOW_LIST,
+                    "rejected_domains": _REJECTED_LIST,
                     "egress_mode": "interactive",
                     "auto_start": True,
                 },
@@ -1398,6 +1404,93 @@ class SmokeTest:
                 self._delete_workspace, self.server, self.auth, static_ws
             )
 
+    async def run_rejected_phase(self, pilot) -> None:
+        """#2367: a rejected_domains host is pre-emptively denied at the sidecar
+        -- no consent request is ever surfaced, even with a decider attached
+        (interactive mode). Contrasted with a normal off-list host, which IS
+        held for consent. Driven over the app's own decider (proxy-independent)."""
+        if not self.args.rejected:
+            return
+        print(
+            "\n--- rejected_domains: pre-emptive deny (no consent prompt) ---"
+        )
+        # 1) the rejected host: denied with NO prompt.
+        rh = "kernel.org"
+        crh = _canonical(rh)
+        step_r = _Step(
+            self.summary.total, rh, "domain", False, "rejected", "-"
+        )
+        of_r = f"/tmp/smoke_rj_{self.summary.total}.out"
+        _trigger(self.container, rh, of_r)
+        intruder = await _wait_no_request(self.app, crh, window=6.0)
+        text_r = await _wait_result(self.container, of_r, timeout=15.0)
+        ec_r = _parse_exit(text_r)
+        if intruder is not None:
+            status = MISMATCH
+            detail = "a rejected host prompted for consent (not pre-empted)"
+            self.app._decide_id(intruder, DECISION_DENIED, DURATION_ONCE)
+            await pilot.pause()
+            await _wait_resolved(self.app, intruder, timeout=15.0)
+            sidecar = "request(!)"
+        elif ec_r is None:
+            status, detail, sidecar = (
+                FINDING,
+                "rejected host hung (NFQUEUE/DNS)",
+                "held(!)",
+            )
+        elif ec_r == 0:
+            status, detail, sidecar = (
+                MISMATCH,
+                "rejected host succeeded (leak)",
+                "leak(!)",
+            )
+        else:
+            status, detail, sidecar = (
+                PASS,
+                f"pre-emptively denied (exit {ec_r}), no prompt",
+                "denied",
+            )
+        self._record_probe(
+            step_r, "rejected host", sidecar, ec_r, status, detail
+        )
+        if status == MISMATCH and not self.args.continue_run:
+            self._abort = True
+            return
+        # 2) contrast: a normal off-list host IS held for consent.
+        nh = "ubuntu.com"
+        cnh = _canonical(nh)
+        step_n = _Step(
+            self.summary.total, nh, "domain", False, "rejected", "-"
+        )
+        of_n = f"/tmp/smoke_rn_{self.summary.total}.out"
+        _trigger(self.container, nh, of_n)
+        rid = await _wait_for_request(self.app, cnh, timeout=12.0)
+        if rid is not None:
+            self.app._decide_id(rid, DECISION_DENIED, DURATION_ONCE)
+            await pilot.pause()
+            await _wait_resolved(self.app, rid, timeout=15.0)
+            ec_n = _parse_exit(await _wait_result(self.container, of_n))
+            self._record_probe(
+                step_n,
+                "off-list contrast",
+                "prompted",
+                ec_n,
+                PASS,
+                "off-list host prompted (contrast: rejected did not)",
+            )
+        else:
+            ec_n = _parse_exit(
+                await _wait_result(self.container, of_n, timeout=10.0)
+            )
+            self._record_probe(
+                step_n,
+                "off-list contrast",
+                "no-request(!)",
+                ec_n,
+                FINDING if ec_n is None else FINDING,
+                "off-list host did not prompt (env?)",
+            )
+
     async def run_revoke_phase(self, pilot) -> None:
         """#2339/#2396: revoking an in-effect verdict drops its rule, so the next
         connection to that host re-prompts. Uses a deny (its within-retry
@@ -1682,6 +1775,8 @@ class SmokeTest:
                 if not stop and not self._abort:
                     await self.run_revoke_phase(pilot)
                 if not stop and not self._abort:
+                    await self.run_rejected_phase(pilot)
+                if not stop and not self._abort:
                     await self.run_fail_closed_phase(pilot)
             # run_test exited -> the decider WS dropped -> the server deregistered
             # the decider -> the workspace reverted to static allow-list (#2308).
@@ -1829,6 +1924,12 @@ def main() -> int:
         dest="revoke",
         action="store_false",
         help="skip the revoke-verdict phase (#2339/#2396)",
+    )
+    p.add_argument(
+        "--no-rejected",
+        dest="rejected",
+        action="store_false",
+        help="skip the rejected_domains pre-emptive-deny phase (#2367)",
     )
     p.add_argument(
         "--no-static-phase",
