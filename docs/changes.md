@@ -727,6 +727,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   re-introducing the 5s window. Workspace teardown and klangkd shutdown are no
   longer gated on the 5s SIGKILL fallback per filtered workspace.
 
+- **Rate-limited egress connections now fail fast instead of hanging
+  (#2399).** A SYN past the network sidecar's NFQUEUE rate limit previously
+  fell through to the OUTPUT DROP policy, so `connect()` hung for
+  `tcp_syn_retries` (~127s) / a `curl --max-time` (exit 28) with no consent
+  request. The overflow is now REJECTed (tcp-reset) so the connection gets
+  ECONNREFUSED at once. Still fail-closed (denied); only the failure mode
+  changes. Normal consent holds are unaffected (a new SYN matches NFQUEUE
+  under the limit).
+
 - **`consent-decide` duration selector no longer shows two highlighted
   buttons at first render (#2360).** The first duration button ("once")
   grabbed initial focus on mount and rendered with the default focus

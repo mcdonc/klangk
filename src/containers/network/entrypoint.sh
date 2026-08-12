@@ -111,6 +111,15 @@ esac
 if [ -n "${KLANGKNETWORK_EGRESS_CONSENT_URL:-}" ]; then
   $IPT -A OUTPUT -m limit --limit 5/sec --limit-burst 20 \
     -j NFQUEUE --queue-num "${KLANGKNETWORK_EGRESS_NFQUEUE_NUM:-5139}"
+  # Fail-FAST on consent-queue overflow (#2399): a SYN past the rate limit
+  # above misses the NFQUEUE match and would otherwise fall through to the
+  # OUTPUT DROP policy -- a dropped SYN makes connect() hang for
+  # tcp_syn_retries (~127s) / a curl --max-time (exit 28) instead of failing,
+  # with NO consent request surfaced (the SYN never reached the consumer).
+  # REJECT (tcp-reset) the overflow so a rate-limited TCP connection gets
+  # ECONNREFUSED at once. Still fail-closed (denied); only the failure mode
+  # changes (hang -> fast). TCP only: the consent gate is the TCP SYN.
+  $IPT -A OUTPUT -p tcp -j REJECT --reject-with tcp-reset
 fi
 
 # --- nat OUTPUT: REDIRECT ALL :53 to the proxy, EXCEPT the proxy's own marked
