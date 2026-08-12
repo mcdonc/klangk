@@ -497,6 +497,7 @@ class KlangkClient:
         setup_state: str | None = None,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        egress_mode: str | None = None,
         settings: dict | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
@@ -516,6 +517,8 @@ class KlangkClient:
             body["health_check"] = health_check
         if allowed_domains:
             body["allowed_domains"] = allowed_domains
+        if egress_mode:
+            body["egress_mode"] = egress_mode
         if settings:
             body["settings"] = settings
         resp = self.post("/api/v1/workspaces", json=body)

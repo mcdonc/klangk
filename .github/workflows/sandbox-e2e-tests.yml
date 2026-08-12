@@ -25,7 +25,7 @@ jobs:
 
       - uses: ./.github/actions/devenv-setup
         with:
-          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar
+          build-tasks: klangk:build-workspace-image
 
       # Runs every sandbox test suite under sandboxes/tests/. There is
       # currently only openclaw; more will be added over time. Each suite

@@ -40,7 +40,11 @@ operators or integrators to act when upgrading.
   exist. Static mode with no lists stays unrestricted. Because every
   interactive workspace now needs a sidecar, an interactive workspace
   **fails closed** (refuses to start) if `network_sidecar_image` is unset or
-  `KLANGKD_USERNS` is empty, instead of starting unrestricted.
+  `KLANGKD_USERNS` is empty, instead of starting unrestricted. The
+  `klangk sandbox` command now creates its workspace in `static` mode so
+  automated installs (npm/git/…) keep their unrestricted egress —
+  interactive would hold every install connection for a consent decision
+  with no decider present.
 
 - **`rejected_domains` workspace setting + sidecar enforcement (#2367).**
   The deny counterpart to `allowed_domains`: a persisted, host-only list whose
