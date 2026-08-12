@@ -467,6 +467,59 @@ class TestTTLAndSweep:
         assert [ip for ip, _ in gone] == ["dead"]
         assert "live" in learned._LEARNED
 
+    def test_consent_allow_rule_expire_is_separate_from_dns_ttl(
+        self, learned, monkeypatch
+    ):
+        # #2408: a consent allow's ACCEPT rule must expire at the verdict, not at
+        # the host-mapping DNS TTL. _record_hosts records the IP with a long DNS
+        # TTL; a subsequent short consent allow installs the ACCEPT with a SHORT
+        # rule_expire (separate from the long host-mapping expire).
+        monkeypatch.setattr(
+            learned.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=1),
+        )
+        monkeypatch.setattr(learned.time, "time", lambda: 0.0)
+        learned._record_hosts([("1.2.3.4", 300)], "evil.test")  # DNS TTL 300s
+        learned.allow(
+            "1.2.3.4", None, 5
+        )  # consent allow, 5s (floored to MIN_TTL)
+        rec = learned._LEARNED["1.2.3.4"]
+        # rule_expire is the verdict (MIN_TTL-floored), NOT the DNS TTL; the
+        # host-mapping expire keeps the longer DNS TTL. The two are separate.
+        assert rec["rule_expire"] == learned.MIN_TTL
+        assert rec["expire"] == 300.0
+        assert rec["rule_expire"] < rec["expire"]
+        assert rec["ports"] == {None}
+
+    def test_sweep_removes_consent_rule_at_verdict_keeps_host_mapping(
+        self, learned, monkeypatch
+    ):
+        # #2408: at the consent verdict's TTL the ACCEPT rule is swept, but the
+        # record (host mapping) is KEPT while its longer DNS-TTL expire is still
+        # valid -- so _host_for can still name the host for the fresh
+        # re-prompt. Only after the DNS TTL does the record itself go.
+        removed = []
+        monkeypatch.setattr(
+            learned, "_remove", lambda ip, port: removed.append((ip, port))
+        )
+        learned._LEARNED["1.2.3.4"] = {
+            "expire": 300.0,  # host mapping (DNS TTL)
+            "rule_expire": 5.0,  # consent verdict
+            "ports": {None},
+            "host": "evil.test",
+        }
+        # at t=5: rule swept, record kept for naming.
+        gone = learned.sweep_once(now=5.0)
+        assert gone == [("1.2.3.4", {None})]
+        assert removed == [("1.2.3.4", None)]
+        rec = learned._LEARNED["1.2.3.4"]
+        assert rec["ports"] == set()  # rule gone
+        assert rec["host"] == "evil.test"  # mapping retained
+        # at t=300: the host mapping elapses -> record dropped.
+        learned.sweep_once(now=300.0)
+        assert "1.2.3.4" not in learned._LEARNED
+
     def test_reject_installs_reject_rule_and_records(
         self, learned, monkeypatch
     ):
@@ -827,6 +880,43 @@ class TestConsentForward:
         rec = learned._LEARNED["1.2.3.4"]
         assert rec["host"] == "evil.test"
         assert rec["ports"] == {None}  # preserved
+
+    def test_record_hosts_does_not_touch_consent_rule_expire(self, learned):
+        # #2408: _record_hosts refreshes only the host-mapping expire -- never
+        # rule_expire (the ACCEPT rule's lifetime, set by allow). So a
+        # re-resolve can extend the host mapping (for naming) without extending
+        # a consent allow's rule past its verdict.
+        import time
+
+        consent_rule_expire = time.time() + 5
+        learned._LEARNED["1.2.3.4"] = {
+            "expire": time.time() + 5,
+            "rule_expire": consent_rule_expire,
+            "ports": {None},
+            "host": None,
+        }
+        learned._record_hosts([("1.2.3.4", 300)], "evil.test")
+        rec = learned._LEARNED["1.2.3.4"]
+        assert rec["rule_expire"] == consent_rule_expire  # untouched
+        assert rec["host"] == "evil.test"  # host name refreshed
+
+    def test_record_hosts_extends_ttl_for_pure_host_mapping(self, learned):
+        # A pure host-mapping entry (no ACCEPT rule, pre-consent) still gets
+        # its host-mapping TTL extended on re-resolve, so the NFQUEUE consumer
+        # can name the host for a fresh consent request.
+        import time
+
+        base = time.time() + 60
+        learned._LEARNED["1.2.3.4"] = {
+            "expire": base,
+            "ports": set(),
+            "host": "a.test",
+        }
+        learned._record_hosts([("1.2.3.4", 300)], "b.test")
+        rec = learned._LEARNED["1.2.3.4"]
+        assert rec["expire"] > base  # extended by the longer DNS TTL
+        assert rec["host"] == "b.test"
+        assert rec["ports"] == set()
 
     def test_host_for_returns_host_when_recorded(self, proxy):
         proxy._LEARNED.clear()
