@@ -362,6 +362,121 @@ async def test_add_rejected_domain_ignores_blank(ws, user):
     assert got["rejected_domains"] is None
 
 
+async def test_remove_allowed_domain_removes_case_insensitive(ws, user):
+    # The inverse of add (#2370): revoking a forever allow retracts the entry.
+    # Case-insensitive match; only the matched entry is removed.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"],
+        "retract-allow",
+        allowed_domains=["PyPI.org:443", "github.com:443"],
+    )
+    assert (
+        await ws.remove_allowed_domain(ws_row["id"], "GITHUB.COM:443") is True
+    )  # case-insensitive
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["allowed_domains"] == ["PyPI.org:443"]
+
+
+async def test_remove_allowed_domain_idempotent_absent(ws, user):
+    # Removing an absent entry is a no-op success (mirrors add's idempotency):
+    # the desired post-state (entry absent) already holds.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "retract-absent", allowed_domains=["example.com:443"]
+    )
+    assert (
+        await ws.remove_allowed_domain(ws_row["id"], "other.com:443") is True
+    )
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["allowed_domains"] == ["example.com:443"]  # unchanged
+
+
+async def test_remove_allowed_domain_from_null(ws, user):
+    # NULL allowed_domains (never set) -> absent -> True, still NULL.
+    ws_row = await ws.create_workspace(user["id"], "retract-null")
+    assert (
+        await ws.remove_allowed_domain(ws_row["id"], "example.com:443") is True
+    )
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["allowed_domains"] is None
+
+
+async def test_remove_allowed_domain_missing_workspace(ws):
+    assert await ws.remove_allowed_domain("nope", "example.com:443") is False
+
+
+async def test_remove_allowed_domain_rejects_malformed(ws, user):
+    ws_row = await ws.create_workspace(user["id"], "retract-bad")
+    assert (
+        await ws.remove_allowed_domain(ws_row["id"], "not a domain!") is False
+    )
+
+
+async def test_remove_rejected_domain_removes_case_insensitive(ws, user):
+    # The deny mirror (#2370): revoking a forever deny retracts the entry.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"],
+        "retract-deny",
+        rejected_domains=["Evil.com:443", "bad.com"],
+    )
+    assert (
+        await ws.remove_rejected_domain(ws_row["id"], "evil.COM:443") is True
+    )
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["rejected_domains"] == ["bad.com"]
+
+
+async def test_remove_rejected_domain_bare_host(ws, user):
+    # A port-less deny was persisted as a bare host; retract the bare host.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "retract-bare", rejected_domains=["bad.com"]
+    )
+    assert await ws.remove_rejected_domain(ws_row["id"], "bad.com") is True
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["rejected_domains"] == []
+
+
+async def test_remove_rejected_domain_missing_workspace(ws):
+    assert await ws.remove_rejected_domain("nope", "bad.com") is False
+
+
+async def test_remove_rejected_domain_rejects_malformed(ws, user):
+    ws_row = await ws.create_workspace(user["id"], "retract-deny-bad")
+    assert (
+        await ws.remove_rejected_domain(ws_row["id"], "not a domain!") is False
+    )
+
+
+async def test_remove_allowed_domain_ignores_blank(ws, user):
+    # A blank entry normalizes to nothing -> no removal, returns False.
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "retract-blank", allowed_domains=["example.com:443"]
+    )
+    assert await ws.remove_allowed_domain(ws_row["id"], "   ") is False
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["allowed_domains"] == ["example.com:443"]  # unchanged
+
+
+async def test_remove_rejected_domain_ignores_blank(ws, user):
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "retract-deny-blank", rejected_domains=["bad.com"]
+    )
+    assert await ws.remove_rejected_domain(ws_row["id"], "   ") is False
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["rejected_domains"] == ["bad.com"]  # unchanged
+
+
+async def test_remove_rejected_domain_idempotent_absent(ws, user):
+    # Removing an absent entry is a no-op success (mirrors allow's idempotency).
+    ws_row = await ws.create_workspace_with_acl(
+        user["id"], "retract-deny-absent", rejected_domains=["bad.com"]
+    )
+    assert (
+        await ws.remove_rejected_domain(ws_row["id"], "other.com:443") is True
+    )
+    got = await ws.get_workspace_by_id(ws_row["id"])
+    assert got["rejected_domains"] == ["bad.com"]  # unchanged
+
+
 async def test_transfer_workspace(ws, app_state, user):
     new_owner = await app_state.state.model.users.create_user("new@x.com", "h")
     ws_row = await ws.create_workspace_with_acl(user["id"], "transfer-me")

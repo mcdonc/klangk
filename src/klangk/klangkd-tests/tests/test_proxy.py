@@ -1868,3 +1868,97 @@ class TestDropForHost:
         )
         ack = json.loads(sent[0])
         assert ack["ok"] is False
+
+    def test_drop_for_host_returns_candidate_ips(self, proxy, monkeypatch):
+        # #2370: drop_for_host returns the candidate IP set so the loop-side
+        # _clear_forever_state can clear _VERDICT_CACHE for those IPs.
+        proxy._LEARNED.clear()
+        proxy._REJECTED.clear()
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=0),
+        )
+        proxy._LEARNED["1.2.3.4"] = {
+            "expire": 9999.0,
+            "ports": {443},
+            "host": "evil.test",
+        }
+        ips = proxy.drop_for_host("evil.test", "allowed")
+        # resolved IP + the host string itself (direct-IP-allow candidate)
+        assert ips == {"1.2.3.4", "evil.test"}
+
+    def test_drop_forever_hosts_removes_host_entries(self, proxy):
+        # An allowed revoke drops the host's _FOREVER_HOSTS coverage (in-session
+        # forever-allow from #2372); other hosts are left intact.
+        proxy._FOREVER_HOSTS.clear()
+        proxy._FOREVER_HOSTS[:] = [
+            ("evil.test", 443, proxy._EXACT),
+            ("other.test", 80, proxy._EXACT),
+        ]
+        proxy._drop_forever_hosts("Evil.TEST")  # case-insensitive
+        assert proxy._FOREVER_HOSTS == [("other.test", 80, proxy._EXACT)]
+
+    def test_clear_verdict_cache_drops_host_entries(self, proxy):
+        # Cached verdicts keyed by (src_ip, src_port, dst, port); dst is key[2].
+        # Only the revoked host's IPs are cleared; an unrelated IP is kept.
+        proxy._VERDICT_CACHE.clear()
+        proxy._VERDICT_CACHE[("10.0.0.1", 1, "1.2.3.4", 443)] = ("allow", 9e9)
+        proxy._VERDICT_CACHE[("10.0.0.1", 2, "5.6.7.8", 443)] = ("deny", 9e9)
+        proxy._clear_verdict_cache({"1.2.3.4", "evil.test"})
+        assert ("10.0.0.1", 1, "1.2.3.4", 443) not in proxy._VERDICT_CACHE
+        assert ("10.0.0.1", 2, "5.6.7.8", 443) in proxy._VERDICT_CACHE
+
+    def test_clear_verdict_cache_empty_ips_is_noop(self, proxy):
+        # No resolved IPs (host never seen / swept) -> nothing to clear.
+        proxy._VERDICT_CACHE.clear()
+        proxy._VERDICT_CACHE[("10.0.0.1", 1, "9.9.9.9", 443)] = ("allow", 9e9)
+        proxy._clear_verdict_cache(set())
+        assert proxy._VERDICT_CACHE == {
+            ("10.0.0.1", 1, "9.9.9.9", 443): ("allow", 9e9)
+        }
+
+    async def test_dispatch_drop_rule_clears_forever_state(
+        self, proxy, tmp_path, monkeypatch
+    ):
+        # End-to-end (#2370): a forever-allow revoke's drop_rule clears the
+        # in-session _FOREVER_HOSTS (BEFORE the iptables fork, so a racing SYN
+        # can't re-install a fresh ACCEPT during the window) + _VERDICT_CACHE
+        # (after), else the next DNS resolution re-learns the host.
+        proxy._LEARNED.clear()
+        proxy._FOREVER_HOSTS.clear()
+        proxy._VERDICT_CACHE.clear()
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=0),
+        )
+        proxy._LEARNED["1.2.3.4"] = {
+            "expire": 9e9,
+            "ports": {443},
+            "host": "h.test",
+        }
+        proxy._FOREVER_HOSTS.append(("h.test", 443, proxy._EXACT))
+        proxy._VERDICT_CACHE[("10.0.0.1", 1, "1.2.3.4", 443)] = ("allow", 9e9)
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        await c._dispatch(
+            json.dumps(
+                {
+                    "type": "drop_rule",
+                    "id": "ack-1",
+                    "host": "h.test",
+                    "decision": "allowed",
+                }
+            )
+        )
+        assert proxy._FOREVER_HOSTS == []
+        assert proxy._VERDICT_CACHE == {}
+        assert json.loads(sent[0])["ok"] is True

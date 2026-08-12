@@ -71,12 +71,17 @@ operators or integrators to act when upgrading.
   the `consent-decide` TUI (`Pause: 15m | 1h | 1d | Cancel`) silences ALL
   consent prompts for the workspace for the chosen window: a destination with
   no allow-list rule and no in-effect recorded verdict is auto-allowed (no
-  hold) instead of prompting. The pause does not bypass policy —
+  hold) instead of prompting. The pause does not bypass policy --
   `allowed_domains`/`rejected_domains` rules and existing `egress_consent`
   verdicts (a recorded deny still blocks) keep applying. The window
   self-expires (the gate re-checks on every connection), the status line
   shows the remaining time, and a refreshed `egress_rules` frame carries the
   live `paused` window to every decider.
+
+- **`reject_list` in the `egress_rules` frame (#2370, #2340).** The read-only
+  rules view (`ConsentCoordinator.rules_frame`) now surfaces the workspace's
+  `rejected_domains` alongside the existing `allow_list`, so deciders see the
+  static deny-list in the rule-management screen.
 
 - **`forever` egress-consent allow persists across connections and restarts
   (#2368, #2372).** An allow with `duration=forever` allow-lists the host for
@@ -472,6 +477,17 @@ operators or integrators to act when upgrading.
   `KLANGKD_ALLOW_INSECURE_NO_AUTH`.
 
 ### Changed
+
+- **Revoking a `forever` verdict retracts its durable list entry (#2370,
+  #2339).** Revoking a `forever` allow/deny now removes the host from
+  `allowed_domains`/`rejected_domains` (not just the in-memory sidecar rule),
+  and the sidecar clears its in-session `_FOREVER_HOSTS`/`_VERDICT_CACHE` for
+  the host -- so the verdict stops taking effect immediately and no longer
+  re-applies on the next sidecar restart. The retract is best-effort (failures
+  logged + swallowed); the verdict row is marked revoked regardless. A
+  statically-configured list entry (set via the API, not a verdict) is only
+  affected if it matches the revoked verdict's host, and clears on the next
+  restart as with any list edit.
 
 - **Egress-consent duration token `restart` renamed to `tilrestart` (#2357).**
   The verdict `duration` value `restart` is now `tilrestart` ("until restart")

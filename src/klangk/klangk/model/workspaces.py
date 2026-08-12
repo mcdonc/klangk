@@ -947,6 +947,106 @@ class WorkspacesModel:
                     return True
         return False  # pragma: no cover - CAS exhausted under contention
 
+    async def remove_allowed_domain(
+        self, workspace_id: str, entry: str
+    ) -> bool:
+        """Remove ``entry`` (``host[:port]``) from a workspace's
+        ``allowed_domains`` (#2370) -- the inverse of :meth:`add_allowed_domain`.
+
+        Revoking a ``forever`` egress-consent allow retracts the durable entry
+        it added (so the allow does not re-apply on the next sidecar restart);
+        the in-memory ACCEPT rules are dropped separately by the sidecar.
+        Compare-and-swap on the JSON blob, case-insensitive match, mirroring
+        :meth:`add_allowed_domain`. Returns True if the workspace exists and
+        ``entry`` is absent from the list afterwards (removed or already
+        absent -- idempotent); False if the workspace is missing or ``entry``
+        is malformed.
+        """
+        try:
+            normalized = parse_allowed_domains([entry])
+        except ValueError:
+            return False
+        if not normalized:
+            return False
+        spec = normalized[0].lower()
+        for _ in range(_SETTINGS_CAS_RETRIES):
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "SELECT allowed_domains FROM workspaces WHERE id = ?",
+                    (workspace_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return False
+                old_blob = row["allowed_domains"]
+                current = json.loads(old_blob) if old_blob else []
+                idx = next(
+                    (i for i, s in enumerate(current) if s.lower() == spec),
+                    None,
+                )
+                if idx is None:
+                    return True  # already absent (idempotent)
+                current.pop(idx)
+                new_blob = json.dumps(current)
+                cursor = await db.execute(
+                    "UPDATE workspaces SET allowed_domains = ?"
+                    " WHERE id = ? AND allowed_domains IS ?",
+                    (new_blob, workspace_id, old_blob),
+                )
+                if cursor.rowcount == 1:
+                    return True
+        return False  # pragma: no cover - CAS exhausted under contention
+
+    async def remove_rejected_domain(
+        self, workspace_id: str, entry: str
+    ) -> bool:
+        """Remove ``entry`` from a workspace's ``rejected_domains`` (#2370) --
+        the inverse of :meth:`add_rejected_domain`.
+
+        Revoking a ``forever`` egress-consent deny retracts the durable entry
+        it added (so the deny does not re-apply on the next sidecar restart);
+        the in-memory REJECT rules are dropped separately by the sidecar.
+        Compare-and-swap on the JSON blob, case-insensitive match, mirroring
+        :meth:`add_rejected_domain`. Returns True if the workspace exists and
+        ``entry`` is absent from the list afterwards (removed or already
+        absent -- idempotent); False if the workspace is missing or ``entry``
+        is malformed.
+        """
+        try:
+            normalized = parse_allowed_domains([entry])
+        except ValueError:
+            return False
+        if not normalized:
+            return False
+        spec = normalized[0].lower()
+        for _ in range(_SETTINGS_CAS_RETRIES):
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "SELECT rejected_domains FROM workspaces WHERE id = ?",
+                    (workspace_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return False
+                old_blob = row["rejected_domains"]
+                current = json.loads(old_blob) if old_blob else []
+                idx = next(
+                    (i for i, s in enumerate(current) if s.lower() == spec),
+                    None,
+                )
+                if idx is None:
+                    return True  # already absent (idempotent)
+                current.pop(idx)
+                new_blob = json.dumps(current)
+                cursor = await db.execute(
+                    "UPDATE workspaces SET rejected_domains = ?"
+                    " WHERE id = ? AND rejected_domains IS ?",
+                    (new_blob, workspace_id, old_blob),
+                )
+                if cursor.rowcount == 1:
+                    return True
+        return False  # pragma: no cover - CAS exhausted under contention
+
     async def transfer_workspace(
         self,
         workspace_id: str,
