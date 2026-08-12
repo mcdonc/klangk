@@ -119,6 +119,7 @@ class WorkspacesModel:
         setup_state: str,
         health_check: str | None,
         allowed_domains: list[str] | None = None,
+        rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
     ) -> dict:
@@ -134,13 +135,16 @@ class WorkspacesModel:
         allowed_domains_json = (
             json.dumps(allowed_domains) if allowed_domains else None
         )
+        rejected_domains_json = (
+            json.dumps(rejected_domains) if rejected_domains else None
+        )
         settings_json = json.dumps(settings) if settings else None
         await db.execute(
             "INSERT INTO workspaces"
             " (id, user_id, name, image, service_command, auto_start,"
             " setup_state, health_check, mounts, env, allowed_domains,"
-            " settings, egress_mode, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " rejected_domains, settings, egress_mode, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 workspace_id,
                 user_id,
@@ -153,6 +157,7 @@ class WorkspacesModel:
                 mounts_json,
                 env_json,
                 allowed_domains_json,
+                rejected_domains_json,
                 settings_json,
                 egress_mode,
                 created_at,
@@ -170,6 +175,7 @@ class WorkspacesModel:
             "mounts": mounts,
             "env": env,
             "allowed_domains": allowed_domains,
+            "rejected_domains": rejected_domains,
             "settings": settings,
             "egress_mode": egress_mode,
             "num_ports": DEFAULT_PORTS_PER_WORKSPACE,
@@ -252,6 +258,7 @@ class WorkspacesModel:
         setup_state: str = SETUP_STATE_COMPLETE,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
     ) -> dict:
@@ -288,6 +295,7 @@ class WorkspacesModel:
                 setup_state=setup_state,
                 health_check=health_check,
                 allowed_domains=allowed_domains,
+                rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=egress_mode,
             )
@@ -306,6 +314,7 @@ class WorkspacesModel:
         setup_state: str = SETUP_STATE_COMPLETE,
         health_check: str | None = None,
         allowed_domains: list[str] | None = None,
+        rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
     ) -> dict:
@@ -333,6 +342,7 @@ class WorkspacesModel:
                 setup_state=setup_state,
                 health_check=health_check,
                 allowed_domains=allowed_domains,
+                rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=egress_mode,
             )
@@ -365,7 +375,7 @@ class WorkspacesModel:
             cursor = await db.execute(
                 "SELECT id, name, container_id, image, service_command,"
                 " auto_start, setup_state, health_check, mounts, env,"
-                " allowed_domains, settings, egress_mode, created_at"
+                " allowed_domains, rejected_domains, settings, egress_mode, created_at"
                 " FROM workspaces"
                 f" {where} {order_by} LIMIT ? OFFSET ?",
                 tuple(params),
@@ -387,6 +397,9 @@ class WorkspacesModel:
                     "env": json.loads(row["env"]) if row["env"] else None,
                     "allowed_domains": json.loads(row["allowed_domains"])
                     if row["allowed_domains"]
+                    else None,
+                    "rejected_domains": json.loads(row["rejected_domains"])
+                    if row["rejected_domains"]
                     else None,
                     "settings": json.loads(row["settings"])
                     if row["settings"]
@@ -436,7 +449,7 @@ class WorkspacesModel:
             cursor = await db.execute(
                 "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
                 " w.service_command, w.auto_start, w.setup_state,"
-                " w.health_check, w.mounts, w.env, w.allowed_domains,"
+                " w.health_check, w.mounts, w.env, w.allowed_domains, w.rejected_domains,"
                 " w.settings, w.egress_mode, w.created_at,"
                 " u.email AS owner_email"
                 " FROM workspaces w"
@@ -477,6 +490,9 @@ class WorkspacesModel:
                     "allowed_domains": json.loads(row["allowed_domains"])
                     if row["allowed_domains"]
                     else None,
+                    "rejected_domains": json.loads(row["rejected_domains"])
+                    if row["rejected_domains"]
+                    else None,
                     "settings": json.loads(row["settings"])
                     if row["settings"]
                     else None,
@@ -507,7 +523,7 @@ class WorkspacesModel:
                 cursor = await db.execute(
                     "SELECT id, user_id, name, container_id, num_ports, image,"
                     " service_command, auto_start, setup_state, health_check,"
-                    " mounts, env, allowed_domains, settings, egress_mode"
+                    " mounts, env, allowed_domains, rejected_domains, settings, egress_mode"
                     " FROM workspaces WHERE id = ? AND user_id = ?",
                     (workspace_id, user_id),
                 )
@@ -515,7 +531,7 @@ class WorkspacesModel:
                 cursor = await db.execute(
                     "SELECT id, user_id, name, container_id, num_ports, image,"
                     " service_command, auto_start, setup_state, health_check,"
-                    " mounts, env, allowed_domains, settings, egress_mode"
+                    " mounts, env, allowed_domains, rejected_domains, settings, egress_mode"
                     " FROM workspaces WHERE id = ?",
                     (workspace_id,),
                 )
@@ -538,6 +554,9 @@ class WorkspacesModel:
                 "allowed_domains": json.loads(row["allowed_domains"])
                 if row["allowed_domains"]
                 else None,
+                "rejected_domains": json.loads(row["rejected_domains"])
+                if row["rejected_domains"]
+                else None,
                 "settings": json.loads(row["settings"])
                 if row["settings"]
                 else None,
@@ -549,7 +568,7 @@ class WorkspacesModel:
         row = await self.app.state.db.fetchone(
             "SELECT id, user_id, name, container_id, num_ports, image,"
             " service_command, setup_state, health_check, mounts, env,"
-            " allowed_domains, settings, egress_mode"
+            " allowed_domains, rejected_domains, settings, egress_mode"
             " FROM workspaces WHERE id = ?",
             (workspace_id,),
         )
@@ -569,6 +588,9 @@ class WorkspacesModel:
             "env": json.loads(row["env"]) if row["env"] else None,
             "allowed_domains": json.loads(row["allowed_domains"])
             if row["allowed_domains"]
+            else None,
+            "rejected_domains": json.loads(row["rejected_domains"])
+            if row["rejected_domains"]
             else None,
             "settings": json.loads(row["settings"])
             if row["settings"]
@@ -748,6 +770,7 @@ class WorkspacesModel:
             "mounts",
             "env",
             "allowed_domains",
+            "rejected_domains",
             "settings",
             "egress_mode",
         }
@@ -763,7 +786,13 @@ class WorkspacesModel:
                 if v not in EGRESS_MODES:
                     raise ValueError(f"Invalid egress_mode: {v!r}")
                 to_set[k] = v
-            elif k in ("mounts", "env", "allowed_domains", "settings"):
+            elif k in (
+                "mounts",
+                "env",
+                "allowed_domains",
+                "rejected_domains",
+                "settings",
+            ):
                 to_set[k] = json.dumps(v) if v is not None else None
             elif k == "auto_start":
                 to_set[k] = 1 if v else 0
@@ -933,7 +962,7 @@ class WorkspacesModel:
             cursor = await db.execute(
                 "SELECT id, user_id, name, container_id, num_ports, image,"
                 " service_command, auto_start, setup_state, health_check,"
-                " mounts, env, allowed_domains, settings, egress_mode"
+                " mounts, env, allowed_domains, rejected_domains, settings, egress_mode"
                 " FROM workspaces WHERE auto_start = 1",
             )
             rows = await cursor.fetchall()
@@ -955,6 +984,9 @@ class WorkspacesModel:
                     "env": json.loads(row["env"]) if row["env"] else None,
                     "allowed_domains": json.loads(row["allowed_domains"])
                     if row["allowed_domains"]
+                    else None,
+                    "rejected_domains": json.loads(row["rejected_domains"])
+                    if row["rejected_domains"]
                     else None,
                     "settings": json.loads(row["settings"])
                     if row["settings"]

@@ -1245,6 +1245,7 @@ class ContainerRegistry:
         workspace_id: str,
         allowed_domains: list[str],
         egress_mode: str = "static",
+        rejected_domains: list[str] | None = None,
         publish: list[tuple[int, int]] | None = None,
         slug: str = "",
     ) -> str:
@@ -1274,7 +1275,8 @@ class ContainerRegistry:
         resolvers = nf.resolvers() if nf else []
         upstream = next((r for r in resolvers if r != "1.1.1.1"), "8.8.8.8")
         env = [
-            f"KLANGKNETWORK_EGRESS_ALLOW={','.join(allowed_domains)}",
+            f"KLANGKNETWORK_EGRESS_ALLOW={','.join(allowed_domains or [])}",
+            f"KLANGKNETWORK_EGRESS_REJECT={','.join(rejected_domains or [])}",
             f"KLANGKNETWORK_EGRESS_UPSTREAM={upstream}",
             # The klangkd backend port (LLM proxy + bridge on
             # host.containers.internal). The network sidecar allow-lists it statically
@@ -1474,6 +1476,7 @@ class ContainerRegistry:
         setup_state: str | None = None,
         service_command: str | None = None,
         allowed_domains: list[str] | None = None,
+        rejected_domains: list[str] | None = None,
         workspace_settings: dict | None = None,
         egress_mode: str = "static",
     ) -> tuple[str, str]:
@@ -1504,6 +1507,7 @@ class ContainerRegistry:
                 setup_state=setup_state,
                 service_command=service_command,
                 allowed_domains=allowed_domains,
+                rejected_domains=rejected_domains,
                 workspace_settings=workspace_settings,
                 egress_mode=egress_mode,
             )
@@ -1981,6 +1985,7 @@ class ContainerRegistry:
         setup_state: str | None = None,
         service_command: str | None = None,
         allowed_domains: list[str] | None = None,
+        rejected_domains: list[str] | None = None,
         workspace_settings: dict | None = None,
         egress_mode: str = "static",
     ) -> tuple[str, str]:
@@ -2011,7 +2016,7 @@ class ContainerRegistry:
                 # and leak the sidecar until the next start's force-remove or
                 # the instance reaper. A filtered workspace always has a live
                 # sidecar (fail-closed), so allowed_domains set => re-track.
-                if allowed_domains:
+                if allowed_domains or rejected_domains:
                     self._ws_with_network_sidecar.add(workspace_id)
                 return result
 
@@ -2126,13 +2131,14 @@ class ContainerRegistry:
         # Egress filtering (#1365): the FQDN network sidecar is the only egress
         # model. The OCI-hook "static" model was dropped (#2254 review) —
         # maintaining two complete models was more complexity than value. A
-        # filtered workspace (allowed_domains set) runs
+        # filtered workspace (allowed_domains or rejected_domains set) runs
         # --network container:<network sidecar> (the network sidecar's proxy owns the rules;
         # the workspace is unprivileged). Fail-CLOSED (#2254 review B2): a
         # workspace that declared an allow-list never starts unrestricted —
         # silently ignoring it would disable a security control the user
         # requested, so a missing/unstartable network sidecar raises
-        # instead. With no allowed_domains the workspace starts
+        # instead. With neither allowed_domains nor rejected_domains the
+        # workspace starts
         # unrestricted (no filtering requested).
         # #2276 (B): whether net_raw must be dropped for this workspace. A
         # filtered workspace whose user can sudo to root would let root use the
@@ -2140,14 +2146,16 @@ class ContainerRegistry:
         # egress filter; dropping net_raw (from the bounding set) closes that
         # for root too. Applied in the cap_add/cap_drop logic after this branch.
         drop_net_raw = False
-        if allowed_domains:
+        if allowed_domains or rejected_domains:
             if not self._network_sidecar_enabled():
                 raise podman.PodmanError(
                     500,
                     f"workspace {workspace_id[:8]} declares allowed_domains "
-                    "but the network sidecar is not configured "
+                    "or rejected_domains but the network sidecar is not "
+                    "configured "
                     "(network_sidecar_image is empty); refusing to start "
-                    "unfiltered. Clear allowed_domains or configure "
+                    "unfiltered. Clear allowed_domains/rejected_domains or "
+                    "configure "
                     "network_sidecar_image.",
                 )
             # The #2264 SO_MARK-bypass guard is user-namespace isolation: the
@@ -2162,17 +2170,20 @@ class ContainerRegistry:
                 raise podman.PodmanError(
                     500,
                     f"workspace {workspace_id[:8]} declares allowed_domains "
-                    "(egress filtering), which requires a non-empty "
+                    "or rejected_domains (egress filtering), which requires a "
+                    "non-empty "
                     "KLANGKD_USERNS so the workspace runs in a user namespace "
                     "distinct from the network sidecar's. An empty userns would "
                     "share the sidecar's userns and reopen the SO_MARK egress "
                     "bypass. Set KLANGKD_USERNS (default "
-                    "keep-id:uid=1000,gid=1000) or clear allowed_domains.",
+                    "keep-id:uid=1000,gid=1000) or clear "
+                    "allowed_domains/rejected_domains.",
                 )
             network_sidecar_id = await self._start_network_sidecar(
                 workspace_id,
                 allowed_domains,
                 egress_mode,
+                rejected_domains=rejected_domains,
                 publish=publish,
                 slug=slug,
             )

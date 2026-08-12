@@ -32,6 +32,19 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`rejected_domains` workspace setting + sidecar enforcement (#2367).**
+  The deny counterpart to `allowed_domains`: a persisted, host-only list whose
+  names the network sidecar NXDOMAINs unconditionally (no resolution, no SYN,
+  no consent prompt), in both static and interactive egress modes, taking
+  precedence over the allow-list and consent. The grammar mirrors
+  `allowed_domains` (bare = exact apex, `.host` = apex + subdomains, `*.host` =
+  subdomains only); CIDR specs are rejected at the API (NXDOMAIN is name-level).
+  Configurable via the create/update/clone/import workspace API. A workspace
+  with `rejected_domains` but no `allowed_domains` runs in default-allow
+  "static blocklist" mode (everything resolves except the reject list). The
+  TUI/Flutter dialogs are a follow-up (#2386); the `forever` **deny** verdict
+  that mutates this list at runtime is #2369.
+
 - **`forever` egress-consent allow persists across connections and restarts
   (#2368, #2372).** An allow with `duration=forever` allow-lists the host for
   the rest of the session AND across container restarts: the sidecar treats the

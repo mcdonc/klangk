@@ -248,6 +248,56 @@ class TestPortsFor:
         assert proxy._forever_host_allows("example.com", 8080)
 
 
+class TestRejectedFor:
+    """``rejected_for`` is the static deny gate (#2367): a name matching a
+    REJECT_SPECS entry is NXDOMAIN'd unconditionally. Same nginx-style scopes
+    as ``ports_for`` (bare = exact apex, ``.host`` = inclusive, ``*.host`` =
+    subdomains only). The module-level ``REJECT_SPECS`` is computed at import,
+    so each test reparses from the env + reassigns it before asserting."""
+
+    def test_bare_is_exact_apex_only(self, proxy, monkeypatch):
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_REJECT", "evil.com")
+        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        assert proxy.rejected_for("evil.com") is True  # apex
+        assert proxy.rejected_for("api.evil.com") is False  # subdomain (exact)
+        assert proxy.rejected_for("evilevil.com") is False  # suffix boundary
+
+    def test_inclusive_matches_apex_and_subdomains(self, proxy, monkeypatch):
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_REJECT", ".malicious.net")
+        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        assert proxy.rejected_for("malicious.net") is True
+        assert proxy.rejected_for("x.malicious.net") is True
+        assert proxy.rejected_for("xmalicious.net") is False  # boundary
+
+    def test_subdomains_excludes_apex(self, proxy, monkeypatch):
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_REJECT", "*.bad.org")
+        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        assert proxy.rejected_for("bad.org") is False  # apex not rejected
+        assert proxy.rejected_for("a.bad.org") is True
+
+    def test_empty_reject_specs_denies_nothing(self, proxy, monkeypatch):
+        monkeypatch.delenv("KLANGKNETWORK_EGRESS_REJECT", raising=False)
+        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        assert proxy.rejected_for("anything.test") is False
+
+    def test_reject_only_mode_default_allow(self, proxy, monkeypatch):
+        # No allow-list but a reject-list -> REJECT_ONLY_MODE: a static (no
+        # consent client) workspace forwards + learns every non-rejected name
+        # (the "static blocklist" model, #2367). Derived from SPECS +
+        # REJECT_SPECS; recompute after setting the env.
+        monkeypatch.delenv("KLANGKNETWORK_EGRESS_ALLOW", raising=False)
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_REJECT", "evil.com")
+        proxy.SPECS = proxy.parse_specs()
+        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        proxy.REJECT_ONLY_MODE = not proxy.SPECS and bool(proxy.REJECT_SPECS)
+        assert proxy.REJECT_ONLY_MODE is True
+        # An allow-list present flips it back off (default-deny model holds).
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", "good.com")
+        proxy.SPECS = proxy.parse_specs()
+        proxy.REJECT_ONLY_MODE = not proxy.SPECS and bool(proxy.REJECT_SPECS)
+        assert proxy.REJECT_ONLY_MODE is False
+
+
 class TestRuleArgs:
     """The iptables rule shape: port-scoped vs all-ports (#2256)."""
 
@@ -1588,6 +1638,81 @@ class TestHandlePacket:
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_not_called()  # dropped, no response
+        fwd.assert_not_awaited()
+
+    async def test_rejected_name_sends_nxdomain_static(
+        self, proxy, monkeypatch
+    ):
+        # #2367: a rejected name is NXDOMAIN'd unconditionally (before the
+        # allow-list + consent), in BOTH modes. Static mode (no client).
+        monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(
+            proxy, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        fwd = AsyncMock()
+        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        s = MagicMock()
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
+        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+        fwd.assert_not_awaited()
+
+    async def test_rejected_name_nxdomain_even_with_client(
+        self, proxy, monkeypatch
+    ):
+        # Reject takes precedence over consent: even in interactive mode a
+        # rejected name NXDOMAINs (no resolve+record, no prompt).
+        monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(
+            proxy, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        rec = AsyncMock()
+        monkeypatch.setattr(proxy, "_forward_and_record", rec)
+        s = MagicMock()
+        client = MagicMock()
+        client.connected = True
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), client)
+        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+        rec.assert_not_awaited()
+
+    async def test_reject_only_mode_forwards_non_rejected(
+        self, proxy, monkeypatch
+    ):
+        # No allow-list but a reject-list, static: default-allow -- a
+        # non-rejected name forwards + learns (only rejected names NXDOMAIN).
+        monkeypatch.setattr(proxy, "query_name", lambda wire: "benign.test")
+        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(
+            proxy, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy, "REJECT_ONLY_MODE", True)
+        fwd = AsyncMock()
+        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        s = MagicMock()
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
+        fwd.assert_awaited_once_with(
+            s, b"q", ("1.2.3.4", 53), "benign.test", None
+        )
+        s.sendto.assert_not_called()
+
+    async def test_rejected_takes_precedence_over_allowed(
+        self, proxy, monkeypatch
+    ):
+        # A name in BOTH allowed + rejected is rejected (deny wins).
+        monkeypatch.setattr(proxy, "query_name", lambda wire: "dual.test")
+        monkeypatch.setattr(
+            proxy, "SPECS", [("dual.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(
+            proxy, "REJECT_SPECS", [("dual.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        fwd = AsyncMock()
+        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        s = MagicMock()
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
+        s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
         fwd.assert_not_awaited()
 
 

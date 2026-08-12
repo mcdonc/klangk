@@ -298,6 +298,7 @@ class Connection:
             setup_state=workspace.get("setup_state"),
             service_command=workspace.get("service_command"),
             allowed_domains=workspace.get("allowed_domains"),
+            rejected_domains=workspace.get("rejected_domains"),
             workspace_settings=workspace.get("settings"),
             egress_mode=workspace.get("egress_mode", "static"),
         )
