@@ -492,7 +492,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                               child: TextField(
                                 controller: _tmpSizeController,
                                 decoration: InputDecoration(
-                                  labelText: 'TMP Size',
+                                  labelText: '/tmp size',
                                   labelStyle: _labelStyle,
                                   floatingLabelStyle: _labelStyle,
                                   floatingLabelBehavior:

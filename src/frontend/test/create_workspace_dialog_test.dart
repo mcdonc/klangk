@@ -936,7 +936,7 @@ void main() {
         (w) => w is TextField && w.decoration?.labelText == 'PIDs Limit',
       );
       final tmpField = find.byWidgetPredicate(
-        (w) => w is TextField && w.decoration?.labelText == 'TMP Size',
+        (w) => w is TextField && w.decoration?.labelText == '/tmp size',
       );
 
       await tester.ensureVisible(idleField);

@@ -942,7 +942,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               child: TextField(
                 controller: _tmpSizeCtrl,
                 decoration: InputDecoration(
-                  labelText: 'TMP Size',
+                  labelText: '/tmp size',
                   labelStyle: labelStyle,
                   floatingLabelBehavior: FloatingLabelBehavior.always,
                   border: const OutlineInputBorder(),

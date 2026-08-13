@@ -284,7 +284,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                         classes="field-row",
                     )
                     yield Horizontal(
-                        Static("TMP size"),
+                        Static("/tmp size"),
                         Input(id="tmp_size", placeholder="e.g. 2g, 512m"),
                         classes="field-row",
                     )
@@ -918,7 +918,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
                         classes="field-row",
                     )
                     yield Horizontal(
-                        Static("TMP size"),
+                        Static("/tmp size"),
                         Input(
                             value=str(_s.get("tmp_size", "")),
                             id="tmp_size",
