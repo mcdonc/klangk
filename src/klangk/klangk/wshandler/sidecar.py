@@ -16,7 +16,7 @@ credential; the workspace id comes straight from the token.
 
 This is the klangkd half of #2311. The sidecar's kernel-level hold (suspending
 DNS queries, deferring NFQUEUE verdicts) + its WS client are implemented in
-the sidecar (``src/containers/network/proxy.py``); #2244 wires the decider
+the sidecar (the ``klangksidecar`` package, ``src/klangksidecar``); #2244 wires the decider
 fanout to :meth:`klangk.consent_coordinator.ConsentCoordinator.resolve`.
 """
 

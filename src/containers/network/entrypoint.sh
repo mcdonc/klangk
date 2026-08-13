@@ -131,4 +131,4 @@ $IPT -t nat -A OUTPUT -p tcp --dport 53 -m mark --mark "$MARK" -j RETURN
 $IPT -t nat -A OUTPUT -p udp --dport 53 -j REDIRECT --to-ports "$LISTEN_PORT"
 $IPT -t nat -A OUTPUT -p tcp --dport 53 -j REDIRECT --to-ports "$LISTEN_PORT"
 
-exec python3 /proxy.py
+exec python3 -m klangksidecar

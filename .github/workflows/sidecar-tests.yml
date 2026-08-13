@@ -1,0 +1,52 @@
+name: Sidecar Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/**]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test-sidecar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            sidecar:
+              - 'src/klangksidecar/**'
+              - '.github/workflows/sidecar-tests.yml'
+
+      - uses: actions/setup-python@v6
+        if: steps.filter.outputs.sidecar == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.filter.outputs.sidecar == 'true'
+        # The network sidecar as its own package (#2450): installs
+        # klangksidecar (proxy.py + its deps: dnspython, websockets) and the
+        # test extra. netfilterqueue is deliberately NOT a default install
+        # (it links libnetfilter_queue, Linux + CAP_NET_ADMIN only); proxy.py
+        # imports it lazily and degrades to a no-op when absent.
+        run: pip install -e 'src/klangksidecar/[test]'
+
+      - name: Run tests
+        if: steps.filter.outputs.sidecar == 'true'
+        # -n auto: run tests in parallel across CPUs (pytest-xdist). No
+        # coverage gate here (see src/klangksidecar/pyproject.toml): proxy.py's
+        # main()/signal paths run as PID 1 of the sidecar and are exercised
+        # end-to-end by test_network_sidecar_e2e.py, not by this unit suite.
+        run: python -m pytest src/klangksidecar/tests -v -n auto --durations=20
+
+      - name: Skip notice
+        if: steps.filter.outputs.sidecar != 'true'
+        run: echo "No sidecar package changes — skipping tests"
