@@ -32,6 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGKNETWORK_EGRESS_UPSTREAM` — operator-pinnable sidecar DNS upstream (#2424).**
+  When set in `klangkd`'s environment, the network sidecar's FQDN proxy forwards
+  workspace DNS to this resolver verbatim instead of auto-detecting a host
+  resolver. An operator may want every filtered workspace to use a specific
+  resolver (e.g. a corporate DNS); the interactive-egress smoketest also uses
+  it to point the sidecar at a controlled-DNS test fixture so chosen hostnames
+  resolve to single stable test IPs. Absent, behavior is unchanged (auto-detect).
+  Mirrors the existing `KLANGKNETWORK_EGRESS_MIN_TTL` / `SWEEP_INTERVAL` forwarding.
+
 - **`egress_mode: "allow"` — default-permit egress (#2406).** A third
   egress mode alongside `static` (default-deny) and `interactive`
   (consent-gated). An `allow` workspace permits every host except names in
