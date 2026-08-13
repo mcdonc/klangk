@@ -1,6 +1,7 @@
 """Tests for container: idle timeout parsing, activity tracking, callbacks, port allocation."""
 
 import asyncio
+import os
 import time
 import types
 from contextlib import ExitStack, contextmanager
@@ -745,6 +746,11 @@ class TestStartContainer:
         assert ws_container["labels"]["klangk.role"] == "workspace"
         assert sidecar["labels"]["klangk.workspace-name"] == slug
         assert ws_container["labels"]["klangk.workspace-name"] == slug
+        # #2342: both carry klangk.managed + the creating daemon's PID, so the
+        # dead-owner reap can cull either if its klangkd dies uncleanly.
+        for c in (sidecar, ws_container):
+            assert c["labels"]["klangk.managed"] == "true"
+            assert c["labels"]["klangk.pid"].isdigit()
 
     # --- #2254: FQDN network sidecar lifecycle ---
 
@@ -793,6 +799,10 @@ class TestStartContainer:
             kwargs["labels"]["klangk.instance"]
             == self.registry.app.state.util.instance_id()
         )
+        # #2342: managed + the creating daemon's PID, same as a workspace
+        # container, so the dead-owner reap covers sidecars too.
+        assert kwargs["labels"]["klangk.managed"] == "true"
+        assert kwargs["labels"]["klangk.pid"].isdigit()
         # #2286: shared klangk.workspace + role labels correlate the sidecar
         # with its workspace (supersedes the old klangk.network-sidecar).
         assert kwargs["labels"]["klangk.workspace"] == ws_id
@@ -2872,6 +2882,8 @@ class TestStartContainer:
         args, kwargs = p.create_container.call_args
         assert args[1] == self.registry.image_name
         assert kwargs["labels"]["klangk.managed"] == "true"
+        # #2342: the creating daemon's PID (dead-owner reap liveness signal).
+        assert kwargs["labels"]["klangk.pid"].isdigit()
         # #2286: shared label + role (supersedes klangk.workspace-id).
         assert kwargs["labels"]["klangk.workspace"] == workspace["id"]
         assert kwargs["labels"]["klangk.role"] == "workspace"
@@ -4584,6 +4596,229 @@ class TestReapInstanceContainers:
         ) as mocks:
             await self.registry.reap_instance_containers()
         mocks.remove_container.assert_awaited_once_with("good-1")
+
+
+class TestPidAlive:
+    """Unit tests for ``container._pid_alive`` — the liveness check the
+    dead-owner reap keys on (#2342)."""
+
+    def test_alive_when_process_exists(self):
+        with patch("klangk.container.os.kill", return_value=None):
+            assert container._pid_alive(12345) is True
+
+    def test_dead_when_no_such_process(self):
+        with patch("klangk.container.os.kill", side_effect=ProcessLookupError):
+            assert container._pid_alive(12345) is False
+
+    def test_alive_when_permission_denied(self):
+        # EPERM: the process exists but belongs to another user (e.g. a
+        # sibling klangkd under a different account) — assume alive so its
+        # containers are left alone.
+        with patch("klangk.container.os.kill", side_effect=PermissionError):
+            assert container._pid_alive(12345) is True
+
+    def test_current_process_is_alive_without_mock(self):
+        # The real liveness check (no os.kill mock) must see the running test
+        # process as alive — the property the dead-owner reap relies on to
+        # never self-reap (#1556).
+        assert container._pid_alive(os.getpid()) is True
+
+
+class TestReapDeadOwnerContainers:
+    """Tests for ``ContainerRegistry.reap_dead_owner_containers`` (#2342).
+
+    The companion to the per-instance reap: it culls ``klangk.managed=true``
+    containers whose owning klangkd (recorded in ``klangk.pid``) is no longer
+    running, while leaving label-less / live-owner / self-owned containers
+    alone.
+    """
+
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.state.container_registry
+
+    async def test_reaps_container_whose_owner_pid_is_dead(self):
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "dead-owner-1",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.instance": "ghost",
+                            "klangk.pid": "99999",
+                        },
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            with patch("klangk.container._pid_alive", return_value=False):
+                await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_awaited_once_with("dead-owner-1")
+
+    async def test_skips_container_whose_owner_pid_is_alive(self):
+        # A live owner (sibling klangkd, possibly mid-shutdown) always holds
+        # its own PID, so its containers read alive and are left alone (#1556).
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "live-owner-1",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.instance": "sibling",
+                            "klangk.pid": "4242",
+                        },
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            with patch("klangk.container._pid_alive", return_value=True):
+                await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_not_awaited()
+
+    async def test_never_reaps_current_instance_own_pid(self):
+        # Security property (#1556): a container stamped with THIS daemon's
+        # pid is skipped via the REAL liveness check — no _pid_alive mock —
+        # so a startup sweep can never self-reap. An inverted _pid_alive or a
+        # pid-label mis-parse would fail here.
+        mine = str(os.getpid())
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "self-1",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.instance": "sibling",
+                            "klangk.pid": mine,
+                        },
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_not_awaited()
+
+    async def test_skips_container_without_pid_label(self):
+        # Tolerant: a label-less container (older klangkd that did not stamp
+        # klangk.pid, possibly still running) is left alone — liveness cannot
+        # be decided (#2342 backwards-compat).
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "no-pid-label",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.instance": "old-version",
+                        },
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_not_awaited()
+
+    async def test_skips_container_with_unparseable_pid(self):
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "bad-pid",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.pid": "not-a-number",
+                        },
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_not_awaited()
+
+    async def test_skips_nonpositive_pid(self):
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "zero-pid",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.pid": "0",
+                        },
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_not_awaited()
+
+    async def test_skips_empty_id(self):
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {"Labels": {"klangk.pid": "99999"}},
+                    {"Id": "real-1", "Labels": {"klangk.pid": "99998"}},
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            with patch("klangk.container._pid_alive", return_value=False):
+                await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_awaited_once_with("real-1")
+
+    async def test_lists_all_managed_containers(self):
+        # The sweep spans all instances (not just this one), keyed on
+        # klangk.managed=true so it covers workspace + network-sidecar.
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(return_value=[]),
+        ) as mocks:
+            await self.registry.reap_dead_owner_containers()
+        mocks.list_containers.assert_awaited_once_with("klangk.managed=true")
+
+    async def test_podman_error_on_list_handled(self):
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                side_effect=podman.PodmanError(500, "fail")
+            ),
+        ):
+            await self.registry.reap_dead_owner_containers()
+        # Should not raise.
+
+    async def test_podman_error_on_remove_handled(self):
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "dead-owner-bad",
+                        "Labels": {"klangk.pid": "99999"},
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "remove failed")
+            ),
+        ) as mocks:
+            with patch("klangk.container._pid_alive", return_value=False):
+                await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_awaited_once_with("dead-owner-bad")
 
 
 class TestBrowserRegistry:

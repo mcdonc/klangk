@@ -366,6 +366,10 @@ class Lifecycle:
         registry = state.container_registry
         await registry.prewarm_podman()
         await registry.reap_instance_containers()
+        # #2342: reap containers whose creating klangkd died uncleanly (a
+        # different instance whose ID no live instance matches). Tolerant of
+        # label-less containers, so an older klangkd's live work is not culled.
+        await registry.reap_dead_owner_containers()
         registry.start_cleanup_loop()
         registry.start_health_loop()
         n = await state.workspaces.auto_start_workspaces()

@@ -104,6 +104,37 @@ def _is_named_volume(source: str) -> bool:
     return "/" not in source and not source.startswith(".")
 
 
+def _pid_alive(pid: int) -> bool:
+    """Return True if a process with ``pid`` is currently running.
+
+    Used by the dead-owner container reap
+    (:meth:`ContainerRegistry.reap_dead_owner_containers`) to decide whether
+    the klangkd that created a container (its PID recorded in the
+    ``klangk.pid`` label) is still alive.
+
+    ``os.kill(pid, 0)`` sends no signal — it only checks existence:
+    success ⇒ alive; ``ProcessLookupError`` (ESRCH) ⇒ no such process ⇒
+    dead; ``PermissionError`` (EPERM) ⇒ the process exists but is owned by
+    another user (e.g. a sibling klangkd run under a different account) ⇒
+    treat as alive so we leave its containers alone.
+
+    Deliberately a plain liveness check, **not** a process-identity check.
+    PIDs recycle, so a dead owner's PID can be reused by an unrelated
+    process and read falsely as "alive" — but that failure mode only ever
+    *misses a reap* (the leaked container keeps running, the pre-feature
+    behavior); it can never reap a live owner's containers, because a live
+    owner always holds its own PID and so always reads alive (#2342, #1556).
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Exists but not ours — another user's process; assume alive.
+        return True
+    return True
+
+
 class ContainerState:
     """Per-workspace container lifecycle state."""
 
@@ -1325,9 +1356,16 @@ class ContainerRegistry:
         # Label the network sidecar with this klangk instance so the startup reaper
         # (reap_instance_containers) and the shutdown orphan sweep cull any
         # network sidecar left behind by a failed stop — the same culling workspace
-        # containers get (#2254 review).
+        # containers get (#2254 review). #2342: klangk.managed + klangk.pid also
+        # let the dead-owner reap (reap_dead_owner_containers) cull a sidecar
+        # whose creating klangkd died uncleanly, the same as a workspace container.
         labels = {
+            "klangk.managed": "true",
             "klangk.instance": self.app.state.util.instance_id(),
+            # The main klangkd daemon process's PID — the liveness signal the
+            # dead-owner reap keys on (#2342). Not conmon / the container's
+            # PID 1 / a podman subprocess: those die with the daemon anyway.
+            "klangk.pid": str(os.getpid()),
             # #2286: a shared klangk.workspace label + a klangk.role label let
             # one `podman ps --filter label=klangk.workspace=<id>` correlate
             # the sidecar with its workspace; the slug is mirrored for
@@ -2139,6 +2177,9 @@ class ContainerRegistry:
             labels={
                 "klangk.managed": "true",
                 "klangk.instance": iid,
+                # The main klangkd daemon process's PID — the liveness signal
+                # the dead-owner reap keys on (#2342).
+                "klangk.pid": str(os.getpid()),
                 # #2286: shared label + role so one `podman ps --filter
                 # label=klangk.workspace=<id>` correlates the workspace with its
                 # network sidecar; the slug mirrors the name for exact-match
@@ -2546,6 +2587,86 @@ class ContainerRegistry:
             except podman.PodmanError as e:
                 logger.warning(
                     "Failed to reap leftover container %s: %s", cid[:12], e
+                )
+
+    async def reap_dead_owner_containers(self) -> None:
+        """Reap managed containers whose owning klangkd is no longer running.
+
+        The companion to :meth:`reap_instance_containers`. That one removes
+        *this* instance's own leftovers (always safe — the in-memory registry
+        starts empty, so there is nothing to adopt). This one removes
+        containers created by **other** klangkd instances whose owner process
+        has since died, which is the #2342 leak: an uncleanly-killed klangkd's
+        containers carry an instance ID no live instance matches, so they
+        would otherwise run forever (consuming memory, CPU, and the
+        NFQUEUE/iptables state in their netns).
+
+        Runs once at :func:`startup`, right after the per-instance reap, so
+        this instance's own leftovers are already gone before this scan. The
+        decision per container (listed by ``klangk.managed=true``, which spans
+        all instances):
+
+        - **No ``klangk.pid`` label → skip.** The container predates this
+          feature (an older klangkd that did not stamp the label — possibly
+          still running) or the label is unreadable; either way liveness
+          cannot be decided, so it is left alone. Tolerating label-less
+          containers keeps a new klangkd from culling an older sibling's live
+          work on a mixed-version host (#2342).
+        - **``klangk.pid`` names a live process → skip.** The owning klangkd
+          is still running — possibly a sibling, possibly mid-``shutdown``
+          (still alive, still owns its containers; its own ``shutdown()``
+          finishes the job). A live owner always holds its own PID, so its
+          containers always read alive and are never reaped here (#1556).
+        - **``klangk.pid`` names no live process → reap.** The owner is dead.
+          ``remove_container(force=True)`` stops-then-removes gracefully and
+          treats an already-gone container (404) as success; any other error
+          (e.g. a 409 from a concurrent removal) is caught and logged below,
+          so it never aborts the sweep. A container whose owner died
+          mid-shutdown — leaving podman finishing a stop — is thus handled
+          without racing conmon (at worst it surfaces as a logged warning on
+          one of the racers).
+
+        Liveness is a plain "is there a process with this PID?" check
+        (:func:`_pid_alive`), not a process-identity check. PID recycling can
+        make a dead owner's PID read falsely alive, but that only ever
+        *misses* a reap; it never reaps a live owner's containers. See #2342
+        for the full rationale.
+        """
+        try:
+            containers = await self.app.state.podman.list_containers(
+                "klangk.managed=true"
+            )
+        except (podman.PodmanError, OSError) as e:
+            logger.warning("Error scanning for dead-owner containers: %s", e)
+            return
+        for c in containers:
+            cid = c.get("Id") or c.get("ID", "")
+            if not cid:
+                continue
+            labels = c.get("Labels") or {}
+            pid_label = labels.get("klangk.pid")
+            if not pid_label:
+                # Tolerant: no pid label → can't decide liveness → leave it.
+                continue
+            try:
+                owner_pid = int(pid_label)
+            except (TypeError, ValueError):
+                continue  # unparseable pid → treat as no label → leave it
+            if owner_pid <= 0 or _pid_alive(owner_pid):
+                continue  # owner still running → leave it (#1556)
+            logger.info(
+                "Reaping dead-owner container %s "
+                "(owner pid %d no longer running)",
+                cid[:12],
+                owner_pid,
+            )
+            try:
+                await self.app.state.podman.remove_container(cid)
+            except podman.PodmanError as e:
+                logger.warning(
+                    "Failed to reap dead-owner container %s: %s",
+                    cid[:12],
+                    e,
                 )
 
     # --- Shutdown ---

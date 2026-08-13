@@ -762,6 +762,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Dead-owner container reap at startup (#2342).** klangkd now stamps each
+  workspace + network-sidecar container with the creating daemon's PID
+  (`klangk.pid`; the sidecar also gains `klangk.managed=true`), and on startup
+  removes any `klangk.managed=true` container whose recorded PID is no longer
+  a live process — cleaning up workspaces a crashed or killed klangkd left
+  running. Containers without a `klangk.pid` (from an older klangkd, possibly
+  still running) are skipped, and a container whose owner is still alive is
+  never touched.
+
 - **Workspace export/import now round-trips `egress_mode` (#2402).** The
   export endpoint previously omitted `egress_mode` from the serialized
   metadata, and import did not read it, so a `static` (or `allow`)
