@@ -1966,8 +1966,11 @@ class SmokeTest:
         allow rule (per IP) can't paper over the L7 hostname spec, so each scope
         mode is observable on the real stack:
           * bare ``exact.test`` (EXACT): apex covered, subdomain NOT.
-          * ``.incl.test`` (INCLUSIVE): apex + subdomains covered.
-          * ``*.wild.test`` (SUBDOMAINS): subdomains covered, apex NOT.
+          * ``.incl.test`` (INCLUSIVE): apex + subdomains covered, including
+            a *multi-level* subdomain (``a.b.incl.test``) -- pins the
+            ``endswith('.host')`` boundary at depth > 1, not just one label.
+          * ``*.wild.test`` (SUBDOMAINS): subdomains covered (incl. deep),
+            apex NOT.
         Driven via a dedicated interactive workspace + a raw decider scoped to
         it. Needs controlled DNS (skipped otherwise)."""
         if not self.args.host_scope:
@@ -1992,8 +1995,15 @@ class SmokeTest:
             ("sub.exact.test", False, "exact(sub) NOT covered"),
             ("incl.test", True, "inclusive(apex) covered"),
             ("sub.incl.test", True, "inclusive(sub) covered"),
+            # Multi-level subdomain (#2442): ``.host`` is endswith('.host'),
+            # so a >1-label-deep name must also be covered. Asserted here (not
+            # just in the model) at the sidecar DNS/consent layer via its own
+            # distinct controlled IP.
+            ("a.b.incl.test", True, "inclusive(deep sub) covered"),
             ("wild.test", False, "subdomains(apex) NOT covered"),
             ("sub.wild.test", True, "subdomains(sub) covered"),
+            # Symmetric deep-sub assertion for ``*.host`` (same endswith branch).
+            ("a.b.wild.test", True, "subdomains(deep sub) covered"),
         ]
         for host, _covered, _label in cases:
             self.dns.allocate(host)
