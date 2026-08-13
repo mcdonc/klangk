@@ -286,12 +286,12 @@ in
 
   # Network sidecar unit suite — the standalone klangksidecar package
   # (#2450). Separate invocation (not folded into test-backend) because it
-  # has its own rootdir (src/sidecar/pyproject.toml) with NO coverage gate —
-  # proxy.py's main()/signal paths are exercised by the real-podman e2e, not
-  # here. CI mirrors this via .github/workflows/sidecar-tests.yml.
+  # has its own rootdir (src/klangksidecar/pyproject.toml) with NO coverage
+  # gate — proxy.py's main()/signal paths are exercised by the real-podman
+  # e2e, not here. CI mirrors this via .github/workflows/sidecar-tests.yml.
   scripts.test-sidecar.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/sidecar/tests -v -n auto "$@"
+    exec python -m pytest src/klangksidecar/tests -v -n auto "$@"
   '';
 
   # Both unit suites, no coverage gate — the fast "does it all pass?"
@@ -356,7 +356,7 @@ in
     python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
       -v -n auto --no-cov "$@"
     echo "=== sidecar unit ==="
-    python -m pytest src/sidecar/tests -v -n auto --no-cov "$@"
+    python -m pytest src/klangksidecar/tests -v -n auto --no-cov "$@"
     echo "=== server e2e ==="
     python -m pytest src/klangk/klangkd-tests/e2e-tests \
       -v --no-cov -n 2 --dist=loadscope "$@"

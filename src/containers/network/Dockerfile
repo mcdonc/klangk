@@ -3,7 +3,7 @@
 #
 # Build context is this directory (entrypoint.sh is COPY'd in). The
 # klangksidecar wheel arrives via a named context (``--build-context sidecar=``,
-# staged by scripts/build-network-sidecar.sh from src/sidecar): the sidecar
+# staged by scripts/build-network-sidecar.sh from src/klangksidecar): the sidecar
 # runs the *installed package* — its deps (dnspython + websockets) and the
 # NFQUEUE consumer (netfilterqueue, via the [nfqueue] extra) come from the
 # wheel's metadata — rather than a hand-copied proxy.py. proxy.py is a single

@@ -47,7 +47,7 @@ import pytest
 
 # The network sidecar image source (entrypoint.sh + Dockerfile), relative to
 # this e2e-tests dir. The proxy itself arrives as the klangksidecar wheel
-# (built from src/sidecar, #2450) and is staged into the build via a named
+# (built from src/klangksidecar, #2450) and is staged into the build via a named
 # context (``--build-context sidecar=``), mirroring
 # scripts/build-network-sidecar.sh — the image installs the wheel rather than
 # a hand-copied proxy.py.

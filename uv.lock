@@ -1154,7 +1154,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "klangksidecar"
-source = { editable = "src/sidecar" }
+source = { editable = "src/klangksidecar" }
 dependencies = [
     { name = "dnspython" },
     { name = "websockets" },

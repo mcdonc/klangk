@@ -1,4 +1,4 @@
-"""Unit tests for the network sidecar's DNS proxy (``src/sidecar/proxy.py``).
+"""Unit tests for the network sidecar's DNS proxy (``src/klangksidecar/proxy.py``).
 
 This is the standalone ``klangksidecar`` package's copy of the proxy
 (#2450): a byte-for-byte duplicate of ``src/containers/network/proxy.py``
@@ -31,8 +31,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # proxy.py is a standalone script (not a package module) — load it straight
-# from its source path. test_proxy.py is at src/sidecar/tests/, so parents[1]
-# is the package root (src/sidecar/).
+# from its source path. test_proxy.py is at src/klangksidecar/tests/, so parents[1]
+# is the package root (src/klangksidecar/).
 _PROXY_PATH = Path(__file__).resolve().parents[1] / "proxy.py"
 
 
