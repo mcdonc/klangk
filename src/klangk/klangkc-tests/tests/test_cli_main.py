@@ -4305,7 +4305,7 @@ class TestSandboxCommand:
         # #2404: --force re-setup flips egress_mode back to 'allow' and
         # restarts first (a prior run reset it to interactive).
         client.update_workspace.assert_called_once_with(
-            ws.id, egress_mode="allow"
+            ws.id, egress_mode="allow", setup_state="pending"
         )
         client.restart_workspace_by_id.assert_called_once_with(ws.id)
 
@@ -4449,7 +4449,6 @@ class TestSandboxSetupOnly:
 
         config = SandboxConfig(
             setup="setup.sh",
-            service_command="openclaw gateway",
             auto_start=True,
         )
 
@@ -4498,7 +4497,7 @@ class TestSandboxSetupOnly:
         from klangk.cli.sandbox import SandboxConfig
 
         config = SandboxConfig(
-            setup="setup.sh", service_command="openclaw gateway"
+            setup="setup.sh",
         )
 
         mock_ws = AsyncMock()
@@ -4530,6 +4529,104 @@ class TestSandboxSetupOnly:
         mock_client.config.assert_called_once_with()
         mock_client.update_workspace.assert_not_called()
         mock_client.stop_workspace_by_id.assert_not_called()
+
+    async def test_fires_service_command_when_left_in_allow(self):
+        """Staying in allow keeps the container running -> fire the service cmd.
+
+        An auto-start sandbox is left in allow with its container running, so
+        the service command must still fire after setup (#1033, deferred until
+        setup_state is complete) -- otherwise an unattended service workspace
+        would never start its service. The reset branch omits this (it stops
+        the container; the service re-fires on the next start).
+        """
+        from pathlib import Path
+
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            setup="setup.sh",
+            service_command="openclaw gateway",
+            auto_start=True,
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "container_ready"}),
+                json.dumps({"type": "terminal_started"}),
+            ]
+        )
+        mock_client = MagicMock()
+
+        with (
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
+            await sandbox_setup_only(
+                "http://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+                client=mock_client,
+            )
+
+        # Left in allow (not reset / not stopped) AND the service command fired.
+        mock_client.update_workspace.assert_not_called()
+        mock_client.stop_workspace_by_id.assert_not_called()
+        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
+        assert any(m.get("cmd") == "terminal_start" for m in sent)
+
+    async def test_terminal_start_disconnect_when_left_in_allow(self):
+        """A closed connection while awaiting terminal_started is tolerated."""
+        from pathlib import Path
+
+        import websockets
+
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            setup="setup.sh",
+            service_command="openclaw gateway",
+            auto_start=True,
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "container_ready"}),
+                websockets.ConnectionClosed(None, None),
+            ]
+        )
+        mock_client = MagicMock()
+
+        with (
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
+            # Must not raise / hang waiting for terminal_started.
+            await sandbox_setup_only(
+                "http://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+                client=mock_client,
+            )
 
     async def test_marks_setup_state_pending_then_complete(self):
         """With a client, sandbox_setup_only marks pending then complete (#1033)."""
