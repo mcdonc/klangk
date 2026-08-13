@@ -835,6 +835,11 @@ class TestLifespan:
                 "reap_instance_containers",
                 new_callable=AsyncMock,
             ) as mock_adopt,
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
+                new_callable=AsyncMock,
+            ),
             patch.object(registry, "start_cleanup_loop") as mock_start,
             patch.object(
                 registry,
@@ -893,6 +898,11 @@ class TestLifespan:
                 "reap_instance_containers",
                 new_callable=AsyncMock,
             ),
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
+                new_callable=AsyncMock,
+            ),
             patch.object(registry, "start_cleanup_loop"),
             patch.object(registry, "shutdown", new_callable=AsyncMock),
             patch.object(util_mod.Util, "check_pid_file", return_value=None),
@@ -948,6 +958,11 @@ class TestStartupShutdownRestart:
                 "reap_instance_containers",
                 new_callable=AsyncMock,
             ) as mock_adopt,
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
+                new_callable=AsyncMock,
+            ),
             patch.object(registry, "start_cleanup_loop") as mock_cleanup,
             patch.object(registry, "start_health_loop") as mock_health,
             patch.object(
@@ -1436,6 +1451,11 @@ class TestStartupShutdownRestart:
             patch.object(
                 registry,
                 "reap_instance_containers",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
                 new_callable=AsyncMock,
             ),
             patch.object(registry, "start_cleanup_loop"),
