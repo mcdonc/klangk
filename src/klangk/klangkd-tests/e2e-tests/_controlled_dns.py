@@ -64,11 +64,11 @@ DEFAULT_IMAGE = "localhost/klangk-network-sidecar:latest"
 DEFAULT_NETWORK = "podman"
 # Secondary IPs are assigned in a high slice of the subnet's /24 (the gateway
 # is reliably the .1, so <gw-first-three>.200+ is free of podman's low DHCP
-# range). 16 IPs is plenty for the host-scope phase's ~8 distinct names (apex
-# + single/deep sub per scope mode, #2442) plus the snapshot/port phases, with
-# headroom.
+# range). 32 IPs covers the host-scope (#2442 multi-level subdomains),
+# snapshot, port-scope, coresident and per-connection-cache / fan-out phases
+# all running at once (~27 distinct names), with headroom.
 _IP_SLICE_START = 200
-_IP_SLICE_SIZE = 16
+_IP_SLICE_SIZE = 32
 # Forward unknown queries here (a public resolver the container can reach over
 # its unrestricted egress). The rest of the smoketest's real hosts resolve
 # through this, so the controlled upstream is a drop-in replacement.
