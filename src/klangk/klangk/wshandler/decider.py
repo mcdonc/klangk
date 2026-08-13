@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -55,11 +56,23 @@ logger = logging.getLogger(__name__)
 
 async def handle_consent_decider(websocket: WebSocket, app) -> None:
     """Register a consent decider for its connection lifetime + act on holds."""
+    # #2420: time the pre-accept steps so an intermittent opening-handshake
+    # timeout (DECIDER2-HANDSHAKE) is attributable from a logged run -- a slow
+    # step names the in-handler culprit; a small total whose wall-clock lags
+    # the client's connect by the timeout means the stall is pre-handler
+    # (event loop / uvicorn / reverse proxy), not in the accept path.
+    _hs_t0 = time.monotonic()
+    _hs_marks: list[tuple[str, float]] = []
+
+    def _hs_mark(label: str) -> None:
+        _hs_marks.append((label, time.monotonic()))
+
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4001, reason="Missing token")
         return
     result = await app.state.auth.get_user_from_token(token)
+    _hs_mark("token")
     if result is auth.Auth.TOKEN_EXPIRED:
         await websocket.close(code=4002, reason="Token expired")
         return
@@ -84,6 +97,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     if not allowed:
         await websocket.close(code=4003, reason="Forbidden")
         return
+    _hs_mark("authz")
 
     # #2394: a static-mode workspace never holds egress for a human decision
     # (its non-allow-listed egress is denied immediately with a static
@@ -112,7 +126,19 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
             )
             return
 
+    _hs_mark("workspace")
     await websocket.accept()
+    _hs_mark("accept")
+    _prev = _hs_t0
+    _parts: list[str] = []
+    for label, t in _hs_marks:
+        _parts.append(f"{label}={(t - _prev) * 1000:.0f}ms")
+        _prev = t
+    logger.info(
+        "consent decider handshake accepted: %.0fms (%s)",
+        (_hs_marks[-1][1] - _hs_t0) * 1000,
+        " ".join(_parts),
+    )
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
     registry = app.state.consent_deciders
