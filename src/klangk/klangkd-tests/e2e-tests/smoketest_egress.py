@@ -1625,16 +1625,39 @@ class SmokeTest:
 
         For an allow and a deny: decide 5s -> within-retry (verdict in effect)
         -> wait past the 5s window -> exceeding-retry (verdict expired, fresh
-        re-prompt). The within-retry is best-effort (CDN IP rotation can
-        re-prompt a freshly-learned IP -> finding); the exceeding-retry is the
-        deterministic expiry check.
+        re-prompt). Run under controlled DNS (#2424) so each case is a single
+        stable IP: a real host's CDN rotation or long DNS TTL can leave a
+        learned ACCEPT rule past a 5s verdict and mask the expiry (the
+        allow/deny asymmetry of #2465 -- the allow's DNS-path learn used the
+        DNS TTL, so it outlived the verdict; the deny records no such learn).
+        SKIPPED (with a note) when controlled DNS is off, since without
+        single-IP hosts the exceeding-retry is indeterminate.
         """
         if not self.args.lifecycle:
             return
-        print("\n--- duration lifecycle: within vs exceeding a 5s verdict ---")
+        if self.dns is None:
+            print(
+                "\n--- duration lifecycle: SKIPPED (--no-controlled-dns; the "
+                "exceeding-retry is indeterminate without single-IP test hosts "
+                "-- a real host's CDN rotation / long DNS TTL can keep a timed "
+                "allow's learned rule past its verdict, masking the expiry, "
+                "#2424/#2465) ---"
+            )
+            return
+        print(
+            "\n--- duration lifecycle: within vs exceeding a 5s verdict "
+            "(controlled DNS -> hard PASS/FAIL) ---"
+        )
+        # Single stable IPs (one per case) so the exceeding-retry is
+        # deterministic: each controlled name fronts the fixture's :443 HTTPS
+        # target (curl -k). The fixture's 60s DNS TTL no longer matters -- the
+        # DNS-path learn is capped at the verdict's window (#2465) -- but it is
+        # exactly the long-TTL condition that masked the bug on real hosts.
+        host_allow, host_deny = "life-allow.test", "life-deny.test"
+        self.dns.allocate_pair(host_allow, host_deny)
         cases = [
-            ("www.example.org", DECISION_ALLOWED, "allow", EXPECT_RELEASED),
-            ("api.github.com", DECISION_DENIED, "deny", EXPECT_REFUSED),
+            (host_allow, DECISION_ALLOWED, "allow", EXPECT_RELEASED),
+            (host_deny, DECISION_DENIED, "deny", EXPECT_REFUSED),
         ]
         for host, decision, label, main_conn in cases:
             if self._abort:

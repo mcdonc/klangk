@@ -497,6 +497,47 @@ def _session_host_allows_ttl(host: str, port: int) -> float | None:
     return best
 
 
+def _session_allow_rule_cap(qname: str) -> float | None:
+    """Min remaining TTL bounding a DNS-path learned rule for ``qname``, or
+    ``None`` (#2465).
+
+    A timed consent allow adds the host to :data:`_SESSION_HOST_ALLOWS`, so
+    :func:`ports_for` treats it as allow-listed and the DNS path
+    (:func:`_respond_allowed` -> :func:`_learn_all`) learns every resolved IP.
+    That learn used to install the ACCEPT rule for the response's DNS TTL --
+    often minutes -- so a short verdict (5s) left a rule that outlived it: a
+    retry past the window connected with no re-prompt (the allow/deny asymmetry
+    of #2465 -- the deny side records no DNS-path learn, so it expired on
+    time). The cap returned here bounds the rule's TTL at the min remaining
+    across matching session allows, so the rule lapses with the verdict and a
+    retry past the window re-prompts.
+
+    ``None`` (no cap -- use the DNS TTL) when a static :data:`SPECS` entry
+    matches: a static allow is forever, so the DNS TTL is the correct rule
+    lifetime, and capping it would expire the rule early and -- in the gap
+    between rule expiry and the next resolve -- re-prompt a forever-allowed
+    host (a static spec has no NFQUEUE gate, only the learned rule covers its
+    SYN). Also ``None`` when no session allow matches (a static-only or
+    non-allow-listed name learns at its DNS TTL). Loop-only (reads
+    :data:`_SESSION_HOST_ALLOWS`); computed on the event-loop thread in
+    :func:`_respond_allowed` and passed to :func:`_learn_all`, which runs
+    off-loop in the executor.
+    """
+    if any(_host_matches(qname, host, mode) for host, _port, mode in SPECS):
+        return None  # a static spec matches -> forever -> DNS TTL is correct
+    _prune_session_allows()
+    now = time.time()
+    best: float | None = None
+    for host, _port, mode, exp in _SESSION_HOST_ALLOWS:
+        if exp <= now:
+            continue
+        if _host_matches(qname, host, mode):
+            remaining = exp - now
+            if best is None or remaining < best:
+                best = remaining
+    return best
+
+
 def _prune_session_denies() -> None:
     """Drop expired in-session host denies (lazy sweep, #2446).
 
@@ -931,12 +972,25 @@ def check_mark() -> None:
         probe.close()
 
 
-def _learn_all(recs: list[tuple[str, int]], ports: set[int | None]) -> None:
+def _learn_all(
+    recs: list[tuple[str, int]],
+    ports: set[int | None],
+    cap: float | None = None,
+) -> None:
     """Install the ACCEPT rule for each learned IP/port (sync; runs in the
-    executor so the iptables forks don't block the event loop)."""
+    executor so the iptables forks don't block the event loop).
+
+    ``cap``, when not ``None``, bounds each rule's TTL at ``min(dns_ttl, cap)``
+    so a timed session-allow's learned rule does not outlive its verdict
+    (#2465). The host mapping -- set earlier by :func:`_record_hosts` at the
+    DNS TTL, ahead of the consent allow -- is untouched: :func:`allow`'s
+    ``max`` keeps the longer mapping lifetime so :func:`_host_for` still names
+    the host for a fresh re-prompt after the verdict lapses (#2408).
+    """
     for ip, ttl in recs:
+        rule_ttl = ttl if cap is None else min(ttl, cap)
         for port in ports:
-            allow(ip, port, ttl)
+            allow(ip, port, rule_ttl)
 
 
 def _record_hosts(recs: list[tuple[str, int]], host: str) -> None:
@@ -996,9 +1050,17 @@ async def _respond_allowed(
         recs = a_records_with_ttl(resp)
     except Exception:
         recs = []
+    # Bound a timed session-allow's learned rule at its verdict's remaining
+    # window (#2465): without this the DNS-path learn uses the response's DNS
+    # TTL (often minutes), so a 5s allow leaves a rule that outlives it and a
+    # retry past the window connects with no re-prompt. None for a static spec
+    # (forever) or no session allow -- the DNS TTL is correct then. Computed
+    # on the loop (reads loop-only _SESSION_HOST_ALLOWS) before the executor
+    # fork below.
+    cap = _session_allow_rule_cap(qname) if recs else None
     try:
         if recs:
-            await loop.run_in_executor(None, _learn_all, recs, ports)
+            await loop.run_in_executor(None, _learn_all, recs, ports, cap)
         if DEBUG:
             print(
                 f"allow {qname} -> {[ip for ip, _ in recs]} ports={_fmt_ports(ports)}",

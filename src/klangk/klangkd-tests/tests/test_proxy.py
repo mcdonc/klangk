@@ -263,6 +263,83 @@ class TestPortsFor:
         )
         assert proxy._session_host_allows_ttl("example.com", 8080)
 
+    def test_session_allow_rule_cap_returns_remaining(
+        self, proxy, monkeypatch
+    ):
+        # #2465: the DNS-path learn cap. A timed session allow bounds the
+        # learned ACCEPT rule at its remaining window so the rule lapses with
+        # the verdict (not the response's DNS TTL). Returns the min remaining
+        # across matching entries; EXACT scope (#2377 -- only the approved
+        # host, not its subdomains).
+        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(
+            proxy,
+            "_SESSION_HOST_ALLOWS",
+            [("example.com", 443, proxy._EXACT, 1005.0)],  # 5s remaining
+        )
+        assert proxy._session_allow_rule_cap("example.com") == 5.0
+        assert (
+            proxy._session_allow_rule_cap("api.example.com") is None
+        )  # exact -> no subdomain
+        assert proxy._session_allow_rule_cap("other.com") is None
+
+    def test_session_allow_rule_cap_none_for_static_spec(
+        self, proxy, monkeypatch
+    ):
+        # A static SPECS entry is a forever allow, so the DNS TTL is the correct
+        # rule lifetime -- no cap (capping would expire the rule early and
+        # re-prompt a forever-allowed host in the gap before the next resolve;
+        # a static spec has no NFQUEUE gate, only the learned rule). Returns
+        # None even when a session allow also matches.
+        monkeypatch.setattr(
+            proxy, "SPECS", [("example.com", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(
+            proxy,
+            "_SESSION_HOST_ALLOWS",
+            [("example.com", 443, proxy._EXACT, 1005.0)],
+        )
+        assert proxy._session_allow_rule_cap("example.com") is None
+
+    def test_session_allow_rule_cap_expired_entry_pruned(
+        self, proxy, monkeypatch
+    ):
+        # A session allow past its window is pruned (lazy sweep) -> no match ->
+        # None. This is the within-vs-exceeding boundary: once the verdict has
+        # lapsed, the DNS path stops bounding (and, via ports_for, stops
+        # learning) the host.
+        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(
+            proxy,
+            "_SESSION_HOST_ALLOWS",
+            [("example.com", 443, proxy._EXACT, 999.0)],  # already expired
+        )
+        assert proxy._session_allow_rule_cap("example.com") is None
+        assert proxy._SESSION_HOST_ALLOWS == []  # pruned
+
+    def test_session_allow_rule_cap_min_across_entries(
+        self, proxy, monkeypatch
+    ):
+        # Two session allows for the host (different ports) -> the most
+        # restrictive (min remaining) bounds the rule. (Multi-port combo is an
+        # edge case; the min is a conservative bound -- a longer-lived port's
+        # rule may lapse early, but its session allow still covers the SYN at
+        # the NFQUEUE gate, so no re-prompt.)
+        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(
+            proxy,
+            "_SESSION_HOST_ALLOWS",
+            [
+                ("example.com", 443, proxy._EXACT, 1005.0),  # 5s
+                ("example.com", 8443, proxy._EXACT, 1300.0),  # 300s
+            ],
+        )
+        assert proxy._session_allow_rule_cap("example.com") == 5.0
+
     def test_add_session_deny_dedups_and_refreshes(self, proxy, monkeypatch):
         # Mirror of test_add_session_host_dedups_and_refreshes (#2446): a
         # re-deny of the same host:port refreshes the expiry (max -- never
@@ -608,6 +685,71 @@ class TestTTLAndSweep:
         assert kept["ports"] == set()
         assert kept["host"] == "evil.test"
 
+    def test_consent_allow_dns_learn_cap_not_extended_past_verdict(
+        self, learned, monkeypatch
+    ):
+        # #2465 regression (the DNS-learn path -- the half #2408's
+        # _record_hosts test did NOT cover): a timed consent allow host-scopes
+        # into _SESSION_HOST_ALLOWS, so every re-resolve during the window goes
+        # through the DNS-path learn (_respond_allowed -> _learn_all). That
+        # learn used to install the ACCEPT rule for the response's DNS TTL
+        # (often minutes), extending rule_expire PAST the verdict -- so a retry
+        # past the window connected with no re-prompt. _learn_all's ``cap``
+        # bounds the rule at the verdict's remaining window; sweep removes the
+        # rule at the verdict, keeping the host mapping so _host_for names the
+        # host for the fresh re-prompt.
+        monkeypatch.setattr(
+            learned.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=1),
+        )
+        removed = []
+        monkeypatch.setattr(
+            learned, "_remove", lambda ip, port: removed.append((ip, port))
+        )
+        monkeypatch.setattr(learned.time, "time", lambda: 0.0)
+        # initial resolve (host mapping at the DNS TTL) + a 5s consent allow.
+        learned._record_hosts([("1.2.3.4", 300)], "example.com")
+        learned.allow("1.2.3.4", 443, 5)  # verdict rule (rule_expire ~MIN_TTL)
+        verdict = learned._LEARNED["1.2.3.4"]["rule_expire"]
+        # a re-resolve during the window (DNS TTL 300), capped at the verdict's
+        # remaining window, must NOT extend rule_expire.
+        learned._learn_all([("1.2.3.4", 300)], {443}, cap=5)
+        rec = learned._LEARNED["1.2.3.4"]
+        assert (
+            rec["rule_expire"] == verdict
+        )  # NOT 300 -- bounded at the verdict
+        assert rec["expire"] > verdict  # host mapping keeps the longer DNS TTL
+        # sweep at the verdict -> rule gone, record retained for naming.
+        gone = learned.sweep_once(now=verdict)
+        assert gone == [("1.2.3.4", {443})]
+        assert removed == [("1.2.3.4", 443)]
+        kept = learned._LEARNED["1.2.3.4"]
+        assert kept["ports"] == set()
+        assert kept["host"] == "example.com"
+
+    def test_consent_allow_dns_learn_uncapped_extends_past_verdict(
+        self, learned, monkeypatch
+    ):
+        # The inverse of the cap test (documents the #2465 bug): WITHOUT the
+        # cap, the DNS-path learn uses the DNS TTL and extends rule_expire past
+        # the verdict -- the rule outlives the verdict, so sweep at the verdict
+        # leaves it in place (the retry-past-window connects with no
+        # re-prompt). This is the behavior _learn_all's ``cap`` corrects.
+        monkeypatch.setattr(
+            learned.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=1),
+        )
+        monkeypatch.setattr(learned.time, "time", lambda: 0.0)
+        learned._record_hosts([("1.2.3.4", 300)], "example.com")
+        learned.allow("1.2.3.4", 443, 5)
+        verdict = learned._LEARNED["1.2.3.4"]["rule_expire"]
+        learned._learn_all([("1.2.3.4", 300)], {443})  # NO cap
+        assert (
+            learned._LEARNED["1.2.3.4"]["rule_expire"] > verdict
+        )  # extended past the verdict -> the bug
+
     def test_reject_installs_reject_rule_and_records(
         self, learned, monkeypatch
     ):
@@ -849,6 +991,114 @@ class TestRespondAllowedSwallowsFailures:
         assert ("5.6.7.8", 443, 200) in calls
         assert ("5.6.7.8", 8443, 200) in calls
         s.sendto.assert_called_once_with(b"resp", ("127.0.0.1", 1234))
+
+    async def test_respond_allowed_caps_rule_at_session_allow_window(
+        self, proxy, monkeypatch
+    ):
+        # #2465 regression: a timed session allow's DNS-path learn must NOT
+        # install the ACCEPT rule for the response's (long) DNS TTL -- that
+        # left a rule outliving a 5s verdict, so a retry past the window
+        # connected with no re-prompt. The rule TTL is bounded at the session
+        # allow's remaining window (here 5s), not the 300s DNS TTL.
+        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.time, "time", lambda: 1000.0)
+        monkeypatch.setattr(
+            proxy,
+            "_SESSION_HOST_ALLOWS",
+            [("example.com", 443, proxy._EXACT, 1005.0)],  # 5s remaining
+        )
+        monkeypatch.setattr(
+            proxy,
+            "a_records_with_ttl",
+            lambda wire: [("1.2.3.4", 300)],  # DNS TTL 300s
+        )
+        calls = []
+        monkeypatch.setattr(
+            proxy, "allow", lambda ip, port, ttl: calls.append((ip, port, ttl))
+        )
+        s = MagicMock()
+        await proxy._respond_allowed(
+            s, b"resp", ("127.0.0.1", 1234), "example.com", {443}
+        )
+        assert ("1.2.3.4", 443, 5) in calls  # capped at the verdict window
+        # the 300s DNS TTL must NOT reach the rule for this session-allowed host.
+        assert all(ttl <= 5 for _ip, _port, ttl in calls)
+
+    async def test_respond_allowed_no_cap_for_static_spec(
+        self, proxy, monkeypatch
+    ):
+        # A static SPECS entry is forever -> the DNS TTL is the correct rule
+        # lifetime (no cap). Capping would expire the rule early and, in the
+        # gap before the next resolve, re-prompt a forever-allowed host (a
+        # static spec has no NFQUEUE gate).
+        monkeypatch.setattr(
+            proxy, "SPECS", [("example.com", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(
+            proxy,
+            "a_records_with_ttl",
+            lambda wire: [("1.2.3.4", 300)],
+        )
+        calls = []
+        monkeypatch.setattr(
+            proxy, "allow", lambda ip, port, ttl: calls.append((ip, port, ttl))
+        )
+        s = MagicMock()
+        await proxy._respond_allowed(
+            s, b"resp", ("127.0.0.1", 1234), "example.com", {None}
+        )
+        assert ("1.2.3.4", None, 300) in calls  # DNS TTL, not capped
+
+    async def test_respond_allowed_no_cap_when_no_session_allow(
+        self, proxy, monkeypatch
+    ):
+        # No session allow and no static spec for the qname -> no cap. (In
+        # production ports_for would have denied this name, so _respond_allowed
+        # would not run; the cap helper still returns None defensively.)
+        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy, "_SESSION_HOST_ALLOWS", [])
+        monkeypatch.setattr(
+            proxy,
+            "a_records_with_ttl",
+            lambda wire: [("1.2.3.4", 300)],
+        )
+        calls = []
+        monkeypatch.setattr(
+            proxy, "allow", lambda ip, port, ttl: calls.append((ip, port, ttl))
+        )
+        s = MagicMock()
+        await proxy._respond_allowed(
+            s, b"resp", ("127.0.0.1", 1234), "example.com", {443}
+        )
+        assert ("1.2.3.4", 443, 300) in calls  # DNS TTL, not capped
+
+    def test_learn_all_cap_bounds_each_rule_ttl(self, proxy, monkeypatch):
+        # _learn_all threads the cap through to allow() as min(dns_ttl, cap),
+        # per IP/port. The host mapping (set separately by _record_hosts at the
+        # DNS TTL) is unaffected.
+        monkeypatch.setattr(proxy.time, "time", lambda: 0.0)
+        calls = []
+        monkeypatch.setattr(
+            proxy, "allow", lambda ip, port, ttl: calls.append((ip, port, ttl))
+        )
+        proxy._learn_all(
+            [("1.2.3.4", 300), ("5.6.7.8", 60)], {443, 8443}, cap=5
+        )
+        # every rule TTL is capped at 5 (min of dns_ttl and cap).
+        assert all(ttl == 5 for _ip, _port, ttl in calls)
+        assert ("1.2.3.4", 443, 5) in calls
+        assert ("5.6.7.8", 8443, 5) in calls
+
+    def test_learn_all_no_cap_uses_dns_ttl(self, proxy, monkeypatch):
+        # Backward compat: cap defaults to None -> the DNS TTL reaches allow()
+        # unchanged (the static-spec path).
+        monkeypatch.setattr(proxy.time, "time", lambda: 0.0)
+        calls = []
+        monkeypatch.setattr(
+            proxy, "allow", lambda ip, port, ttl: calls.append((ip, port, ttl))
+        )
+        proxy._learn_all([("1.2.3.4", 300)], {443})
+        assert calls == [("1.2.3.4", 443, 300)]
 
 
 class TestConsentForward:
