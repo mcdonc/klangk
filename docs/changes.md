@@ -532,7 +532,7 @@ operators or integrators to act when upgrading.
 - **Revoking a `forever` verdict retracts its durable list entry (#2370,
   #2339).** Revoking a `forever` allow/deny now removes the host from
   `allowed_domains`/`rejected_domains` (not just the in-memory sidecar rule),
-  and the sidecar clears its in-session `_FOREVER_HOSTS`/`_VERDICT_CACHE` for
+  and the sidecar clears its in-session `_SESSION_HOST_ALLOWS`/`_VERDICT_CACHE` for
   the host -- so the verdict stops taking effect immediately and no longer
   re-applies on the next sidecar restart. The retract is best-effort (failures
   logged + swallowed); the verdict row is marked revoked regardless. A
@@ -776,6 +776,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 - **`klangk invite` → `klangk admin invitations send` (#1374).**
 
 ### Fixed
+
+- **Timed egress-consent allows now cover the whole host (#2434).** A timed or
+  `until restart` `allow` verdict now allow-lists the consented host for its
+  whole duration — the same as `allow forever` already did — instead of only
+  the IP resolved at the moment of the decision (`once` stays per-connection).
+  This fixes intermittent `ECONNREFUSED` on a connection to a host the user had
+  just allowed, when the connection resolved to a different (CDN-rotated) IP
+  than the one consented.
 
 - **Dead-owner container reap at startup (#2342).** klangkd now stamps each
   workspace + network-sidecar container with the creating daemon's PID
