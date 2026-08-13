@@ -484,6 +484,7 @@ class SmokeTest:
         try:
             return start_server(
                 uds=False,
+                log_path=os.environ.get("SMOKE_KLANGKD_LOG") or None,
                 KLANGKD_JWT_SECRET="smoketest-egress-secret",
                 KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
                 KLANGKD_DEFAULT_USER="smoke@example.com",
@@ -1781,7 +1782,16 @@ class SmokeTest:
                     await self.run_fail_closed_phase(pilot)
             # run_test exited -> the decider WS dropped -> the server deregistered
             # the decider -> the workspace reverted to static allow-list (#2308).
+            # _shared_d2 (the multi-decider / snapshot raw decider) is a SEPARATE
+            # WS that outlives run_test (closed only in teardown) and never
+            # pings, so close it explicitly here -- otherwise it can still be
+            # live (within the 45s reap window) during the static phase,
+            # keeping the workspace interactive and producing a false "held"
+            # mismatch (#2413).
             if not stop and not self._abort and self.args.static_phase:
+                if self._shared_d2 is not None:
+                    await self._shared_d2.close()
+                    self._shared_d2 = None
                 await self.run_no_decider_phase(pilot)
         finally:
             await self.teardown()

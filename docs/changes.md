@@ -771,6 +771,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   validating it against the allowed `EGRESS_MODES` (`static` |
   `interactive` | `allow`) and falling back to the deploy default on an
   unknown or missing value.
+- **Off-list egress fails fast when consent is unavailable (#2413).** When
+  the network sidecar's WebSocket to klangkd is down (a klangkd restart or a
+  proxy hiccup), off-list egress now fails fast with a connection refused
+  (forged RST + a short REJECT backstop) instead of hanging for the kernel's
+  ~127s SYN-retransmit window. On-list egress is unaffected (learned ACCEPT
+  rules sit above the NFQUEUE gate); the temporary deny is bounded by
+  `KLANGKNETWORK_EGRESS_REJECT_TTL` (default 10s), so no rule lingers past the
+  outage and fresh off-list egress prompts again once the sidecar reconnects.
 - **A timed consent `allow` no longer outlives its verdict (#2408).** The
   network sidecar tracked one TTL per learned IP, shared between the consent
   rule's lifetime and the DNS host-mapping's lifetime. A re-resolution (every
