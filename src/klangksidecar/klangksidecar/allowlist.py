@@ -196,6 +196,57 @@ def _session_host_allows_ttl(host: str, port: int) -> float | None:
     return best
 
 
+def _session_allow_rule_cap(qname: str) -> float | None:
+    """Min remaining TTL bounding a DNS-path learned rule for ``qname``, or
+    ``None`` (#2465).
+
+    A timed consent allow adds the host to :data:`_SESSION_HOST_ALLOWS`, so
+    :func:`ports_for` treats it as allow-listed and the DNS path
+    (:func:`_respond_allowed` -> :func:`_learn_all`) learns every resolved IP.
+    That learn used to install the ACCEPT rule for the response's DNS TTL --
+    often minutes -- so a short verdict (5s) left a rule that outlived it: a
+    retry past the window connected with no re-prompt (the allow/deny asymmetry
+    of #2465 -- the deny side records no DNS-path learn, so it expired on
+    time). The cap returned here bounds the rule's TTL at the min remaining
+    across matching session allows, so the rule lapses with the verdict and a
+    retry past the window re-prompts.
+
+    ``None`` (no cap -- use the DNS TTL) when a static :data:`SPECS` entry
+    matches: a static allow is forever, so the DNS TTL is the correct rule
+    lifetime, and capping it would expire the rule early and -- in the gap
+    between rule expiry and the next resolve -- re-prompt a forever-allowed
+    host (a static spec has no NFQUEUE gate, only the learned rule covers its
+    SYN). Also ``None`` when no session allow matches (a static-only or
+    non-allow-listed name learns at its DNS TTL). Loop-only (reads
+    :data:`_SESSION_HOST_ALLOWS`); computed on the event-loop thread in
+    :func:`_respond_allowed` and passed to :func:`_learn_all`, which runs
+    off-loop in the executor.
+
+    The static-spec check is qname-level (any port), so a host with a
+    port-scoped static spec (``example.com:443``) AND a timed session allow on
+    a *different* port (``example.com:8443``) leaves the :8443 learn uncapped
+    -- pre-#2465 behavior (nothing was capped before), not a regression. The
+    lingering :8443 ACCEPT rule (DNS TTL) sits at the top of OUTPUT and
+    shadows NFQUEUE, so a retry past that verdict's window connects without a
+    re-prompt until the DNS TTL elapses -- a known narrow leak for that combo,
+    NOT covered by the NFQUEUE gate. All real consent flows hit this for a
+    single host:port, where the cap is exact.
+    """
+    if any(_host_matches(qname, host, mode) for host, _port, mode in SPECS):
+        return None  # a static spec matches -> forever -> DNS TTL is correct
+    _prune_session_allows()
+    now = time.time()
+    best: float | None = None
+    for host, _port, mode, exp in state._SESSION_HOST_ALLOWS:
+        if exp <= now:
+            continue
+        if _host_matches(qname, host, mode):
+            remaining = exp - now
+            if best is None or remaining < best:
+                best = remaining
+    return best
+
+
 def _prune_session_denies() -> None:
     """Drop expired in-session host denies (lazy sweep, #2446).
 

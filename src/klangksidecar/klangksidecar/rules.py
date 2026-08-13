@@ -55,14 +55,21 @@ def _remove(ip: str, port: int | None) -> None:
     )
 
 
-def allow(ip: str, port: int | None, ttl: int | float) -> None:
+def allow(ip: str, port: int | None, ttl: int | float, floor: bool = True) -> None:
     """Install (if new) the ACCEPT for ``ip[:port]`` and refresh its TTL.
 
     ``port`` is ``None`` for an all-ports rule. The learned IP's expiry is
-    set to ``now + max(ttl, MIN_TTL)`` (a 0-TTL response must not yank the
-    rule the workspace needs to reach the IP it just resolved) and only ever
-    moves forward, so a shorter-TTL re-resolution can't prematurely expire a
-    longer-lived prior rule (#2256).
+    set to ``now + ttl`` and only ever moves forward, so a shorter-TTL
+    re-resolution can't prematurely expire a longer-lived prior rule (#2256).
+    ``floor`` (default ``True``) raises the TTL to :data:`MIN_TTL` -- the
+    0-TTL-DNS-response safety net (a resolver may hand back a 0-TTL A record,
+    and that must not yank the rule the workspace needs to reach the IP it
+    just resolved). A *consent-verdict* TTL is the user's intent, not a DNS
+    TTL, so the consent paths (:func:`_decide_and_verdict`, the ``_cb``
+    in-session auto-allow, and a capped :func:`_learn_all`) pass
+    ``floor=False`` -- a timed verdict's rule lapses at the verdict, not at
+    MIN_TTL (#2465: otherwise a ``5s`` verdict's rule lived 30s under the
+    default MIN_TTL). The static-spec DNS learn keeps the default floor.
 
     The install happens **under** :data:`_LOCK` so the kernel rule and its
     ``_LEARNED`` record are atomic w.r.t. :func:`sweep_once`'s remove+delete
@@ -74,7 +81,7 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
     executor (see :func:`_learn_all` / :func:`_async_sweeper`), so the lock
     genuinely serializes them; contention is negligible.
     """
-    expire = time.time() + max(ttl, MIN_TTL)
+    expire = time.time() + (max(ttl, MIN_TTL) if floor else ttl)
     with _LOCK:
         _install(ip, port)
         rec = _LEARNED.get(ip)
@@ -110,51 +117,49 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
                 del _REJECTED[key]
 
 
-def _reject_rule_args(ip: str, port: int) -> list[str]:
-    """iptables OUTPUT rule args for REJECT (tcp-reset) to ``ip:port``."""
-    return [
-        "-d",
-        ip,
-        "-p",
-        "tcp",
-        "--dport",
-        str(port),
-        "-j",
-        "REJECT",
-        "--reject-with",
-        "tcp-reset",
-    ]
+def _reject_rule_args(ip: str, port: int, sport: int = 0) -> list[str]:
+    """iptables OUTPUT rule args for REJECT (tcp-reset) to ``ip:port``.
+
+    ``sport`` (the denied connection's source port) scopes the rule to
+    retransmits of THAT connection only (#2463); 0/omitted leaves it
+    destination-scoped (every connection to ``ip:port``).
+    """
+    args = ["-d", ip, "-p", "tcp", "--dport", str(port)]
+    if sport:
+        args += ["--sport", str(sport)]
+    args += ["-j", "REJECT", "--reject-with", "tcp-reset"]
+    return args
 
 
-def _reject_rule_exists(ip: str, port: int) -> bool:
+def _reject_rule_exists(ip: str, port: int, sport: int = 0) -> bool:
     return (
         subprocess.run(
-            [config.IPT, "-C", "OUTPUT", *_reject_rule_args(ip, port)],
+            [config.IPT, "-C", "OUTPUT", *_reject_rule_args(ip, port, sport)],
             capture_output=True,
         ).returncode
         == 0
     )
 
 
-def _install_reject(ip: str, port: int) -> None:
+def _install_reject(ip: str, port: int, sport: int = 0) -> None:
     """Insert the REJECT (tcp-reset) rule at the top of OUTPUT if not present."""
-    if _reject_rule_exists(ip, port):
+    if _reject_rule_exists(ip, port, sport):
         return
     subprocess.run(
-        [config.IPT, "-I", "OUTPUT", "1", *_reject_rule_args(ip, port)],
+        [config.IPT, "-I", "OUTPUT", "1", *_reject_rule_args(ip, port, sport)],
         capture_output=True,
     )
 
 
-def _remove_reject(ip: str, port: int) -> None:
+def _remove_reject(ip: str, port: int, sport: int = 0) -> None:
     """Delete the REJECT rule; swallow failure if it's already gone."""
     subprocess.run(
-        [config.IPT, "-D", "OUTPUT", *_reject_rule_args(ip, port)],
+        [config.IPT, "-D", "OUTPUT", *_reject_rule_args(ip, port, sport)],
         capture_output=True,
     )
 
 
-def reject(ip: str, port: int, ttl: float) -> None:
+def reject(ip: str, port: int, ttl: float, sport: int = 0) -> None:
     """Install a temporary REJECT (tcp-reset) for ``ip:port`` + set its TTL.
 
     A denied SYN is dropped, but dropping a SYN doesn't fail ``connect()`` --
@@ -162,11 +167,21 @@ def reject(ip: str, port: int, ttl: float) -> None:
     REJECT rule makes the next retransmit get a RST, so ``connect()`` returns
     ECONNREFUSED at once (eager deny). Like :func:`allow`, the install + the
     ``_REJECTED`` record are atomic under :data:`_LOCK` w.r.t. :func:`sweep_once`.
+
+    ``sport`` (the denied connection's source port) scopes the rule to
+    retransmits of THAT connection only, so a NEW connection (different source
+    port) to the same ``ip:port`` is NOT rejected above NFQUEUE and re-enters
+    consent-gating (#2463). 0/omitted leaves the rule destination-scoped
+    (every connection to ``ip:port``), which is correct for a timed/forever
+    deny (its over-deny is intended -- the DB rule + ``_SESSION_HOST_DENIES``
+    govern re-prompting) and the WS-down fail-close.
     """
     expire = time.time() + ttl
     with _LOCK:
-        _install_reject(ip, port)
-        _REJECTED[(ip, port)] = max(_REJECTED.get((ip, port), 0.0), expire)
+        _install_reject(ip, port, sport)
+        _REJECTED[(ip, port, sport)] = max(
+            _REJECTED.get((ip, port, sport), 0.0), expire
+        )
 
 
 def drop_for_host(host: str, decision: str) -> set[str]:
@@ -320,12 +335,29 @@ def check_mark() -> None:
         probe.close()
 
 
-def _learn_all(recs: list[tuple[str, int]], ports: set[int | None]) -> None:
+def _learn_all(
+    recs: list[tuple[str, int]],
+    ports: set[int | None],
+    cap: float | None = None,
+) -> None:
     """Install the ACCEPT rule for each learned IP/port (sync; runs in the
-    executor so the iptables forks don't block the event loop)."""
+    executor so the iptables forks don't block the event loop).
+
+    ``cap``, when not ``None``, bounds each rule's TTL at ``min(dns_ttl, cap)``
+    so a timed session-allow's learned rule does not outlive its verdict
+    (#2465). The host mapping -- set earlier by :func:`_record_hosts` at the
+    DNS TTL, ahead of the consent allow -- is untouched: :func:`allow`'s
+    ``max`` keeps the longer mapping lifetime so :func:`_host_for` still names
+    the host for a fresh re-prompt after the verdict lapses (#2408).
+    """
     for ip, ttl in recs:
+        rule_ttl = ttl if cap is None else min(ttl, cap)
         for port in ports:
-            allow(ip, port, ttl)
+            # cap=None (static spec) -> a DNS-response TTL, floored at MIN_TTL
+            # for 0-TTL safety; cap set (session allow) -> the verdict's
+            # remaining window, NOT floored so a sub-MIN_TTL verdict (5s)
+            # lapses at the verdict, not at MIN_TTL (#2465).
+            allow(ip, port, rule_ttl, floor=cap is None)
 
 
 def _record_hosts(recs: list[tuple[str, int]], host: str) -> None:

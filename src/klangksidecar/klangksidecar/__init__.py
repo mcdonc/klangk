@@ -12,15 +12,14 @@ NFQUEUE pending a verdict. See the submodule docstrings for the details.
 
 from __future__ import annotations
 
-# Import order matters: leaf modules first, app last (app depends on all).
-from . import (
+from . import (  # noqa: F401 (re-exported)
     allowlist,
     app,
     config,
     consent,
-    resolve,
     nfqueue,
     packets,
+    resolve,
     rules,
     state,
 )

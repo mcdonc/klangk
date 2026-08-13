@@ -14,16 +14,15 @@ from typing import TYPE_CHECKING
 
 import dns.message
 import dns.rdatatype
+import dns.rcode
 
-from . import rules
+from . import allowlist, rules
 from .allowlist import ports_for, rejected_for
 from .config import DEBUG, MARK, UPSTREAM
 from .rules import _fmt_ports, _learn_all
 
 if TYPE_CHECKING:
-    # ``SidecarConsentClient`` appears only in annotations (the client is
-    # passed in, never constructed here); import it lazily to avoid a cycle.
-    from .consent import SidecarConsentClient  # noqa: allow-deferred-import (annotation-only; avoids a cycle)
+    from .consent import SidecarConsentClient  # noqa: allow-deferred-import (annotation-only)
 
 
 def query_name(wire: bytes) -> str:
@@ -84,7 +83,17 @@ async def _respond_allowed(
         recs = []
     try:
         if recs:
-            await loop.run_in_executor(None, _learn_all, recs, ports)
+            # Bound a timed session-allow's learned rule at its verdict's
+            # remaining window (#2465): without this the DNS-path learn uses
+            # the response's DNS TTL (often minutes), so a 5s allow leaves a
+            # rule that outlives it and a retry past the window connects with
+            # no re-prompt. None for a static spec (forever) or no session
+            # allow -- the DNS TTL is correct then. Computed here (inside the
+            # try so a raise can't escape _respond_allowed and take down the
+            # PID-1 sidecar, #2278) on the loop (reads loop-only
+            # _SESSION_HOST_ALLOWS) before the executor fork below.
+            cap = allowlist._session_allow_rule_cap(qname)
+            await loop.run_in_executor(None, _learn_all, recs, ports, cap)
         if DEBUG:
             print(
                 f"allow {qname} -> {[ip for ip, _ in recs]} ports={_fmt_ports(ports)}",

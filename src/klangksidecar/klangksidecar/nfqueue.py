@@ -25,9 +25,7 @@ from .rules import _host_for
 from .state import _BG_TASKS, _INFLIGHT, _VERDICT_CACHE
 
 if TYPE_CHECKING:
-    # ``SidecarConsentClient`` appears only in annotations (passed in, never
-    # constructed here); lazy import avoids a cycle with .consent.
-    from .consent import SidecarConsentClient  # noqa: allow-deferred-import (annotation-only; avoids a cycle)
+    from .consent import SidecarConsentClient  # noqa: allow-deferred-import (annotation-only)
 
 
 def _setup_nfq_consumer(client: SidecarConsentClient | None):
@@ -111,7 +109,12 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         # RST'd above NFQUEUE, then drop. On-list egress is unaffected
         # (learned ACCEPT rules sit above NFQUEUE); once the WS reconnects,
         # fresh off-list egress prompts again. The REJECT TTL is short, so no
-        # rule lingers past the outage (#2413).
+        # rule lingers past the outage (#2413). Unlike a `once` deny (#2463),
+        # this REJECT stays destination-scoped deliberately: during a WS outage
+        # no connection can be consented, so fail-fast (ECONNREFUSED) for every
+        # off-list connect to the same ip:port is the intended #2308 behavior,
+        # and this path writes no _VERDICT_CACHE entry, so connection-scoping
+        # would gain nothing.
         if port:
             packets._send_rst(payload)
             asyncio.get_running_loop().run_in_executor(
@@ -163,7 +166,7 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         # (the consented port) -- deliberately stricter than the consent-allow
         # path's all-ports learn (allow(dst, None, ...)).
         asyncio.get_running_loop().run_in_executor(
-            None, rules.allow, dst, port, remaining
+            None, rules.allow, dst, port, remaining, False
         )
         pkt.accept()
         _VERDICT_CACHE[flow] = ("allow", now + VERDICT_CACHE_TTL)
@@ -261,7 +264,7 @@ async def _decide_and_verdict(
             # re-prompts); a timed duration -> learn all-ports for it.
             if ttl is not None:
                 try:
-                    await loop.run_in_executor(None, rules.allow, dst, None, ttl)
+                    await loop.run_in_executor(None, rules.allow, dst, None, ttl, False)
                 except Exception:
                     pass
             pkt.accept()
@@ -271,6 +274,16 @@ async def _decide_and_verdict(
             # rule flaky (#2345). The REJECT rule stays as a belt-and-suspenders
             # backstop for any retransmit the RST missed. `once` -> the short
             # fail-close reject window; a timed duration -> that long.
+            # ``once`` is per-connection: scope the REJECT to THIS connection's
+            # source port so a NEW connection (different sport) to the same
+            # host:port re-prompts instead of being rejected above NFQUEUE for
+            # the fail-close window (#2463). A timed/forever deny stays
+            # destination-scoped -- its over-deny is correct (the DB rule +
+            # _SESSION_HOST_DENIES govern re-prompting). The source port is
+            # guarded: a real TCP SYN never has src port 0 (RFC 793), so a
+            # truthy flow[1] is the normal case; if it is ever 0 (a
+            # non-TCP/unparseable flow), fall back to destination-scoped so a
+            # future parse change can't silently re-introduce the over-deny.
             if port:
                 try:
                     packets._send_rst(pkt.get_payload())
@@ -278,9 +291,14 @@ async def _decide_and_verdict(
                     pass
                 reject_ttl = ttl if ttl is not None else CONSENT_REJECT_TTL
                 try:
-                    await loop.run_in_executor(
-                        None, rules.reject, dst, port, reject_ttl
-                    )
+                    if ttl is None and flow[1]:
+                        await loop.run_in_executor(
+                            None, rules.reject, dst, port, reject_ttl, flow[1]
+                        )
+                    else:
+                        await loop.run_in_executor(
+                            None, rules.reject, dst, port, reject_ttl
+                        )
                 except Exception:
                     pass
             pkt.drop()

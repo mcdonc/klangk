@@ -76,6 +76,17 @@ VERDICT_CACHE_TTL = float(
 CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10"))
 
 
+# Opt-in per-RST debug logging (#2464): the forged eager-deny RST is the
+# primary fast-refuse, so when a denied connection instead *times out* this
+# logs each forged RST (socket open? sendto ok? the 4-tuple) to the sidecar's
+# stdout. Off by default -- a denied connection's SYN retransmits each hit the
+# cached deny and re-forge an RST, which would spam a production sidecar's log.
+# The egress smoketest enables it (KLANGKNETWORK_EGRESS_DEBUG_RST=1, forwarded
+# by ContainerManager._start_network_sidecar) and captures the sidecar's podman
+# log so a fast-refuse miss is diagnosable after the run.
+_RST_DEBUG = os.environ.get("KLANGKNETWORK_EGRESS_DEBUG_RST", "") == "1"
+
+
 # Duration token -> seconds the sidecar honors a verdict (#2328): an allow
 # learns the IP for T; a deny REJECTs for T. `once` = this connection only (no
 # learn; a short deny). `restart` = the container's lifetime (the sidecar's
@@ -87,7 +98,7 @@ CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10
 # persistence is #2368's `forever`-allow sub-piece; the deny counterpart is
 # #2369.)
 _DURATION_SECONDS = {
-    "5s": 5,  # test-only (#2363, subsumed by #2392); honored but never UI-offered
+    "5s": 5,  # test-only (#2363); TEMPORARILY UI-offered for manual testing (#2465)
     "5m": 300,
     "15m": 900,
     "1h": 3600,

@@ -90,11 +90,17 @@ _VERDICT_CACHE: dict[tuple[str, int, str, int], tuple[str, float]] = {}
 _INFLIGHT: set[tuple[str, int, str, int]] = set()
 
 
-# Temporary REJECT (tcp-reset) rules for denied connections: {(ip, port): expire}.
-# Swept by sweep_once alongside _LEARNED. Makes a deny fail-fast (ECONNREFUSED)
-# instead of waiting for tcp_syn_retries (~127s) -- dropping a SYN alone doesn't
-# fail connect(); the kernel just retransmits until its own timeout.
-_REJECTED: dict[tuple[str, int], float] = {}
+# Temporary REJECT (tcp-reset) rules for denied connections, keyed by
+# (ip, port, sport): sport=0 is destination-scoped (catches every connection to
+# ip:port, used for a timed/forever deny whose over-deny is intended + the
+# WS-down fail-close); a nonzero sport is connection-scoped (catches only
+# retransmits of THAT connection, used for a ``once`` deny so a NEW connection
+# to the same host:port re-prompts instead of being rejected above NFQUEUE,
+# #2463). Swept by sweep_once alongside _LEARNED. Makes a deny fail-fast
+# (ECONNREFUSED) instead of waiting for tcp_syn_retries (~127s) -- dropping a
+# SYN alone doesn't fail connect(); the kernel just retransmits until its own
+# timeout.
+_REJECTED: dict[tuple[str, int, int], float] = {}
 
 
 # Strong refs to background asyncio tasks (the TTL sweeper) so CPython doesn't
