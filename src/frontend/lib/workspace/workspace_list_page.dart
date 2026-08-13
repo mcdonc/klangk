@@ -63,7 +63,7 @@ String? validateAllowedDomainSpec(String spec, {bool allowCidr = true}) {
   if (spec.contains('/')) {
     if (!allowCidr) {
       return 'CIDR ranges are not supported for rejected domains '
-          '(NXDOMAIN is name-level)';
+          '(matched by hostname, not IP)';
     }
     return _validateCidrDomainSpec(spec);
   }
