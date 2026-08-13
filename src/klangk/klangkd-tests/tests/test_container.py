@@ -1,6 +1,7 @@
 """Tests for container: idle timeout parsing, activity tracking, callbacks, port allocation."""
 
 import asyncio
+import os
 import time
 import types
 from contextlib import ExitStack, contextmanager
@@ -4616,6 +4617,12 @@ class TestPidAlive:
         with patch("klangk.container.os.kill", side_effect=PermissionError):
             assert container._pid_alive(12345) is True
 
+    def test_current_process_is_alive_without_mock(self):
+        # The real liveness check (no os.kill mock) must see the running test
+        # process as alive — the property the dead-owner reap relies on to
+        # never self-reap (#1556).
+        assert container._pid_alive(os.getpid()) is True
+
 
 class TestReapDeadOwnerContainers:
     """Tests for ``ContainerRegistry.reap_dead_owner_containers`` (#2342).
@@ -4672,6 +4679,31 @@ class TestReapDeadOwnerContainers:
         ) as mocks:
             with patch("klangk.container._pid_alive", return_value=True):
                 await self.registry.reap_dead_owner_containers()
+        mocks.remove_container.assert_not_awaited()
+
+    async def test_never_reaps_current_instance_own_pid(self):
+        # Security property (#1556): a container stamped with THIS daemon's
+        # pid is skipped via the REAL liveness check — no _pid_alive mock —
+        # so a startup sweep can never self-reap. An inverted _pid_alive or a
+        # pid-label mis-parse would fail here.
+        mine = str(os.getpid())
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "self-1",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.instance": "sibling",
+                            "klangk.pid": mine,
+                        },
+                    }
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_not_awaited()
 
     async def test_skips_container_without_pid_label(self):

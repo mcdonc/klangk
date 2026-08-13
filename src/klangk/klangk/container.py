@@ -2619,9 +2619,12 @@ class ContainerRegistry:
           containers always read alive and are never reaped here (#1556).
         - **``klangk.pid`` names no live process → reap.** The owner is dead.
           ``remove_container(force=True)`` stops-then-removes gracefully and
-          treats "already gone" / "being removed" (404) as success, so a
-          container whose owner died mid-shutdown — leaving podman finishing a
-          stop — is handled without racing conmon.
+          treats an already-gone container (404) as success; any other error
+          (e.g. a 409 from a concurrent removal) is caught and logged below,
+          so it never aborts the sweep. A container whose owner died
+          mid-shutdown — leaving podman finishing a stop — is thus handled
+          without racing conmon (at worst it surfaces as a logged warning on
+          one of the racers).
 
         Liveness is a plain "is there a process with this PID?" check
         (:func:`_pid_alive`), not a process-identity check. PID recycling can
