@@ -32,6 +32,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`5s` consent-duration option (#2465).** The test-only 5-second duration
+  is temporarily exposed in the consent duration selector (TUI + Flutter) for
+  manual testing, now that a timed allow lapses at its verdict rather than the
+  `MIN_TTL` floor. Remove `5s` from `SELECTABLE_DURATIONS` (TUI) /
+  `kConsentDurations` (Flutter) to hide it again; it stays valid for
+  programmatic/test callers either way.
+
 - **`KLANGKNETWORK_EGRESS_UPSTREAM` — operator-pinnable sidecar DNS upstream (#2424).**
   When set in `klangkd`'s environment, the network sidecar's FQDN proxy forwards
   workspace DNS to this resolver verbatim instead of auto-detecting a host

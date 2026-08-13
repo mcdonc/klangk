@@ -29,8 +29,13 @@ const String kDecisionAllowed = 'allowed';
 const String kDecisionDenied = 'denied';
 
 /// Ordered for the duration selector; the default is `tilrestart` (#2328).
+/// The test-only `5s` is TEMPORARILY included (#2465) for manual testing now
+/// that a timed allow lapses at its verdict (not the MIN_TTL floor); remove
+/// it from this list to shut it off (it stays valid when sent by a
+/// programmatic caller).
 const List<String> kConsentDurations = [
   'once',
+  '5s',
   '5m',
   '15m',
   '1h',
@@ -46,6 +51,7 @@ const String kConsentDurationDefault = 'tilrestart';
 /// the single connection and `tilrestart`/`forever` have no fixed expiry, so
 /// they are absent -- a rule with one of those (or null) has no countdown.
 const Map<String, int> kConsentDurationSeconds = {
+  '5s': 5,
   '5m': 300,
   '15m': 900,
   '1h': 3600,
