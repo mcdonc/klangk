@@ -463,6 +463,9 @@ class RawDecider:
     async def verdict(self, rid: str, decision: str, duration: str) -> None:
         await self.ws.send(make_verdict(rid, decision, duration))
 
+    async def revoke(self, rid: str) -> None:
+        await self.ws.send(make_revoke(rid))
+
     def start_pinger(self) -> None:
         """Send client pings so the registry reaper doesn't drop us (#2308)."""
         if self._ping_task is None:
@@ -598,6 +601,13 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("host scope: ", "HOST-SCOPE-VIOLATION"),
     ("port-scope phase failed", "UNEXPECTED-ERROR"),
     ("port scope: ", "PORT-SCOPE-VIOLATION"),
+    # Co-resident hosts (#2440): pin per-IP allow/revoke sharing (canary for #2352).
+    ("co-resident: allow A did NOT leak to B", "CORESIDENT-ALLOW-FLIP"),
+    ("co-resident: revoke A did NOT uncover B", "CORESIDENT-REVOKE-FLIP"),
+    ("co-resident: A did NOT prompt", "NO-EXPECTED-REQUEST"),
+    ("co-resident: post-revoke B hung", "HUNG-NFQUEUE-DNS"),
+    ("co-resident: B did not connect cleanly", "HUNG-NFQUEUE-DNS"),
+    ("co-resident phase failed", "UNEXPECTED-ERROR"),
     # allow egress mode (#2411): off-list must connect (coordinator record+allow),
     # rejected still denied, decider registration refused.
     ("allow-mode off-list refused", "ALLOWMODE-REFUSED"),
@@ -645,6 +655,8 @@ OUTCOME_NAMES: dict[str, str] = {
     "ALLOWLIST-PROMPTED": "an allow-list-covered host prompted for consent (a real static-allow invariant break). #2419",
     "HOST-SCOPE-VIOLATION": "an nginx-style host scope (exact/inclusive/subdomains, #2377) let the wrong name through / blocked the right one.",
     "PORT-SCOPE-VIOLATION": "a port-scoped allow (host:443) permitted a different port (:80), or vice-versa.",
+    "CORESIDENT-ALLOW-FLIP": "co-resident allow canary flipped: allowing host A no longer leaked to host B on the same IP -- per-host allow may have landed (#2352/#2440).",
+    "CORESIDENT-REVOKE-FLIP": "co-resident revoke canary flipped: revoking host A no longer dropped coverage for host B on the same IP -- per-host revoke may have landed (#2352/#2440).",
     "SNAPSHOT-REPLAY": "a resolved-while-away row replayed (or a held row vanished) in the reconnect snapshot -- now deterministic under controlled DNS (#2424).",
     "ALLOWMODE-REFUSED": "an allow-mode (default-permit) off-list host was refused or hung -- it must connect (#2411/#2406).",
     "ALLOWMODE-DECIDER-ACCEPTED": "a consent decider registered (or ambiguously attached) against an allow-mode workspace -- it must be refused, same gate as static (#2395/#2406).",
@@ -2205,6 +2217,217 @@ class SmokeTest:
             if d is not None:
                 await d.close()
 
+    async def run_coresident_phase(self, pilot) -> None:
+        """Pin co-resident-host behavior as a canary for #2352 (#2440).
+
+        Per-host allow/revoke is L3/L4-only today: two hostnames that resolve
+        to the SAME IP share one iptables rule, so allowing host A also lets
+        host B through, and revoking A drops the shared rule so B loses
+        coverage too (#2352, OPEN). This phase points two controlled hostnames
+        at one IP and pins BOTH halves of that limitation:
+
+          1. Allow A (learn a per-IP ACCEPT) -> B (same IP) connects with NO
+             prompt (today's behavior).
+          2. Revoke A -> the shared rule is dropped -> B re-prompts (today's
+             behavior).
+
+        Both assertions are CANARIES: they PASS while #2352 is unfixed and
+        FLIP to MISMATCH when per-host allow/revoke lands, so a silent fix
+        can't go unnoticed. Driven via a dedicated interactive workspace + a
+        raw decider scoped to it. Needs controlled DNS (skipped otherwise).
+        """
+        if not self.args.coresident:
+            return
+        if self.dns is None:
+            print(
+                "\n--- co-resident hosts: SKIPPED (--no-controlled-dns; needs "
+                "two names on one controlled IP, #2424/#2352) ---"
+            )
+            return
+        print(
+            "\n--- co-resident hosts: pin per-IP allow/revoke sharing "
+            "(canary for #2352) ---"
+        )
+        parent = _Step(
+            self.summary.total, "coresident", "n/a", False, "coresident", "-"
+        )
+        # Two names on ONE controlled IP (#2352's premise). co_locate() maps B
+        # to A's IP rather than allocating a fresh one, so they share the
+        # sidecar's single per-IP ACCEPT/REJECT rule.
+        host_a, host_b = "core-a.test", "core-b.test"
+        ip_a = self.dns.allocate(host_a)
+        self.dns.co_locate(host_b, host_a)
+        assert self.dns.ip_for(host_b) == ip_a, (
+            "co-resident hosts must share an IP"
+        )
+        allow: list[str] = []  # neither off-list -> both prompt
+        ws_id = None
+        d: RawDecider | None = None
+        cont: str | None = None
+        conn = None
+        try:
+            ws_id = await asyncio.to_thread(
+                self._create_workspace,
+                self.server,
+                self.auth,
+                allow,
+                [],
+                f"smoke-coresident-{int(time.time() * 1000) % 100000}",
+            )
+            self._extra_ws_ids.append(ws_id)
+            print(
+                f"co-resident workspace {ws_id}  "
+                f"{host_a}+{host_b}->{ip_a}  allow=[] (both off-list)"
+            )
+            conn = await self._open_terminal_ws(ws_id)
+            self._extra_ws_conns.append(
+                (conn, asyncio.create_task(self._drain(conn)))
+            )
+            cont = _container_for_workspace(ws_id)
+            d = await self._connect_raw_decider(ws_id, ping=True)
+            self._extra_deciders.append(d)
+            await d.settle()
+            # Wait for the sidecar consent-WS to wire before the scored holds
+            # (#2417): a fresh workspace's sidecar connects on its own
+            # backoff, so the first off-list hold could fail-close (no prompt)
+            # and false-fire the canary.
+            ready_host = "core-ready.test"
+            self.dns.allocate(ready_host)
+            if not await self._probe_sidecar_ready_raw(d, cont, ready_host):
+                self._record_probe(
+                    parent,
+                    "sidecar ready",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "co-resident phase failed: sidecar consent-WS did not "
+                    "wire (#2417); cannot pin per-IP sharing",
+                )
+                await d.close()
+                return
+
+            # 1) Allow A -> learn a per-IP ACCEPT rule (forever = persistent
+            #    in-memory TTL; survives until the revoke below).
+            ca = _canonical(host_a)
+            of_a = "/tmp/smoke_cr_a.out"
+            _trigger(cont, host_a, of_a)
+            rid_a = await d.wait_for(ca, 12.0)
+            if rid_a is None:
+                self._record_probe(
+                    parent,
+                    "allow A",
+                    "no-request(!)",
+                    None,
+                    MISMATCH,
+                    f"co-resident: A did NOT prompt ({host_a}); cannot learn "
+                    f"the per-IP rule to pin #2352",
+                )
+                if not self.args.continue_run:
+                    self._abort = True
+                await d.close()
+                return
+            await d.verdict(rid_a, DECISION_ALLOWED, DURATION_FOREVER)
+            await d.wait_resolution(rid_a, 15.0)
+            await _wait_result(cont, of_a)  # A's own connection completes
+            await asyncio.sleep(1.5)  # let the learned ACCEPT rule install
+
+            # CANARY #1: B (same IP) connects with NO prompt + exit 0. Today
+            # the rule is per-IP, so A's allow covers B. When #2352 lands
+            # per-host allow, B will prompt -> this flips to MISMATCH.
+            cb = _canonical(host_b)
+            of_b1 = "/tmp/smoke_cr_b1.out"
+            _trigger(cont, host_b, of_b1)
+            intruder = await self._raw_wait_no_request(d, cb, window=6.0)
+            text = await _wait_result(cont, of_b1, timeout=20.0)
+            ec = _parse_exit(text)
+            if intruder is None and ec == 0:
+                sx, dx = (
+                    PASS,
+                    "co-resident: allow A leaked to B (shared per-IP rule, "
+                    "#2352) -- CANARY: flips when per-host allow lands",
+                )
+            elif intruder is not None:
+                sx, dx = (
+                    MISMATCH,
+                    "co-resident: allow A did NOT leak to B (B prompted) -- "
+                    "CANARY FLIP: per-host allow may have landed (#2352); "
+                    "update this pin",
+                )
+            else:
+                sx, dx = (
+                    FINDING,
+                    f"co-resident: B did not connect cleanly (exit {ec}); "
+                    f"not a #2352 signal (NFQUEUE/DNS)",
+                )
+            self._record_probe(parent, "allow A -> B", "shared", ec, sx, dx)
+            if sx == MISMATCH and not self.args.continue_run:
+                self._abort = True
+                await d.close()
+                return
+
+            # 2) Revoke A -> the shared per-IP rule is dropped.
+            try:
+                await d.revoke(rid_a)
+            except Exception:
+                pass
+            await asyncio.sleep(2.0)  # let the server + sidecar drop the rule
+
+            # CANARY #2: B re-prompts (the shared rule that covered it is
+            # gone). Today revoking A uncovers B too. When #2352 lands
+            # per-host revoke, revoking A leaves B's own coverage intact ->
+            # this flips. (Under a full #2352 fix CANARY #1 already fired
+            # above, so this pin is the second half for the per-host-REVOKE
+            # work specifically.)
+            of_b2 = "/tmp/smoke_cr_b2.out"
+            _trigger(cont, host_b, of_b2)
+            rid_b2 = await d.wait_for(cb, 12.0)
+            if rid_b2 is not None:
+                await d.verdict(rid_b2, DECISION_DENIED, DURATION_ONCE)
+                await d.wait_resolution(rid_b2, 15.0)
+                ec2 = _parse_exit(await _wait_result(cont, of_b2))
+                sx2, dx2 = (
+                    PASS,
+                    "co-resident: revoke A uncovered B (shared per-IP rule "
+                    "dropped, #2352) -- CANARY: flips when per-host revoke "
+                    "lands",
+                )
+            else:
+                ec2 = _parse_exit(
+                    await _wait_result(cont, of_b2, timeout=10.0)
+                )
+                if ec2 is None:
+                    sx2, dx2 = (
+                        FINDING,
+                        "co-resident: post-revoke B hung (NFQUEUE/DNS; not a "
+                        "#2352 signal)",
+                    )
+                else:
+                    sx2, dx2 = (
+                        MISMATCH,
+                        f"co-resident: revoke A did NOT uncover B (no "
+                        f"re-prompt, exit {ec2}) -- CANARY FLIP: per-host "
+                        f"revoke may have landed (#2352); update this pin",
+                    )
+            self._record_probe(
+                parent, "revoke A -> B", "re-prompt", ec2, sx2, dx2
+            )
+            if sx2 == MISMATCH and not self.args.continue_run:
+                self._abort = True
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                parent,
+                "bring up co-resident ws",
+                "error",
+                None,
+                MISMATCH,
+                f"co-resident phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+        finally:
+            if d is not None:
+                await d.close()
+
     async def run_static_refusal_phase(self) -> None:
         """#2395: a workspace with ``egress_mode='static'`` must refuse
         consent-decider registration (a 4003 close), so a decider can't flip a
@@ -3567,6 +3790,8 @@ class SmokeTest:
                     await self.run_host_scope_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_port_scope_phase(pilot)
+                if not stop and not self._abort:
+                    await self.run_coresident_phase(pilot)
             # run_test exited -> the decider WS dropped -> the server deregistered
             # the decider -> the workspace reverted to static allow-list (#2308).
             # _shared_d2 (the multi-decider / snapshot raw decider) is a SEPARATE
@@ -3880,6 +4105,13 @@ def main() -> int:
         dest="port_scope",
         action="store_false",
         help="skip the port-scope (host:443 vs :80) phase (#2424)",
+    )
+    p.add_argument(
+        "--no-coresident",
+        dest="coresident",
+        action="store_false",
+        help="skip the co-resident-hosts phase (canary for per-IP allow/revoke "
+        "sharing, #2352/#2440)",
     )
     p.add_argument(
         "--cleanup",
