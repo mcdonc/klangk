@@ -1858,6 +1858,44 @@ class TestNfqueueCallback:
         await self._decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
 
+    def test_send_rst_paths_and_debug(self, proxy, monkeypatch, capsys):
+        # Direct coverage of _send_rst's four branches + the opt-in RST debug
+        # log (#2464): no-socket, success, sendto-failure, unparseable, and the
+        # KLANGKNETWORK_EGRESS_DEBUG_RST flag on/off. The flag defaults off so
+        # the debug print is the only branch the indirect _decide tests miss.
+        syn = _syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111)
+
+        # No socket -> no-op; with the debug flag on, note the REJECT-only fall
+        # back (covers _rst_debug's print branch).
+        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        monkeypatch.setattr(proxy, "_RST_DEBUG", True)
+        proxy._send_rst(syn)
+        assert "no raw socket" in capsys.readouterr().out
+
+        # Socket set, sendto succeeds -> forged + a "sent" debug line.
+        sock = MagicMock()
+        monkeypatch.setattr(proxy, "_RST_SOCK", sock)
+        proxy._send_rst(syn)
+        sock.sendto.assert_called_once()
+        assert "rst-forge: sent" in capsys.readouterr().out
+
+        # sendto raises -> swallowed + a "failed" debug line.
+        sock.sendto.side_effect = OSError("boom")
+        proxy._send_rst(syn)
+        assert "sendto failed" in capsys.readouterr().out
+
+        # Unparseable tuple -> no sendto + an "unparseable" debug line.
+        sock.sendto.reset_mock()
+        proxy._send_rst(b"\x00\x00\x00\x00")  # too short / not IPv4
+        assert "unparseable" in capsys.readouterr().out
+        assert sock.sendto.call_count == 0  # nothing forged for a bad tuple
+
+        # Flag off (the default) -> no debug output at all (covers the False
+        # branch of _rst_debug's `if _RST_DEBUG`).
+        monkeypatch.setattr(proxy, "_RST_DEBUG", False)
+        proxy._send_rst(syn)
+        assert capsys.readouterr().out == ""
+
     async def test_cache_hit_deny_forges_rst(self, proxy, monkeypatch):
         # A retried connect() to a denied flow reuses the cached verdict and
         # also forges the RST (fails fast), not just drops.
