@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 # Make the e2e-tests dir importable (it's not on sys.path by default for the
 # unit test suite) — same pattern as test_e2e_env.py.
 _E2E_DIR = Path(__file__).resolve().parents[1] / "e2e-tests"
@@ -108,3 +110,95 @@ def test_cleanup_prefix_guard_avoids_substring_match(monkeypatch):
     monkeypatch.setattr(cd.subprocess, "run", fake_run)
     assert cd.cleanup_stale_containers() == ["ctrl-dns-target-9"]
     assert removed_via_rm == ["ctrl-dns-target-9"]
+
+
+def test_probe_target_empty_on_ok(monkeypatch):
+    """``_probe_target`` returns ``''`` when the probe container prints ``OK``,
+    and the probe connects to every IP concurrently (one thread per IP) so a
+    single iteration is bounded by the per-IP timeout, not N x it (#2473)."""
+    captured: dict[str, str] = {}
+
+    def fake_run(args, **kwargs):
+        captured["script"] = args[-1]
+        return _ok("OK")
+
+    monkeypatch.setattr(cd.subprocess, "run", fake_run)
+    c = cd.ControlledDns()
+    c._p.ips = ["10.88.0.200", "10.88.0.201"]
+    assert c._probe_target() == ""
+    assert "threading" in captured["script"]
+    assert "create_connection" in captured["script"]
+
+
+def test_probe_target_returns_bad_list(monkeypatch):
+    """A probe that finds unreachable IPs returns the ``BAD ...`` line (so the
+    readiness loop can retry)."""
+    monkeypatch.setattr(
+        cd.subprocess,
+        "run",
+        lambda *a, **k: _ok("BAD 10.88.0.201:TimeoutError"),
+    )
+    c = cd.ControlledDns()
+    c._p.ips = ["10.88.0.200", "10.88.0.201"]
+    assert c._probe_target() == "BAD 10.88.0.201:TimeoutError"
+
+
+def test_probe_target_reports_subprocess_failure(monkeypatch):
+    """A ``podman run`` timeout surfaces as ``'probe raised: ...'`` rather than
+    crashing the readiness loop."""
+
+    def fake_run(args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=30)
+
+    monkeypatch.setattr(cd.subprocess, "run", fake_run)
+    c = cd.ControlledDns()
+    c._p.ips = ["10.88.0.200"]
+    assert c._probe_target().startswith("probe raised:")
+
+
+def test_wait_target_ready_retries_until_ok(monkeypatch):
+    """Readiness retries: a target unreachable-then-reachable returns rather
+    than raising — the deadline must outlast more than one probe (#2473)."""
+    seq = ["BAD 10.88.0.200:TimeoutError", "OK"]
+    calls = {"n": 0}
+
+    def fake_run(args, **kwargs):
+        i = calls["n"]
+        calls["n"] += 1
+        return _ok(seq[min(i, len(seq) - 1)])
+
+    monkeypatch.setattr(cd.subprocess, "run", fake_run)
+    monkeypatch.setattr(cd.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(cd.time, "time", lambda: 100.0)  # deadline never hit
+
+    c = cd.ControlledDns()
+    c._p.ips = ["10.88.0.200"]
+    c._wait_target_ready(timeout=30.0)  # returns, does not raise
+    assert calls["n"] >= 2  # retried at least once before success
+
+
+def test_wait_target_ready_raises_when_never_reachable(monkeypatch):
+    """If the target never becomes reachable the loop exhausts its deadline and
+    raises (rather than silently succeeding or hanging)."""
+    monkeypatch.setattr(
+        cd.subprocess,
+        "run",
+        lambda *a, **k: _ok("BAD 10.88.0.200:TimeoutError"),
+    )
+    monkeypatch.setattr(cd.time, "sleep", lambda *_a, **_k: None)
+    # time.time(): 100 for the deadline set + first while-check, then far in the
+    # future so the next while-check sees the deadline exceeded and exits.
+    times = [100.0, 100.0, 1e12]
+    idx = {"i": 0}
+
+    def fake_time():
+        v = times[min(idx["i"], len(times) - 1)]
+        idx["i"] += 1
+        return v
+
+    monkeypatch.setattr(cd.time, "time", fake_time)
+
+    c = cd.ControlledDns()
+    c._p.ips = ["10.88.0.200", "10.88.0.201"]
+    with pytest.raises(RuntimeError, match="did not become reachable"):
+        c._wait_target_ready(timeout=30.0)

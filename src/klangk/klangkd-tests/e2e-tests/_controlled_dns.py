@@ -573,8 +573,14 @@ class ControlledDns:
             "ip addr add $ip/16 dev eth0 2>/dev/null || true; done",
         )
 
-    def _wait_target_ready(self, timeout: float = 20.0) -> None:
-        """A peer on the network can open a TCP connection to each target IP."""
+    def _wait_target_ready(self, timeout: float = 30.0) -> None:
+        """A peer on the network can open a TCP connection to each target IP.
+
+        Retries until ``timeout``. Each :meth:`_probe_target` iteration is
+        bounded by the single per-IP connect timeout (the IPs are probed in
+        parallel), so this budget buys several retries rather than being eaten
+        by one slow iteration (#2473).
+        """
         deadline = time.time() + timeout
         last = ""
         while time.time() < deadline:
@@ -588,17 +594,29 @@ class ControlledDns:
         )
 
     def _probe_target(self) -> str:
-        """'' if every target IP accepts a TCP :443 connect, else an error."""
+        """'' if every target IP accepts a TCP :443 connect, else an error.
+
+        The probe container connects to every target IP **in parallel** (one
+        thread per IP, each with its own 3s connect timeout), so one iteration
+        is bounded by ~3s + podman overhead rather than 31x3s. A sequential
+        probe made the readiness deadline shorter than a single iteration, so
+        a transiently slow target never got a retry (#2473).
+        """
         # Run a single ephemeral probe container that tries every IP at once.
         script = (
-            "import socket,sys\n"
+            "import socket,threading\n"
+            "ips=%r\n"
             "bad=[]\n"
-            "for ip in %r:\n"
+            "lock=threading.Lock()\n"
+            "def probe(ip):\n"
             "    try:\n"
             "        s=socket.create_connection((ip,443),timeout=3); s.close()\n"
             "    except Exception as e:\n"
-            "        bad.append(ip+':'+type(e).__name__)\n"
-            "print('BAD '+','.join(bad) if bad else 'OK')\n"
+            "        with lock: bad.append(ip+':'+type(e).__name__)\n"
+            "ts=[threading.Thread(target=probe,args=(ip,)) for ip in ips]\n"
+            "for t in ts: t.start()\n"
+            "for t in ts: t.join()\n"
+            "print('BAD '+','.join(sorted(bad)) if bad else 'OK')\n"
         ) % (self._p.ips,)
         try:
             r = subprocess.run(

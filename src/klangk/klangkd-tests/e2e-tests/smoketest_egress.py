@@ -1207,7 +1207,27 @@ class SmokeTest:
                     f"!! controlled-dns failed to start: {exc!r}",
                     file=sys.stderr,
                 )
-                self.dns = None
+                # Remove the partially-started fixture (e.g. a target container
+                # created before the readiness probe failed) so it isn't left
+                # running. _cleanup_sync/atexit would also catch it, but this is
+                # the direct path.
+                if self.dns is not None:
+                    await asyncio.to_thread(self.dns.stop)
+                    self.dns = None
+                # Fail hard: controlled-DNS was requested (the default) and the
+                # whole point of the fixture is to make the fuzz run
+                # deterministic (#2424). Silently degrading to real DNS makes
+                # every later phase's result indeterminate while the run still
+                # prints a healthy-looking plan line, so the operator must opt
+                # out explicitly with --no-controlled-dns to accept real DNS
+                # (#2473).
+                raise RuntimeError(
+                    "controlled-DNS is required for a deterministic fuzz run, "
+                    "but the fixture failed to start (see above). Re-run with "
+                    "--no-controlled-dns to allow real DNS (the "
+                    "snapshot/host-scope/port-scope/co-resident phases will be "
+                    "skipped)."
+                ) from exc
         if self.args.server:
             url = self.args.server.rstrip("/")
             self.server = {
