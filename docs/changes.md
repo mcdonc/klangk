@@ -529,6 +529,12 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Network egress UI copy (#2457).** The workspace consent-rules tab is
+  now labeled **"Net Rules"** (was "Rules") to disambiguate it, and the
+  rejected-domains help text plus its validation error replaced the DNS
+  jargon "NXDOMAIN" with plain language (e.g. "Hosts blocked unconditionally
+  (never resolved, no consent asked)."). Display-only; no behavior change.
+
 - **Revoking a `forever` verdict retracts its durable list entry (#2370,
   #2339).** Revoking a `forever` allow/deny now removes the host from
   `allowed_domains`/`rejected_domains` (not just the in-memory sidecar rule),

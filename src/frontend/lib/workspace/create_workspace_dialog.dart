@@ -804,7 +804,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
       Text('Rejected Domains', style: _labelStyle),
       const SizedBox(height: 4),
       Text(
-        'Hosts NXDOMAIN\'d unconditionally (no resolution, no consent).',
+        'Hosts blocked unconditionally (never resolved, no consent asked).',
         style: const TextStyle(fontSize: 12, color: KColors.textSecondary),
       ),
       const SizedBox(height: 8),

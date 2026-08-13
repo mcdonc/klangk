@@ -1105,7 +1105,7 @@ class _SettingsFormState extends State<_SettingsForm> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Hosts NXDOMAIN\'d unconditionally (no resolution, no consent). '
+          'Hosts blocked unconditionally (never resolved, no consent asked). '
           'CIDR ranges are not supported.',
           style: TextStyle(
             color: KColors.textSecondary,

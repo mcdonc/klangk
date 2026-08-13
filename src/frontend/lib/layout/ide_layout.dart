@@ -276,7 +276,7 @@ class IdeLayoutState extends State<IdeLayout> {
     // (the caller passes null otherwise), mounted with the other management
     // tabs before Sharing/Settings.
     if (widget.consentRules != null) {
-      addTab('Rules', Icons.shield_outlined, widget.consentRules!);
+      addTab('Net Rules', Icons.shield_outlined, widget.consentRules!);
     }
     if (widget.sharing != null) {
       addTab('Sharing', Icons.people_outline, widget.sharing!);
