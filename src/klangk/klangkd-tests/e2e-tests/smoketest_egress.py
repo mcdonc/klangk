@@ -307,6 +307,50 @@ def _read_outfile(container: str, outfile: str) -> str:
     return r.stdout
 
 
+def _container_inspect(container: str) -> dict | None:
+    """``podman inspect`` one container -> parsed JSON, or ``None`` if gone.
+
+    Used by the container-gone diagnostics (#2475) to read the death state
+    (status / exit code / OOMKilled) before teardown removes the corpse.
+    """
+    try:
+        r = subprocess.run(
+            ["podman", "inspect", "--format", "json", container],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        arr = json.loads(r.stdout or "[]")
+        return arr[0] if arr else None
+    except (ValueError, IndexError):
+        return None
+
+
+def _is_container_gone_error(exc: BaseException) -> bool:
+    """Did a ``podman exec`` fail because the target container vanished?
+
+    ``_trigger`` runs ``podman exec -d ...`` with ``check=True`` and no output
+    capture, so a mid-run container removal surfaces as a
+    ``CalledProcessError(returncode=125)`` whose stderr ('no such container')
+    is NOT on the exception -- it already went to the terminal. Podman's 125 is
+    its runtime-error code; a detached ``exec`` only returns 125 when it can't
+    reach the container, so rc 125 + a ``podman exec`` command is a reliable
+    gone-signal. Used to fork the scored loop's per-step handler into a single
+    CONTAINER-GONE finding + abort instead of a spurious cascade (#2475).
+    """
+    if not isinstance(exc, subprocess.CalledProcessError):
+        return False
+    cmd = list(getattr(exc, "cmd", None) or [])
+    if not cmd or cmd[0] != "podman" or "exec" not in cmd:
+        return False
+    return exc.returncode == 125
+
+
 async def _wait_result(
     container: str, outfile: str, timeout: float = 45
 ) -> str:
@@ -692,6 +736,7 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("off-list hung (not a clean static denial)", "STATIC-HELD"),
     ("off-list succeeded with no decider", "STATIC-LEAK"),
     ("step raised", "UNEXPECTED-ERROR"),
+    ("container gone", "CONTAINER-GONE"),
     # Controlled-DNS phases (#2424): host-scope / port-scope / snapshot-replay.
     ("A replayed in reconnect snapshot", "SNAPSHOT-REPLAY"),
     ("B missing from reconnect snapshot", "SNAPSHOT-REPLAY"),
@@ -761,6 +806,7 @@ OUTCOME_NAMES: dict[str, str] = {
     "FIRST-DECISION-VIOLATION": "first-decision-wins broken (a late/2nd verdict let it through).",
     "SNAPSHOT-CASCADE": "reconnect snapshot indeterminate (CDN-cascade respawn / timing).",
     "HUNG-NFQUEUE-DNS": "connection hung / unexpected exit (NFQUEUE/DNS), not a consent failure.",
+    "CONTAINER-GONE": "the workspace container vanished mid-run (podman exec rc 125 'no such container') -- an infra/networking failure, not a consent-logic break. Death diagnostics captured. #2475",
     "CONN-NOT-CLEAN": "connection not cleanly refused / a resolve frame wasn't seen.",
     "AB-HELD-HUNG": "concurrent A/B hold hung (NFQUEUE/DNS; possibly a concurrent-hold issue).",
     "ISOLATION-BROKEN": "a workspace-scoped decider saw another workspace's request. #2392",
@@ -987,6 +1033,121 @@ class SmokeTest:
                     print(f"sidecar logs {name} (ws {ws_id[:8]}) -> {path}")
                 except Exception:
                     pass
+
+    def _capture_container_diagnostics(
+        self, container: str, at_step: int
+    ) -> str:
+        """Capture why the workspace container vanished, *now* (before teardown
+        removes the rest). Returns the diagnostics file path, or '' on failure.
+
+        'no such container' means the container was **removed** (not merely
+        stopped) -- and only klangkd removes workspace containers -- so the
+        klangkd log tail is the decisive evidence. Also dumps the workspace
+        container's inspect state (exit code / OOMKilled, if the corpse is
+        still in the store), ``podman ps -a`` for the workspace, and this
+        workspace's network-sidecar logs (the eager-deny RST trace, #2464).
+        See #2475.
+        """
+        ws_id = self.ws_id or "?"
+        stamp = int(time.time())
+        path = f"/tmp/smoke_container_gone_{ws_id[:8]}_{stamp}.log"
+        lines: list[str] = [
+            f"# container-gone diagnostics @ step {at_step}",
+            f"workspace={ws_id} container={container}",
+        ]
+
+        info = _container_inspect(container)
+        if info is None:
+            lines.append(f"podman inspect {container}: <gone/removed>")
+        else:
+            st = info.get("State", {}) or {}
+            lines.append(
+                f"podman inspect {container}: status={st.get('Status')} "
+                f"exit={st.get('ExitCode')} oom={st.get('OOMKilled')} "
+                f"started={st.get('StartedAt')} "
+                f"finished={st.get('FinishedAt')}"
+            )
+
+        try:
+            ps = subprocess.run(
+                [
+                    "podman",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    f"label=klangk.workspace={ws_id}",
+                    "--format",
+                    "{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            lines.append(f"--- podman ps -a (klangk.workspace={ws_id}) ---")
+            lines.append((ps.stdout or "(none)").rstrip())
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"podman ps -a failed: {e!r}")
+
+        # This workspace's network-sidecar logs (eager-deny RST trace; #2464).
+        try:
+            sc = subprocess.run(
+                [
+                    "podman",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    f"label=klangk.workspace={ws_id}",
+                    "--filter",
+                    "label=klangk.role=network-sidecar",
+                    "--format",
+                    "{{.Names}}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            for name in sc.stdout.split():
+                try:
+                    lg = subprocess.run(
+                        ["podman", "logs", name],
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                    )
+                    lines.append(f"--- sidecar logs {name} ---")
+                    lines.append(
+                        ((lg.stdout or "") + (lg.stderr or "")).rstrip()
+                    )
+                except Exception as e:  # noqa: BLE001
+                    lines.append(f"sidecar logs {name} failed: {e!r}")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"sidecar list failed: {e!r}")
+
+        # The decisive evidence: who removed the container. klangkd logs every
+        # workspace-container stop/remove with its reason.
+        log_path = os.environ.get("SMOKE_KLANGKD_LOG")
+        if log_path:
+            try:
+                with open(log_path) as f:
+                    tail = f.readlines()[-400:]
+                lines.append(
+                    f"--- klangkd log tail ({log_path}, "
+                    f"last {len(tail)} lines) ---"
+                )
+                lines.extend(line.rstrip() for line in tail)
+            except Exception as e:  # noqa: BLE001
+                lines.append(f"klangkd log read failed: {e!r}")
+        else:
+            lines.append(
+                "SMOKE_KLANGKD_LOG unset -- set it to capture the server tail"
+            )
+
+        try:
+            with open(path, "w") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception:
+            return ""
+        return path
 
     # -- setup ------------------------------------------------------------
     def _start_server(self) -> dict:
@@ -4607,6 +4768,42 @@ class SmokeTest:
                     try:
                         res = await self._run_step(pilot, step)
                     except Exception as exc:  # noqa: BLE001
+                        if _is_container_gone_error(exc) and self.container:
+                            # The workspace container vanished mid-run (a
+                            # `podman exec` returned 125 'no such container').
+                            # Capture why NOW -- before teardown removes the
+                            # rest -- then abort: every later step would just
+                            # re-fail the same exec, so record one FINDING
+                            # (CONTAINER-GONE) instead of a spurious cascade of
+                            # UNEXPECTED-ERROR mismatches (#2475).
+                            diag = self._capture_container_diagnostics(
+                                self.container, step.idx + 1
+                            )
+                            res = _Result(
+                                step,
+                                _canonical(step.host),
+                                True,
+                                "",
+                                "?",
+                                "container-gone",
+                                None,
+                                FINDING,
+                                detail=(
+                                    f"container gone at step {step.idx + 1}: "
+                                    f"podman exec rc="
+                                    f"{getattr(exc, 'returncode', '?')} "
+                                    f"({exc.__class__.__name__}); diagnostics "
+                                    f"-> {diag or '(capture failed)'}"
+                                ),
+                            )
+                            res.outcome = _outcome_name(res)
+                            self.summary.total += 1
+                            self.summary.findings += 1
+                            self.summary.rows.append(res)
+                            self._print_row(res)
+                            self._abort = True
+                            stop = True
+                            break
                         res = _Result(
                             step,
                             _canonical(step.host),
@@ -4685,14 +4882,41 @@ class SmokeTest:
             # traceback on exit (#2456). KeyboardInterrupt / CancelledError is
             # deliberately NOT caught here (they are BaseException, not
             # Exception) -- Ctrl-C propagates to main()'s clean exit-130.
-            self._record_probe(
-                _Step(self.summary.total, "(run)", "n/a", False, "run", "-"),
-                "uncaught exception",
-                "error",
-                None,
-                MISMATCH,
-                f"run aborted: uncaught {exc!r}",
-            )
+            if _is_container_gone_error(exc) and self.container:
+                # A phase's podman exec hit a gone container: capture the death
+                # diagnostics (who removed it -- only klangkd removes workspace
+                # containers) and record a CONTAINER-GONE finding rather than a
+                # generic UNEXPECTED-ERROR (#2475).
+                diag = self._capture_container_diagnostics(
+                    self.container, self.summary.total
+                )
+                self._record_probe(
+                    _Step(
+                        self.summary.total,
+                        "(run)",
+                        "n/a",
+                        False,
+                        "run",
+                        "-",
+                    ),
+                    "container gone",
+                    "container-gone",
+                    None,
+                    FINDING,
+                    f"run aborted: workspace container gone mid-run; "
+                    f"diagnostics -> {diag or '(capture failed)'} (#2475)",
+                )
+            else:
+                self._record_probe(
+                    _Step(
+                        self.summary.total, "(run)", "n/a", False, "run", "-"
+                    ),
+                    "uncaught exception",
+                    "error",
+                    None,
+                    MISMATCH,
+                    f"run aborted: uncaught {exc!r}",
+                )
             stop = True
         finally:
             self._capture_sidecar_logs()
