@@ -94,6 +94,24 @@ _EDGE_VARIANTS = [  # exploratory: sidecar may canonicalize differently
     ("cloudflare.com.", "domain", True),
     ("www.Google.com", "domain", True),
 ]
+# Throwaway off-list hosts for the sidecar-readiness probe (#2417). Fresh (not
+# in the fuzz pool or any phase) so a probe can't perturb the run's model, and
+# enough of them that cycling back to one -- after a fail-close forged RST
+# installs a ~10s REJECT backstop on its IP -- lands well past that backstop.
+_SIDECAR_PROBE_HOSTS = [
+    "ietf.org",
+    "iana.org",
+    "w3.org",
+    "isc.org",
+    "openssl.org",
+    "python.org",
+    "rust-lang.org",
+    "gnupg.org",
+]
+# Worst-case sidecar connect backoff (1->2->4->8->15s) plus margin for the
+# workspace JWT file to appear; the readiness probe retries fresh hosts across
+# this whole window before giving up.
+_SIDECAR_READY_BUDGET = 60.0
 _FUZZ_DURATIONS = [
     DURATION_ONCE,
     DURATION_5S,  # test-only (#2363); exercises timed within/exceeding at run speed
@@ -642,6 +660,53 @@ class SmokeTest:
             f"stop_on_mismatch={'no' if self.args.continue_run else 'yes'}\n"
         )
 
+    async def _wait_sidecar_ready(self, pilot) -> None:
+        """Gate the scored loop on the sidecar consent WS being wired (#2417).
+
+        ``_wait_connected`` only proves the *decider's* WS reached klangkd. The
+        sidecar's own consent-WS client -- a separate connection from inside the
+        container -- connects on its own backoff schedule, gated on the
+        workspace JWT file. If the scored loop starts before the sidecar WS is
+        up, an off-list SYN hits the NFQUEUE fail-close branch (forge RST + a
+        short REJECT backstop, #2415): no egress frame reaches the decider, so
+        the iteration scores a hard MISMATCH. Probe a throwaway off-list host
+        and retry until a request actually surfaces in the decider (proving
+        sidecar-WS -> coordinator -> decider are wired), then settle it with an
+        allow/once (releases just this SYN; no learned rule) so the probe can't
+        perturb the scored run.
+        """
+        print(
+            "verifying sidecar consent WS is wired before the scored loop ..."
+        )
+        deadline = time.time() + _SIDECAR_READY_BUDGET
+        attempt = 0
+        while time.time() < deadline:
+            host = _SIDECAR_PROBE_HOSTS[attempt % len(_SIDECAR_PROBE_HOSTS)]
+            canon = _canonical(host)
+            outfile = f"/tmp/smoke_ready_{attempt}.out"
+            _trigger(self.container, host, outfile)
+            # A wired sidecar holds the SYN and surfaces a request within ~1s;
+            # a fail-close forges the RST, so curl exits at once and no request
+            # ever arrives. A short window is enough either way.
+            rid = await _wait_for_request(self.app, canon, timeout=5.0)
+            if rid is not None:
+                self.app._decide_id(rid, DECISION_ALLOWED, DURATION_ONCE)
+                await pilot.pause()
+                await _wait_resolved(self.app, rid, timeout=15.0)
+                print(f"  sidecar wired (probe {host} surfaced a request)\n")
+                return
+            attempt += 1
+            print(
+                f"  probe {host}: no request yet (sidecar WS still "
+                f"connecting?); retrying ..."
+            )
+            await asyncio.sleep(0.5)
+        raise RuntimeError(
+            "sidecar consent WS did not surface a request within "
+            f"{_SIDECAR_READY_BUDGET:.0f}s; aborting before the scored loop "
+            "would mismatch (#2417)"
+        )
+
     # -- per-iteration -----------------------------------------------------
     async def _run_step(self, pilot, step: _Step) -> _Result:
         canon = _canonical(step.host)
@@ -680,7 +745,7 @@ class SmokeTest:
                     detail = "expected a request; connection hung (NFQUEUE/DNS, not a consent failure)"
                 else:
                     status = FINDING if expl else MISMATCH
-                    detail = "expected a request, none arrived (connection resolved cleanly)"
+                    detail = f"expected a request, none arrived (curl {_exit_label(ec)})"
                 return self._record(
                     _Result(
                         step,
@@ -889,8 +954,7 @@ class SmokeTest:
                     "no-request(!)",
                     ec,
                     status,
-                    "expected a re-prompt; none arrived but the "
-                    "connection resolved cleanly",
+                    f"expected a re-prompt; none arrived (curl {_exit_label(ec)})",
                 )
             # settle so the held request doesn't dangle: allow/once releases
             # just this SYN (ttl None -> no learn, no REJECT) so it can't
@@ -1743,6 +1807,7 @@ class SmokeTest:
                 await self.run_static_refusal_phase()
             async with self.app.run_test() as pilot:
                 await _wait_connected(self.app)
+                await self._wait_sidecar_ready(pilot)
                 for step in plan:
                     try:
                         res = await self._run_step(pilot, step)
