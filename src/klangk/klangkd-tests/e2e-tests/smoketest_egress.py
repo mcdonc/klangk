@@ -64,8 +64,10 @@ from klangk.cli.tui.consent import (  # noqa: E402
     DURATION_1H,
     DURATION_ONCE,
     DURATION_TILRESTART,
+    make_pause,
     make_ping,
     make_revoke,
+    make_unpause,
     make_verdict,
 )
 
@@ -413,6 +415,12 @@ class RawDecider:
             msg = json.loads(raw)
         except Exception:
             return ("ignored", None)
+        return self._apply(msg)
+
+    def _apply(self, msg: dict) -> tuple[str, object | None]:
+        # Update held/resolved from one parsed frame; return (type, payload).
+        # Factored out so the pause-ack waiter can re-enter it for any
+        # egress_request/egress_resolved frame that lands alongside the ack.
         t = msg.get("type")
         if t == "egress_request":
             req = msg.get("request") or {}
@@ -459,6 +467,49 @@ class RawDecider:
 
     def has(self, canon: str) -> bool:
         return any(h == canon for h in self.held.values())
+
+    async def wait_no_request(
+        self, canon: str, window: float = 6.0
+    ) -> str | None:
+        # Mirror of the module-level _wait_no_request for a RawDecider: None
+        # if no request for ``canon`` surfaces in ``window``, else its id.
+        # Drains frames while polling so any egress_request actually lands.
+        deadline = time.time() + window
+        while time.time() < deadline:
+            for rid, h in self.held.items():
+                if h == canon:
+                    return rid
+            await self._recv(0.3)
+        return None
+
+    async def pause(self, duration: str, timeout: float = 10.0) -> bool:
+        # #2332: send a pause frame; True once a pause_ack with ok=True lands.
+        await self.ws.send(make_pause(duration))
+        return await self._await_pause_ack(timeout)
+
+    async def unpause(self, timeout: float = 10.0) -> bool:
+        # #2332: clear an active pause; True once a pause_ack ok=True lands.
+        await self.ws.send(make_unpause())
+        return await self._await_pause_ack(timeout)
+
+    async def _await_pause_ack(self, timeout: float) -> bool:
+        # The coordinator sets the pause then sends the ack, then broadcasts a
+        # refreshed egress_rules frame; apply any egress frame that arrives
+        # alongside so held/resolved stay consistent.
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                raw = await asyncio.wait_for(self.ws.recv(), timeout=0.5)
+            except Exception:
+                return False
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            if msg.get("type") == "pause_ack":
+                return bool(msg.get("ok"))
+            self._apply(msg)
+        return False
 
     async def verdict(self, rid: str, decision: str, duration: str) -> None:
         await self.ws.send(make_verdict(rid, decision, duration))
@@ -650,6 +701,11 @@ OUTCOME_NAMES: dict[str, str] = {
     "ALLOWMODE-DECIDER-ACCEPTED": "a consent decider registered (or ambiguously attached) against an allow-mode workspace -- it must be refused, same gate as static (#2395/#2406).",
     "RESTART-FOREVER-NOT-DURABLE": "a `forever` verdict did not survive a container restart -- forever-allow must reconnect via allowed_domains (#2368), forever-deny must re-deny via rejected_domains (#2369).",
     "RESTART-TILRESTART-SURVIVED": "a `tilrestart` verdict survived a container restart -- it must be reaped (the sidecar's in-memory rule dies and the DB row is cleared on restart, #2346/#2349).",
+    "PAUSE-HELD": "an off-list host surfaced a consent request while consent filtering was paused -- the pause did not silence the interactive hold. #2332",
+    "PAUSE-REFUSED": "an off-list host was refused or hung while paused instead of auto-allowing -- the pause did not take effect at the gate. #2332",
+    "PAUSE-POLICY-BYPASS": "a static policy (allow-list / rejected_domains) was bypassed or changed while paused -- pause must affect only the interactive hold, not the DNS-layer lists. #2332",
+    "PAUSE-RESUME-BROKEN": "after resume, an off-list host was not re-held for consent (the pause lingered, or the re-hold failed). #2332",
+    "PAUSE-ACK-FAILED": "the pause/unpause pause_ack came back not-ok (authz/protocol: missing share-terminals, unknown duration, or a deploy-wide decider). #2332/#2389",
 }
 
 _EXPECT_CONN_NAMES = {
@@ -3427,6 +3483,314 @@ class SmokeTest:
                 except Exception:
                     pass
 
+    async def run_pause_phase(self, pilot) -> None:
+        """#2332/#2389: pausing consent filtering silences the interactive hold
+        workspace-wide for a window, while static policy keeps applying.
+
+        * While paused, an off-list host CONNECTS (exit 0) with NO prompt
+          surfaced to a decider (the hold auto-allows).
+        * After resume, the SAME off-list host is HELD again and surfaces a
+          request.
+        * ``allowed_domains`` / ``rejected_domains`` enforcement is unchanged
+          by pause -- those are enforced at the sidecar DNS layer (ACCEPT /
+          NXDOMAIN) upstream of the consent gate, so a paused workspace can't
+          let a rejected host through or be affected by an allow-list entry.
+
+        Uses its own interactive workspace + RawDecider (workspace-level
+        state, like the restart phase; independent of the hero textual
+        decider). ``pilot`` is unused (signature symmetry).
+        """
+        if not self.args.pause_phase:
+            return
+        print(
+            "\n--- #2332 pause consent filtering: hold silenced, "
+            "policy kept ---"
+        )
+        parent = _Step(
+            self.summary.total,
+            "(pause ws)",
+            "n/a",
+            False,
+            "pause",
+            "-",
+        )
+        # Fresh, distinct hosts (not in the probe pool or any default list):
+        # off-list must connect under pause; allow-list + rejected exercise
+        # the static policy that pause must leave untouched.
+        host_off = "ubuntu.com"
+        host_allow = "example.com"
+        host_rej = "kernel.org"
+        canon_off = _canonical(host_off)
+        pws: str | None = None
+        conn = None
+        d: RawDecider | None = None
+        try:
+            pws = await asyncio.to_thread(
+                self._create_workspace,
+                self.server,
+                self.auth,
+                [host_allow],  # allow-list: DNS-layer allow, pause-independent
+                [host_rej],  # rejected: DNS-layer NXDOMAIN, pause-independent
+                f"smoke-pause-{int(time.time() * 1000) % 100000}",
+            )
+            self._extra_ws_ids.append(pws)
+            print(f"pause workspace {pws}")
+            conn = await self._open_terminal_ws(pws)
+            asyncio.create_task(self._drain(conn))
+            container = _container_for_workspace(pws)
+            d = await self._connect_raw_decider(pws, ping=True)
+            await d.settle()
+
+            # The sidecar consent-WS must be wired before pause/hold behavior
+            # is asserted; an unwired sidecar fail-closes off-list and would
+            # false-positive as a pause refusal (#2417).
+            if not await self._probe_sidecar_ready_raw(
+                d, container, _SIDECAR_PROBE_HOSTS[2]
+            ):
+                self._record_probe(
+                    parent,
+                    "pause sidecar ready",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "pause-phase sidecar not wired; cannot assert pause behavior",
+                )
+                return
+
+            # 1) PAUSE. The decider is workspace-scoped (the hero owner), so
+            #    share-terminals is satisfied; a pause_ack ok=True must return.
+            if not await d.pause("15m"):
+                self._record_probe(
+                    parent,
+                    "pause",
+                    "nack(!)",
+                    None,
+                    MISMATCH,
+                    "pause_ack was not ok (authz/protocol failed)",
+                )
+                return
+            self._record_probe(
+                parent,
+                "pause",
+                "paused",
+                None,
+                PASS,
+                "consent filtering paused workspace-wide (15m window)",
+            )
+
+            # 2) While paused: off-list CONNECTS with NO prompt (auto-allow).
+            of_off = f"/tmp/smoke_pause_off_{self.summary.total}.out"
+            _trigger(container, host_off, of_off)
+            intruder = await d.wait_no_request(canon_off, window=6.0)
+            if intruder is not None:
+                # The hold was not silenced -- release the SYN, then flag it.
+                await d.verdict(intruder, DECISION_ALLOWED, DURATION_ONCE)
+                await d.wait_resolution(intruder, timeout=15.0)
+                self._record_probe(
+                    parent,
+                    "paused off-list",
+                    "request(!)",
+                    None,
+                    MISMATCH,
+                    "off-list prompted while paused (hold not silenced)",
+                )
+            else:
+                text_off = await _wait_result(container, of_off, timeout=25.0)
+                ec_off = _parse_exit(text_off)
+                if ec_off == 0:
+                    self._record_probe(
+                        parent,
+                        "paused off-list",
+                        "connected",
+                        ec_off,
+                        PASS,
+                        "off-list auto-allowed while paused (no prompt)",
+                    )
+                elif ec_off is None:
+                    self._record_probe(
+                        parent,
+                        "paused off-list",
+                        "hung(!)",
+                        None,
+                        MISMATCH,
+                        "off-list hung while paused (NFQUEUE/DNS or no auto-allow)",
+                    )
+                else:
+                    self._record_probe(
+                        parent,
+                        "paused off-list",
+                        "refused(!)",
+                        ec_off,
+                        MISMATCH,
+                        f"off-list refused while paused (exit {ec_off}); "
+                        "must auto-allow",
+                    )
+            if self._abort:
+                return
+
+            # 3) While paused: allow-list host STILL connects (DNS-layer allow,
+            #    unaffected by pause). A prompt or a refusal means the pause
+            #    perturbed the static policy.
+            of_al = f"/tmp/smoke_pause_al_{self.summary.total}.out"
+            _trigger(container, host_allow, of_al)
+            intruder_al = await d.wait_no_request(
+                _canonical(host_allow), window=5.0
+            )
+            text_al = await _wait_result(container, of_al, timeout=20.0)
+            ec_al = _parse_exit(text_al)
+            if intruder_al is not None:
+                await d.verdict(intruder_al, DECISION_ALLOWED, DURATION_ONCE)
+                await d.wait_resolution(intruder_al, timeout=15.0)
+                self._record_probe(
+                    parent,
+                    "paused allow-list",
+                    "request(!)",
+                    ec_al,
+                    MISMATCH,
+                    "allow-list refused while paused (prompted; DNS-layer "
+                    "allow bypassed?)",
+                )
+            elif ec_al == 0:
+                self._record_probe(
+                    parent,
+                    "paused allow-list",
+                    "connected",
+                    ec_al,
+                    PASS,
+                    "allow-list host connected while paused (unchanged)",
+                )
+            else:
+                self._record_probe(
+                    parent,
+                    "paused allow-list",
+                    "refused(!)",
+                    ec_al,
+                    MISMATCH,
+                    f"allow-list refused while paused (exit {ec_al}); "
+                    "static allow unchanged by pause",
+                )
+            if self._abort:
+                return
+
+            # 4) While paused: rejected host STILL denied (DNS-layer NXDOMAIN,
+            #    unaffected by pause). A success is a leak; a prompt means the
+            #    pause routed a rejected host into the consent gate.
+            of_rj = f"/tmp/smoke_pause_rj_{self.summary.total}.out"
+            _trigger(container, host_rej, of_rj)
+            intruder_rj = await d.wait_no_request(
+                _canonical(host_rej), window=5.0
+            )
+            text_rj = await _wait_result(container, of_rj, timeout=20.0)
+            ec_rj = _parse_exit(text_rj)
+            if intruder_rj is not None:
+                await d.verdict(intruder_rj, DECISION_DENIED, DURATION_ONCE)
+                await d.wait_resolution(intruder_rj, timeout=15.0)
+                self._record_probe(
+                    parent,
+                    "paused rejected",
+                    "request(!)",
+                    ec_rj,
+                    MISMATCH,
+                    "rejected host prompted while paused (DNS-layer deny bypassed?)",
+                )
+            elif ec_rj == 0:
+                self._record_probe(
+                    parent,
+                    "paused rejected",
+                    "leak(!)",
+                    ec_rj,
+                    MISMATCH,
+                    "rejected host leaked while paused (DNS-layer deny broken)",
+                )
+            else:
+                self._record_probe(
+                    parent,
+                    "paused rejected",
+                    "denied",
+                    ec_rj,
+                    PASS,
+                    f"rejected host denied while paused (exit {ec_rj}; "
+                    "unchanged)",
+                )
+            if self._abort:
+                return
+
+            # 5) RESUME. Clearing the pause must ack ok=True.
+            if not await d.unpause():
+                self._record_probe(
+                    parent,
+                    "resume",
+                    "nack(!)",
+                    None,
+                    MISMATCH,
+                    "unpause_ack was not ok (resume failed)",
+                )
+                return
+            self._record_probe(
+                parent,
+                "resume",
+                "resumed",
+                None,
+                PASS,
+                "consent filtering resumed (pause cleared)",
+            )
+
+            # 6) After resume: the SAME off-list host is HELD again and surfaces
+            #    a request (the paused allow was once -> nothing lingered). A
+            #    silent connect means the pause lingered; a prompt is the PASS.
+            of_off2 = f"/tmp/smoke_pause_off2_{self.summary.total}.out"
+            _trigger(container, host_off, of_off2)
+            rid_off = await d.wait_for(canon_off, timeout=15.0)
+            if rid_off is not None:
+                await d.verdict(rid_off, DECISION_ALLOWED, DURATION_ONCE)
+                await d.wait_resolution(rid_off, timeout=15.0)
+                ec_off2 = _parse_exit(
+                    await _wait_result(container, of_off2, timeout=15.0)
+                )
+                self._record_probe(
+                    parent,
+                    "resumed off-list",
+                    "re-held",
+                    ec_off2,
+                    PASS,
+                    "off-list re-held for consent after resume",
+                )
+            else:
+                ec_off2 = _parse_exit(
+                    await _wait_result(container, of_off2, timeout=12.0)
+                )
+                self._record_probe(
+                    parent,
+                    "resumed off-list",
+                    "no-request(!)",
+                    ec_off2,
+                    MISMATCH,
+                    f"off-list not re-held after resume (exit {ec_off2}; "
+                    "pause lingered?)",
+                )
+        except Exception as e:  # noqa: BLE001  (phase bring-up failure)
+            self._record_probe(
+                parent,
+                "pause phase",
+                "error",
+                None,
+                MISMATCH,
+                f"pause-phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+        finally:
+            if d is not None:
+                try:
+                    await d.close()
+                except Exception:
+                    pass
+            if conn is not None:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+
     async def run_no_decider_phase(self, pilot) -> None:
         """Static-mode phase: with NO consent decider registered, off-list egress
         is denied cleanly (no held request, no hang) while allow-list egress
@@ -3560,6 +3924,11 @@ class SmokeTest:
                     await self.run_allow_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_restart_phase(pilot)
+                # Consent-filtering pause/resume (#2332/#2389): its own
+                # interactive workspace + RawDecider (workspace-level state,
+                # like the restart phase), so it runs alongside it.
+                if not stop and not self._abort:
+                    await self.run_pause_phase(pilot)
                 # Controlled-DNS phases (#2424): host-scope + port-scope use their
                 # own workspace + raw decider (independent of the textual app),
                 # so they run last inside run_test.
@@ -3839,6 +4208,14 @@ def main() -> int:
         action="store_false",
         help="skip the #2364/#2346 restart verdict-semantics phase "
         "(forever survives, tilrestart reaped)",
+    )
+    p.add_argument(
+        "--no-pause-phase",
+        dest="pause_phase",
+        action="store_false",
+        help="skip the #2332/#2389 consent-filtering pause/resume phase "
+        "(off-list auto-allows while paused, re-holds after resume; "
+        "allow-list/rejected policy unchanged)",
     )
     p.add_argument(
         "--expiry-wait",
