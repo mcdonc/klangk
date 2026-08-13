@@ -254,6 +254,54 @@ def _net_gw(name: str, network: str = DEFAULT_NETWORK) -> str:
     return out.strip()
 
 
+_FIXTURE_PREFIXES = ("ctrl-dns-target-", "ctrl-dns-dns-")
+
+
+def cleanup_stale_containers() -> list[str]:
+    """Remove leftover ``ctrl-dns-*`` containers from prior, interrupted runs.
+
+    The fixture names its containers ``ctrl-dns-target-<pid>`` /
+    ``ctrl-dns-dns-<pid>`` (``<pid>`` = the creating process's PID), so a new
+    run gets fresh names and never reclaims an interrupted prior run's set.
+    Those prior containers are created via raw ``podman run`` and carry **no**
+    ``klangk.*`` labels, so klangkd's dead-owner reaper (#2430) cannot see
+    them — they would run forever (#2443). This sweep is the only cleanup
+    path for them, so the smoketest calls it before starting its own fixture
+    (clean slate) and exposes it via ``--cleanup`` for recovering an existing
+    mess.
+
+    Returns the names removed. Best-effort: podman being absent or timing out
+    is not fatal (returns whatever was removed so far).
+    """
+    removed: list[str] = []
+    try:
+        res = subprocess.run(
+            ["podman", "ps", "-a", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return removed
+    for name in res.stdout.split():
+        # Match only the fixture's own prefixes (``--filter name=`` is a
+        # substring match and could over-select); an unrelated container is
+        # never touched.
+        if not name.startswith(_FIXTURE_PREFIXES):
+            continue
+        try:
+            subprocess.run(
+                ["podman", "rm", "-f", name],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            removed.append(name)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            break
+    return removed
+
+
 class ControlledDns:
     """A controlled-DNS + multi-IP HTTP/HTTPS fixture (#2424).
 

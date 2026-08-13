@@ -28,11 +28,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import json
 import os
 import random
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -47,7 +49,10 @@ import httpx  # noqa: E402
 
 from _e2e_server import start_server, stop_server, ws_connect  # noqa: E402
 
-from _controlled_dns import ControlledDns  # noqa: E402
+from _controlled_dns import (  # noqa: E402
+    ControlledDns,
+    cleanup_stale_containers,
+)
 
 from klangk.cli.tui.consent import (  # noqa: E402
     ConsentDeciderApp,
@@ -717,6 +722,57 @@ class SmokeTest:
         self._extra_deciders: list[RawDecider] = []
         self._extra_ws_ids: list[str] = []
         self._extra_ws_conns: list[tuple] = []
+        # Guard for _cleanup_sync(): the container-removing teardown (dns.stop
+        # + stop_server) must run exactly once even though it is reachable
+        # from the async finally, atexit, and the SIGTERM handler (#2443).
+        self._cleaned_up = False
+
+    # -- interrupt-safe cleanup -----------------------------------------
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        """True iff a process with ``pid`` exists (mirrors klangkd's check)."""
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True  # another user's process -> assume alive
+        return True
+
+    def _cleanup_sync(self) -> None:
+        """Synchronous, idempotent container teardown (#2443).
+
+        Removes the ctrl-dns fixtures (``self.dns.stop()``) and the owned
+        klangkd subprocess + its labelled sidecar containers
+        (``stop_server()``). Both are synchronous and need no event loop, so
+        this is safe to call from ``atexit`` and a ``SIGTERM`` handler — the
+        paths the async ``teardown()`` never reaches when the smoketest is
+        killed (Ctrl-C under asyncio runs the async ``finally``, but
+        ``SIGTERM``/``SIGKILL`` terminate with no cleanup, leaking the
+        unlabelled ctrl-dns fixtures forever and orphaning the klangkd).
+
+        Idempotent and best-effort: the async ``teardown()`` nulls these
+        fields after its own cleanup, so a double-call is a no-op.
+        """
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+        dns = self.dns
+        owned = self._owned_server
+        # Null first so the async teardown (which may run concurrently on a
+        # Ctrl-C) sees nothing to do and cannot race us.
+        self.dns = None
+        self._owned_server = None
+        if dns is not None:
+            try:
+                dns.stop()
+            except Exception:
+                pass
+        if owned is not None:
+            try:
+                stop_server(owned)
+            except Exception:
+                pass
 
     # -- setup ------------------------------------------------------------
     def _start_server(self) -> dict:
@@ -896,6 +952,10 @@ class SmokeTest:
         self._containers_conf = path
 
     async def setup(self) -> None:
+        # Register the interrupt-safe teardown up front so a partial setup
+        # failure (or a kill mid-setup) still removes whatever fixtures this
+        # far exist. _cleanup_sync is idempotent and no-ops on absent fixtures.
+        atexit.register(self._cleanup_sync)
         # Start the controlled-DNS fixture BEFORE the owned klangkd so its
         # upstream IP is known when the sidecar is created (the env is read at
         # workspace/sidecar-creation time). Skipped for an external --server
@@ -903,6 +963,15 @@ class SmokeTest:
         # or when --no-controlled-dns is passed.
         if self.args.controlled_dns and not self.args.server:
             self._enable_bridge_networking()
+            # Clean slate: reclaim ctrl-dns-* containers left by a prior run
+            # that was SIGKILLed (or whose teardown never ran). These carry no
+            # klangk.* labels, so klangkd's reaper cannot see them (#2443).
+            stale = await asyncio.to_thread(cleanup_stale_containers)
+            if stale:
+                print(
+                    f"reclaimed {len(stale)} stale ctrl-dns container(s): "
+                    f"{', '.join(stale)}"
+                )
             try:
                 self.dns = ControlledDns(image=self.args.sidecar_image)
                 self.dns.start()
@@ -3228,12 +3297,124 @@ def main() -> int:
         action="store_false",
         help="skip the port-scope (host:443 vs :80) phase (#2424)",
     )
+    p.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="don't run the smoketest; reclaim leaked containers from prior "
+        "interrupted runs (ctrl-dns-* fixtures + klangk-net-* sidecars whose "
+        "owning klangkd is dead) then exit (#2443)",
+    )
     args = p.parse_args()
+    if args.cleanup:
+        return _run_cleanup()
     if args.seed is None:
         args.seed = random.randrange(1 << 30)
     if args.consent_timeout < 4:
         p.error("--consent-timeout must be >= 4")
-    return asyncio.run(SmokeTest(args).run())
+    inst = SmokeTest(args)
+
+    def _on_term(signum, frame):
+        # SIGTERM (``kill <pid>``, agent timeouts) terminates without running
+        # the async ``finally`` or ``atexit`` — which is how the unlabelled
+        # ctrl-dns fixtures leak (#2443). Run the synchronous container
+        # teardown here, then exit with the conventional 128+signal code.
+        inst._cleanup_sync()
+        sys.exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _on_term)
+    try:
+        return asyncio.run(inst.run())
+    finally:
+        # Normal exit / uncaught exception / KeyboardInterrupt: belt-and-
+        # suspenders in case the async ``finally`` was itself interrupted
+        # (e.g. a second Ctrl-C). Idempotent — no-ops if already cleaned.
+        inst._cleanup_sync()
+
+
+def _run_cleanup() -> int:
+    """Reclaim leaked smoketest containers without a full run (#2443).
+
+    Removes:
+
+      * every ``ctrl-dns-*`` fixture (unlabelled, so invisible to klangkd's
+        reaper — this sweep is the only path for them);
+      * every ``klangk-net-*`` sidecar whose ``klangk.pid`` owner is no longer
+        alive (the same rule as ``reap_dead_owner_containers`` in
+        ``container.py``, applied standalone so a fresh klangkd need not be
+        started to clear the pile-up).
+
+    ``klangk-net-*`` sidecars with no ``klangk.pid`` (predating #2430) cannot
+    be decided safe and are printed with a paste-ready ``podman rm`` line
+    rather than removed automatically.
+    """
+    fixtures = cleanup_stale_containers()
+    for name in fixtures:
+        print(f"removed ctrl-dns fixture: {name}")
+
+    names: list[str] = []
+    try:
+        res = subprocess.run(
+            ["podman", "ps", "-a", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        names = [n for n in res.stdout.split() if n.startswith("klangk-net-")]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    dead_sidecars: list[str] = []
+    legacy_sidecars: list[str] = []
+    for name in names:
+        try:
+            r = subprocess.run(
+                [
+                    "podman",
+                    "inspect",
+                    "-f",
+                    '{{index .Config.Labels "klangk.pid"}}',
+                    name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+        pid = r.stdout.strip()
+        try:
+            owner = int(pid)
+        except ValueError:
+            legacy_sidecars.append(name)
+            continue
+        if owner > 0 and not SmokeTest._pid_alive(owner):
+            dead_sidecars.append(name)
+
+    for name in dead_sidecars:
+        try:
+            subprocess.run(
+                ["podman", "rm", "-f", name],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            print(f"removed dead-owner sidecar: {name}")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            break
+
+    if legacy_sidecars:
+        print(
+            "\nlegacy label-less sidecars (pre-#2430; owner cannot be "
+            "decided — remove manually if stale):"
+        )
+        print("  podman rm -f " + " ".join(legacy_sidecars))
+
+    total = len(fixtures) + len(dead_sidecars)
+    extra = (
+        f", {len(legacy_sidecars)} legacy listed" if legacy_sidecars else ""
+    )
+    print(f"\ncleanup done: removed {total} container(s){extra}.")
+    return 0
 
 
 if __name__ == "__main__":
