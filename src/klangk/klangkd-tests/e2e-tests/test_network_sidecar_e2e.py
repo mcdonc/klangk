@@ -45,12 +45,20 @@ import uuid
 
 import pytest
 
-# The network sidecar image source (proxy.py + entrypoint.sh + Dockerfile),
-# relative to this e2e-tests dir.
+# The network sidecar image source (entrypoint.sh + Dockerfile), relative to
+# this e2e-tests dir. The proxy itself arrives as the klangksidecar wheel
+# (built from src/sidecar, #2450) and is staged into the build via a named
+# context (``--build-context sidecar=``), mirroring
+# scripts/build-network-sidecar.sh — the image installs the wheel rather than
+# a hand-copied proxy.py.
 _NETWORK_SIDECAR_SRC = os.path.normpath(
     os.path.join(
         os.path.dirname(__file__), "..", "..", "..", "containers", "network"
     )
+)
+# Repo root, for ``uv build`` (the workspace pyproject lives there).
+_REPO_ROOT = os.path.normpath(
+    os.path.join(_NETWORK_SIDECAR_SRC, "..", "..", "..")
 )
 
 # Reused as the "workspace" + fake-upstream image: it has python3 + dnspython
@@ -223,8 +231,36 @@ def env():
     """Build the network sidecar image + materialize the helper scripts."""
     _require_platform()
     tag = f"netc-e2e:{uuid.uuid4().hex[:8]}"
+    # Build the klangksidecar wheel (the proxy package, #2450) and stage it as
+    # the named context the Dockerfile consumes (COPY --from=sidecar). The
+    # image pip-installs the wheel rather than a hand-copied proxy.py, so the
+    # package can grow multifile without the build changing.
+    wheel_dir = tempfile.mkdtemp(prefix="netc-e2e-whl-")
+    uv = subprocess.run(
+        [
+            "uv",
+            "build",
+            "--package",
+            "klangksidecar",
+            "--wheel",
+            "--out-dir",
+            wheel_dir,
+        ],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert uv.returncode == 0, uv.stderr
     build = _podman(
-        "build", "-q", "-t", tag, _NETWORK_SIDECAR_SRC, timeout=300
+        "build",
+        "-q",
+        "-t",
+        tag,
+        "--build-context",
+        f"sidecar={wheel_dir}",
+        _NETWORK_SIDECAR_SRC,
+        timeout=300,
     )
     assert build.returncode == 0, build.stderr
     tmp = tempfile.mkdtemp(prefix="netc-e2e-")
@@ -245,6 +281,7 @@ def env():
     }
     _podman("rmi", "-f", tag, check=False, timeout=60)
     shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(wheel_dir, ignore_errors=True)
 
 
 def _ip_of(name):
