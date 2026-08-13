@@ -301,11 +301,17 @@ _VERDICT_CACHE: dict[tuple[str, int, str, int], tuple[str, float]] = {}
 # event-loop thread -- no lock. Added in :func:`_cb`, discarded in
 # :func:`_decide_and_verdict` once the verdict is cached.
 _INFLIGHT: set[tuple[str, int, str, int]] = set()
-# Temporary REJECT (tcp-reset) rules for denied connections: {(ip, port): expire}.
-# Swept by sweep_once alongside _LEARNED. Makes a deny fail-fast (ECONNREFUSED)
-# instead of waiting for tcp_syn_retries (~127s) -- dropping a SYN alone doesn't
-# fail connect(); the kernel just retransmits until its own timeout.
-_REJECTED: dict[tuple[str, int], float] = {}
+# Temporary REJECT (tcp-reset) rules for denied connections, keyed by
+# (ip, port, sport): sport=0 is destination-scoped (catches every connection to
+# ip:port, used for a timed/forever deny whose over-deny is intended + the
+# WS-down fail-close); a nonzero sport is connection-scoped (catches only
+# retransmits of THAT connection, used for a ``once`` deny so a NEW connection
+# to the same host:port re-prompts instead of being rejected above NFQUEUE,
+# #2463). Swept by sweep_once alongside _LEARNED. Makes a deny fail-fast
+# (ECONNREFUSED) instead of waiting for tcp_syn_retries (~127s) -- dropping a
+# SYN alone doesn't fail connect(); the kernel just retransmits until its own
+# timeout.
+_REJECTED: dict[tuple[str, int, int], float] = {}
 # Strong refs to background asyncio tasks (the TTL sweeper) so CPython doesn't
 # GC a sleeping task. A done-callback discards each entry on completion.
 _BG_TASKS: set[asyncio.Task] = set()
@@ -624,51 +630,49 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
                 del _REJECTED[key]
 
 
-def _reject_rule_args(ip: str, port: int) -> list[str]:
-    """iptables OUTPUT rule args for REJECT (tcp-reset) to ``ip:port``."""
-    return [
-        "-d",
-        ip,
-        "-p",
-        "tcp",
-        "--dport",
-        str(port),
-        "-j",
-        "REJECT",
-        "--reject-with",
-        "tcp-reset",
-    ]
+def _reject_rule_args(ip: str, port: int, sport: int = 0) -> list[str]:
+    """iptables OUTPUT rule args for REJECT (tcp-reset) to ``ip:port``.
+
+    ``sport`` (the denied connection's source port) scopes the rule to
+    retransmits of THAT connection only (#2463); 0/omitted leaves it
+    destination-scoped (every connection to ``ip:port``).
+    """
+    args = ["-d", ip, "-p", "tcp", "--dport", str(port)]
+    if sport:
+        args += ["--sport", str(sport)]
+    args += ["-j", "REJECT", "--reject-with", "tcp-reset"]
+    return args
 
 
-def _reject_rule_exists(ip: str, port: int) -> bool:
+def _reject_rule_exists(ip: str, port: int, sport: int = 0) -> bool:
     return (
         subprocess.run(
-            [IPT, "-C", "OUTPUT", *_reject_rule_args(ip, port)],
+            [IPT, "-C", "OUTPUT", *_reject_rule_args(ip, port, sport)],
             capture_output=True,
         ).returncode
         == 0
     )
 
 
-def _install_reject(ip: str, port: int) -> None:
+def _install_reject(ip: str, port: int, sport: int = 0) -> None:
     """Insert the REJECT (tcp-reset) rule at the top of OUTPUT if not present."""
-    if _reject_rule_exists(ip, port):
+    if _reject_rule_exists(ip, port, sport):
         return
     subprocess.run(
-        [IPT, "-I", "OUTPUT", "1", *_reject_rule_args(ip, port)],
+        [IPT, "-I", "OUTPUT", "1", *_reject_rule_args(ip, port, sport)],
         capture_output=True,
     )
 
 
-def _remove_reject(ip: str, port: int) -> None:
+def _remove_reject(ip: str, port: int, sport: int = 0) -> None:
     """Delete the REJECT rule; swallow failure if it's already gone."""
     subprocess.run(
-        [IPT, "-D", "OUTPUT", *_reject_rule_args(ip, port)],
+        [IPT, "-D", "OUTPUT", *_reject_rule_args(ip, port, sport)],
         capture_output=True,
     )
 
 
-def reject(ip: str, port: int, ttl: float) -> None:
+def reject(ip: str, port: int, ttl: float, sport: int = 0) -> None:
     """Install a temporary REJECT (tcp-reset) for ``ip:port`` + set its TTL.
 
     A denied SYN is dropped, but dropping a SYN doesn't fail ``connect()`` --
@@ -676,11 +680,21 @@ def reject(ip: str, port: int, ttl: float) -> None:
     REJECT rule makes the next retransmit get a RST, so ``connect()`` returns
     ECONNREFUSED at once (eager deny). Like :func:`allow`, the install + the
     ``_REJECTED`` record are atomic under :data:`_LOCK` w.r.t. :func:`sweep_once`.
+
+    ``sport`` (the denied connection's source port) scopes the rule to
+    retransmits of THAT connection only, so a NEW connection (different source
+    port) to the same ``ip:port`` is NOT rejected above NFQUEUE and re-enters
+    consent-gating (#2463). 0/omitted leaves the rule destination-scoped
+    (every connection to ``ip:port``), which is correct for a timed/forever
+    deny (its over-deny is intended -- the DB rule + ``_SESSION_HOST_DENIES``
+    govern re-prompting) and the WS-down fail-close.
     """
     expire = time.time() + ttl
     with _LOCK:
-        _install_reject(ip, port)
-        _REJECTED[(ip, port)] = max(_REJECTED.get((ip, port), 0.0), expire)
+        _install_reject(ip, port, sport)
+        _REJECTED[(ip, port, sport)] = max(
+            _REJECTED.get((ip, port, sport), 0.0), expire
+        )
 
 
 def drop_for_host(host: str, decision: str) -> set[str]:
@@ -1582,7 +1596,12 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         # RST'd above NFQUEUE, then drop. On-list egress is unaffected
         # (learned ACCEPT rules sit above NFQUEUE); once the WS reconnects,
         # fresh off-list egress prompts again. The REJECT TTL is short, so no
-        # rule lingers past the outage (#2413).
+        # rule lingers past the outage (#2413). Unlike a `once` deny (#2463),
+        # this REJECT stays destination-scoped deliberately: during a WS outage
+        # no connection can be consented, so fail-fast (ECONNREFUSED) for every
+        # off-list connect to the same ip:port is the intended #2308 behavior,
+        # and this path writes no _VERDICT_CACHE entry, so connection-scoping
+        # would gain nothing.
         if port:
             _send_rst(payload)
             asyncio.get_running_loop().run_in_executor(
@@ -1740,6 +1759,16 @@ async def _decide_and_verdict(
             # rule flaky (#2345). The REJECT rule stays as a belt-and-suspenders
             # backstop for any retransmit the RST missed. `once` -> the short
             # fail-close reject window; a timed duration -> that long.
+            # ``once`` is per-connection: scope the REJECT to THIS connection's
+            # source port so a NEW connection (different sport) to the same
+            # host:port re-prompts instead of being rejected above NFQUEUE for
+            # the fail-close window (#2463). A timed/forever deny stays
+            # destination-scoped -- its over-deny is correct (the DB rule +
+            # _SESSION_HOST_DENIES govern re-prompting). The source port is
+            # guarded: a real TCP SYN never has src port 0 (RFC 793), so a
+            # truthy flow[1] is the normal case; if it is ever 0 (a
+            # non-TCP/unparseable flow), fall back to destination-scoped so a
+            # future parse change can't silently re-introduce the over-deny.
             if port:
                 try:
                     _send_rst(pkt.get_payload())
@@ -1747,7 +1776,12 @@ async def _decide_and_verdict(
                     pass
                 reject_ttl = ttl if ttl is not None else CONSENT_REJECT_TTL
                 try:
-                    await loop.run_in_executor(None, reject, dst, port, reject_ttl)
+                    if ttl is None and flow[1]:
+                        await loop.run_in_executor(
+                            None, reject, dst, port, reject_ttl, flow[1]
+                        )
+                    else:
+                        await loop.run_in_executor(None, reject, dst, port, reject_ttl)
                 except Exception:
                     pass
             pkt.drop()

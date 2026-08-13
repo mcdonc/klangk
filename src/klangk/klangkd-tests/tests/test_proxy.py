@@ -624,7 +624,32 @@ class TestTTLAndSweep:
         assert any(
             "-I" in a and "REJECT" in a and "tcp-reset" in a for a in runs
         )
-        assert learned._REJECTED[("1.2.3.4", 80)] == 1010.0
+        assert not any(
+            "--sport" in a for a in runs
+        )  # dest-scoped omits --sport
+        assert learned._REJECTED[("1.2.3.4", 80, 0)] == 1010.0
+
+    def test_reject_connection_scoped_adds_sport(self, learned, monkeypatch):
+        # #2463: a connection-scoped REJECT (nonzero sport) carries --sport so a
+        # real iptables rule matches only retransmits of THAT connection; a
+        # destination-scoped reject (sport 0) omits it. The (ip, port, sport)
+        # key keeps the two rule kinds distinct in _REJECTED.
+        runs = []
+
+        def fake_run(args, **kw):
+            runs.append(args)
+            return types.SimpleNamespace(returncode=1)  # rule absent -> -I
+
+        monkeypatch.setattr(learned.subprocess, "run", fake_run)
+        monkeypatch.setattr(learned.time, "time", lambda: 1000.0)
+        learned._REJECTED.clear()
+        learned.reject("1.2.3.4", 443, 10, 50000)  # connection-scoped
+        scoped = [a for a in runs if "--sport" in a][0]
+        assert "-d" in scoped and "1.2.3.4" in scoped
+        assert "--dport" in scoped and "443" in scoped
+        assert scoped[scoped.index("--sport") + 1] == "50000"
+        assert "REJECT" in scoped and "tcp-reset" in scoped
+        assert learned._REJECTED[("1.2.3.4", 443, 50000)] == 1010.0
 
     def test_sweep_removes_expired_reject_rules(self, learned, monkeypatch):
         removed = []
@@ -637,15 +662,15 @@ class TestTTLAndSweep:
         monkeypatch.setattr(learned.subprocess, "run", fake_run)
         learned._LEARNED.clear()
         learned._REJECTED.clear()
-        learned._REJECTED[("1.2.3.4", 80)] = 100.0  # expired
-        learned._REJECTED[("5.6.7.8", 443)] = 9999.0  # live
+        learned._REJECTED[("1.2.3.4", 80, 0)] = 100.0  # expired
+        learned._REJECTED[("5.6.7.8", 443, 0)] = 9999.0  # live
         learned.sweep_once(now=500.0)
         assert any(
             "1.2.3.4" in a and "REJECT" in a and "tcp-reset" in a
             for a in removed
         )
-        assert ("1.2.3.4", 80) not in learned._REJECTED
-        assert ("5.6.7.8", 443) in learned._REJECTED  # live one kept
+        assert ("1.2.3.4", 80, 0) not in learned._REJECTED
+        assert ("5.6.7.8", 443, 0) in learned._REJECTED  # live one kept
 
     def test_all_ports_allow_supersedes_prior_port_denies(
         self, learned, monkeypatch
@@ -657,19 +682,21 @@ class TestTTLAndSweep:
         monkeypatch.setattr(
             learned,
             "_remove_reject",
-            lambda ip, port: removed.append((ip, port)),
+            lambda ip, port, sport=0: removed.append((ip, port, sport)),
         )
         monkeypatch.setattr(learned, "_install", lambda *a: None)
         learned._REJECTED.clear()
-        learned._REJECTED[("1.2.3.4", 443)] = 9999.0
-        learned._REJECTED[("1.2.3.4", 80)] = 9999.0
-        learned._REJECTED[("5.6.7.8", 443)] = 9999.0  # different IP, untouched
+        learned._REJECTED[("1.2.3.4", 443, 0)] = 9999.0
+        learned._REJECTED[("1.2.3.4", 80, 0)] = 9999.0
+        learned._REJECTED[("5.6.7.8", 443, 0)] = (
+            9999.0  # different IP, untouched
+        )
         learned.allow("1.2.3.4", None, 60)  # all-ports (consent path)
-        assert ("1.2.3.4", 443) in removed
-        assert ("1.2.3.4", 80) in removed
-        assert ("5.6.7.8", 443) not in removed  # different IP kept
-        assert ("1.2.3.4", 443) not in learned._REJECTED
-        assert ("5.6.7.8", 443) in learned._REJECTED
+        assert ("1.2.3.4", 443, 0) in removed
+        assert ("1.2.3.4", 80, 0) in removed
+        assert ("5.6.7.8", 443, 0) not in removed  # different IP kept
+        assert ("1.2.3.4", 443, 0) not in learned._REJECTED
+        assert ("5.6.7.8", 443, 0) in learned._REJECTED
 
 
 class TestARecordsWithTtl:
@@ -1622,7 +1649,10 @@ class TestNfqueueCallback:
 
     async def test_deny_verdict_drops_and_rejects(self, proxy, monkeypatch):
         # deny -> drop the SYN + install a REJECT (tcp-reset) so the retransmit
-        # gets RST'd (ECONNREFUSED), not a ~127s tcp_syn_retries wait.
+        # gets RST'd (ECONNREFUSED), not a ~127s tcp_syn_retries wait. A `once`
+        # deny is connection-scoped (#2463): the REJECT carries the denying
+        # connection's source port (here 50000) so a NEW connection to the same
+        # host:port re-prompts instead of being rejected above NFQUEUE.
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
@@ -1630,15 +1660,17 @@ class TestNfqueueCallback:
         monkeypatch.setattr(
             proxy,
             "reject",
-            lambda ip, port, ttl: rejected.append((ip, port, ttl)),
+            lambda ip, port, ttl, sport=0: rejected.append(
+                (ip, port, ttl, sport)
+            ),
         )
         self._bind(proxy, monkeypatch, client)
-        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
         await self._decide(proxy, pkt, client)
         assert pkt.verdict == "drop"
         assert rejected == [
-            ("1.2.3.4", 443, proxy.CONSENT_REJECT_TTL)
-        ]  # eager deny
+            ("1.2.3.4", 443, proxy.CONSENT_REJECT_TTL, 50000)
+        ]  # eager deny, connection-scoped to this connection's source port
 
     async def test_request_error_drops(self, proxy, monkeypatch):
         client = MagicMock()
@@ -1812,9 +1844,7 @@ class TestNfqueueCallback:
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
         rejected = []
-        monkeypatch.setattr(
-            proxy, "reject", lambda ip, port, ttl: rejected.append(ttl)
-        )
+        monkeypatch.setattr(proxy, "reject", lambda *a: rejected.append(a[2]))
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await self._decide(proxy, pkt, client)
@@ -1951,6 +1981,75 @@ class TestNfqueueCallback:
             "a new connection (new source port) must re-prompt after an "
             "allow-once, not reuse the prior verdict"
         )
+
+    async def test_deny_once_re_prompts_new_connection_same_host(
+        self, proxy, monkeypatch
+    ):
+        # #2463: a `once` deny governs only the deciding connection. A NEW
+        # connection (new source port) to the same (dst, port) must re-prompt --
+        # the connection-scoped REJECT (keyed on the source port) does not catch
+        # it, the verdict cache misses (distinct flow), and `once` adds no
+        # _SESSION_HOST_DENIES entry. This is the deny-side mirror of
+        # test_distinct_source_port_re_prompts_after_allow_once, and the
+        # unit-level grounding of the #2463 fix.
+        requests = []
+
+        async def fast_request(host, port):
+            requests.append((host, port))
+            return ("deny", "once")
+
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(side_effect=fast_request)
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        self._bind(proxy, monkeypatch, client)
+        # Connection A (sport 50000) -> deny/once -> fail-close + connection-
+        # scoped REJECT for sport 50000 only.
+        proxy._cb(
+            _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 1)),
+            client,
+        )
+        await asyncio.gather(*proxy._BG_TASKS)
+        assert proxy._SESSION_HOST_DENIES == []  # `once` adds no host-deny
+        # Connection B (sport 50001, same dst) -> DISTINCT flow -> the
+        # connection-scoped REJECT (sport 50000) does not match, the verdict
+        # cache misses, and there is no session-deny gate -> re-prompts.
+        proxy._cb(
+            _FakePkt(_syn_payload("10.0.0.5", 50001, "1.2.3.4", 443, 1)),
+            client,
+        )
+        await asyncio.gather(*proxy._BG_TASKS)
+        assert len(requests) == 2, (
+            "a new connection (new source port) must re-prompt after a "
+            "deny-once, not be silently rejected for the fail-close window"
+        )
+
+    async def test_deny_once_reject_is_connection_scoped(
+        self, proxy, monkeypatch
+    ):
+        # #2463: the fail-close REJECT installed by a `once` deny carries the
+        # denying connection's source port (--sport), so a real iptables rule
+        # would catch only retransmits of THAT connection, leaving a NEW
+        # connection (different sport) to re-enter NFQUEUE and re-prompt. A
+        # timed/forever deny, by contrast, stays destination-scoped (sport 0)
+        # -- its over-deny is intended.
+        for duration, expect_sport in [("once", 50000), ("15m", 0)]:
+            client = MagicMock()
+            client.connected = True
+            client.request = AsyncMock(return_value=("deny", duration))
+            rejected = []
+            monkeypatch.setattr(
+                proxy,
+                "reject",
+                lambda ip, port, ttl, sport=0: rejected.append(sport),
+            )
+            self._bind(proxy, monkeypatch, client)
+            pkt = _FakePkt(
+                _syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111)
+            )
+            await self._decide(proxy, pkt, client)
+            assert rejected == [expect_sport], duration
 
 
 def test_duration_ttl_mapping(proxy):
