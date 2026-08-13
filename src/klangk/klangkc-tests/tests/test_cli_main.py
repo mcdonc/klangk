@@ -5735,3 +5735,37 @@ class TestConsentDecideCommand:
 
             result = CliRunner().invoke(main.app, ["consent-decide", "ghost"])
         assert result.exit_code == 1
+
+    def test_popup_options_enable_persistent_role(self, logged_in_cfg):
+        """--popup-socket/--popup-session put the decider in persistent role (#2383)."""
+        from klangk.cli import main
+        from klangk.cli.tui import consent as tui_consent
+
+        ws = Workspace(id="wsid", name="my-ws", created_at="x")
+        client = MagicMock()
+        client.list_workspaces.return_value = [ws]
+        client.list_shared_workspaces.return_value = []
+        launched, fake_run = self._launch_capture()
+
+        with (
+            patch.object(main, "_client", return_value=client),
+            patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
+        ):
+            from typer.testing import CliRunner
+
+            result = CliRunner().invoke(
+                main.app,
+                [
+                    "consent-decide",
+                    "my-ws",
+                    "--popup-socket",
+                    "/tmp/klangk.sock",
+                    "--popup-session",
+                    "klangk-consent-wsid",
+                ],
+            )
+        assert result.exit_code == 0
+        app = launched["app"]
+        assert app.popup_socket == "/tmp/klangk.sock"
+        assert app.popup_session == "klangk-consent-wsid"
+        assert app._persistent

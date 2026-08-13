@@ -32,6 +32,18 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`klangkd doctor` tmux version check (#2383).** Doctor now reports the
+  host tmux version and warns when it is below 3.2 — the minimum for the
+  upcoming TUI consent-decider popup over the shell (`tmux display-popup`
+  landed in 3.2). Below 3.2 the shell layer will fall back to a plain
+  attach, so the check is a warning, not an error.
+- **`klangk consent-decide` persistent popup role (#2383).** The decider
+  accepts internal `--popup-socket` / `--popup-session` options (set by the
+  shell-layer wrapper) for its upcoming persistent role inside a hidden tmux
+  session: in that role `q` hides the popup viewer (detaching it, leaving the
+  decider registered) and `Q` confirms a real quit. Standalone `q` still
+  quits immediately.
+
 - **`5s` consent-duration option (#2465).** The test-only 5-second duration
   is temporarily exposed in the consent duration selector (TUI + Flutter) for
   manual testing, now that a timed allow lapses at its verdict rather than the

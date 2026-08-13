@@ -2876,6 +2876,25 @@ def consent_decide(
             "(match the server's KLANGKD_EGRESS_CONSENT_TIMEOUT)."
         ),
     ),
+    popup_socket: str = typer.Option(
+        None,
+        "--popup-socket",
+        hidden=True,
+        help=(
+            "Internal: tmux socket of the hidden decider session. Set by "
+            "the shell-layer wrapper to enable the persistent popup role "
+            "(#2383); `q` hides the viewer instead of quitting."
+        ),
+    ),
+    popup_session: str = typer.Option(
+        None,
+        "--popup-session",
+        hidden=True,
+        help=(
+            "Internal: name of the hidden decider tmux session (#2383). "
+            "Set together with --popup-socket."
+        ),
+    ),
 ) -> None:
     """Decide a workspace's held egress requests live (#2310).
 
@@ -2900,6 +2919,8 @@ def consent_decide(
         ws.name,
         hold_timeout=hold_timeout,
         max_size=ws_max_size(),
+        popup_socket=popup_socket,
+        popup_session=popup_session,
     ).run()
 
 
