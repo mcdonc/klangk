@@ -50,6 +50,9 @@ def _collect_settings(screen: Screen) -> dict | None:
     raw = screen.query_one("#pids_limit", Input).value.strip()
     if raw:
         settings["pids_limit"] = int(raw)
+    raw = screen.query_one("#tmp_size", Input).value.strip()
+    if raw:
+        settings["tmp_size"] = raw
     return settings or None
 
 
@@ -106,6 +109,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
         "cpu_limit",
         "memory_limit",
         "pids_limit",
+        "tmp_size",
         "command",
         "health_check",
         "cancel",
@@ -277,6 +281,11 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                     yield Horizontal(
                         Static("PIDs limit"),
                         Input(id="pids_limit", placeholder="e.g. 512"),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("TMP size"),
+                        Input(id="tmp_size", placeholder="e.g. 2g, 512m"),
                         classes="field-row",
                     )
                 with TabPane("Advanced", id="advanced_pane"):
@@ -649,6 +658,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             "cpu_limit",
             "memory_limit",
             "pids_limit",
+            "tmp_size",
         ):
             self._create()
 
@@ -692,6 +702,7 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
         "cpu_limit",
         "memory_limit",
         "pids_limit",
+        "tmp_size",
         "command",
         "health_check",
         "cancel",
@@ -903,6 +914,15 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
                             else "",
                             id="pids_limit",
                             placeholder="e.g. 512",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("TMP size"),
+                        Input(
+                            value=str(_s.get("tmp_size", "")),
+                            id="tmp_size",
+                            placeholder="e.g. 2g, 512m",
                         ),
                         classes="field-row",
                     )
