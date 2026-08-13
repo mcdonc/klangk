@@ -1891,16 +1891,19 @@ def sandbox(
             if resolve_setup_command(config, handle)
             else None,
             health_check=config.health_check,
-            # #2325 / #2406: a sandbox is an automated install context
-            # (setup.sh runs npm/git/... that need unrestricted outbound
-            # network). Default workspaces are interactive (hold every egress
-            # for consent), which would block the install with no decider
-            # present. Create the sandbox workspace in ``allow`` mode so its
-            # egress is default-permit (installs proceed), with off-list
-            # destinations recorded through the consent pipeline for
-            # observability and rejected_domains still enforced. Allow mode
-            # degrades to plain unrestricted when the server has no network
-            # sidecar configured, so the sandbox keeps working everywhere.
+            # #2325 / #2406 / #2404: a sandbox is an automated install
+            # context (setup.sh runs npm/git/... that need unrestricted
+            # outbound network). Default workspaces are interactive (hold
+            # every egress for consent), which would block the install with
+            # no decider present. Create the sandbox workspace in ``allow``
+            # mode so its egress is default-permit (installs proceed), with
+            # off-list destinations recorded through the consent pipeline
+            # for observability and rejected_domains still enforced.
+            # sandbox_setup_only resets egress_mode back to ``interactive``
+            # and stops the container once setup.sh returns (#2404), so the
+            # next start is consent-gated. Allow mode degrades to plain
+            # unrestricted when the server has no network sidecar
+            # configured, so the sandbox keeps working everywhere.
             egress_mode="allow",
         )
         _err.print(f"Workspace [bold]{workspace}[/bold] created.")
@@ -1909,6 +1912,15 @@ def sandbox(
     need_setup = created or force
 
     if need_setup:
+        # #2404: on --force re-setup the workspace may have been reset to
+        # 'interactive' by a prior sandbox run (sandbox_setup_only resets
+        # it after setup). setup.sh needs unrestricted egress, and
+        # egress_mode only takes effect at container start -- so flip back
+        # to 'allow' and restart before re-running setup. Skipped on the
+        # create path (the workspace is freshly created in 'allow' above).
+        if force and not created:
+            client.update_workspace(ws.id, egress_mode="allow")
+            client.restart_workspace(workspace)
         _err.print(f"Connecting to [bold]{workspace}[/bold] for setup...")
         try:
             asyncio.run(
@@ -1939,6 +1951,10 @@ def sandbox(
         f"[green]Done.[/green] Run [bold]klangk shell"
         f" {workspace}[/bold] to connect."
     )
+    _err.print(
+        "[dim]Workspace stopped; egress reset to interactive for the"
+        " next start.[/dim]"
+    )
 
 
 async def sandbox_setup_only(
@@ -1955,12 +1971,13 @@ async def sandbox_setup_only(
 
     After setup.sh returns, marks the workspace's ``setup_state``
     (#1033): ``complete`` on success (or when no setup command is
-    configured), ``failed`` otherwise. Only fires the service command
-    via ``terminal_start`` on success -- a failed setup must not
-    auto-run the service command (that is the failure-masquerade the
-    issue objects to). The state is marked BEFORE ``terminal_start``
-    is sent, so the server reads ``complete`` from the DB when it
-    decides whether to create the service-cmd window.
+    configured), ``failed`` otherwise. Then (#2404) resets the
+    workspace's ``egress_mode`` from the create-time ``allow`` back to
+    ``interactive`` and stops the container: ``egress_mode`` is applied
+    by the network sidecar at container start, so the stop forces the
+    next start (the user's ``klangk shell``) up in interactive,
+    consent-gated mode. The service command is not fired here -- it
+    re-fires at the create choke point on that next start.
     """
     async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
         await wait_container_ready(ws, workspace_id)
@@ -1997,29 +2014,36 @@ async def sandbox_setup_only(
                     f" = {new_state}: {e}[/yellow]"
                 )
 
-        # After setup, start a terminal so the service command runs
-        # in a dedicated "service-cmd" tmux window (visible as a tab
-        # but not occupying the user's interactive window 0). Skipped
-        # on setup failure -- the service command's prerequisites are
-        # not met.
-        if config.service_command and setup_ok:
-            await ws.send(
-                json.dumps({"cmd": "terminal_start", "cols": 80, "rows": 24})
-            )
-            # Wait (bounded) for the terminal to start so the default
-            # command actually runs before we disconnect.  Other
-            # messages are ignored.
-            deadline = asyncio.get_event_loop().time() + 30
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    break
-                try:
-                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                except (asyncio.TimeoutError, websockets.ConnectionClosed):
-                    break
-                if json.loads(raw).get("type") == "terminal_started":
-                    break
+        # #2404: the workspace was created in 'allow' mode so setup.sh's
+        # npm/git/pip could egress without a consent decider. Now that the
+        # install is done, reset to the safe 'interactive' default and stop
+        # the container. egress_mode is applied by the network sidecar at
+        # container START (not on the live container), so the stop forces
+        # the next start -- the user's `klangk shell` -- up in interactive,
+        # consent-gated mode. The service command is not fired here: it
+        # re-fires at the create choke point on that next start, so firing
+        # it now just to kill it on stop would be wasted.
+        if client is not None:
+            try:
+                await asyncio.to_thread(
+                    client.update_workspace,
+                    workspace_id,
+                    egress_mode="interactive",
+                )
+            except Exception as e:  # pragma: no cover
+                _err.print(
+                    "[yellow]Warning: could not reset egress_mode to"
+                    f" interactive: {e}[/yellow]"
+                )
+            try:
+                await asyncio.to_thread(
+                    client.stop_workspace_by_id, workspace_id
+                )
+            except Exception as e:  # pragma: no cover
+                _err.print(
+                    "[yellow]Warning: could not stop container after"
+                    f" setup: {e}[/yellow]"
+                )
 
 
 terminal_app = typer.Typer(

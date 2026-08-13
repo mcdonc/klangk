@@ -529,6 +529,12 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`klangk sandbox` resets egress to interactive after install (#2404).**
+  A sandbox workspace is still created in `allow` mode so `setup.sh` installs
+  proceed, but once setup returns the driver resets `egress_mode` to
+  `interactive` and stops the container; the next `klangk shell` start applies
+  interactive (consent-gated) egress. `--force` re-setup flips back to `allow`
+  and restarts first, so re-running setup still egresses freely.
 - **Workspace Pi agent hides thinking blocks by default (#2459).** The
   per-user `~/.pi/agent/settings.json` provisioned at first login now sets
   `hideThinkingBlock: true` instead of the previous `defaultThinkingLevel:

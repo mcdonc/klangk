@@ -645,6 +645,17 @@ class KlangkClient:
         self.check_auth(resp)
         self._raise_for_status(resp)
 
+    def stop_workspace_by_id(self, workspace_id: str) -> None:
+        """Stop a running workspace container by id.
+
+        Id-based counterpart to :meth:`stop_workspace` for callers (the
+        sandbox driver) that already hold the workspace id and want to
+        skip the name→id resolution round-trip.
+        """
+        resp = self.post(f"/api/v1/workspaces/{workspace_id}/stop")
+        self.check_auth(resp)
+        self._raise_for_status(resp)
+
     def start_workspace(self, name: str) -> None:
         ws = self.resolve_workspace(name)
         resp = self.post(f"/api/v1/workspaces/{ws.id}/start")

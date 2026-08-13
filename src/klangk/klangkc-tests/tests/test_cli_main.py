@@ -4230,6 +4230,11 @@ class TestSandboxCommand:
         assert call_kwargs[1]["egress_mode"] == "allow"
         assert "Creating workspace" in result.output
         assert "klangk shell" in result.output
+        # #2404: create path creates in allow (above); the allow-flip+restart
+        # only runs on --force re-setup, so neither is called here.
+        client.update_workspace.assert_not_called()
+        client.restart_workspace.assert_not_called()
+        assert "egress reset to interactive" in result.output
 
     def test_existing_workspace_errors_without_force(
         self, logged_in_cfg, tmp_path
@@ -4297,6 +4302,12 @@ class TestSandboxCommand:
         assert result.exit_code == 0
         assert setup_called == [True]
         assert "re-applying config" in result.output
+        # #2404: --force re-setup flips egress_mode back to 'allow' and
+        # restarts first (a prior run reset it to interactive).
+        client.update_workspace.assert_called_once_with(
+            ws.id, egress_mode="allow"
+        )
+        client.restart_workspace.assert_called_once_with("myws")
 
     def test_setup_connection_error(self, logged_in_cfg, tmp_path):
         from klangk.cli import main
@@ -4369,7 +4380,15 @@ class TestSandboxSetupOnly:
                 mock_ws, config, Path("/tmp"), "admin"
             )
 
-    async def test_starts_terminal_after_setup_when_service_command(self):
+    async def test_resets_egress_and_stops_after_setup(self):
+        """After setup, egress_mode resets to interactive and container stops (#2404).
+
+        The sandbox is created in 'allow' so setup.sh can install freely; once
+        setup returns the driver drops back to the safe 'interactive' default
+        and stops the container (egress_mode applies at the next start). The
+        service command is NOT fired here -- it re-fires at the create choke
+        point on the next `klangk shell` start.
+        """
         from pathlib import Path
 
         from klangk.cli.main import sandbox_setup_only
@@ -4381,11 +4400,9 @@ class TestSandboxSetupOnly:
 
         mock_ws = AsyncMock()
         mock_ws.recv = AsyncMock(
-            side_effect=[
-                json.dumps({"type": "container_ready"}),
-                json.dumps({"type": "terminal_started"}),
-            ]
+            return_value=json.dumps({"type": "container_ready"})
         )
+        mock_client = MagicMock()
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
@@ -4403,54 +4420,17 @@ class TestSandboxSetupOnly:
                 config,
                 Path("/tmp"),
                 "admin",
-            )
-            mock_setup.assert_called_once_with(
-                mock_ws, config, Path("/tmp"), "admin"
+                client=mock_client,
             )
 
-        # terminal_start was sent after setup so the service command runs.
+        # egress_mode reset to interactive, then container stopped.
+        mock_client.update_workspace.assert_called_once_with(
+            "ws-id", egress_mode="interactive"
+        )
+        mock_client.stop_workspace_by_id.assert_called_once_with("ws-id")
+        # The service command is not fired during sandbox -- no terminal_start.
         sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
-        assert any(m.get("cmd") == "terminal_start" for m in sent)
-
-    async def test_terminal_start_disconnect_is_not_fatal(self):
-        """A closed connection while awaiting terminal_started is tolerated."""
-        from pathlib import Path
-
-        import websockets
-
-        from klangk.cli.main import sandbox_setup_only
-        from klangk.cli.sandbox import SandboxConfig
-
-        config = SandboxConfig(
-            setup="setup.sh", service_command="openclaw gateway"
-        )
-
-        mock_ws = AsyncMock()
-        mock_ws.recv = AsyncMock(
-            side_effect=[
-                json.dumps({"type": "container_ready"}),
-                websockets.ConnectionClosed(None, None),
-            ]
-        )
-
-        with (
-            patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
-        ):
-            mock_connect.return_value.__aenter__ = AsyncMock(
-                return_value=mock_ws
-            )
-            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_setup.return_value = 0
-            # Must not raise / hang waiting for terminal_started.
-            await sandbox_setup_only(
-                "http://test",
-                "token",
-                "ws-id",
-                config,
-                Path("/tmp"),
-                "admin",
-            )
+        assert not any(m.get("cmd") == "terminal_start" for m in sent)
 
     async def test_marks_setup_state_pending_then_complete(self):
         """With a client, sandbox_setup_only marks pending then complete (#1033)."""
@@ -4537,9 +4517,12 @@ class TestSandboxSetupOnly:
 
         calls = [c.args for c in mock_client.set_setup_state.call_args_list]
         assert ("ws-id", "failed") in calls
-        # terminal_start NOT sent on failure
-        sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
-        assert not any(m.get("cmd") == "terminal_start" for m in sent)
+        # #2404: even on failure the workspace drops back to interactive and
+        # is stopped (don't leave a broken install in wide-open allow mode).
+        mock_client.update_workspace.assert_called_once_with(
+            "ws-id", egress_mode="interactive"
+        )
+        mock_client.stop_workspace_by_id.assert_called_once_with("ws-id")
 
     async def test_copies_files(self, tmp_path):
         from klangk.cli.main import sandbox_setup
