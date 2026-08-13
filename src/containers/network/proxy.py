@@ -522,6 +522,13 @@ def _session_allow_rule_cap(qname: str) -> float | None:
     :data:`_SESSION_HOST_ALLOWS`); computed on the event-loop thread in
     :func:`_respond_allowed` and passed to :func:`_learn_all`, which runs
     off-loop in the executor.
+
+    The static-spec check is qname-level (any port), so a host with a
+    port-scoped static spec (``example.com:443``) AND a timed session allow on
+    a *different* port (``example.com:8443``) leaves the :8443 learn uncapped
+    -- pre-#2465 behavior (nothing was capped before), not a regression; the
+    :8443 session allow still covers its SYN at the NFQUEUE gate. All real
+    consent flows hit this for a single host:port, where the cap is exact.
     """
     if any(_host_matches(qname, host, mode) for host, _port, mode in SPECS):
         return None  # a static spec matches -> forever -> DNS TTL is correct
@@ -641,14 +648,21 @@ def _remove(ip: str, port: int | None) -> None:
     )
 
 
-def allow(ip: str, port: int | None, ttl: int | float) -> None:
+def allow(ip: str, port: int | None, ttl: int | float, floor: bool = True) -> None:
     """Install (if new) the ACCEPT for ``ip[:port]`` and refresh its TTL.
 
     ``port`` is ``None`` for an all-ports rule. The learned IP's expiry is
-    set to ``now + max(ttl, MIN_TTL)`` (a 0-TTL response must not yank the
-    rule the workspace needs to reach the IP it just resolved) and only ever
-    moves forward, so a shorter-TTL re-resolution can't prematurely expire a
-    longer-lived prior rule (#2256).
+    set to ``now + ttl`` and only ever moves forward, so a shorter-TTL
+    re-resolution can't prematurely expire a longer-lived prior rule (#2256).
+    ``floor`` (default ``True``) raises the TTL to :data:`MIN_TTL` -- the
+    0-TTL-DNS-response safety net (a resolver may hand back a 0-TTL A record,
+    and that must not yank the rule the workspace needs to reach the IP it
+    just resolved). A *consent-verdict* TTL is the user's intent, not a DNS
+    TTL, so the consent paths (:func:`_decide_and_verdict`, the ``_cb``
+    in-session auto-allow, and a capped :func:`_learn_all`) pass
+    ``floor=False`` -- a timed verdict's rule lapses at the verdict, not at
+    MIN_TTL (#2465: otherwise a ``5s`` verdict's rule lived 30s under the
+    default MIN_TTL). The static-spec DNS learn keeps the default floor.
 
     The install happens **under** :data:`_LOCK` so the kernel rule and its
     ``_LEARNED`` record are atomic w.r.t. :func:`sweep_once`'s remove+delete
@@ -660,7 +674,7 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
     executor (see :func:`_learn_all` / :func:`_async_sweeper`), so the lock
     genuinely serializes them; contention is negligible.
     """
-    expire = time.time() + max(ttl, MIN_TTL)
+    expire = time.time() + (max(ttl, MIN_TTL) if floor else ttl)
     with _LOCK:
         _install(ip, port)
         rec = _LEARNED.get(ip)
@@ -990,7 +1004,11 @@ def _learn_all(
     for ip, ttl in recs:
         rule_ttl = ttl if cap is None else min(ttl, cap)
         for port in ports:
-            allow(ip, port, rule_ttl)
+            # cap=None (static spec) -> a DNS-response TTL, floored at MIN_TTL
+            # for 0-TTL safety; cap set (session allow) -> the verdict's
+            # remaining window, NOT floored so a sub-MIN_TTL verdict (5s)
+            # lapses at the verdict, not at MIN_TTL (#2465).
+            allow(ip, port, rule_ttl, floor=cap is None)
 
 
 def _record_hosts(recs: list[tuple[str, int]], host: str) -> None:
@@ -1050,16 +1068,18 @@ async def _respond_allowed(
         recs = a_records_with_ttl(resp)
     except Exception:
         recs = []
-    # Bound a timed session-allow's learned rule at its verdict's remaining
-    # window (#2465): without this the DNS-path learn uses the response's DNS
-    # TTL (often minutes), so a 5s allow leaves a rule that outlives it and a
-    # retry past the window connects with no re-prompt. None for a static spec
-    # (forever) or no session allow -- the DNS TTL is correct then. Computed
-    # on the loop (reads loop-only _SESSION_HOST_ALLOWS) before the executor
-    # fork below.
-    cap = _session_allow_rule_cap(qname) if recs else None
     try:
         if recs:
+            # Bound a timed session-allow's learned rule at its verdict's
+            # remaining window (#2465): without this the DNS-path learn uses
+            # the response's DNS TTL (often minutes), so a 5s allow leaves a
+            # rule that outlives it and a retry past the window connects with
+            # no re-prompt. None for a static spec (forever) or no session
+            # allow -- the DNS TTL is correct then. Computed here (inside the
+            # try so a raise can't escape _respond_allowed and take down the
+            # PID-1 sidecar, #2278) on the loop (reads loop-only
+            # _SESSION_HOST_ALLOWS) before the executor fork below.
+            cap = _session_allow_rule_cap(qname)
             await loop.run_in_executor(None, _learn_all, recs, ports, cap)
         if DEBUG:
             print(
@@ -1745,7 +1765,9 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         # Learn for the allow's remaining window (timed) or ~forever; port-scoped
         # (the consented port) -- deliberately stricter than the consent-allow
         # path's all-ports learn (allow(dst, None, ...)).
-        asyncio.get_running_loop().run_in_executor(None, allow, dst, port, remaining)
+        asyncio.get_running_loop().run_in_executor(
+            None, allow, dst, port, remaining, False
+        )
         pkt.accept()
         _VERDICT_CACHE[flow] = ("allow", now + VERDICT_CACHE_TTL)
         # NOTE (#2370): revoking an allow must also drop this host from
@@ -1842,7 +1864,7 @@ async def _decide_and_verdict(
             # re-prompts); a timed duration -> learn all-ports for it.
             if ttl is not None:
                 try:
-                    await loop.run_in_executor(None, allow, dst, None, ttl)
+                    await loop.run_in_executor(None, allow, dst, None, ttl, False)
                 except Exception:
                     pass
             pkt.accept()

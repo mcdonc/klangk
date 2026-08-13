@@ -815,14 +815,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   pause/reconnect), so the client prunes elapsed rules on its 1s tick.
 
 - **Timed egress-consent allows no longer outlive their duration (#2465).** A
-  timed `allow` verdict (e.g. `allow/5s`) used to keep covering retries past
-  its window: the in-session host allow let the DNS path re-learn each
-  resolved IP for the response's DNS TTL (often minutes), so the learned
-  ACCEPT rule outlived the verdict and a retry past the window connected with
-  no re-prompt. The DNS-path learn is now bounded at the verdict's remaining
-  window, so the rule lapses with the verdict and a retry re-prompts (the
-  `deny` side already behaved correctly). Static allow-list entries are
-  unaffected.
+  timed `allow` verdict used to keep covering retries past its window via two
+  leaks, both now closed. (1) Every re-resolve of the consented host re-learned
+  its resolved IP for the response's DNS TTL (often minutes), so the learned
+  ACCEPT rule outlived the verdict; the DNS-path learn is now bounded at the
+  verdict's remaining window. (2) A consent-verdict rule was floored at the
+  learned-IP `MIN_TTL` (30s), so a short verdict (the test-only `5s`) lived
+  30s; the consent paths now use the verdict verbatim (no floor). Together a
+  timed allow's rule lapses at the verdict and a retry past the window
+  re-prompts (the `deny` side already behaved correctly). Static allow-list
+  entries are unaffected (their DNS-learn floor is unchanged).
 
 - **Timed egress-consent allows now cover the whole host (#2434).** A timed or
   `until restart` `allow` verdict now allow-lists the consented host for its
