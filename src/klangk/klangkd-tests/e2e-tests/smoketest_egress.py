@@ -609,6 +609,15 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ),
     ("allow decider: no frame/close", "ALLOWMODE-DECIDER-ACCEPTED"),
     ("allow-mode phase failed", "UNEXPECTED-ERROR"),
+    # restart verdict semantics (#2364/#2346): forever survives, tilrestart reaped.
+    ("restart-phase sidecar not wired", "HUNG-NFQUEUE-DNS"),
+    ("restart-phase no request for", "NO-EXPECTED-REQUEST"),
+    ("tilrestart not in effect pre-restart", "CARRYOVER-SURPRISE"),
+    ("forever-allow did not survive restart", "RESTART-FOREVER-NOT-DURABLE"),
+    ("forever-deny did not survive restart", "RESTART-FOREVER-NOT-DURABLE"),
+    ("forever-deny leaked after restart", "RESTART-FOREVER-NOT-DURABLE"),
+    ("tilrestart survived restart", "RESTART-TILRESTART-SURVIVED"),
+    ("restart-phase failed", "UNEXPECTED-ERROR"),
 ]
 
 OUTCOME_NAMES: dict[str, str] = {
@@ -639,6 +648,8 @@ OUTCOME_NAMES: dict[str, str] = {
     "SNAPSHOT-REPLAY": "a resolved-while-away row replayed (or a held row vanished) in the reconnect snapshot -- now deterministic under controlled DNS (#2424).",
     "ALLOWMODE-REFUSED": "an allow-mode (default-permit) off-list host was refused or hung -- it must connect (#2411/#2406).",
     "ALLOWMODE-DECIDER-ACCEPTED": "a consent decider registered (or ambiguously attached) against an allow-mode workspace -- it must be refused, same gate as static (#2395/#2406).",
+    "RESTART-FOREVER-NOT-DURABLE": "a `forever` verdict did not survive a container restart -- forever-allow must reconnect via allowed_domains (#2368), forever-deny must re-deny via rejected_domains (#2369).",
+    "RESTART-TILRESTART-SURVIVED": "a `tilrestart` verdict survived a container restart -- it must be reaped (the sidecar's in-memory rule dies and the DB row is cleared on restart, #2346/#2349).",
 }
 
 _EXPECT_CONN_NAMES = {
@@ -3109,6 +3120,313 @@ class SmokeTest:
             if not self.args.continue_run:
                 self._abort = True
 
+    async def run_restart_phase(self, pilot) -> None:
+        """#2364/#2346 verdict semantics across a workspace container restart.
+
+        * a ``forever`` **allow** survives -- it mutates ``allowed_domains``
+          (#2368), which the sidecar re-reads on (re)start, so the host
+          reconnects with no re-prompt;
+        * a ``forever`` **deny** survives -- it mutates ``rejected_domains``
+          (#2369), so the host is re-denied with no re-prompt; and
+        * a ``tilrestart`` verdict is **cleared** (#2346/#2349) -- the sidecar's
+          in-memory rule dies with the container and the DB row is reaped on
+          (re)start, so the host re-prompts.
+
+        Uses its own interactive workspace + RawDecider (independent of the
+        hero workspace's textual decider). Grants the three verdicts, issues ONE
+        container restart (POST /restart), re-opens the terminal WS + reattaches
+        a fresh decider, re-wires the sidecar, and asserts the post-restart
+        behavior. ``pilot`` is unused (signature symmetry).
+        """
+        if not self.args.restart_phase:
+            return
+        print(
+            "\n--- #2364/#2346 restart: forever survives, tilrestart cleared ---"
+        )
+        parent = _Step(
+            self.summary.total,
+            "(restart ws)",
+            "n/a",
+            False,
+            "restart-semantics",
+            "-",
+        )
+        # Distinct fresh hosts (not in the probe pool or any default list) so
+        # the three verdicts don't collide and don't perturb the readiness probe.
+        host_a, host_b, host_c = (
+            "cloudflare.com",
+            "github.com",
+            "wikipedia.org",
+        )
+        canon_a, canon_b, canon_c = (
+            _canonical(host_a),
+            _canonical(host_b),
+            _canonical(host_c),
+        )
+        rws: str | None = None
+        conn = None
+        d: RawDecider | None = None
+        try:
+            rws = await asyncio.to_thread(
+                self._create_workspace,
+                self.server,
+                self.auth,
+                [],  # no allow-list: every probe host prompts
+                [],  # no rejected-list
+                f"smoke-restart-{int(time.time() * 1000) % 100000}",
+            )
+            self._extra_ws_ids.append(rws)
+            print(f"restart-semantics workspace {rws}")
+            conn = await self._open_terminal_ws(rws)
+            asyncio.create_task(self._drain(conn))
+            container = _container_for_workspace(rws)
+            d = await self._connect_raw_decider(rws, ping=True)
+            await d.settle()
+
+            # The sidecar consent-WS must be wired before verdicts grant cleanly.
+            if not await self._probe_sidecar_ready_raw(
+                d, container, _SIDECAR_PROBE_HOSTS[0]
+            ):
+                self._record_probe(
+                    parent,
+                    "restart sidecar ready",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "restart-phase sidecar not wired; cannot assert durability",
+                )
+                return
+
+            async def _grant(
+                host: str, canon: str, decision: str, duration: str, label: str
+            ) -> str | None:
+                # Trigger + wait for the request + apply the verdict. Returns the
+                # request id, or None (recorded MISMATCH) if no request surfaced.
+                _trigger(
+                    container, host, f"/tmp/smoke_restart_grant_{label}.out"
+                )
+                rid = await d.wait_for(canon, timeout=15.0)
+                if rid is None:
+                    self._record_probe(
+                        parent,
+                        f"{label} grant",
+                        "no-request(!)",
+                        None,
+                        MISMATCH,
+                        f"restart-phase no request for {host} ({label} grant)",
+                    )
+                    return None
+                await d.verdict(rid, decision, duration)
+                await d.wait_resolution(rid, timeout=20.0)
+                return rid
+
+            # 1) Grant forever-allow (A), forever-deny (B), tilrestart-allow (C).
+            if (
+                await _grant(
+                    host_a,
+                    canon_a,
+                    DECISION_ALLOWED,
+                    DURATION_FOREVER,
+                    "forever-allow",
+                )
+                is None
+            ):
+                return
+            if (
+                await _grant(
+                    host_b,
+                    canon_b,
+                    DECISION_DENIED,
+                    DURATION_FOREVER,
+                    "forever-deny",
+                )
+                is None
+            ):
+                return
+            if (
+                await _grant(
+                    host_c,
+                    canon_c,
+                    DECISION_ALLOWED,
+                    DURATION_TILRESTART,
+                    "tilrestart",
+                )
+                is None
+            ):
+                return
+
+            # Sanity: tilrestart was in effect pre-restart (the sidecar's
+            # in-memory ACCEPT lets C connect). Best-effort -- CDN/per-IP
+            # rotation can re-prompt a freshly-learned IP (#2399) -> finding.
+            of_c = f"/tmp/smoke_restart_cpre_{self.summary.total}.out"
+            _trigger(container, host_c, of_c)
+            ec_c = _parse_exit(
+                await _wait_result(container, of_c, timeout=20.0)
+            )
+            if ec_c == 0:
+                self._record_probe(
+                    parent,
+                    "tilrestart pre-restart",
+                    "connected",
+                    ec_c,
+                    PASS,
+                    "tilrestart allow in effect before restart",
+                )
+            else:
+                self._record_probe(
+                    parent,
+                    "tilrestart pre-restart",
+                    "no-connect",
+                    ec_c,
+                    FINDING,
+                    "tilrestart not in effect pre-restart (CDN/per-IP rotation?)",
+                )
+            if self._abort:
+                return
+
+            # 2) ONE container restart. The old terminal WS dies with the
+            #    container; reopen it + reattach a fresh decider, then re-wire
+            #    the sidecar before the scored post-restart probes.
+            print("  restarting workspace container ...")
+            await asyncio.to_thread(
+                self._restart_workspace, self.server, self.auth, rws
+            )
+            try:
+                await conn.close()
+            except Exception:
+                pass
+            conn = await self._open_terminal_ws(rws)
+            asyncio.create_task(self._drain(conn))
+            await d.close()
+            d = await self._connect_raw_decider(rws, ping=True)
+            await d.settle()
+            if not await self._probe_sidecar_ready_raw(
+                d, container, _SIDECAR_PROBE_HOSTS[1]
+            ):
+                self._record_probe(
+                    parent,
+                    "restart sidecar re-ready",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "restart-phase sidecar not wired after restart; cannot assert",
+                )
+                return
+
+            # 3) forever-allow survives -> A connects (allowed_domains persisted).
+            of_a = f"/tmp/smoke_restart_a_{self.summary.total}.out"
+            _trigger(container, host_a, of_a)
+            ec_a = _parse_exit(
+                await _wait_result(container, of_a, timeout=25.0)
+            )
+            if ec_a == 0:
+                self._record_probe(
+                    parent,
+                    "forever-allow post-restart",
+                    "connected",
+                    ec_a,
+                    PASS,
+                    "forever allow survived restart (allowed_domains, #2368)",
+                )
+            else:
+                self._record_probe(
+                    parent,
+                    "forever-allow post-restart",
+                    "no-connect(!)",
+                    ec_a,
+                    MISMATCH,
+                    "forever-allow did not survive restart "
+                    "(allowed_domains not re-read?)",
+                )
+            if self._abort:
+                return
+
+            # 4) forever-deny survives -> B denied (rejected_domains persisted).
+            of_b = f"/tmp/smoke_restart_b_{self.summary.total}.out"
+            _trigger(container, host_b, of_b)
+            ec_b = _parse_exit(
+                await _wait_result(container, of_b, timeout=25.0)
+            )
+            if ec_b is not None and ec_b != 0:
+                self._record_probe(
+                    parent,
+                    "forever-deny post-restart",
+                    "denied",
+                    ec_b,
+                    PASS,
+                    "forever deny survived restart (rejected_domains, #2369)",
+                )
+            elif ec_b == 0:
+                self._record_probe(
+                    parent,
+                    "forever-deny post-restart",
+                    "leak(!)",
+                    ec_b,
+                    MISMATCH,
+                    "forever-deny leaked after restart (rejected_domains dropped?)",
+                )
+            else:
+                self._record_probe(
+                    parent,
+                    "forever-deny post-restart",
+                    "prompted(!)",
+                    None,
+                    MISMATCH,
+                    "forever-deny did not survive restart (re-prompted, not persisted)",
+                )
+            if self._abort:
+                return
+
+            # 5) tilrestart cleared -> C re-prompts (in-memory rule died + DB row
+            #    reaped). If it connected with no prompt instead, it survived.
+            of_c2 = f"/tmp/smoke_restart_cpost_{self.summary.total}.out"
+            _trigger(container, host_c, of_c2)
+            rid_c = await d.wait_for(canon_c, timeout=15.0)
+            if rid_c is not None:
+                # Release the held SYN so curl doesn't linger.
+                await d.verdict(rid_c, DECISION_ALLOWED, DURATION_ONCE)
+                await d.wait_resolution(rid_c, timeout=15.0)
+                self._record_probe(
+                    parent,
+                    "tilrestart post-restart",
+                    "re-prompted",
+                    None,
+                    PASS,
+                    "tilrestart cleared on restart (reaped, #2346/#2349)",
+                )
+            else:
+                ec_c2 = _parse_exit(_read_outfile(container, of_c2))
+                self._record_probe(
+                    parent,
+                    "tilrestart post-restart",
+                    "no-prompt(!)",
+                    ec_c2,
+                    MISMATCH,
+                    "tilrestart survived restart (not reaped; rule/row kept)",
+                )
+        except Exception as e:  # noqa: BLE001  (phase bring-up failure)
+            self._record_probe(
+                parent,
+                "restart phase",
+                "error",
+                None,
+                MISMATCH,
+                f"restart-phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+        finally:
+            if d is not None:
+                try:
+                    await d.close()
+                except Exception:
+                    pass
+            if conn is not None:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+
     async def run_no_decider_phase(self, pilot) -> None:
         """Static-mode phase: with NO consent decider registered, off-list egress
         is denied cleanly (no held request, no hang) while allow-list egress
@@ -3240,6 +3558,8 @@ class SmokeTest:
                     await self.run_audit_distinction_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_allow_phase(pilot)
+                if not stop and not self._abort:
+                    await self.run_restart_phase(pilot)
                 # Controlled-DNS phases (#2424): host-scope + port-scope use their
                 # own workspace + raw decider (independent of the textual app),
                 # so they run last inside run_test.
@@ -3343,6 +3663,23 @@ class SmokeTest:
         )
         try:
             client.delete(f"/api/v1/workspaces/{ws_id}")
+        finally:
+            client.close()
+
+    @staticmethod
+    def _restart_workspace(server, auth, ws_id) -> None:
+        # POST /api/v1/workspaces/{id}/restart: stop+remove the running container
+        # and start a fresh one with the same config (#1244). The fresh start
+        # re-runs start_container -> clear_tilrestart_duration (reaps
+        # tilrestart verdicts) and re-reads allowed/rejected_domains (forever
+        # verdicts persist). Blocks until the new container is up; the sidecar
+        # consent-WS reconnects on its own backoff afterwards.
+        client = httpx.Client(
+            base_url=server["url"], headers=auth["headers"], timeout=120
+        )
+        try:
+            r = client.post(f"/api/v1/workspaces/{ws_id}/restart")
+            r.raise_for_status()
         finally:
             client.close()
 
@@ -3495,6 +3832,13 @@ def main() -> int:
         action="store_false",
         help="skip the #2411 allow-egress-mode phase (off-list connects, "
         "rejected denied, decider refused)",
+    )
+    p.add_argument(
+        "--no-restart-phase",
+        dest="restart_phase",
+        action="store_false",
+        help="skip the #2364/#2346 restart verdict-semantics phase "
+        "(forever survives, tilrestart reaped)",
     )
     p.add_argument(
         "--expiry-wait",
