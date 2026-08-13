@@ -1351,6 +1351,7 @@ class ContainerRegistry:
         for _opt in (
             "KLANGKNETWORK_EGRESS_MIN_TTL",
             "KLANGKNETWORK_EGRESS_SWEEP_INTERVAL",
+            "KLANGKNETWORK_EGRESS_DEBUG_RST",
         ):
             _v = os.environ.get(_opt)
             if _v:

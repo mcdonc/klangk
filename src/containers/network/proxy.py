@@ -147,6 +147,31 @@ VERDICT_CACHE_TTL = float(
 # Only needs to catch the SYN retransmit (~1 RTO); the verdict cache separately
 # keeps the deny from re-prompting for VERDICT_CACHE_TTL.
 CONSENT_REJECT_TTL = float(os.environ.get("KLANGKNETWORK_EGRESS_REJECT_TTL", "10"))
+# Opt-in per-RST debug logging (#2464): the forged eager-deny RST is the
+# primary fast-refuse, so when a denied connection instead *times out* this
+# logs each forged RST (socket open? sendto ok? the 4-tuple) to the sidecar's
+# stdout. Off by default -- a denied connection's SYN retransmits each hit the
+# cached deny and re-forge an RST, which would spam a production sidecar's log.
+# The egress smoketest enables it (KLANGKNETWORK_EGRESS_DEBUG_RST=1, forwarded
+# by ContainerManager._start_network_sidecar) and captures the sidecar's podman
+# log so a fast-refuse miss is diagnosable after the run.
+_RST_DEBUG = os.environ.get("KLANGKNETWORK_EGRESS_DEBUG_RST", "") == "1"
+
+
+def _rst_debug(msg: str) -> None:
+    """Emit a forged-RST diagnostic line when ``KLANGKNETWORK_EGRESS_DEBUG_RST``
+    is on (#2464).
+
+    Centralized so the egress-smoketest diagnostic is one branch to cover, not
+    one per call site in :func:`_send_rst`. The smoketest enables the flag and
+    captures the sidecar's podman log so a fast-refuse miss (a denied
+    connection timing out instead of refusing fast) shows whether each RST
+    fired.
+    """
+    if _RST_DEBUG:
+        print(msg, flush=True)
+
+
 # Duration token -> seconds the sidecar honors a verdict (#2328): an allow
 # learns the IP for T; a deny REJECTs for T. `once` = this connection only (no
 # learn; a short deny). `restart` = the container's lifetime (the sidecar's
@@ -1485,9 +1510,11 @@ def _send_rst(payload: bytes) -> None:
     """
     sock = _RST_SOCK
     if sock is None:
+        _rst_debug("rst-forge: no raw socket (NET_RAW?) -- REJECT-only fast-refuse")
         return
     src_ip, src_port, dst_ip, dst_port, seq = parse_syn_tuple(payload)
     if not src_ip or not dst_port:
+        _rst_debug(f"rst-forge: unparseable tuple (src={src_ip} dst_port={dst_port})")
         return
     try:
         sock.sendto(
@@ -1497,8 +1524,12 @@ def _send_rst(payload: bytes) -> None:
             build_rst_packet(dst_ip, dst_port, src_ip, src_port, seq),
             (src_ip, 0),
         )
-    except OSError:
-        pass
+        _rst_debug(
+            f"rst-forge: sent {dst_ip}:{dst_port} -> {src_ip}:{src_port} "
+            f"ack={(seq + 1) & 0xFFFFFFFF}"
+        )
+    except OSError as exc:
+        _rst_debug(f"rst-forge: sendto failed: {exc!r}")
 
 
 def _setup_nfq_consumer(client: SidecarConsentClient | None):

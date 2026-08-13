@@ -933,6 +933,61 @@ class SmokeTest:
             except Exception:
                 pass
 
+    def _capture_sidecar_logs(self) -> None:
+        """Dump each workspace's network-sidecar podman log to /tmp (#2464).
+
+        The forged eager-deny RST is the sidecar's primary fast-refuse; when a
+        denied connection instead *times out* (exit 28), the only way to see
+        whether the RST fired is the sidecar's own stdout -- which podman
+        discards when the sidecar is removed. This runs in ``run()``'s
+        ``finally`` BEFORE ``teardown()`` deletes the workspaces (and their
+        sidecars), so the logs survive. Targets only this run's workspaces
+        (by ``klangk.workspace`` label) so an operator's unrelated sidecars
+        aren't touched. Best-effort: no podman / no sidecar -> silent no-op.
+        """
+        ws_ids = (
+            [self.ws_id, *self._extra_ws_ids]
+            if self.ws_id
+            else list(self._extra_ws_ids)
+        )
+        for ws_id in ws_ids:
+            try:
+                ps = subprocess.run(
+                    [
+                        "podman",
+                        "ps",
+                        "-a",
+                        "--filter",
+                        f"label=klangk.workspace={ws_id}",
+                        "--filter",
+                        "label=klangk.role=network-sidecar",
+                        "--format",
+                        "{{.Names}}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+            except Exception:
+                continue
+            for name in ps.stdout.split():
+                try:
+                    logs = subprocess.run(
+                        ["podman", "logs", name],
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                    )
+                except Exception:
+                    continue
+                path = f"/tmp/smoke_sidecar_{ws_id[:8]}.log"
+                try:
+                    with open(path, "w") as f:
+                        f.write((logs.stdout or "") + (logs.stderr or ""))
+                    print(f"sidecar logs {name} (ws {ws_id[:8]}) -> {path}")
+                except Exception:
+                    pass
+
     # -- setup ------------------------------------------------------------
     def _start_server(self) -> dict:
         kwargs = dict(
@@ -952,6 +1007,13 @@ class SmokeTest:
             # verdict's within/exceeding in seconds (#2363).
             KLANGKNETWORK_EGRESS_MIN_TTL="1",
             KLANGKNETWORK_EGRESS_SWEEP_INTERVAL="1",
+            # Opt in the sidecar's per-RST debug logging (#2464): the forged
+            # eager-deny RST is the primary fast-refuse, so when a denied
+            # connection instead times out (exit 28), the captured sidecar log
+            # shows whether each RST fired. Forwarded by
+            # ContainerManager._start_network_sidecar; captured to
+            # /tmp/smoke_sidecar_*.log by _capture_sidecar_logs at teardown.
+            KLANGKNETWORK_EGRESS_DEBUG_RST="1",
             LOGFIRE_TOKEN="",
         )
         # Point the real sidecar's upstream at the controlled-DNS fixture
@@ -4589,6 +4651,7 @@ class SmokeTest:
             )
             stop = True
         finally:
+            self._capture_sidecar_logs()
             await self.teardown()
         self._print_summary(stop)
         return 1 if self.summary.mismatches else 0
