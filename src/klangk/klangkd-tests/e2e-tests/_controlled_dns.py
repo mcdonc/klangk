@@ -481,6 +481,28 @@ class ControlledDns:
         """Two names guaranteed to resolve to *distinct* IPs."""
         return self.allocate(apex), self.allocate(sub)
 
+    def co_locate(self, name: str, sibling: str) -> str:
+        """Map ``name`` to the SAME IP as an already-allocated ``sibling``.
+
+        Two co-resident hostnames (same IP) share one L3/L4 iptables rule in
+        the sidecar today, so allowing one affects the other (#2352). Returns
+        the shared IP. ``sibling`` must already be allocated (via
+        :meth:`allocate` / :meth:`allocate_pair`); ``name`` is then pointed at
+        its IP rather than getting a fresh one.
+        """
+        with self._lock:
+            sib_key = sibling.rstrip(".").lower()
+            if sib_key not in self._map:
+                raise RuntimeError(
+                    "controlled-dns: cannot co-locate %r with unallocated %r"
+                    % (name, sibling)
+                )
+            key = name.rstrip(".").lower()
+            ip = self._map[sib_key]
+            self._map[key] = ip
+            self._write_map()
+            return ip
+
     def ip_for(self, name: str) -> str:
         with self._lock:
             return self._map.get(name.rstrip(".").lower(), "")
