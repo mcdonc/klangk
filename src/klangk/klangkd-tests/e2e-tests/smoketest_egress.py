@@ -741,6 +741,7 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("no hold surfaced for the", "NO-EXPECTED-REQUEST"),
     ("concurrent same-host deduped to one prompt, but both", "ALLOW-REFUSED"),
     ("fan-out phase failed", "UNEXPECTED-ERROR"),
+    ("run aborted", "UNEXPECTED-ERROR"),
 ]
 
 OUTCOME_NAMES: dict[str, str] = {
@@ -4571,6 +4572,22 @@ class SmokeTest:
                     await self._shared_d2.close()
                     self._shared_d2 = None
                 await self.run_no_decider_phase(pilot)
+        except Exception as exc:
+            # An uncaught exception escaped a phase (e.g. a podman exec against
+            # a workspace container that disappeared mid-run). Record it so the
+            # summary reflects the abort instead of dumping a raw asyncio
+            # traceback on exit (#2456). KeyboardInterrupt / CancelledError is
+            # deliberately NOT caught here (they are BaseException, not
+            # Exception) -- Ctrl-C propagates to main()'s clean exit-130.
+            self._record_probe(
+                _Step(self.summary.total, "(run)", "n/a", False, "run", "-"),
+                "uncaught exception",
+                "error",
+                None,
+                MISMATCH,
+                f"run aborted: uncaught {exc!r}",
+            )
+            stop = True
         finally:
             await self.teardown()
         self._print_summary(stop)
@@ -4923,6 +4940,21 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _on_term)
     try:
         return asyncio.run(inst.run())
+    except KeyboardInterrupt:
+        # Ctrl-C: asyncio.run cancels the main task (run()'s async ``finally``
+        # still runs teardown during the cancellation) then re-raises
+        # KeyboardInterrupt. Catch it for a clean exit -- the conventional
+        # 128+SIGINT (130) and no traceback (#2456). The ``finally`` below
+        # (_cleanup_sync) is the backstop if a second Ctrl-C interrupts
+        # teardown itself.
+        print("\ninterrupted", file=sys.stderr)
+        return 128 + signal.SIGINT
+    except Exception as exc:
+        # Backstop for an exception that escaped run()'s own handling (e.g.
+        # setup() or teardown() raised). Print a concise error -- not the full
+        # asyncio-internals traceback -- and exit non-zero (#2456).
+        print(f"\nsmoketest aborted: {exc!r}", file=sys.stderr)
+        return 1
     finally:
         # Normal exit / uncaught exception / KeyboardInterrupt: belt-and-
         # suspenders in case the async ``finally`` was itself interrupted
