@@ -11,19 +11,25 @@ unprivileged). Unfiltered workspaces are unaffected (single container).
 1. `entrypoint.sh` installs a default-deny `OUTPUT` ruleset + a nat `REDIRECT`
    of the workspace's configured DNS resolvers (`:53`) to the proxy's listen
    port (`127.0.0.1:15353`).
-2. `proxy.py` applies the FQDN allow-list, forwards allowed queries to a
-   **different** upstream, learns the A-record IPs, and inserts
-   `iptables -I OUTPUT 1 -d <ip> -j ACCEPT` for each — so the workspace can
-   reach exactly the IPs it resolved (solving DNS round-robin). Denied names
-   get NXDOMAIN.
+2. The proxy (the `klangksidecar` package, built from `src/klangksidecar` and
+   installed into the image as a wheel) applies the FQDN allow-list, forwards
+   allowed queries to a **different** upstream, learns the A-record IPs, and
+   inserts `iptables -I OUTPUT 1 -d <ip> -j ACCEPT` for each — so the workspace
+   can reach exactly the IPs it resolved (solving DNS round-robin). Denied
+   names get NXDOMAIN.
 
 The destination-based REDIRECT (only the workspace's resolvers) + a distinct
 upstream is the loop-avoidance: the proxy's own forwards aren't redirected.
 
 ## Build
 
+The image installs the `klangksidecar` wheel (the proxy package), staged into
+the build via a named context, so use the wrapper script (it builds the wheel
+
+- passes `--build-context sidecar=`):
+
 ```bash
-podman build -t klangk-network-sidecar -f src/containers/network/Dockerfile src/containers/network
+devenv shell -- bash scripts/build-network-sidecar.sh
 ```
 
 ## Run (klangk wires this via #2254)
