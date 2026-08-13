@@ -38,8 +38,10 @@ DECISIONS = frozenset(
 DURATION_ONCE = "once"
 # Test-only short duration (#2363, subsumed by #2392): accepted by the
 # validator + honored by the sidecar so a timed verdict's expiry can be
-# exercised in seconds, but deliberately kept OUT of the human-facing
-# duration selectors (CLI TUI + Flutter). Programmatic/test callers only.
+# exercised in seconds. TEMPORARILY exposed in the human-facing duration
+# selectors (CLI TUI + Flutter) for manual testing (#2465); remove it from
+# those selectors to hide it again -- it stays valid for programmatic/test
+# callers either way.
 DURATION_5S = "5s"
 DURATION_5M = "5m"
 DURATION_15M = "15m"

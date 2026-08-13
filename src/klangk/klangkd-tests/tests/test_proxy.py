@@ -792,6 +792,30 @@ class TestTTLAndSweep:
             learned._LEARNED["1.2.3.4"]["rule_expire"] == 720.0
         )  # 120+600 -> extended past the 300s verdict -> the bug
 
+    def test_static_spec_learn_0_ttl_floored_at_min_ttl(
+        self, learned, monkeypatch
+    ):
+        # Nit 3 (#2465 review): the static-spec DNS learn (cap=None) keeps the
+        # MIN_TTL floor even though `floor` is now conditional -- a 0-TTL DNS
+        # response must not yank the rule the workspace just resolved. Uses the
+        # real allow() -> _LEARNED (the floor is applied inside allow, so a mock
+        # of allow would not see it). Guards the 0-TTL safety net across the
+        # floor-is-conditional change.
+        monkeypatch.setattr(
+            learned.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=1),
+        )
+        monkeypatch.setattr(learned.time, "time", lambda: 0.0)
+        # cap=None (default) -> floor=True -> a 0-TTL A record is floored up to
+        # MIN_TTL, not installed as a 0-lifetime rule.
+        learned._learn_all([("1.2.3.4", 0)], {443})
+        rec = learned._LEARNED["1.2.3.4"]
+        assert (
+            rec["rule_expire"] == learned.MIN_TTL
+        )  # 0 floored up, not yanked
+        assert rec["ports"] == {443}
+
     def test_reject_installs_reject_rule_and_records(
         self, learned, monkeypatch
     ):

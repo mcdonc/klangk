@@ -183,7 +183,7 @@ def _rst_debug(msg: str) -> None:
 # persistence is #2368's `forever`-allow sub-piece; the deny counterpart is
 # #2369.)
 _DURATION_SECONDS = {
-    "5s": 5,  # test-only (#2363, subsumed by #2392); honored but never UI-offered
+    "5s": 5,  # test-only (#2363); TEMPORARILY UI-offered for manual testing (#2465)
     "5m": 300,
     "15m": 900,
     "1h": 3600,
@@ -526,9 +526,12 @@ def _session_allow_rule_cap(qname: str) -> float | None:
     The static-spec check is qname-level (any port), so a host with a
     port-scoped static spec (``example.com:443``) AND a timed session allow on
     a *different* port (``example.com:8443``) leaves the :8443 learn uncapped
-    -- pre-#2465 behavior (nothing was capped before), not a regression; the
-    :8443 session allow still covers its SYN at the NFQUEUE gate. All real
-    consent flows hit this for a single host:port, where the cap is exact.
+    -- pre-#2465 behavior (nothing was capped before), not a regression. The
+    lingering :8443 ACCEPT rule (DNS TTL) sits at the top of OUTPUT and
+    shadows NFQUEUE, so a retry past that verdict's window connects without a
+    re-prompt until the DNS TTL elapses -- a known narrow leak for that combo,
+    NOT covered by the NFQUEUE gate. All real consent flows hit this for a
+    single host:port, where the cap is exact.
     """
     if any(_host_matches(qname, host, mode) for host, _port, mode in SPECS):
         return None  # a static spec matches -> forever -> DNS TTL is correct

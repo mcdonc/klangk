@@ -1654,7 +1654,8 @@ class SmokeTest:
         # DNS-path learn is capped at the verdict's window (#2465) -- but it is
         # exactly the long-TTL condition that masked the bug on real hosts.
         host_allow, host_deny = "life-allow.test", "life-deny.test"
-        self.dns.allocate_pair(host_allow, host_deny)
+        self.dns.allocate(host_allow)
+        self.dns.allocate(host_deny)
         cases = [
             (host_allow, DECISION_ALLOWED, "allow", EXPECT_RELEASED),
             (host_deny, DECISION_DENIED, "deny", EXPECT_REFUSED),
