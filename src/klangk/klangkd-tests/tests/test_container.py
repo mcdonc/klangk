@@ -2127,6 +2127,55 @@ class TestStartContainer:
         assert kwargs["cpus"] == 2.0
         assert kwargs["memory"] == "8g"
         assert kwargs["pids_limit"] == 16384
+        # #2378: /tmp tmpfs defaults to the pre-#2378 2g size.
+        assert kwargs["tmpfs"]["/tmp"] == "rw,exec,nosuid,size=2g"
+
+    async def test_tmp_size_deploy_default_passed_to_tmpfs(
+        self, workspace, monkeypatch
+    ):
+        # #2378: a deploy-wide KLANGKD_CONTAINER_TMP_SIZE flows into the
+        # /tmp tmpfs mount's size= option.
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_tmp_size", "4g")
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["tmpfs"]["/tmp"] == "rw,exec,nosuid,size=4g"
+
+    async def test_tmp_size_workspace_override_wins(
+        self, workspace, monkeypatch
+    ):
+        # #2378: settings.tmp_size overrides the deploy default (override >
+        # default), same precedence as the other resource limits.
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_tmp_size", "4g")
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"],
+                "/tmp/ws",
+                "/tmp/home",
+                workspace_settings={"tmp_size": "512m"},
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["tmpfs"]["/tmp"] == "rw,exec,nosuid,size=512m"
+
+    async def test_tmp_size_none_omits_size_option(
+        self, workspace, monkeypatch
+    ):
+        # #2378: an explicit unset (empty env) -> None -> /tmp mounted with
+        # no size= option (podman sizes it at half of RAM). The /run and
+        # /var/log tmpfs mounts are unchanged.
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_tmp_size", None)
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                workspace["id"], "/tmp/ws", "/tmp/home"
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["tmpfs"]["/tmp"] == "rw,exec,nosuid"
+        assert kwargs["tmpfs"]["/run"] == "rw,noexec,nosuid,size=256m"
 
     async def test_ping_cap_add_emitted_by_default(self, workspace):
         # #2045: enable_ping defaults to True, so the workspace container

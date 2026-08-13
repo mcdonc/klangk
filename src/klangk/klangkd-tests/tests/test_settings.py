@@ -378,6 +378,43 @@ class TestConfigFile:
             with pytest.raises(Exception, match="must be > 0"):
                 make_settings({"KLANGKD_CONTAINER_MEMORY_LIMIT": raw})
 
+    def test_container_tmp_size_default_is_2g(self):
+        # #2378: out-of-the-box default preserves the pre-#2378 hardcoded
+        # /tmp tmpfs size (no behavior change for existing installs).
+        assert make_settings({}).container_tmp_size == "2g"
+
+    def test_container_tmp_size_from_env(self):
+        s = make_settings({"KLANGKD_CONTAINER_TMP_SIZE": "512m"})
+        assert s.container_tmp_size == "512m"
+
+    def test_container_tmp_size_accepts_go_units_grammar(self):
+        # Same grammar as container_memory_limit (shared regex).
+        for raw, expected in [
+            ("2g", "2g"),
+            ("512mb", "512mb"),
+            ("1024", "1024"),
+        ]:
+            assert (
+                make_settings(
+                    {"KLANGKD_CONTAINER_TMP_SIZE": raw}
+                ).container_tmp_size
+                == expected
+            ), raw
+
+    def test_container_tmp_size_rejects_iec_iform(self):
+        with pytest.raises(Exception, match="Expected a positive size"):
+            make_settings({"KLANGKD_CONTAINER_TMP_SIZE": "2gib"})
+
+    def test_container_tmp_size_empty_string_is_none(self):
+        # Empty -> None -> /tmp mounted with no size= option (podman sizes
+        # it at half of RAM).
+        s = make_settings({"KLANGKD_CONTAINER_TMP_SIZE": ""})
+        assert s.container_tmp_size is None
+
+    def test_container_tmp_size_zero_aborts(self):
+        with pytest.raises(Exception, match="must be > 0"):
+            make_settings({"KLANGKD_CONTAINER_TMP_SIZE": "0"})
+
     def test_container_pids_limit_from_env(self):
         s = make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "512"})
         assert s.container_pids_limit == 512

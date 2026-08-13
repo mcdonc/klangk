@@ -114,6 +114,11 @@ def _render_config() -> str:
 container_cpu_limit: 2.0
 container_memory_limit: 8g
 container_pids_limit: 16384
+# #2378: /tmp tmpfs size per workspace (podman size string, e.g. 2g, 512m).
+# Default 2g matches the pre-#2378 mount; a workspace may override it via
+# its settings bag (settings.tmp_size). Empty -> no size= option (podman
+# sizes /tmp at half of RAM).
+container_tmp_size: 2g
 #
 # Full settings reference:
 #   https://mcdonc.github.io/klangk/reference/klangkd-config/
