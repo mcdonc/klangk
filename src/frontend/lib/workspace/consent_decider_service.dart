@@ -742,6 +742,44 @@ class ConsentDeciderService extends ChangeNotifier {
     final left = until - now;
     return left < 0 ? 0 : left.round();
   }
+
+  /// Whether a timed verdict's window has elapsed (its countdown reached zero)
+  /// and the rule should be hidden from the rules view. The server drops it
+  /// from `list_active` at the same instant, but only re-broadcasts
+  /// `egress_rules` on the next discrete event (verdict/revoke/pause/
+  /// reconnect) -- not on natural expiry -- so the client prunes it locally
+  /// ([pruneExpiredRules]) to hide the row the moment it expires rather than
+  /// freezing at "0s left". Open-ended verdicts (`forever`/`tilrestart`) and
+  /// unknown/missing-`decided_at` rows never expire (they have no countdown).
+  bool isRuleExpired(ConsentRule rule) {
+    final remaining = ruleRemainingSeconds(rule);
+    return remaining != null && remaining <= 0;
+  }
+
+  /// Drop timed verdicts whose window has elapsed from the cached snapshot,
+  /// notifying listeners if anything changed. Called by the rules view's 1s
+  /// tick so an expired rule disappears at the first tick past its expiry
+  /// instead of lingering at "0s left". Returns whether any rule was pruned.
+  /// No-op (returns false) before the first `egress_rules` frame lands.
+  bool pruneExpiredRules() {
+    final r = _rules;
+    if (r == null) return false;
+    final allowed = r.allowed.where((e) => !isRuleExpired(e)).toList();
+    final denied = r.denied.where((e) => !isRuleExpired(e)).toList();
+    if (allowed.length == r.allowed.length &&
+        denied.length == r.denied.length) {
+      return false;
+    }
+    _rules = EgressRules(
+      workspaceId: r.workspaceId,
+      allowList: r.allowList,
+      allowed: allowed,
+      denied: denied,
+      paused: r.paused,
+    );
+    notifyListeners();
+    return true;
+  }
 }
 
 DateTime _wallClock() => DateTime.now();

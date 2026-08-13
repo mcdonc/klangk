@@ -808,6 +808,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   Timed/forever denies are unchanged (their destination-scoped REJECT is
   correct — the persisted rule governs re-prompting).
 
+- **Flutter Net Rules page drops expired timed verdicts (#2467).** A timed
+  active allow/deny now disappears from the Net Rules view the moment its
+  window elapses, instead of lingering with a "0s left" label. The server
+  only re-broadcasts the rules snapshot on discrete events (verdict/revoke/
+  pause/reconnect), so the client prunes elapsed rules on its 1s tick.
+
 - **Timed egress-consent allows now cover the whole host (#2434).** A timed or
   `until restart` `allow` verdict now allow-lists the consented host for its
   whole duration — the same as `allow forever` already did — instead of only

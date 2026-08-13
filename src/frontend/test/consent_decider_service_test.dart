@@ -872,4 +872,96 @@ void main() {
       svc.dispose();
     });
   });
+
+  group('isRuleExpired', () {
+    test('timed past expiry -> true; open-ended / unknown / missing -> false',
+        () {
+      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
+      final svc = ConsentDeciderService(
+          workspaceId: 'ws', token: 't', clock: () => now);
+      ConsentRule rule(String? duration, {double? decidedAt}) => ConsentRule(
+          id: 'r',
+          destHost: 'h',
+          decision: 'allowed',
+          duration: duration,
+          decidedAt: decidedAt);
+      // decided at 1000s, 5m (300s) -> expires at 1300s; now=1000s -> live.
+      expect(svc.isRuleExpired(rule('5m', decidedAt: 1000.0)), isFalse);
+      // decided at 100s -> expired long ago (remaining clamps to 0).
+      expect(svc.isRuleExpired(rule('5m', decidedAt: 100.0)), isTrue);
+      // open-ended / unknown / missing decided_at -> never expire.
+      expect(svc.isRuleExpired(rule('forever', decidedAt: 100.0)), isFalse);
+      expect(svc.isRuleExpired(rule('tilrestart', decidedAt: 100.0)), isFalse);
+      expect(svc.isRuleExpired(rule('bogus', decidedAt: 100.0)), isFalse);
+      expect(svc.isRuleExpired(rule('5m')), isFalse);
+      svc.dispose();
+    });
+  });
+
+  group('pruneExpiredRules', () {
+    test('no-op (returns false) before the first egress_rules frame', () {
+      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
+      final svc = ConsentDeciderService(
+          workspaceId: 'ws', token: 't', clock: () => now);
+      expect(svc.pruneExpiredRules(), isFalse);
+      expect(svc.rules, isNull);
+      svc.dispose();
+    });
+
+    test('drops expired timed rules, keeps the rest, and notifies', () async {
+      var now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
+      final ch = _FakeChannel();
+      ConsentDeciderService.testChannelFactory = (_) => ch;
+      final svc = ConsentDeciderService(
+          workspaceId: 'ws', token: 't', clock: () => now);
+      svc.connect();
+      ch.serverSend(_rulesFrame(
+        allowList: ['github.com'],
+        allowed: [
+          // timed: decided now (t=1000), 5m -> expires at t=1300; live for now.
+          _ruleJson(id: 'timed', host: 't.io', decidedAt: 1000.0),
+          // open-ended: never expires.
+          _ruleJson(
+              id: 'forever', host: 'f.io', duration: 'forever', decidedAt: 1.0),
+        ],
+        denied: [
+          // timed deny: also expires at t=1300.
+          _ruleJson(
+              id: 'd-timed',
+              host: 'dt.io',
+              decision: 'denied',
+              decidedAt: 1000.0),
+        ],
+      ));
+      await Future.delayed(Duration.zero); // flush the broadcast listener
+      // Sorted newest-decided-first: 'timed' (1000) before 'forever' (1).
+      expect(svc.rules!.allowed.map((r) => r.id), ['timed', 'forever']);
+      expect(svc.rules!.denied.map((r) => r.id), ['d-timed']);
+      expect(svc.rules!.allowList, ['github.com']);
+
+      var notifications = 0;
+      svc.addListener(() => notifications++);
+
+      // Nothing has elapsed yet (clock still at t=1000): no-op, no notify.
+      expect(svc.pruneExpiredRules(), isFalse);
+      expect(notifications, 0);
+      expect(svc.rules!.allowed.map((r) => r.id), ['timed', 'forever']);
+
+      // Advance past the timed rules' expiry (t=1300) and prune again: both
+      // timed rows drop, the open-ended allow stays, the allow-list is
+      // preserved, and listeners were notified.
+      now = DateTime.fromMillisecondsSinceEpoch(1400 * 1000, isUtc: true);
+      expect(svc.pruneExpiredRules(), isTrue);
+      expect(notifications, 1);
+      expect(svc.rules!.allowed.map((r) => r.id), ['forever']);
+      expect(svc.rules!.denied, isEmpty);
+      expect(svc.rules!.allowList, ['github.com']);
+
+      // Idempotent: pruning the already-pruned snapshot is a no-op.
+      expect(svc.pruneExpiredRules(), isFalse);
+      expect(notifications, 1);
+      ConsentDeciderService.testChannelFactory = null;
+      svc.dispose();
+    });
+  });
 }
