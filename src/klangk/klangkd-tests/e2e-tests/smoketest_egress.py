@@ -1307,15 +1307,28 @@ class SmokeTest:
     async def _connect_raw_decider(
         self,
         workspace_id: str | None = None,
-        attempts: int = 2,
+        attempts: int = 4,
         *,
         ping: bool = False,
     ) -> RawDecider:
-        # Retry once with a generous open timeout as a safety net against a
-        # transient accept hiccup; bounded so a persistent issue fails fast
-        # (the caller records a finding) rather than hanging the run.
-        # (Was framed as a TCP-proxy flakiness workaround; that premise was
-        # disproven — the proxy is reliable at this concurrency, #2398.)
+        # Retry a 2nd-decider attach with a generous open timeout so a
+        # transient WS-upgrade outage is ridden out rather than failing the
+        # multi-decider phase. #2420 (DECIDER2-HANDSHAKE): the 2nd decider's
+        # opening handshake has intermittently timed out while the 1st decider
+        # + plain HTTP stayed up -- both attempts used to time out (~31s
+        # outage), so the default now retries longer (4 x 15s) to ride out a
+        # transient while still bounding a *persistent* issue (the caller
+        # records a finding instead of hanging the run).
+        #
+        # Each attempt is timed + printed so the next real occurrence pins
+        # whether the stall is client-side (no server response within the
+        # open timeout -- correlate with klangkd's per-step
+        # "consent decider handshake accepted" log) or server-side. The root
+        # cause is still open; klangkd's accept path + event loop + DB were
+        # all fast when it did NOT reproduce, so the stall is likely
+        # pre-handler (proxy/uvicorn/scheduling) under load.
+        # (The prior framing as a TCP-proxy flakiness workaround was
+        # disproven -- the proxy is Caddy and reliable, #2398.)
         #
         # workspace_id scopes the decider: a real id -> workspace-scoped
         # (needs terminal access); None -> deploy-wide (needs admin, decides
@@ -1325,12 +1338,22 @@ class SmokeTest:
         if workspace_id is not None:
             url += f"&workspace={workspace_id}"
         last: Exception | None = None
-        for _ in range(attempts):
+        for i in range(attempts):
+            began = time.time()
             try:
                 ws = await ws_connect(self.server, url, open_timeout=15)
+                if i:
+                    print(
+                        f"     (decider attach: attempt {i + 1}/{attempts} "
+                        f"succeeded after {time.time() - began:.1f}s)"
+                    )
                 return RawDecider(ws, ping=ping)
             except Exception as e:  # noqa: BLE001
                 last = e
+                print(
+                    f"     (decider attach: attempt {i + 1}/{attempts} failed "
+                    f"after {time.time() - began:.1f}s: {e!r})"
+                )
                 await asyncio.sleep(1.0)
         assert last is not None
         raise last
