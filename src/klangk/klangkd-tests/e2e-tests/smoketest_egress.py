@@ -47,6 +47,8 @@ import httpx  # noqa: E402
 
 from _e2e_server import start_server, stop_server, ws_connect  # noqa: E402
 
+from _controlled_dns import ControlledDns  # noqa: E402
+
 from klangk.cli.tui.consent import (  # noqa: E402
     ConsentDeciderApp,
     DECISION_ALLOWED,
@@ -254,10 +256,17 @@ def _container_for_workspace(ws_id: str) -> str:
     return names[0]
 
 
-def _trigger(container: str, host: str, outfile: str) -> None:
+def _trigger(
+    container: str,
+    host: str,
+    outfile: str,
+    port: int = 443,
+    scheme: str = "https",
+) -> None:
     # Detached curl: blocks on the held SYN until a verdict/timeout, then writes
     # EXIT:$?. -k skips cert validation so an IP/cert-mismatch still gives a
-    # clean connect(0)/refuse(7) signal.
+    # clean connect(0)/refuse(7) signal. ``port``/``scheme`` let the port-scope
+    # phase drive :80 (http) vs :443 (https) on the same controlled IP (#2424).
     subprocess.run(
         [
             "podman",
@@ -267,7 +276,7 @@ def _trigger(container: str, host: str, outfile: str) -> None:
             "bash",
             "-c",
             "curl -sS -k --max-time 30 -o /dev/null "
-            f"https://{shlex.quote(host)} > {outfile} 2>&1; "
+            f"{scheme}://{shlex.quote(host)}:{port} > {outfile} 2>&1; "
             f'echo "EXIT:$?" >> {outfile}',
         ],
         check=True,
@@ -577,6 +586,13 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("off-list hung (not a clean static denial)", "STATIC-HELD"),
     ("off-list succeeded with no decider", "STATIC-LEAK"),
     ("step raised", "UNEXPECTED-ERROR"),
+    # Controlled-DNS phases (#2424): host-scope / port-scope / snapshot-replay.
+    ("A replayed in reconnect snapshot", "SNAPSHOT-REPLAY"),
+    ("B missing from reconnect snapshot", "SNAPSHOT-REPLAY"),
+    ("host-scope phase failed", "UNEXPECTED-ERROR"),
+    ("host scope: ", "HOST-SCOPE-VIOLATION"),
+    ("port-scope phase failed", "UNEXPECTED-ERROR"),
+    ("port scope: ", "PORT-SCOPE-VIOLATION"),
 ]
 
 OUTCOME_NAMES: dict[str, str] = {
@@ -602,6 +618,9 @@ OUTCOME_NAMES: dict[str, str] = {
     "UNEXPECTED-ERROR": "a phase bring-up or per-step exception (an unexpected error).",
     "AUDIT-MISLABELED": "expired/denied audit distinction broken (timeout audited as deny, or vice-versa). #2392",
     "ALLOWLIST-PROMPTED": "an allow-list-covered host prompted for consent (a real static-allow invariant break). #2419",
+    "HOST-SCOPE-VIOLATION": "an nginx-style host scope (exact/inclusive/subdomains, #2377) let the wrong name through / blocked the right one.",
+    "PORT-SCOPE-VIOLATION": "a port-scoped allow (host:443) permitted a different port (:80), or vice-versa.",
+    "SNAPSHOT-REPLAY": "a resolved-while-away row replayed (or a held row vanished) in the reconnect snapshot -- now deterministic under controlled DNS (#2424).",
 }
 
 _EXPECT_CONN_NAMES = {
@@ -678,6 +697,18 @@ class SmokeTest:
         self.app: ConsentDeciderApp | None = None
         self.container: str | None = None
         self._shared_d2: RawDecider | None = None
+        # The controlled-DNS fixture (#2424): None unless --controlled-dns is on.
+        # When started it points the real sidecar's upstream at a test DNS that
+        # resolves chosen names to single stable IPs (fronted by a test HTTP/HTTPS
+        # server), removing the CDN-IP-rotation + L3/L4 confounds that made the
+        # snapshot-replay / host-scope / port-scope phases indeterminate.
+        self.dns: ControlledDns | None = None
+        # Path to a temp containers.conf (netns=bridge) the smoketest writes when
+        # controlled DNS is on, so klangkd's sidecar + the fixture's containers
+        # land on the same bridge network (the default rootless netns here is
+        # pasta, which isolates containers -- the sidecar couldn't reach the
+        # fixture's DNS/target containers). Cleared in teardown.
+        self._containers_conf: str | None = None
         # Extra deciders / workspaces / terminal-WS opened by the decider-scope
         # + audit phases. Closed + deleted in teardown so nothing leaks into
         # the no-decider phase (the #2413 leak class) or past the run. A phase
@@ -689,26 +720,34 @@ class SmokeTest:
 
     # -- setup ------------------------------------------------------------
     def _start_server(self) -> dict:
+        kwargs = dict(
+            uds=False,
+            log_path=os.environ.get("SMOKE_KLANGKD_LOG") or None,
+            KLANGKD_JWT_SECRET="smoketest-egress-secret",
+            KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+            KLANGKD_DEFAULT_USER="smoke@example.com",
+            KLANGKD_DEFAULT_PASSWORD="smokepass",
+            KLANGKD_TEST_MODE="1",
+            KLANGKD_ALLOW_AUTOSTART="1",
+            KLANGKD_IDLE_TIMEOUT_SECONDS="3600",
+            KLANGKD_EGRESS_CONSENT_TIMEOUT=str(self.args.consent_timeout),
+            # Shorten the sidecar's learned-IP TTL floor + sweep cadence
+            # (forwarded to the sidecar by klangkd) so a `5s` verdict really
+            # expires in ~5s, not the 30s floor -- lets the run test a timed
+            # verdict's within/exceeding in seconds (#2363).
+            KLANGKNETWORK_EGRESS_MIN_TTL="1",
+            KLANGKNETWORK_EGRESS_SWEEP_INTERVAL="1",
+            LOGFIRE_TOKEN="",
+        )
+        # Point the real sidecar's upstream at the controlled-DNS fixture
+        # (#2424): when --controlled-dns is on, every workspace the smoketest
+        # creates resolves chosen names to single stable test IPs and forwards
+        # the rest to a real resolver. Honored verbatim by
+        # _start_network_sidecar (mirrors the MIN_TTL/SWEEP forwarding above).
+        if self.dns is not None:
+            kwargs["KLANGKNETWORK_EGRESS_UPSTREAM"] = self.dns.upstream_ip
         try:
-            return start_server(
-                uds=False,
-                log_path=os.environ.get("SMOKE_KLANGKD_LOG") or None,
-                KLANGKD_JWT_SECRET="smoketest-egress-secret",
-                KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
-                KLANGKD_DEFAULT_USER="smoke@example.com",
-                KLANGKD_DEFAULT_PASSWORD="smokepass",
-                KLANGKD_TEST_MODE="1",
-                KLANGKD_ALLOW_AUTOSTART="1",
-                KLANGKD_IDLE_TIMEOUT_SECONDS="3600",
-                KLANGKD_EGRESS_CONSENT_TIMEOUT=str(self.args.consent_timeout),
-                # Shorten the sidecar's learned-IP TTL floor + sweep cadence
-                # (forwarded to the sidecar by klangkd) so a `5s` verdict really
-                # expires in ~5s, not the 30s floor -- lets the run test a timed
-                # verdict's within/exceeding in seconds (#2363).
-                KLANGKNETWORK_EGRESS_MIN_TTL="1",
-                KLANGKNETWORK_EGRESS_SWEEP_INTERVAL="1",
-                LOGFIRE_TOKEN="",
-            )
+            return start_server(**kwargs)
         except Exception as exc:  # noqa: BLE001
             print(
                 f"\n!! could not start klangkd: {exc!r}\n\n"
@@ -743,7 +782,13 @@ class SmokeTest:
         }
 
     @staticmethod
-    def _create_workspace(server: dict, auth: dict) -> str:
+    def _create_workspace(
+        server: dict,
+        auth: dict,
+        allow_list: list[str] | None = None,
+        rejected_list: list[str] | None = None,
+        name: str | None = None,
+    ) -> str:
         client = httpx.Client(
             base_url=server["url"], headers=auth["headers"], timeout=120
         )
@@ -751,9 +796,16 @@ class SmokeTest:
             r = client.post(
                 "/api/v1/workspaces",
                 json={
-                    "name": f"smoke-{int(time.time() * 1000) % 100000}",
-                    "allowed_domains": _ALLOW_LIST,
-                    "rejected_domains": _REJECTED_LIST,
+                    "name": name
+                    or f"smoke-{int(time.time() * 1000) % 100000}",
+                    "allowed_domains": (
+                        _ALLOW_LIST if allow_list is None else allow_list
+                    ),
+                    "rejected_domains": (
+                        _REJECTED_LIST
+                        if rejected_list is None
+                        else (rejected_list or [])
+                    ),
                     "egress_mode": "interactive",
                     "auto_start": True,
                 },
@@ -819,7 +871,52 @@ class SmokeTest:
         except Exception:
             pass
 
+    def _enable_bridge_networking(self) -> None:
+        """Point podman at a temp containers.conf with ``netns = "bridge"``.
+
+        The fixture's DNS + target containers and klangkd's sidecar must share
+        a bridge network so the sidecar can reach them by IP. The default
+        rootless netns on many hosts is ``pasta``, which gives each container
+        its OWN isolated netns (no inter-container routing) -- under it the
+        sidecar cannot reach the fixture, and no controlled-DNS prompt ever
+        surfaces (#2424). Setting ``netns = "bridge"`` via CONTAINERS_CONF
+        (inherited by both the fixture's podman calls and the owned klangkd
+        subprocess) puts them on the shared ``podman`` bridge instead. No-op if
+        the ambient CONTAINERS_CONF already sets a netns.
+        """
+        import tempfile
+
+        if os.environ.get("CONTAINERS_CONF"):
+            return  # operator supplied their own; respect it
+        d = tempfile.mkdtemp(prefix="klangk-smoke-cc-")
+        path = os.path.join(d, "containers.conf")
+        with open(path, "w") as f:
+            f.write('[containers]\nnetns = "bridge"\n')
+        os.environ["CONTAINERS_CONF"] = path
+        self._containers_conf = path
+
     async def setup(self) -> None:
+        # Start the controlled-DNS fixture BEFORE the owned klangkd so its
+        # upstream IP is known when the sidecar is created (the env is read at
+        # workspace/sidecar-creation time). Skipped for an external --server
+        # (the operator must set KLANGKNETWORK_EGRESS_UPSTREAM on it themselves)
+        # or when --no-controlled-dns is passed.
+        if self.args.controlled_dns and not self.args.server:
+            self._enable_bridge_networking()
+            try:
+                self.dns = ControlledDns(image=self.args.sidecar_image)
+                self.dns.start()
+                print(
+                    f"controlled-dns up: sidecar upstream -> "
+                    f"{self.dns.upstream_ip} (target slice "
+                    f"{self.dns.target_ips[0]}..{self.dns.target_ips[-1]})"
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"!! controlled-dns failed to start: {exc!r}",
+                    file=sys.stderr,
+                )
+                self.dns = None
         if self.args.server:
             url = self.args.server.rstrip("/")
             self.server = {
@@ -1507,11 +1604,25 @@ class SmokeTest:
     async def run_snapshot_replay_phase(self, pilot) -> None:
         """Reconnect snapshot replay: a request resolved while a decider is
         disconnected does NOT replay in the snapshot it gets on reconnect; a
-        still-held one does."""
+        still-held one does.
+
+        Default-ON under controlled DNS (#2424): with a single stable IP per
+        host there is no CDN IP-cascade respawn to masquerade as a replay
+        event, so the phase is a hard PASS/FAIL rather than the indeterminate
+        FINDING it was on real multi-IP hosts. Skipped (with a note) when
+        controlled DNS is off, since without it the result is indeterminate."""
         if not self.args.snapshot:
             return
+        if self.dns is None:
+            print(
+                "\n--- reconnect snapshot replay: SKIPPED "
+                "(--no-controlled-dns; the result is indeterminate without "
+                "single-IP test hosts, #2424) ---"
+            )
+            return
         print(
-            "\n--- reconnect snapshot replay: resolved-while-away rows don't replay ---"
+            "\n--- reconnect snapshot replay: resolved-while-away rows don't "
+            "replay (controlled DNS -> hard PASS/FAIL) ---"
         )
         step = _Step(
             self.summary.total, "snapshot", "n/a", False, "snapshot", "-"
@@ -1530,7 +1641,11 @@ class SmokeTest:
             if not self.args.continue_run:
                 self._abort = True
             return
-        host_a, host_b = "amazon.com", "microsoft.com"
+        # Controlled, single-IP hosts (distinct IPs so A and B are two distinct
+        # consent flows; each has exactly one IP, so denying A can't cascade into
+        # a fresh held request that looks like a replay bug).
+        host_a, host_b = "snap-a.test", "snap-b.test"
+        self.dns.allocate_pair(host_a, host_b)
         ca, cb = _canonical(host_a), _canonical(host_b)
         of_a, of_b = "/tmp/smoke_sr_a.out", "/tmp/smoke_sr_b.out"
         _trigger(self.container, host_a, of_a)
@@ -1598,17 +1713,20 @@ class SmokeTest:
                 "snapshot has the still-held B, not the resolved A",
             )
         elif has_b and has_a:
-            # A denied on one IP -> curl tries the next IP (CDN cascade) -> a NEW
-            # held request for A appears; can't cleanly distinguish from a replay
-            # bug with real multi-IP hosts -> finding, not a failure.
+            # Controlled DNS -> A has a single IP -> a deny can't cascade into a
+            # fresh held request. So A present in the reconnect snapshot IS a
+            # real replay bug (a resolved-while-away row replayed), not timing.
             status, detail = (
-                FINDING,
-                "A present (likely a CDN-cascade respawn, not a replay bug)",
+                MISMATCH,
+                "A replayed in reconnect snapshot (resolved-while-away row "
+                "replayed; a real snapshot bug, not a CDN cascade under "
+                "controlled DNS)",
             )
         else:
             status, detail = (
-                FINDING,
-                f"B missing from snapshot (timing/cascade): B={has_b} A={has_a}",
+                MISMATCH,
+                f"B missing from reconnect snapshot (a still-held row "
+                f"vanished): B={has_b} A={has_a}",
             )
         self._record_probe(
             step,
@@ -1624,6 +1742,374 @@ class SmokeTest:
         await _wait_resolved(self.app, rb, 15.0)
         await _wait_result(self.container, of_a, timeout=10.0)
         await _wait_result(self.container, of_b, timeout=10.0)
+
+    async def _raw_wait_no_request(
+        self, d: RawDecider, canon: str, window: float = 5.0
+    ) -> str | None:
+        """None if no request for ``canon`` surfaces in ``window`` (draining
+        frames so a late egress_request is actually seen), else the request id.
+        Mirrors :func:`_wait_no_request` for the textual app, for a RawDecider."""
+        deadline = time.time() + window
+        while time.time() < deadline:
+            rid = next((r for r, h in d.held.items() if h == canon), None)
+            if rid is not None:
+                return rid
+            await d._recv(0.3)
+        return None
+
+    async def _raw_wait_for_any(
+        self, d: RawDecider, canons: set[str], timeout: float = 12.0
+    ) -> str | None:
+        """The request id of the first held request whose canonical dest is in
+        ``canons``, or None on timeout. Used by the port-scope phase, where an
+        off-port request to an allow-listed host surfaces named by IP (the
+        allow-list DNS-learn path leaves the record's host=None), so the request
+        matches the controlled IP, not the hostname."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            rid = next((r for r, h in d.held.items() if h in canons), None)
+            if rid is not None:
+                return rid
+            await d._recv(0.4)
+        return None
+
+    async def _probe_sidecar_ready_raw(
+        self, d: RawDecider, cont: str, host: str, budget: float = 60.0
+    ) -> bool:
+        """True once a throwaway off-list host surfaces a consent request in
+        ``d`` (the sidecar consent-WS is wired), else False. Allows the hold so
+        the probe can't perturb later assertions. Mirrors _wait_sidecar_ready
+        for a workspace driven via a RawDecider (#2417) -- a fresh workspace's
+        sidecar WS connects on its own backoff, so a missing prompt for the
+        FIRST scored host is readiness, not a scope violation."""
+        canon = _canonical(host)
+        deadline = time.time() + budget
+        attempt = 0
+        while time.time() < deadline:
+            of = f"/tmp/smoke_rawready_{attempt}.out"
+            _trigger(cont, host, of)
+            rid = await d.wait_for(canon, timeout=6.0)
+            if rid is not None:
+                await d.verdict(rid, DECISION_ALLOWED, DURATION_ONCE)
+                await d.wait_resolution(rid, 15.0)
+                return True
+            attempt += 1
+            await asyncio.sleep(0.5)
+        return False
+
+    async def run_host_scope_phase(self, pilot) -> None:
+        """nginx-style host scopes (#2377) against distinct controlled IPs (#2424).
+
+        With the apex and its subdomain on DIFFERENT controlled IPs, the L3/L4
+        allow rule (per IP) can't paper over the L7 hostname spec, so each scope
+        mode is observable on the real stack:
+          * bare ``exact.test`` (EXACT): apex covered, subdomain NOT.
+          * ``.incl.test`` (INCLUSIVE): apex + subdomains covered.
+          * ``*.wild.test`` (SUBDOMAINS): subdomains covered, apex NOT.
+        Driven via a dedicated interactive workspace + a raw decider scoped to
+        it. Needs controlled DNS (skipped otherwise)."""
+        if not self.args.host_scope:
+            return
+        if self.dns is None:
+            print(
+                "\n--- host scope: SKIPPED (--no-controlled-dns; needs distinct "
+                "controlled IPs so the L3/L4 rule can't mask the L7 spec, #2424) ---"
+            )
+            return
+        print(
+            "\n--- host scope: exact / inclusive / subdomains (#2377) on "
+            "distinct controlled IPs ---"
+        )
+        parent = _Step(
+            self.summary.total, "host-scope", "n/a", False, "host-scope", "-"
+        )
+        # Distinct controlled IPs per name. The (apex, sub) pairs MUST differ so
+        # an allow-learned ACCEPT for the apex IP can't cover the subdomain's IP.
+        cases = [
+            ("exact.test", True, "exact(apex) covered"),
+            ("sub.exact.test", False, "exact(sub) NOT covered"),
+            ("incl.test", True, "inclusive(apex) covered"),
+            ("sub.incl.test", True, "inclusive(sub) covered"),
+            ("wild.test", False, "subdomains(apex) NOT covered"),
+            ("sub.wild.test", True, "subdomains(sub) covered"),
+        ]
+        for host, _covered, _label in cases:
+            self.dns.allocate(host)
+        allow = ["exact.test", ".incl.test", "*.wild.test"]
+        ws_id = None
+        d: RawDecider | None = None
+        cont: str | None = None
+        conn = None
+        try:
+            ws_id = await asyncio.to_thread(
+                self._create_workspace,
+                self.server,
+                self.auth,
+                allow,
+                [],
+                f"smoke-hostscope-{int(time.time() * 1000) % 100000}",
+            )
+            self._extra_ws_ids.append(ws_id)
+            print(f"host-scope workspace {ws_id}  allow={allow}")
+            conn = await self._open_terminal_ws(ws_id)
+            self._extra_ws_conns.append(
+                (conn, asyncio.create_task(self._drain(conn)))
+            )
+            cont = _container_for_workspace(ws_id)
+            d = await self._connect_raw_decider(ws_id, ping=True)
+            self._extra_deciders.append(d)
+            await d.settle()
+            # Wait for the sidecar consent-WS to wire before the scored hosts
+            # (#2417): a fresh workspace's sidecar connects on its own backoff,
+            # so the first non-covered host could fail-close (no prompt) and
+            # false-positive as a scope violation.
+            ready_host = "hs-ready.test"
+            self.dns.allocate(ready_host)
+            if not await self._probe_sidecar_ready_raw(d, cont, ready_host):
+                self._record_probe(
+                    parent,
+                    "sidecar ready",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "host-scope phase failed: sidecar consent-WS did not wire "
+                    "(#2417); cannot assert scope boundaries",
+                )
+                await d.close()
+                return
+
+            for host, expect_covered, label in cases:
+                if self._abort:
+                    return
+                canon = _canonical(host)
+                of = f"/tmp/smoke_hs_{canon.replace('.', '_')}.out"
+                _trigger(cont, host, of)
+                if expect_covered:
+                    # Covered -> no consent request, and the connection succeeds
+                    # (the learned ACCEPT + the test server -> exit 0).
+                    rid = await self._raw_wait_no_request(d, canon, window=5.0)
+                    text = await _wait_result(cont, of, timeout=20.0)
+                    ec = _parse_exit(text)
+                    if rid is None and ec == 0:
+                        sx, dx = PASS, ""
+                    elif rid is not None:
+                        sx, dx = (
+                            MISMATCH,
+                            (
+                                f"host scope: {label} -- {host} prompted for consent "
+                                f"(should be covered by the allow-list)"
+                            ),
+                        )
+                    else:
+                        sx, dx = (
+                            FINDING,
+                            (
+                                f"host scope: {label} -- covered host did not connect "
+                                f"cleanly (exit {ec})"
+                            ),
+                        )
+                    self._record_probe(parent, label, "covered", ec, sx, dx)
+                else:
+                    # NOT covered -> a consent request surfaces; allow it so the
+                    # connection completes (exit 0) and clean up.
+                    rid = await d.wait_for(canon, 12.0)
+                    if rid is None:
+                        self._record_probe(
+                            parent,
+                            label,
+                            "no-request(!)",
+                            None,
+                            MISMATCH,
+                            f"host scope: {label} -- {host} did NOT prompt "
+                            f"(should be uncovered by the allow-list)",
+                        )
+                        if not self.args.continue_run:
+                            self._abort = True
+                        return
+                    await d.verdict(rid, DECISION_ALLOWED, DURATION_ONCE)
+                    await d.wait_resolution(rid, 15.0)
+                    text = await _wait_result(cont, of)
+                    ec = _parse_exit(text)
+                    if ec == 0:
+                        sx, dx = PASS, ""
+                    else:
+                        sx, dx = (
+                            FINDING,
+                            (
+                                f"host scope: {label} -- allowed but did not connect "
+                                f"cleanly (exit {ec})"
+                            ),
+                        )
+                    self._record_probe(
+                        parent, label, "prompted+allow", ec, sx, dx
+                    )
+                if sx == MISMATCH and not self.args.continue_run:
+                    self._abort = True
+                    return
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                parent,
+                "bring up host-scope ws",
+                "error",
+                None,
+                MISMATCH,
+                f"host-scope phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+        finally:
+            if d is not None:
+                await d.close()
+
+    async def run_port_scope_phase(self, pilot) -> None:
+        """Port-scoped allow specs (#2377 / #2256) on a controlled IP (#2424).
+
+        ``svc.test:443`` allow-lists ONLY :443; ``:80`` on the same controlled
+        IP must still prompt. Same IP (the port scoping is at L4, so the L3/L4
+        rule is per IP+port and the confound the host-scope phase works around
+        does not apply). Needs controlled DNS (skipped otherwise)."""
+        if not self.args.port_scope:
+            return
+        if self.dns is None:
+            print(
+                "\n--- port scope: SKIPPED (--no-controlled-dns; needs a "
+                "controlled IP with a test server on :80 + :443, #2424) ---"
+            )
+            return
+        print(
+            "\n--- port scope: host:443 does not permit :80 on the same "
+            "controlled IP ---"
+        )
+        parent = _Step(
+            self.summary.total, "port-scope", "n/a", False, "port-scope", "-"
+        )
+        self.dns.allocate("svc.test")
+        allow = ["svc.test:443"]
+        ws_id = None
+        d: RawDecider | None = None
+        cont: str | None = None
+        conn = None
+        try:
+            ws_id = await asyncio.to_thread(
+                self._create_workspace,
+                self.server,
+                self.auth,
+                allow,
+                [],
+                f"smoke-portscope-{int(time.time() * 1000) % 100000}",
+            )
+            self._extra_ws_ids.append(ws_id)
+            print(f"port-scope workspace {ws_id}  allow={allow}")
+            conn = await self._open_terminal_ws(ws_id)
+            self._extra_ws_conns.append(
+                (conn, asyncio.create_task(self._drain(conn)))
+            )
+            cont = _container_for_workspace(ws_id)
+            d = await self._connect_raw_decider(ws_id, ping=True)
+            self._extra_deciders.append(d)
+            await d.settle()
+            ready_host = "ps-ready.test"
+            self.dns.allocate(ready_host)
+            if not await self._probe_sidecar_ready_raw(d, cont, ready_host):
+                self._record_probe(
+                    parent,
+                    "sidecar ready",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "port-scope phase failed: sidecar consent-WS did not wire "
+                    "(#2417); cannot assert port scoping",
+                )
+                await d.close()
+                return
+
+            # 1) :443 is covered -> no prompt, connect OK (exit 0).
+            of443 = "/tmp/smoke_ps_443.out"
+            _trigger(cont, "svc.test", of443, port=443, scheme="https")
+            rid = await self._raw_wait_no_request(
+                d, _canonical("svc.test"), window=5.0
+            )
+            text = await _wait_result(cont, of443, timeout=20.0)
+            ec = _parse_exit(text)
+            if rid is None and ec == 0:
+                sx, dx = PASS, ""
+            elif rid is not None:
+                sx, dx = (
+                    MISMATCH,
+                    ("port scope: svc.test:443 prompted (should be covered)"),
+                )
+            else:
+                sx, dx = (
+                    FINDING,
+                    (
+                        f"port scope: :443 covered host did not connect cleanly (exit {ec})"
+                    ),
+                )
+            self._record_probe(parent, ":443 covered", "covered", ec, sx, dx)
+            if sx == MISMATCH and not self.args.continue_run:
+                self._abort = True
+                await d.close()
+                return
+
+            # 2) :80 is NOT covered -> a prompt surfaces; allow + clean up.
+            # NOTE: the request is named by IP, not hostname. svc.test IS
+            # allow-listed (on :443), so the proxy's allow-list DNS-learn path
+            # (allow(), which leaves the learned record's host=None) recorded
+            # the IP without a host name -- only the non-allow-listed
+            # _record_hosts path names the host. So this off-port request
+            # surfaces as the controlled IP, not "svc.test". Port-scoping itself
+            # is correct (:80 is not covered -> prompts); match either name.
+            svc_ip = self.dns.ip_for("svc.test")
+            of80 = "/tmp/smoke_ps_80.out"
+            _trigger(cont, "svc.test", of80, port=80, scheme="http")
+            rid = await self._raw_wait_for_any(
+                d, {_canonical("svc.test"), _canonical(svc_ip)}, 12.0
+            )
+            if rid is None:
+                self._record_probe(
+                    parent,
+                    ":80 NOT covered",
+                    "no-request(!)",
+                    None,
+                    MISMATCH,
+                    "port scope: svc.test:80 did NOT prompt (host:443 leaked to :80)",
+                )
+                if not self.args.continue_run:
+                    self._abort = True
+                await d.close()
+                return
+            await d.verdict(rid, DECISION_ALLOWED, DURATION_ONCE)
+            await d.wait_resolution(rid, 15.0)
+            text = await _wait_result(cont, of80)
+            ec = _parse_exit(text)
+            if ec == 0:
+                sx, dx = PASS, ""
+            else:
+                sx, dx = (
+                    FINDING,
+                    (
+                        f"port scope: :80 allowed but did not connect cleanly (exit {ec})"
+                    ),
+                )
+            self._record_probe(
+                parent, ":80 prompted+allow", "prompted+allow", ec, sx, dx
+            )
+            if sx == MISMATCH and not self.args.continue_run:
+                self._abort = True
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                parent,
+                "bring up port-scope ws",
+                "error",
+                None,
+                MISMATCH,
+                f"port-scope phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+        finally:
+            if d is not None:
+                await d.close()
 
     async def run_static_refusal_phase(self) -> None:
         """#2395: a workspace with ``egress_mode='static'`` must refuse
@@ -2452,6 +2938,13 @@ class SmokeTest:
                     await self.run_decider_scope_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_audit_distinction_phase(pilot)
+                # Controlled-DNS phases (#2424): host-scope + port-scope use their
+                # own workspace + raw decider (independent of the textual app),
+                # so they run last inside run_test.
+                if not stop and not self._abort:
+                    await self.run_host_scope_phase(pilot)
+                if not stop and not self._abort:
+                    await self.run_port_scope_phase(pilot)
             # run_test exited -> the decider WS dropped -> the server deregistered
             # the decider -> the workspace reverted to static allow-list (#2308).
             # _shared_d2 (the multi-decider / snapshot raw decider) is a SEPARATE
@@ -2471,6 +2964,23 @@ class SmokeTest:
         return 1 if self.summary.mismatches else 0
 
     async def teardown(self) -> None:
+        if self.dns is not None:
+            try:
+                self.dns.stop()
+            except Exception:
+                pass
+            self.dns = None
+        if self._containers_conf is not None:
+            import shutil
+
+            os.environ.pop("CONTAINERS_CONF", None)
+            try:
+                shutil.rmtree(
+                    os.path.dirname(self._containers_conf), ignore_errors=True
+                )
+            except Exception:
+                pass
+            self._containers_conf = None
         if self._shared_d2 is not None:
             await self._shared_d2.close()
             self._shared_d2 = None
@@ -2634,11 +3144,12 @@ def main() -> int:
     p.add_argument(
         "--snapshot",
         dest="snapshot",
-        action="store_true",
-        help="enable the reconnect snapshot-replay phase (DEFAULT OFF: with "
-        "real multi-IP hosts the result is indeterminate — a "
-        "resolved-while-away row is indistinguishable from a CDN "
-        "IP-cascade respawn — so it records a finding, not a pass/fail)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="the reconnect snapshot-replay phase (DEFAULT ON under controlled "
+        "DNS, #2424: with single-IP test hosts it is a hard PASS/FAIL; use "
+        "--no-snapshot to skip. Without --controlled-dns the phase is skipped "
+        "(indeterminate on real multi-IP hosts).",
     )
     p.add_argument(
         "--no-revoke",
@@ -2687,6 +3198,35 @@ def main() -> int:
         dest="delete_workspace",
         action="store_false",
         help="do not delete the workspace on exit",
+    )
+    p.add_argument(
+        "--controlled-dns",
+        dest="controlled_dns",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="bring up the controlled-DNS fixture (#2424) and point the real "
+        "sidecar at it so chosen hostnames resolve to single stable test IPs "
+        "(default ON). Disabling reverts the snapshot/host-scope/port-scope "
+        "phases to their pre-#2424 behavior (skipped / indeterminate).",
+    )
+    p.add_argument(
+        "--sidecar-image",
+        default="localhost/klangk-network-sidecar:latest",
+        help="the network-sidecar image the controlled-DNS fixture reuses for "
+        "its DNS forwarder + multi-IP HTTP/HTTPS target (default: "
+        "localhost/klangk-network-sidecar:latest).",
+    )
+    p.add_argument(
+        "--no-host-scope",
+        dest="host_scope",
+        action="store_false",
+        help="skip the host-scope (exact/inclusive/subdomains) phase (#2377/#2424)",
+    )
+    p.add_argument(
+        "--no-port-scope",
+        dest="port_scope",
+        action="store_false",
+        help="skip the port-scope (host:443 vs :80) phase (#2424)",
     )
     args = p.parse_args()
     if args.seed is None:

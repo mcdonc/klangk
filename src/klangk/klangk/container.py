@@ -1303,9 +1303,22 @@ class ContainerRegistry:
             )
         name = self._network_sidecar_name(workspace_id, slug)
         # Pick an upstream that differs from the REDIRECT target (1.1.1.1).
-        nf = getattr(self.app.state, "netfilter", None)
-        resolvers = nf.resolvers() if nf else []
-        upstream = next((r for r in resolvers if r != "1.1.1.1"), "8.8.8.8")
+        # KLANGKNETWORK_EGRESS_UPSTREAM (when set in klangkd's env) pins the
+        # sidecar's upstream resolver verbatim, mirroring the MIN_TTL /
+        # SWEEP_INTERVAL forwarding below — an operator may want workspaces to
+        # use a specific resolver (e.g. a corporate DNS), and the egress
+        # smoketest uses it to point the sidecar at a controlled-DNS fixture
+        # (#2424) so chosen hostnames resolve to single stable test IPs.
+        # Absent -> auto-detect a host resolver that differs from 1.1.1.1.
+        env_upstream = os.environ.get("KLANGKNETWORK_EGRESS_UPSTREAM")
+        if env_upstream:
+            upstream = env_upstream
+        else:
+            nf = getattr(self.app.state, "netfilter", None)
+            resolvers = nf.resolvers() if nf else []
+            upstream = next(
+                (r for r in resolvers if r != "1.1.1.1"), "8.8.8.8"
+            )
         env = [
             f"KLANGKNETWORK_EGRESS_ALLOW={','.join(allowed_domains or [])}",
             f"KLANGKNETWORK_EGRESS_REJECT={','.join(rejected_domains or [])}",

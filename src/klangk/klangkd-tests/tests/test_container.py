@@ -835,6 +835,36 @@ class TestStartContainer:
         assert "KLANGKNETWORK_EGRESS_MIN_TTL=1" in kwargs["env"]
         assert "KLANGKNETWORK_EGRESS_SWEEP_INTERVAL=1" in kwargs["env"]
 
+    async def test_start_network_sidecar_upstream_env_override(
+        self, monkeypatch
+    ):
+        # KLANGKNETWORK_EGRESS_UPSTREAM, when set in klangkd's env, pins the
+        # sidecar's upstream verbatim (operator-pinnable workspace DNS, and the
+        # path the egress smoketest's controlled-DNS fixture uses, #2424).
+        # Mirrors the MIN_TTL/SWEEP forwarding: set -> honored, absent -> the
+        # detected resolver (the next test pins the fallback explicitly).
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        from klangk import netfilter as _nf
+
+        # Detection would return 8.8.8.8; the override must win.
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_UPSTREAM", "10.88.0.23")
+        with patch_podman(self.registry) as p:
+            await self.registry._start_network_sidecar(
+                ws_id, ["github.com:443"]
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert "KLANGKNETWORK_EGRESS_UPSTREAM=10.88.0.23" in kwargs["env"]
+        assert not any(
+            e.startswith("KLANGKNETWORK_EGRESS_UPSTREAM=8.8.8.8")
+            for e in kwargs["env"]
+        )
+
     async def test_start_network_sidecar_publishes_host_ports(
         self, monkeypatch
     ):
