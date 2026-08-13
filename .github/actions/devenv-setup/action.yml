@@ -9,26 +9,15 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: DeterminateSystems/determinate-nix-action@v3
-
-    - name: Disable Determinate binary-cache substituter
-      if: runner.os == 'Linux'
-      shell: bash
-      run: |
-        # The Determinate Nix installer configures install.determinate.systems
-        # as a binary-cache substituter in /etc/nix/nix.conf. Its NARs
-        # intermittently arrive corrupt/partial on GitHub hosted runners,
-        # causing "error: path '...' is not valid" mid-evaluation (#1420).
-        #
-        # nix.conf processes lines in order: a bare `substituters =` line
-        # REPLACES the accumulated value (including any `extra-substituters`
-        # the installer added), so appending one here leaves only
-        # cache.nixos.org. The bootstrap step's `cachix use` later appends
-        # devenv.cachix.org via `extra-substituters`. Result: paths come
-        # only from the two reliable caches — no Determinate store caching.
-        echo 'substituters = https://cache.nixos.org/' \
-          | sudo tee -a /etc/nix/nix.conf
-        sudo systemctl restart nix-daemon
+    # Official NixOS installer. Unlike the Determinate installer this only
+    # configures cache.nixos.org by default, so there is no
+    # install.determinate.systems substituter to strip out (the workaround
+    # for #1420 is no longer needed). Flakes/nix-command are turned on both
+    # by the action's built-in --enable-flakes flag and explicitly below.
+    - uses: NixOS/nix-installer-action@v1
+      with:
+        extra-conf: |
+          experimental-features = nix-command flakes
 
     - name: Free disk space
       if: runner.os == 'Linux'
