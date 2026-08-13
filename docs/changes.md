@@ -32,6 +32,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`5s` consent-duration option (#2465).** The test-only 5-second duration
+  is temporarily exposed in the consent duration selector (TUI + Flutter) for
+  manual testing, now that a timed allow lapses at its verdict rather than the
+  `MIN_TTL` floor. Remove `5s` from `SELECTABLE_DURATIONS` (TUI) /
+  `kConsentDurations` (Flutter) to hide it again; it stays valid for
+  programmatic/test callers either way.
+
 - **`KLANGKNETWORK_EGRESS_UPSTREAM` — operator-pinnable sidecar DNS upstream (#2424).**
   When set in `klangkd`'s environment, the network sidecar's FQDN proxy forwards
   workspace DNS to this resolver verbatim instead of auto-detecting a host
@@ -813,6 +820,18 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   window elapses, instead of lingering with a "0s left" label. The server
   only re-broadcasts the rules snapshot on discrete events (verdict/revoke/
   pause/reconnect), so the client prunes elapsed rules on its 1s tick.
+
+- **Timed egress-consent allows no longer outlive their duration (#2465).** A
+  timed `allow` verdict used to keep covering retries past its window via two
+  leaks, both now closed. (1) Every re-resolve of the consented host re-learned
+  its resolved IP for the response's DNS TTL (often minutes), so the learned
+  ACCEPT rule outlived the verdict; the DNS-path learn is now bounded at the
+  verdict's remaining window. (2) A consent-verdict rule was floored at the
+  learned-IP `MIN_TTL` (30s), so a short verdict (the test-only `5s`) lived
+  30s; the consent paths now use the verdict verbatim (no floor). Together a
+  timed allow's rule lapses at the verdict and a retry past the window
+  re-prompts (the `deny` side already behaved correctly). Static allow-list
+  entries are unaffected (their DNS-learn floor is unchanged).
 
 - **Timed egress-consent allows now cover the whole host (#2434).** A timed or
   `until restart` `allow` verdict now allow-lists the consented host for its

@@ -51,8 +51,9 @@ DECISION_DENIED = "denied"
 # per CLI isolation. Ordered for the TUI selector; default is `tilrestart` (#2328).
 DURATION_ONCE = "once"
 # Test-only short duration (#2363, subsumed by #2392): recognized for in-effect
-# math (a `5s` verdict in a rules snapshot counts down correctly) but kept
-# OUT of the human-facing selector via SELECTABLE_DURATIONS below.
+# math (a `5s` verdict in a rules snapshot counts down correctly). TEMPORARILY
+# exposed in the human-facing selector (#2465) for manual testing; see
+# SELECTABLE_DURATIONS below.
 DURATION_5S = "5s"
 DURATION_5M = "5m"
 DURATION_15M = "15m"
@@ -75,9 +76,11 @@ DURATIONS = (
     DURATION_FOREVER,
 )
 # Human-facing duration selector: every duration a user can pick. The
-# test-only 5s is deliberately excluded so it never appears in the UI
-# (#2363); it remains valid when sent by a programmatic/test caller.
-SELECTABLE_DURATIONS = tuple(d for d in DURATIONS if d != DURATION_5S)
+# test-only 5s is TEMPORARILY included (#2465) for manual testing now that a
+# timed allow lapses at its verdict (not the MIN_TTL floor) -- it can be
+# dropped from the selector (restore the ``d != DURATION_5S`` filter) to shut
+# it off; it stays valid for programmatic/test callers either way.
+SELECTABLE_DURATIONS = DURATIONS
 DURATION_DEFAULT = DURATION_TILRESTART
 
 # Seconds each *timed* duration adds to ``decided_at`` (mirror of the server's

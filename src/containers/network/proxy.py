@@ -183,7 +183,7 @@ def _rst_debug(msg: str) -> None:
 # persistence is #2368's `forever`-allow sub-piece; the deny counterpart is
 # #2369.)
 _DURATION_SECONDS = {
-    "5s": 5,  # test-only (#2363, subsumed by #2392); honored but never UI-offered
+    "5s": 5,  # test-only (#2363); TEMPORARILY UI-offered for manual testing (#2465)
     "5m": 300,
     "15m": 900,
     "1h": 3600,
@@ -497,6 +497,57 @@ def _session_host_allows_ttl(host: str, port: int) -> float | None:
     return best
 
 
+def _session_allow_rule_cap(qname: str) -> float | None:
+    """Min remaining TTL bounding a DNS-path learned rule for ``qname``, or
+    ``None`` (#2465).
+
+    A timed consent allow adds the host to :data:`_SESSION_HOST_ALLOWS`, so
+    :func:`ports_for` treats it as allow-listed and the DNS path
+    (:func:`_respond_allowed` -> :func:`_learn_all`) learns every resolved IP.
+    That learn used to install the ACCEPT rule for the response's DNS TTL --
+    often minutes -- so a short verdict (5s) left a rule that outlived it: a
+    retry past the window connected with no re-prompt (the allow/deny asymmetry
+    of #2465 -- the deny side records no DNS-path learn, so it expired on
+    time). The cap returned here bounds the rule's TTL at the min remaining
+    across matching session allows, so the rule lapses with the verdict and a
+    retry past the window re-prompts.
+
+    ``None`` (no cap -- use the DNS TTL) when a static :data:`SPECS` entry
+    matches: a static allow is forever, so the DNS TTL is the correct rule
+    lifetime, and capping it would expire the rule early and -- in the gap
+    between rule expiry and the next resolve -- re-prompt a forever-allowed
+    host (a static spec has no NFQUEUE gate, only the learned rule covers its
+    SYN). Also ``None`` when no session allow matches (a static-only or
+    non-allow-listed name learns at its DNS TTL). Loop-only (reads
+    :data:`_SESSION_HOST_ALLOWS`); computed on the event-loop thread in
+    :func:`_respond_allowed` and passed to :func:`_learn_all`, which runs
+    off-loop in the executor.
+
+    The static-spec check is qname-level (any port), so a host with a
+    port-scoped static spec (``example.com:443``) AND a timed session allow on
+    a *different* port (``example.com:8443``) leaves the :8443 learn uncapped
+    -- pre-#2465 behavior (nothing was capped before), not a regression. The
+    lingering :8443 ACCEPT rule (DNS TTL) sits at the top of OUTPUT and
+    shadows NFQUEUE, so a retry past that verdict's window connects without a
+    re-prompt until the DNS TTL elapses -- a known narrow leak for that combo,
+    NOT covered by the NFQUEUE gate. All real consent flows hit this for a
+    single host:port, where the cap is exact.
+    """
+    if any(_host_matches(qname, host, mode) for host, _port, mode in SPECS):
+        return None  # a static spec matches -> forever -> DNS TTL is correct
+    _prune_session_allows()
+    now = time.time()
+    best: float | None = None
+    for host, _port, mode, exp in _SESSION_HOST_ALLOWS:
+        if exp <= now:
+            continue
+        if _host_matches(qname, host, mode):
+            remaining = exp - now
+            if best is None or remaining < best:
+                best = remaining
+    return best
+
+
 def _prune_session_denies() -> None:
     """Drop expired in-session host denies (lazy sweep, #2446).
 
@@ -600,14 +651,21 @@ def _remove(ip: str, port: int | None) -> None:
     )
 
 
-def allow(ip: str, port: int | None, ttl: int | float) -> None:
+def allow(ip: str, port: int | None, ttl: int | float, floor: bool = True) -> None:
     """Install (if new) the ACCEPT for ``ip[:port]`` and refresh its TTL.
 
     ``port`` is ``None`` for an all-ports rule. The learned IP's expiry is
-    set to ``now + max(ttl, MIN_TTL)`` (a 0-TTL response must not yank the
-    rule the workspace needs to reach the IP it just resolved) and only ever
-    moves forward, so a shorter-TTL re-resolution can't prematurely expire a
-    longer-lived prior rule (#2256).
+    set to ``now + ttl`` and only ever moves forward, so a shorter-TTL
+    re-resolution can't prematurely expire a longer-lived prior rule (#2256).
+    ``floor`` (default ``True``) raises the TTL to :data:`MIN_TTL` -- the
+    0-TTL-DNS-response safety net (a resolver may hand back a 0-TTL A record,
+    and that must not yank the rule the workspace needs to reach the IP it
+    just resolved). A *consent-verdict* TTL is the user's intent, not a DNS
+    TTL, so the consent paths (:func:`_decide_and_verdict`, the ``_cb``
+    in-session auto-allow, and a capped :func:`_learn_all`) pass
+    ``floor=False`` -- a timed verdict's rule lapses at the verdict, not at
+    MIN_TTL (#2465: otherwise a ``5s`` verdict's rule lived 30s under the
+    default MIN_TTL). The static-spec DNS learn keeps the default floor.
 
     The install happens **under** :data:`_LOCK` so the kernel rule and its
     ``_LEARNED`` record are atomic w.r.t. :func:`sweep_once`'s remove+delete
@@ -619,7 +677,7 @@ def allow(ip: str, port: int | None, ttl: int | float) -> None:
     executor (see :func:`_learn_all` / :func:`_async_sweeper`), so the lock
     genuinely serializes them; contention is negligible.
     """
-    expire = time.time() + max(ttl, MIN_TTL)
+    expire = time.time() + (max(ttl, MIN_TTL) if floor else ttl)
     with _LOCK:
         _install(ip, port)
         rec = _LEARNED.get(ip)
@@ -931,12 +989,29 @@ def check_mark() -> None:
         probe.close()
 
 
-def _learn_all(recs: list[tuple[str, int]], ports: set[int | None]) -> None:
+def _learn_all(
+    recs: list[tuple[str, int]],
+    ports: set[int | None],
+    cap: float | None = None,
+) -> None:
     """Install the ACCEPT rule for each learned IP/port (sync; runs in the
-    executor so the iptables forks don't block the event loop)."""
+    executor so the iptables forks don't block the event loop).
+
+    ``cap``, when not ``None``, bounds each rule's TTL at ``min(dns_ttl, cap)``
+    so a timed session-allow's learned rule does not outlive its verdict
+    (#2465). The host mapping -- set earlier by :func:`_record_hosts` at the
+    DNS TTL, ahead of the consent allow -- is untouched: :func:`allow`'s
+    ``max`` keeps the longer mapping lifetime so :func:`_host_for` still names
+    the host for a fresh re-prompt after the verdict lapses (#2408).
+    """
     for ip, ttl in recs:
+        rule_ttl = ttl if cap is None else min(ttl, cap)
         for port in ports:
-            allow(ip, port, ttl)
+            # cap=None (static spec) -> a DNS-response TTL, floored at MIN_TTL
+            # for 0-TTL safety; cap set (session allow) -> the verdict's
+            # remaining window, NOT floored so a sub-MIN_TTL verdict (5s)
+            # lapses at the verdict, not at MIN_TTL (#2465).
+            allow(ip, port, rule_ttl, floor=cap is None)
 
 
 def _record_hosts(recs: list[tuple[str, int]], host: str) -> None:
@@ -998,7 +1073,17 @@ async def _respond_allowed(
         recs = []
     try:
         if recs:
-            await loop.run_in_executor(None, _learn_all, recs, ports)
+            # Bound a timed session-allow's learned rule at its verdict's
+            # remaining window (#2465): without this the DNS-path learn uses
+            # the response's DNS TTL (often minutes), so a 5s allow leaves a
+            # rule that outlives it and a retry past the window connects with
+            # no re-prompt. None for a static spec (forever) or no session
+            # allow -- the DNS TTL is correct then. Computed here (inside the
+            # try so a raise can't escape _respond_allowed and take down the
+            # PID-1 sidecar, #2278) on the loop (reads loop-only
+            # _SESSION_HOST_ALLOWS) before the executor fork below.
+            cap = _session_allow_rule_cap(qname)
+            await loop.run_in_executor(None, _learn_all, recs, ports, cap)
         if DEBUG:
             print(
                 f"allow {qname} -> {[ip for ip, _ in recs]} ports={_fmt_ports(ports)}",
@@ -1683,7 +1768,9 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         # Learn for the allow's remaining window (timed) or ~forever; port-scoped
         # (the consented port) -- deliberately stricter than the consent-allow
         # path's all-ports learn (allow(dst, None, ...)).
-        asyncio.get_running_loop().run_in_executor(None, allow, dst, port, remaining)
+        asyncio.get_running_loop().run_in_executor(
+            None, allow, dst, port, remaining, False
+        )
         pkt.accept()
         _VERDICT_CACHE[flow] = ("allow", now + VERDICT_CACHE_TTL)
         # NOTE (#2370): revoking an allow must also drop this host from
@@ -1780,7 +1867,7 @@ async def _decide_and_verdict(
             # re-prompts); a timed duration -> learn all-ports for it.
             if ttl is not None:
                 try:
-                    await loop.run_in_executor(None, allow, dst, None, ttl)
+                    await loop.run_in_executor(None, allow, dst, None, ttl, False)
                 except Exception:
                     pass
             pkt.accept()
