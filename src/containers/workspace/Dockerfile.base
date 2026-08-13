@@ -1,9 +1,14 @@
-FROM node:26-slim
+# debian:trixie-slim pinned by digest (multi-arch manifest list) for
+# reproducible base-image builds; aligns with src/containers/nix-seed/Dockerfile.
+# Bump the digest (and let the base-image workflow re-tag) to pull in Debian
+# security updates. (#2432)
+FROM debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
+    gnupg \
     python3 \
     python3-pip \
     python3-venv \
@@ -64,6 +69,27 @@ RUN chmod u+s /usr/bin/ping
 RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && locale-gen
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
+
+# Node.js 26 + npm from the NodeSource apt repo, pinned to an exact patch via
+# apt. Matches the Node major the previous `node:26-slim` base shipped, so
+# workspace behavior is unchanged; Node is now an explicit apt dependency
+# instead of an artifact of the base image. Debian trixie's own nodejs is 20.x
+# (EOL, and below Pi's engine floor of >=22.19.0), so the distro package is not
+# used. NodeSource's nodejs package bundles npm (Provides: npm); we do NOT
+# install Debian's separate `npm`, which would pull distro Node 20 as a
+# dependency. NodeSource keeps every 26.x patch in its repo, so this pin is
+# durable. (#2432)
+ARG NODEJS_VERSION=26.7.0-1nodesource1
+RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \
+    && chmod 644 /usr/share/keyrings/nodesource.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_26.x nodistro main" \
+       > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       nodejs=${NODEJS_VERSION} \
+    && node --version && npm --version \
+    && rm -rf /var/lib/apt/lists/* \
+    && chown -R root:root /var/log/apt
 
 # GitHub CLI (not in default Debian repos)
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \

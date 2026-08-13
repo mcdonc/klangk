@@ -1,7 +1,7 @@
 # Container Packages
 
 Every workspace runs inside a container built from
-`node:26-slim` (Debian). The image ships a curated set of packages
+`debian:trixie-slim` (Debian 13). The image ships a curated set of packages
 so common development tasks work out of the box.
 
 > **Note:** This page documents the default `klangk-workspace` image.
@@ -10,12 +10,12 @@ so common development tasks work out of the box.
 
 ## Language Runtimes
 
-| Runtime        | Source                      | Notes                          |
-| -------------- | --------------------------- | ------------------------------ |
-| **Node.js 26** | Base image (`node:26-slim`) | Includes `npm`                 |
-| **Python 3**   | `python3` system package    | `pip` and `venv` included      |
-| **Bash**       | Default shell               | `/bin/sh` is symlinked to bash |
-| **Zsh**        | `zsh` system package        | Available but not the default  |
+| Runtime        | Source                                 | Notes                              |
+| -------------- | -------------------------------------- | ---------------------------------- |
+| **Node.js 26** | NodeSource apt repo (`nodejs` package) | Includes `npm`; pinned to `26.7.0` |
+| **Python 3**   | `python3` system package               | `pip` and `venv` included          |
+| **Bash**       | Default shell                          | `/bin/sh` is symlinked to bash     |
+| **Zsh**        | `zsh` system package                   | Available but not the default      |
 
 ## Build Tools
 
