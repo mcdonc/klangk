@@ -593,6 +593,17 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("host scope: ", "HOST-SCOPE-VIOLATION"),
     ("port-scope phase failed", "UNEXPECTED-ERROR"),
     ("port scope: ", "PORT-SCOPE-VIOLATION"),
+    # allow egress mode (#2411): off-list must connect (coordinator record+allow),
+    # rejected still denied, decider registration refused.
+    ("allow-mode off-list refused", "ALLOWMODE-REFUSED"),
+    ("allow-mode off-list hung", "ALLOWMODE-REFUSED"),
+    ("allow-mode sidecar consent-WS did not wire", "HUNG-NFQUEUE-DNS"),
+    (
+        "a decider registered against an allow workspace",
+        "ALLOWMODE-DECIDER-ACCEPTED",
+    ),
+    ("allow decider: no frame/close", "ALLOWMODE-DECIDER-ACCEPTED"),
+    ("allow-mode phase failed", "UNEXPECTED-ERROR"),
 ]
 
 OUTCOME_NAMES: dict[str, str] = {
@@ -621,6 +632,8 @@ OUTCOME_NAMES: dict[str, str] = {
     "HOST-SCOPE-VIOLATION": "an nginx-style host scope (exact/inclusive/subdomains, #2377) let the wrong name through / blocked the right one.",
     "PORT-SCOPE-VIOLATION": "a port-scoped allow (host:443) permitted a different port (:80), or vice-versa.",
     "SNAPSHOT-REPLAY": "a resolved-while-away row replayed (or a held row vanished) in the reconnect snapshot -- now deterministic under controlled DNS (#2424).",
+    "ALLOWMODE-REFUSED": "an allow-mode (default-permit) off-list host was refused or hung -- it must connect (#2411/#2406).",
+    "ALLOWMODE-DECIDER-ACCEPTED": "a consent decider registered (or ambiguously attached) against an allow-mode workspace -- it must be refused, same gate as static (#2395/#2406).",
 }
 
 _EXPECT_CONN_NAMES = {
@@ -788,6 +801,7 @@ class SmokeTest:
         allow_list: list[str] | None = None,
         rejected_list: list[str] | None = None,
         name: str | None = None,
+        egress_mode: str = "interactive",
     ) -> str:
         client = httpx.Client(
             base_url=server["url"], headers=auth["headers"], timeout=120
@@ -806,7 +820,7 @@ class SmokeTest:
                         if rejected_list is None
                         else (rejected_list or [])
                     ),
-                    "egress_mode": "interactive",
+                    "egress_mode": egress_mode,
                     "auto_start": True,
                 },
             )
@@ -2809,6 +2823,223 @@ class SmokeTest:
             if d is not None:
                 await d.close()
 
+    async def _wait_allow_sidecar_wired(self, container: str) -> bool:
+        """Allow-mode readiness analogue of :meth:`_wait_sidecar_ready`.
+
+        The interactive probe keys on a consent request surfacing in the
+        decider; allow mode surfaces none (the coordinator short-circuits to
+        record+allow, #2406), so the signal that the sidecar consent-WS ->
+        coordinator -> allow path is wired is a successful CONNECT. Retries
+        fresh off-list hosts (cycling ``_SIDECAR_PROBE_HOSTS``) so a fail-close
+        forged RST can't pin a ~10s REJECT backstop on the probe IP and mask
+        wiring on the next attempt (#2417).
+        """
+        deadline = time.time() + _SIDECAR_READY_BUDGET
+        attempt = 0
+        while time.time() < deadline:
+            host = _SIDECAR_PROBE_HOSTS[attempt % len(_SIDECAR_PROBE_HOSTS)]
+            of = f"/tmp/smoke_allow_ready_{attempt}.out"
+            _trigger(container, host, of)
+            # A wired sidecar holds the SYN briefly, then the coordinator
+            # auto-allows -> exit 0; an unwired one fail-closes (forged RST)
+            # -> exit 7 at once. 12s covers the brief hold either way.
+            text = await _wait_result(container, of, timeout=12.0)
+            if _parse_exit(text) == 0:
+                return True
+            attempt += 1
+            await asyncio.sleep(0.5)
+        return False
+
+    async def run_allow_phase(self, pilot) -> None:
+        """#2411 ``allow`` egress mode (default-permit):
+
+        * off-list egress CONNECTS -- the consent coordinator short-circuits to
+          record+allow with no hold and no prompt (#2406), the opposite of the
+          no-decider static phase (which denies+records off-list);
+        * ``rejected_domains`` is STILL enforced (NXDOMAIN'd at the sidecar DNS
+          layer, upstream of consent); and
+        * a workspace-scoped consent decider is REFUSED (4003, same
+          non-interactive gate as static, #2395/#2406).
+
+        Uses its own allow-mode workspace + direct curl probes -- no decider
+        attaches (none can). ``pilot`` is unused (signature symmetry).
+        """
+        if not self.args.allow_phase:
+            return
+        print(
+            "\n--- #2411 allow mode: off-list connects, rejected denied, "
+            "decider refused ---"
+        )
+        parent = _Step(
+            self.summary.total, "(allow ws)", "n/a", False, "allow-mode", "-"
+        )
+        ws_id: str | None = None
+        conn = None
+        drain = None
+        try:
+            ws_id = await asyncio.to_thread(
+                self._create_workspace,
+                self.server,
+                self.auth,
+                [],  # no allow-list: allow mode permits all non-rejected hosts
+                ["evil.example.com"],  # rejected -> sidecar NXDOMAIN
+                f"smoke-allow-{int(time.time() * 1000) % 100000}",
+                "allow",
+            )
+            self._extra_ws_ids.append(ws_id)
+            print(f"allow-mode workspace {ws_id}")
+            conn = await self._open_terminal_ws(ws_id)
+            drain = asyncio.create_task(self._drain(conn))
+            self._extra_ws_conns.append((conn, drain))
+            container = _container_for_workspace(ws_id)
+
+            # 1) Wait for the sidecar consent-WS to wire before the scored
+            #    probes -- an unwired sidecar fail-closes off-list to a forged
+            #    RST and would false-positive as an allow-mode refusal.
+            if not await self._wait_allow_sidecar_wired(container):
+                self._record_probe(
+                    parent,
+                    "allow sidecar ready",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "allow-mode sidecar consent-WS did not wire (#2417); "
+                    "cannot assert off-list connects",
+                )
+                return
+
+            # 2) Off-list (default-permit): a fresh off-list host must CONNECT.
+            host_off = "cloudflare.com"
+            of_off = f"/tmp/smoke_allow_off_{self.summary.total}.out"
+            _trigger(container, host_off, of_off)
+            text_off = await _wait_result(container, of_off, timeout=30.0)
+            ec_off = _parse_exit(text_off)
+            if ec_off == 0:
+                self._record_probe(
+                    parent,
+                    "allow off-list",
+                    "connected",
+                    ec_off,
+                    PASS,
+                    f"off-list {host_off} connected (default-permit)",
+                )
+            elif ec_off is None:
+                self._record_probe(
+                    parent,
+                    "allow off-list",
+                    "hung(!)",
+                    None,
+                    MISMATCH,
+                    "allow-mode off-list hung (NFQUEUE/DNS)",
+                )
+            else:
+                self._record_probe(
+                    parent,
+                    "allow off-list",
+                    "refused(!)",
+                    ec_off,
+                    MISMATCH,
+                    f"allow-mode off-list refused (exit {ec_off}); must connect",
+                )
+            if self._abort:
+                return
+
+            # 3) rejected_domains enforced: the rejected host is NXDOMAIN'd at
+            #    the sidecar DNS layer even in allow mode.
+            host_rej = "evil.example.com"
+            of_rej = f"/tmp/smoke_allow_rej_{self.summary.total}.out"
+            _trigger(container, host_rej, of_rej)
+            text_rej = await _wait_result(container, of_rej, timeout=20.0)
+            ec_rej = _parse_exit(text_rej)
+            if ec_rej == 0:
+                self._record_probe(
+                    parent,
+                    "allow rejected",
+                    "leak(!)",
+                    ec_rej,
+                    MISMATCH,
+                    "rejected host succeeded in allow mode (leak)",
+                )
+            else:
+                self._record_probe(
+                    parent,
+                    "allow rejected",
+                    "denied",
+                    ec_rej,
+                    PASS,
+                    f"rejected host denied in allow mode (exit {ec_rej})",
+                )
+            if self._abort:
+                return
+
+            # 4) A workspace-scoped consent decider must be REFUSED (4003),
+            #    mirroring run_static_refusal_phase (#2395/#2406).
+            url = (
+                f"/ws/consent-decider?token={self.auth['token']}"
+                f"&workspace={ws_id}"
+            )
+            try:
+                ws = await ws_connect(self.server, url, open_timeout=15)
+            except Exception as e:  # noqa: BLE001  (refused at the handshake)
+                self._record_probe(
+                    parent,
+                    "decider->allow",
+                    "refused(handshake)",
+                    None,
+                    PASS,
+                    f"registration refused at the handshake: {e!r}",
+                )
+                return
+            try:
+                try:
+                    await asyncio.wait_for(ws.recv(), timeout=5.0)
+                    # A frame (the snapshot) arrived -> the decider registered
+                    # against an allow workspace (#2406 violation).
+                    self._record_probe(
+                        parent,
+                        "decider->allow",
+                        "attached(!)",
+                        None,
+                        MISMATCH,
+                        "a decider registered against an allow workspace",
+                    )
+                except Exception as e:  # noqa: BLE001  (ConnectionClosed / timeout)
+                    if "Closed" in type(e).__name__:
+                        code = getattr(e, "code", None)
+                        self._record_probe(
+                            parent,
+                            "decider->allow",
+                            f"refused({code})",
+                            None,
+                            PASS,
+                            "registration refused (connection closed)",
+                        )
+                    else:
+                        self._record_probe(
+                            parent,
+                            "decider->allow",
+                            "no-close",
+                            None,
+                            FINDING,
+                            f"allow decider: no frame/close: {e!r}",
+                        )
+            finally:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+        except Exception as e:  # noqa: BLE001  (phase bring-up failure)
+            self._record_probe(
+                parent,
+                "allow phase",
+                "error",
+                None,
+                MISMATCH,
+                f"allow-mode phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+
     async def run_no_decider_phase(self, pilot) -> None:
         """Static-mode phase: with NO consent decider registered, off-list egress
         is denied cleanly (no held request, no hang) while allow-list egress
@@ -2938,6 +3169,8 @@ class SmokeTest:
                     await self.run_decider_scope_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_audit_distinction_phase(pilot)
+                if not stop and not self._abort:
+                    await self.run_allow_phase(pilot)
                 # Controlled-DNS phases (#2424): host-scope + port-scope use their
                 # own workspace + raw decider (independent of the textual app),
                 # so they run last inside run_test.
@@ -3186,6 +3419,13 @@ def main() -> int:
         dest="audit_distinction",
         action="store_false",
         help="skip the expired-vs-denied audit-distinction phase (#2392)",
+    )
+    p.add_argument(
+        "--no-allow-phase",
+        dest="allow_phase",
+        action="store_false",
+        help="skip the #2411 allow-egress-mode phase (off-list connects, "
+        "rejected denied, decider refused)",
     )
     p.add_argument(
         "--expiry-wait",
