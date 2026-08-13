@@ -11223,7 +11223,11 @@ async def test_edit_screen_rejected_domains_editor(monkeypatch):
         es.action_remove_item()
         await pilot.pause()
         assert es._rejected_domains == []
-        es.query_one("#save").scroll_visible()
+        # animate=False: scroll_visible() animates by default, and a single
+        # pilot.pause() doesn't reliably complete the scroll animation before
+        # the click — the button stays below the fold and the click misses.
+        # Deterministic on the slower-scheduled macOS runner (see #2426).
+        es.query_one("#save").scroll_visible(animate=False)
         await pilot.pause()
         assert await pilot.click("#save")
         await app.workers.wait_for_complete()
@@ -11270,7 +11274,9 @@ async def test_edit_screen_editor_add_buttons_clickable(monkeypatch):
         await pilot.pause()
         assert await pilot.click("#add_allow")
         await pilot.pause()
-        es.query_one("#save").scroll_visible()
+        # animate=False so the scroll completes within one pilot.pause();
+        # the default animated scroll races the click (#2426).
+        es.query_one("#save").scroll_visible(animate=False)
         await pilot.pause()
         assert await pilot.click("#save")
         await app.workers.wait_for_complete()
