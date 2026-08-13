@@ -4234,7 +4234,7 @@ class TestSandboxCommand:
         # only runs on --force re-setup, so neither is called here.
         client.update_workspace.assert_not_called()
         client.restart_workspace.assert_not_called()
-        assert "egress reset to interactive" in result.output
+        client.restart_workspace_by_id.assert_not_called()
 
     def test_existing_workspace_errors_without_force(
         self, logged_in_cfg, tmp_path
@@ -4307,7 +4307,7 @@ class TestSandboxCommand:
         client.update_workspace.assert_called_once_with(
             ws.id, egress_mode="allow"
         )
-        client.restart_workspace.assert_called_once_with("myws")
+        client.restart_workspace_by_id.assert_called_once_with(ws.id)
 
     def test_setup_connection_error(self, logged_in_cfg, tmp_path):
         from klangk.cli import main
@@ -4403,6 +4403,8 @@ class TestSandboxSetupOnly:
             return_value=json.dumps({"type": "container_ready"})
         )
         mock_client = MagicMock()
+        # Server has a network sidecar, so the reset to interactive is safe.
+        mock_client.config.return_value = {"netfilter_enabled": True}
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
@@ -4431,6 +4433,103 @@ class TestSandboxSetupOnly:
         # The service command is not fired during sandbox -- no terminal_start.
         sent = [json.loads(c.args[0]) for c in mock_ws.send.call_args_list]
         assert not any(m.get("cmd") == "terminal_start" for m in sent)
+
+    async def test_leaves_allow_for_auto_start_workspace(self):
+        """An auto-start workspace stays in allow (#2404).
+
+        Auto-start workspaces boot unattended with no consent decider
+        connected; interactive mode DENIES egress then, so their service
+        command could never reach its upstream. The driver leaves them in
+        allow rather than resetting.
+        """
+        from pathlib import Path
+
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            setup="setup.sh",
+            service_command="openclaw gateway",
+            auto_start=True,
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "container_ready"})
+        )
+        mock_client = MagicMock()
+
+        with (
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
+            await sandbox_setup_only(
+                "http://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+                client=mock_client,
+            )
+
+        # Not reset / not stopped; config isn't even consulted (auto-start
+        # short-circuits the sidecar check).
+        mock_client.config.assert_not_called()
+        mock_client.update_workspace.assert_not_called()
+        mock_client.stop_workspace_by_id.assert_not_called()
+
+    async def test_leaves_allow_when_no_network_sidecar(self):
+        """No server sidecar -> stay in allow (#2404).
+
+        interactive is fail-closed without a sidecar (start_container
+        refuses to start unfiltered), so resetting would make the workspace
+        unconnectable. The driver reads netfilter_enabled from the config
+        and leaves the workspace in allow when it's off.
+        """
+        from pathlib import Path
+
+        from klangk.cli.main import sandbox_setup_only
+        from klangk.cli.sandbox import SandboxConfig
+
+        config = SandboxConfig(
+            setup="setup.sh", service_command="openclaw gateway"
+        )
+
+        mock_ws = AsyncMock()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "container_ready"})
+        )
+        mock_client = MagicMock()
+        mock_client.config.return_value = {"netfilter_enabled": False}
+
+        with (
+            patch("klangk.cli.transport.websockets.connect") as mock_connect,
+            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+        ):
+            mock_connect.return_value.__aenter__ = AsyncMock(
+                return_value=mock_ws
+            )
+            mock_connect.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_setup.return_value = 0
+            await sandbox_setup_only(
+                "http://test",
+                "token",
+                "ws-id",
+                config,
+                Path("/tmp"),
+                "admin",
+                client=mock_client,
+            )
+
+        mock_client.config.assert_called_once_with()
+        mock_client.update_workspace.assert_not_called()
+        mock_client.stop_workspace_by_id.assert_not_called()
 
     async def test_marks_setup_state_pending_then_complete(self):
         """With a client, sandbox_setup_only marks pending then complete (#1033)."""
@@ -4495,6 +4594,7 @@ class TestSandboxSetupOnly:
         )
         mock_client = MagicMock()
         mock_client.set_setup_state = MagicMock()
+        mock_client.config.return_value = {"netfilter_enabled": True}
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,

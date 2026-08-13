@@ -1920,7 +1920,7 @@ def sandbox(
         # create path (the workspace is freshly created in 'allow' above).
         if force and not created:
             client.update_workspace(ws.id, egress_mode="allow")
-            client.restart_workspace(workspace)
+            client.restart_workspace_by_id(ws.id)
         _err.print(f"Connecting to [bold]{workspace}[/bold] for setup...")
         try:
             asyncio.run(
@@ -1951,10 +1951,6 @@ def sandbox(
         f"[green]Done.[/green] Run [bold]klangk shell"
         f" {workspace}[/bold] to connect."
     )
-    _err.print(
-        "[dim]Workspace stopped; egress reset to interactive for the"
-        " next start.[/dim]"
-    )
 
 
 async def sandbox_setup_only(
@@ -1971,12 +1967,18 @@ async def sandbox_setup_only(
 
     After setup.sh returns, marks the workspace's ``setup_state``
     (#1033): ``complete`` on success (or when no setup command is
-    configured), ``failed`` otherwise. Then (#2404) resets the
-    workspace's ``egress_mode`` from the create-time ``allow`` back to
-    ``interactive`` and stops the container: ``egress_mode`` is applied
-    by the network sidecar at container start, so the stop forces the
-    next start (the user's ``klangk shell``) up in interactive,
-    consent-gated mode. The service command is not fired here -- it
+    configured), ``failed`` otherwise. Then (#2404) chooses the
+    post-install egress posture: drop the create-time ``allow`` back to
+    the safe ``interactive`` default and stop the container -- but only
+    when that is safe and meaningful. ``interactive`` is fail-closed
+    without a network sidecar (``start_container`` refuses to start
+    unfiltered), and it DENIES egress when no consent decider is
+    connected, so an auto-start service workspace left interactive
+    could never boot healthy. So the reset is skipped (workspace stays
+    in ``allow``) for auto-start workspaces or when the server has no
+    sidecar; otherwise ``egress_mode`` is reset to ``interactive`` and
+    the container is stopped, so the next ``klangk shell`` start applies
+    consent-gated egress. The service command is not fired here -- it
     re-fires at the create choke point on that next start.
     """
     async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
@@ -2014,35 +2016,70 @@ async def sandbox_setup_only(
                     f" = {new_state}: {e}[/yellow]"
                 )
 
-        # #2404: the workspace was created in 'allow' mode so setup.sh's
-        # npm/git/pip could egress without a consent decider. Now that the
-        # install is done, reset to the safe 'interactive' default and stop
-        # the container. egress_mode is applied by the network sidecar at
-        # container START (not on the live container), so the stop forces
-        # the next start -- the user's `klangk shell` -- up in interactive,
-        # consent-gated mode. The service command is not fired here: it
-        # re-fires at the create choke point on that next start, so firing
-        # it now just to kill it on stop would be wasted.
+        # #2404: choose the post-install egress posture. The workspace was
+        # created in 'allow' so setup.sh could egress without a decider; now
+        # drop to the safe 'interactive' default -- but only when that is
+        # safe and meaningful:
+        #   - auto-start workspaces boot unattended (no decider connected),
+        #     and interactive DENIES egress with no decider, so their service
+        #     command could never reach its upstream. Leave them in allow.
+        #   - interactive is fail-closed: start_container refuses to start
+        #     unfiltered when no network sidecar is configured. So only reset
+        #     when the server can actually enforce it (netfilter_enabled).
+        # When neither skip applies, reset egress_mode to interactive and
+        # stop the container. egress_mode is applied by the sidecar at
+        # container START (not on the live container), so the stop forces the
+        # next start -- the user's `klangk shell` -- up in interactive mode.
+        # The service command is not fired here: it re-fires at the create
+        # choke point on that next start.
         if client is not None:
-            try:
-                await asyncio.to_thread(
-                    client.update_workspace,
-                    workspace_id,
-                    egress_mode="interactive",
-                )
-            except Exception as e:  # pragma: no cover
+            reset_to_interactive = False
+            skipped_reason = None
+            if config.auto_start:
+                skipped_reason = "auto-start workspace boots unattended"
+            else:
+                try:
+                    cfg = await asyncio.to_thread(client.config)
+                except Exception as e:  # pragma: no cover
+                    cfg = {}
+                    _err.print(
+                        "[yellow]Warning: could not read server config"
+                        f" ({e}); leaving workspace in allow[/yellow]"
+                    )
+                if not cfg.get("netfilter_enabled"):
+                    skipped_reason = "no network sidecar on this server"
+                else:
+                    reset_to_interactive = True
+
+            if reset_to_interactive:
+                try:
+                    await asyncio.to_thread(
+                        client.update_workspace,
+                        workspace_id,
+                        egress_mode="interactive",
+                    )
+                except Exception as e:  # pragma: no cover
+                    _err.print(
+                        "[yellow]Warning: could not reset egress_mode"
+                        f" to interactive: {e}[/yellow]"
+                    )
+                try:
+                    await asyncio.to_thread(
+                        client.stop_workspace_by_id, workspace_id
+                    )
+                except Exception as e:  # pragma: no cover
+                    _err.print(
+                        "[yellow]Warning: could not stop container"
+                        f" after setup: {e}[/yellow]"
+                    )
                 _err.print(
-                    "[yellow]Warning: could not reset egress_mode to"
-                    f" interactive: {e}[/yellow]"
+                    "[dim]Workspace stopped; egress reset to interactive"
+                    " for the next start.[/dim]"
                 )
-            try:
-                await asyncio.to_thread(
-                    client.stop_workspace_by_id, workspace_id
-                )
-            except Exception as e:  # pragma: no cover
+            else:
                 _err.print(
-                    "[yellow]Warning: could not stop container after"
-                    f" setup: {e}[/yellow]"
+                    "[dim]Workspace left in allow mode"
+                    f" ({skipped_reason}).[/dim]"
                 )
 
 

@@ -1214,6 +1214,19 @@ class TestClientLines:
 
         mock_post.assert_called_once_with("/api/v1/workspaces/ws1/restart")
 
+    def test_restart_workspace_by_id_calls_post(self):
+        # Id-based variant skips the name→id list resolution (#2404).
+        from klangk.cli.client import KlangkClient
+
+        client = KlangkClient("http://test:8995", "tok")
+        restart_resp = MagicMock()
+        restart_resp.status_code = 200
+        with patch.object(
+            client, "post", return_value=restart_resp
+        ) as mock_post:
+            client.restart_workspace_by_id("ws1")
+        mock_post.assert_called_once_with("/api/v1/workspaces/ws1/restart")
+
     def test_stop_workspace_calls_post(self):
         from klangk.cli.client import KlangkClient
 
