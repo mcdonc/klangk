@@ -34,7 +34,9 @@ from klangk.cli.tui.consent import (
     ConsentRule,
     EgressRules,
     PauseState,
+    QuitConfirmScreen,
     RulesScreen,
+    build_detach_command,
     make_pause,
     make_ping,
     make_revoke,
@@ -2216,3 +2218,134 @@ class TestRulesRevoke:
             lv = app.screen.query_one("#rules-list", ListView)
             assert lv.highlighted_child is not None
             assert getattr(lv.highlighted_child, "rule_id", None) == "a2"
+
+
+# ---------------------------------------------------------------------------
+# Persistent popup role: q hides the viewer, Q confirms a real quit (#2383).
+# ---------------------------------------------------------------------------
+
+
+class TestPersistentPopupRole:
+    """The decider's behaviour when launched inside the hidden tmux session."""
+
+    def test_build_detach_command(self):
+        # The hide action detaches the popup viewer from the hidden session.
+        assert build_detach_command("/tmp/k.sock", "klangk-consent-w") == [
+            "tmux",
+            "-S",
+            "/tmp/k.sock",
+            "detach-client",
+            "-s",
+            "klangk-consent-w",
+        ]
+
+    def test_persistent_flag_off_by_default(self):
+        app = _make_app()
+        assert not app._persistent
+
+    def test_persistent_flag_on_with_session(self):
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        assert app._persistent
+
+    def test_apply_bindings_standalone_labels_q_quit(self):
+        app = _make_app()
+        app._apply_bindings()
+        labels = {b[0]: b[2] for b in app.BINDINGS}
+        assert labels["q"] == "Quit"
+        assert labels["Q"] == "Quit"
+
+    def test_apply_bindings_persistent_labels_q_hide(self):
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        app._apply_bindings()
+        labels = {b[0]: b[2] for b in app.BINDINGS}
+        assert labels["q"] == "Hide"
+        assert labels["Q"] == "Quit"
+
+    def test_q_key_standalone_exits(self):
+        # No popup context -> q quits immediately (today's behaviour).
+        app = _make_app()
+        exited = []
+        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
+        app.action_q_key()
+        assert exited == [True]
+
+    def test_q_key_persistent_hides_not_quit(self, monkeypatch):
+        # Popup context -> q detaches the viewer and does NOT quit/deregister.
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        exited = []
+        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
+        ran: list[list[str]] = []
+        monkeypatch.setattr(
+            tui_consent.subprocess, "run", lambda cmd, **kw: ran.append(cmd)
+        )
+        app.action_q_key()
+        assert exited == []
+        assert ran == [build_detach_command("/tmp/k.sock", "klangk-consent-w")]
+
+    def test_hide_viewer_noop_without_popup(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        app = _make_app()
+        run = MagicMock()
+        monkeypatch.setattr(tui_consent.subprocess, "run", run)
+        app._hide_viewer()
+        assert not run.called
+
+    def test_hide_viewer_swallows_subprocess_error(self, monkeypatch):
+        # A stale session / missing tmux must never crash the decider.
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+
+        def boom(*a, **k):
+            raise OSError("no tmux")
+
+        monkeypatch.setattr(tui_consent.subprocess, "run", boom)
+        app._hide_viewer()  # must not raise
+
+    def test_on_confirm_quit_true_exits(self):
+        app = _make_app()
+        exited = []
+        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
+        app._on_confirm_quit(True)
+        assert exited == [True]
+
+    def test_on_confirm_quit_false_does_not_exit(self):
+        app = _make_app()
+        exited = []
+        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
+        app._on_confirm_quit(False)
+        assert exited == []
+
+    async def test_confirm_quit_pushes_confirm_screen(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.action_confirm_quit()
+            await pilot.pause()
+            assert isinstance(app.screen, QuitConfirmScreen)
+
+    async def test_quit_confirm_yes_dismisses_true(self):
+        got: list[bool] = []
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.push_screen(QuitConfirmScreen(), lambda v: got.append(v))
+            await pilot.pause()
+            app.screen.action_yes()
+            await pilot.pause()
+        assert got == [True]
+
+    async def test_quit_confirm_no_dismisses_false(self):
+        got: list[bool] = []
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.push_screen(QuitConfirmScreen(), lambda v: got.append(v))
+            await pilot.pause()
+            app.screen.action_no()
+            await pilot.pause()
+        assert got == [False]

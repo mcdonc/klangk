@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -220,6 +221,71 @@ def check_binary(
             hint=install_hint(name, manager),
         )
     return CheckResult(name=name, ok=True, message=f"{name} ok ({path})")
+
+
+# tmux display-popup (used by the TUI consent-decider popup over the
+# shell, #2383) landed in 3.2. Below this the shell layer falls back to a
+# plain attach, so an old/unknown host tmux is a warning, not an error.
+TMUX_MIN_VERSION = (3, 2)
+
+
+def parse_tmux_version(out: str) -> tuple[int, int] | None:
+    """Parse ``tmux -V`` output (e.g. ``"tmux 3.6a"``) -> ``(3, 6)``.
+
+    Returns None when no ``MAJOR.MINOR`` pair is present (unparseable /
+    unexpected output) so the caller can flag it as an unknown-version
+    warning rather than guessing.
+    """
+    m = re.search(r"(\d+)\.(\d+)", out)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)))
+
+
+def check_tmux_version(manager: str | None) -> CheckResult:
+    """Check host tmux is new enough for the consent-popup shell layer (#2383).
+
+    A missing tmux is already reported as an error by the required-binary
+    check above; here that case is a passing no-op (no version to check).
+    A present-but-old or unparseable version is a warning: the shell layer
+    degrades to a plain attach, so doctor must not hard-fail the host.
+    """
+    if not shutil.which("tmux"):
+        return CheckResult(
+            name="tmux (consent popup)",
+            ok=True,
+            message="no host tmux (reported by the tmux check above)",
+        )
+    rc, out, _err = _run(["tmux", "-V"])
+    ver = parse_tmux_version(out) if rc == 0 else None
+    label = ".".join(map(str, ver)) if ver is not None else "unknown"
+    if ver is None:
+        return CheckResult(
+            name="tmux (consent popup)",
+            ok=False,
+            is_warning=True,
+            message=(
+                f"tmux version unparseable ({out.strip()[:40] or 'tmux -V failed'});"
+                " consent popup needs >= 3.2"
+            ),
+            hint=install_hint("tmux", manager),
+        )
+    if ver < TMUX_MIN_VERSION:
+        return CheckResult(
+            name="tmux (consent popup)",
+            ok=False,
+            is_warning=True,
+            message=(
+                f"tmux {label} < 3.2 — consent popup unavailable"
+                " (plain shell attach used)"
+            ),
+            hint=install_hint("tmux", manager),
+        )
+    return CheckResult(
+        name="tmux (consent popup)",
+        ok=True,
+        message=f"tmux {label} ok for consent popup (>= 3.2)",
+    )
 
 
 def check_gnu_tar(manager: str | None) -> CheckResult:
@@ -471,6 +537,10 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
     # 1. Required binaries
     for name, check_cmd in _REQUIRED_BINARIES:
         report.add(check_binary(name, check_cmd, manager))
+
+    # 1b. tmux version for the consent-popup shell layer (#2383): display-popup
+    # needs >= 3.2; below it the shell falls back to a plain attach (warning).
+    report.add(check_tmux_version(manager))
 
     # GNU tar and GNU du (special: must verify GNU, not just present)
     report.add(check_gnu_tar(manager))

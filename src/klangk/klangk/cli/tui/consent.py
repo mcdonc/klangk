@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 import time
 from dataclasses import dataclass, replace
 
@@ -242,6 +243,20 @@ def make_pause(duration: str) -> str:
 def make_unpause() -> str:
     """Build an outbound unpause frame (JSON string) -- resume prompting (#2332)."""
     return json.dumps({"type": "unpause"})
+
+
+def build_detach_command(socket_path: str, session: str) -> list[str]:
+    """tmux argv to detach clients attached to the decider's hidden session.
+
+    In the persistent popup role (#2383) the decider runs inside a hidden
+    tmux session and a popup *viewer* attaches to it. Detaching every client
+    of *session* on local socket *socket_path* hides that viewer (the only
+    client) while the decider process inside the session keeps running -- so
+    the held-request stream stays open and the decider stays registered.
+    Returns the argv only; the caller runs it and tolerates failure (a stale
+    session or no viewer attached is not an error).
+    """
+    return ["tmux", "-S", socket_path, "detach-client", "-s", session]
 
 
 class ConsentDeciderController:
@@ -541,7 +556,8 @@ class ConsentDeciderApp(App):
         ("a", "allow", "Allow"),
         ("d", "deny", "Deny"),
         ("r", "rules", "Rules"),
-        ("q", "quit", "Quit"),
+        ("q", "q_key", "Quit"),
+        ("Q", "confirm_quit", "Quit"),
     ]
 
     def __init__(  # noqa: PLR0913
@@ -555,6 +571,8 @@ class ConsentDeciderApp(App):
         max_size: int | None = None,
         ping_interval: float = _PING_INTERVAL,
         reconnect_delays: tuple[float, ...] = _RECONNECT_DELAYS,
+        popup_socket: str | None = None,
+        popup_session: str | None = None,
     ) -> None:
         super().__init__()
         self.server_url = server_url
@@ -571,6 +589,34 @@ class ConsentDeciderApp(App):
         self._flash_msg = ""
         self._flash_until = 0.0
         self._duration = DURATION_DEFAULT
+        # Persistent popup role (#2383): the decider runs inside a hidden
+        # tmux session a popup viewer attaches to. Set (with popup_socket)
+        # when launched by the shell-layer wrapper; None for standalone use.
+        self.popup_socket = popup_socket
+        self.popup_session = popup_session
+
+    @property
+    def _persistent(self) -> bool:
+        """True when running inside the hidden popup session (#2383)."""
+        return self.popup_session is not None
+
+    def _apply_bindings(self) -> None:
+        """Install persistent vs standalone keybindings, then refresh Footer.
+
+        `q` hides the viewer in persistent mode (so it can't accidentally
+        quit + deregister the always-on decider); `q` quits in standalone.
+        `Q` always confirms a real quit. The label on `q` follows the role
+        so the Footer reads correctly in each.
+        """
+        q_label = "Hide" if self._persistent else "Quit"
+        self.BINDINGS = [
+            ("a", "allow", "Allow"),
+            ("d", "deny", "Deny"),
+            ("r", "rules", "Rules"),
+            ("q", "q_key", q_label),
+            ("Q", "confirm_quit", "Quit"),
+        ]
+        self.refresh_bindings()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -625,6 +671,7 @@ class ConsentDeciderApp(App):
 
     def on_mount(self) -> None:
         self.title = f"consent-decide · {self.workspace_name}"
+        self._apply_bindings()
         self.run_worker(
             self._ws_loop, exclusive=True, group="ws", exit_on_error=False
         )
@@ -993,6 +1040,51 @@ class ConsentDeciderApp(App):
             return
         self.push_screen(RulesScreen())
 
+    def action_q_key(self) -> None:
+        """`q`: hide the popup viewer (persistent) or quit (standalone).
+
+        Persistent mode runs the decider inside a hidden tmux session; `q`
+        detaches the viewer so a stray key can't quit + deregister the
+        always-on decider. Standalone `q` quits as before. Press `Q` to quit
+        for real in either mode.
+        """
+        if self._persistent:
+            self._hide_viewer()
+        else:
+            self.exit()
+
+    def action_confirm_quit(self) -> None:
+        """`Q`: confirm, then quit + deregister the decider (#2383).
+
+        A deliberate two-step so neither mode quits on a single keypress.
+        Cancelled (`n`/`Esc`) returns to the queue with the decider intact.
+        """
+        self.push_screen(QuitConfirmScreen(), self._on_confirm_quit)
+
+    def _on_confirm_quit(self, confirmed: bool) -> None:
+        if confirmed:
+            self.exit()
+
+    def _hide_viewer(self) -> None:
+        """Detach the popup viewer so it hides; the decider stays registered.
+
+        No-op when not running under a popup (standalone `consent-decide`).
+        A failed/stale detach is swallowed -- the decider keeps running
+        either way, and the viewer is reopened with the reopen key.
+        """
+        sock = self.popup_socket
+        sess = self.popup_session
+        if not sock or not sess:
+            return
+        try:
+            subprocess.run(
+                build_detach_command(sock, sess),
+                capture_output=True,
+                timeout=3,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("consent-decide viewer detach failed")
+
     def _decide(self, decision: str) -> None:
         rid = self._focused_request_id()
         if rid is None:
@@ -1018,6 +1110,47 @@ class ConsentDeciderApp(App):
             await ws.send(make_verdict(rid, decision, duration))
         except Exception:
             self._flash("verdict send failed — reconnecting")
+
+
+class QuitConfirmScreen(Screen):
+    """Confirm deregistering the decider (the `Q` path, #2383).
+
+    A deliberate two-step so neither role quits on a single keypress: in
+    the persistent popup role a stray key must not quit + deregister the
+    always-on decider, and in standalone `Q` matches `q`'s old behaviour
+    behind a guard. `y` quits; `n`/`Esc` cancels back to the queue.
+    """
+
+    CSS = """
+    QuitConfirmScreen { align: center middle; }
+    QuitConfirmScreen #confirm-box {
+        width: auto; max-width: 64; padding: 1 2;
+        border: round $warning;
+        background: $panel;
+    }
+    """
+
+    BINDINGS = [
+        ("y", "yes", "Yes"),
+        ("n", "no", "No"),
+        ("escape", "no", "No"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-box"):
+            yield Static(
+                "Quit and deregister this consent decider?\n"
+                "Held requests auto-deny on timeout.\n\n"
+                "[y] quit   [n] cancel",
+                id="confirm-msg",
+            )
+        yield Footer()
+
+    def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_no(self) -> None:
+        self.dismiss(False)
 
 
 class RulesScreen(Screen):
