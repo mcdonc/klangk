@@ -1,52 +1,41 @@
-"""Unit tests for the network sidecar's DNS proxy (``src/klangksidecar/proxy.py``).
+"""Unit tests for the network sidecar's DNS proxy (the ``klangksidecar`` package).
 
-This is the standalone ``klangksidecar`` package's copy of the proxy
-(#2450): a byte-for-byte duplicate of ``src/containers/network/proxy.py``
-(the container-embedded copy that ships in the sidecar image today and must
-keep working). The two copies are identical in this step; iteration on the
-new copy happens in follow-ups.
-
-``proxy.py`` is a standalone sidecar script that runs as PID 1 of the
-sidecar (``__main__``), so it stays a top-level module rather than being
-folded into a package subdirectory, and these tests load it straight from
-its source path and drive its helpers directly. ``main()`` only runs under
-``__name__ == "__main__"``, so importing is safe (module level just reads
-env vars + builds the allow-list). The main()/signal-handler/real-socket
+The proxy began as a byte-for-byte copy of ``src/containers/network/proxy.py``
+(the container-embedded copy that still ships in the sidecar image) and is now
+split into per-concern submodules (config/state/allowlist/rules/resolve/packets/
+consent/nfqueue/app); this suite drives its helpers directly via the flat
+``klangksidecar.X`` re-export. ``app.main()`` runs only under
+``__name__ == "__main__"``, so importing the package is safe (module level just
+reads env vars + builds the allow-list). The main()/signal-handler/real-socket
 paths are exercised end-to-end by the real-podman e2e
-(``src/klangk/klangkd-tests/e2e-tests/test_network_sidecar_e2e.py``), not
-here, so this suite imposes no coverage gate.
+(``src/klangk/klangkd-tests/e2e-tests/test_network_sidecar_e2e.py``), not here,
+so this suite imposes no coverage gate.
 """
 
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import signal
 import sys
 import types
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# proxy.py is a standalone script (not a package module) — load it straight
-# from its source path. test_proxy.py is at src/klangksidecar/tests/, so parents[1]
-# is the package root (src/klangksidecar/).
-_PROXY_PATH = Path(__file__).resolve().parents[1] / "proxy.py"
-
 
 def _install_dns_stubs() -> None:
-    """Ensure proxy.py can import dnspython; stub it only as a fallback.
+    """Ensure the package can import dnspython; stub it only as a fallback.
 
     dnspython is a declared dependency of this package (``klangksidecar``),
     so the real library is normally present and is what these tests exercise
     where they don't monkeypatch the consuming functions. The stub below is a
     fallback for an environment that installed the suite without the package's
-    deps: proxy.py imports ``dns.message`` / ``dns.rcode`` / ``dns.rdatatype``
-    at module level, and those imports must succeed even without dnspython.
-    The tests below monkeypatch the functions that actually use dnspython
-    (a_records_with_ttl etc.), so the stub only needs to exist, not work.
+    deps: ``klangksidecar.dns`` imports ``dns.message`` / ``dns.rcode`` /
+    ``dns.rdatatype`` at module level, and those imports must succeed even
+    without dnspython. The tests below monkeypatch the functions that actually
+    use dnspython (a_records_with_ttl etc.), so the stub only needs to exist,
+    not work.
     """
     try:
         import dns.message  # noqa: F401
@@ -80,13 +69,20 @@ def _install_dns_stubs() -> None:
 
 @pytest.fixture(scope="module")
 def proxy():
-    """Load proxy.py as an isolated module."""
+    """The ``klangksidecar`` package (the proxy, split into submodules #2450).
+
+    The proxy was a single ``proxy.py``; it is now the ``klangksidecar`` package
+    (config/state/allowlist/rules/dns/packets/consent/nfqueue/app). This returns
+    the package object; the re-export in ``__init__`` keeps the flat ``proxy.X``
+    API these tests use (reads resolve via re-export; ``proxy.time`` /
+    ``proxy.subprocess`` / ``proxy.socket`` are the singleton stdlib modules the
+    suite patches). Monkeypatching a package-defined function targets its
+    defining submodule (``proxy.rules``, ``proxy.dns``, ...).
+    """
     _install_dns_stubs()
-    spec = importlib.util.spec_from_file_location("sidecar_test_proxy", _PROXY_PATH)
-    assert spec and spec.loader, f"could not load {_PROXY_PATH}"
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    import klangksidecar
+
+    return klangksidecar
 
 
 @pytest.fixture
@@ -138,7 +134,9 @@ class TestPortsFor:
 
     def test_bare_host_is_exact_apex_only(self, proxy, monkeypatch):
         # bare github.com -> EXACT (#2377): apex only, NOT subdomains.
-        monkeypatch.setattr(proxy, "SPECS", [("github.com", None, proxy._EXACT)])
+        monkeypatch.setattr(
+            proxy.allowlist, "SPECS", [("github.com", None, proxy._EXACT)]
+        )
         assert proxy.ports_for("github.com") is None  # apex
         assert proxy.ports_for("api.github.com") == set()  # subdomain denied
         assert proxy.ports_for("evilgithub.com") == set()  # boundary
@@ -146,7 +144,9 @@ class TestPortsFor:
 
     def test_inclusive_matches_apex_and_subdomains(self, proxy, monkeypatch):
         # .github.com -> apex + subdomains (any depth) -- the old bare behavior.
-        monkeypatch.setattr(proxy, "SPECS", [("github.com", None, proxy._INCLUSIVE)])
+        monkeypatch.setattr(
+            proxy.allowlist, "SPECS", [("github.com", None, proxy._INCLUSIVE)]
+        )
         assert proxy.ports_for("github.com") is None
         assert proxy.ports_for("api.github.com") is None
         assert proxy.ports_for("a.b.github.com") is None
@@ -154,25 +154,31 @@ class TestPortsFor:
 
     def test_wildcard_excludes_apex(self, proxy, monkeypatch):
         # *.pypi.org -> subdomains only, NOT the apex.
-        monkeypatch.setattr(proxy, "SPECS", [("pypi.org", None, proxy._SUBDOMAINS)])
+        monkeypatch.setattr(
+            proxy.allowlist, "SPECS", [("pypi.org", None, proxy._SUBDOMAINS)]
+        )
         assert proxy.ports_for("pypi.org") == set()
         assert proxy.ports_for("a.pypi.org") is None
         assert proxy.ports_for("a.b.pypi.org") is None
 
     def test_wildcard_with_port(self, proxy, monkeypatch):
-        monkeypatch.setattr(proxy, "SPECS", [("pypi.org", 443, proxy._SUBDOMAINS)])
+        monkeypatch.setattr(
+            proxy.allowlist, "SPECS", [("pypi.org", 443, proxy._SUBDOMAINS)]
+        )
         assert proxy.ports_for("pypi.org") == set()
         assert proxy.ports_for("x.pypi.org") == {443}
 
     def test_port_scope_exact(self, proxy, monkeypatch):
-        monkeypatch.setattr(proxy, "SPECS", [("github.com", 443, proxy._EXACT)])
+        monkeypatch.setattr(
+            proxy.allowlist, "SPECS", [("github.com", 443, proxy._EXACT)]
+        )
         assert proxy.ports_for("github.com") == {443}
         assert proxy.ports_for("api.github.com") == set()  # exact -> no subdomain
 
     def test_all_ports_spec_dominates(self, proxy, monkeypatch):
         # github.com (all ports) + github.com:443 -> all ports win.
         monkeypatch.setattr(
-            proxy,
+            proxy.allowlist,
             "SPECS",
             [
                 ("github.com", None, proxy._EXACT),
@@ -183,7 +189,7 @@ class TestPortsFor:
 
     def test_multiple_ports_union(self, proxy, monkeypatch):
         monkeypatch.setattr(
-            proxy,
+            proxy.allowlist,
             "SPECS",
             [
                 ("github.com", 443, proxy._EXACT),
@@ -193,13 +199,15 @@ class TestPortsFor:
         assert proxy.ports_for("github.com") == {443, 8443}
 
     def test_empty_specs_denies_all(self, proxy, monkeypatch):
-        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
         assert proxy.ports_for("anything.test") == set()
 
     def test_case_sensitive_relies_on_caller_lowercasing(self, proxy, monkeypatch):
         # ports_for compares verbatim; parse_specs/query_name lowercase at the
         # edges. A mixed-case qname does NOT match a lowercased spec.
-        monkeypatch.setattr(proxy, "SPECS", [("github.com", None, proxy._EXACT)])
+        monkeypatch.setattr(
+            proxy.allowlist, "SPECS", [("github.com", None, proxy._EXACT)]
+        )
         assert proxy.ports_for("GitHub.Com") == set()
 
     def test_session_host_allows_consulted_alongside_specs(self, proxy, monkeypatch):
@@ -207,9 +215,9 @@ class TestPortsFor:
         # _SESSION_HOST_ALLOWS (#2372, #2377, #2434): ports_for treats that exact
         # host as allow-listed for the verdict's lifetime, so a later CDN-rotated
         # IP re-resolves and is allowed without re-prompting.
-        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
         monkeypatch.setattr(
-            proxy,
+            proxy.state,
             "_SESSION_HOST_ALLOWS",
             [("example.com", 443, proxy._EXACT, float("inf"))],
         )
@@ -236,7 +244,7 @@ class TestPortsFor:
         # must match. Returns the remaining TTL (truthy) or None. Mirrors
         # ports_for via the shared _host_matches.
         monkeypatch.setattr(
-            proxy,
+            proxy.state,
             "_SESSION_HOST_ALLOWS",
             [("example.com", 443, proxy._EXACT, float("inf"))],
         )
@@ -249,7 +257,7 @@ class TestPortsFor:
         # all-ports entry (p is None) matches any port -- defensive (entries are
         # added port-scoped, but the predicate tolerates None).
         monkeypatch.setattr(
-            proxy,
+            proxy.state,
             "_SESSION_HOST_ALLOWS",
             [("example.com", None, proxy._EXACT, float("inf"))],
         )
@@ -275,7 +283,7 @@ class TestPortsFor:
         # Returns the remaining TTL (truthy) or None. Mirrors
         # test_session_host_allows_ttl via the shared _host_matches.
         monkeypatch.setattr(
-            proxy,
+            proxy.state,
             "_SESSION_HOST_DENIES",
             [("example.com", 443, proxy._EXACT, float("inf"))],
         )
@@ -287,7 +295,7 @@ class TestPortsFor:
         assert proxy._session_host_denies_ttl("", 443) is None
         # all-ports entry (p is None) matches any port.
         monkeypatch.setattr(
-            proxy,
+            proxy.state,
             "_SESSION_HOST_DENIES",
             [("example.com", None, proxy._EXACT, float("inf"))],
         )
@@ -303,27 +311,27 @@ class TestRejectedFor:
 
     def test_bare_is_exact_apex_only(self, proxy, monkeypatch):
         monkeypatch.setenv("KLANGKNETWORK_EGRESS_REJECT", "evil.com")
-        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        proxy.allowlist.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
         assert proxy.rejected_for("evil.com") is True  # apex
         assert proxy.rejected_for("api.evil.com") is False  # subdomain (exact)
         assert proxy.rejected_for("evilevil.com") is False  # suffix boundary
 
     def test_inclusive_matches_apex_and_subdomains(self, proxy, monkeypatch):
         monkeypatch.setenv("KLANGKNETWORK_EGRESS_REJECT", ".malicious.net")
-        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        proxy.allowlist.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
         assert proxy.rejected_for("malicious.net") is True
         assert proxy.rejected_for("x.malicious.net") is True
         assert proxy.rejected_for("xmalicious.net") is False  # boundary
 
     def test_subdomains_excludes_apex(self, proxy, monkeypatch):
         monkeypatch.setenv("KLANGKNETWORK_EGRESS_REJECT", "*.bad.org")
-        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        proxy.allowlist.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
         assert proxy.rejected_for("bad.org") is False  # apex not rejected
         assert proxy.rejected_for("a.bad.org") is True
 
     def test_empty_reject_specs_denies_nothing(self, proxy, monkeypatch):
         monkeypatch.delenv("KLANGKNETWORK_EGRESS_REJECT", raising=False)
-        proxy.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
+        proxy.allowlist.REJECT_SPECS = proxy.parse_specs("KLANGKNETWORK_EGRESS_REJECT")
         assert proxy.rejected_for("anything.test") is False
 
 
@@ -485,7 +493,7 @@ class TestTTLAndSweep:
     def test_sweep_removes_expired_rules(self, learned, monkeypatch):
         removed = []
         monkeypatch.setattr(
-            learned, "_remove", lambda ip, port: removed.append((ip, port))
+            learned.rules, "_remove", lambda ip, port: removed.append((ip, port))
         )
         learned._LEARNED["1.2.3.4"] = {"expire": 500.0, "ports": {443, None}}
         gone = learned.sweep_once(now=1000.0)
@@ -495,7 +503,7 @@ class TestTTLAndSweep:
         assert "1.2.3.4" not in learned._LEARNED
 
     def test_sweep_keeps_live_ips(self, learned, monkeypatch):
-        monkeypatch.setattr(learned, "_remove", lambda *a: None)
+        monkeypatch.setattr(learned.rules, "_remove", lambda *a: None)
         learned._LEARNED["1.2.3.4"] = {"expire": 2000.0, "ports": {443}}
         assert learned.sweep_once(now=1000.0) == []
         assert "1.2.3.4" in learned._LEARNED
@@ -503,7 +511,7 @@ class TestTTLAndSweep:
     def test_sweep_boundary_keeps_equal_expire(self, learned, monkeypatch):
         # expire <= now is removed; a rule valid through `now` (expire > now)
         # is kept. expire == now counts as expired.
-        monkeypatch.setattr(learned, "_remove", lambda *a: None)
+        monkeypatch.setattr(learned.rules, "_remove", lambda *a: None)
         learned._LEARNED["dead"] = {"expire": 1000.0, "ports": {443}}
         learned._LEARNED["live"] = {"expire": 1000.001, "ports": {443}}
         gone = learned.sweep_once(now=1000.0)
@@ -542,7 +550,7 @@ class TestTTLAndSweep:
         # re-prompt. Only after the DNS TTL does the record itself go.
         removed = []
         monkeypatch.setattr(
-            learned, "_remove", lambda ip, port: removed.append((ip, port))
+            learned.rules, "_remove", lambda ip, port: removed.append((ip, port))
         )
         learned._LEARNED["1.2.3.4"] = {
             "expire": 300.0,  # host mapping (DNS TTL)
@@ -576,7 +584,7 @@ class TestTTLAndSweep:
         )
         removed = []
         monkeypatch.setattr(
-            learned, "_remove", lambda ip, port: removed.append((ip, port))
+            learned.rules, "_remove", lambda ip, port: removed.append((ip, port))
         )
         monkeypatch.setattr(learned.time, "time", lambda: 0.0)
         learned.allow("1.2.3.4", None, 5)  # consent allow (floored to MIN_TTL)
@@ -634,11 +642,11 @@ class TestTTLAndSweep:
         # decider allowed the host -> a prior port-specific deny no longer applies).
         removed = []
         monkeypatch.setattr(
-            learned,
+            learned.rules,
             "_remove_reject",
             lambda ip, port: removed.append((ip, port)),
         )
-        monkeypatch.setattr(learned, "_install", lambda *a: None)
+        monkeypatch.setattr(learned.rules, "_install", lambda *a: None)
         learned._REJECTED.clear()
         learned._REJECTED[("1.2.3.4", 443)] = 9999.0
         learned._REJECTED[("1.2.3.4", 80)] = 9999.0
@@ -752,13 +760,13 @@ class TestRespondAllowedSwallowsFailures:
 
     async def test_allow_failure_does_not_propagate(self, proxy, monkeypatch):
         monkeypatch.setattr(
-            proxy, "a_records_with_ttl", lambda wire: [("1.2.3.4", 100)]
+            proxy.resolve, "a_records_with_ttl", lambda wire: [("1.2.3.4", 100)]
         )
 
         def _boom(ip, port, ttl):
             raise RuntimeError("iptables transient failure")
 
-        monkeypatch.setattr(proxy, "allow", _boom)
+        monkeypatch.setattr(proxy.rules, "allow", _boom)
         s = MagicMock()
         # Must not raise (the executor propagates the iptables error, which
         # _respond_allowed swallows).
@@ -768,9 +776,9 @@ class TestRespondAllowedSwallowsFailures:
 
     async def test_sendto_failure_does_not_propagate(self, proxy, monkeypatch):
         monkeypatch.setattr(
-            proxy, "a_records_with_ttl", lambda wire: [("1.2.3.4", 100)]
+            proxy.resolve, "a_records_with_ttl", lambda wire: [("1.2.3.4", 100)]
         )
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
         s = MagicMock()
         s.sendto.side_effect = OSError("client gone")
         # Must not raise.
@@ -782,13 +790,13 @@ class TestRespondAllowedSwallowsFailures:
         self, proxy, monkeypatch
     ):
         monkeypatch.setattr(
-            proxy,
+            proxy.resolve,
             "a_records_with_ttl",
             lambda wire: [("1.2.3.4", 100), ("5.6.7.8", 200)],
         )
         calls = []
         monkeypatch.setattr(
-            proxy, "allow", lambda ip, port, ttl: calls.append((ip, port, ttl))
+            proxy.rules, "allow", lambda ip, port, ttl: calls.append((ip, port, ttl))
         )
         s = MagicMock()
         await proxy._respond_allowed(s, b"resp", ("127.0.0.1", 1234), "q", {443, 8443})
@@ -1133,11 +1141,13 @@ class TestConsentForward:
         proxy._LEARNED.clear()
         recorded = []
         monkeypatch.setattr(
-            proxy,
+            proxy.rules,
             "_record_hosts",
             lambda recs, host: recorded.append((recs, host)),
         )
-        monkeypatch.setattr(proxy, "a_records_with_ttl", lambda wire: [("1.2.3.4", 60)])
+        monkeypatch.setattr(
+            proxy.resolve, "a_records_with_ttl", lambda wire: [("1.2.3.4", 60)]
+        )
         s = MagicMock()
         await proxy._respond_recorded(s, b"resp", ("1.2.3.4", 53), "evil.test")
         assert recorded == [([("1.2.3.4", 60)], "evil.test")]
@@ -1147,12 +1157,12 @@ class TestConsentForward:
         proxy._LEARNED.clear()
         recorded = []
         monkeypatch.setattr(
-            proxy,
+            proxy.rules,
             "_record_hosts",
             lambda recs, host: recorded.append((recs, host)),
         )
         monkeypatch.setattr(
-            proxy, "a_records_with_ttl", lambda wire: []
+            proxy.resolve, "a_records_with_ttl", lambda wire: []
         )  # upstream NXDOMAIN
         s = MagicMock()
         await proxy._respond_recorded(s, b"resp", ("1.2.3.4", 53), "evil.test")
@@ -1161,8 +1171,10 @@ class TestConsentForward:
 
     async def test_respond_recorded_swallows_sendto_failure(self, proxy, monkeypatch):
         proxy._LEARNED.clear()
-        monkeypatch.setattr(proxy, "_record_hosts", lambda recs, host: None)
-        monkeypatch.setattr(proxy, "a_records_with_ttl", lambda wire: [("1.2.3.4", 60)])
+        monkeypatch.setattr(proxy.rules, "_record_hosts", lambda recs, host: None)
+        monkeypatch.setattr(
+            proxy.resolve, "a_records_with_ttl", lambda wire: [("1.2.3.4", 60)]
+        )
         s = MagicMock()
         s.sendto.side_effect = OSError("gone")
         await proxy._respond_recorded(  # must not raise
@@ -1253,7 +1265,7 @@ class TestNfqueueCallback:
         client.request = AsyncMock(return_value=("allow", "tilrestart"))
         learned = []
         monkeypatch.setattr(
-            proxy,
+            proxy.rules,
             "allow",
             lambda ip, port, ttl: learned.append((ip, port, ttl)),
         )
@@ -1270,7 +1282,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "tilrestart"))
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._record_hosts([("1.2.3.4", 60)], "evil.test")  # DNS resolved this IP
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
@@ -1288,7 +1300,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "forever"))
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._record_hosts([("1.2.3.4", 60)], "example.com")
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
@@ -1297,7 +1309,7 @@ class TestNfqueueCallback:
         specs = [(h, p, m) for (h, p, m, _exp) in proxy._SESSION_HOST_ALLOWS]
         assert ("example.com", 443, proxy._EXACT) in specs
         # ports_for now treats the host as allow-listed (EXACT -- apex only).
-        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
         assert proxy.ports_for("example.com") == {443}
         assert proxy.ports_for("api.example.com") == set()  # exact -> no subdomain
 
@@ -1313,7 +1325,7 @@ class TestNfqueueCallback:
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "forever"))
         allowed = []
-        monkeypatch.setattr(proxy, "allow", lambda *a: allowed.append(a))
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: allowed.append(a))
         self._bind(proxy, monkeypatch, client)
         proxy._add_session_host("example.com", 443, proxy._DURATION_FOREVER)
         proxy._record_hosts([("2.2.2.2", 60)], "example.com")
@@ -1340,8 +1352,8 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "once"))
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
-        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "reject", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._add_session_host("example.com", 443, proxy._DURATION_FOREVER)
         proxy._record_hosts([("2.2.2.2", 60)], "example.com")
@@ -1357,7 +1369,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "once"))
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._record_hosts([("1.2.3.4", 60)], "example.com")
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
@@ -1375,7 +1387,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "5m"))
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         # Decide on IP_A (the resolved IP at decision time).
         proxy._record_hosts([("1.2.3.4", 60)], "example.com")
@@ -1406,7 +1418,7 @@ class TestNfqueueCallback:
         assert proxy._session_host_allows_ttl("example.com", 443) == 300.0
         clock[0] = 1400.0  # past the 300s window
         assert proxy._session_host_allows_ttl("example.com", 443) is None
-        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
         assert proxy.ports_for("example.com") == set()  # pruned -> denied
         assert proxy._SESSION_HOST_ALLOWS == []
 
@@ -1420,7 +1432,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "5m"))
-        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "reject", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         # Decide (deny) on IP_A (the resolved IP at decision time).
         proxy._record_hosts([("1.2.3.4", 60)], "example.com")
@@ -1452,7 +1464,7 @@ class TestNfqueueCallback:
         client.request = AsyncMock(return_value=("allow", "5s"))
         rejected = []
         monkeypatch.setattr(
-            proxy,
+            proxy.rules,
             "reject",
             lambda ip, port, ttl: rejected.append((ip, port, ttl)),
         )
@@ -1482,8 +1494,8 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
-        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "reject", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._add_session_deny("example.com", 443, proxy._DURATION_FOREVER)
         proxy._record_hosts([("2.2.2.2", 60)], "example.com")
@@ -1498,7 +1510,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
-        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "reject", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._record_hosts([("1.2.3.4", 60)], "example.com")
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
@@ -1526,7 +1538,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._add_session_deny("example.com", 443, proxy._DURATION_FOREVER)
         proxy._add_session_host("example.com", 443, proxy._DURATION_FOREVER)
@@ -1546,7 +1558,7 @@ class TestNfqueueCallback:
         client.request = AsyncMock(return_value=("deny", "once"))
         rejected = []
         monkeypatch.setattr(
-            proxy,
+            proxy.rules,
             "reject",
             lambda ip, port, ttl: rejected.append((ip, port, ttl)),
         )
@@ -1587,12 +1599,14 @@ class TestNfqueueCallback:
         client.request = AsyncMock()
         rejected = []
         monkeypatch.setattr(
-            proxy,
+            proxy.rules,
             "reject",
             lambda ip, port, ttl: rejected.append((ip, port, ttl)),
         )
         rst = []
-        monkeypatch.setattr(proxy, "_send_rst", lambda payload: rst.append(payload))
+        monkeypatch.setattr(
+            proxy.packets, "_send_rst", lambda payload: rst.append(payload)
+        )
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         proxy._cb(pkt, client)  # _cb fails fast inline (no _BG_TASK)
@@ -1627,7 +1641,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "tilrestart"))
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         pkt1 = _FakePkt(_ip_payload("1.2.3.4", 443))
         pkt2 = _FakePkt(_ip_payload("1.2.3.4", 443))  # retransmit
@@ -1654,7 +1668,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(side_effect=slow_request)
-        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._cb(_FakePkt(_ip_payload("1.2.3.4", 443)), client)
         proxy._cb(_FakePkt(_ip_payload("5.6.7.8", 80)), client)
@@ -1675,7 +1689,7 @@ class TestNfqueueCallback:
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "once"))
         learned = []
-        monkeypatch.setattr(proxy, "allow", lambda *a: learned.append(a))
+        monkeypatch.setattr(proxy.rules, "allow", lambda *a: learned.append(a))
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await self._decide(proxy, pkt, client)
@@ -1688,7 +1702,7 @@ class TestNfqueueCallback:
         client.request = AsyncMock(return_value=("allow", "1h"))
         learned = []
         monkeypatch.setattr(
-            proxy,
+            proxy.rules,
             "allow",
             lambda ip, port, ttl: learned.append((ip, port, ttl)),
         )
@@ -1704,7 +1718,7 @@ class TestNfqueueCallback:
         client.request = AsyncMock(return_value=("deny", "15m"))
         rejected = []
         monkeypatch.setattr(
-            proxy,
+            proxy.rules,
             "reject",
             lambda ip, port, ttl: rejected.append((ip, port, ttl)),
         )
@@ -1720,7 +1734,9 @@ class TestNfqueueCallback:
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
         rejected = []
-        monkeypatch.setattr(proxy, "reject", lambda ip, port, ttl: rejected.append(ttl))
+        monkeypatch.setattr(
+            proxy.rules, "reject", lambda ip, port, ttl: rejected.append(ttl)
+        )
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await self._decide(proxy, pkt, client)
@@ -1737,9 +1753,9 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
-        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "reject", lambda *a: None)
         sock = MagicMock()
-        monkeypatch.setattr(proxy, "_RST_SOCK", sock)
+        monkeypatch.setattr(proxy.packets, "_RST_SOCK", sock)
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
         await self._decide(proxy, pkt, client)
@@ -1755,8 +1771,8 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
-        monkeypatch.setattr(proxy, "reject", lambda *a: None)
-        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        monkeypatch.setattr(proxy.rules, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy.packets, "_RST_SOCK", None)
         self._bind(proxy, monkeypatch, client)
         pkt = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 0x1111))
         await self._decide(proxy, pkt, client)
@@ -1768,9 +1784,9 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("deny", "once"))
-        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy.rules, "reject", lambda *a: None)
         sock = MagicMock()
-        monkeypatch.setattr(proxy, "_RST_SOCK", sock)
+        monkeypatch.setattr(proxy.packets, "_RST_SOCK", sock)
         self._bind(proxy, monkeypatch, client)
         pkt1 = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 1))
         await self._decide(proxy, pkt1, client)  # populates the cache
@@ -1798,8 +1814,8 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(side_effect=slow_request)
-        monkeypatch.setattr(proxy, "reject", lambda *a: None)
-        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        monkeypatch.setattr(proxy.rules, "reject", lambda *a: None)
+        monkeypatch.setattr(proxy.packets, "_RST_SOCK", None)
         self._bind(proxy, monkeypatch, client)
         pkt1 = _FakePkt(_syn_payload("10.0.0.5", 50000, "1.2.3.4", 443, 1))
         pkt2 = _FakePkt(
@@ -1834,7 +1850,7 @@ class TestNfqueueCallback:
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(side_effect=fast_request)
-        monkeypatch.setattr(proxy, "_RST_SOCK", None)
+        monkeypatch.setattr(proxy.packets, "_RST_SOCK", None)
         self._bind(proxy, monkeypatch, client)
         # Connection A (sport 50000) -> allow/once -> cached for flow A only.
         proxy._cb(
@@ -1872,19 +1888,19 @@ class TestHandlePacket:
     consent-gated at NFQUEUE); static mode (no client) -> NXDOMAIN."""
 
     async def test_allowed_name_forwards_and_learns(self, proxy, monkeypatch):
-        monkeypatch.setattr(proxy, "query_name", lambda wire: "allowed.test")
-        monkeypatch.setattr(proxy, "SPECS", [("allowed.test", None, False)])
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "allowed.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [("allowed.test", None, False)])
         fwd = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_learn", fwd)
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         fwd.assert_awaited_once()  # forwarded + learned, not denied
         s.sendto.assert_not_called()  # no NXDOMAIN
 
     async def test_denied_no_client_sends_nxdomain(self, proxy, monkeypatch):
-        monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
-        monkeypatch.setattr(proxy, "SPECS", [])
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+        monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
@@ -1892,12 +1908,12 @@ class TestHandlePacket:
     async def test_denied_with_client_resolves_and_records(self, proxy, monkeypatch):
         # Interactive: a denied name resolves + records IP->host (NO ACCEPT) so
         # its SYN is consent-gated at NFQUEUE -- it is NOT held at the DNS query.
-        monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
-        monkeypatch.setattr(proxy, "SPECS", [])
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
         rec = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_record", rec)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_record", rec)
         nxd = MagicMock()
-        monkeypatch.setattr(proxy, "_send_nxdomain", nxd)
+        monkeypatch.setattr(proxy.resolve, "_send_nxdomain", nxd)
         client = MagicMock()
         client.connected = True
         s = MagicMock()
@@ -1909,9 +1925,9 @@ class TestHandlePacket:
         def _boom(wire):
             raise RuntimeError("bad wire")
 
-        monkeypatch.setattr(proxy, "query_name", _boom)
+        monkeypatch.setattr(proxy.resolve, "query_name", _boom)
         fwd = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_learn", fwd)
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_not_called()  # dropped, no response
@@ -1920,11 +1936,13 @@ class TestHandlePacket:
     async def test_rejected_name_sends_nxdomain_static(self, proxy, monkeypatch):
         # #2367: a rejected name is NXDOMAIN'd unconditionally (before the
         # allow-list + consent), in BOTH modes. Static mode (no client).
-        monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
-        monkeypatch.setattr(proxy, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)])
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(
+            proxy.allowlist, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
         fwd = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_learn", fwd)
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
@@ -1933,11 +1951,13 @@ class TestHandlePacket:
     async def test_rejected_name_nxdomain_even_with_client(self, proxy, monkeypatch):
         # Reject takes precedence over consent: even in interactive mode a
         # rejected name NXDOMAINs (no resolve+record, no prompt).
-        monkeypatch.setattr(proxy, "query_name", lambda wire: "evil.test")
-        monkeypatch.setattr(proxy, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)])
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(
+            proxy.allowlist, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
         rec = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_record", rec)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_record", rec)
         s = MagicMock()
         client = MagicMock()
         client.connected = True
@@ -1952,12 +1972,14 @@ class TestHandlePacket:
         # not fail-open). The reject list is a useful blocklist only in
         # interactive mode (or alongside an allow-list); static mode is being
         # phased out. ports_for on empty SPECS -> set() -> _decision denies.
-        monkeypatch.setattr(proxy, "query_name", lambda wire: "benign.test")
-        monkeypatch.setattr(proxy, "SPECS", [])
-        monkeypatch.setattr(proxy, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)])
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "benign.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+        monkeypatch.setattr(
+            proxy.allowlist, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
         fwd = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_learn", fwd)
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
@@ -1965,12 +1987,16 @@ class TestHandlePacket:
 
     async def test_rejected_takes_precedence_over_allowed(self, proxy, monkeypatch):
         # A name in BOTH allowed + rejected is rejected (deny wins).
-        monkeypatch.setattr(proxy, "query_name", lambda wire: "dual.test")
-        monkeypatch.setattr(proxy, "SPECS", [("dual.test", None, proxy._EXACT)])
-        monkeypatch.setattr(proxy, "REJECT_SPECS", [("dual.test", None, proxy._EXACT)])
-        monkeypatch.setattr(proxy, "nxdomain_for", lambda d: b"NXD")
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "dual.test")
+        monkeypatch.setattr(
+            proxy.allowlist, "SPECS", [("dual.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(
+            proxy.allowlist, "REJECT_SPECS", [("dual.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
         fwd = AsyncMock()
-        monkeypatch.setattr(proxy, "_forward_and_learn", fwd)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_learn", fwd)
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
@@ -2332,8 +2358,8 @@ class TestSigtermShutdown:
         # SIGTERM, so an explicit handler is what lets podman's `stop` prompt
         # the exit (#2400). Registering the handler + cancelling the main task
         # must unwind _async_main and run _shutdown (close the DNS socket).
-        monkeypatch.setattr(proxy, "CONSENT_URL", "")  # no WS client / NFQUEUE
-        monkeypatch.setattr(proxy, "check_mark", lambda: None)
+        monkeypatch.setattr(proxy.config, "CONSENT_URL", "")  # no WS client / NFQUEUE
+        monkeypatch.setattr(proxy.rules, "check_mark", lambda: None)
         fake_sock = MagicMock()
         fake_sock.close = MagicMock()
         monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: fake_sock)
@@ -2376,18 +2402,24 @@ class TestSigtermShutdown:
         # The handler is installed on the consent path too (where NFQUEUE + the
         # WS client must be torn down); only the registration is asserted, since
         # fully driving the WS client + NFQUEUE is the e2e's job (#2327).
-        monkeypatch.setattr(proxy, "CONSENT_URL", "http://klangkd/ws/egress-sidecar")
-        monkeypatch.setattr(proxy, "check_mark", lambda: None)
-        monkeypatch.setattr(proxy, "check_rst_socket", lambda: None)
+        monkeypatch.setattr(
+            proxy.config, "CONSENT_URL", "http://klangkd/ws/egress-sidecar"
+        )
+        monkeypatch.setattr(proxy.rules, "check_mark", lambda: None)
+        monkeypatch.setattr(proxy.packets, "check_rst_socket", lambda: None)
         started = []
 
         class _FakeClient:
             async def start(self):
                 started.append(True)
 
-        monkeypatch.setattr(proxy, "SidecarConsentClient", lambda *a: _FakeClient())
+        monkeypatch.setattr(
+            proxy.consent, "SidecarConsentClient", lambda *a: _FakeClient()
+        )
         fake_nfq = MagicMock()
-        monkeypatch.setattr(proxy, "_setup_nfq_consumer", lambda client: fake_nfq)
+        monkeypatch.setattr(
+            proxy.nfqueue, "_setup_nfq_consumer", lambda client: fake_nfq
+        )
         fake_sock = MagicMock()
         fake_sock.close = MagicMock()
         monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: fake_sock)
@@ -2425,9 +2457,9 @@ class TestSigtermShutdown:
         # BaseException, so _shutdown's `except Exception` guards don't catch
         # it -- without the idempotency flag, nfq.unbind()/sock.close() get
         # skipped and the clean teardown the PR exists to provide is aborted.
-        monkeypatch.setattr(proxy, "CONSENT_URL", "http://k/ev")
-        monkeypatch.setattr(proxy, "check_mark", lambda: None)
-        monkeypatch.setattr(proxy, "check_rst_socket", lambda: None)
+        monkeypatch.setattr(proxy.config, "CONSENT_URL", "http://k/ev")
+        monkeypatch.setattr(proxy.rules, "check_mark", lambda: None)
+        monkeypatch.setattr(proxy.packets, "check_rst_socket", lambda: None)
 
         in_stop = asyncio.Event()
         release_stop = asyncio.Event()
@@ -2440,10 +2472,12 @@ class TestSigtermShutdown:
                 in_stop.set()
                 await release_stop.wait()  # hold teardown mid-flight
 
-        monkeypatch.setattr(proxy, "SidecarConsentClient", lambda *a: _BlockingClient())
+        monkeypatch.setattr(
+            proxy.consent, "SidecarConsentClient", lambda *a: _BlockingClient()
+        )
         nfq = MagicMock()
         nfq.get_fd = MagicMock(return_value=11)
-        monkeypatch.setattr(proxy, "_setup_nfq_consumer", lambda client: nfq)
+        monkeypatch.setattr(proxy.nfqueue, "_setup_nfq_consumer", lambda client: nfq)
         fake_sock = MagicMock()
         fake_sock.close = MagicMock()
         monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: fake_sock)
@@ -2484,7 +2518,7 @@ class TestSigtermShutdown:
         # _shutdown bounds client.stop() so a stalled WS close handshake (its
         # close_timeout can be 5s, and the server may be going away during
         # klangkd shutdown) can't re-introduce the 5s SIGKILL window (#2400).
-        monkeypatch.setattr(proxy, "_SHUTDOWN_CLIENT_TIMEOUT", 0.1)
+        monkeypatch.setattr(proxy.app, "_SHUTDOWN_CLIENT_TIMEOUT", 0.1)
         nfq = MagicMock()
         nfq.get_fd = MagicMock(return_value=11)
         sock = MagicMock()

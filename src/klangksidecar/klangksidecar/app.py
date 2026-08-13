@@ -1,0 +1,160 @@
+"""Asyncio orchestration: the DNS recv loop + SIGTERM teardown + main() (#2450).
+
+_async_main binds the DNS socket, starts the consent client + TTL sweeper +
+NFQUEUE consumer, and runs the per-query loop; _shutdown tears it all down on
+SIGTERM (#2400); main is the PID-1 entry.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import signal
+import socket
+from typing import TYPE_CHECKING
+
+from . import allowlist, config, consent, nfqueue, packets, resolve, rules
+from .config import DEBUG, HOLD_TIMEOUT, LISTEN_PORT, UPSTREAM, WORKSPACE_TOKEN_PATH
+from .state import _BG_TASKS
+
+if TYPE_CHECKING:
+    # ``SidecarConsentClient`` appears only in annotations (constructed +
+    # passed around); lazy import keeps the module-level import graph clean.
+    from .consent import SidecarConsentClient  # noqa: allow-deferred-import (annotation-only; avoids a cycle)
+
+# Bound on the consent client's teardown during SIGTERM shutdown (#2400):
+# client.stop() closes the WS (close_timeout=5s), and during klangkd shutdown
+# the server may be going away, so an unbounded close handshake could
+# re-introduce the 5s window this fix eliminates. Bounded so the whole
+# teardown fits well inside podman's `stop -t 5`.
+_SHUTDOWN_CLIENT_TIMEOUT = 2.0
+
+
+async def _shutdown(
+    client: SidecarConsentClient | None,
+    nfq,
+    sock: socket.socket,
+    sweep: asyncio.Task | None,
+) -> None:
+    """Clean teardown on SIGTERM (#2400): stop the consent client, cancel the
+    TTL sweeper, unbind NFQUEUE, close the DNS socket.
+
+    The consent client's stop is bounded (:data:`_SHUTDOWN_CLIENT_TIMEOUT`) so a
+    stalled WebSocket close handshake can't re-introduce the 5s window. Best-
+    effort — a failure (or the bound) in one step must not skip the rest
+    (process exit reaps whatever remains). Runs in :func:`_async_main`'s
+    ``finally`` after the SIGTERM handler cancels the main task, so the proxy
+    exits promptly instead of relying on podman's SIGKILL fallback — which a
+    PID-1 sidecar always hit, because the kernel ignores default SIGTERM
+    dispositions for a PID-namespace init (SIGNAL_UNKILLABLE: a fatal signal
+    with no explicit handler is skipped for init).
+    """
+    if client is not None:
+        try:
+            await asyncio.wait_for(client.stop(), _SHUTDOWN_CLIENT_TIMEOUT)
+        except Exception:
+            pass
+    if sweep is not None:
+        sweep.cancel()
+        try:
+            await sweep
+        except (asyncio.CancelledError, Exception):
+            pass
+    if nfq is not None:
+        try:
+            asyncio.get_running_loop().remove_reader(nfq.get_fd())
+        except Exception:
+            pass
+        try:
+            nfq.unbind()
+        except Exception:
+            pass
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+
+async def _async_main() -> None:
+    """The asyncio DNS loop (#2311 half B, #2324): allow-listed + denied names
+    resolve inline; a denied name in interactive mode records IP->host so its
+    connection SYN is consent-gated at NFQUEUE (a separate thread).
+
+    Installs an explicit SIGTERM handler (#2400) so podman's ``stop`` signal
+    triggers a clean, prompt teardown instead of being ignored (the sidecar is
+    PID 1, and the kernel suppresses default terminate dispositions for init).
+    """
+    loop = asyncio.get_running_loop()
+    client: SidecarConsentClient | None = None
+    if config.CONSENT_URL:
+        client = consent.SidecarConsentClient(
+            config.CONSENT_URL, WORKSPACE_TOKEN_PATH, HOLD_TIMEOUT
+        )
+        await client.start()
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind(("127.0.0.1", LISTEN_PORT))
+    s.setblocking(False)
+    print(
+        f"dns-proxy listening on 127.0.0.1:{LISTEN_PORT} "
+        f"(upstream={UPSTREAM[0]}, allowed={allowlist.SPECS})",
+        flush=True,
+    )
+    rules.check_mark()
+    _sweep = asyncio.create_task(rules._async_sweeper())
+    _BG_TASKS.add(_sweep)  # strong ref for the loop's lifetime
+    _sweep.add_done_callback(_BG_TASKS.discard)
+    nfq = None
+    # NFQUEUE consumer is driven by this event loop (get_fd + add_reader) so a
+    # slow verdict on one SYN doesn't serialize others (#2324, #2329).
+    if config.CONSENT_URL:
+        packets.check_rst_socket()  # eager-deny RST forge (#2345); best-effort (NET_RAW)
+        nfq = nfqueue._setup_nfq_consumer(
+            client
+        )  # bound NFQUEUE, for _shutdown (#2400)
+    # The sidecar is PID 1 (entrypoint.sh execs python). The kernel suppresses
+    # default terminate/stop dispositions for a PID-namespace init: a SIGTERM
+    # with no handler installed is effectively ignored, so podman's `stop -t 5`
+    # SIGTERM was no-op'd and EVERY removal fell back to SIGKILL after the full
+    # 5s window (occasionally wedging in Stopping). Install an explicit handler
+    # that cancels this task -> _shutdown closes the WS, unbinds NFQUEUE, closes
+    # the socket -> prompt exit (#2400). (SIGKILL/SIGSTOP bypass this and always
+    # work, which is why podman's SIGKILL fallback eventually cleared it.)
+    main_task = asyncio.current_task()
+    stopping = False
+
+    def _on_sigterm() -> None:
+        # Idempotent: a second SIGTERM arriving while _shutdown is mid-await
+        # must NOT re-cancel the main task -- that CancelledError is a
+        # BaseException, so _shutdown's `except Exception` guards don't catch
+        # it and teardown would be aborted (skipping nfq.unbind/sock.close).
+        # The first signal cancels; subsequent ones are no-ops (SIGKILL remains
+        # podman's hard backstop if teardown hangs) (#2400).
+        nonlocal stopping
+        if stopping:
+            return
+        stopping = True
+        if main_task is not None:
+            main_task.cancel()
+
+    try:
+        loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+    except (NotImplementedError, RuntimeError):
+        pass  # signal handlers need the main thread + a supported loop backend
+    try:
+        while True:
+            try:
+                data, addr = await loop.sock_recvfrom(s, 65535)
+            except Exception:
+                continue
+            await resolve._handle_packet(s, data, addr, client)
+    except asyncio.CancelledError:
+        if DEBUG:
+            print("dns-proxy: stop signal received, shutting down", flush=True)
+    finally:
+        await _shutdown(client, nfq, s, _sweep)
+
+
+def main() -> None:
+    try:
+        asyncio.run(_async_main())
+    except KeyboardInterrupt:
+        pass
