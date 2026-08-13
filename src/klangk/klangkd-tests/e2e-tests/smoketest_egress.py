@@ -522,7 +522,7 @@ def _exit_label(exit_code: int | None) -> str:
 # code. See #2421.
 OUTCOME_CODE_NAMES: dict[str, str] = {
     "D1": "NO-EXPECTED-REQUEST",  # an expected consent request never arrived (off-list / post-expiry / post-revoke); fail-closed or hung. #2417 #2418
-    "D2": "CARRYOVER-SURPRISE",  # an in-effect verdict didn't cover a retry (CDN/per-IP). Non-bug per #2399; mis-scored in the scored loop (#2419).
+    "D2": "CARRYOVER-SURPRISE",  # an in-effect verdict didn't cover a retry (CDN/per-IP). Non-bug per #2399; scored as a FINDING (#2419).
     "D3": "DECIDER2-HANDSHAKE",  # a 2nd consent decider WS opening-handshake failure. #2420
     "D4": "ALLOW-REFUSED",  # an allow / allow-list / active-allow was refused (EXPECT_RELEASED -> exit 7).
     "D5": "DENY-RELEASED",  # a deny / active-deny let the connection through (EXPECT_REFUSED -> exit 0).
@@ -542,6 +542,7 @@ OUTCOME_CODE_NAMES: dict[str, str] = {
     "D19": "ISOLATION-BROKEN",  # a workspace-scoped decider saw another workspace's request. #2392
     "D20": "UNEXPECTED-ERROR",  # a phase bring-up or per-step exception (an unexpected error).
     "D21": "AUDIT-MISLABELED",  # expired/denied audit distinction broken (timeout audited as deny, or vice-versa). #2392
+    "D22": "ALLOWLIST-PROMPTED",  # an allow-list-covered host prompted for consent (a real static-allow invariant break). #2419
 }
 
 # detail-string prefix -> code (see OUTCOME_CODE_NAMES). Checked in order; the
@@ -549,6 +550,7 @@ OUTCOME_CODE_NAMES: dict[str, str] = {
 _DETAIL_PREFIX_CODES: list[tuple[str, str]] = [
     ("expected a request, none arrived", "D1"),
     ("expected a request; connection hung", "D16"),
+    ("expected no request (covered:allowed:allowlist", "D22"),
     ("expected no request (covered:", "D2"),
     ("expected a re-prompt; connection hung", "D16"),
     ("expected a re-prompt; none arrived", "D1"),
@@ -889,7 +891,7 @@ class SmokeTest:
     async def _run_step(self, pilot, step: _Step) -> _Result:
         canon = _canonical(step.host)
         now = time.time()
-        covered, cov_decision, _src = self.model.covers(canon, now)
+        covered, cov_decision, cov_src = self.model.covers(canon, now)
         expect_request = not covered
         outfile = f"/tmp/smoke_{step.idx}.out"
         expl = step.exploratory
@@ -979,7 +981,14 @@ class SmokeTest:
         text = await _wait_result(self.container, outfile)
         exit_code = _parse_exit(text)
         if intruder is not None:
-            status = FINDING if expl else MISMATCH
+            # Verdict coverage is best-effort: it races with CDN IP rotation
+            # and host canonicalization, so a retry resolving to a rotated IP
+            # legitimately re-prompts (per #2399 — non-bug). Only allow-list
+            # coverage is the deterministic invariant, so reserve a hard
+            # MISMATCH for it; a verdict-covered re-prompt is a FINDING,
+            # matching the within-retry probe and the model's docstring (#2419).
+            soft = expl or cov_src != "allowlist"
+            status = FINDING if soft else MISMATCH
             return self._record(
                 _Result(
                     step,
@@ -990,7 +999,7 @@ class SmokeTest:
                     "request(!)",
                     exit_code,
                     status,
-                    detail=f"expected no request (covered:{cov_decision}), one arrived",
+                    detail=f"expected no request (covered:{cov_decision}:{cov_src}), one arrived",
                 )
             )
         status = _classify_conn(expect_conn, exit_code)
