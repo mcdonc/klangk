@@ -263,6 +263,46 @@ class TestPortsFor:
         )
         assert proxy._session_host_allows_ttl("example.com", 8080)
 
+    def test_add_session_deny_dedups_and_refreshes(self, proxy, monkeypatch):
+        # Mirror of test_add_session_host_dedups_and_refreshes (#2446): a
+        # re-deny of the same host:port refreshes the expiry (max -- never
+        # shortens an unexpired entry); a different port adds a new entry.
+        monkeypatch.setattr(proxy.time, "time", lambda: 1000.0)
+        proxy._SESSION_HOST_DENIES.clear()
+        proxy._add_session_deny("example.com", 443, 300)  # expire 1300
+        proxy._add_session_deny(
+            "example.com", 443, 60
+        )  # dup -> max(1300, 1060)
+        proxy._add_session_deny("example.com", 8443, 300)  # different port
+        assert proxy._SESSION_HOST_DENIES == [
+            ("example.com", 443, proxy._EXACT, 1300.0),
+            ("example.com", 8443, proxy._EXACT, 1300.0),
+        ]
+
+    def test_session_host_denies_ttl(self, proxy, monkeypatch):
+        # The deny-side NFQUEUE-gate predicate (#2446): entries are EXACT
+        # (#2377 -- only the denied host, not its subdomains); port must match.
+        # Returns the remaining TTL (truthy) or None. Mirrors
+        # test_session_host_allows_ttl via the shared _host_matches.
+        monkeypatch.setattr(
+            proxy,
+            "_SESSION_HOST_DENIES",
+            [("example.com", 443, proxy._EXACT, float("inf"))],
+        )
+        assert proxy._session_host_denies_ttl("example.com", 443)
+        assert proxy._session_host_denies_ttl("api.example.com", 443) is None
+        assert proxy._session_host_denies_ttl("example.com", 80) is None
+        assert proxy._session_host_denies_ttl("other.com", 443) is None
+        assert proxy._session_host_denies_ttl("evilexample.com", 443) is None
+        assert proxy._session_host_denies_ttl("", 443) is None
+        # all-ports entry (p is None) matches any port.
+        monkeypatch.setattr(
+            proxy,
+            "_SESSION_HOST_DENIES",
+            [("example.com", None, proxy._EXACT, float("inf"))],
+        )
+        assert proxy._session_host_denies_ttl("example.com", 8080)
+
 
 class TestRejectedFor:
     """``rejected_for`` is the static deny gate (#2367): a name matching a
@@ -1260,6 +1300,7 @@ class TestNfqueueCallback:
         proxy._INFLIGHT.clear()
         proxy._LEARNED.clear()
         proxy._SESSION_HOST_ALLOWS.clear()
+        proxy._SESSION_HOST_DENIES.clear()
         proxy._BG_TASKS.clear()
 
     async def _decide(self, proxy, pkt, client):
@@ -1444,6 +1485,140 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy, "SPECS", [])
         assert proxy.ports_for("example.com") == set()  # pruned -> denied
         assert proxy._SESSION_HOST_ALLOWS == []
+
+    async def test_timed_deny_is_host_scoped(self, proxy, monkeypatch):
+        # #2446 regression: a TIMED deny host-scopes (mirror of the allow side).
+        # The verdict adds the host to _SESSION_HOST_DENIES, so a CDN-rotated IP
+        # of the host -- resolved AFTER the deny, with no per-IP _REJECTED rule
+        # of its own -- is auto-denied at the NFQUEUE gate WITHOUT re-prompting
+        # (the CARRYOVER-SURPRISE fix). Pre-fix this SYN re-entered NFQUEUE and
+        # re-prompted for a host the user had already denied.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "5m"))
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        # Decide (deny) on IP_A (the resolved IP at decision time).
+        proxy._record_hosts([("1.2.3.4", 60)], "example.com")
+        await self._decide(
+            proxy, _FakePkt(_ip_payload("1.2.3.4", 443)), client
+        )
+        specs = [(h, p, m) for (h, p, m, _exp) in proxy._SESSION_HOST_DENIES]
+        assert ("example.com", 443, proxy._EXACT) in specs  # host-scoped
+        # A CDN-rotated IP_B (no REJECT, never consented) is auto-denied at the
+        # NFQUEUE gate -- no consent prompt, no verdict task spawned.
+        proxy._record_hosts([("9.9.9.9", 60)], "example.com")
+        client2 = MagicMock()
+        client2.connected = True
+        client2.request = AsyncMock(return_value=("allow", "5s"))
+        pkt2 = _FakePkt(_ip_payload("9.9.9.9", 443))
+        proxy._cb(pkt2, client2)
+        await asyncio.sleep(0.05)
+        assert pkt2.verdict == "drop"  # auto-denied, not allowed
+        client2.request.assert_not_awaited()  # no re-prompt (the fix)
+        assert not proxy._BG_TASKS
+
+    async def test_cb_auto_denies_syn_to_session_denied_host_ip(
+        self, proxy, monkeypatch
+    ):
+        # A SYN to an IP whose host was denied (timed) is auto-denied at the
+        # NFQUEUE gate (no consent prompt): a REJECT for the deny's remaining
+        # window runs off-loop, the SYN is dropped, and the verdict is cached
+        # for retransmits (#2446). reject() runs in the executor.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "5s"))
+        rejected = []
+        monkeypatch.setattr(
+            proxy,
+            "reject",
+            lambda ip, port, ttl: rejected.append((ip, port, ttl)),
+        )
+        self._bind(proxy, monkeypatch, client)
+        proxy._add_session_deny("example.com", 443, proxy._DURATION_FOREVER)
+        proxy._record_hosts([("2.2.2.2", 60)], "example.com")
+        pkt = _FakePkt(_ip_payload("2.2.2.2", 443))
+        proxy._cb(pkt, client)  # sync: auto-denies inline, no task
+        await asyncio.sleep(0.1)  # let the executor run reject()
+        assert pkt.verdict == "drop"
+        client.request.assert_not_awaited()  # no consent prompt
+        assert not proxy._BG_TASKS  # no verdict task spawned
+        # reject() called port-scoped, in the executor, with the deny's
+        # remaining window (~forever for a fresh forever entry).
+        assert len(rejected) == 1
+        assert rejected[0][0] == "2.2.2.2"
+        assert rejected[0][1] == 443
+        assert rejected[0][2] >= proxy._DURATION_FOREVER - 5
+        # Verdict cached so a retransmit reuses it.
+        assert any(v[0] == "deny" for v in proxy._VERDICT_CACHE.values())
+
+    async def test_cb_does_not_auto_deny_wrong_port(self, proxy, monkeypatch):
+        # The deny gate is host+port scoped end-to-end: a SYN to a denied host
+        # on a DIFFERENT port (deny was :443; this SYN is :80) is NOT
+        # auto-denied -- it reaches the consent prompt (the security property,
+        # exercised through _cb, not just the predicate).
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "once"))
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        proxy._add_session_deny("example.com", 443, proxy._DURATION_FOREVER)
+        proxy._record_hosts([("2.2.2.2", 60)], "example.com")
+        proxy._cb(_FakePkt(_ip_payload("2.2.2.2", 80)), client)
+        await asyncio.gather(*proxy._BG_TASKS)  # the prompt task ran
+        client.request.assert_awaited_once_with("example.com", 80)
+
+    async def test_once_deny_does_not_add_session_denylist(
+        self, proxy, monkeypatch
+    ):
+        # `once` deny is per-connection (a reconnect re-prompts), so it adds
+        # nothing to _SESSION_HOST_DENIES (mirror of once-allow). Timed/forever
+        # host-scope (#2446); `once` alone stays a per-IP REJECT.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "once"))
+        monkeypatch.setattr(proxy, "reject", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        proxy._record_hosts([("1.2.3.4", 60)], "example.com")
+        pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
+        await self._decide(proxy, pkt, client)
+        assert proxy._SESSION_HOST_DENIES == []
+
+    def test_timed_session_deny_expires(self, proxy, monkeypatch):
+        # #2446: a timed session-deny expires (lazy prune), so the host
+        # re-enters consent-gating once its window elapses -- it does not leak
+        # like a forever entry.
+        clock = [1000.0]
+        monkeypatch.setattr(proxy.time, "time", lambda: clock[0])
+        proxy._SESSION_HOST_DENIES.clear()
+        proxy._add_session_deny("example.com", 443, 300)  # expire 1300
+        assert proxy._session_host_denies_ttl("example.com", 443) == 300.0
+        clock[0] = 1400.0  # past the 300s window
+        assert proxy._session_host_denies_ttl("example.com", 443) is None
+        assert proxy._SESSION_HOST_DENIES == []
+
+    async def test_allow_overrides_in_effect_deny_at_gate(
+        self, proxy, monkeypatch
+    ):
+        # Acceptance (#2446): an in-effect allow overrides an in-effect deny
+        # at the gate -- _cb consults _session_host_allows_ttl BEFORE
+        # _session_host_denies_ttl, so a SYN to a host that is both allowed and
+        # denied is ACCEPTED (the allow wins), not auto-denied.
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("deny", "once"))
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        proxy._add_session_deny("example.com", 443, proxy._DURATION_FOREVER)
+        proxy._add_session_host("example.com", 443, proxy._DURATION_FOREVER)
+        proxy._record_hosts([("2.2.2.2", 60)], "example.com")
+        pkt = _FakePkt(_ip_payload("2.2.2.2", 443))
+        proxy._cb(pkt, client)
+        await asyncio.sleep(0.05)
+        assert pkt.verdict == "accept"  # allow wins over the in-effect deny
+        client.request.assert_not_awaited()
+        assert not proxy._BG_TASKS
 
     async def test_deny_verdict_drops_and_rejects(self, proxy, monkeypatch):
         # deny -> drop the SYN + install a REJECT (tcp-reset) so the retransmit
@@ -2107,6 +2282,20 @@ class TestDropForHost:
         # resolved IP + the host string itself (direct-IP-allow candidate)
         assert ips == {"1.2.3.4", "evil.test"}
 
+    def test_drop_session_denies_removes_host_entries(self, proxy):
+        # A denied revoke drops the host's _SESSION_HOST_DENIES coverage
+        # (#2446); other hosts are left intact. Mirror of the allow revoke
+        # (test_drop_session_hosts_removes_host_entries).
+        proxy._SESSION_HOST_DENIES.clear()
+        proxy._SESSION_HOST_DENIES[:] = [
+            ("evil.test", 443, proxy._EXACT, float("inf")),
+            ("other.test", 80, proxy._EXACT, float("inf")),
+        ]
+        proxy._drop_session_denies("Evil.TEST")  # case-insensitive
+        assert proxy._SESSION_HOST_DENIES == [
+            ("other.test", 80, proxy._EXACT, float("inf"))
+        ]
+
     def test_drop_session_hosts_removes_host_entries(self, proxy):
         # An allowed revoke drops the host's _SESSION_HOST_ALLOWS coverage
         # (in-session allow from #2372/#2434); other hosts are left intact.
@@ -2184,6 +2373,51 @@ class TestDropForHost:
         )
         assert proxy._SESSION_HOST_ALLOWS == []
         assert proxy._VERDICT_CACHE == {}
+        assert json.loads(sent[0])["ok"] is True
+
+    async def test_dispatch_drop_rule_denied_clears_session_deny(
+        self, proxy, tmp_path, monkeypatch
+    ):
+        # #2446: a DENY revoke's drop_rule clears the in-session
+        # _SESSION_HOST_DENIES BEFORE the iptables fork, so a SYN racing that
+        # fork can't keep auto-denying the host the operator just un-denied.
+        # Mirror of test_dispatch_drop_rule_clears_session_state (allow revoke).
+        proxy._LEARNED.clear()
+        proxy._SESSION_HOST_DENIES.clear()
+        proxy._VERDICT_CACHE.clear()
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=0),
+        )
+        proxy._LEARNED["1.2.3.4"] = {
+            "expire": 9e9,
+            "ports": set(),
+            "host": "h.test",
+        }
+        proxy._SESSION_HOST_DENIES.append(
+            ("h.test", 443, proxy._EXACT, float("inf"))
+        )
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        await c._dispatch(
+            json.dumps(
+                {
+                    "type": "drop_rule",
+                    "id": "ack-2",
+                    "host": "h.test",
+                    "decision": "denied",
+                }
+            )
+        )
+        assert proxy._SESSION_HOST_DENIES == []
         assert json.loads(sent[0])["ok"] is True
 
 

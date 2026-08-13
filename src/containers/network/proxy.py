@@ -42,6 +42,14 @@ connection). **Fail-close**: a down WebSocket or a timed-out verdict resolves to
 ``deny`` immediately, so the workspace stays locked down when klangkd or the
 decider is unreachable (today's static behavior) — no new latency, no hang.
 
+A non-``once`` verdict is remembered **by host** (not just by the IP resolved
+at decision time), so a retry to a CDN-rotated IP is covered for the verdict's
+lifetime without re-prompting. An ``allow`` is host-allow-listed
+(:data:`_SESSION_HOST_ALLOWS`, #2372/#2434); a ``deny`` is host-deny-listed
+(:data:`_SESSION_HOST_DENIES`, #2446) so the user isn't re-asked for a host they
+already denied (the CARRYOVER-SURPRISE). ``once`` is per-connection (a reconnect
+re-prompts); an in-effect allow overrides an in-effect deny at the gate.
+
 Configuration (env):
   KLANGKNETWORK_EGRESS_ALLOW       comma-separated allow-list: ``host[:port]``,
                             ``*.domain[:port]``, or CIDR specs. CIDR specs are
@@ -245,6 +253,25 @@ REJECT_SPECS = parse_specs("KLANGKNETWORK_EGRESS_REJECT")
 # swept off-loop by sweep_once under _LOCK like _LEARNED/_REJECTED).
 _SESSION_HOST_ALLOWS: list[tuple[str, int | None, str, float]] = []
 
+# Hosts denied in-session by a consent ``deny`` verdict, timed or forever
+# (#2446 -- the deny-side mirror of :data:`_SESSION_HOST_ALLOWS`). Each entry is
+# (host, port, mode, expire). On a deny whose duration is not ``once``,
+# _decide_and_verdict adds the denied host:port here (expire = now + the
+# verdict's TTL) so _cb (via _session_host_denies_ttl) denies a retry fast --
+# without re-prompting -- even when a CDN rotation or a DNS-TTL lapse means the
+# per-IP _REJECTED rule no longer covers the destination. This is the fix for
+# the CARRYOVER-SURPRISE finding (#2446): a timed deny used to cover only the
+# IP resolved at decision time (plus a ~10s REJECT_TTL), so a rotated IP
+# re-entered NFQUEUE and re-prompted the user for a host they had already
+# denied. ``once`` adds nothing (per-connection, so a reconnect re-prompts).
+# Dies with the sidecar (in-memory); revocation (drop rule, decision=denied)
+# clears it via _drop_session_denies. Touched only on the event-loop thread
+# (like _SESSION_HOST_ALLOWS) -- no lock. Timed entries expire lazily via
+# _prune_session_denies. An in-effect allow still wins: _cb consults
+# _session_host_allows_ttl BEFORE _session_host_denies_ttl, so an allow
+# overrides an in-effect deny.
+_SESSION_HOST_DENIES: list[tuple[str, int | None, str, float]] = []
+
 # Learned IPs: {ip: {"expire": epoch, "ports": set[int | None], "host": str}}.
 # ``ports`` holds the ACCEPT rule ports (a ``None`` is all-ports); ``host`` is
 # the DNS name that resolved to this IP (named in the consent request). An
@@ -429,6 +456,72 @@ def _session_host_allows_ttl(host: str, port: int) -> float | None:
     now = time.time()
     best: float | None = None
     for h, p, mode, exp in _SESSION_HOST_ALLOWS:
+        if exp <= now:
+            continue  # belt-and-suspenders: _prune ran above, but a just-expired
+            # entry can survive the microseconds between its `now` and this one.
+        if _host_matches(host, h, mode) and (p == port or p is None):
+            remaining = exp - now
+            if best is None or remaining > best:
+                best = remaining
+    return best
+
+
+def _prune_session_denies() -> None:
+    """Drop expired in-session host denies (lazy sweep, #2446).
+
+    :data:`_SESSION_HOST_DENIES` is loop-only (no lock), so -- like
+    :data:`_SESSION_HOST_ALLOWS` -- its timed entries expire here, on the loop,
+    the next time a gate (:func:`_session_host_denies_ttl`,
+    :func:`_add_session_deny`, :func:`_drop_session_denies`) reads them. Cheap
+    (the list is tiny -- one entry per denied host:port) and keeps the structure
+    from growing unbounded across a long session.
+    """
+    now = time.time()
+    _SESSION_HOST_DENIES[:] = [t for t in _SESSION_HOST_DENIES if t[3] > now]
+
+
+def _add_session_deny(host: str, port: int, ttl: float) -> None:
+    """Deny ``host:port`` in-session for a consent deny verdict (#2446).
+
+    The deny-side mirror of :func:`_add_session_host`: adds
+    ``(host, port, _EXACT, now + ttl)`` to :data:`_SESSION_HOST_DENIES` so
+    :func:`_cb` (via :func:`_session_host_denies_ttl`) suppresses a re-prompt
+    for a host the user already denied -- including a CDN-rotated or
+    resolver-cached IP that the per-IP :data:`_REJECTED` rule does not cover
+    (the CARRYOVER-SURPRISE, #2446). EXACT scope (only the denied host, not its
+    subdomains, #2377); deduped, a re-deny refreshes the expiry (``max`` --
+    never shortens an unexpired entry). ``once`` adds nothing (per-connection,
+    so a reconnect re-prompts). Loop-only (no lock).
+    """
+    _prune_session_denies()
+    expire = time.time() + ttl
+    spec = (host, port, _EXACT)
+    for i, (h, p, mode, _exp) in enumerate(_SESSION_HOST_DENIES):
+        if (h, p, mode) == spec:
+            _SESSION_HOST_DENIES[i] = (h, p, mode, max(_exp, expire))
+            return
+    _SESSION_HOST_DENIES.append((host, port, _EXACT, expire))
+
+
+def _session_host_denies_ttl(host: str, port: int) -> float | None:
+    """Remaining seconds an in-session deny covers ``host`` on ``port``, or
+    ``None`` (#2446).
+
+    The deny-side mirror of :func:`_session_host_allows_ttl`, used by
+    :func:`_cb` as the last-chance gate before prompting: a SYN to a host:port
+    the user already denied (timed or forever) -- including a CDN-rotated or
+    resolver-cached IP that no fresh per-IP :data:`_REJECTED` rule covers -- is
+    denied fast (RST + short REJECT) without re-prompting. Matches via
+    :func:`_host_matches` (entries are added EXACT, so only the denied host
+    matches, #2377); port must match (or the entry is all-ports). Returns the
+    max remaining TTL across matching entries. Loop-only (no lock).
+    """
+    if not host:
+        return None
+    _prune_session_denies()
+    now = time.time()
+    best: float | None = None
+    for h, p, mode, exp in _SESSION_HOST_DENIES:
         if exp <= now:
             continue  # belt-and-suspenders: _prune ran above, but a just-expired
             # entry can survive the microseconds between its `now` and this one.
@@ -671,6 +764,23 @@ def _drop_session_hosts(host: str) -> None:
     """
     hl = host.lower()
     _SESSION_HOST_ALLOWS[:] = [t for t in _SESSION_HOST_ALLOWS if t[0].lower() != hl]
+
+
+def _drop_session_denies(host: str) -> None:
+    """Remove a host's in-session deny coverage (#2446).
+
+    The deny-side mirror of :func:`_drop_session_hosts`, called on the event
+    loop by :meth:`SidecarConsentClient._handle_drop_rule` for a ``denied``
+    revoke BEFORE :func:`drop_for_host` forks iptables in the executor: while
+    that fork runs (~tens of ms), :func:`_cb` reads :data:`_SESSION_HOST_DENIES`,
+    and a SYN arriving in that window would otherwise keep auto-denying (and
+    re-installing a REJECT for) the host the operator just un-denied. Clearing
+    it first lets the host re-prompt. :data:`_SESSION_HOST_DENIES` is loop-only
+    (no lock) -- touched on the loop, never inside :func:`drop_for_host`
+    (executor thread).
+    """
+    hl = host.lower()
+    _SESSION_HOST_DENIES[:] = [t for t in _SESSION_HOST_DENIES if t[0].lower() != hl]
 
 
 def _clear_verdict_cache(ips: set[str]) -> None:
@@ -1102,6 +1212,11 @@ class SidecarConsentClient:
             # there.)
             if decision == "allowed":
                 _drop_session_hosts(host)
+            elif decision == "denied":
+                # Clear the host-scoped deny memory (#2446) BEFORE drop_for_host
+                # forks iptables, so a SYN arriving during that window re-prompts
+                # instead of staying auto-denied (mirror of the allow revoke).
+                _drop_session_denies(host)
             try:
                 ips = await asyncio.get_running_loop().run_in_executor(
                     None, drop_for_host, host, decision
@@ -1526,6 +1641,29 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         # passing (ports_for re-allow-lists it + this cache reuses the verdict).
         # Wired with the revoke path in #2370.
         return
+    # An in-session host deny covers the whole domain, timed or forever
+    # (#2446): a SYN to a host:port the user already denied -- including a
+    # CDN-rotated or resolver-cached IP that the per-IP _REJECTED rule does not
+    # cover -- is denied fast here, before prompting, so the user isn't re-asked
+    # for a domain they denied (the CARRYOVER-SURPRISE). Checked AFTER the allow
+    # gate above so an in-effect allow still overrides an in-effect deny.
+    deny_remaining = _session_host_denies_ttl(host, port) if port else None
+    if deny_remaining is not None:
+        # Forge the eager-deny RST so connect() fails fast (ECONNREFUSED) at
+        # once; a REJECT for the deny's remaining window backstops retransmits
+        # off-loop (reject() forks iptables under _LOCK). TCP only (port 0 is
+        # non-TCP). The _VERDICT_CACHE write covers retransmits of THIS flow.
+        if port:
+            try:
+                _send_rst(payload)
+            except Exception:
+                pass
+            asyncio.get_running_loop().run_in_executor(
+                None, reject, dst, port, deny_remaining
+            )
+        pkt.drop()
+        _VERDICT_CACHE[flow] = ("deny", now + VERDICT_CACHE_TTL)
+        return
     pkt.retain()  # keep the payload valid past this callback (deferred verdict)
     _INFLIGHT.add(flow)
     t = asyncio.create_task(_decide_and_verdict(pkt, flow, dst, port, host, client))
@@ -1573,6 +1711,14 @@ async def _decide_and_verdict(
     ttl = _duration_ttl(duration)
     if decision == "allow" and ttl is not None and port:
         _add_session_host(host, port, ttl)
+    # Symmetric host-scoped memory on the deny side (#2446): a timed/forever
+    # deny is remembered by host (not just IP) so a retry -- including a
+    # CDN-rotated IP -- is denied fast without re-prompting. ``once`` (ttl
+    # None) adds nothing (per-connection). Populated before the iptables fork
+    # below so a SYN to a different IP of this host during the yield still hits
+    # _session_host_denies_ttl in _cb.
+    if decision == "deny" and ttl is not None and port:
+        _add_session_deny(host, port, ttl)
     # Run the iptables fork (allow/reject) in the executor so it doesn't block
     # the loop thread -- matches the DNS path's _learn_all, which also runs
     # off the loop. The packet is retained, so verdicting after the await is

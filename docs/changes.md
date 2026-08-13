@@ -785,6 +785,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   just allowed, when the connection resolved to a different (CDN-rotated) IP
   than the one consented.
 
+- **Timed egress-consent denials now cover the whole host (#2446).** A timed or
+  `until restart` `deny` verdict now deny-lists the consented host for its whole
+  duration — the deny-side counterpart of the allow fix in #2434 — instead of
+  only a short per-IP reject rule. A retry to an already-denied host (including
+  a CDN-rotated IP) is now refused without re-prompting the user for a host
+  they already denied (`once` stays per-connection); an in-effect `allow` still
+  overrides an in-effect deny at the gate.
+
 - **Dead-owner container reap at startup (#2342).** klangkd now stamps each
   workspace + network-sidecar container with the creating daemon's PID
   (`klangk.pid`; the sidecar also gains `klangk.managed=true`), and on startup
