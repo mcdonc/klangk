@@ -798,6 +798,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **A `once` egress-consent deny no longer blocks later same-host connects (#2463).**
+  Denying a single connection once used to install a destination-scoped REJECT
+  rule that silently rejected every _new_ connection to the same `host:port` for
+  the fail-close window (~10s by default), with no re-prompt and no rule in the
+  DB. The fail-close REJECT for a `once` deny is now scoped to the denied
+  connection's source port, so a new connection (different source port)
+  re-prompts as expected; `once` adds no DB rule and nothing keeps denying it.
+  Timed/forever denies are unchanged (their destination-scoped REJECT is
+  correct — the persisted rule governs re-prompting).
+
 - **Timed egress-consent allows now cover the whole host (#2434).** A timed or
   `until restart` `allow` verdict now allow-lists the consented host for its
   whole duration — the same as `allow forever` already did — instead of only
