@@ -513,119 +513,132 @@ def _exit_label(exit_code: int | None) -> str:
     return f"exit{exit_code}" + (f":{tag}" if tag else "")
 
 
-# -- outcome codes ----------------------------------------------------------
-# A stable code per observable phenomenon (independent of severity), printed on
+# -- outcome names ----------------------------------------------------------
+# A stable NAME per observable phenomenon (independent of severity), printed on
 # each result line and tallied in the summary so a repeat in a later run maps
 # straight to the issue that explains it. Keyed on the result's `detail` prefix
 # (the most specific signal); the `_classify_conn` mismatches carry no detail,
-# so `_outcome_code` falls back to (expect_conn, exit_code). PASS rows get no
-# code. See #2421.
-OUTCOME_CODE_NAMES: dict[str, str] = {
-    "D1": "NO-EXPECTED-REQUEST",  # an expected consent request never arrived (off-list / post-expiry / post-revoke); fail-closed or hung. #2417 #2418
-    "D2": "CARRYOVER-SURPRISE",  # an in-effect verdict didn't cover a retry (CDN/per-IP). Non-bug per #2399; scored as a FINDING (#2419).
-    "D3": "DECIDER2-HANDSHAKE",  # a 2nd consent decider WS opening-handshake failure. #2420
-    "D4": "ALLOW-REFUSED",  # an allow / allow-list / active-allow was refused (EXPECT_RELEASED -> exit 7).
-    "D5": "DENY-RELEASED",  # a deny / active-deny let the connection through (EXPECT_REFUSED -> exit 0).
-    "D6": "NORESPONSE-OK",  # a no-response (timeout) succeeded (EXPECT_NOT0 -> exit 0).
-    "D7": "STATIC-LEAK",  # off-list succeeded with no decider registered.
-    "D8": "STATIC-HELD",  # off-list hung with no decider (not a clean static denial).
-    "D9": "STATICWS-ACCEPTED",  # a decider registered against a static workspace. #2395
-    "D10": "REJECTED-PROMPTED",  # a rejected_domains host prompted for consent (not pre-empted). #2367
-    "D11": "REJECTED-LEAK",  # a rejected_domains host succeeded (leak). #2367
-    "D12": "NO-REPROMPT-REVOKE",  # no re-prompt after a revoke (rule not dropped). #2339 #2396
-    "D13": "FAILCLOSED-LEAK",  # connection succeeded after the decider disconnected (#2308 violation).
-    "D14": "FIRST-DECISION-VIOLATION",  # first-decision-wins broken (a late/2nd verdict let it through).
-    "D15": "SNAPSHOT-CASCADE",  # reconnect snapshot indeterminate (CDN-cascade respawn / timing).
-    "D16": "HUNG-NFQUEUE-DNS",  # connection hung / unexpected exit (NFQUEUE/DNS), not a consent failure.
-    "D17": "CONN-NOT-CLEAN",  # connection not cleanly refused / a resolve frame wasn't seen.
-    "D18": "AB-HELD-HUNG",  # concurrent A/B hold hung (NFQUEUE/DNS; possibly a concurrent-hold issue).
-    "D19": "ISOLATION-BROKEN",  # a workspace-scoped decider saw another workspace's request. #2392
-    "D20": "UNEXPECTED-ERROR",  # a phase bring-up or per-step exception (an unexpected error).
-    "D21": "AUDIT-MISLABELED",  # expired/denied audit distinction broken (timeout audited as deny, or vice-versa). #2392
-    "D22": "ALLOWLIST-PROMPTED",  # an allow-list-covered host prompted for consent (a real static-allow invariant break). #2419
-}
-
-# detail-string prefix -> code (see OUTCOME_CODE_NAMES). Checked in order; the
-# first matching prefix wins, so keep prefixes specific.
-_DETAIL_PREFIX_CODES: list[tuple[str, str]] = [
-    ("expected a request, none arrived", "D1"),
-    ("expected a request; connection hung", "D16"),
-    ("expected no request (covered:allowed:allowlist", "D22"),
-    ("expected no request (covered:", "D2"),
-    ("expected a re-prompt; connection hung", "D16"),
-    ("expected a re-prompt; none arrived", "D1"),
-    ("verdict not in effect", "D2"),
-    ("no request for a fresh off-list host", "D1"),
-    ("could not attach a 2nd decider", "D3"),
-    ("X not seen by BOTH deciders", "D1"),
-    ("Y not held", "D1"),
-    ("app didn't see decider2's resolve", "D17"),
-    ("decider2's deny let the connection through", "D5"),
-    ("connection not cleanly refused", "D17"),
-    ("B conn not cleanly refused", "D17"),
-    ("B2 conn not cleanly refused", "D17"),
-    ("late allow let it through", "D14"),
-    ("A/B hung", "D18"),
-    ("A/B not both held", "D1"),
-    ("A present", "D15"),
-    ("B missing from snapshot", "D15"),
-    ("a decider registered against a static workspace", "D9"),
-    ("neither a frame nor a close", "D9"),
-    ("a rejected host prompted for consent", "D10"),
-    ("rejected host hung", "D16"),
-    ("rejected host succeeded", "D11"),
-    ("off-list host did not prompt", "D1"),
-    ("off-list host was not held for consent", "D1"),
-    ("post-revoke connection hung", "D16"),
-    ("no re-prompt after revoke", "D12"),
-    ("connection hung after disconnect", "D16"),
-    ("connection SUCCEEDED after the decider disconnected", "D13"),
-    ("B sidecar not ready", "D1"),
-    ("A-scoped decider saw B's request", "D19"),
-    ("B deny let the connection through", "D5"),
-    ("deploy-wide's B deny let it through", "D5"),
-    ("deploy-wide didn't see A", "D1"),
-    ("deploy-wide saw A but the app didn't", "D1"),
-    ("deploy-wide didn't see B", "D1"),
-    ("could not set up the scope phase", "D20"),
-    ("no hold surfaced", "D1"),
-    ("expired but the connection succeeded", "D6"),
-    ("timeout audited as", "D21"),
-    ("no egress_resolved frame", "D17"),
-    ("unexpected resolution", "D21"),
-    ("denied but conn not refused", "D17"),
-    ("human deny audited as", "D21"),
-    ("audit phase failed", "D20"),
-    ("allow-list host should connect", "D4"),
-    ("off-list hung (not a clean static denial)", "D8"),
-    ("off-list succeeded with no decider", "D7"),
-    ("step raised", "D20"),
+# so `_outcome_name` falls back to (expect_conn, exit_code). PASS rows get no
+# name. See #2421.
+#
+# `OUTCOME_NAMES` is the single source of truth: every name a prefix or
+# expect_conn maps to must be a key here (checked at import below), and each
+# entry carries the one-line description + issue(s) that explain the class.
+_DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
+    ("expected a request, none arrived", "NO-EXPECTED-REQUEST"),
+    ("expected a request; connection hung", "HUNG-NFQUEUE-DNS"),
+    ("expected no request (covered:allowed:allowlist", "ALLOWLIST-PROMPTED"),
+    ("expected no request (covered:", "CARRYOVER-SURPRISE"),
+    ("expected a re-prompt; connection hung", "HUNG-NFQUEUE-DNS"),
+    ("expected a re-prompt; none arrived", "NO-EXPECTED-REQUEST"),
+    ("verdict not in effect", "CARRYOVER-SURPRISE"),
+    ("no request for a fresh off-list host", "NO-EXPECTED-REQUEST"),
+    ("could not attach a 2nd decider", "DECIDER2-HANDSHAKE"),
+    ("X not seen by BOTH deciders", "NO-EXPECTED-REQUEST"),
+    ("Y not held", "NO-EXPECTED-REQUEST"),
+    ("app didn't see decider2's resolve", "CONN-NOT-CLEAN"),
+    ("decider2's deny let the connection through", "DENY-RELEASED"),
+    ("connection not cleanly refused", "CONN-NOT-CLEAN"),
+    ("B conn not cleanly refused", "CONN-NOT-CLEAN"),
+    ("B2 conn not cleanly refused", "CONN-NOT-CLEAN"),
+    ("late allow let it through", "FIRST-DECISION-VIOLATION"),
+    ("A/B hung", "AB-HELD-HUNG"),
+    ("A/B not both held", "NO-EXPECTED-REQUEST"),
+    ("A present", "SNAPSHOT-CASCADE"),
+    ("B missing from snapshot", "SNAPSHOT-CASCADE"),
+    ("a decider registered against a static workspace", "STATICWS-ACCEPTED"),
+    ("neither a frame nor a close", "STATICWS-ACCEPTED"),
+    ("a rejected host prompted for consent", "REJECTED-PROMPTED"),
+    ("rejected host hung", "HUNG-NFQUEUE-DNS"),
+    ("rejected host succeeded", "REJECTED-LEAK"),
+    ("off-list host did not prompt", "NO-EXPECTED-REQUEST"),
+    ("off-list host was not held for consent", "NO-EXPECTED-REQUEST"),
+    ("post-revoke connection hung", "HUNG-NFQUEUE-DNS"),
+    ("no re-prompt after revoke", "NO-REPROMPT-REVOKE"),
+    ("connection hung after disconnect", "HUNG-NFQUEUE-DNS"),
+    ("connection SUCCEEDED after the decider disconnected", "FAILCLOSED-LEAK"),
+    ("B sidecar not ready", "NO-EXPECTED-REQUEST"),
+    ("A-scoped decider saw B's request", "ISOLATION-BROKEN"),
+    ("B deny let the connection through", "DENY-RELEASED"),
+    ("deploy-wide's B deny let it through", "DENY-RELEASED"),
+    ("deploy-wide didn't see A", "NO-EXPECTED-REQUEST"),
+    ("deploy-wide saw A but the app didn't", "NO-EXPECTED-REQUEST"),
+    ("deploy-wide didn't see B", "NO-EXPECTED-REQUEST"),
+    ("could not set up the scope phase", "UNEXPECTED-ERROR"),
+    ("no hold surfaced", "NO-EXPECTED-REQUEST"),
+    ("expired but the connection succeeded", "NORESPONSE-OK"),
+    ("timeout audited as", "AUDIT-MISLABELED"),
+    ("no egress_resolved frame", "CONN-NOT-CLEAN"),
+    ("unexpected resolution", "AUDIT-MISLABELED"),
+    ("denied but conn not refused", "CONN-NOT-CLEAN"),
+    ("human deny audited as", "AUDIT-MISLABELED"),
+    ("audit phase failed", "UNEXPECTED-ERROR"),
+    ("allow-list host should connect", "ALLOW-REFUSED"),
+    ("off-list hung (not a clean static denial)", "STATIC-HELD"),
+    ("off-list succeeded with no decider", "STATIC-LEAK"),
+    ("step raised", "UNEXPECTED-ERROR"),
 ]
 
+OUTCOME_NAMES: dict[str, str] = {
+    "NO-EXPECTED-REQUEST": "an expected consent request never arrived (off-list / post-expiry / post-revoke); fail-closed or hung. #2417 #2418",
+    "CARRYOVER-SURPRISE": "an in-effect verdict didn't cover a retry (CDN/per-IP). Non-bug per #2399; scored as a FINDING (#2419).",
+    "DECIDER2-HANDSHAKE": "a 2nd consent decider WS opening-handshake failure. #2420",
+    "ALLOW-REFUSED": "an allow / allow-list / active-allow was refused (EXPECT_RELEASED -> exit 7).",
+    "DENY-RELEASED": "a deny / active-deny let the connection through (EXPECT_REFUSED -> exit 0).",
+    "NORESPONSE-OK": "a no-response (timeout) succeeded (EXPECT_NOT0 -> exit 0).",
+    "STATIC-LEAK": "off-list succeeded with no decider registered.",
+    "STATIC-HELD": "off-list hung with no decider (not a clean static denial).",
+    "STATICWS-ACCEPTED": "a decider registered against a static workspace. #2395",
+    "REJECTED-PROMPTED": "a rejected_domains host prompted for consent (not pre-empted). #2367",
+    "REJECTED-LEAK": "a rejected_domains host succeeded (leak). #2367",
+    "NO-REPROMPT-REVOKE": "no re-prompt after a revoke (rule not dropped). #2339 #2396",
+    "FAILCLOSED-LEAK": "connection succeeded after the decider disconnected (#2308 violation).",
+    "FIRST-DECISION-VIOLATION": "first-decision-wins broken (a late/2nd verdict let it through).",
+    "SNAPSHOT-CASCADE": "reconnect snapshot indeterminate (CDN-cascade respawn / timing).",
+    "HUNG-NFQUEUE-DNS": "connection hung / unexpected exit (NFQUEUE/DNS), not a consent failure.",
+    "CONN-NOT-CLEAN": "connection not cleanly refused / a resolve frame wasn't seen.",
+    "AB-HELD-HUNG": "concurrent A/B hold hung (NFQUEUE/DNS; possibly a concurrent-hold issue).",
+    "ISOLATION-BROKEN": "a workspace-scoped decider saw another workspace's request. #2392",
+    "UNEXPECTED-ERROR": "a phase bring-up or per-step exception (an unexpected error).",
+    "AUDIT-MISLABELED": "expired/denied audit distinction broken (timeout audited as deny, or vice-versa). #2392",
+    "ALLOWLIST-PROMPTED": "an allow-list-covered host prompted for consent (a real static-allow invariant break). #2419",
+}
 
-def _outcome_code(res: "_Result") -> str:
-    """Stable outcome code for a result ("" for PASS). See #2421.
+_EXPECT_CONN_NAMES = {
+    EXPECT_RELEASED: "ALLOW-REFUSED",
+    EXPECT_REFUSED: "DENY-RELEASED",
+    EXPECT_NOT0: "NORESPONSE-OK",
+}
+
+# Every name the mapping tables emit must be registered in OUTCOME_NAMES; a
+# typo here fails loudly at import instead of producing a mystery "??".
+assert all(name in OUTCOME_NAMES for _, name in _DETAIL_PREFIX_NAMES), (
+    "unregistered outcome name in _DETAIL_PREFIX_NAMES"
+)
+assert all(name in OUTCOME_NAMES for name in _EXPECT_CONN_NAMES.values()), (
+    "unregistered outcome name in _EXPECT_CONN_NAMES"
+)
+
+
+def _outcome_name(res: "_Result") -> str:
+    """Stable outcome name for a result ("" for PASS). See #2421.
 
     A non-PASS result whose detail matches no known prefix returns the sentinel
-    "D?" so any gap is loud rather than silent.
+    "??" so any gap is loud rather than silent.
     """
     if res.status == PASS:
         return ""
     detail = res.detail or ""
-    for prefix, code in _DETAIL_PREFIX_CODES:
+    for prefix, name in _DETAIL_PREFIX_NAMES:
         if detail.startswith(prefix):
-            return code
+            return name
     if detail:
-        return "D?"  # unmapped detail -> visible gap
+        return "??"  # unmapped detail -> visible gap
     # No detail: a `_classify_conn` outcome. Derive from the expectation.
     if res.status == MISMATCH:
-        return {
-            EXPECT_RELEASED: "D4",
-            EXPECT_REFUSED: "D5",
-            EXPECT_NOT0: "D6",
-        }.get(res.expect_conn, "D?")
+        return _EXPECT_CONN_NAMES.get(res.expect_conn, "??")
     # FINDING with no detail -> hung / unexpected exit (NFQUEUE/DNS).
-    return "D16"
+    return "HUNG-NFQUEUE-DNS"
 
 
 @dataclass
@@ -639,7 +652,7 @@ class _Result:
     exit_code: int | None
     status: str
     detail: str = ""
-    code: str = ""  # stable outcome code (D1..); "" for PASS. See #2421.
+    outcome: str = ""  # stable outcome name; "" for PASS. See #2421.
 
 
 @dataclass
@@ -1017,7 +1030,7 @@ class SmokeTest:
         )
 
     def _record(self, res: _Result) -> _Result:
-        res.code = _outcome_code(res)
+        res.outcome = _outcome_name(res)
         self.summary.total += 1
         self.summary.rows.append(res)
         if res.status == PASS:
@@ -1050,7 +1063,8 @@ class SmokeTest:
             f"[{r.step.idx + 1:>{len(str(self.args.count))}}/{self.args.count}] "
             f"dest={r.step.host:<18} {r.step.kind:<6} {cov:<9} "
             f"-> {action:<18} sidecar={r.sidecar:<12} conn={_exit_label(r.exit_code):<14} "
-            f"{self._mark(r.status)}" + (f" [{r.code}]" if r.code else "")
+            f"{self._mark(r.status)}"
+            + (f" [{r.outcome}]" if r.outcome else "")
         )
         if r.detail:
             print(f"       ... {r.detail}")
@@ -1204,13 +1218,13 @@ class SmokeTest:
             status,
             detail=detail,
         )
-        res.code = _outcome_code(res)
+        res.outcome = _outcome_name(res)
         self.summary.rows.append(res)
         indent = " " * (len(str(self.args.count)) + 3)
         print(
             f"{indent}↳ {label:<20} sidecar={sidecar:<12} "
             f"conn={_exit_label(exit_code):<14} {self._mark(status)}"
-            + (f" [{res.code}]" if res.code else "")
+            + (f" [{res.outcome}]" if res.outcome else "")
         )
         if detail:
             print(f"{indent}   ... {detail}")
@@ -2388,7 +2402,7 @@ class SmokeTest:
                             MISMATCH,
                             detail=f"step raised: {exc!r}",
                         )
-                        res.code = _outcome_code(res)
+                        res.outcome = _outcome_name(res)
                         self.summary.total += 1
                         self.summary.mismatches += 1
                         self.summary.rows.append(res)
@@ -2498,17 +2512,16 @@ class SmokeTest:
             client.close()
 
     @staticmethod
-    def _print_code_tally(rows: list[_Result]) -> None:
+    def _print_outcome_tally(rows: list[_Result]) -> None:
         counts: dict[str, int] = {}
         for r in rows:
-            if r.code:
-                counts[r.code] = counts.get(r.code, 0) + 1
+            if r.outcome:
+                counts[r.outcome] = counts.get(r.outcome, 0) + 1
         if not counts:
             return
-        print("\noutcome codes:")
-        for code in sorted(counts):
-            name = OUTCOME_CODE_NAMES.get(code, "??")
-            print(f"  {code} {name:<26} x{counts[code]}")
+        print("\noutcome names:")
+        for name in sorted(counts):
+            print(f"  {name:<26} x{counts[name]}")
 
     def _print_summary(self, stopped: bool) -> None:
         s = self.summary
@@ -2524,7 +2537,7 @@ class SmokeTest:
             print("\nfindings (under-specified; not failures):")
             for r in findings:
                 print(
-                    f"  [{r.step.idx + 1}]{' [' + r.code + ']' if r.code else ''} "
+                    f"  [{r.step.idx + 1}]{' [' + r.outcome + ']' if r.outcome else ''} "
                     f"{r.step.host} ({r.step.kind}) "
                     f"action={r.action_taken} sidecar={r.sidecar} "
                     f"conn={_exit_label(r.exit_code)}  {r.detail}"
@@ -2534,13 +2547,13 @@ class SmokeTest:
             print("\nmismatches:")
             for r in mism:
                 print(
-                    f"  [{r.step.idx + 1}]{' [' + r.code + ']' if r.code else ''} "
+                    f"  [{r.step.idx + 1}]{' [' + r.outcome + ']' if r.outcome else ''} "
                     f"{r.step.host} ({r.step.kind}) "
                     f"expect_req={r.expect_request} expect_conn={r.expect_conn} "
                     f"action={r.action_taken} sidecar={r.sidecar} "
                     f"conn={_exit_label(r.exit_code)}  {r.detail}"
                 )
-        self._print_code_tally(s.rows)
+        self._print_outcome_tally(s.rows)
         print("=" * 72)
 
 
