@@ -55,7 +55,7 @@ class TestWriteSettings:
         settings = json.loads((agent / "settings.json").read_text())
         assert settings["defaultProvider"] == "llm-proxy"
         assert settings["defaultModel"] == "test-model"
-        assert settings["defaultThinkingLevel"] == "off"
+        assert settings["hideThinkingBlock"] is True
         assert settings["extensions"] == [str(sc.IMAGE_DIR / "extensions")]
         assert settings["skills"] == [str(sc.IMAGE_DIR / "skills")]
         assert settings["prompts"] == [str(sc.IMAGE_DIR / "prompts")]
@@ -97,7 +97,7 @@ class TestWriteSettings:
         settings = json.loads((agent / "settings.json").read_text())
         assert settings["defaultProvider"] == "llm-proxy"
         assert settings["defaultModel"] == "test-model"
-        assert settings["defaultThinkingLevel"] == "off"
+        assert settings["hideThinkingBlock"] is True
         assert settings["extensions"] == [str(image_dir / "extensions")]
         assert settings["skills"] == [str(image_dir / "skills")]
         assert settings["prompts"] == [str(image_dir / "prompts")]

@@ -529,6 +529,14 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Workspace Pi agent hides thinking blocks by default (#2459).** The
+  per-user `~/.pi/agent/settings.json` provisioned at first login now sets
+  `hideThinkingBlock: true` instead of the previous `defaultThinkingLevel:
+"off"`, which had no effect behind the LLM proxy (the model kept thinking
+  regardless). Thinking still runs and costs tokens; only its block is hidden
+  in the web-terminal TUI, where the Ctrl+T toggle is swallowed by the
+  browser. Existing `settings.json` files are left untouched.
+
 - **Network egress UI copy (#2457).** The workspace consent-rules tab is
   now labeled **"Net Rules"** (was "Rules") to disambiguate it, and the
   rejected-domains help text plus its validation error replaced the DNS
