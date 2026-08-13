@@ -65,6 +65,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _cpuLimitController = TextEditingController();
   final _memoryLimitController = TextEditingController();
   final _pidsLimitController = TextEditingController();
+  final _tmpSizeController = TextEditingController();
   late String _selectedImage;
   final _mounts = <String>[];
   final _envVars = <String, String>{};
@@ -119,6 +120,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     _cpuLimitController.dispose();
     _memoryLimitController.dispose();
     _pidsLimitController.dispose();
+    _tmpSizeController.dispose();
     super.dispose();
   }
 
@@ -202,6 +204,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     if (mem.isNotEmpty) s['memory_limit'] = mem;
     final pids = _pidsLimitController.text.trim();
     if (pids.isNotEmpty) s['pids_limit'] = int.parse(pids);
+    final tmp = _tmpSizeController.text.trim();
+    if (tmp.isNotEmpty) s['tmp_size'] = tmp;
     return s;
   }
 
@@ -477,6 +481,25 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                                   hintText: 'e.g. 512',
                                 ),
                                 keyboardType: TextInputType.number,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _tmpSizeController,
+                                decoration: InputDecoration(
+                                  labelText: 'TMP Size',
+                                  labelStyle: _labelStyle,
+                                  floatingLabelStyle: _labelStyle,
+                                  floatingLabelBehavior:
+                                      FloatingLabelBehavior.always,
+                                  border: const OutlineInputBorder(),
+                                  hintText: 'e.g. 2g, 512m',
+                                ),
                               ),
                             ),
                           ],
