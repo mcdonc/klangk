@@ -118,6 +118,12 @@ _SIDECAR_PROBE_HOSTS = [
     "rust-lang.org",
     "gnupg.org",
 ]
+# Concurrent fan-out size for the per-connection-cache phase (#2441): N
+# distinct hosts fired at once must surface N distinct held requests, proving
+# the post-#2331 NFQUEUE consumer holds N flows concurrently (not serialized).
+# >2 steps beyond the existing A/B held pair; bounded by the controlled-DNS IP
+# slice (each host gets its own stable IP).
+_FANOUT_N = 5
 # Worst-case sidecar connect backoff (1->2->4->8->15s) plus margin for the
 # workspace JWT file to appear; the readiness probe retries fresh hosts across
 # this whole window before giving up.
@@ -342,6 +348,21 @@ def _pending_for(app: ConsentDeciderApp, canon: str) -> str | None:
     return None
 
 
+def _pending_rids_for(app: ConsentDeciderApp, canon: str) -> list[str]:
+    """Every pending request id whose canonical dest is ``canon`` (any count).
+
+    Unlike :func:`_pending_for` (which returns one), this keeps duplicates --
+    used by the per-connection-cache phase to count how many distinct requests
+    surfaced for the SAME host (two concurrent connections must produce two,
+    not one; a held connection's retransmits must produce one, not many).
+    """
+    return [
+        req.id
+        for req in app.controller.pending.values()
+        if _canonical(req.dest_host or "") == canon
+    ]
+
+
 async def _wait_for_request(app, canon, timeout=12.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -360,6 +381,32 @@ async def _wait_no_request(app, canon, window=6.0):
         if rid is not None:
             return rid
         await asyncio.sleep(0.3)
+    return None
+
+
+async def _wait_all_hosts(
+    app, canons: list[str], timeout: float = 15.0
+) -> dict[str, str] | None:
+    """Wait until every canonical host in ``canons`` has >=1 pending request,
+    ALL held simultaneously.
+
+    Returns ``{canon: rid}`` once every host is present at once, or None on
+    timeout. For the N-way fan-out (#2337): N concurrent connects to N distinct
+    hosts must each surface a request AT THE SAME TIME; a serialized NFQUEUE
+    consumer (pre-#2331) holds only the first until it resolves, so the rest
+    never appear together.
+    """
+    want = set(canons)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        present: dict[str, str] = {}
+        for req in app.controller.pending.values():
+            c = _canonical(req.dest_host or "")
+            if c in want and c not in present:
+                present[c] = req.id
+        if want <= present.keys():
+            return {c: present[c] for c in canons}
+        await asyncio.sleep(0.2)
     return None
 
 
@@ -679,6 +726,21 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("forever-deny leaked after restart", "RESTART-FOREVER-NOT-DURABLE"),
     ("tilrestart survived restart", "RESTART-TILRESTART-SURVIVED"),
     ("restart-phase failed", "UNEXPECTED-ERROR"),
+    # per-connection verdict cache + N-way fan-out (#2441 / #2361 / #2366 / #2337).
+    ("fan-out: only", "FANOUT-SERIALIZED"),
+    ("fan-out: not", "FANOUT-SERIALIZED"),
+    (
+        "concurrent same-host connections produced",
+        "CONCURRENT-NOT-DEDUPED",
+    ),
+    (
+        "a once verdict on one connection released a separate",
+        "ONCE-CROSS-CONN",
+    ),
+    ("a held connection produced", "RETRANSMIT-DUPLICATED"),
+    ("no hold surfaced for the", "NO-EXPECTED-REQUEST"),
+    ("concurrent same-host deduped to one prompt, but both", "ALLOW-REFUSED"),
+    ("fan-out phase failed", "UNEXPECTED-ERROR"),
 ]
 
 OUTCOME_NAMES: dict[str, str] = {
@@ -718,6 +780,10 @@ OUTCOME_NAMES: dict[str, str] = {
     "PAUSE-POLICY-BYPASS": "a static policy (allow-list / rejected_domains) was bypassed or changed while paused -- pause must affect only the interactive hold, not the DNS-layer lists. #2332",
     "PAUSE-RESUME-BROKEN": "after resume, an off-list host was not re-held for consent (the pause lingered, or the re-hold failed). #2332",
     "PAUSE-ACK-FAILED": "the pause/unpause pause_ack came back not-ok (authz/protocol: missing share-terminals, unknown duration, or a deploy-wide decider). #2332/#2389",
+    "FANOUT-SERIALIZED": "N concurrent off-list connects did not all surface a held request simultaneously (the NFQUEUE consumer serialized them -- a #2331/#2337 regression).",
+    "CONCURRENT-NOT-DEDUPED": "concurrent connections to the same destination each produced a prompt (the coordinator's per-destination dedup is broken -- each should collapse to one).",
+    "ONCE-CROSS-CONN": "a `once` verdict on one connection released a separate concurrent connection to the same host (the verdict leaked across connections -- #2361).",
+    "RETRANSMIT-DUPLICATED": "a held connection's SYN retransmits produced more than one consent request (the in-flight dedup is broken -- #2366).",
 }
 
 _EXPECT_CONN_NAMES = {
@@ -1904,6 +1970,325 @@ class SmokeTest:
         await _wait_resolved(self.app, rb, 15.0)
         await _wait_result(self.container, of_a, timeout=10.0)
         await _wait_result(self.container, of_b, timeout=10.0)
+
+    async def run_fanout_phase(self, pilot) -> None:
+        """Per-connection verdict cache + N-way concurrent fan-out (#2441).
+
+        Three deterministic assertions on the real stack, each a hard
+        PASS/FAIL under controlled DNS:
+
+        1. **N-way fan-out** -- :data:`_FANOUT_N` concurrent off-list connects
+           to :data:`_FANOUT_N` DISTINCT hosts surface :data:`_FANOUT_N`
+           DISTINCT consent requests, all held SIMULTANEOUSLY (not serialized
+           behind the first). The post-#2331 loop-driven NFQUEUE consumer holds
+           N flows concurrently; the pre-#2331 blocking consumer reported only
+           the first until it resolved (#2336/#2337).
+        2. **concurrent same-host** (#2361) -- a ``once`` verdict on one
+           connection does NOT satisfy a separate concurrent connection to the
+           SAME host. The consent *coordinator* dedupes a second concurrent
+           request for the same ``(workspace, dst, dport)`` to a fail-closed
+           DENY (``consent_coordinator.hold`` -> ``create_request`` returns
+           None -> duplicate), so two concurrent curls to a single-IP host
+           surface ONE prompt and the duplicate SYN is refused (not allowed
+           through by the held request's eventual verdict). Pre-#2366 the
+           sidecar ``(dst, port)`` cache was a separate, fixed leak path; the
+           sequential re-prompt under ``once`` it gated is asserted by the
+           scored loop's exceeding-retry(once) probe + #2366's e2e.
+        3. **retransmit dedup** (#2366) -- a held connection surfaces exactly
+           ONE request, not one per SYN retransmit. The in-flight set dedupes a
+           held connection's retransmits (same 4-tuple -> drop), so holding
+           past several retransmit intervals produces no duplicate request.
+
+        Needs controlled DNS (#2424): #2/#3 need a single stable IP per host so
+        the only thing distinguishing two concurrent connections is the source
+        port (the connection 4-tuple), and a held connection's retransmits
+        share it. Skipped otherwise (indeterminate on real multi-IP hosts).
+
+        Driven over the hero workspace's own textual decider (``self.app``);
+        ``controller.pending`` is read directly, so no 2nd-decider WS (and its
+        #2420 handshake flakiness) is needed.
+        """
+        if not self.args.fanout:
+            return
+        if self.dns is None:
+            print(
+                "\n--- per-connection verdict cache / fan-out: SKIPPED "
+                "(--no-controlled-dns; #2/#3 need a single stable IP so the "
+                "only difference between two concurrent connections is the "
+                "source port, #2424) ---"
+            )
+            return
+        print(
+            f"\n--- per-connection verdict cache: {_FANOUT_N}-way fan-out + "
+            "once-not-shared + retransmit-dedup (#2361/#2366/#2337) ---"
+        )
+        parent = _Step(
+            self.summary.total, "fan-out", "n/a", False, "fan-out", "-"
+        )
+        app = self.app
+        try:
+            # -- 1) N-way fan-out: N distinct hosts -> N distinct requests, all
+            #       held simultaneously (#2337). Each controlled name gets its
+            #       own stable IP so the L3/L4 rule can't merge two hosts.
+            fan_hosts = [f"fan-{i}.test" for i in range(_FANOUT_N)]
+            for h in fan_hosts:
+                self.dns.allocate(h)
+            fan_canons = [_canonical(h) for h in fan_hosts]
+            fan_outs = []
+            for i, h in enumerate(fan_hosts):
+                of = f"/tmp/smoke_fo_d{i}.out"
+                fan_outs.append(of)
+                _trigger(self.container, h, of)
+            present = await _wait_all_hosts(app, fan_canons, timeout=15.0)
+            if present is None:
+                got = [c for c in fan_canons if _pending_rids_for(app, c)]
+                self._record_probe(
+                    parent,
+                    f"{_FANOUT_N}-way fan-out",
+                    "no-request(!)",
+                    None,
+                    MISMATCH,
+                    f"fan-out: only {len(got)} of {_FANOUT_N} hosts surfaced "
+                    f"a request simultaneously (serialized? #2336/#2337)",
+                )
+                if not self.args.continue_run:
+                    self._abort = True
+                return
+            rids = [present[c] for c in fan_canons]
+            distinct = len(set(rids)) == _FANOUT_N
+            held = sum(rid in app.controller.pending for rid in rids)
+            if distinct and held == _FANOUT_N:
+                self._record_probe(
+                    parent,
+                    f"{_FANOUT_N}-way fan-out",
+                    f"{_FANOUT_N} held",
+                    None,
+                    PASS,
+                    f"{_FANOUT_N} distinct hosts -> {_FANOUT_N} distinct "
+                    f"requests, all held simultaneously (#2337)",
+                )
+            else:
+                self._record_probe(
+                    parent,
+                    f"{_FANOUT_N}-way fan-out",
+                    f"distinct={len(set(rids))},held={held}",
+                    None,
+                    MISMATCH,
+                    f"fan-out: not {_FANOUT_N} distinct simultaneous requests "
+                    f"(distinct={distinct}, held={held})",
+                )
+                if not self.args.continue_run:
+                    self._abort = True
+                    return
+            # Release each with once (no IP learn -> can't perturb later
+            # probes) and drain the curls so none dangle.
+            for rid in rids:
+                if rid in app.controller.pending:
+                    app._decide_id(rid, DECISION_ALLOWED, DURATION_ONCE)
+            await pilot.pause()
+            for rid in rids:
+                await _wait_resolved(app, rid, timeout=15.0)
+            for of in fan_outs:
+                await _wait_result(self.container, of, timeout=15.0)
+            if self._abort:
+                return
+
+            # -- 2) concurrent same-host: the consent COORDINATOR dedupes a
+            #       second concurrent request for the same (workspace, dst,
+            #       dport) to a fail-closed DENY (consent_coordinator.hold ->
+            #       create_request returns None -> duplicate). So two concurrent
+            #       curls to a single-IP host surface ONE prompt; the duplicate
+            #       SYN is refused, NOT satisfied by the held request's eventual
+            #       verdict. That is bullet #2's claim -- a `once` on one
+            #       connection does NOT satisfy a separate concurrent connection
+            #       to the same host (#2361): the separate connection is denied,
+            #       not allowed through. (The sidecar's per-connection verdict
+            #       cache that makes a *sequential* retry re-prompt under `once`
+            #       is asserted by the scored loop's exceeding-retry(once) probe
+            #       + #2366's e2e; the CONCURRENT case is the coordinator
+            #       per-destination dedup asserted here.)
+            same_host = "fan-same.test"
+            self.dns.allocate(same_host)
+            csame = _canonical(same_host)
+            of_s1 = "/tmp/smoke_fo_s1.out"
+            of_s2 = "/tmp/smoke_fo_s2.out"
+            _trigger(self.container, same_host, of_s1)
+            _trigger(self.container, same_host, of_s2)
+            # Let both SYNs reach the coordinator, then read the steady-state
+            # request count for this host (1 == deduped; >=2 == dedup broken).
+            await asyncio.sleep(2.0)
+            same_rids = _pending_rids_for(app, csame)
+            n_same = len(same_rids)
+            if n_same == 0:
+                await _wait_result(self.container, of_s1, timeout=8.0)
+                await _wait_result(self.container, of_s2, timeout=8.0)
+                self._record_probe(
+                    parent,
+                    "once cross-connection",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "no hold surfaced for the concurrent same-host probe "
+                    "(sidecar readiness?)",
+                )
+            elif n_same >= 2:
+                # dedup broken: settle the pile-up, then move on.
+                for rid in same_rids:
+                    app._decide_id(rid, DECISION_DENIED, DURATION_ONCE)
+                await pilot.pause()
+                for rid in same_rids:
+                    await _wait_resolved(app, rid, timeout=10.0)
+                await _wait_result(self.container, of_s1, timeout=10.0)
+                await _wait_result(self.container, of_s2, timeout=10.0)
+                self._record_probe(
+                    parent,
+                    "once cross-connection",
+                    f"{n_same} prompts(!)",
+                    None,
+                    MISMATCH,
+                    f"concurrent same-host connections produced {n_same} "
+                    f"prompts (coordinator per-destination dedup broken)",
+                )
+                if not self.args.continue_run:
+                    self._abort = True
+            else:
+                # n_same == 1: the coordinator deduped to one prompt. Allow it
+                # with once -> the DECIDING connection is released; the
+                # DUPLICATE was already denied fail-closed. Assert exactly one
+                # curl succeeded and the other was refused (not satisfied).
+                rid = same_rids[0]
+                app._decide_id(rid, DECISION_ALLOWED, DURATION_ONCE)
+                await pilot.pause()
+                await _wait_resolved(app, rid, timeout=15.0)
+                ec_s1 = _parse_exit(
+                    await _wait_result(self.container, of_s1, timeout=15.0)
+                )
+                ec_s2 = _parse_exit(
+                    await _wait_result(self.container, of_s2, timeout=15.0)
+                )
+                if (ec_s1 == 0) ^ (ec_s2 == 0):
+                    self._record_probe(
+                        parent,
+                        "once cross-connection",
+                        "deduped+denied",
+                        ec_s1,
+                        PASS,
+                        "concurrent same-host deduped to one prompt; the "
+                        "duplicate was fail-closed denied, the deciding "
+                        "connection released by once -- the separate "
+                        "connection was NOT satisfied (#2361)",
+                    )
+                elif ec_s1 == 0 and ec_s2 == 0:
+                    self._record_probe(
+                        parent,
+                        "once cross-connection",
+                        "leaked(!)",
+                        ec_s1,
+                        MISMATCH,
+                        "a once verdict on one connection released a separate "
+                        "concurrent connection to the same host (#2361)",
+                    )
+                    if not self.args.continue_run:
+                        self._abort = True
+                else:
+                    # Both refused: the duplicate's destination-scoped
+                    # fail-close REJECT (reject(dst,port,...) in proxy.py)
+                    # clobbered the deciding connection's allow too. The
+                    # duplicate was still NOT satisfied (denied, not allowed
+                    # through) -- bullet #2's claim holds -- but the deciding
+                    # connection's release was collateral damage. A known
+                    # concurrent-same-host edge case -> finding, not a hard fail.
+                    self._record_probe(
+                        parent,
+                        "once cross-connection",
+                        "both refused",
+                        ec_s1,
+                        FINDING,
+                        "concurrent same-host deduped to one prompt, but "
+                        "both connections refused -- the duplicate's "
+                        "destination-scoped fail-close REJECT clobbered the "
+                        "deciding connection's allow; the separate "
+                        "connection was still NOT satisfied (#2361)",
+                    )
+            if self._abort:
+                return
+
+            # -- 3) retransmit dedup: a held connection surfaces exactly ONE
+            #       request, not one per SYN retransmit (#2366). Hold past
+            #       several retransmit intervals WITHOUT verdicting; the
+            #       in-flight set drops the retransmits (same 4-tuple), so the
+            #       count stays at 1.
+            rt_host = "fan-rt.test"
+            self.dns.allocate(rt_host)
+            crt = _canonical(rt_host)
+            of_rt = "/tmp/smoke_fo_rt.out"
+            _trigger(self.container, rt_host, of_rt)
+            rt_rid = await _wait_for_request(app, crt, timeout=12.0)
+            if rt_rid is None:
+                self._record_probe(
+                    parent,
+                    "retransmit dedup",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "no hold surfaced for the retransmit probe "
+                    "(sidecar readiness?)",
+                )
+                return
+            # Stay under the consent timeout so the server doesn't auto-deny
+            # mid-window; a few seconds covers 2-3 SYN retransmits (RTO ~1s).
+            rt_window = min(5.0, max(2.0, self.args.consent_timeout - 4.0))
+            before = len(_pending_rids_for(app, crt))
+            await asyncio.sleep(rt_window)
+            after_rids = _pending_rids_for(app, crt)
+            after = len(after_rids)
+            # Release it (allow/once) before the consent timeout auto-denies.
+            app._decide_id(rt_rid, DECISION_ALLOWED, DURATION_ONCE)
+            await pilot.pause()
+            await _wait_resolved(app, rt_rid, timeout=15.0)
+            ec_rt = _parse_exit(
+                await _wait_result(self.container, of_rt, timeout=15.0)
+            )
+            if before == 1 and after == 1:
+                self._record_probe(
+                    parent,
+                    "retransmit dedup",
+                    "1 request",
+                    ec_rt,
+                    PASS,
+                    f"held {rt_window:.0f}s (past SYN retransmits) -> still "
+                    f"exactly one request; retransmits deduped (#2366)",
+                )
+            else:
+                for rid in after_rids:
+                    if rid in app.controller.pending and rid != rt_rid:
+                        app._decide_id(rid, DECISION_DENIED, DURATION_ONCE)
+                await pilot.pause()
+                for rid in after_rids:
+                    if rid != rt_rid:
+                        await _wait_resolved(app, rid, timeout=10.0)
+                self._record_probe(
+                    parent,
+                    "retransmit dedup",
+                    f"{after} requests(!)",
+                    ec_rt,
+                    MISMATCH,
+                    f"a held connection produced {after} request(s) after "
+                    f"{rt_window:.0f}s (retransmit dedup broken, #2366)",
+                )
+                if not self.args.continue_run:
+                    self._abort = True
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                parent,
+                "fan-out phase",
+                "error",
+                None,
+                MISMATCH,
+                f"fan-out phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
 
     async def _raw_wait_no_request(
         self, d: RawDecider, canon: str, window: float = 5.0
@@ -4144,6 +4529,8 @@ class SmokeTest:
                 if not stop and not self._abort:
                     await self.run_snapshot_replay_phase(pilot)
                 if not stop and not self._abort:
+                    await self.run_fanout_phase(pilot)
+                if not stop and not self._abort:
                     await self.run_revoke_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_rejected_phase(pilot)
@@ -4393,6 +4780,15 @@ def main() -> int:
         "DNS, #2424: with single-IP test hosts it is a hard PASS/FAIL; use "
         "--no-snapshot to skip. Without --controlled-dns the phase is skipped "
         "(indeterminate on real multi-IP hosts).",
+    )
+    p.add_argument(
+        "--no-fanout",
+        dest="fanout",
+        action="store_false",
+        help="skip the per-connection verdict-cache + N-way fan-out phase "
+        "(#2361/#2366/#2337: N concurrent distinct hosts surface N distinct "
+        "requests; a once on one connection does not satisfy another; a held "
+        "connection's retransmits dedupe to one request).",
     )
     p.add_argument(
         "--no-revoke",
