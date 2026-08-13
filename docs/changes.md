@@ -41,6 +41,12 @@ operators or integrators to act when upgrading.
   resolve to single stable test IPs. Absent, behavior is unchanged (auto-detect).
   Mirrors the existing `KLANGKNETWORK_EGRESS_MIN_TTL` / `SWEEP_INTERVAL` forwarding.
 
+- **`KLANGKD_CONTAINER_TMP_SIZE` + `settings.tmp_size` (#2378).** The
+  per-workspace `/tmp` tmpfs size is now configurable (e.g. `2g`, `512m`);
+  the deploy default stays `2g` (the prior hardcoded value), so existing
+  installs are unchanged. Set the env var empty to mount `/tmp` with no
+  `size=` option (podman then sizes it at half of RAM). Exposed in the
+  Flutter create/settings dialogs and the TUI create/edit form.
 - **`egress_mode: "allow"` — default-permit egress (#2406).** A third
   egress mode alongside `static` (default-deny) and `interactive`
   (consent-gated). An `allow` workspace permits every host except names in

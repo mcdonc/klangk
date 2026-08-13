@@ -2586,6 +2586,7 @@ class TestWorkspaceRoutes:
                     "idle_timeout": 300,
                     "cpu_limit": "1.5",
                     "memory_limit": "2g",
+                    "tmp_size": "4g",
                 },
             },
             headers=headers,
@@ -2599,6 +2600,7 @@ class TestWorkspaceRoutes:
             "idle_timeout": 300,
             "cpu_limit": 1.5,
             "memory_limit": "2g",
+            "tmp_size": "4g",
         }
 
     async def test_create_workspace_rejects_unknown_setting(

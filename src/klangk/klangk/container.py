@@ -1177,6 +1177,18 @@ class ContainerRegistry:
             self.app.state.settings.container_pids_limit,
         )
 
+    def _resolve_tmp_size(self, workspace_settings: dict | None) -> str | None:
+        """Per-workspace ``/tmp`` tmpfs size (``--tmpfs /tmp:...,size=<n>``).
+
+        #2378: same precedence as the other resolvers (workspace override >
+        deploy default > none). ``None`` means mount ``/tmp`` with no
+        explicit ``size=`` option (podman sizes it at half of RAM).
+        """
+        return ws_settings.resolve_tmp_size(
+            {"settings": workspace_settings},
+            self.app.state.settings.container_tmp_size,
+        )
+
     def _network_sidecar_enabled(self) -> bool:
         """Whether the FQDN network sidecar model is configured (#2254).
 
@@ -2185,6 +2197,13 @@ class ContainerRegistry:
             "true",
             "yes",
         )
+        # #2378: per-workspace /tmp tmpfs size. Default (``2g``) preserves
+        # the pre-#2378 mount; ``None`` (explicit unset) -> no ``size=``
+        # option, so podman sizes it at half of RAM.
+        tmp_size = self._resolve_tmp_size(workspace_settings)
+        tmp_opts = "rw,exec,nosuid"
+        if tmp_size:
+            tmp_opts += f",size={tmp_size}"
 
         create_kwargs = dict(
             labels={
@@ -2203,7 +2222,7 @@ class ContainerRegistry:
             },
             binds=binds,
             tmpfs={
-                "/tmp": "rw,exec,nosuid,size=2g",
+                "/tmp": tmp_opts,
                 "/run": "rw,noexec,nosuid,size=256m",
                 "/var/log": "rw,noexec,nosuid,size=256m",
             },

@@ -315,6 +315,7 @@ class _SettingsFormState extends State<_SettingsForm> {
   late TextEditingController _cpuLimitCtrl;
   late TextEditingController _memoryLimitCtrl;
   late TextEditingController _pidsLimitCtrl;
+  late TextEditingController _tmpSizeCtrl;
   late String _selectedImage;
   late List<String> _mounts;
   late Map<String, String> _envVars;
@@ -400,6 +401,9 @@ class _SettingsFormState extends State<_SettingsForm> {
     _pidsLimitCtrl = TextEditingController(
       text: settings['pids_limit']?.toString() ?? '',
     );
+    _tmpSizeCtrl = TextEditingController(
+      text: (settings['tmp_size'] as String?) ?? '',
+    );
   }
 
   @override
@@ -484,6 +488,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     _cpuLimitCtrl.dispose();
     _memoryLimitCtrl.dispose();
     _pidsLimitCtrl.dispose();
+    _tmpSizeCtrl.dispose();
     super.dispose();
   }
 
@@ -497,6 +502,8 @@ class _SettingsFormState extends State<_SettingsForm> {
     if (mem.isNotEmpty) s['memory_limit'] = mem;
     final pids = _pidsLimitCtrl.text.trim();
     if (pids.isNotEmpty) s['pids_limit'] = int.parse(pids);
+    final tmp = _tmpSizeCtrl.text.trim();
+    if (tmp.isNotEmpty) s['tmp_size'] = tmp;
     return s;
   }
 
@@ -924,6 +931,23 @@ class _SettingsFormState extends State<_SettingsForm> {
                   hintText: 'e.g. 512',
                 ),
                 keyboardType: TextInputType.number,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _tmpSizeCtrl,
+                decoration: InputDecoration(
+                  labelText: '/tmp size',
+                  labelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'e.g. 2g, 512m',
+                ),
               ),
             ),
           ],

@@ -163,6 +163,22 @@ def test_validate_settings_accepts_int_bytes_memory():
     }
 
 
+# #2378: tmp_size reuses the memory-size coercer (same podman grammar).
+@pytest.mark.parametrize("val", ["2g", "512m", "1.5g", "1024"])
+def test_validate_settings_accepts_tmp_size_forms(val):
+    assert ws.validate_settings({"tmp_size": val}) == {"tmp_size": val}
+
+
+def test_validate_settings_rejects_bad_tmp_size_unit():
+    with pytest.raises(ValueError, match="not a valid memory size"):
+        ws.validate_settings({"tmp_size": "2gib"})
+
+
+def test_validate_settings_rejects_zero_tmp_size():
+    with pytest.raises(ValueError, match="not a valid memory size"):
+        ws.validate_settings({"tmp_size": "0"})
+
+
 # --- validate_settings_patch (merge semantics) ---
 
 
@@ -245,6 +261,9 @@ def test_typed_resolvers_bind_keys():
     assert ws.resolve_cpu_limit(ws_dict, 1.0) == 2.0
     assert ws.resolve_memory_limit(ws_dict, "1g") == "1g"
     assert ws.resolve_pids_limit(ws_dict, 100) == 100
+    assert ws.resolve_tmp_size({"settings": {"tmp_size": "4g"}}, "2g") == "4g"
+    assert ws.resolve_tmp_size({"settings": None}, "2g") == "2g"
+    assert ws.resolve_tmp_size({"settings": {}}, None) is None
 
 
 def test_known_settings_has_all_documented_keys():
@@ -255,6 +274,7 @@ def test_known_settings_has_all_documented_keys():
             "cpu_limit",
             "memory_limit",
             "pids_limit",
+            "tmp_size",
             "nix",
         }
     )

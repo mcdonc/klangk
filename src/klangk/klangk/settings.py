@@ -760,6 +760,10 @@ class KlangkSettings(BaseSettings):
     container_cpu_limit: float | None = 2.0
     container_memory_limit: str | None = "8g"
     container_pids_limit: int | None = 16384
+    # #2378: per-workspace /tmp tmpfs size (``--tmpfs /tmp:...,size=<n>``).
+    # Default ``2g`` preserves the pre-#2378 hardcoded mount size; a
+    # workspace may override it via its settings bag (``settings.tmp_size``).
+    container_tmp_size: str | None = "2g"
     test_mode: str | None = None
     version_file: str | None = None
 
@@ -1233,6 +1237,33 @@ class KlangkSettings(BaseSettings):
                 f"KLANGKD_CONTAINER_PIDS_LIMIT={v!r} must be > 0."
             )
         return value
+
+    @field_validator("container_tmp_size", mode="before")
+    @classmethod
+    def _coerce_container_tmp_size(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_TMP_SIZE`` (#2378).
+
+        Accepts the same podman size-string grammar as
+        ``container_memory_limit`` (``2g`` / ``2gb`` / ``512m`` / ``1024``
+        bare bytes / ``1.5g`` / …). ``None`` / empty -> ``None`` (mount
+        ``/tmp`` with no explicit ``size=`` option, letting podman size it at
+        half of RAM). Default ``2g`` preserves the pre-#2378 hardcoded
+        ``/tmp`` tmpfs size. A malformed or ``<= 0`` value raises and aborts
+        startup, same posture as the other container limits (#34).
+        """
+        if v is None or v == "":
+            return None
+        s = str(v).strip()
+        m = _CONTAINER_MEM_LIMIT_RE.match(s)
+        if m is None:
+            raise ValueError(
+                f"KLANGKD_CONTAINER_TMP_SIZE={v!r} is invalid. Expected "
+                "a positive size with an optional unit suffix "
+                "(b/k/m/g/t/p, e.g. 2g, 2gb, 512m, 1024)."
+            )
+        if float(m.group("num")) <= 0:
+            raise ValueError(f"KLANGKD_CONTAINER_TMP_SIZE={v!r} must be > 0.")
+        return s
 
     @field_validator("llm_models", mode="before")
     @classmethod

@@ -200,6 +200,9 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     "cpu_limit": _coerce_float,
     "memory_limit": _coerce_memory,
     "pids_limit": _coerce_positive_int,
+    # #2378: per-workspace /tmp tmpfs size (podman size string, same grammar
+    # as memory_limit — a positive number + optional k/m/g/t/p unit).
+    "tmp_size": _coerce_memory,
     # #2202: per-workspace nix flag — triggers the per-workspace /nix mount
     # (Nix.ensure_workspace_nix) when a backend is configured (``nix_seed``,
     # #2219/#2220).
@@ -375,3 +378,16 @@ def resolve_pids_limit(
 ) -> int | None:
     """Resolve the per-workspace PIDs limit (``--pids-limit``, int)."""
     return resolve(workspace, "pids_limit", deploy_default)
+
+
+def resolve_tmp_size(
+    workspace: dict | None, deploy_default: str | None
+) -> str | None:
+    """Resolve the per-workspace ``/tmp`` tmpfs size (``size=<n>``, #2378).
+
+    Same precedence as the other resolvers (workspace override > deploy
+    default > none); ``None`` means "mount /tmp with no explicit size option"
+    (podman then sizes the tmpfs at half of RAM). Same size-string grammar as
+    :func:`resolve_memory_limit`.
+    """
+    return resolve(workspace, "tmp_size", deploy_default)

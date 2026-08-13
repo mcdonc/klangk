@@ -11583,12 +11583,14 @@ async def test_create_screen_collects_settings(monkeypatch):
         cs.query_one("#cpu_limit", Input).value = "1.5"
         cs.query_one("#memory_limit", Input).value = "4g"
         cs.query_one("#pids_limit", Input).value = "256"
+        cs.query_one("#tmp_size", Input).value = "2g"
         result = _collect_settings(cs)
         assert result == {
             "idle_timeout": 600,
             "cpu_limit": 1.5,
             "memory_limit": "4g",
             "pids_limit": 256,
+            "tmp_size": "2g",
         }
 
 
@@ -11613,9 +11615,14 @@ async def test_edit_screen_save_includes_settings(monkeypatch):
         es = app.screen
         es.query_one("#cpu_limit", Input).value = "2.0"
         es.query_one("#pids_limit", Input).value = "512"
+        es.query_one("#tmp_size", Input).value = "1g"
         es._save()
         await app.workers.wait_for_complete()
-        assert captured["settings"] == {"cpu_limit": 2.0, "pids_limit": 512}
+        assert captured["settings"] == {
+            "cpu_limit": 2.0,
+            "pids_limit": 512,
+            "tmp_size": "1g",
+        }
 
 
 async def test_edit_screen_prepopulates_settings(monkeypatch):
@@ -11627,7 +11634,7 @@ async def test_edit_screen_prepopulates_settings(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     ws = _wsobj(
         "test-ws",
-        settings={"cpu_limit": 2.0, "idle_timeout": 300},
+        settings={"cpu_limit": 2.0, "idle_timeout": 300, "tmp_size": "3g"},
     )
     app = KlangkApp(_create_state())
     async with app.run_test(size=(140, 40)) as pilot:
@@ -11643,5 +11650,6 @@ async def test_edit_screen_prepopulates_settings(monkeypatch):
         es = app.screen
         assert es.query_one("#cpu_limit", Input).value == "2.0"
         assert es.query_one("#idle_timeout", Input).value == "300"
+        assert es.query_one("#tmp_size", Input).value == "3g"
         assert es.query_one("#memory_limit", Input).value == ""
         assert es.query_one("#pids_limit", Input).value == ""

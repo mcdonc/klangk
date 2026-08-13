@@ -106,7 +106,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(11));
+      expect(find.byType(TextField), findsNWidgets(12));
       expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
     });
 
@@ -935,6 +935,9 @@ void main() {
       final pidsField = find.byWidgetPredicate(
         (w) => w is TextField && w.decoration?.labelText == 'PIDs Limit',
       );
+      final tmpField = find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.labelText == '/tmp size',
+      );
 
       await tester.ensureVisible(idleField);
       await tester.enterText(idleField, '600');
@@ -944,6 +947,8 @@ void main() {
       await tester.enterText(memField, '4g');
       await tester.ensureVisible(pidsField);
       await tester.enterText(pidsField, '256');
+      await tester.ensureVisible(tmpField);
+      await tester.enterText(tmpField, '2g');
 
       await tester.tap(find.text('Create'));
       await tester.pump();
@@ -955,6 +960,7 @@ void main() {
         'cpu_limit': 1.5,
         'memory_limit': '4g',
         'pids_limit': 256,
+        'tmp_size': '2g',
       });
     });
 
