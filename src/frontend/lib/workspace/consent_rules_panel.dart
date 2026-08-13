@@ -9,8 +9,12 @@
 /// by the `egress_rules` frame the [ConsentDeciderService] already receives
 /// over `/ws/consent-decider` (#2335).
 ///
-/// Countdowns tick live (1s) but the server is the source of truth (it drops
-/// a rule at the real expiry); this only repaints the remaining-time hint.
+/// Countdowns tick live (1s) but the server is the source of truth: it drops
+/// a rule from `list_active` at the real expiry. The server only re-broadcasts
+/// the `egress_rules` frame on a discrete event (verdict/revoke/pause/
+/// reconnect), though -- not on natural expiry -- so the tick also prunes
+/// elapsed rules from the cached snapshot ([ConsentDeciderService.pruneExpiredRules])
+/// to hide the row the instant it expires rather than freezing at "0s left".
 /// Revoke is never optimistic: the row stays until the server's `revoke_ack`
 /// confirms success -- a still-enforced rule is never hidden silently (mirrors
 /// the TUI). A failed ack surfaces via the service's [flashMessage].
@@ -83,9 +87,15 @@ class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
     // forever/tilrestart-only workspace (the server is the source of truth;
     // this only repaints the remaining-time hints).
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted &&
-          hasLiveCountdown(
-              widget.service.rules, widget.service.ruleRemainingSeconds)) {
+      if (!mounted) return;
+      // Drop timed verdicts whose window just elapsed: the server only
+      // re-broadcasts egress_rules on a discrete event (verdict/revoke/pause/
+      // reconnect), not on natural expiry, so prune locally to hide the row
+      // the instant it expires (notifyListeners rebuilds if anything changed)
+      // rather than freezing at "0s left".
+      widget.service.pruneExpiredRules();
+      if (hasLiveCountdown(
+          widget.service.rules, widget.service.ruleRemainingSeconds)) {
         _onChange();
       }
     });

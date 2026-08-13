@@ -387,5 +387,39 @@ void main() {
       expect(find.textContaining('reconnecting'), findsOneWidget);
       svc.dispose();
     });
+
+    testWidgets('an expired timed rule disappears on the next tick (#2467)',
+        (tester) async {
+      var now = _at(1000); // epoch seconds
+      final ch = _FakeChannel();
+      final svc = _serviceWithChannel(ch, clock: () => now);
+      svc.connect();
+      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+      // A timed allow (decided now, expires in 5m / at t=1300) + a forever
+      // allow (no expiry).
+      ch.serverSend(_rulesFrame(allowed: [
+        _ruleJson(id: 'timed', host: 't.io', duration: '5m', decidedAt: 1000),
+        _ruleJson(
+            id: 'forever', host: 'f.io', duration: 'forever', decidedAt: 1.0),
+      ]));
+      await tester.pump();
+      expect(find.text('Active allows (2)'), findsOneWidget);
+      expect(find.byKey(const ValueKey('revoke-timed')), findsOneWidget);
+      expect(find.byKey(const ValueKey('revoke-forever')), findsOneWidget);
+
+      // Past the timed rule's expiry. Before the 1s tick fires the row is
+      // still the cached snapshot (no rebuild has pruned it yet).
+      now = _at(1400);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('revoke-timed')), findsOneWidget);
+
+      // The 1s tick prunes the elapsed rule: it vanishes, the count drops,
+      // and the open-ended rule stays (no "0s left" linger).
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('Active allows (1)'), findsOneWidget);
+      expect(find.byKey(const ValueKey('revoke-timed')), findsNothing);
+      expect(find.byKey(const ValueKey('revoke-forever')), findsOneWidget);
+      svc.dispose();
+    });
   });
 }
