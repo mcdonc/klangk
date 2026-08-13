@@ -57,6 +57,7 @@ from klangk.cli.tui.consent import (  # noqa: E402
     DURATION_1H,
     DURATION_ONCE,
     DURATION_TILRESTART,
+    make_ping,
     make_revoke,
     make_verdict,
 )
@@ -348,14 +349,28 @@ class RawDecider:
     """Minimal second consent decider over the raw decider WS.
 
     The textual ``ConsentDeciderApp`` is decider #1 (the human path driven by
-    the fuzz loop); this is a lightweight second connection for the
-    multi-decider / snapshot-replay phases, speaking the same
-    ``egress_request`` / ``egress_resolved`` / ``verdict`` frames.
+    the fuzz loop); this is a lightweight extra connection for the
+    multi-decider / snapshot-replay / decider-scope / audit phases, speaking
+    the same ``egress_request`` / ``egress_resolved`` / ``verdict`` frames.
+
+    ``ping=True`` starts a keepalive pinger so the registry's 45s liveness
+    sweep (#2308) can't reap the decider mid-phase -- matters for phases that
+    wait on a second workspace's container or on a consent timeout. The shared
+    multi-decider d2 stays non-pinging by design: its reaping inside the 45s
+    window is a backstop for the no-decider phase, and it is closed explicitly
+    anyway (#2413).
     """
 
-    def __init__(self, ws) -> None:
+    def __init__(self, ws, *, ping: bool = False) -> None:
         self.ws = ws
         self.held: dict[str, str] = {}  # request_id -> canonical host
+        # request_id -> the egress_resolved frame's ``decision`` field
+        # ("allowed"/"denied"/"expired") -- the observable audit distinction
+        # between a human verdict and a consent-timeout auto-expire (#2392).
+        self.resolved: dict[str, str | None] = {}
+        self._ping_task: asyncio.Task | None = None
+        if ping:
+            self.start_pinger()
 
     async def _recv(self, timeout: float):
         try:
@@ -377,6 +392,7 @@ class RawDecider:
             rid = msg.get("request_id")
             if isinstance(rid, str):
                 self.held.pop(rid, None)
+                self.resolved[rid] = msg.get("decision")
             return ("resolved", rid)
         return (t, None)
 
@@ -395,13 +411,50 @@ class RawDecider:
             await self._recv(0.4)
         return None
 
+    async def wait_resolution(
+        self, rid: str, timeout: float = 20.0
+    ) -> str | None:
+        """The egress_resolved ``decision`` for rid, or None on timeout.
+
+        Drains frames while polling so the egress_resolved actually lands.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if rid in self.resolved:
+                return self.resolved[rid]
+            await self._recv(0.4)
+        return None
+
     def has(self, canon: str) -> bool:
         return any(h == canon for h in self.held.values())
 
     async def verdict(self, rid: str, decision: str, duration: str) -> None:
         await self.ws.send(make_verdict(rid, decision, duration))
 
+    def start_pinger(self) -> None:
+        """Send client pings so the registry reaper doesn't drop us (#2308)."""
+        if self._ping_task is None:
+            self._ping_task = asyncio.create_task(self._ping_loop())
+
+    async def _ping_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(15.0)
+                try:
+                    await self.ws.send(make_ping())
+                except Exception:
+                    return
+        except asyncio.CancelledError:
+            return
+
     async def close(self) -> None:
+        if self._ping_task is not None:
+            self._ping_task.cancel()
+            try:
+                await self._ping_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._ping_task = None
         try:
             await self.ws.close()
         except Exception:
@@ -442,6 +495,119 @@ def _exit_label(exit_code: int | None) -> str:
     return f"exit{exit_code}" + (f":{tag}" if tag else "")
 
 
+# -- outcome codes ----------------------------------------------------------
+# A stable code per observable phenomenon (independent of severity), printed on
+# each result line and tallied in the summary so a repeat in a later run maps
+# straight to the issue that explains it. Keyed on the result's `detail` prefix
+# (the most specific signal); the `_classify_conn` mismatches carry no detail,
+# so `_outcome_code` falls back to (expect_conn, exit_code). PASS rows get no
+# code. See #2421.
+OUTCOME_CODE_NAMES: dict[str, str] = {
+    "D1": "NO-EXPECTED-REQUEST",  # an expected consent request never arrived (off-list / post-expiry / post-revoke); fail-closed or hung. #2417 #2418
+    "D2": "CARRYOVER-SURPRISE",  # an in-effect verdict didn't cover a retry (CDN/per-IP). Non-bug per #2399; mis-scored in the scored loop (#2419).
+    "D3": "DECIDER2-HANDSHAKE",  # a 2nd consent decider WS opening-handshake failure. #2420
+    "D4": "ALLOW-REFUSED",  # an allow / allow-list / active-allow was refused (EXPECT_RELEASED -> exit 7).
+    "D5": "DENY-RELEASED",  # a deny / active-deny let the connection through (EXPECT_REFUSED -> exit 0).
+    "D6": "NORESPONSE-OK",  # a no-response (timeout) succeeded (EXPECT_NOT0 -> exit 0).
+    "D7": "STATIC-LEAK",  # off-list succeeded with no decider registered.
+    "D8": "STATIC-HELD",  # off-list hung with no decider (not a clean static denial).
+    "D9": "STATICWS-ACCEPTED",  # a decider registered against a static workspace. #2395
+    "D10": "REJECTED-PROMPTED",  # a rejected_domains host prompted for consent (not pre-empted). #2367
+    "D11": "REJECTED-LEAK",  # a rejected_domains host succeeded (leak). #2367
+    "D12": "NO-REPROMPT-REVOKE",  # no re-prompt after a revoke (rule not dropped). #2339 #2396
+    "D13": "FAILCLOSED-LEAK",  # connection succeeded after the decider disconnected (#2308 violation).
+    "D14": "FIRST-DECISION-VIOLATION",  # first-decision-wins broken (a late/2nd verdict let it through).
+    "D15": "SNAPSHOT-CASCADE",  # reconnect snapshot indeterminate (CDN-cascade respawn / timing).
+    "D16": "HUNG-NFQUEUE-DNS",  # connection hung / unexpected exit (NFQUEUE/DNS), not a consent failure.
+    "D17": "CONN-NOT-CLEAN",  # connection not cleanly refused / a resolve frame wasn't seen.
+    "D18": "AB-HELD-HUNG",  # concurrent A/B hold hung (NFQUEUE/DNS; possibly a concurrent-hold issue).
+    "D19": "ISOLATION-BROKEN",  # a workspace-scoped decider saw another workspace's request. #2392
+    "D20": "UNEXPECTED-ERROR",  # a phase bring-up or per-step exception (an unexpected error).
+    "D21": "AUDIT-MISLABELED",  # expired/denied audit distinction broken (timeout audited as deny, or vice-versa). #2392
+}
+
+# detail-string prefix -> code (see OUTCOME_CODE_NAMES). Checked in order; the
+# first matching prefix wins, so keep prefixes specific.
+_DETAIL_PREFIX_CODES: list[tuple[str, str]] = [
+    ("expected a request, none arrived", "D1"),
+    ("expected a request; connection hung", "D16"),
+    ("expected no request (covered:", "D2"),
+    ("expected a re-prompt; connection hung", "D16"),
+    ("expected a re-prompt; none arrived", "D1"),
+    ("verdict not in effect", "D2"),
+    ("no request for a fresh off-list host", "D1"),
+    ("could not attach a 2nd decider", "D3"),
+    ("X not seen by BOTH deciders", "D1"),
+    ("Y not held", "D1"),
+    ("app didn't see decider2's resolve", "D17"),
+    ("decider2's deny let the connection through", "D5"),
+    ("connection not cleanly refused", "D17"),
+    ("B conn not cleanly refused", "D17"),
+    ("B2 conn not cleanly refused", "D17"),
+    ("late allow let it through", "D14"),
+    ("A/B hung", "D18"),
+    ("A/B not both held", "D1"),
+    ("A present", "D15"),
+    ("B missing from snapshot", "D15"),
+    ("a decider registered against a static workspace", "D9"),
+    ("neither a frame nor a close", "D9"),
+    ("a rejected host prompted for consent", "D10"),
+    ("rejected host hung", "D16"),
+    ("rejected host succeeded", "D11"),
+    ("off-list host did not prompt", "D1"),
+    ("off-list host was not held for consent", "D1"),
+    ("post-revoke connection hung", "D16"),
+    ("no re-prompt after revoke", "D12"),
+    ("connection hung after disconnect", "D16"),
+    ("connection SUCCEEDED after the decider disconnected", "D13"),
+    ("B sidecar not ready", "D1"),
+    ("A-scoped decider saw B's request", "D19"),
+    ("B deny let the connection through", "D5"),
+    ("deploy-wide's B deny let it through", "D5"),
+    ("deploy-wide didn't see A", "D1"),
+    ("deploy-wide saw A but the app didn't", "D1"),
+    ("deploy-wide didn't see B", "D1"),
+    ("could not set up the scope phase", "D20"),
+    ("no hold surfaced", "D1"),
+    ("expired but the connection succeeded", "D6"),
+    ("timeout audited as", "D21"),
+    ("no egress_resolved frame", "D17"),
+    ("unexpected resolution", "D21"),
+    ("denied but conn not refused", "D17"),
+    ("human deny audited as", "D21"),
+    ("audit phase failed", "D20"),
+    ("allow-list host should connect", "D4"),
+    ("off-list hung (not a clean static denial)", "D8"),
+    ("off-list succeeded with no decider", "D7"),
+    ("step raised", "D20"),
+]
+
+
+def _outcome_code(res: "_Result") -> str:
+    """Stable outcome code for a result ("" for PASS). See #2421.
+
+    A non-PASS result whose detail matches no known prefix returns the sentinel
+    "D?" so any gap is loud rather than silent.
+    """
+    if res.status == PASS:
+        return ""
+    detail = res.detail or ""
+    for prefix, code in _DETAIL_PREFIX_CODES:
+        if detail.startswith(prefix):
+            return code
+    if detail:
+        return "D?"  # unmapped detail -> visible gap
+    # No detail: a `_classify_conn` outcome. Derive from the expectation.
+    if res.status == MISMATCH:
+        return {
+            EXPECT_RELEASED: "D4",
+            EXPECT_REFUSED: "D5",
+            EXPECT_NOT0: "D6",
+        }.get(res.expect_conn, "D?")
+    # FINDING with no detail -> hung / unexpected exit (NFQUEUE/DNS).
+    return "D16"
+
+
 @dataclass
 class _Result:
     step: _Step
@@ -453,6 +619,7 @@ class _Result:
     exit_code: int | None
     status: str
     detail: str = ""
+    code: str = ""  # stable outcome code (D1..); "" for PASS. See #2421.
 
 
 @dataclass
@@ -478,6 +645,14 @@ class SmokeTest:
         self.app: ConsentDeciderApp | None = None
         self.container: str | None = None
         self._shared_d2: RawDecider | None = None
+        # Extra deciders / workspaces / terminal-WS opened by the decider-scope
+        # + audit phases. Closed + deleted in teardown so nothing leaks into
+        # the no-decider phase (the #2413 leak class) or past the run. A phase
+        # also closes its own deciders eagerly: the deploy-wide one covers
+        # workspace A and would otherwise keep it interactive.
+        self._extra_deciders: list[RawDecider] = []
+        self._extra_ws_ids: list[str] = []
+        self._extra_ws_conns: list[tuple] = []
 
     # -- setup ------------------------------------------------------------
     def _start_server(self) -> dict:
@@ -583,22 +758,25 @@ class SmokeTest:
         finally:
             client.close()
 
-    async def _wait_container_ready(self) -> None:
-        # Open the workspace terminal WS: confirms container_ready AND keeps
-        # the workspace from idle-stopping during the run.
+    async def _open_terminal_ws(self, ws_id: str):
+        # Open the workspace terminal WS for ws_id + wait for container_ready.
+        # Confirms the container is up; the caller keeps the WS open (drained)
+        # so the workspace doesn't idle-stop during the run.
         ws = await ws_connect(self.server, f"/ws?token={self.auth['token']}")
         await ws.send(
-            json.dumps({"cmd": "workspace_connect", "workspaceId": self.ws_id})
+            json.dumps({"cmd": "workspace_connect", "workspaceId": ws_id})
         )
         deadline = time.time() + 120
         while time.time() < deadline:
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=120))
             if msg.get("type") == "container_ready":
-                self.ws_conn = ws
-                self._drain_task = asyncio.create_task(self._drain(ws))
-                return
+                return ws
         await ws.close()
         raise RuntimeError("container_ready not received within 120s")
+
+    async def _wait_container_ready(self) -> None:
+        self.ws_conn = await self._open_terminal_ws(self.ws_id)
+        self._drain_task = asyncio.create_task(self._drain(self.ws_conn))
 
     @staticmethod
     async def _drain(ws) -> None:
@@ -765,6 +943,7 @@ class SmokeTest:
         )
 
     def _record(self, res: _Result) -> _Result:
+        res.code = _outcome_code(res)
         self.summary.total += 1
         self.summary.rows.append(res)
         if res.status == PASS:
@@ -797,7 +976,7 @@ class SmokeTest:
             f"[{r.step.idx + 1:>{len(str(self.args.count))}}/{self.args.count}] "
             f"dest={r.step.host:<18} {r.step.kind:<6} {cov:<9} "
             f"-> {action:<18} sidecar={r.sidecar:<12} conn={_exit_label(r.exit_code):<14} "
-            f"{self._mark(r.status)}"
+            f"{self._mark(r.status)}" + (f" [{r.code}]" if r.code else "")
         )
         if r.detail:
             print(f"       ... {r.detail}")
@@ -941,23 +1120,24 @@ class SmokeTest:
             self.summary.findings += 1
         else:
             self.summary.mismatches += 1
-        self.summary.rows.append(
-            _Result(
-                parent,
-                _canonical(parent.host),
-                True,
-                "",
-                label,
-                sidecar,
-                exit_code,
-                status,
-                detail=detail,
-            )
+        res = _Result(
+            parent,
+            _canonical(parent.host),
+            True,
+            "",
+            label,
+            sidecar,
+            exit_code,
+            status,
+            detail=detail,
         )
+        res.code = _outcome_code(res)
+        self.summary.rows.append(res)
         indent = " " * (len(str(self.args.count)) + 3)
         print(
             f"{indent}↳ {label:<20} sidecar={sidecar:<12} "
             f"conn={_exit_label(exit_code):<14} {self._mark(status)}"
+            + (f" [{res.code}]" if res.code else "")
         )
         if detail:
             print(f"{indent}   ... {detail}")
@@ -1037,21 +1217,31 @@ class SmokeTest:
                 expect_conn=EXPECT_NOT0,
             )
 
-    async def _connect_raw_decider(self, attempts: int = 2) -> RawDecider:
+    async def _connect_raw_decider(
+        self,
+        workspace_id: str | None = None,
+        attempts: int = 2,
+        *,
+        ping: bool = False,
+    ) -> RawDecider:
         # Retry once with a generous open timeout as a safety net against a
         # transient accept hiccup; bounded so a persistent issue fails fast
         # (the caller records a finding) rather than hanging the run.
         # (Was framed as a TCP-proxy flakiness workaround; that premise was
         # disproven — the proxy is reliable at this concurrency, #2398.)
-        url = (
-            f"/ws/consent-decider?token={self.auth['token']}"
-            f"&workspace={self.ws_id}"
-        )
+        #
+        # workspace_id scopes the decider: a real id -> workspace-scoped
+        # (needs terminal access); None -> deploy-wide (needs admin, decides
+        # for every workspace). Used by the decider-scope phase's
+        # isolation / coverage probes (#2392).
+        url = f"/ws/consent-decider?token={self.auth['token']}"
+        if workspace_id is not None:
+            url += f"&workspace={workspace_id}"
         last: Exception | None = None
         for _ in range(attempts):
             try:
                 ws = await ws_connect(self.server, url, open_timeout=15)
-                return RawDecider(ws)
+                return RawDecider(ws, ping=ping)
             except Exception as e:  # noqa: BLE001
                 last = e
                 await asyncio.sleep(1.0)
@@ -1071,7 +1261,7 @@ class SmokeTest:
         phases — one extra decider connection rather than opening/closing
         one per phase."""
         if self._shared_d2 is None:
-            self._shared_d2 = await self._connect_raw_decider()
+            self._shared_d2 = await self._connect_raw_decider(self.ws_id)
             await self._shared_d2.settle()
         return self._shared_d2
 
@@ -1657,6 +1847,372 @@ class SmokeTest:
         if status == MISMATCH and not self.args.continue_run:
             self._abort = True
 
+    async def run_decider_scope_phase(self, pilot) -> None:
+        """Workspace-scoped vs deploy-wide decider authz (#2392).
+
+        Cross-workspace isolation: a decider scoped to workspace A must NOT
+        receive workspace B's ``egress_request`` (the registry's
+        ``deciders_for`` filters by scope). Deploy-wide coverage: an admin
+        decider (no ``workspace`` param) receives ``egress_request`` from
+        EVERY workspace. Both are driven on the real stack with a second
+        interactive workspace B.
+
+        ``pilot`` drives the textual app (decider #1, scoped to A = the
+        isolation subject); we read its ``controller.pending`` directly.
+        """
+        if not self.args.decider_scope:
+            return
+        print(
+            "\n--- decider scope: workspace-scoped isolation + deploy-wide ---"
+        )
+        d_b: RawDecider | None = None
+        d_dep: RawDecider | None = None
+        cont_b: str | None = None
+        step_tag = "create B"
+        try:
+            ws_b = await asyncio.to_thread(
+                self._create_workspace, self.server, self.auth
+            )
+            self._extra_ws_ids.append(ws_b)
+            print(f"workspace B {ws_b}  (interactive, for scope isolation)")
+            # Keep B's container up + confirm readiness. A second workspace's
+            # sidecar consent-WS has the same startup race as A's (#2417), so a
+            # missing hold below is a finding, not a hard fail.
+            step_tag = "B terminal WS"
+            conn_b = await self._open_terminal_ws(ws_b)
+            self._extra_ws_conns.append(
+                (conn_b, asyncio.create_task(self._drain(conn_b)))
+            )
+            step_tag = "B container"
+            cont_b = _container_for_workspace(ws_b)
+            step_tag = "decider B"
+            d_b = await self._connect_raw_decider(ws_b, ping=True)
+            self._extra_deciders.append(d_b)
+            await d_b.settle()
+            step_tag = "deploy-wide decider"
+            d_dep = await self._connect_raw_decider(None, ping=True)
+            self._extra_deciders.append(d_dep)
+            await d_dep.settle()
+
+            # 1) isolation + B readiness: B's off-list SYN is held; d_b sees
+            #    it, the A-scoped app does NOT. If d_b never sees it, B's
+            #    sidecar WS wasn't wired yet (#2417) -> finding, not a hard fail.
+            host_b = "openjdk.org"  # fresh: untouched elsewhere
+            cb = _canonical(host_b)
+            step_b = _Step(
+                self.summary.total, host_b, "domain", False, "scope-B", "-"
+            )
+            of_b = f"/tmp/smoke_scope_b_{self.summary.total}.out"
+            _trigger(cont_b, host_b, of_b)
+            rid_b = await d_b.wait_for(cb, 20.0)
+            if rid_b is None:
+                self._record_probe(
+                    step_b,
+                    "B off-list -> d_b",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "B sidecar not ready (no hold); cannot assert isolation (#2417)",
+                )
+            else:
+                leaked = await _wait_for_request(self.app, cb, 3.0)
+                await d_b.verdict(rid_b, DECISION_DENIED, DURATION_ONCE)
+                await d_b.wait_resolution(rid_b, 15.0)
+                text_b = await _wait_result(cont_b, of_b)
+                ec_b = _parse_exit(text_b)
+                if leaked is not None:
+                    sx, dx = (
+                        MISMATCH,
+                        "A-scoped decider saw B's request (isolation broken)",
+                    )
+                elif ec_b == EXIT_REFUSED:
+                    sx, dx = PASS, ""
+                elif ec_b == 0:
+                    sx, dx = MISMATCH, "B deny let the connection through"
+                else:
+                    sx, dx = (
+                        FINDING,
+                        f"B conn not cleanly refused (exit {ec_b})",
+                    )
+                self._record_probe(
+                    step_b,
+                    "B off-list -> d_b only",
+                    "isolated" if leaked is None else "leak(!)",
+                    ec_b,
+                    sx,
+                    dx,
+                )
+                if sx == MISMATCH and not self.args.continue_run:
+                    self._abort = True
+                    return
+
+            # 2) deploy-wide positive control: an A off-list SYN reaches the
+            #    deploy-wide decider AND the A-scoped app (proves d_dep really
+            #    receives frames, so #3's "didn't see B" can't be a false neg).
+            host_a = "rust-lang.org"  # fresh
+            ca = _canonical(host_a)
+            step_a = _Step(
+                self.summary.total, host_a, "domain", False, "scope-A", "-"
+            )
+            of_a = f"/tmp/smoke_scope_a_{self.summary.total}.out"
+            _trigger(self.container, host_a, of_a)
+            rid_a = await d_dep.wait_for(ca, 20.0)
+            app_a = (
+                await _wait_for_request(self.app, ca, 8.0) if rid_a else None
+            )
+            if rid_a is None:
+                self._record_probe(
+                    step_a,
+                    "A off-list -> deploy-wide",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "deploy-wide didn't see A (A sidecar readiness, #2417)",
+                )
+            else:
+                if app_a is not None:
+                    self.app._decide_id(app_a, DECISION_ALLOWED, DURATION_ONCE)
+                    await pilot.pause()
+                    await _wait_resolved(self.app, app_a, 15.0)
+                text_a = await _wait_result(self.container, of_a)
+                ec_a = _parse_exit(text_a)
+                if app_a is not None:
+                    sx, dx = PASS, ""
+                else:
+                    sx, dx = (
+                        FINDING,
+                        "deploy-wide saw A but the app didn't (timing)",
+                    )
+                self._record_probe(
+                    step_a,
+                    "A off-list -> deploy-wide + app",
+                    "covered" if app_a else "partial",
+                    ec_a,
+                    sx,
+                    dx,
+                )
+                if sx == MISMATCH and not self.args.continue_run:
+                    self._abort = True
+                    return
+
+            # 3) deploy-wide sees B: the SAME deploy-wide decider receives a B
+            #    off-list SYN -- coverage is deploy-wide, not A-scoped.
+            host_b2 = "elixir-lang.org"  # fresh
+            cb2 = _canonical(host_b2)
+            step_b2 = _Step(
+                self.summary.total, host_b2, "domain", False, "scope-B2", "-"
+            )
+            of_b2 = f"/tmp/smoke_scope_b2_{self.summary.total}.out"
+            _trigger(cont_b, host_b2, of_b2)
+            rid_b2 = await d_dep.wait_for(cb2, 20.0)
+            if rid_b2 is None:
+                self._record_probe(
+                    step_b2,
+                    "B off-list -> deploy-wide",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "deploy-wide didn't see B (B sidecar readiness, #2417)",
+                )
+            else:
+                await d_b.verdict(rid_b2, DECISION_DENIED, DURATION_ONCE)
+                await d_b.wait_resolution(rid_b2, 15.0)
+                text_b2 = await _wait_result(cont_b, of_b2)
+                ec_b2 = _parse_exit(text_b2)
+                if ec_b2 == EXIT_REFUSED:
+                    sx, dx = PASS, ""
+                elif ec_b2 == 0:
+                    sx, dx = MISMATCH, "deploy-wide's B deny let it through"
+                else:
+                    sx, dx = (
+                        FINDING,
+                        f"B2 conn not cleanly refused (exit {ec_b2})",
+                    )
+                self._record_probe(
+                    step_b2,
+                    "B off-list -> deploy-wide too",
+                    "covered",
+                    ec_b2,
+                    sx,
+                    dx,
+                )
+                if sx == MISMATCH and not self.args.continue_run:
+                    self._abort = True
+                    return
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                _Step(
+                    self.summary.total, "(scope)", "n/a", False, "scope", "-"
+                ),
+                "bring up B + deciders",
+                "error",
+                None,
+                MISMATCH,
+                f"could not set up the scope phase ({step_tag}): {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+        finally:
+            # CRITICAL: the deploy-wide decider covers workspace A, so a live one
+            # keeps A interactive and breaks the no-decider phase premise (the
+            # #2413 leak class). Close both eagerly; teardown is a backstop
+            # (double-close is a safe no-op).
+            for d in (d_dep, d_b):
+                if d is not None:
+                    await d.close()
+
+    async def run_audit_distinction_phase(self, pilot) -> None:
+        """Audit distinction: ``expired`` (timeout) vs ``denied`` (human) (#2392).
+
+        A no-response consent hold auto-expires at the timeout and is resolved
+        to the decider as ``egress_resolved{decision:"expired"}`` -- distinct
+        from a human deny (``decision:"denied"``). The DB-level distinction
+        (``decided_by`` NULL for a static-policy denial vs the decider's user id
+        for a verdict; ``decision="expired"`` for a timeout) is model-internal
+        with no HTTP read path and the issue forbids new server code, so this
+        phase asserts the OBSERVABLE proxy: the ``egress_resolved`` frame's
+        ``decision`` field. The static-denial half (off-list denied with no
+        decider, no hold, no frame) is already covered by the no-decider phase.
+
+        ``pilot`` is unused (signature symmetry); a fresh pinging RawDecider is
+        the observer so it isn't reaped mid-phase.
+        """
+        if not self.args.audit_distinction:
+            return
+        print(
+            "\n--- audit distinction: expired (timeout) vs denied (human) ---"
+        )
+        d: RawDecider | None = None
+        try:
+            d = await self._connect_raw_decider(self.ws_id, ping=True)
+            self._extra_deciders.append(d)
+            await d.settle()
+
+            # 1) expired: off-list fresh host, NO verdict -> the consent
+            #    timeout auto-expires the hold. The egress_resolved frame's
+            #    decision must be "expired" (NOT "denied" -- that would
+            #    mis-audit a timeout as a human deny).
+            host_e = "ietf.org"  # fresh: untouched elsewhere
+            ce = _canonical(host_e)
+            step_e = _Step(
+                self.summary.total,
+                host_e,
+                "domain",
+                False,
+                "audit-expired",
+                "-",
+            )
+            of_e = f"/tmp/smoke_aud_e_{self.summary.total}.out"
+            _trigger(self.container, host_e, of_e)
+            rid_e = await d.wait_for(ce, 20.0)
+            if rid_e is None:
+                self._record_probe(
+                    step_e,
+                    "expired: hold",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "no hold surfaced (A sidecar readiness, #2417)",
+                )
+            else:
+                decision = await d.wait_resolution(
+                    rid_e, timeout=self.args.consent_timeout + 20
+                )
+                text_e = await _wait_result(self.container, of_e)
+                ec_e = _parse_exit(text_e)
+                if decision == "expired" and ec_e != 0:
+                    sx, dx = PASS, ""
+                elif decision == "expired":
+                    sx, dx = MISMATCH, "expired but the connection succeeded"
+                elif decision == "denied":
+                    sx, dx = (
+                        MISMATCH,
+                        "timeout audited as 'denied' (not 'expired')",
+                    )
+                elif decision is None:
+                    sx, dx = (
+                        FINDING,
+                        "no egress_resolved frame (sidecar hiccup)",
+                    )
+                else:
+                    sx, dx = FINDING, f"unexpected resolution: {decision!r}"
+                self._record_probe(
+                    step_e,
+                    "expired (no response)",
+                    str(decision),
+                    ec_e,
+                    sx,
+                    dx,
+                )
+                if sx == MISMATCH and not self.args.continue_run:
+                    self._abort = True
+                    return
+
+            # 2) denied: off-list fresh host, a human deny verdict ->
+            #    egress_resolved decision "denied" and the connection refused.
+            host_d = "python.org"  # fresh
+            cd = _canonical(host_d)
+            step_d = _Step(
+                self.summary.total,
+                host_d,
+                "domain",
+                False,
+                "audit-denied",
+                "-",
+            )
+            of_d = f"/tmp/smoke_aud_d_{self.summary.total}.out"
+            _trigger(self.container, host_d, of_d)
+            rid_d = await d.wait_for(cd, 20.0)
+            if rid_d is None:
+                self._record_probe(
+                    step_d,
+                    "denied: hold",
+                    "no-request(!)",
+                    None,
+                    FINDING,
+                    "no hold surfaced (A sidecar readiness, #2417)",
+                )
+                return
+            await d.verdict(rid_d, DECISION_DENIED, DURATION_ONCE)
+            decision_d = await d.wait_resolution(rid_d, 15.0)
+            text_d = await _wait_result(self.container, of_d)
+            ec_d = _parse_exit(text_d)
+            if decision_d == "denied" and ec_d == EXIT_REFUSED:
+                sx, dx = PASS, ""
+            elif decision_d == "denied":
+                sx, dx = FINDING, f"denied but conn not refused (exit {ec_d})"
+            else:
+                sx, dx = (
+                    MISMATCH,
+                    f"human deny audited as {decision_d!r} (not 'denied')",
+                )
+            self._record_probe(
+                step_d,
+                "denied (human verdict)",
+                str(decision_d),
+                ec_d,
+                sx,
+                dx,
+            )
+            if sx == MISMATCH and not self.args.continue_run:
+                self._abort = True
+        except Exception as e:  # noqa: BLE001
+            self._record_probe(
+                _Step(
+                    self.summary.total, "(audit)", "n/a", False, "audit", "-"
+                ),
+                "audit phase",
+                "error",
+                None,
+                MISMATCH,
+                f"audit phase failed: {e!r}",
+            )
+            if not self.args.continue_run:
+                self._abort = True
+        finally:
+            if d is not None:
+                await d.close()
+
     async def run_no_decider_phase(self, pilot) -> None:
         """Static-mode phase: with NO consent decider registered, off-list egress
         is denied cleanly (no held request, no hang) while allow-list egress
@@ -1756,8 +2312,9 @@ class SmokeTest:
                             "error",
                             None,
                             MISMATCH,
-                            detail=f"{exc!r}",
+                            detail=f"step raised: {exc!r}",
                         )
+                        res.code = _outcome_code(res)
                         self.summary.total += 1
                         self.summary.mismatches += 1
                         self.summary.rows.append(res)
@@ -1780,6 +2337,10 @@ class SmokeTest:
                     await self.run_rejected_phase(pilot)
                 if not stop and not self._abort:
                     await self.run_fail_closed_phase(pilot)
+                if not stop and not self._abort:
+                    await self.run_decider_scope_phase(pilot)
+                if not stop and not self._abort:
+                    await self.run_audit_distinction_phase(pilot)
             # run_test exited -> the decider WS dropped -> the server deregistered
             # the decider -> the workspace reverted to static allow-list (#2308).
             # _shared_d2 (the multi-decider / snapshot raw decider) is a SEPARATE
@@ -1802,6 +2363,28 @@ class SmokeTest:
         if self._shared_d2 is not None:
             await self._shared_d2.close()
             self._shared_d2 = None
+        for d in self._extra_deciders:
+            try:
+                await d.close()
+            except Exception:
+                pass
+        self._extra_deciders.clear()
+        for conn, drain in self._extra_ws_conns:
+            drain.cancel()
+            try:
+                await conn.close()
+            except Exception:
+                pass
+        self._extra_ws_conns.clear()
+        if self.server and self.auth and self.args.delete_workspace:
+            for wid in self._extra_ws_ids:
+                try:
+                    await asyncio.to_thread(
+                        self._delete_workspace, self.server, self.auth, wid
+                    )
+                except Exception:
+                    pass
+        self._extra_ws_ids.clear()
         if self.app is not None:
             try:
                 self.app._stop = True
@@ -1840,6 +2423,19 @@ class SmokeTest:
         finally:
             client.close()
 
+    @staticmethod
+    def _print_code_tally(rows: list[_Result]) -> None:
+        counts: dict[str, int] = {}
+        for r in rows:
+            if r.code:
+                counts[r.code] = counts.get(r.code, 0) + 1
+        if not counts:
+            return
+        print("\noutcome codes:")
+        for code in sorted(counts):
+            name = OUTCOME_CODE_NAMES.get(code, "??")
+            print(f"  {code} {name:<26} x{counts[code]}")
+
     def _print_summary(self, stopped: bool) -> None:
         s = self.summary
         print("\n" + "=" * 72)
@@ -1854,7 +2450,8 @@ class SmokeTest:
             print("\nfindings (under-specified; not failures):")
             for r in findings:
                 print(
-                    f"  [{r.step.idx + 1}] {r.step.host} ({r.step.kind}) "
+                    f"  [{r.step.idx + 1}]{' [' + r.code + ']' if r.code else ''} "
+                    f"{r.step.host} ({r.step.kind}) "
                     f"action={r.action_taken} sidecar={r.sidecar} "
                     f"conn={_exit_label(r.exit_code)}  {r.detail}"
                 )
@@ -1863,11 +2460,13 @@ class SmokeTest:
             print("\nmismatches:")
             for r in mism:
                 print(
-                    f"  [{r.step.idx + 1}] {r.step.host} ({r.step.kind}) "
+                    f"  [{r.step.idx + 1}]{' [' + r.code + ']' if r.code else ''} "
+                    f"{r.step.host} ({r.step.kind}) "
                     f"expect_req={r.expect_request} expect_conn={r.expect_conn} "
                     f"action={r.action_taken} sidecar={r.sidecar} "
                     f"conn={_exit_label(r.exit_code)}  {r.detail}"
                 )
+        self._print_code_tally(s.rows)
         print("=" * 72)
 
 
@@ -1954,6 +2553,18 @@ def main() -> int:
         dest="static_refusal",
         action="store_false",
         help="skip the #2395 static-workspace-refuses-decider check",
+    )
+    p.add_argument(
+        "--no-decider-scope",
+        dest="decider_scope",
+        action="store_false",
+        help="skip the workspace-scoped vs deploy-wide decider phase (#2392)",
+    )
+    p.add_argument(
+        "--no-audit-distinction",
+        dest="audit_distinction",
+        action="store_false",
+        help="skip the expired-vs-denied audit-distinction phase (#2392)",
     )
     p.add_argument(
         "--expiry-wait",
