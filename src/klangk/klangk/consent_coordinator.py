@@ -506,7 +506,7 @@ class ConsentCoordinator:
         :meth:`_persist_forever_deny`: removes the consented host from
         ``allowed_domains`` (allow) or ``rejected_domains`` (deny) so the
         verdict does not re-apply on the next sidecar restart. The deciding
-        connection's in-memory ACCEPT/REJECT + ``_FOREVER_HOSTS``/
+        connection's in-memory ACCEPT/REJECT + ``_SESSION_HOST_ALLOWS``/
         ``_VERDICT_CACHE`` were already cleared by the drop the caller sent.
 
         Best-effort (failures logged + swallowed): the row is already revoked,
@@ -578,7 +578,7 @@ class ConsentCoordinator:
         # NOTE (#2370): a `forever` verdict also lives in the workspace's
         # allowed_domains/rejected_domains (added in resolve, #2368/#2369),
         # which the sidecar re-reads on restart. The drop above cleared the
-        # in-memory rules + _FOREVER_HOSTS/_VERDICT_CACHE; retract the durable
+        # in-memory rules + _SESSION_HOST_ALLOWS/_VERDICT_CACHE; retract the durable
         # entry too (after the row is marked revoked) so the verdict does not
         # re-apply on the next sidecar restart.
         # Ask the sidecar to drop its rule for this host+decision. No live

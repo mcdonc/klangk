@@ -179,7 +179,7 @@ WORKSPACE_TOKEN_PATH = "/run/klangk/workspace-token"
 # EXACT (apex only); a leading-dot ``.host`` is INCLUSIVE (apex + subdomains);
 # ``*.host`` is SUBDOMAINS only. (Bare = exact is the breaking flip from the
 # old "bare = apex+subdomains" model.) One definition shared by parse_specs /
-# ports_for / _forever_host_allows.
+# ports_for / _session_host_allows_ttl.
 _EXACT = "exact"
 _INCLUSIVE = "inclusive"
 _SUBDOMAINS = "subdomains"
@@ -225,16 +225,25 @@ SPECS = parse_specs()
 # matching one of these is NXDOMAIN'd unconditionally (see :func:`rejected_for`).
 REJECT_SPECS = parse_specs("KLANGKNETWORK_EGRESS_REJECT")
 
-# Hosts allow-listed in-session by a `forever` consent verdict (#2372): each
-# entry is (host, port, mode), mirroring SPECS. On a forever allow,
-# _decide_and_verdict adds the consented host:port here so ports_for treats it
-# as allow-listed for the rest of the session -- the DNS path then learns every
+# Hosts allow-listed in-session by a consent ``allow`` verdict, timed or
+# forever (#2372, #2434): each entry is (host, port, mode, expire), mirroring
+# SPECS plus an expiry epoch. On an allow whose duration is not ``once``,
+# _decide_and_verdict adds the consented host:port here (expire = now + the
+# verdict's TTL; forever/tilrestart map to ~a year) so ports_for treats it as
+# allow-listed for the verdict's lifetime -- the DNS path then learns every
 # resolved IP and allows it without NFQUEUE, so a CDN-rotated IP does NOT
-# re-prompt seconds after the user said "allow forever." Dies with the sidecar
-# (in-memory); the persisted allowed_domains entry (#2368) covers the next
-# restart. Touched only on the event-loop thread (the NFQUEUE consumer is
-# loop-driven, and ports_for runs in the DNS loop) -- no lock, like SPECS.
-_FOREVER_HOSTS: list[tuple[str, int | None, str]] = []
+# re-prompt (and _session_host_allows_ttl short-circuits any SYN that still
+# races NFQUEUE). This is the fix for the ALLOW-REFUSED mismatch (#2434): a
+# timed allow used to cover only the IP resolved at decision time, so a
+# CDN-rotated IP re-entered NFQUEUE and a hold timeout there fail-closed to a
+# deny REJECT an in-effect allow should override. ``once`` adds nothing -- it is
+# per-connection, so a reconnect re-prompts. Dies with the sidecar (in-memory);
+# the persisted allowed_domains entry (#2368) covers the next restart. Touched
+# only on the event-loop thread (the NFQUEUE consumer is loop-driven, and
+# ports_for runs in the DNS loop) -- no lock, like SPECS. Timed entries expire
+# lazily via _prune_session_allows (the structure is loop-only, so it can't be
+# swept off-loop by sweep_once under _LOCK like _LEARNED/_REJECTED).
+_SESSION_HOST_ALLOWS: list[tuple[str, int | None, str, float]] = []
 
 # Learned IPs: {ip: {"expire": epoch, "ports": set[int | None], "host": str}}.
 # ``ports`` holds the ACCEPT rule ports (a ``None`` is all-ports); ``host`` is
@@ -311,7 +320,7 @@ def nxdomain_for(wire: bytes) -> bytes:
 def _host_matches(qname: str, host: str, mode: str) -> bool:
     """Does ``qname`` match ``host`` under nginx-style scope ``mode`` (#2377)?
 
-    Shared by :func:`ports_for` (the DNS gate) and :func:`_forever_host_allows`
+    Shared by :func:`ports_for` (the DNS gate) and :func:`_session_host_allows_ttl`
     (the NFQUEUE gate) so the two can't drift. :data:`_EXACT` (bare host) matches
     the apex only; :data:`_INCLUSIVE` (``.host``) matches apex + subdomains;
     :data:`_SUBDOMAINS` (``*.host``) matches subdomains only. The suffix check
@@ -337,7 +346,9 @@ def ports_for(qname: str) -> set[int] | None:
     (subdomains only, apex excluded).
     """
     ports: set[int] = set()
-    for host, port, mode in (*SPECS, *_FOREVER_HOSTS):
+    _prune_session_allows()
+    session = [(h, p, m) for (h, p, m, _exp) in _SESSION_HOST_ALLOWS]
+    for host, port, mode in (*SPECS, *session):
         if not _host_matches(qname, host, mode):
             continue
         if port is None:
@@ -357,38 +368,75 @@ def rejected_for(qname: str) -> bool:
     return any(_host_matches(qname, host, mode) for host, _port, mode in REJECT_SPECS)
 
 
-def _add_forever_host(host: str, port: int) -> None:
-    """Allow-list ``host:port`` in-session for a `forever` consent verdict (#2372).
+def _prune_session_allows() -> None:
+    """Drop expired in-session host allows (lazy sweep, #2434).
 
-    Adds ``(host, port, _EXACT)`` to :data:`_FOREVER_HOSTS` so :func:`ports_for`
-    treats the host as allow-listed for the rest of the session -- the DNS path
-    then learns every resolved IP and allows it without NFQUEUE, so a
-    CDN-rotated IP no longer re-prompts seconds after the user allowed the
-    host. EXACT scope: the user approved the specific qname they saw, so only
-    that host (not its subdomains) is opened (#2377). Deduped; port-scoped
-    (callers gate on a real port -- a port-less entry would broaden to
-    all-ports).
+    :data:`_SESSION_HOST_ALLOWS` is loop-only (no lock), so -- unlike
+    :data:`_LEARNED` / :data:`_REJECTED`, which are swept off-loop by
+    :func:`sweep_once` under :data:`_LOCK` -- its timed entries expire here, on
+    the loop, the next time a gate (:func:`ports_for`,
+    :func:`_session_host_allows_ttl`, :func:`_add_session_host`) reads them.
+    Cheap (the list is tiny -- one entry per consented host:port) and keeps the
+    structure from growing unbounded across a long session.
     """
+    now = time.time()
+    _SESSION_HOST_ALLOWS[:] = [t for t in _SESSION_HOST_ALLOWS if t[3] > now]
+
+
+def _add_session_host(host: str, port: int, ttl: float) -> None:
+    """Allow-list ``host:port`` in-session for a consent allow verdict (#2372,
+    #2434).
+
+    Adds ``(host, port, _EXACT, now + ttl)`` to :data:`_SESSION_HOST_ALLOWS` so
+    :func:`ports_for` (the DNS gate) treats the host as allow-listed for the
+    verdict's lifetime -- the DNS path then learns every resolved IP and allows
+    it without NFQUEUE, so a CDN-rotated IP no longer re-prompts (or, if it
+    still races NFQUEUE, :func:`_session_host_allows_ttl` short-circuits it in
+    :func:`_cb`). EXACT scope: the user approved the specific qname they saw, so
+    only that host (not its subdomains) is opened (#2377). Deduped; a re-allow
+    of the same host:port refreshes the expiry (``max`` -- never shortens an
+    unexpired entry). A timed allow (5s/5m/1h/tilrestart) is host-scoped just
+    like ``forever`` (#2434); ``once`` carries no host-allow (per-connection, so
+    a reconnect re-prompts). Loop-only (no lock).
+    """
+    _prune_session_allows()
+    expire = time.time() + ttl
     spec = (host, port, _EXACT)
-    if all(s != spec for s in _FOREVER_HOSTS):
-        _FOREVER_HOSTS.append(spec)
+    for i, (h, p, mode, _exp) in enumerate(_SESSION_HOST_ALLOWS):
+        if (h, p, mode) == spec:
+            _SESSION_HOST_ALLOWS[i] = (h, p, mode, max(_exp, expire))
+            return
+    _SESSION_HOST_ALLOWS.append((host, port, _EXACT, expire))
 
 
-def _forever_host_allows(host: str, port: int) -> bool:
-    """Does a `forever` verdict allow-list ``host`` on ``port`` (#2372)?
+def _session_host_allows_ttl(host: str, port: int) -> float | None:
+    """Remaining seconds an in-session allow covers ``host`` on ``port``, or
+    ``None`` (#2372, #2434).
 
     Used by :func:`_cb` as the last-chance gate before prompting: a SYN to a
-    host:port the user allowed forever is auto-allowed even when no fresh DNS
-    resolution re-ACCEPTed the (CDN-rotated or resolver-cached) IP. Matches via
-    :func:`_host_matches` (nginx-style scope); forever entries are added EXACT
-    by :func:`_add_forever_host`, so only the approved host matches (#2377).
+    host:port the user allowed (timed or forever) -- including a CDN-rotated or
+    resolver-cached IP that no fresh DNS resolution re-ACCEPTed -- is
+    auto-allowed, learned for the allow's remaining window, so the user isn't
+    re-asked (and a hold timeout can't fail-close a still-allowed host to a
+    deny, #2434). Matches via :func:`_host_matches` (nginx-style scope); entries
+    are added EXACT by :func:`_add_session_host`, so only the approved host
+    matches (#2377). Returns the max remaining TTL across matching entries.
+    Loop-only (no lock).
     """
     if not host:
-        return False
-    for h, p, mode in _FOREVER_HOSTS:
+        return None
+    _prune_session_allows()
+    now = time.time()
+    best: float | None = None
+    for h, p, mode, exp in _SESSION_HOST_ALLOWS:
+        if exp <= now:
+            continue  # belt-and-suspenders: _prune ran above, but a just-expired
+            # entry can survive the microseconds between its `now` and this one.
         if _host_matches(host, h, mode) and (p == port or p is None):
-            return True
-    return False
+            remaining = exp - now
+            if best is None or remaining > best:
+                best = remaining
+    return best
 
 
 def _rule_args(ip: str, port: int | None) -> list[str]:
@@ -553,8 +601,9 @@ def drop_for_host(host: str, decision: str) -> set[str]:
     Returns the set of candidate IPs (the host's resolved IPs + the host
     string itself, for a direct-IP connect) so the caller --
     :meth:`SidecarConsentClient._handle_drop_rule`, on the event loop -- can
-    clear the loop-only ``_FOREVER_HOSTS``/``_VERDICT_CACHE`` state via
-    :func:`_clear_forever_state`. Those structures are documented loop-only
+    clear the loop-only ``_SESSION_HOST_ALLOWS``/``_VERDICT_CACHE`` state
+    (via :func:`_drop_session_hosts` / :func:`_clear_verdict_cache`). Those
+    structures are documented loop-only
     (no lock) and must NOT be mutated here, since this function runs off the
     loop in the executor.
 
@@ -602,25 +651,26 @@ def drop_for_host(host: str, decision: str) -> set[str]:
     return targets
 
 
-def _drop_forever_hosts(host: str) -> None:
-    """Remove a host's in-session ``forever``-allow coverage (#2370, #2372).
+def _drop_session_hosts(host: str) -> None:
+    """Remove a host's in-session allow coverage (#2370, #2372, #2434).
 
-    Drops every :data:`_FOREVER_HOSTS` entry whose host matches
+    Drops every :data:`_SESSION_HOST_ALLOWS` entry whose host matches
     (case-insensitive). Called on the **event loop** by
     :meth:`SidecarConsentClient._handle_drop_rule` **before** :func:`drop_for_host`
     forks iptables in the executor: while that fork runs (~tens of ms), the
-    NFQUEUE consumer (:func:`_cb` -> :func:`_forever_host_allows`) and the DNS
-    path (:func:`ports_for`) both read :data:`_FOREVER_HOSTS`, and a SYN/resolve
-    arriving in that window would otherwise re-install a fresh ~1-year ACCEPT
-    (:data:`_DURATION_FOREVER`, via :func:`allow`) that the revoke never clears.
-    Clearing it first makes both gates deny during the window, so no fresh rule
-    can be installed; :func:`drop_for_host` then removes the existing ACCEPTs.
-    :data:`_FOREVER_HOSTS` is loop-only (no lock) -- touched on the loop, never
-    inside :func:`drop_for_host` (executor thread). A deny revoke does not call
-    this (a deny never adds to :data:`_FOREVER_HOSTS`).
+    NFQUEUE consumer (:func:`_cb` -> :func:`_session_host_allows_ttl`) and the DNS
+    path (:func:`ports_for`) both read :data:`_SESSION_HOST_ALLOWS`, and a
+    SYN/resolve arriving in that window would otherwise re-install a fresh
+    ACCEPT (the host's remaining allow TTL, via :func:`allow`) that the revoke
+    never clears. Clearing it first makes both gates deny during the window, so
+    no fresh rule can be installed; :func:`drop_for_host` then removes the
+    existing ACCEPTs. :data:`_SESSION_HOST_ALLOWS` is loop-only (no lock) --
+    touched on the loop, never inside :func:`drop_for_host` (executor thread). A
+    deny revoke does not call this (a deny never adds to
+    :data:`_SESSION_HOST_ALLOWS`).
     """
     hl = host.lower()
-    _FOREVER_HOSTS[:] = [t for t in _FOREVER_HOSTS if t[0].lower() != hl]
+    _SESSION_HOST_ALLOWS[:] = [t for t in _SESSION_HOST_ALLOWS if t[0].lower() != hl]
 
 
 def _clear_verdict_cache(ips: set[str]) -> None:
@@ -1042,15 +1092,16 @@ class SidecarConsentClient:
         decision = msg.get("decision")
         ok = False
         if isinstance(host, str) and decision in ("allowed", "denied"):
-            # #2370: close the `forever` gates BEFORE the executor window. While
-            # drop_for_host forks iptables off-loop (~tens of ms), a racing
-            # SYN/DNS could read _FOREVER_HOSTS and re-install a fresh
-            # ~1-year ACCEPT (_DURATION_FOREVER) the revoke never clears.
-            # _drop_forever_hosts runs on the loop (loop-only structure) and
-            # makes _cb's _forever_host_allows + ports_for deny during the
-            # window. (A deny never adds to _FOREVER_HOSTS, so skip it there.)
+            # #2370: close the session-allow gates BEFORE the executor window.
+            # While drop_for_host forks iptables off-loop (~tens of ms), a racing
+            # SYN/DNS could read _SESSION_HOST_ALLOWS and re-install a fresh
+            # ACCEPT (the host's remaining allow TTL) the revoke never clears.
+            # _drop_session_hosts runs on the loop (loop-only structure) and
+            # makes _cb's _session_host_allows_ttl + ports_for deny during the
+            # window. (A deny never adds to _SESSION_HOST_ALLOWS, so skip it
+            # there.)
             if decision == "allowed":
-                _drop_forever_hosts(host)
+                _drop_session_hosts(host)
             try:
                 ips = await asyncio.get_running_loop().run_in_executor(
                     None, drop_for_host, host, decision
@@ -1448,28 +1499,32 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
         pkt.drop()
         return
     host = _host_for(dst)  # DNS name if resolved here, else the IP
-    # A `forever` allow covers the whole domain (#2372): a SYN to a host:port
-    # the user already allowed forever -- including a CDN-rotated or
-    # resolver-cached IP that no fresh DNS resolution re-ACCEPTed -- is
-    # auto-allowed here, the last gate before prompting, so the user isn't
-    # re-asked for a domain they allowed forever.
-    if port and _forever_host_allows(host, port):
+    # An in-session host allow covers the whole domain, timed or forever
+    # (#2372, #2434): a SYN to a host:port the user already allowed -- including
+    # a CDN-rotated or resolver-cached IP that no fresh DNS resolution
+    # re-ACCEPTed -- is auto-allowed here, the last gate before prompting, so
+    # the user isn't re-asked for a domain they allowed. This is the fix for the
+    # ALLOW-REFUSED mismatch (#2434): without it a timed allow only covered the
+    # IP resolved at decision time, so a CDN-rotated IP re-entered NFQUEUE and a
+    # hold timeout there fail-closed to a deny REJECT an in-effect allow should
+    # override.
+    remaining = _session_host_allows_ttl(host, port) if port else None
+    if remaining is not None:
         # allow() forks iptables under _LOCK -- run it off the loop thread (the
         # file's invariant; every other allow/learn/reject call is in the
         # executor). Fire-and-forget: conntrack ESTABLISHED,RELATED carries THIS
         # connection after pkt.accept(); the ACCEPT rule only helps FUTURE
         # connections, and the _VERDICT_CACHE write below covers retransmits.
-        # Port-scoped (the consented port) -- deliberately stricter than the
-        # consent-allow path's all-ports learn (allow(dst, None, ...)).
-        asyncio.get_running_loop().run_in_executor(
-            None, allow, dst, port, _DURATION_FOREVER
-        )
+        # Learn for the allow's remaining window (timed) or ~forever; port-scoped
+        # (the consented port) -- deliberately stricter than the consent-allow
+        # path's all-ports learn (allow(dst, None, ...)).
+        asyncio.get_running_loop().run_in_executor(None, allow, dst, port, remaining)
         pkt.accept()
         _VERDICT_CACHE[flow] = ("allow", now + VERDICT_CACHE_TTL)
-        # NOTE (#2370): revoking a forever verdict must also drop this host
-        # from _FOREVER_HOSTS and clear _VERDICT_CACHE, or a revoked
-        # forever-allow keeps passing (ports_for re-allow-lists it + this
-        # cache reuses the verdict). Wired with the revoke path in #2370.
+        # NOTE (#2370): revoking an allow must also drop this host from
+        # _SESSION_HOST_ALLOWS and clear _VERDICT_CACHE, or a revoked allow keeps
+        # passing (ports_for re-allow-lists it + this cache reuses the verdict).
+        # Wired with the revoke path in #2370.
         return
     pkt.retain()  # keep the payload valid past this callback (deferred verdict)
     _INFLIGHT.add(flow)
@@ -1510,16 +1565,19 @@ async def _decide_and_verdict(
     _VERDICT_CACHE[flow] = (decision, now + VERDICT_CACHE_TTL)
     # Populate the in-session allow-list BEFORE the iptables fork below (which
     # yields to the executor): a SYN to a different IP of this host arriving
-    # during that yield would otherwise miss _FOREVER_HOSTS and re-prompt. Both
-    # gates (ports_for + _cb) read it (#2372).
-    if decision == "allow" and duration == "forever" and port:
-        _add_forever_host(host, port)
+    # during that yield would otherwise miss _SESSION_HOST_ALLOWS and re-prompt.
+    # Both gates (ports_for + _cb) read it (#2372). A timed allow is host-scoped
+    # too (#2434): otherwise a CDN-rotated IP of a timed-allowed host re-enters
+    # NFQUEUE, and a hold timeout there fail-closes to a deny REJECT an
+    # in-effect allow should override -- an allow that refuses.
+    ttl = _duration_ttl(duration)
+    if decision == "allow" and ttl is not None and port:
+        _add_session_host(host, port, ttl)
     # Run the iptables fork (allow/reject) in the executor so it doesn't block
     # the loop thread -- matches the DNS path's _learn_all, which also runs
     # off the loop. The packet is retained, so verdicting after the await is
     # safe; the rule is installed before the SYN is released.
     loop = asyncio.get_running_loop()
-    ttl = _duration_ttl(duration)
     try:
         if decision == "allow":
             # `once` (ttl None) -> no learn, just this connection (reconnect

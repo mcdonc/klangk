@@ -607,11 +607,11 @@ class TestConsentDecisionEndStates:
     ):
         # #2399 Finding 1: a TIMED allow (5m/1h/5s) must cover a later
         # connection to the same host WITHOUT re-prompting -- the same way a
-        # timed deny does. Unlike `forever` (covered by the in-session
-        # _FOREVER_HOSTS gate in _cb + the DNS path), a timed allow has NO
-        # Python gate: a new connection is covered ONLY by the learned
-        # iptables ACCEPT rule (top of OUTPUT, ahead of NFQUEUE) installed by
-        # allow(dst, None, ttl). This test pins that path.
+        # timed deny does. Like `forever`, a timed allow now host-scopes via
+        # the in-session _SESSION_HOST_ALLOWS gate in _cb + the DNS path
+        # (#2434); a new connection is ALSO covered by the learned iptables
+        # ACCEPT rule (top of OUTPUT, ahead of NFQUEUE) installed by
+        # allow(dst, None, ttl). This test pins the no-re-prompt behavior.
         ws_id = workspace
         ws_conn = await ws_connect(server, auth, ws_id)
         try:
@@ -801,7 +801,7 @@ class TestConsentDecisionEndStates:
                 # 2nd connection (pre-restart): a `forever` allow approves the
                 # whole domain, so a later curl -- even one that resolves to a
                 # CDN-rotated IP -- must NOT re-prompt (#2372: the sidecar
-                # allow-lists the host in-session via _FOREVER_HOSTS, so the DNS
+                # allow-lists the host in-session via _SESSION_HOST_ALLOWS, so the DNS
                 # path learns every resolved IP and allows it without NFQUEUE).
                 await asyncio.sleep(2)
                 _trigger(container, "example.com", "/tmp/r_fa_1.out")

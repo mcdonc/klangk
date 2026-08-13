@@ -204,13 +204,18 @@ class TestPortsFor:
         )
         assert proxy.ports_for("GitHub.Com") == set()
 
-    def test_forever_hosts_consulted_alongside_specs(self, proxy, monkeypatch):
-        # A `forever` consent verdict adds the host (EXACT) to _FOREVER_HOSTS
-        # (#2372, #2377): ports_for treats that exact host as allow-listed, so a
-        # later CDN-rotated IP re-resolves and is allowed without re-prompting.
+    def test_session_host_allows_consulted_alongside_specs(
+        self, proxy, monkeypatch
+    ):
+        # A consent `allow` verdict (timed or forever) adds the host (EXACT) to
+        # _SESSION_HOST_ALLOWS (#2372, #2377, #2434): ports_for treats that exact
+        # host as allow-listed for the verdict's lifetime, so a later CDN-rotated
+        # IP re-resolves and is allowed without re-prompting.
         monkeypatch.setattr(proxy, "SPECS", [])
         monkeypatch.setattr(
-            proxy, "_FOREVER_HOSTS", [("example.com", 443, proxy._EXACT)]
+            proxy,
+            "_SESSION_HOST_ALLOWS",
+            [("example.com", 443, proxy._EXACT, float("inf"))],
         )
         assert proxy.ports_for("example.com") == {443}
         assert (
@@ -218,35 +223,45 @@ class TestPortsFor:
         )  # exact -> no subdomain
         assert proxy.ports_for("other.com") == set()
 
-    def test_add_forever_host_dedups(self, proxy):
-        proxy._FOREVER_HOSTS.clear()
-        proxy._add_forever_host("example.com", 443)
-        proxy._add_forever_host("example.com", 443)  # dup -> one entry
-        proxy._add_forever_host("example.com", 8443)  # different port -> added
-        assert proxy._FOREVER_HOSTS == [
-            ("example.com", 443, proxy._EXACT),
-            ("example.com", 8443, proxy._EXACT),
+    def test_add_session_host_dedups_and_refreshes(self, proxy, monkeypatch):
+        # A re-allow of the same host:port refreshes the expiry (max -- never
+        # shortens an unexpired entry); a different port adds a new entry.
+        monkeypatch.setattr(proxy.time, "time", lambda: 1000.0)
+        proxy._SESSION_HOST_ALLOWS.clear()
+        proxy._add_session_host("example.com", 443, 300)  # expire 1300
+        proxy._add_session_host(
+            "example.com", 443, 60
+        )  # dup -> max(1300, 1060)
+        proxy._add_session_host("example.com", 8443, 300)  # different port
+        assert proxy._SESSION_HOST_ALLOWS == [
+            ("example.com", 443, proxy._EXACT, 1300.0),
+            ("example.com", 8443, proxy._EXACT, 1300.0),
         ]
 
-    def test_forever_host_allows(self, proxy, monkeypatch):
-        # The NFQUEUE-gate predicate (#2372): forever entries are EXACT (#2377),
-        # so only the approved host (not its subdomains) matches; port must
-        # match. Mirrors ports_for via the shared _host_matches.
+    def test_session_host_allows_ttl(self, proxy, monkeypatch):
+        # The NFQUEUE-gate predicate (#2372, #2434): session entries are EXACT
+        # (#2377), so only the approved host (not its subdomains) matches; port
+        # must match. Returns the remaining TTL (truthy) or None. Mirrors
+        # ports_for via the shared _host_matches.
         monkeypatch.setattr(
-            proxy, "_FOREVER_HOSTS", [("example.com", 443, proxy._EXACT)]
+            proxy,
+            "_SESSION_HOST_ALLOWS",
+            [("example.com", 443, proxy._EXACT, float("inf"))],
         )
-        assert proxy._forever_host_allows("example.com", 443)
-        assert not proxy._forever_host_allows("api.example.com", 443)  # exact
-        assert not proxy._forever_host_allows("example.com", 80)  # wrong port
-        assert not proxy._forever_host_allows("other.com", 443)  # wrong host
-        assert not proxy._forever_host_allows("evilexample.com", 443)  # suffix
-        assert not proxy._forever_host_allows("", 443)  # no host
-        # all-ports entry (p is None) matches any port -- defensive (forever
-        # entries are added port-scoped, but the predicate tolerates None).
+        assert proxy._session_host_allows_ttl("example.com", 443)
+        assert proxy._session_host_allows_ttl("api.example.com", 443) is None
+        assert proxy._session_host_allows_ttl("example.com", 80) is None
+        assert proxy._session_host_allows_ttl("other.com", 443) is None
+        assert proxy._session_host_allows_ttl("evilexample.com", 443) is None
+        assert proxy._session_host_allows_ttl("", 443) is None
+        # all-ports entry (p is None) matches any port -- defensive (entries are
+        # added port-scoped, but the predicate tolerates None).
         monkeypatch.setattr(
-            proxy, "_FOREVER_HOSTS", [("example.com", None, proxy._EXACT)]
+            proxy,
+            "_SESSION_HOST_ALLOWS",
+            [("example.com", None, proxy._EXACT, float("inf"))],
         )
-        assert proxy._forever_host_allows("example.com", 8080)
+        assert proxy._session_host_allows_ttl("example.com", 8080)
 
 
 class TestRejectedFor:
@@ -1244,7 +1259,7 @@ class TestNfqueueCallback:
         proxy._VERDICT_CACHE.clear()
         proxy._INFLIGHT.clear()
         proxy._LEARNED.clear()
-        proxy._FOREVER_HOSTS.clear()
+        proxy._SESSION_HOST_ALLOWS.clear()
         proxy._BG_TASKS.clear()
 
     async def _decide(self, proxy, pkt, client):
@@ -1296,9 +1311,9 @@ class TestNfqueueCallback:
         self, proxy, monkeypatch
     ):
         # A `forever` allow approves the host (not just the resolved IP): the
-        # sidecar adds it to _FOREVER_HOSTS so ports_for treats it as
+        # sidecar adds it to _SESSION_HOST_ALLOWS so ports_for treats it as
         # allow-listed for the session -- a later CDN-rotated IP re-resolves
-        # and is allowed without re-prompting (#2372).
+        # and is allowed without re-prompting (#2372, #2434).
         client = MagicMock()
         client.connected = True
         client.request = AsyncMock(return_value=("allow", "forever"))
@@ -1308,7 +1323,8 @@ class TestNfqueueCallback:
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await self._decide(proxy, pkt, client)
         assert pkt.verdict == "accept"
-        assert ("example.com", 443, proxy._EXACT) in proxy._FOREVER_HOSTS
+        specs = [(h, p, m) for (h, p, m, _exp) in proxy._SESSION_HOST_ALLOWS]
+        assert ("example.com", 443, proxy._EXACT) in specs
         # ports_for now treats the host as allow-listed (EXACT -- apex only).
         monkeypatch.setattr(proxy, "SPECS", [])
         assert proxy.ports_for("example.com") == {443}
@@ -1316,7 +1332,7 @@ class TestNfqueueCallback:
             proxy.ports_for("api.example.com") == set()
         )  # exact -> no subdomain
 
-    async def test_cb_auto_allows_syn_to_forever_host_ip(
+    async def test_cb_auto_allows_syn_to_session_allowed_host_ip(
         self, proxy, monkeypatch
     ):
         # A SYN to an IP whose host was allowed forever is auto-allowed at the
@@ -1330,7 +1346,7 @@ class TestNfqueueCallback:
         allowed = []
         monkeypatch.setattr(proxy, "allow", lambda *a: allowed.append(a))
         self._bind(proxy, monkeypatch, client)
-        proxy._add_forever_host("example.com", 443)
+        proxy._add_session_host("example.com", 443, proxy._DURATION_FOREVER)
         proxy._record_hosts([("2.2.2.2", 60)], "example.com")
         pkt = _FakePkt(_ip_payload("2.2.2.2", 443))
         proxy._cb(pkt, client)  # sync: auto-allows inline, no task
@@ -1338,8 +1354,12 @@ class TestNfqueueCallback:
         assert pkt.verdict == "accept"
         client.request.assert_not_awaited()  # no consent prompt
         assert not proxy._BG_TASKS  # no verdict task spawned
-        # allow() called port-scoped, in the executor, with the forever TTL.
-        assert allowed == [("2.2.2.2", 443, proxy._DURATION_FOREVER)]
+        # allow() called port-scoped, in the executor, with the allow's remaining
+        # TTL (~forever for a fresh forever entry).
+        assert len(allowed) == 1
+        assert allowed[0][0] == "2.2.2.2"
+        assert allowed[0][1] == 443
+        assert allowed[0][2] >= proxy._DURATION_FOREVER - 5
         # Verdict cached so a retransmit reuses it without re-prompting.
         assert any(v[0] == "allow" for v in proxy._VERDICT_CACHE.values())
 
@@ -1354,26 +1374,76 @@ class TestNfqueueCallback:
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
         monkeypatch.setattr(proxy, "reject", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
-        proxy._add_forever_host("example.com", 443)
+        proxy._add_session_host("example.com", 443, proxy._DURATION_FOREVER)
         proxy._record_hosts([("2.2.2.2", 60)], "example.com")
         proxy._cb(_FakePkt(_ip_payload("2.2.2.2", 80)), client)
         await asyncio.gather(*proxy._BG_TASKS)  # the prompt task ran
         client.request.assert_awaited_once_with("example.com", 80)
 
-    async def test_restart_allow_does_not_add_session_allowlist(
+    async def test_once_allow_does_not_add_session_allowlist(
         self, proxy, monkeypatch
     ):
-        # Only `forever` mutates the in-session allow-list; a restart/timed
-        # allow is a plain in-memory IP learn (no domain-level coverage).
+        # Only `once` skips the in-session host allow-list: it is per-connection
+        # (a reconnect re-prompts), so a CDN-rotated IP of a once-allowed host
+        # must NOT be auto-allowed. Timed/forever/tilrestart all host-scope
+        # (#2434); `once` alone stays an in-memory IP learn of the resolved IP.
         client = MagicMock()
         client.connected = True
-        client.request = AsyncMock(return_value=("allow", "tilrestart"))
+        client.request = AsyncMock(return_value=("allow", "once"))
         monkeypatch.setattr(proxy, "allow", lambda *a: None)
         self._bind(proxy, monkeypatch, client)
         proxy._record_hosts([("1.2.3.4", 60)], "example.com")
         pkt = _FakePkt(_ip_payload("1.2.3.4", 443))
         await self._decide(proxy, pkt, client)
-        assert proxy._FOREVER_HOSTS == []
+        assert proxy._SESSION_HOST_ALLOWS == []
+
+    async def test_timed_allow_is_host_scoped(self, proxy, monkeypatch):
+        # #2434 regression: a TIMED allow (not just forever) host-scopes. The
+        # verdict adds the host to _SESSION_HOST_ALLOWS, so a CDN-rotated IP of
+        # the host -- resolved AFTER the allow, with no ACCEPT rule of its own
+        # -- is auto-allowed at the NFQUEUE gate WITHOUT re-prompting. Pre-fix
+        # this SYN re-entered NFQUEUE, and a hold timeout there fail-closed to a
+        # deny REJECT (the ALLOW-REFUSED mismatch: an in-effect allow that
+        # refuses).
+        client = MagicMock()
+        client.connected = True
+        client.request = AsyncMock(return_value=("allow", "5m"))
+        monkeypatch.setattr(proxy, "allow", lambda *a: None)
+        self._bind(proxy, monkeypatch, client)
+        # Decide on IP_A (the resolved IP at decision time).
+        proxy._record_hosts([("1.2.3.4", 60)], "example.com")
+        await self._decide(
+            proxy, _FakePkt(_ip_payload("1.2.3.4", 443)), client
+        )
+        specs = [(h, p, m) for (h, p, m, _exp) in proxy._SESSION_HOST_ALLOWS]
+        assert ("example.com", 443, proxy._EXACT) in specs  # host-scoped
+        # A CDN-rotated IP_B (no ACCEPT, never consented) is auto-allowed at the
+        # NFQUEUE gate -- no consent prompt, no verdict task spawned.
+        proxy._record_hosts([("9.9.9.9", 60)], "example.com")
+        client2 = MagicMock()
+        client2.connected = True
+        client2.request = AsyncMock(return_value=("deny", "5s"))
+        pkt2 = _FakePkt(_ip_payload("9.9.9.9", 443))
+        proxy._cb(pkt2, client2)
+        await asyncio.sleep(0.05)
+        assert pkt2.verdict == "accept"  # auto-allowed, not denied
+        client2.request.assert_not_awaited()  # no re-prompt
+        assert not proxy._BG_TASKS
+
+    def test_timed_session_allow_expires(self, proxy, monkeypatch):
+        # #2434: a timed session-allow expires (lazy prune), so the host
+        # re-enters consent-gating once its window elapses -- it does not leak
+        # like a forever entry.
+        clock = [1000.0]
+        monkeypatch.setattr(proxy.time, "time", lambda: clock[0])
+        proxy._SESSION_HOST_ALLOWS.clear()
+        proxy._add_session_host("example.com", 443, 300)  # expire 1300
+        assert proxy._session_host_allows_ttl("example.com", 443) == 300.0
+        clock[0] = 1400.0  # past the 300s window
+        assert proxy._session_host_allows_ttl("example.com", 443) is None
+        monkeypatch.setattr(proxy, "SPECS", [])
+        assert proxy.ports_for("example.com") == set()  # pruned -> denied
+        assert proxy._SESSION_HOST_ALLOWS == []
 
     async def test_deny_verdict_drops_and_rejects(self, proxy, monkeypatch):
         # deny -> drop the SYN + install a REJECT (tcp-reset) so the retransmit
@@ -2020,7 +2090,7 @@ class TestDropForHost:
 
     def test_drop_for_host_returns_candidate_ips(self, proxy, monkeypatch):
         # #2370: drop_for_host returns the candidate IP set so the loop-side
-        # _clear_forever_state can clear _VERDICT_CACHE for those IPs.
+        # _clear_verdict_cache can clear _VERDICT_CACHE for those IPs.
         proxy._LEARNED.clear()
         proxy._REJECTED.clear()
         monkeypatch.setattr(
@@ -2037,16 +2107,18 @@ class TestDropForHost:
         # resolved IP + the host string itself (direct-IP-allow candidate)
         assert ips == {"1.2.3.4", "evil.test"}
 
-    def test_drop_forever_hosts_removes_host_entries(self, proxy):
-        # An allowed revoke drops the host's _FOREVER_HOSTS coverage (in-session
-        # forever-allow from #2372); other hosts are left intact.
-        proxy._FOREVER_HOSTS.clear()
-        proxy._FOREVER_HOSTS[:] = [
-            ("evil.test", 443, proxy._EXACT),
-            ("other.test", 80, proxy._EXACT),
+    def test_drop_session_hosts_removes_host_entries(self, proxy):
+        # An allowed revoke drops the host's _SESSION_HOST_ALLOWS coverage
+        # (in-session allow from #2372/#2434); other hosts are left intact.
+        proxy._SESSION_HOST_ALLOWS.clear()
+        proxy._SESSION_HOST_ALLOWS[:] = [
+            ("evil.test", 443, proxy._EXACT, float("inf")),
+            ("other.test", 80, proxy._EXACT, float("inf")),
         ]
-        proxy._drop_forever_hosts("Evil.TEST")  # case-insensitive
-        assert proxy._FOREVER_HOSTS == [("other.test", 80, proxy._EXACT)]
+        proxy._drop_session_hosts("Evil.TEST")  # case-insensitive
+        assert proxy._SESSION_HOST_ALLOWS == [
+            ("other.test", 80, proxy._EXACT, float("inf"))
+        ]
 
     def test_clear_verdict_cache_drops_host_entries(self, proxy):
         # Cached verdicts keyed by (src_ip, src_port, dst, port); dst is key[2].
@@ -2067,15 +2139,15 @@ class TestDropForHost:
             ("10.0.0.1", 1, "9.9.9.9", 443): ("allow", 9e9)
         }
 
-    async def test_dispatch_drop_rule_clears_forever_state(
+    async def test_dispatch_drop_rule_clears_session_state(
         self, proxy, tmp_path, monkeypatch
     ):
-        # End-to-end (#2370): a forever-allow revoke's drop_rule clears the
-        # in-session _FOREVER_HOSTS (BEFORE the iptables fork, so a racing SYN
-        # can't re-install a fresh ACCEPT during the window) + _VERDICT_CACHE
-        # (after), else the next DNS resolution re-learns the host.
+        # End-to-end (#2370): an allow revoke's drop_rule clears the in-session
+        # _SESSION_HOST_ALLOWS (BEFORE the iptables fork, so a racing SYN can't
+        # re-install a fresh ACCEPT during the window) + _VERDICT_CACHE (after),
+        # else the next DNS resolution re-learns the host.
         proxy._LEARNED.clear()
-        proxy._FOREVER_HOSTS.clear()
+        proxy._SESSION_HOST_ALLOWS.clear()
         proxy._VERDICT_CACHE.clear()
         monkeypatch.setattr(
             proxy.subprocess,
@@ -2087,7 +2159,9 @@ class TestDropForHost:
             "ports": {443},
             "host": "h.test",
         }
-        proxy._FOREVER_HOSTS.append(("h.test", 443, proxy._EXACT))
+        proxy._SESSION_HOST_ALLOWS.append(
+            ("h.test", 443, proxy._EXACT, float("inf"))
+        )
         proxy._VERDICT_CACHE[("10.0.0.1", 1, "1.2.3.4", 443)] = ("allow", 9e9)
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
         c._connected.set()
@@ -2108,7 +2182,7 @@ class TestDropForHost:
                 }
             )
         )
-        assert proxy._FOREVER_HOSTS == []
+        assert proxy._SESSION_HOST_ALLOWS == []
         assert proxy._VERDICT_CACHE == {}
         assert json.loads(sent[0])["ok"] is True
 
