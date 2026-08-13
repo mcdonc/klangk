@@ -1,0 +1,86 @@
+# The network sidecar, as a first-class standalone package (#2450).
+#
+# ``proxy.py`` is the FQDN egress DNS proxy + interactive consent hold
+# (#2250/#2253/#2311). It is a *copy* of ``src/containers/network/proxy.py`` —
+# the container-embedded copy is what ships in the sidecar image today and
+# must keep working unchanged; this package lets the sidecar be iterated on
+# (consent flow, future ingress/egress) without disturbing that copy and
+# without coupling the sidecar's tests to the ``klangk`` server package.
+#
+# ``proxy.py`` is a standalone script that runs as PID 1 of the sidecar
+# (``__main__``), so it stays a top-level module rather than being folded into
+# a package subdirectory. Its version constraint mirrors the sidecar image's
+# Dockerfile (``src/containers/network/Dockerfile``) so the dev/test venv
+# matches what ships.
+[project]
+name = "klangksidecar"
+dynamic = ["version"]
+description = "Klangk network sidecar: FQDN egress DNS proxy + interactive consent hold"
+requires-python = ">=3.12"
+dependencies = [
+    # dnspython is imported at module level (dns.message / dns.rcode /
+    # dns.rdatatype); the server venv doesn't ship it, which is why this is a
+    # separate package. Pinned to match the sidecar image.
+    "dnspython>=2.7,<3",
+    # Lazy-imported by the consent path (the egress-sidecar WS client,
+    # #2311 half B). Pure-Python, installs everywhere.
+    "websockets>=12,<17",
+]
+
+# netfilterqueue is NOT a default install: it links libnetfilter_queue (a C
+# lib + dev headers, Linux-only, needs CAP_NET_ADMIN at runtime) and would
+# break installs on macOS / CI runners that lack it. proxy.py imports it
+# *lazily* (inside _setup_nfq_consumer) and degrades gracefully to a no-op
+# when absent — opt in here only when actually driving the NFQUEUE path.
+[project.optional-dependencies]
+nfqueue = ["netfilterqueue"]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-xdist>=3.0.0",
+    "pytest-timeout>=2.3.0",
+]
+
+# No coverage gate here, by design: proxy.py's main()/signal-handler/real-
+# socket paths only run as PID 1 of the sidecar and are exercised end-to-end
+# by the real-podman e2e (src/klangk/klangkd-tests/e2e-tests/
+# test_network_sidecar_e2e.py), not by this unit suite. Mirrors how the
+# klangk suite treats proxy.py today (it isn't part of the klangk package, so
+# it was never coverage-gated). The unit suite pins the proxy's logic
+# (spec parsing, ports_for, allow/sweep, the consent state machine).
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--capture=no --timeout=60"
+# Mirror the klangk suite's mock-induced GC warning ignores.
+filterwarnings = [
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore:coroutine .* was never awaited:RuntimeWarning",
+]
+
+# Deliberately NO ``[tool.ruff]`` override: proxy.py is a byte-for-byte copy
+# of ``src/containers/network/proxy.py``, which lives outside ``src/klangk``
+# and so is formatted at ruff's *default* line length (88). Adding
+# ``line-length = 79`` here (the klangk convention) would make ruff reformat
+# the sidecar copy and silently break the byte-for-byte invariant. Both
+# files pass ruff format/check at the default config, which is what the
+# container copy is held to.
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0.dev0"
+# The VCS root is the monorepo root (two levels up), so the sidecar shares the
+# repo's single tag-derived version — same raw-options klangk uses.
+raw-options.root = "../.."
+raw-options.tag_regex = "^v(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^\\+]*)(?:\\+.*)?$"
+raw-options.git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
+
+# proxy.py is a single top-level module (flat layout); ship it as the
+# importable ``proxy`` module. tests/ has no __init__.py so it is excluded
+# from the wheel automatically.
+[tool.hatch.build.targets.wheel]
+packages = ["proxy.py"]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"

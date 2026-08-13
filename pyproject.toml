@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["src/klangk"]
+members = ["src/klangk", "src/sidecar"]
 
 # Root pytest config — a safety net for invocations whose rootdir
 # resolves to the repo root (e.g. `pytest` with no args, or a multi-dir
