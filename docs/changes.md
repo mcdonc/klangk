@@ -543,6 +543,13 @@ operators or integrators to act when upgrading.
   jargon "NXDOMAIN" with plain language (e.g. "Hosts blocked unconditionally
   (never resolved, no consent asked)."). Display-only; no behavior change.
 
+- **Workspace base image is now `debian:trixie-slim`, Node installed via apt (#2432).**
+  The workspace container derives from `debian:trixie-slim` (pinned by digest)
+  instead of `node:26-slim`, and Node.js 26 + npm are installed explicitly
+  from the NodeSource apt repo (`nodejs=26.7.0-1nodesource1`) rather than
+  coming from the base image. Node major is unchanged (still 26), so workspace
+  behavior is unaffected.
+
 - **Revoking a `forever` verdict retracts its durable list entry (#2370,
   #2339).** Revoking a `forever` allow/deny now removes the host from
   `allowed_domains`/`rejected_domains` (not just the in-memory sidecar rule),
