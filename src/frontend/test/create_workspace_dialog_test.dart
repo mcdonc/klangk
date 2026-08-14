@@ -552,6 +552,21 @@ void main() {
       expect(find.text('blocked.example.com'), findsNothing);
     });
 
+    testWidgets('labels both domains editors with titles (#2508)',
+        (tester) async {
+      // The allowed-domains editor previously had no title, unlike the
+      // rejected-domains editor below it and the settings panel's copy.
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog());
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Allowed Domains'), findsOneWidget);
+      expect(find.text('Rejected Domains'), findsOneWidget);
+    });
+
     testWidgets('pre-fills allowed domains from the deploy default',
         (tester) async {
       // #1365: the editor inherits KLANGKD_NETFILTER_DEFAULT_DOMAINS so a

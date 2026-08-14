@@ -712,6 +712,13 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
 
   List<Widget> _buildAllowedDomainsEditor() {
     return [
+      Text('Allowed Domains', style: _labelStyle),
+      const SizedBox(height: 4),
+      Text(
+        'Hosts the workspace may always contact (egress allowlist).',
+        style: const TextStyle(fontSize: 12, color: KColors.textSecondary),
+      ),
+      const SizedBox(height: 8),
       ..._allowedDomains.asMap().entries.map(
             (e) => Padding(
               padding: const EdgeInsets.only(bottom: 4),

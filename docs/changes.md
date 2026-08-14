@@ -881,6 +881,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Add Workspace dialog netfilter section (#2508).** The
+  allowed-domains editor now has an "Allowed Domains" title and
+  description, matching the rejected-domains editor and the workspace
+  settings panel.
 - **Login-banner redirect loop on return visits.** Opening the app with
   a saved login token while a login banner was pending (`login_banner_every_visit`
   on, or a banner whose text changed since it was last accepted) hit a
