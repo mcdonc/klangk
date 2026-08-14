@@ -41,6 +41,11 @@ operators or integrators to act when upgrading.
   grammar bullets were also corrected to the nginx-style scopes
   (bare host = apex only, `.host` = apex + subdomains) of #2377.
 
+- **Interactive egress consent documented (#2247).** The
+  [egress filtering](https://klangk.dev/features/egress-filtering) page
+  now covers the interactive consent mode end-to-end: egress modes and
+  defaults, deciders and held connections, decision durations, pause and
+  revoke, the audit trail, operator settings, and the security model.
 - **`klangk shell` consent-decider popup (#2383).** Shelling into an
   `interactive`-egress workspace now wraps the shell in a local tmux that
   floats the egress-consent decider over it as a `tmux display-popup`, so
