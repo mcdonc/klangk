@@ -1124,10 +1124,13 @@ class QuitConfirmScreen(Screen):
     CSS = """
     QuitConfirmScreen { align: center middle; }
     QuitConfirmScreen #confirm-box {
-        width: auto; max-width: 64; padding: 1 2;
+        width: 60;
+        height: auto;
+        padding: 1 2;
         border: round $warning;
         background: $panel;
     }
+    QuitConfirmScreen #confirm-msg { width: 1fr; }
     """
 
     BINDINGS = [
@@ -1143,6 +1146,7 @@ class QuitConfirmScreen(Screen):
                 "Held requests auto-deny on timeout.\n\n"
                 "[y] quit   [n] cancel",
                 id="confirm-msg",
+                markup=False,
             )
         yield Footer()
 
