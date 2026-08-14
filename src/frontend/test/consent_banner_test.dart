@@ -266,6 +266,80 @@ void main() {
     },
   );
 
+  testWidgets(
+    'the duration menu stays on screen at phone widths',
+    (tester) async {
+      tester.view.physicalSize = const Size(420, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final channel = _FakeChannel();
+      final svc = _serviceWithChannel(channel);
+      svc.connect();
+      channel.serverSend({
+        'type': 'egress_request',
+        'request': {
+          'id': 'r1',
+          'workspace_id': 'ws',
+          'dest_host': 'example.com',
+          'dest_port': 443,
+          'requested_at': 2000.0,
+        },
+      });
+      await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('allow-dur-r1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // Regression (PR review): an overlay-relative position keeps every
+      // menu item inside the viewport even when the ▾ sits right of the
+      // viewport's midpoint (the Expanded host label pushes it there).
+      final item = find.text('Forever');
+      expect(item, findsOneWidget);
+      expect(tester.getTopLeft(item).dx, greaterThanOrEqualTo(0));
+      // On-screen means actually tappable: the pick lands on the socket.
+      await tester.tap(item);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final out =
+          jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
+      expect(out['duration'], 'forever');
+      svc.dispose();
+    },
+  );
+
+  testWidgets(
+    'the menu closes itself if its request resolves while open',
+    (tester) async {
+      final channel = _FakeChannel();
+      final svc = _serviceWithChannel(channel);
+      svc.connect();
+      channel.serverSend({
+        'type': 'egress_request',
+        'request': {
+          'id': 'r1',
+          'workspace_id': 'ws',
+          'dest_host': 'example.com',
+          'dest_port': 443,
+          'requested_at': 2000.0,
+        },
+      });
+      await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('allow-dur-r1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Forever'), findsOneWidget);
+      // The row resolves (another decider / timeout) while the menu is
+      // open: the menu must close and no verdict may be sent afterwards.
+      channel.serverSend({'type': 'egress_resolved', 'request_id': 'r1'});
+      await tester.pump(); // flush the stream event -> listener -> menu pop
+      await tester.pumpAndSettle(); // exit transition fully unmounts
+      expect(find.text('Forever'), findsNothing);
+      expect(channel.sent, isEmpty);
+      svc.dispose();
+    },
+  );
+
   testWidgets('shows a flash for a server error frame', (tester) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);

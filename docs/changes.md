@@ -597,9 +597,9 @@ operators or integrators to act when upgrading.
   Purely presentational — keys and behavior unchanged.
 - **Consent banner per-row duration menus (#2499).** Each row of the
   egress-consent banner has a split Allow/Deny button: a bare click sends
-  the verdict with the default duration (`until restart`), and the attached
-  ▾ menu sends it with any other duration (`just once`, `5 minutes`, …,
-  `forever`) in one step. The duration is chosen with the click, never armed
+  the verdict with the default duration (until restart), and the attached
+  ▾ menu sends it with any other duration (just once, 5 minutes, …,
+  forever) in one step. The duration is chosen with the click, never armed
   beforehand, and no longer takes up a button row of its own.
 - **`KLANGKD_IDLE_TIMEOUT_SECONDS` default 30m → 60m (#2480).** The workspace container idle timeout now defaults to 3600s (was 1800s). Existing
   deployments get a longer idle window on upgrade unless the env var is already

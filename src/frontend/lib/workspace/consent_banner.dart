@@ -179,6 +179,8 @@ class _ConsentBannerState extends State<ConsentBanner> {
             label: 'Allow',
             color: Colors.green,
             menuKey: ValueKey('allow-dur-${req.id}'),
+            service: service,
+            requestId: req.id,
             onVerdict: (d) => service.sendVerdict(req.id, kDecisionAllowed, d),
           ),
           const SizedBox(width: 6),
@@ -186,6 +188,8 @@ class _ConsentBannerState extends State<ConsentBanner> {
             label: 'Deny',
             color: Colors.red,
             menuKey: ValueKey('deny-dur-${req.id}'),
+            service: service,
+            requestId: req.id,
             onVerdict: (d) => service.sendVerdict(req.id, kDecisionDenied, d),
           ),
         ],
@@ -219,6 +223,8 @@ class _VerdictButton extends StatelessWidget {
     required this.label,
     required this.color,
     required this.menuKey,
+    required this.service,
+    required this.requestId,
     required this.onVerdict,
   });
 
@@ -228,9 +234,20 @@ class _VerdictButton extends StatelessWidget {
   /// Key on the `▾` segment (unique per row, e.g. `allow-dur-<requestId>`).
   final Key menuKey;
 
+  /// The banner's service -- watched while the menu is open so the menu can
+  /// close itself if its row's request resolves mid-menu (see [_openMenu]).
+  final ConsentDeciderService service;
+
+  /// The row's request id (the verdict target).
+  final String requestId;
+
   /// Sends this button's decision with `duration` (a [kConsentDurations]
   /// token).
   final void Function(String duration) onVerdict;
+
+  /// Display label for a duration token; falls back to the raw token if the
+  /// map ever lags behind [kConsentDurations] (degrades, never crashes).
+  static String _label(String d) => _durationLabels[d] ?? d;
 
   ButtonStyle _style(Color color, BorderRadius radius) {
     return FilledButton.styleFrom(
@@ -251,9 +268,7 @@ class _VerdictButton extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Tooltip(
-          message:
-              '$label ${_durationLabels[kConsentDurationDefault]!.toLowerCase()}'
-              ' — ▾ picks another duration',
+          message: '$label ${_label(kConsentDurationDefault).toLowerCase()}',
           child: FilledButton(
             onPressed: () => onVerdict(kConsentDurationDefault),
             style: _style(
@@ -265,14 +280,17 @@ class _VerdictButton extends StatelessWidget {
         ),
         // Builder so the menu anchors to the ▾ segment's own render box.
         Builder(
-          builder: (ctx) => FilledButton(
-            key: menuKey,
-            onPressed: () => _openMenu(ctx),
-            style: _style(
-              color,
-              const BorderRadius.horizontal(right: Radius.circular(6)),
+          builder: (ctx) => Tooltip(
+            message: 'Choose duration',
+            child: FilledButton(
+              key: menuKey,
+              onPressed: () => _openMenu(ctx),
+              style: _style(
+                color,
+                const BorderRadius.horizontal(right: Radius.circular(6)),
+              ),
+              child: const Icon(Icons.arrow_drop_down, size: 18),
             ),
-            child: const Icon(Icons.arrow_drop_down, size: 18),
           ),
         ),
       ],
@@ -281,24 +299,54 @@ class _VerdictButton extends StatelessWidget {
 
   /// Open the duration menu below the `▾` segment; a pick submits the verdict
   /// with the chosen duration, dismissing without a pick sends nothing.
+  ///
+  /// The position is the button's bottom edge expressed relative to the
+  /// overlay (`RelativeRect.fromRect`), so the menu's placement delegate
+  /// clamps it inside the viewport -- a plain `RelativeRect.fromLTRB(dx, dy,
+  /// dx, dy)` inverts its right edge once the button sits right of the
+  /// viewport's midpoint and pushes menu items off-screen at phone widths.
+  ///
+  /// If the row's request resolves while the menu is open, the menu closes
+  /// itself: the verdict target is gone, and a pick would otherwise send a
+  /// verdict the server silently drops (the banner's no-silent-loss promise
+  /// covers rejected sends, not ones aimed at a dead id).
   void _openMenu(BuildContext context) {
-    final box = context.findRenderObject() as RenderBox;
-    final pos = box.localToGlobal(Offset(0, box.size.height + 4));
-    showMenu<String>(
+    final button = context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final topLeft = button.localToGlobal(
+      Offset(0, button.size.height + 4),
+      ancestor: overlay,
+    );
+    final position = RelativeRect.fromRect(
+      Rect.fromLTWH(topLeft.dx, topLeft.dy, button.size.width, 0),
+      Offset.zero & overlay.size,
+    );
+    final nav = Navigator.of(context);
+    void closeIfGone() {
+      if (service.pending.every((r) => r.id != requestId)) {
+        service.removeListener(closeIfGone);
+        if (nav.mounted) nav.pop(); // dismiss the menu; no verdict is sent
+      }
+    }
+
+    service.addListener(closeIfGone);
+    final menu = showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
+      position: position,
       items: [
         for (final d in kConsentDurations)
           PopupMenuItem(
             value: d,
             child: Text(
               d == kConsentDurationDefault
-                  ? '${_durationLabels[d]} (default)'
-                  : _durationLabels[d]!,
+                  ? '${_label(d)} (default)'
+                  : _label(d),
             ),
           ),
       ],
-    ).then((d) {
+    );
+    menu.whenComplete(() => service.removeListener(closeIfGone));
+    menu.then((d) {
       if (d != null) onVerdict(d);
     });
   }
