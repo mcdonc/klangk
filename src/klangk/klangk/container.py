@@ -844,7 +844,7 @@ class ContainerRegistry:
         return None
 
     def _parse_idle_timeout(self) -> tuple[int, int]:
-        default = 30 * 60
+        default = 60 * 60
         env_val = self.app.state.settings.idle_timeout_seconds
         if env_val is not None:
             try:

@@ -1935,8 +1935,8 @@ class TestHandleWorkspaceConnect:
         assert ready[0]["workspaceId"] == workspace["id"]
         assert ready[0]["serviceCommand"] is None
         assert "userHome" in ready[0]
-        # Integer timeout (default 30m) should show as "30m" not "30.0m"
-        assert "30m" in conn.pending_status_msg
+        # Integer timeout (default 60m) should show as "60m" not "60.0m"
+        assert "60m" in conn.pending_status_msg
 
     async def test_connect_sends_service_command(
         self, user, agent_user, app_state

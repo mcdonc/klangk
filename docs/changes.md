@@ -536,6 +536,12 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`KLANGKD_IDLE_TIMEOUT_SECONDS` default 30m → 60m (#2480).** The
+  workspace container idle timeout now defaults to 3600s (was 1800s). Existing
+  deployments get a longer idle window on upgrade unless the env var is already
+  set; set `KLANGKD_IDLE_TIMEOUT_SECONDS=1800` to keep the old 30-minute default.
+  The auto-computed idle-check interval (`timeout/3`, clamped 10–60s) follows.
+
 - **`klangk sandbox` drops to interactive egress after install, where safe (#2404).**
   A sandbox workspace is still created in `allow` mode so `setup.sh` installs
   proceed; once setup returns, the driver resets `egress_mode` to `interactive`

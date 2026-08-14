@@ -102,8 +102,8 @@ class TestParseIdleTimeout:
 
     def test_default_values(self):
         reg = self._registry({})
-        assert reg.idle_timeout_seconds == 30 * 60
-        assert reg.check_interval_seconds == max(10, min(60, 30 * 60 // 3))
+        assert reg.idle_timeout_seconds == 60 * 60
+        assert reg.check_interval_seconds == max(10, min(60, 60 * 60 // 3))
 
     def test_custom_value(self):
         reg = self._registry({"KLANGKD_IDLE_TIMEOUT_SECONDS": "120"})
@@ -112,7 +112,7 @@ class TestParseIdleTimeout:
 
     def test_invalid_value_uses_default(self):
         reg = self._registry({"KLANGKD_IDLE_TIMEOUT_SECONDS": "not_a_number"})
-        assert reg.idle_timeout_seconds == 30 * 60
+        assert reg.idle_timeout_seconds == 60 * 60
 
     def test_small_value_clamps_interval(self):
         reg = self._registry({"KLANGKD_IDLE_TIMEOUT_SECONDS": "15"})

@@ -268,7 +268,7 @@ port: "8997"
 | `hosting_proto`          | _(auto-derived)_                 | `KLANGKD_HOSTING_PROTO`          |
 | `hosting_base_path`      | _(auto-derived)_                 | `KLANGKD_HOSTING_BASE_PATH`      |
 | `bridge_timeout_seconds` |                                  | `KLANGKD_BRIDGE_TIMEOUT_SECONDS` |
-| `idle_timeout_seconds`   | `1800`                           | `KLANGKD_IDLE_TIMEOUT_SECONDS`   |
+| `idle_timeout_seconds`   | `3600`                           | `KLANGKD_IDLE_TIMEOUT_SECONDS`   |
 
 ### Container / workspace
 
