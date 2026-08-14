@@ -9,15 +9,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import time
 import uuid
 
 from . import allowlist, rules
-from .config import DEBUG
+from .config import ACTIVITY_GATE_S, DEBUG
 from .state import _VERDICT_CACHE, _clear_verdict_cache
 
 # ---------------------------------------------------------------------------
 # Interactive consent: egress-sidecar WS client + hold paths (#2311 half B).
 # ---------------------------------------------------------------------------
+
+
+def _jittered_gate() -> float:
+    """The activity flood gate, jittered to 0.5x-1.0x of :data:`ACTIVITY_GATE_S`.
+
+    Full-jitter (the AWS-backoff idiom): the suppression window lands randomly
+    in [0.5x, 1.0x] of the base, so the per-workspace send cadence drifts and a
+    fleet of sidecars never herds onto a synchronized frame rate against
+    klangkd. The floor stays at half the base, so the window never collapses.
+    """
+    return ACTIVITY_GATE_S * random.uniform(0.5, 1.0)
 
 
 def _ws_url(consent_url: str) -> str:
@@ -62,6 +75,10 @@ class SidecarConsentClient:
         self._stop = False
         self._no_token_warned = False
         self._task: asyncio.Task | None = None
+        # Idle-activity flood gate (#2479): monotonic timestamp of the last
+        # ``{type:activity}`` frame sent. 0.0 so the first event always forwards.
+        self._last_activity_send = 0.0
+        self._activity_tasks: set[asyncio.Task] = set()
 
     @property
     def connected(self) -> bool:
@@ -240,6 +257,45 @@ class SidecarConsentClient:
         except asyncio.TimeoutError:
             self._pending.pop(lid, None)
             return "deny", "once"
+
+    def bump_activity(self) -> None:
+        """Best-effort, flood-gated idle-activity signal to klangkd (#2479).
+
+        Called from the DNS proxy (every query) and the NFQUEUE consumer (every
+        queued connection SYN) so klangkd's idle timer reflects egress-only
+        workloads, whose traffic bypasses the daemon entirely and would
+        otherwise be reaped by the idle timeout. Throttled by a jittered flood
+        gate (:func:`_jittered_gate` -- 0.5x-1.0x of :data:`ACTIVITY_GATE_S`):
+        a connect-heavy workload (a build, a crawler) generates a bounded,
+        desynchronized frame rate, while the first event after a quiet period
+        (>= the jittered window since the last send) forwards at once so a
+        single connect after a long idle stretch resets the timer promptly. A
+        dropped / disconnected send is silent -- activity signaling must never
+        break egress. Sync-safe: the NFQUEUE callback runs on the loop thread
+        but is itself sync, so the coroutine WS send is scheduled as a task.
+        """
+        if not self._connected.is_set() or self._ws is None:
+            return
+        now = time.monotonic()
+        if now - self._last_activity_send < _jittered_gate():
+            return
+        self._last_activity_send = now
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # not on a loop (defensive) -> nothing to schedule
+        t = loop.create_task(self._send_activity())
+        self._activity_tasks.add(t)  # strong ref so the send isn't GC'd mid-flight
+        t.add_done_callback(self._activity_tasks.discard)
+
+    async def _send_activity(self) -> None:
+        ws = self._ws
+        if ws is None:
+            return
+        try:
+            await ws.send(json.dumps({"type": "activity"}))
+        except Exception:
+            pass  # best-effort: a dropped frame just delays the next idle bump
 
     def _fail_close_pending(self) -> None:
         # A lost connection is a fresh session against a (possibly restarted)

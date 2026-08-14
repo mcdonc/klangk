@@ -17,6 +17,7 @@ import asyncio
 import json
 import signal
 import sys
+import time
 import types
 from unittest.mock import AsyncMock, MagicMock
 
@@ -1537,6 +1538,101 @@ def _syn_payload(src: str, sport: int, dst: str, dport: int, seq: int) -> bytes:
     b[24:28] = seq.to_bytes(4, "big")
     b[33] = 0x02  # SYN flag
     return bytes(b)
+
+
+class TestBumpActivity:
+    """Idle-activity flood gate (#2479): the sidecar bumps klangkd's idle timer
+    on egress/network activity, throttled to <=1 frame per ACTIVITY_GATE_S."""
+
+    def _client(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        return c, sent
+
+    async def _drain(self, c):
+        # run any scheduled activity-send tasks to completion (deterministic)
+        if c._activity_tasks:
+            await asyncio.gather(*c._activity_tasks, return_exceptions=True)
+
+    async def test_first_call_sends_activity_frame(self, proxy, tmp_path):
+        c, sent = self._client(proxy, tmp_path)
+        c.bump_activity()
+        await self._drain(c)
+        assert [json.loads(f) for f in sent] == [{"type": "activity"}]
+
+    async def test_rapid_calls_within_gate_send_once(self, proxy, tmp_path):
+        c, sent = self._client(proxy, tmp_path)
+        for _ in range(50):
+            c.bump_activity()
+        await self._drain(c)
+        assert len(sent) == 1  # flood-gated: <=1 per ACTIVITY_GATE_S
+
+    async def test_sends_again_after_gate_window_elapses(
+        self, proxy, tmp_path, monkeypatch
+    ):
+        c, sent = self._client(proxy, tmp_path)
+        base = proxy.config.ACTIVITY_GATE_S
+        # Pin the jitter to the full base so the window is deterministic here;
+        # the jitter range itself is covered by test_gate_jittered_below_base.
+        monkeypatch.setattr(proxy.consent, "_jittered_gate", lambda: base)
+        c.bump_activity()  # first -> sends (sets _last_activity_send = now)
+        c.bump_activity()  # within base -> suppressed
+        await self._drain(c)
+        assert len(sent) == 1
+        # simulate the gate window elapsing (first event after a quiet period)
+        c._last_activity_send = time.monotonic() - (base + 1)
+        c.bump_activity()  # past base -> sends again
+        await self._drain(c)
+        assert len(sent) == 2
+
+    async def test_gate_jittered_below_base_lets_early_send_through(
+        self, proxy, tmp_path, monkeypatch
+    ):
+        # #2479: the suppression window is jittered (0.5x..1.0x of the base) so
+        # workspaces don't herd onto a shared send cadence. At minimum jitter a
+        # send just past HALF the base forwards; at maximum jitter (the full
+        # base) that same elapsed time is still suppressed.
+        base = proxy.config.ACTIVITY_GATE_S
+        elapsed = base * 0.5 + 1  # just past half the base
+
+        c1, sent1 = self._client(proxy, tmp_path)
+        monkeypatch.setattr(proxy.consent, "_jittered_gate", lambda: base * 0.5)
+        c1._last_activity_send = time.monotonic() - elapsed
+        c1.bump_activity()
+        await self._drain(c1)
+        assert len(sent1) == 1  # jitter collapsed the window to 0.5x -> forwards
+
+        c2, sent2 = self._client(proxy, tmp_path)
+        monkeypatch.setattr(proxy.consent, "_jittered_gate", lambda: base)
+        c2._last_activity_send = time.monotonic() - elapsed
+        c2.bump_activity()
+        await self._drain(c2)
+        assert sent2 == []  # full-base window still suppresses at half-base elapsed
+
+    async def test_disconnected_is_noop(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c.bump_activity()  # not connected, no _ws -> must not schedule/raise
+        await self._drain(c)
+        assert c._activity_tasks == set()
+
+    async def test_send_error_is_swallowed(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+
+        class _BadWS:
+            async def send(self, frame):
+                raise OSError("gone")
+
+        c._ws = _BadWS()
+        c.bump_activity()  # must not raise
+        await self._drain(c)  # the scheduled send raises internally, swallowed
 
 
 class _FakePkt:

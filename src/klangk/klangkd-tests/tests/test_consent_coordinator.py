@@ -1357,6 +1357,44 @@ class TestEgressSidecarWS:
         await ws.feed(WebSocketDisconnect())
         await handler
 
+    async def test_activity_frame_bumps_idle_timer(self):
+        # #2479: a {type:activity} frame from the sidecar bumps the workspace's
+        # idle timer so an egress-only workload (whose traffic bypasses klangkd)
+        # is not reaped by the idle timeout.
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.sidecar import handle_egress_sidecar
+
+        app, _ = _sidecar_app()
+        state = types.SimpleNamespace(record_activity=Mock())
+        app.state.container_registry = types.SimpleNamespace(
+            states={FULL_WS: state}
+        )
+        ws = _FakeWS({"token": FULL_WS})
+        handler = asyncio.create_task(handle_egress_sidecar(ws, app))
+        await ws.feed(json.dumps({"type": "activity"}))
+        await asyncio.sleep(0.02)
+        state.record_activity.assert_called_once_with()
+        await ws.feed(WebSocketDisconnect())
+        await handler
+
+    async def test_activity_frame_no_tracked_state_is_noop(self):
+        # #2479: an activity frame for a workspace with no live ContainerState
+        # (container not started / already reaped) must not raise -- there is
+        # simply nothing to bump.
+        from fastapi import WebSocketDisconnect
+
+        from klangk.wshandler.sidecar import handle_egress_sidecar
+
+        app, _ = _sidecar_app()
+        app.state.container_registry = types.SimpleNamespace(states={})
+        ws = _FakeWS({"token": FULL_WS})
+        handler = asyncio.create_task(handle_egress_sidecar(ws, app))
+        await ws.feed(json.dumps({"type": "activity"}))
+        await asyncio.sleep(0.02)
+        await ws.feed(WebSocketDisconnect())
+        await handler
+
     async def test_drop_ack_resolves_pending(self):
         # a drop_ack frame from the sidecar -> resolve_ack on the registry (#2339)
         from fastapi import WebSocketDisconnect

@@ -84,6 +84,12 @@ def _cb(pkt, client: SidecarConsentClient | None) -> None:
     drain (distinct connections are held concurrently, not serialized behind
     the first).
     """
+    # Every queued SYN is outbound egress activity -- bump klangkd's idle timer
+    # (flood-gated inside the client) so an egress-only workload is not reaped
+    # (#2479). First, before any classification: even a SYN we drop (cached
+    # deny / retransmit) is real network activity.
+    if client is not None:
+        client.bump_activity()
     payload = pkt.get_payload()
     # Connection-level key (src IP+port + dst IP+port): a SYN retransmit shares
     # its connection's tuple, a NEW connection has a new source port. Keying the
