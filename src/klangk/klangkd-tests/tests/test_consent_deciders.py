@@ -177,8 +177,15 @@ class TestConsentDeciderRegistryBroadcast:
 class _FakeWS:
     """Minimal stand-in for a fastapi WebSocket for handler-level tests."""
 
-    def __init__(self, params: dict, incoming: list):
+    def __init__(
+        self, params: dict, incoming: list, headers: dict | None = None
+    ):
         self.query_params = params
+        self.headers = (
+            headers
+            if headers is not None
+            else {"user-agent": "fake-decider/1.0"}
+        )
         self._incoming = iter(incoming)
         self.sent: list[str] = []
         self.accepted = False
@@ -279,6 +286,22 @@ class TestConsentDeciderWS:
         assert ws.accepted is False
         assert app.state.consent_deciders.has_decider(WS) is False
 
+    async def test_missing_token_logs_refusal(self, caplog):
+        # #2490: every pre-accept refusal logs its reason server-side (the
+        # close code/reason never reach the client on a refused handshake).
+        import logging
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        ws = _FakeWS({"workspace": WS}, [], headers={"user-agent": "ua-x/9"})
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.decider"
+        ):
+            await handle_consent_decider(ws, app)
+        assert "refused: Missing token" in caplog.text
+        assert "ua=ua-x/9" in caplog.text
+
     async def test_invalid_token_is_rejected(self):
         from klangk.wshandler.decider import handle_consent_decider
 
@@ -306,6 +329,40 @@ class TestConsentDeciderWS:
         assert ws.accepted is False
         assert app.state.consent_deciders.has_decider(WS) is False
 
+    async def test_forbidden_logs_user_and_workspace(self, caplog):
+        # #2490: an authz refusal names the user + workspace in the log --
+        # and never the token (it rides the query string; leaking it into
+        # the log would leak a live JWT).
+        import logging
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"}, allowed=False)
+        ws = _FakeWS({"token": "SEKRET-JWT", "workspace": WS}, [])
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.decider"
+        ):
+            await handle_consent_decider(ws, app)
+        assert "refused: Forbidden" in caplog.text
+        assert "user=a@x" in caplog.text
+        assert f"workspace={WS}" in caplog.text
+        assert "SEKRET-JWT" not in caplog.text
+
+    async def test_refusal_log_sanitizes_forged_workspace(self, caplog):
+        # #2490: the workspace query param is attacker-controlled pre-auth;
+        # a forged %0A must not inject new lines into the log record.
+        import logging
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"}, allowed=False)
+        ws = _FakeWS({"token": "tok", "workspace": f"{WS}\nFAKED line"}, [])
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.decider"
+        ):
+            await handle_consent_decider(ws, app)
+        assert "\nFAKED" not in caplog.text
+
     async def test_static_workspace_scoped_decider_is_forbidden(self):
         # #2394: a workspace with egress_mode=static must refuse a
         # workspace-scoped consent decider at registration -- the
@@ -319,6 +376,24 @@ class TestConsentDeciderWS:
         assert ws.closed == (4003, "workspace egress mode is not interactive")
         assert ws.accepted is False
         assert app.state.consent_deciders.has_decider(WS) is False
+
+    async def test_static_refusal_logs_reason(self, caplog):
+        # #2490: the egress-mode refusal names the mode mismatch in the log
+        # -- the most common 403-storm cause (workspace flipped out of
+        # interactive mid-session).
+        import logging
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"}, egress_mode="static")
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.decider"
+        ):
+            await handle_consent_decider(ws, app)
+        assert (
+            "refused: workspace egress mode is not interactive" in caplog.text
+        )
 
     async def test_allow_workspace_scoped_decider_is_forbidden(self):
         # #2406: an allow-mode workspace is default-permit and auto-allows
@@ -346,6 +421,22 @@ class TestConsentDeciderWS:
         assert ws.closed == (4003, "Forbidden")
         assert ws.accepted is False
         assert app.state.consent_deciders.has_decider(WS) is False
+
+    async def test_vanished_workspace_refusal_is_logged(self, caplog):
+        # #2490: the delete-race refusal is logged like every other one.
+        import logging
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"})
+        app.state.model.workspaces.get_workspace = AsyncMock(return_value=None)
+        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.decider"
+        ):
+            await handle_consent_decider(ws, app)
+        assert "refused: Forbidden" in caplog.text
+        assert "user=a@x" in caplog.text
 
     async def test_deploy_wide_decider_unaffected_by_static_mode(self):
         # #2394: deploy-wide deciders (no ?workspace=) cover all interactive

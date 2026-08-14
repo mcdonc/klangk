@@ -459,6 +459,31 @@ class TestAppRender:
             await pilot.pause()
             assert app.query_one("#empty", Static).display is True
 
+    async def test_refresh_shows_refused_state(self):
+        # #2490: after repeated 403 refusals the status line says the decider
+        # slowed its retry ("refused — retrying every 60s"), not
+        # "reconnecting".
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app._refused = True
+            app._refresh()
+            await pilot.pause()
+            status = app.query_one("#status", Static)
+            assert "refused — retrying every 60s" in str(status.content)
+
+    def test_user_agent_has_distinctive_prefix(self):
+        # The UA names this client so klangkd's refusal log can attribute a
+        # 403 to the consent decider (#2490).
+        assert tui_consent._USER_AGENT.startswith("klangk-consent-decide/")
+        assert tui_consent._user_agent() == tui_consent._USER_AGENT
+
+    def test_user_agent_falls_back_when_not_installed(self, monkeypatch):
+        def boom(name):
+            raise tui_consent.PackageNotFoundError(name)
+
+        monkeypatch.setattr(tui_consent, "_pkg_version", boom)
+        assert tui_consent._user_agent() == "klangk-consent-decide/dev"
+
     async def test_refresh_shows_active_flash(self):
         # While a flash is active (within TTL), _refresh renders it instead of
         # the normal status (so flashes survive the 1s periodic refresh).
@@ -1121,6 +1146,111 @@ class TestWsLoop:
         except asyncio.CancelledError:
             pass
         assert calls["n"] >= 2  # failed once, then reconnected
+
+    async def test_refused_403_slows_retry_and_heals(
+        self, monkeypatch, caplog
+    ):
+        # #2490: a pre-accept refusal is HTTP 403 (uvicorn answers every
+        # pre-accept close with 403 -- even an expired token, whose 4002
+        # close code never reaches us). First refusal refreshes the JWT and
+        # retries fast; once refusals pile up the loop drops to a fixed slow
+        # interval instead of stopping -- and a later successful connect
+        # clears the refused flag (self-heal: a mid-session flip back to
+        # interactive recovers without restarting the shell). The refused
+        # flag is transient (healed on connect #3), so the slow-retry branch
+        # is asserted via its one-time warning log.
+        import logging
+
+        calls = {"n": 0}
+
+        def connect(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise websockets.InvalidStatus(
+                    types.SimpleNamespace(status_code=403)
+                )
+            return FakeCM(FakeWS([]))  # 3rd+ connect succeeds, then drops
+
+        monkeypatch.setattr(tui_consent, "ws_connect", connect)
+        monkeypatch.setattr(tui_consent, "_REFUSED_RETRY_INTERVAL", 0.0)
+        app = _make_app(reconnect_delays=(0.0,))
+
+        async def fake_refresh():
+            return "refreshed-token"
+
+        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        with caplog.at_level(logging.WARNING, logger="klangk.cli.tui.consent"):
+            task = asyncio.create_task(_real_ws_loop(app))
+            for _ in range(100):  # wait for the healing connect
+                if calls["n"] >= 3:
+                    break
+                await asyncio.sleep(0.02)
+            await asyncio.sleep(0.05)
+            app._stop = True
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        assert "registration refused (403) repeatedly" in caplog.text
+        assert app.token == "refreshed-token"
+        assert app._refused is False  # healed by the successful connect
+        assert calls["n"] >= 3  # kept retrying (no dead stop)
+
+    async def test_refused_403_keeps_slow_retrying_forever(self, monkeypatch):
+        # While refused the loop never stops on its own: it retries at the
+        # (patched-to-zero) slow interval for the app's lifetime -- bounded
+        # spam on the server side, automatic recovery on the client side.
+        calls = {"n": 0}
+
+        def refuse_403(*a, **kw):
+            calls["n"] += 1
+            raise websockets.InvalidStatus(
+                types.SimpleNamespace(status_code=403)
+            )
+
+        async def fake_refresh():
+            return None  # no new token available
+
+        monkeypatch.setattr(tui_consent, "ws_connect", refuse_403)
+        monkeypatch.setattr(tui_consent, "_REFUSED_RETRY_INTERVAL", 0.0)
+        app = _make_app(reconnect_delays=(0.0,))
+        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        task = asyncio.create_task(_real_ws_loop(app))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert app._refused is True
+        assert calls["n"] > 5  # still attempting, well past the 2nd refusal
+
+    async def test_handshake_503_keeps_retrying(self, monkeypatch):
+        # A non-403 handshake failure (gateway 503) is transient: the loop
+        # keeps the normal reconnect backoff and never sets _refused.
+        calls = {"n": 0}
+
+        def refuse_503(*a, **kw):
+            calls["n"] += 1
+            raise websockets.InvalidStatus(
+                types.SimpleNamespace(status_code=503)
+            )
+
+        monkeypatch.setattr(tui_consent, "ws_connect", refuse_503)
+        app = _make_app(reconnect_delays=(0.0,))
+        task = asyncio.create_task(_real_ws_loop(app))
+        await asyncio.sleep(0.1)
+        app._stop = True
+        await asyncio.sleep(0.1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert calls["n"] >= 2  # still retrying
+        assert app._refused is False
 
     async def test_connect_exception_logs_and_retries(self, monkeypatch):
         # ws_connect always raises: the loop keeps retrying (never crashes).

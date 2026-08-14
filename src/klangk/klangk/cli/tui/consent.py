@@ -30,6 +30,7 @@ import logging
 import subprocess
 import time
 from dataclasses import dataclass, replace
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 import websockets
 from rich.markup import escape
@@ -130,6 +131,25 @@ _RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 # How long a flashed message (send failure, server error) stays on the status
 # line before the periodic refresh overwrites it.
 _FLASH_TTL = 5.0
+
+# After two consecutive 403 refusals the decider retries at this fixed slow
+# interval (#2490): bounded log spam (1/min vs the old 1/5s storm), but the
+# decider still self-heals if the workspace flips back to interactive (or
+# permissions are restored) mid-session instead of staying dead until the
+# shell is restarted.
+_REFUSED_RETRY_INTERVAL = 60.0
+
+
+# Sent as the WS handshake User-Agent so klangkd's refusal log (#2490) can
+# attribute a 403 to this client (vs a browser or anything else).
+def _user_agent() -> str:
+    try:
+        return f"klangk-consent-decide/{_pkg_version('klangk')}"
+    except PackageNotFoundError:  # running from source, not installed
+        return "klangk-consent-decide/dev"
+
+
+_USER_AGENT = _user_agent()
 
 # Frame-application outcomes returned by ConsentDeciderController.apply_frame.
 ADDED = (
@@ -608,6 +628,11 @@ class ConsentDeciderApp(App):
         self._ws = None
         self._connected = False
         self._stop = False
+        # #2490: set once registration has been refused (HTTP 403) twice --
+        # the reconnect loop has dropped to its slow fixed interval and the
+        # status line says so instead of "reconnecting". Cleared when a
+        # connect succeeds again (self-heal).
+        self._refused = False
         self._flash_msg = ""
         self._flash_until = 0.0
         self._duration = DURATION_DEFAULT
@@ -735,10 +760,24 @@ class ConsentDeciderApp(App):
         next attempt authenticates (mirrors ``monitor``). While disconnected
         the decider is deregistered server-side, so in-flight holds auto-deny
         on their own timeout (fail-closed) -- never silently allowed.
+
+        A refused handshake (HTTP 403, #2490) is different: the server
+        closed *before* accept (authz, egress mode, vanished workspace --
+        or an expired token, since the pre-accept close code never reaches
+        us and uvicorn answers every refusal with 403). The first refusal
+        refreshes the JWT and retries fast (recovering the expired-token
+        case); once refusals pile up (the counter resets only on a
+        successful connect) the loop backs off to a fixed slow interval
+        (:data:`_REFUSED_RETRY_INTERVAL`) instead of stopping -- bounded
+        log spam, but the decider still self-heals if the refusal cause
+        goes away mid-session (workspace flipped back to interactive,
+        permissions restored).
         """
         attempt = 0
+        refusals = 0
         while not self._stop:
             auth_close = False
+            refused = False
             try:
                 async with ws_connect(
                     self.server_url,
@@ -746,17 +785,56 @@ class ConsentDeciderApp(App):
                     max_size=self.max_size,
                     path="/ws/consent-decider",
                     query={"workspace": self.workspace_id},
+                    user_agent_header=_USER_AGENT,
                 ) as ws:
                     self._ws = ws
                     self._connected = True
                     attempt = 0
+                    refusals = 0
+                    if self._refused:
+                        # Healed: the refusal cause went away -- back to
+                        # normal connected/reconnect reporting.
+                        self._refused = False
                     self._refresh()
                     auth_close = await self._pump(ws)
+            except websockets.InvalidStatus as e:
+                if e.response.status_code == 403:
+                    refused = True
+                else:
+                    # A proxy/gateway error (502/503...) is transient -- retry.
+                    logger.debug("consent-decide ws handshake failed: %s", e)
             except Exception as e:  # noqa: BLE001
                 logger.debug("consent-decide ws dropped: %s", e)
             finally:
                 self._ws = None
                 self._connected = False
+            if refused:
+                refusals += 1
+                if refusals >= 2:
+                    # Repeated refusal: registration cannot succeed right
+                    # now (see docstring). Log once, then fall back to the
+                    # slow interval -- not a tight loop, not a dead stop
+                    # (#2490 review: a mid-session flip back to interactive
+                    # must self-heal without restarting the shell).
+                    if not self._refused:
+                        self._refused = True
+                        logger.warning(
+                            "consent-decide: registration refused (403) "
+                            "repeatedly; retrying every %.0fs",
+                            _REFUSED_RETRY_INTERVAL,
+                        )
+                    delay = _REFUSED_RETRY_INTERVAL
+                else:
+                    # First refusal: maybe just an expired token (its 4002
+                    # close code is lost pre-accept) -- refresh and retry
+                    # fast once.
+                    delay = self._backoff(1)
+                new = await self._refresh_token()
+                if new:
+                    self.token = new
+                await asyncio.sleep(delay)
+                self._refresh()
+                continue
             if self._stop:
                 break
             if auth_close:
@@ -931,7 +1009,14 @@ class ConsentDeciderApp(App):
         if self._flash_until > time.time():
             status.update(self._flash_msg)
         else:
-            conn = "connected" if self._connected else "reconnecting"
+            if self._connected:
+                conn = "connected"
+            elif self._refused:
+                conn = (
+                    f"refused — retrying every {int(_REFUSED_RETRY_INTERVAL)}s"
+                )
+            else:
+                conn = "reconnecting"
             line = (
                 f" {escape(self.workspace_name)}  ·  {conn}"
                 f"  ·  {len(ordered)} held"

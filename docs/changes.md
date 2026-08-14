@@ -861,6 +861,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Consent-decider 403 storm on refused registration (#2490).** A refused
+  decider WebSocket handshake (uvicorn answers every pre-accept close with
+  a bare HTTP 403 — e.g. the workspace is no longer `interactive` egress
+  mode, or permissions were revoked) now logs the reason, user, workspace,
+  and User-Agent in klangkd's log instead of an anonymous 403. The decider
+  client refreshes its token and retries once, then falls back to a slow
+  60s retry instead of reconnecting every 5s; its status line shows
+  `refused — retrying every 60s`, and it self-heals if the refusal cause
+  goes away mid-session.
+
 - **Network sidecar containers no longer orphaned on reap/sweep (#2476).**
   A workspace joins its sidecar's netns via `--network container:<sidecar>`,
   so podman refuses to remove a sidecar while its workspace still shares that
