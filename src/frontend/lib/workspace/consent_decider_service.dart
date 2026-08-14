@@ -6,8 +6,9 @@
 /// and sends ``verdict`` frames so the deciding user can allow/deny each held
 /// connection *while the sidecar holds it* (#2311), plus ``pause``/``unpause``
 /// frames that silence prompts workspace-wide for a window (#2332). The
-/// verdict + pause protocol and frame shapes are duplicated from the server
-/// (``model/egress_consent.py``) per the isolation boundary the web client
+/// verdict protocol + frame shapes are duplicated from the server
+/// (``model/egress_consent.py``, pause handling in ``wshandler/decider.py`` +
+/// ``consent_coordinator.py``) per the isolation boundary the web client
 /// shares with the CLI.
 ///
 /// A decider that goes silent is reaped by the server after
@@ -65,8 +66,9 @@ const String kConsentDurationForever = 'forever';
 const String kConsentDurationTilrestart = 'tilrestart';
 
 /// Pause-window tokens the server accepts for silencing prompts (#2332).
-/// A focused set (not the full verdict-duration list); mirrors the TUI's
-/// `PAUSE_DURATIONS` (`cli/tui/consent.py`).
+/// A focused set (not the full verdict-duration list); mirrors the server's
+/// `PAUSE_DURATIONS` (`consent_coordinator.py`) and the TUI pause bar's
+/// buttons (`cli/tui/consent.py`).
 const List<String> kConsentPauseDurations = ['15m', '1h', '1d'];
 
 /// Inbound-frame application outcomes returned by [ConsentDeciderService.applyFrame].
@@ -93,7 +95,7 @@ enum ConsentFrameOutcome {
   revokeAck,
 
   /// The server replied to a pause/unpause (#2332); [ConsentFrameResult.pauseOk]
-  /// is set.
+  /// and [ConsentFrameResult.pauseUntil] are set.
   pauseAck,
 
   /// Non-JSON / unknown frame (ignored).
@@ -123,6 +125,11 @@ class ConsentFrameResult {
   /// [ConsentFrameOutcome.pauseAck]).
   final bool pauseOk;
 
+  /// The pause-window end (epoch seconds) a successful `pause_ack` carries,
+  /// or null (outcome == [ConsentFrameOutcome.pauseAck]; null `until` on an
+  /// ok ack means the pause was cleared).
+  final double? pauseUntil;
+
   const ConsentFrameResult(this.outcome,
       {this.request,
       this.resolvedId,
@@ -130,7 +137,8 @@ class ConsentFrameResult {
       this.rules,
       this.revokeAckId,
       this.revokeOk = false,
-      this.pauseOk = false});
+      this.pauseOk = false,
+      this.pauseUntil});
 
   static const ignored = ConsentFrameResult(ConsentFrameOutcome.ignored);
 }
@@ -414,6 +422,24 @@ class ConsentDeciderService extends ChangeNotifier {
   String? _flashMessage;
   DateTime? _flashUntil;
 
+  /// Duration of the user's last pause request, or null after Unpause
+  /// (#2494). Set when a pause/unpause is sent and **reverted on a failed
+  /// ack**, so the highlighted button never claims a window the server
+  /// refused. The server's frame carries only `until` (not which window),
+  /// so the active button follows the user's last acknowledged request --
+  /// mirrors the TUI `_pause_duration`, minus its stale-on-nack flaw. Owned
+  /// by the service (not the panel) so it survives a panel remount.
+  String? _lastPauseRequest;
+
+  /// The pause/unpause op awaiting its ack: a duration token ('15m'...) or
+  /// 'unpause'. Lets a nack flash which op failed; cleared on any ack.
+  String? _pendingPauseOp;
+
+  /// The button-highlight source for the pause controls -- the user's last
+  /// acknowledged pause request (null = Unpause is active). See
+  /// [_lastPauseRequest].
+  String? get lastPauseRequest => _lastPauseRequest;
+
   /// The active flash message, or null once it has expired. Clock-based (not a
   /// real timer) so it is unit-testable by advancing the injected [clock]; the
   /// banner's 1s tick repaint re-reads this and the flash visually clears.
@@ -519,11 +545,7 @@ class ConsentDeciderService extends ChangeNotifier {
         _applyRevokeAck(res.revokeAckId, res.revokeOk);
         break;
       case ConsentFrameOutcome.pauseAck:
-        // A failed pause/unpause flashes so the decider knows the window is
-        // unchanged; success needs no flash -- the refreshed `egress_rules`
-        // frame the server broadcasts carries the new pause state. Mirrors
-        // the TUI's `pause_ack` handling.
-        if (!res.pauseOk) _flash('pause failed');
+        _applyPauseAck(res.pauseOk, res.pauseUntil);
         break;
       case ConsentFrameOutcome.error:
         // Surface the rejection to the user (the TUI flashes it); a verdict
@@ -554,6 +576,36 @@ class ConsentDeciderService extends ChangeNotifier {
         allowed: r.allowed.where((e) => e.id != id).toList(),
         denied: r.denied.where((e) => e.id != id).toList(),
         paused: r.paused,
+      );
+    }
+    notifyListeners();
+  }
+
+  /// Apply a `pause_ack` (#2494 review): a nack reverts the highlight (the
+  /// server refused -- missing `share-terminals`, deploy-wide decider, bad
+  /// duration -- so no window was set) and flashes which op failed; a
+  /// success applies the ack's own pause state as an authoritative fallback
+  /// -- the refreshed `egress_rules` broadcast normally lands first (the
+  /// server awaits it before acking), but the broadcast is best-effort
+  /// server-side, so without this the display could sit stale after a
+  /// successful pause. Null `until` on an ok ack means the pause was cleared
+  /// (unpause).
+  void _applyPauseAck(bool ok, double? until) {
+    final op = _pendingPauseOp;
+    _pendingPauseOp = null;
+    if (!ok) {
+      _lastPauseRequest = null;
+      _flash(op == 'unpause' ? 'unpause failed' : 'pause failed');
+      return;
+    }
+    final r = _rules;
+    if (r != null) {
+      _rules = EgressRules(
+        workspaceId: r.workspaceId,
+        allowList: r.allowList,
+        allowed: r.allowed,
+        denied: r.denied,
+        paused: until != null ? EgressPause(until: until) : null,
       );
     }
     notifyListeners();
@@ -655,6 +707,9 @@ class ConsentDeciderService extends ChangeNotifier {
   /// the refreshed `egress_rules` frame. Flashes (not silent) when
   /// disconnected or the send fails. Mirrors the TUI.
   void sendPause(String duration) {
+    _lastPauseRequest = duration;
+    _pendingPauseOp = duration;
+    notifyListeners();
     final ch = _channel;
     if (ch == null || !_connected) {
       _flash('disconnected — reconnecting');
@@ -670,6 +725,9 @@ class ConsentDeciderService extends ChangeNotifier {
 
   /// Resume prompting (clear an active pause) (#2332). Mirrors the TUI.
   void sendUnpause() {
+    _lastPauseRequest = null;
+    _pendingPauseOp = 'unpause';
+    notifyListeners();
     final ch = _channel;
     if (ch == null || !_connected) {
       _flash('disconnected — reconnecting');
@@ -748,8 +806,10 @@ class ConsentDeciderService extends ChangeNotifier {
           revokeAckId: rid is String ? rid : null, revokeOk: msg['ok'] == true);
     }
     if (mtype == 'pause_ack') {
+      final until = msg['until'];
       return ConsentFrameResult(ConsentFrameOutcome.pauseAck,
-          pauseOk: msg['ok'] == true);
+          pauseOk: msg['ok'] == true,
+          pauseUntil: until is num ? until.toDouble() : null);
     }
     return ConsentFrameResult.ignored;
   }
@@ -838,18 +898,35 @@ class ConsentDeciderService extends ChangeNotifier {
     return remaining != null && remaining <= 0;
   }
 
-  /// Drop timed verdicts whose window has elapsed from the cached snapshot,
-  /// notifying listeners if anything changed. Called by the rules view's 1s
-  /// tick so an expired rule disappears at the first tick past its expiry
-  /// instead of lingering at "0s left". Returns whether any rule was pruned.
-  /// No-op (returns false) before the first `egress_rules` frame lands.
+  /// Whether the pause window has elapsed -- a finite `until` in the past
+  /// (#2494 review). The server reverts to prompting at the real expiry but,
+  /// like a rule, only re-broadcasts `egress_rules` on the next discrete
+  /// event -- so without a local prune the panel would show "Filtering
+  /// paused (resumes in 0s)" forever, claiming prompts are suppressed when
+  /// holds have actually resumed. An indefinite pause (`until` null) and a
+  /// not-paused workspace never expire. Mirrors [isRuleExpired] (#2467).
+  bool isPauseExpired(EgressRules rules) {
+    final until = rules.paused?.until;
+    if (until == null) return false;
+    final now = clock().millisecondsSinceEpoch / 1000.0;
+    return until <= now;
+  }
+
+  /// Drop timed verdicts whose window has elapsed -- and a self-expired
+  /// pause -- from the cached snapshot, notifying listeners if anything
+  /// changed. Called by the rules view's 1s tick so an expired rule (or
+  /// pause) disappears at the first tick past its expiry instead of
+  /// lingering at "0s left". Returns whether anything was pruned. No-op
+  /// (returns false) before the first `egress_rules` frame lands.
   bool pruneExpiredRules() {
     final r = _rules;
     if (r == null) return false;
     final allowed = r.allowed.where((e) => !isRuleExpired(e)).toList();
     final denied = r.denied.where((e) => !isRuleExpired(e)).toList();
+    final paused = isPauseExpired(r) ? null : r.paused;
     if (allowed.length == r.allowed.length &&
-        denied.length == r.denied.length) {
+        denied.length == r.denied.length &&
+        paused == r.paused) {
       return false;
     }
     _rules = EgressRules(
@@ -857,7 +934,7 @@ class ConsentDeciderService extends ChangeNotifier {
       allowList: r.allowList,
       allowed: allowed,
       denied: denied,
-      paused: r.paused,
+      paused: paused,
     );
     notifyListeners();
     return true;

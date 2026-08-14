@@ -806,25 +806,29 @@ void main() {
       svc.dispose();
     });
 
-    test('sendPause sends a pause frame on the socket', () {
+    test('sendPause sends a pause frame and tracks the request', () {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       svc.connect();
+      expect(svc.lastPauseRequest, isNull);
       svc.sendPause('1h');
       expect(channel.sent, isNotEmpty);
       final out =
           jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
       expect(out, {'type': 'pause', 'duration': '1h'});
+      expect(svc.lastPauseRequest, '1h');
       svc.dispose();
     });
 
-    test('sendUnpause sends an unpause frame on the socket', () {
+    test('sendUnpause sends an unpause frame and clears the request', () {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       svc.connect();
+      svc.sendPause('1h');
       svc.sendUnpause();
       expect(channel.sent, isNotEmpty);
       final out =
           jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
       expect(out, {'type': 'unpause'});
+      expect(svc.lastPauseRequest, isNull);
       svc.dispose();
     });
 
@@ -854,18 +858,56 @@ void main() {
       svc2.dispose();
     });
 
-    test('pause_ack failure flashes; success is silent', () async {
+    test('pause_ack nack reverts the highlight and flashes which op failed',
+        () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       svc.connect();
-      // Success first: no flash -- the refreshed `egress_rules` frame the
-      // server broadcasts right after carries the new pause state.
-      channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
-      await Future<void>.delayed(Duration.zero);
-      expect(svc.flashMessage, isNull);
-      // Failure flashes so the decider knows the window is unchanged.
+      // A refused pause must not leave its button highlighted as active.
+      svc.sendPause('1h');
+      expect(svc.lastPauseRequest, '1h');
       channel.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
       await Future<void>.delayed(Duration.zero);
       expect(svc.flashMessage, contains('pause failed'));
+      expect(svc.lastPauseRequest, isNull);
+      // A refused unpause names itself in the flash.
+      svc.sendUnpause();
+      channel.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
+      await Future<void>.delayed(Duration.zero);
+      expect(svc.flashMessage, contains('unpause failed'));
+      expect(svc.lastPauseRequest, isNull);
+      svc.dispose();
+    });
+
+    test('pause_ack ok applies the acked window (authoritative fallback)',
+        () async {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      channel.serverSend(_rulesFrame(allowList: ['a.io']));
+      await Future<void>.delayed(Duration.zero);
+      expect(svc.rules!.paused, isNull);
+      // The refreshed egress_rules broadcast normally lands first, but it is
+      // best-effort server-side -- the ack's own until must apply alone.
+      svc.sendPause('15m');
+      channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
+      await Future<void>.delayed(Duration.zero);
+      expect(svc.rules!.paused, const EgressPause(until: 1300.0));
+      expect(svc.flashMessage, isNull); // success never flashes
+      // A successful unpause (ok, until null) clears the window.
+      svc.sendUnpause();
+      channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': null});
+      await Future<void>.delayed(Duration.zero);
+      expect(svc.rules!.paused, isNull);
+      svc.dispose();
+    });
+
+    test('pause_ack ok before any rules snapshot is a safe no-op', () async {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      svc.sendPause('15m');
+      channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
+      await Future<void>.delayed(Duration.zero);
+      expect(svc.rules, isNull); // no crash; the connect snapshot carries truth
+      expect(svc.lastPauseRequest, '15m');
       svc.dispose();
     });
 
@@ -983,6 +1025,33 @@ void main() {
     });
   });
 
+  group('isPauseExpired', () {
+    EgressRules rules(EgressPause? paused) => EgressRules(
+        workspaceId: 'w',
+        allowList: const [],
+        allowed: const [],
+        denied: const [],
+        paused: paused);
+
+    test('finite until past -> true; future / indefinite / not paused -> false',
+        () {
+      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
+      final svc = ConsentDeciderService(
+          workspaceId: 'ws', token: 't', clock: () => now);
+      // until 1300s, now 1000s -> live.
+      expect(
+          svc.isPauseExpired(rules(const EgressPause(until: 1300.0))), isFalse);
+      // until 900s -> elapsed.
+      expect(
+          svc.isPauseExpired(rules(const EgressPause(until: 900.0))), isTrue);
+      // Indefinite (until restart) and not-paused never expire.
+      expect(
+          svc.isPauseExpired(rules(const EgressPause(until: null))), isFalse);
+      expect(svc.isPauseExpired(rules(null)), isFalse);
+      svc.dispose();
+    });
+  });
+
   group('pruneExpiredRules', () {
     test('no-op (returns false) before the first egress_rules frame', () {
       final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
@@ -1045,6 +1114,34 @@ void main() {
       // Idempotent: pruning the already-pruned snapshot is a no-op.
       expect(svc.pruneExpiredRules(), isFalse);
       expect(notifications, 1);
+      ConsentDeciderService.testChannelFactory = null;
+      svc.dispose();
+    });
+
+    test('drops a self-expired pause; keeps a live or indefinite one (#2494)',
+        () async {
+      var now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
+      final ch = _FakeChannel();
+      ConsentDeciderService.testChannelFactory = (_) => ch;
+      final svc = ConsentDeciderService(
+          workspaceId: 'ws', token: 't', clock: () => now);
+      svc.connect();
+      // Live window: until t=1300, now t=1000.
+      ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
+      await Future.delayed(Duration.zero);
+      expect(svc.pruneExpiredRules(), isFalse); // still live -> kept
+      expect(svc.rules!.paused, const EgressPause(until: 1300.0));
+
+      // Past expiry: the pause is pruned (never lingers at "resumes in 0s").
+      now = DateTime.fromMillisecondsSinceEpoch(1400 * 1000, isUtc: true);
+      expect(svc.pruneExpiredRules(), isTrue);
+      expect(svc.rules!.paused, isNull);
+
+      // An indefinite pause (until restart) never expires.
+      ch.serverSend(_rulesFrame(paused: {'paused': true}));
+      await Future.delayed(Duration.zero);
+      expect(svc.pruneExpiredRules(), isFalse);
+      expect(svc.rules!.paused, const EgressPause(until: null));
       ConsentDeciderService.testChannelFactory = null;
       svc.dispose();
     });

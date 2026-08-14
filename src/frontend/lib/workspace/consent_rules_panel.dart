@@ -80,24 +80,6 @@ class ConsentRulesPanel extends StatefulWidget {
 class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
   Timer? _tick;
 
-  /// Duration of the user's last pause request, or null after Unpause
-  /// (#2332). The server's pause frame carries only `until` (not which
-  /// window), so the active button follows the user's last request --
-  /// mirrors the TUI `_pause_duration`.
-  String? _lastPauseRequest;
-
-  /// Send a pause (`duration` != null) or unpause (null) frame and highlight
-  /// the tapped button. The sent state itself is never optimistic: the
-  /// server's `pause_ack` + refreshed `egress_rules` frame drive the display.
-  void _onPauseTap(String? duration) {
-    setState(() => _lastPauseRequest = duration);
-    if (duration == null) {
-      widget.service.sendUnpause();
-    } else {
-      widget.service.sendPause(duration);
-    }
-  }
-
   @override
   void initState() {
     super.initState();
@@ -111,11 +93,12 @@ class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
     // this only repaints the remaining-time hints).
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      // Drop timed verdicts whose window just elapsed: the server only
-      // re-broadcasts egress_rules on a discrete event (verdict/revoke/pause/
-      // reconnect), not on natural expiry, so prune locally to hide the row
-      // the instant it expires (notifyListeners rebuilds if anything changed)
-      // rather than freezing at "0s left".
+      // Drop timed verdicts (and a self-expired pause) whose window just
+      // elapsed: the server only re-broadcasts egress_rules on a discrete
+      // event (verdict/revoke/pause/reconnect), not on natural expiry, so
+      // prune locally to hide the row the instant it expires
+      // (notifyListeners rebuilds if anything changed) rather than freezing
+      // at "0s left".
       widget.service.pruneExpiredRules();
       if (hasLiveCountdown(
           widget.service.rules, widget.service.ruleRemainingSeconds)) {
@@ -215,11 +198,7 @@ class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
                         remaining: service.ruleRemainingSeconds,
                         onRevoke: _confirmRevoke,
                       ),
-                      _PauseSection(
-                        service: service,
-                        lastRequest: _lastPauseRequest,
-                        onTap: _onPauseTap,
-                      ),
+                      _PauseSection(service: service),
                     ],
                   ),
                 ),
@@ -414,18 +393,14 @@ class _RuleRow extends StatelessWidget {
 /// The pause section (#2332/#2494): the live window status (when paused)
 /// plus the pause controls -- Unpause / Pause 15m / 1h / 1d -- modeled after
 /// the TUI pause bar (`cli/tui/consent.py`). The button matching the user's
-/// last request is highlighted (Unpause is active when nothing was last
-/// paused); the window itself follows the server's `pause_ack` + refreshed
-/// `egress_rules` frame.
+/// last acknowledged request ([ConsentDeciderService.lastPauseRequest]) is
+/// highlighted (Unpause is active when nothing was last paused); the window
+/// itself follows the server's `pause_ack` + refreshed `egress_rules`
+/// frames -- a refused pause reverts the highlight, and a self-expired
+/// window is pruned by the 1s tick rather than lingering at "0s".
 class _PauseSection extends StatelessWidget {
-  const _PauseSection({
-    required this.service,
-    required this.lastRequest,
-    required this.onTap,
-  });
+  const _PauseSection({required this.service});
   final ConsentDeciderService service;
-  final String? lastRequest;
-  final ValueChanged<String?> onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -456,8 +431,10 @@ class _PauseSection extends StatelessWidget {
   Widget _pauseButton(String? duration, String label) {
     // The active button mirrors the TUI's `pause-active` style: amber
     // background, canvas foreground.
-    final active = duration == lastRequest;
+    final active = duration == service.lastPauseRequest;
     final key = ValueKey('pause-${duration ?? 'none'}');
+    final onPressed = () =>
+        duration == null ? service.sendUnpause() : service.sendPause(duration);
     if (active) {
       return FilledButton(
         key: key,
@@ -466,14 +443,14 @@ class _PauseSection extends StatelessWidget {
           foregroundColor: KColors.bgCanvas,
           visualDensity: VisualDensity.compact,
         ),
-        onPressed: () => onTap(duration),
+        onPressed: onPressed,
         child: Text(label),
       );
     }
     return OutlinedButton(
       key: key,
       style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
-      onPressed: () => onTap(duration),
+      onPressed: onPressed,
       child: Text(label),
     );
   }

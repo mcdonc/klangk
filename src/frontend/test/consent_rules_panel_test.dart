@@ -307,7 +307,7 @@ void main() {
     });
 
     testWidgets(
-        'pause controls render once rules land; highlight follows the last request (#2494)',
+        'pause controls render once rules land; highlight follows the last acked request (#2494)',
         (tester) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch);
@@ -349,19 +349,61 @@ void main() {
       expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
           isA<OutlinedButton>());
 
-      // The paused status line renders alongside the controls.
-      ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
+      // A refused pause (nack) reverts the highlight: the button must not
+      // claim a window the server never set.
+      ch.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
       await tester.pump();
-      expect(find.textContaining('Filtering paused'), findsOneWidget);
-
-      // Tapping Unpause sends the unpause frame; the highlight returns.
-      await tester.tap(find.byKey(const ValueKey('pause-none')));
-      await tester.pump();
-      expect(jsonDecode(ch.sent.last as String), {'type': 'unpause'});
+      expect(find.text('pause failed'), findsOneWidget);
       expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
           isA<FilledButton>());
       expect(tester.widget(find.byKey(const ValueKey('pause-15m'))),
           isA<OutlinedButton>());
+
+      // A successful pause applies from the ack alone (the egress_rules
+      // re-broadcast is best-effort server-side): the status line renders.
+      await tester.tap(find.byKey(const ValueKey('pause-1h')));
+      await tester.pump();
+      expect(jsonDecode(ch.sent.last as String),
+          {'type': 'pause', 'duration': '1h'});
+      ch.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
+      await tester.pump();
+      expect(find.textContaining('Filtering paused'), findsOneWidget);
+
+      // Tapping Unpause sends the frame; a successful ack clears the status.
+      await tester.tap(find.byKey(const ValueKey('pause-none')));
+      await tester.pump();
+      expect(jsonDecode(ch.sent.last as String), {'type': 'unpause'});
+      ch.serverSend({'type': 'pause_ack', 'ok': true, 'until': null});
+      await tester.pump();
+      expect(find.textContaining('Filtering paused'), findsNothing);
+      expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
+          isA<FilledButton>());
+      svc.dispose();
+    });
+
+    testWidgets(
+        'a self-expired pause disappears on the next tick (never "resumes in 0s")',
+        (tester) async {
+      var now = _at(1000); // epoch seconds
+      final ch = _FakeChannel();
+      final svc = _serviceWithChannel(ch, clock: () => now);
+      svc.connect();
+      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+      // Paused until t=1300; now t=1000 -> live countdown shows.
+      ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
+      await tester.pump();
+      expect(find.textContaining('Filtering paused'), findsOneWidget);
+
+      // Past the window: before the 1s tick fires the (cached) status line
+      // still renders; the tick must prune it, not freeze at "resumes in 0s"
+      // -- the server only re-broadcasts on the next discrete event.
+      now = _at(1400);
+      await tester.pump();
+      expect(find.textContaining('Filtering paused'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.textContaining('Filtering paused'), findsNothing);
+      // The controls stay rendered for the next request.
+      expect(find.text('Pause prompts'), findsOneWidget);
       svc.dispose();
     });
 
