@@ -54,6 +54,28 @@ from ..model.workspaces import EGRESS_MODE_INTERACTIVE
 logger = logging.getLogger(__name__)
 
 
+async def _refuse(
+    websocket: WebSocket, code: int, reason: str, email: str | None = None
+) -> None:
+    """Close a refused decider handshake before ``accept()`` (#2490).
+
+    A pre-accept close is answered by the ASGI server with a bare HTTP 403
+    -- the close code and reason never reach the client -- so log the
+    refusal server-side (reason, user, workspace, User-Agent) to make the
+    403s in the klangkd log self-explanatory instead of anonymous noise.
+    """
+    logger.warning(
+        "consent decider connection refused: %s (code %d) user=%s "
+        "workspace=%s ua=%s",
+        reason,
+        code,
+        email or "unknown",
+        websocket.query_params.get("workspace") or "deploy-wide",
+        websocket.headers.get("user-agent", "?"),
+    )
+    await websocket.close(code=code, reason=reason)
+
+
 async def handle_consent_decider(websocket: WebSocket, app) -> None:
     """Register a consent decider for its connection lifetime + act on holds."""
     # #2420: time the pre-accept steps so an intermittent opening-handshake
@@ -69,15 +91,15 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
 
     token = websocket.query_params.get("token")
     if not token:
-        await websocket.close(code=4001, reason="Missing token")
+        await _refuse(websocket, 4001, "Missing token")
         return
     result = await app.state.auth.get_user_from_token(token)
     _hs_mark("token")
     if result is auth.Auth.TOKEN_EXPIRED:
-        await websocket.close(code=4002, reason="Token expired")
+        await _refuse(websocket, 4002, "Token expired")
         return
     if result is None:
-        await websocket.close(code=4001, reason="Invalid token")
+        await _refuse(websocket, 4001, "Invalid token")
         return
     user = result
     workspace = websocket.query_params.get("workspace")  # None = deploy-wide
@@ -95,7 +117,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
             "/admin", principals, "admin"
         )
     if not allowed:
-        await websocket.close(code=4003, reason="Forbidden")
+        await _refuse(websocket, 4003, "Forbidden", user.get("email"))
         return
     _hs_mark("authz")
 
@@ -111,18 +133,21 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     # NB: these closes run before websocket.accept(), so the ASGI server
     # (uvicorn) answers the handshake with a bare HTTP 403 -- the close code
     # and reason are NOT transmitted to the client (same as the authz close
-    # above). The distinct reason string is still worth setting: it lands in
-    # the server log for debugging why a connection was refused.
+    # above). _refuse() therefore also logs the reason server-side (#2490):
+    # the log line is the only place a 403 storm is attributable.
     if workspace is not None:
         ws = await app.state.model.workspaces.get_workspace(workspace)
         if ws is None:
             # Vanished between the authz check and now (a delete race) -- the
             # workspace authz just passed against can no longer be registered.
-            await websocket.close(code=4003, reason="Forbidden")
+            await _refuse(websocket, 4003, "Forbidden", user.get("email"))
             return
         if ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
-            await websocket.close(
-                code=4003, reason="workspace egress mode is not interactive"
+            await _refuse(
+                websocket,
+                4003,
+                "workspace egress mode is not interactive",
+                user.get("email"),
             )
             return
 

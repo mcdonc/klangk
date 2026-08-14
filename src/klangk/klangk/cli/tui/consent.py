@@ -30,6 +30,7 @@ import logging
 import subprocess
 import time
 from dataclasses import dataclass, replace
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 import websockets
 from rich.markup import escape
@@ -126,6 +127,18 @@ _PING_INTERVAL = 15.0
 
 # Reconnect backoff (seconds). Caps the spin on a repeatedly-dropping server.
 _RECONNECT_DELAYS = (1.0, 2.0, 5.0)
+
+
+# Sent as the WS handshake User-Agent so klangkd's refusal log (#2490) can
+# attribute a 403 to this client (vs a browser or anything else).
+def _user_agent() -> str:
+    try:
+        return f"klangk-consent-decide/{_pkg_version('klangk')}"
+    except PackageNotFoundError:  # running from source, not installed
+        return "klangk-consent-decide/dev"
+
+
+_USER_AGENT = _user_agent()
 
 # How long a flashed message (send failure, server error) stays on the status
 # line before the periodic refresh overwrites it.
@@ -608,6 +621,10 @@ class ConsentDeciderApp(App):
         self._ws = None
         self._connected = False
         self._stop = False
+        # #2490: set when the server refused registration (HTTP 403) twice in
+        # a row -- the reconnect loop has given up and the status line says
+        # so instead of "reconnecting".
+        self._refused = False
         self._flash_msg = ""
         self._flash_until = 0.0
         self._duration = DURATION_DEFAULT
@@ -735,10 +752,20 @@ class ConsentDeciderApp(App):
         next attempt authenticates (mirrors ``monitor``). While disconnected
         the decider is deregistered server-side, so in-flight holds auto-deny
         on their own timeout (fail-closed) -- never silently allowed.
+
+        A refused handshake (HTTP 403, #2490) is different: the server
+        closed *before* accept (authz, egress mode, vanished workspace --
+        or an expired token, since the pre-accept close code never reaches
+        us and uvicorn answers every refusal with 403). Retrying cannot
+        fix a real refusal, so after one refresh-and-retry (which recovers
+        the expired-token case) a second consecutive 403 stops the loop
+        for good instead of spamming the server log forever.
         """
         attempt = 0
+        refusals = 0
         while not self._stop:
             auth_close = False
+            refused = False
             try:
                 async with ws_connect(
                     self.server_url,
@@ -746,17 +773,45 @@ class ConsentDeciderApp(App):
                     max_size=self.max_size,
                     path="/ws/consent-decider",
                     query={"workspace": self.workspace_id},
+                    user_agent_header=_USER_AGENT,
                 ) as ws:
                     self._ws = ws
                     self._connected = True
                     attempt = 0
+                    refusals = 0
                     self._refresh()
                     auth_close = await self._pump(ws)
+            except websockets.InvalidStatus as e:
+                if e.response.status_code == 403:
+                    refused = True
+                else:
+                    # A proxy/gateway error (502/503...) is transient -- retry.
+                    logger.debug("consent-decide ws handshake failed: %s", e)
             except Exception as e:  # noqa: BLE001
                 logger.debug("consent-decide ws dropped: %s", e)
             finally:
                 self._ws = None
                 self._connected = False
+            if refused:
+                refusals += 1
+                if refusals >= 2:
+                    # Permanent refusal: the decider cannot register (see
+                    # docstring). Stop; the status line shows why (#2490).
+                    self._refused = True
+                    logger.warning(
+                        "consent-decide: registration refused (403) twice; "
+                        "not retrying"
+                    )
+                    self._refresh()
+                    break
+                # First refusal: maybe just an expired token (its 4002 close
+                # code is lost pre-accept) -- refresh and try once more.
+                new = await self._refresh_token()
+                if new:
+                    self.token = new
+                await asyncio.sleep(self._backoff(1))
+                self._refresh()
+                continue
             if self._stop:
                 break
             if auth_close:
@@ -931,7 +986,12 @@ class ConsentDeciderApp(App):
         if self._flash_until > time.time():
             status.update(self._flash_msg)
         else:
-            conn = "connected" if self._connected else "reconnecting"
+            if self._connected:
+                conn = "connected"
+            elif self._refused:
+                conn = "refused — not retrying"
+            else:
+                conn = "reconnecting"
             line = (
                 f" {escape(self.workspace_name)}  ·  {conn}"
                 f"  ·  {len(ordered)} held"

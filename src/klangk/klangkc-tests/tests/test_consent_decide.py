@@ -459,6 +459,30 @@ class TestAppRender:
             await pilot.pause()
             assert app.query_one("#empty", Static).display is True
 
+    async def test_refresh_shows_refused_state(self):
+        # #2490: after two 403 refusals the status line says the decider gave
+        # up ("refused — not retrying"), not "reconnecting".
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app._refused = True
+            app._refresh()
+            await pilot.pause()
+            status = app.query_one("#status", Static)
+            assert "refused — not retrying" in str(status.content)
+
+    def test_user_agent_has_distinctive_prefix(self):
+        # The UA names this client so klangkd's refusal log can attribute a
+        # 403 to the consent decider (#2490).
+        assert tui_consent._USER_AGENT.startswith("klangk-consent-decide/")
+        assert tui_consent._user_agent() == tui_consent._USER_AGENT
+
+    def test_user_agent_falls_back_when_not_installed(self, monkeypatch):
+        def boom(name):
+            raise tui_consent.PackageNotFoundError(name)
+
+        monkeypatch.setattr(tui_consent, "_pkg_version", boom)
+        assert tui_consent._user_agent() == "klangk-consent-decide/dev"
+
     async def test_refresh_shows_active_flash(self):
         # While a flash is active (within TTL), _refresh renders it instead of
         # the normal status (so flashes survive the 1s periodic refresh).
@@ -1121,6 +1145,67 @@ class TestWsLoop:
         except asyncio.CancelledError:
             pass
         assert calls["n"] >= 2  # failed once, then reconnected
+
+    async def test_refused_403_retries_once_then_stops(self, monkeypatch):
+        # #2490: a pre-accept refusal is HTTP 403 (uvicorn answers every
+        # pre-accept close with 403 -- even an expired token, whose 4002
+        # close code never reaches us). The loop refreshes the token and
+        # retries ONCE; a second consecutive 403 is permanent -- it stops
+        # instead of spamming the server log forever.
+        calls = {"n": 0}
+
+        def refuse_403(*a, **kw):
+            calls["n"] += 1
+            raise websockets.InvalidStatus(
+                types.SimpleNamespace(status_code=403)
+            )
+
+        monkeypatch.setattr(tui_consent, "ws_connect", refuse_403)
+        app = _make_app(reconnect_delays=(0.0,))
+
+        async def fake_refresh():
+            return "refreshed-token"
+
+        monkeypatch.setattr(app, "_refresh_token", fake_refresh)
+        task = asyncio.create_task(_real_ws_loop(app))
+        for _ in range(100):  # wait for the loop to give up
+            if app._refused:
+                break
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert app._refused is True
+        assert calls["n"] == 2  # one refusal + one refresh-and-retry
+        assert app.token == "refreshed-token"
+
+    async def test_handshake_503_keeps_retrying(self, monkeypatch):
+        # A non-403 handshake failure (gateway 503) is transient: the loop
+        # keeps the normal reconnect backoff and never sets _refused.
+        calls = {"n": 0}
+
+        def refuse_503(*a, **kw):
+            calls["n"] += 1
+            raise websockets.InvalidStatus(
+                types.SimpleNamespace(status_code=503)
+            )
+
+        monkeypatch.setattr(tui_consent, "ws_connect", refuse_503)
+        app = _make_app(reconnect_delays=(0.0,))
+        task = asyncio.create_task(_real_ws_loop(app))
+        await asyncio.sleep(0.1)
+        app._stop = True
+        await asyncio.sleep(0.1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert calls["n"] >= 2  # still retrying
+        assert app._refused is False
 
     async def test_connect_exception_logs_and_retries(self, monkeypatch):
         # ws_connect always raises: the loop keeps retrying (never crashes).
