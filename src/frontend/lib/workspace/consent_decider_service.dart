@@ -29,13 +29,11 @@ const String kDecisionAllowed = 'allowed';
 const String kDecisionDenied = 'denied';
 
 /// Ordered for the duration selector; the default is `tilrestart` (#2328).
-/// The test-only `5s` is TEMPORARILY included (#2465) for manual testing now
-/// that a timed allow lapses at its verdict (not the MIN_TTL floor); remove
-/// it from this list to shut it off (it stays valid when sent by a
-/// programmatic caller).
+/// The test-only `5s` is NOT offered (#2487) -- it's not meant for end users --
+/// but stays recognized for in-effect/countdown math and programmatic/test
+/// callers (it remains in `kConsentDurationSeconds` below).
 const List<String> kConsentDurations = [
   'once',
-  '5s',
   '5m',
   '15m',
   '1h',
