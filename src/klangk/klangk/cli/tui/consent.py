@@ -34,6 +34,7 @@ from dataclasses import dataclass, replace
 import websockets
 from rich.markup import escape
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
@@ -563,12 +564,15 @@ class ConsentDeciderApp(App):
         ("a", "allow", "Allow"),
         ("d", "deny", "Deny"),
         ("r", "rules", "Rules"),
-        # q, Q, and Escape all hide the viewer in persistent mode (the decider
-        # is persistent — it never quits on a key, only when the shell ends)
-        # and all quit in standalone (#2383).
+        # q, Q, Escape, and Ctrl-A all hide the viewer in persistent mode (the
+        # decider is persistent — it never quits on a key, only when the shell
+        # ends) and all quit in standalone (#2383). Ctrl-A lets "C-a p" close
+        # the popup while it's open: the outer C-a p binding can't fire then
+        # (the popup captures input), but C-a passes through to the decider.
         ("q", "q_key", "Quit"),
         ("Q", "q_key", "Quit"),
         ("escape", "q_key", "Quit"),
+        ("ctrl+a", "q_key", "Quit"),
     ]
 
     def __init__(  # noqa: PLR0913
@@ -614,19 +618,21 @@ class ConsentDeciderApp(App):
     def _apply_bindings(self) -> None:
         """Install persistent vs standalone keybindings, then refresh Footer.
 
-        ``q`` and ``Q`` both hide the viewer in persistent mode (the decider
-        is persistent — it never quits on a key, only when the shell ends) and
-        both quit in standalone. The label follows the role so the Footer
-        reads correctly in each.
+        ``q``, ``Q`` and ``Escape`` all hide the viewer in persistent mode
+        (the decider is persistent — it never quits on a key, only when the
+        shell ends) and all quit in standalone. Only ``q`` is shown in the
+        Footer, labelled ``q/Esc``; ``Q`` and ``Esc`` are active but hidden
+        from the Footer to keep it uncluttered.
         """
         q_label = "Hide" if self._persistent else "Quit"
         self.BINDINGS = [
-            ("a", "allow", "Allow"),
-            ("d", "deny", "Deny"),
-            ("r", "rules", "Rules"),
-            ("q", "q_key", q_label),
-            ("Q", "q_key", q_label),
-            ("escape", "q_key", q_label),
+            Binding("a", "allow", "Allow"),
+            Binding("d", "deny", "Deny"),
+            Binding("r", "rules", "Rules"),
+            Binding("q", "q_key", f"q/Esc {q_label}", show=True),
+            Binding("Q", "q_key", q_label, show=False),
+            Binding("escape", "q_key", q_label, show=False),
+            Binding("ctrl+a", "q_key", q_label, show=False),
         ]
         self.refresh_bindings()
 
@@ -873,13 +879,20 @@ class ConsentDeciderApp(App):
                 child.remove()
         # Repaint survivors' countdown in place; append only new rows.
         existing = {getattr(c, "request_id", None): c for c in lv.children}
+        new_ids: list[str] = []
         for req in ordered:
             item = existing.get(req.id)
             if item is None:
                 lv.append(self._render_item(req))
+                new_ids.append(req.id)
             else:
                 self._update_item(item, req)
-        self._select_by_id(focused_id)
+        # A newly-arrived hold grabs focus so the user can act on it at once;
+        # otherwise keep focus on the previously-focused survivor (#2383).
+        if new_ids:
+            self._select_by_id(new_ids[0])
+        else:
+            self._select_by_id(focused_id)
         empty.display = not ordered
         if self._flash_until > time.time():
             status.update(self._flash_msg)

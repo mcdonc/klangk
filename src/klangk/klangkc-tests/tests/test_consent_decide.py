@@ -489,6 +489,21 @@ class TestAppRender:
             await pilot.pause()
             assert app._focused_request_id() == "r2"
 
+    async def test_refresh_focuses_newly_arrived_hold(self):
+        # A newly-arrived hold grabs focus so the user can act on it at once.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            app.query_one("#requests", ListView).index = 0  # focus r1
+            await pilot.pause()
+            # a new hold arrives
+            app.controller.apply_frame(_req_frame("r2", host="b.com"))
+            app._refresh()
+            await pilot.pause()
+            assert app._focused_request_id() == "r2"
+
     async def test_render_item_with_process_and_port(self):
         app = _make_app()
         req = ConsentRequest(
@@ -2251,22 +2266,37 @@ class TestPersistentPopupRole:
     def test_apply_bindings_standalone_labels_q_quit(self):
         app = _make_app()
         app._apply_bindings()
-        labels = {b[0]: b[2] for b in app.BINDINGS}
-        assert labels["q"] == "Quit"
-        assert labels["Q"] == "Quit"
-        assert labels["escape"] == "Quit"
+        shown = {b.key: b.description for b in app.BINDINGS if b.show}
+        assert shown == {
+            "a": "Allow",
+            "d": "Deny",
+            "r": "Rules",
+            "q": "q/Esc Quit",
+        }
+        # Q, Esc, Ctrl-A are active but hidden from the Footer
+        assert {b.key for b in app.BINDINGS if not b.show} == {
+            "Q",
+            "escape",
+            "ctrl+a",
+        }
 
     def test_apply_bindings_persistent_labels_q_hide(self):
         app = _make_app(
             popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
         )
         app._apply_bindings()
-        labels = {b[0]: b[2] for b in app.BINDINGS}
-        assert labels["q"] == "Hide"
-        # Q and Escape hide too in persistent mode — the decider is persistent
-        # (it never quits on a key, only when the shell ends).
-        assert labels["Q"] == "Hide"
-        assert labels["escape"] == "Hide"
+        shown = {b.key: b.description for b in app.BINDINGS if b.show}
+        assert shown == {
+            "a": "Allow",
+            "d": "Deny",
+            "r": "Rules",
+            "q": "q/Esc Hide",
+        }
+        assert {b.key for b in app.BINDINGS if not b.show} == {
+            "Q",
+            "escape",
+            "ctrl+a",
+        }
 
     def test_q_key_standalone_exits(self):
         # No popup context -> q quits immediately (today's behaviour).
