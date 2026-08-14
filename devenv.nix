@@ -154,6 +154,13 @@ in
       execIfModified = [
         "scripts/build-network-sidecar.sh"
         "src/containers/network/**"
+        # The klangksidecar wheel (#2450): only the import package + its
+        # pyproject (dep pins + wheel metadata) affect what gets baked into
+        # the image. tests/ is excluded from the wheel automatically, and
+        # uv.lock is not consulted by ``uv build`` -- keying on it would
+        # rebuild the image on every unrelated workspace dep bump.
+        "src/klangksidecar/klangksidecar/**"
+        "src/klangksidecar/pyproject.toml"
       ];
     };
     "klangk:kill-port-holders" = {
