@@ -1719,6 +1719,29 @@ class TestEgressAcct:
         monkeypatch.setattr(proxy.subprocess, "run", boom)
         assert proxy.rules.acct_bytes() == 0
 
+    def test_acct_bytes_non_integer_column_is_zero(self, proxy, monkeypatch):
+        # Safety net if an iptables-nft version emits an unexpected -v layout:
+        # the comment-tagged line's bytes column isn't an int -> 0.
+        out = (
+            "   42 notanumber ACCEPT all -- * * 0.0.0.0/0 0.0.0.0/0 /* klangk-acct */\n"
+        )
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(stdout=out, returncode=0),
+        )
+        assert proxy.rules.acct_bytes() == 0
+
+    def test_acct_bytes_malformed_line_is_zero(self, proxy, monkeypatch):
+        # Comment tag present but too few columns to hold pkts+bytes -> 0.
+        out = "klangk-acct\n"
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(stdout=out, returncode=0),
+        )
+        assert proxy.rules.acct_bytes() == 0
+
 
 class TestActivitySampler:
     """Workspace-egress byte sampling -> idle bump (#2485): the sampler polls
@@ -1760,9 +1783,9 @@ class TestActivitySampler:
                 bumps.append(1)
 
         task = asyncio.create_task(
-            proxy.consent._activity_sampler(C(), lambda: next(readings), 0.001)
+            proxy.consent._activity_sampler(C(), lambda: next(readings), 0.0)
         )
-        await asyncio.sleep(0.1)  # plenty of 1ms ticks to drain the readings
+        await asyncio.sleep(0.1)  # plenty of 0-interval ticks to drain readings
         task.cancel()
         try:
             await task
@@ -3069,6 +3092,12 @@ class TestSigtermShutdown:
         )
         monkeypatch.setattr(proxy.rules, "check_mark", lambda: None)
         monkeypatch.setattr(proxy.packets, "check_rst_socket", lambda: None)
+        # #2485: the egress-accounting resolve/install/read are blocking (DNS +
+        # iptables) -- stub them so this unit test does no real I/O, like the
+        # other startup mocks above.
+        monkeypatch.setattr(proxy.app, "_resolve_ws_host", lambda url: None)
+        monkeypatch.setattr(proxy.rules, "install_acct", lambda *a, **k: None)
+        monkeypatch.setattr(proxy.rules, "acct_bytes", lambda: 0)
         started = []
 
         class _FakeClient:
@@ -3122,6 +3151,12 @@ class TestSigtermShutdown:
         monkeypatch.setattr(proxy.config, "CONSENT_URL", "http://k/ev")
         monkeypatch.setattr(proxy.rules, "check_mark", lambda: None)
         monkeypatch.setattr(proxy.packets, "check_rst_socket", lambda: None)
+        # #2485: the egress-accounting resolve/install/read are blocking (DNS +
+        # iptables) -- stub them so this unit test does no real I/O, like the
+        # other startup mocks above.
+        monkeypatch.setattr(proxy.app, "_resolve_ws_host", lambda url: None)
+        monkeypatch.setattr(proxy.rules, "install_acct", lambda *a, **k: None)
+        monkeypatch.setattr(proxy.rules, "acct_bytes", lambda: 0)
 
         in_stop = asyncio.Event()
         release_stop = asyncio.Event()

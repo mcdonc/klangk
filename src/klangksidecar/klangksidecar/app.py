@@ -83,18 +83,29 @@ async def _shutdown(
 def _resolve_ws_host(consent_url: str) -> str | None:
     """Resolve the klangkd WS host to an IP so the egress-accounting rule can
     exclude it (#2485) -- the WS is the sidecar's own persistent control socket
-    and its keepalives must not self-sustain the idle timer. Best-effort: None
-    on any failure (the rule then also counts the WS keepalive; a minor
-    over-keep, the safe direction -- the workspace stays alive slightly past
-    true idle rather than being reaped mid-flow).
+    and its keepalives must not self-sustain the idle timer.
+
+    Returns None on any failure (no host in the URL, or unresolvable). IMPORTANT:
+    a None DEFEATS the idle timeout -- the WS keepalive (~50-100 bytes per 20s
+    ping) then counts as workspace egress and bumps the timer every tick, so the
+    workspace is never reaped. In the default deployment CONSENT_URL is
+    host.containers.internal (a /etc/hosts entry, single IP) and resolves
+    locally, so this is a round-robin / DNS-only-backend edge case; it is logged
+    so an operator whose workspaces never idle can find it.
     """
     try:
         host = urlparse(consent_url).hostname
-        if not host:
-            return None
-        return socket.gethostbyname(host)
+        ip = socket.gethostbyname(host) if host else None
     except Exception:
-        return None
+        ip = None
+    if not ip:
+        print(
+            "egress-sidecar: could not resolve the klangkd WS host to exclude "
+            "it from egress accounting -- its keepalives will count as workspace "
+            "egress and the workspace idle timer may never fire (#2485)",
+            flush=True,
+        )
+    return ip
 
 
 async def _async_main() -> None:
@@ -139,8 +150,10 @@ async def _async_main() -> None:
         # DNS+SYN hooks miss). Best-effort; a missing rule -> flat zero counter
         # -> sampler never bumps (falls back to #2481). _resolve_ws_host scopes
         # the rule to exclude the sidecar's own WS so its keepalives can't
-        # self-sustain the timer.
-        rules.install_acct(_resolve_ws_host(config.CONSENT_URL))
+        # self-sustain the timer. Resolve + install run off-loop (gethostbyname
+        # + 2 iptables forks are blocking), matching the rest of startup.
+        ws_ip = await loop.run_in_executor(None, _resolve_ws_host, config.CONSENT_URL)
+        await loop.run_in_executor(None, rules.install_acct, ws_ip)
         _sampler = asyncio.create_task(
             consent._activity_sampler(client, rules.acct_bytes, config.ACTIVITY_GATE_S)
         )

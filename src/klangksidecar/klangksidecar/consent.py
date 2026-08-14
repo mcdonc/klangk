@@ -360,17 +360,22 @@ async def _activity_sampler(client, get_bytes, interval: float) -> None:
     (= :data:`ACTIVITY_GATE_S`, so one tick yields at most one activity frame
     per window -- the send itself is flood-gated by ``bump_activity``). The
     per-tick work is exactly one counter read; the kernel does all the
-    per-packet accounting. Best-effort, like the #2481 hooks: a read failure
-    re-baselines (:func:`_activity_delta`) and ``bump_activity`` is silent on a
-    down WS, so sampling never breaks egress. Mirrors
-    :func:`klangksidecar.rules._async_sweeper` (sleep + work, swallow per-tick
-    errors so one bad tick doesn't kill the task).
+    per-packet accounting. The read runs OFF the event loop via
+    ``run_in_executor`` (like :func:`klangksidecar.rules._async_sweeper` runs
+    :func:`sweep_once`), because the production reader forks iptables and would
+    otherwise stall the DNS recv loop once per interval. Best-effort, like the
+    #2481 hooks: a read failure re-baselines (:func:`_activity_delta`) and
+    ``bump_activity`` is silent on a down WS, so sampling never breaks egress.
+    Per-tick errors are swallowed so one bad tick doesn't kill the task.
     """
-    _, prev = _activity_delta(get_bytes, 0)
+    loop = asyncio.get_running_loop()
+    _, prev = await loop.run_in_executor(None, _activity_delta, get_bytes, 0)
     while True:
         await asyncio.sleep(interval)
         try:
-            bumped, prev = _activity_delta(get_bytes, prev)
+            bumped, prev = await loop.run_in_executor(
+                None, _activity_delta, get_bytes, prev
+            )
             if bumped:
                 client.bump_activity()
         except Exception:

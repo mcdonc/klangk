@@ -347,7 +347,10 @@ def check_mark() -> None:
 # like traffic -> bumps the timer -> the workspace never goes idle). Mangle,
 # not filter, so the rule never fights the learned ACCEPT/REJECT rules'
 # `-I OUTPUT 1` inserts; `-j ACCEPT` terminates only the mangle chain, leaving
-# the nat REDIRECT + filter OUTPUT path intact.
+# the nat REDIRECT + filter OUTPUT path intact. (The forged eager-deny RST
+# from packets.py is also unmarked + not the WS host, so it is counted too --
+# harmless: it correlates 1:1 with a SYN the #2481 NFQUEUE hook already bumped,
+# and bump_activity's flood gate dedupes.)
 _ACCT_COMMENT = "klangk-acct"
 
 
