@@ -100,6 +100,14 @@ String? guardRoot({required bool isLoggedIn, required String loc}) {
 ///
 /// [publicRoutes] should already include the feature paths; [featurePaths]
 /// is passed separately so [guardLoggedInPublicRoute] can exclude them.
+///
+/// While a banner is pending, the banner gate is **terminal**: `/consent`
+/// is the only legal location, for logged-out and logged-in users alike.
+/// Falling through to the guards below would let [guardLoggedInPublicRoute]
+/// bounce a logged-in user off `/consent` (a public route) straight back
+/// into the banner gate — the `/consent => /workspaces => /consent`
+/// redirect loop hit whenever `bannerRequired` is true with a persisted
+/// token (`login_banner_every_visit`, or a changed banner text).
 String? evaluateGuards({
   required bool isLoggedIn,
   required bool bannerRequired,
@@ -108,7 +116,10 @@ String? evaluateGuards({
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
 }) {
-  return guardBanner(bannerRequired: bannerRequired, loc: loc) ??
+  if (bannerRequired) {
+    return guardBanner(bannerRequired: true, loc: loc);
+  }
+  return guardBanner(bannerRequired: false, loc: loc) ??
       guardAuth(
         isLoggedIn: isLoggedIn,
         loc: loc,
