@@ -586,6 +586,11 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Restyled pause/duration option buttons (#2502).** The Net Rules pause
+  controls (Unpause / Pause 15m / 1h / 1d) and the consent banner's duration
+  selector now share one pill-shaped option-button look with equal sizing,
+  pause/play icons, and tooltips; the active choice keeps the amber fill.
+  Purely presentational — keys and behavior unchanged.
 - **Consent banner duration buttons (#2499).** The egress-consent banner's
   verdict-duration dropdown is now a row of compact buttons (one per
   duration, the selected one highlighted), matching the `consent-decide`

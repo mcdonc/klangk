@@ -26,9 +26,9 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import 'consent_decider_service.dart';
+import '../widgets/option_button.dart';
 
 /// A banner over the workspace body showing held egress requests + actions.
 ///
@@ -228,33 +228,14 @@ class _DurationSelector extends StatelessWidget {
   }
 
   Widget _button(String d) {
-    // The active button mirrors the pause buttons (#2497): amber
-    // background, canvas foreground; inactive stays outlined.
-    final active = d == value;
-    final key = ValueKey('dur-$d');
-    if (active) {
-      return FilledButton(
-        key: key,
-        style: FilledButton.styleFrom(
-          backgroundColor: KColors.accentAmber,
-          foregroundColor: KColors.bgCanvas,
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          textStyle: const TextStyle(fontSize: 12),
-        ),
-        onPressed: () => onChanged(d),
-        child: Text(d),
-      );
-    }
-    return OutlinedButton(
-      key: key,
-      style: OutlinedButton.styleFrom(
-        visualDensity: VisualDensity.compact,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        textStyle: const TextStyle(fontSize: 12),
-      ),
+    // Shared option-button look (#2502): amber fill for the active choice,
+    // pill shape, aligned minimum size -- same control language as the Net
+    // Rules pause buttons.
+    return KOptionButton(
+      buttonKey: ValueKey('dur-$d'),
+      label: d,
+      active: d == value,
       onPressed: () => onChanged(d),
-      child: Text(d),
     );
   }
 }
