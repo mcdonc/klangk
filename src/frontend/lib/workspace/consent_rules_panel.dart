@@ -31,6 +31,7 @@ import 'package:flutter/material.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import 'consent_decider_service.dart';
+import '../widgets/option_button.dart';
 
 /// Compact remaining-time label: ``5m``, ``2h``, ``3d``, ``1w`` (#2387).
 /// Mirrors the TUI ``_fmt_duration``.
@@ -418,9 +419,14 @@ class _PauseSection extends StatelessWidget {
             spacing: 8,
             runSpacing: 4,
             children: [
-              _pauseButton(null, 'Unpause'),
+              _pauseButton(null, 'Unpause',
+                  icon: Icons.play_arrow_outlined,
+                  tooltip: 'Consent prompts resume immediately'),
               for (final d in kConsentPauseDurations)
-                _pauseButton(d, 'Pause $d'),
+                _pauseButton(d, 'Pause $d',
+                    icon: Icons.pause_outlined,
+                    tooltip: 'Silence all consent prompts for '
+                        '${_pauseTooltip(d)}'),
             ],
           ),
         ],
@@ -428,30 +434,28 @@ class _PauseSection extends StatelessWidget {
     );
   }
 
-  Widget _pauseButton(String? duration, String label) {
+  /// Human wording for a window token in the button tooltip.
+  static String _pauseTooltip(String duration) => switch (duration) {
+        '15m' => '15 minutes',
+        '1h' => '1 hour',
+        '1d' => '1 day',
+        _ => duration,
+      };
+
+  Widget _pauseButton(String? duration, String label,
+      {IconData? icon, String? tooltip}) {
     // The active button mirrors the TUI's `pause-active` style: amber
-    // background, canvas foreground.
-    final active = duration == service.lastPauseRequest;
-    final key = ValueKey('pause-${duration ?? 'none'}');
-    final onPressed = () =>
-        duration == null ? service.sendUnpause() : service.sendPause(duration);
-    if (active) {
-      return FilledButton(
-        key: key,
-        style: FilledButton.styleFrom(
-          backgroundColor: KColors.accentAmber,
-          foregroundColor: KColors.bgCanvas,
-          visualDensity: VisualDensity.compact,
-        ),
-        onPressed: onPressed,
-        child: Text(label),
-      );
-    }
-    return OutlinedButton(
-      key: key,
-      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
-      onPressed: onPressed,
-      child: Text(label),
+    // background, canvas foreground (#2502 restyle: shared pill shape +
+    // icon/tooltip affordances via [KOptionButton]).
+    return KOptionButton(
+      buttonKey: ValueKey('pause-${duration ?? 'none'}'),
+      label: label,
+      active: duration == service.lastPauseRequest,
+      icon: icon,
+      tooltip: tooltip,
+      onPressed: () => duration == null
+          ? service.sendUnpause()
+          : service.sendPause(duration),
     );
   }
 }
