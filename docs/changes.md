@@ -581,8 +581,12 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
-- **`KLANGKD_IDLE_TIMEOUT_SECONDS` default 30m → 60m (#2480).** The
-  workspace container idle timeout now defaults to 3600s (was 1800s). Existing
+- **Consent banner duration buttons (#2499).** The egress-consent banner's
+  verdict-duration dropdown is now a row of compact buttons (one per
+  duration, the selected one highlighted), matching the `consent-decide`
+  TUI's duration selector. Behavior is unchanged: one global selection,
+  default `tilrestart`, applied on the next Allow/Deny.
+- **`KLANGKD_IDLE_TIMEOUT_SECONDS` default 30m → 60m (#2480).** The workspace container idle timeout now defaults to 3600s (was 1800s). Existing
   deployments get a longer idle window on upgrade unless the env var is already
   set; set `KLANGKD_IDLE_TIMEOUT_SECONDS=1800` to keep the old 30-minute default.
   The auto-computed idle-check interval (`timeout/3`, clamped 10–60s) follows.
