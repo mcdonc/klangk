@@ -161,6 +161,15 @@ def new_detached_session(
     )
 
 
+def configure_hidden_session(socket: str, session: str) -> list[list[str]]:
+    """Hide the hidden session's status bar so the popup shows only the decider.
+
+    Without this the consent popup renders the decider PLUS a tmux status bar
+    across its bottom (#2383).
+    """
+    return [_tmux(socket, "set-option", "-t", session, "status", "off")]
+
+
 def configure_outer_session(socket: str, session: str) -> list[list[str]]:
     """Make the outer session nearly invisible + pass-through for the inner.
 
@@ -380,6 +389,10 @@ def run_consent_shell(
         run(cmd)
     # 3. hidden decider session (sized to the popup so it doesn't reflow).
     run(new_detached_session(socket, hidden, decider_argv, x=pw, y=ph))
+    # 3b. hide the hidden session's status bar so the popup shows only the
+    #     decider (no tmux status bar across the popup's bottom).
+    for cmd in configure_hidden_session(socket, hidden):
+        run(cmd)
     # 4. the C-a p reopen binding (no auto-show — the decider shows the popup
     #    itself when a held request arrives, so the shell isn't bothered at
     #    startup when there's nothing to decide).
@@ -409,6 +422,7 @@ __all__ = [
     "REOPEN_KEY",
     "TMUX_MIN_VERSION",
     "attach_cmd",
+    "configure_hidden_session",
     "configure_outer_session",
     "display_popup_command",
     "has_session_cmd",

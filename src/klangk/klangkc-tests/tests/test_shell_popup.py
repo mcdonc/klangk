@@ -177,6 +177,22 @@ class TestBuilders:
             ],
         ]
 
+    def test_configure_hidden_session(self):
+        # Hide the hidden session's status bar so the popup shows only the
+        # decider (no tmux status bar across the popup's bottom).
+        assert sp.configure_hidden_session("/tmp/s.sock", "hidden") == [
+            [
+                "tmux",
+                "-S",
+                "/tmp/s.sock",
+                "set-option",
+                "-t",
+                "hidden",
+                "status",
+                "off",
+            ],
+        ]
+
     def test_popup_viewer_shell_string(self):
         assert sp.popup_viewer_shell_string("/tmp/s.sock", "hidden") == (
             "env -u TMUX tmux -S /tmp/s.sock attach -t hidden"
@@ -354,8 +370,9 @@ class TestRunConsentShell:
         socket = sp.socket_path("wsid")
         outer = sp.outer_session_name("wsid")
         hidden = sp.hidden_session_name("wsid")
-        # 1 outer session + 3 config + 1 hidden + 1 binding + 1 attach + 2 kills = 9
-        assert len(ran) == 9
+        # 1 outer + 3 outer-config + 1 hidden + 1 hidden-config + 1 binding
+        # + 1 attach + 2 kills = 10
+        assert len(ran) == 10
         # outer session created with the inner argv, then configured
         assert (
             ran[0]
@@ -376,18 +393,20 @@ class TestRunConsentShell:
         # hidden session
         assert ran[4][1:4] == ["-S", socket, "new-session"]
         assert ran[4][ran[4].index("-s") + 1] == hidden
+        # hidden session status bar hidden (popup shows only the decider)
+        assert ran[5:6] == sp.configure_hidden_session(socket, hidden)
         # the reopen binding (no auto-show hook)
-        assert ran[5:6] == sp.popup_binding_cmds(
+        assert ran[6:7] == sp.popup_binding_cmds(
             socket,
             hidden,
             w=sp.DEFAULT_POPUP_SIZE[0],
             h=sp.DEFAULT_POPUP_SIZE[1],
         )
         # attach to outer
-        assert ran[6] == sp.attach_cmd(socket, outer)
+        assert ran[7] == sp.attach_cmd(socket, outer)
         # cleanup: kill hidden then outer
-        assert ran[7] == sp.kill_session_cmd(socket, hidden)
-        assert ran[8] == sp.kill_session_cmd(socket, outer)
+        assert ran[8] == sp.kill_session_cmd(socket, hidden)
+        assert ran[9] == sp.kill_session_cmd(socket, outer)
 
     def test_returns_attach_exit_code(self):
         def fake_run(argv):
@@ -462,7 +481,7 @@ class TestRunConsentShell:
         assert hidden_cmd[hidden_cmd.index("-x") + 1] == "50"
         assert hidden_cmd[hidden_cmd.index("-y") + 1] == "10"
         # popup command (the reopen binding) uses the popup size
-        assert "-w 50 -h 10" in ran[5][5]
+        assert "-w 50 -h 10" in ran[6][5]
 
 
 # ---------------------------------------------------------------------------
