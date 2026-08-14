@@ -32,6 +32,12 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Pause egress filtering from the web UI (#2494).** The workspace page's
+  **Net Rules** tab now has a pause control (Unpause / Pause 15m / 1h / 1d)
+  that silences consent prompts workspace-wide for a window, matching the
+  `consent-decide` TUI control (#2332). Requires the same
+  `share-terminals` permission as the TUI; the server nacks otherwise.
+
 - **Egress request-flow diagram (#2376).** New "Anatomy of an egressing
   request" page under Architecture: a Mermaid flowchart of a single
   egressing request — DNS gate → NFQUEUE SYN gate → consent loop →
