@@ -40,6 +40,12 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, ListItem, ListView, Static
 
 from ..auth import refresh_token
+from ..shell_popup import (
+    DEFAULT_POPUP_SIZE,
+    hidden_has_client,
+    outer_clients,
+    show_popup_argv,
+)
 from ..transport import ws_connect
 
 logger = logging.getLogger(__name__)
@@ -557,8 +563,11 @@ class ConsentDeciderApp(App):
         ("a", "allow", "Allow"),
         ("d", "deny", "Deny"),
         ("r", "rules", "Rules"),
+        # q and Q both hide the viewer in persistent mode (the decider is
+        # persistent — it never quits on a key, only when the shell ends) and
+        # both quit in standalone (#2383).
         ("q", "q_key", "Quit"),
-        ("Q", "confirm_quit", "Quit"),
+        ("Q", "q_key", "Quit"),
     ]
 
     def __init__(  # noqa: PLR0913
@@ -604,10 +613,10 @@ class ConsentDeciderApp(App):
     def _apply_bindings(self) -> None:
         """Install persistent vs standalone keybindings, then refresh Footer.
 
-        `q` hides the viewer in persistent mode (so it can't accidentally
-        quit + deregister the always-on decider); `q` quits in standalone.
-        `Q` always confirms a real quit. The label on `q` follows the role
-        so the Footer reads correctly in each.
+        ``q`` and ``Q`` both hide the viewer in persistent mode (the decider
+        is persistent — it never quits on a key, only when the shell ends) and
+        both quit in standalone. The label follows the role so the Footer
+        reads correctly in each.
         """
         q_label = "Hide" if self._persistent else "Quit"
         self.BINDINGS = [
@@ -615,7 +624,7 @@ class ConsentDeciderApp(App):
             ("d", "deny", "Deny"),
             ("r", "rules", "Rules"),
             ("q", "q_key", q_label),
-            ("Q", "confirm_quit", "Quit"),
+            ("Q", "q_key", q_label),
         ]
         self.refresh_bindings()
 
@@ -767,6 +776,10 @@ class ConsentDeciderApp(App):
                     auth_close = code in (4001, 4002)
                     break
                 action, payload = self.controller.apply_frame(raw)
+                if action == ADDED:
+                    # A held request arrived: surface it as the popup over the
+                    # shell (no-op in standalone, skipped if already shown).
+                    self._show_popup()
                 try:
                     if action == ERROR:
                         self._flash(str(payload))
@@ -1042,28 +1055,16 @@ class ConsentDeciderApp(App):
         self.push_screen(RulesScreen())
 
     def action_q_key(self) -> None:
-        """`q`: hide the popup viewer (persistent) or quit (standalone).
+        """``q``/``Q``: hide the popup viewer (persistent) or quit (standalone).
 
-        Persistent mode runs the decider inside a hidden tmux session; `q`
-        detaches the viewer so a stray key can't quit + deregister the
-        always-on decider. Standalone `q` quits as before. Press `Q` to quit
-        for real in either mode.
+        Persistent mode runs the decider inside a hidden tmux session; ``q``
+        and ``Q`` detach the viewer so the always-on decider is never quit by a
+        key (it dies only when the shell ends). Standalone ``q``/``Q`` quit as
+        before. Reopen the popup with the shell wrapper's reopen key.
         """
         if self._persistent:
             self._hide_viewer()
         else:
-            self.exit()
-
-    def action_confirm_quit(self) -> None:
-        """`Q`: confirm, then quit + deregister the decider (#2383).
-
-        A deliberate two-step so neither mode quits on a single keypress.
-        Cancelled (`n`/`Esc`) returns to the queue with the decider intact.
-        """
-        self.push_screen(QuitConfirmScreen(), self._on_confirm_quit)
-
-    def _on_confirm_quit(self, confirmed: bool) -> None:
-        if confirmed:
             self.exit()
 
     def _hide_viewer(self) -> None:
@@ -1085,6 +1086,31 @@ class ConsentDeciderApp(App):
             )
         except Exception:  # noqa: BLE001
             logger.debug("consent-decide viewer detach failed")
+
+    def _show_popup(self) -> None:
+        """Show the popup on the user's shell client when a request arrives.
+
+        No-op when not running under a popup (standalone ``consent-decide``).
+        Skipped when the popup is already open (the hidden session has a
+        viewer client attached). A failed show is swallowed -- the decider
+        keeps running and the user can reopen with the shell's reopen key.
+        """
+        sock = self.popup_socket
+        sess = self.popup_session
+        if not sock or not sess:
+            return
+        if hidden_has_client(sock, sess):
+            return  # popup already open
+        w, h = DEFAULT_POPUP_SIZE
+        for client in outer_clients(sock, sess):
+            try:
+                subprocess.run(
+                    show_popup_argv(sock, sess, client, w=w, h=h),
+                    capture_output=True,
+                    timeout=3,
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("consent-decide popup show failed")
 
     def _decide(self, decision: str) -> None:
         rid = self._focused_request_id()
@@ -1111,51 +1137,6 @@ class ConsentDeciderApp(App):
             await ws.send(make_verdict(rid, decision, duration))
         except Exception:
             self._flash("verdict send failed — reconnecting")
-
-
-class QuitConfirmScreen(Screen):
-    """Confirm deregistering the decider (the `Q` path, #2383).
-
-    A deliberate two-step so neither role quits on a single keypress: in
-    the persistent popup role a stray key must not quit + deregister the
-    always-on decider, and in standalone `Q` matches `q`'s old behaviour
-    behind a guard. `y` quits; `n`/`Esc` cancels back to the queue.
-    """
-
-    CSS = """
-    QuitConfirmScreen { align: center middle; }
-    QuitConfirmScreen #confirm-box {
-        width: 60;
-        height: auto;
-        padding: 1 2;
-        border: round $warning;
-        background: $panel;
-    }
-    QuitConfirmScreen #confirm-msg { width: 1fr; }
-    """
-
-    BINDINGS = [
-        ("y", "yes", "Yes"),
-        ("n", "no", "No"),
-        ("escape", "no", "No"),
-    ]
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="confirm-box"):
-            yield Static(
-                "Quit and deregister this consent decider?\n"
-                "Held requests auto-deny on timeout.\n\n"
-                "[y] quit   [n] cancel",
-                id="confirm-msg",
-                markup=False,
-            )
-        yield Footer()
-
-    def action_yes(self) -> None:
-        self.dismiss(True)
-
-    def action_no(self) -> None:
-        self.dismiss(False)
 
 
 class RulesScreen(Screen):

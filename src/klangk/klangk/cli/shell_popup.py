@@ -205,16 +205,84 @@ def display_popup_command(socket: str, hidden: str, *, w: int, h: int) -> str:
     return f"display-popup -E -w {w} -h {h} {shlex.quote(viewer)}"
 
 
-def popup_hook_cmds(
-    socket: str, outer: str, hidden: str, *, w: int, h: int
+def popup_binding_cmds(
+    socket: str, hidden: str, *, w: int, h: int
 ) -> list[list[str]]:
-    """Auto-show the popup on attach + bind the reopen key (outer prefix)."""
+    """The ``<outer-prefix> p`` reopen binding.
+
+    No auto-show hook: the popup is shown only when the decider receives a
+    held request (it runs :func:`show_popup_argv` itself), so the user is not
+    bothered at shell startup when there is nothing to decide.
+    """
     cmd = display_popup_command(socket, hidden, w=w, h=h)
-    return [
-        _tmux(socket, "set-hook", "-t", outer, "client-attached", cmd),
-        # bind-key in the prefix table -> <outer-prefix> + REOPEN_KEY.
-        _tmux(socket, "bind-key", REOPEN_KEY, cmd),
-    ]
+    # bind-key in the prefix table -> <outer-prefix> + REOPEN_KEY.
+    return [_tmux(socket, "bind-key", REOPEN_KEY, cmd)]
+
+
+def outer_clients(socket: str, hidden: str) -> list[str]:
+    """tmux clients attached to a session other than the hidden one.
+
+    These are the user's shell client(s) to show the popup on. The hidden
+    session's own viewer client (when the popup is open) is excluded.
+    """
+    try:
+        proc = subprocess.run(
+            _tmux(
+                socket,
+                "list-clients",
+                "-F",
+                "#{client_name}\t#{client_session}",
+            ),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    clients: list[str] = []
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[1] != hidden:
+            clients.append(parts[0])
+    return clients
+
+
+def hidden_has_client(socket: str, hidden: str) -> bool:
+    """True when the hidden session has a viewer client attached (popup open)."""
+    try:
+        proc = subprocess.run(
+            _tmux(socket, "list-clients", "-t", hidden),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(proc.stdout.strip())
+
+
+def show_popup_argv(
+    socket: str, hidden: str, client: str, *, w: int, h: int
+) -> list[str]:
+    """Argv to show the popup on a specific client (the decider's show path).
+
+    Unlike :func:`display_popup_command` (a string for the key binding, which
+    targets the invoking client), this is run server-side by the decider when a
+    held request arrives, so it names the target client explicitly with ``-c``.
+    """
+    viewer = popup_viewer_shell_string(socket, hidden)
+    return _tmux(
+        socket,
+        "display-popup",
+        "-c",
+        client,
+        "-E",
+        "-w",
+        str(w),
+        "-h",
+        str(h),
+        viewer,
+    )
 
 
 def attach_cmd(socket: str, session: str) -> list[str]:
@@ -312,8 +380,10 @@ def run_consent_shell(
         run(cmd)
     # 3. hidden decider session (sized to the popup so it doesn't reflow).
     run(new_detached_session(socket, hidden, decider_argv, x=pw, y=ph))
-    # 4. auto-show the popup on attach + the C-a p reopen binding.
-    for cmd in popup_hook_cmds(socket, outer, hidden, w=pw, h=ph):
+    # 4. the C-a p reopen binding (no auto-show — the decider shows the popup
+    #    itself when a held request arrives, so the shell isn't bothered at
+    #    startup when there's nothing to decide).
+    for cmd in popup_binding_cmds(socket, hidden, w=pw, h=ph):
         run(cmd)
     # 5. attach the user's terminal to the outer session (blocks).
     rc = attach(attach_cmd(socket, outer))
@@ -342,16 +412,19 @@ __all__ = [
     "configure_outer_session",
     "display_popup_command",
     "has_session_cmd",
+    "hidden_has_client",
     "hidden_session_name",
     "host_tmux_version",
     "kill_session_cmd",
     "new_detached_session",
+    "outer_clients",
     "outer_session_name",
     "parse_tmux_version",
-    "popup_hook_cmds",
+    "popup_binding_cmds",
     "popup_viewer_shell_string",
     "run_consent_shell",
     "should_use_popup",
+    "show_popup_argv",
     "socket_path",
     "tmux_usable",
 ]

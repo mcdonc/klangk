@@ -34,7 +34,6 @@ from klangk.cli.tui.consent import (
     ConsentRule,
     EgressRules,
     PauseState,
-    QuitConfirmScreen,
     RulesScreen,
     build_detach_command,
     make_pause,
@@ -2263,7 +2262,9 @@ class TestPersistentPopupRole:
         app._apply_bindings()
         labels = {b[0]: b[2] for b in app.BINDINGS}
         assert labels["q"] == "Hide"
-        assert labels["Q"] == "Quit"
+        # Q hides too in persistent mode — the decider is persistent (it never
+        # quits on a key, only when the shell ends), so Q can't deregister it.
+        assert labels["Q"] == "Hide"
 
     def test_q_key_standalone_exits(self):
         # No popup context -> q quits immediately (today's behaviour).
@@ -2309,56 +2310,76 @@ class TestPersistentPopupRole:
         monkeypatch.setattr(tui_consent.subprocess, "run", boom)
         app._hide_viewer()  # must not raise
 
-    def test_on_confirm_quit_true_exits(self):
-        app = _make_app()
-        exited = []
-        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
-        app._on_confirm_quit(True)
-        assert exited == [True]
+    def test_show_popup_noop_without_popup_context(self, monkeypatch):
+        # Standalone: no popup socket/session, nothing to show.
+        from unittest.mock import MagicMock
 
-    def test_on_confirm_quit_false_does_not_exit(self):
         app = _make_app()
-        exited = []
-        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
-        app._on_confirm_quit(False)
-        assert exited == []
+        run = MagicMock()
+        monkeypatch.setattr(tui_consent.subprocess, "run", run)
+        app._show_popup()
+        assert not run.called
 
-    async def test_confirm_quit_pushes_confirm_screen(self):
-        app = _make_app()
-        async with app.run_test() as pilot:
-            app.action_confirm_quit()
-            await pilot.pause()
-            assert isinstance(app.screen, QuitConfirmScreen)
+    def test_show_popup_noop_when_already_open(self, monkeypatch):
+        # Hidden session already has a viewer (popup open) -> don't re-show.
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        monkeypatch.setattr(
+            tui_consent, "hidden_has_client", lambda sock, sess: True
+        )
+        called: list = []
+        monkeypatch.setattr(
+            tui_consent.subprocess, "run", lambda *a, **k: called.append(a)
+        )
+        app._show_popup()
+        assert called == []
 
-    async def test_quit_confirm_yes_dismisses_true(self):
-        got: list[bool] = []
-        app = _make_app()
-        async with app.run_test() as pilot:
-            app.push_screen(QuitConfirmScreen(), lambda v: got.append(v))
-            await pilot.pause()
-            app.screen.action_yes()
-            await pilot.pause()
-        assert got == [True]
+    def test_show_popup_targets_outer_clients(self, monkeypatch):
+        # A held request arrived: show the popup on each outer (shell) client.
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        monkeypatch.setattr(
+            tui_consent, "hidden_has_client", lambda sock, sess: False
+        )
+        monkeypatch.setattr(
+            tui_consent,
+            "outer_clients",
+            lambda sock, sess: ["clientA", "clientB"],
+        )
+        ran: list[list[str]] = []
+        monkeypatch.setattr(
+            tui_consent.subprocess, "run", lambda cmd, **kw: ran.append(cmd)
+        )
+        app._show_popup()
+        assert len(ran) == 2
+        # each is a display-popup -c <client> on the local socket
+        assert ran[0][:5] == [
+            "tmux",
+            "-S",
+            "/tmp/k.sock",
+            "display-popup",
+            "-c",
+        ]
+        assert ran[0][5] == "clientA"
+        assert ran[1][5] == "clientB"
+        # the viewer attaches to the hidden session (last positional)
+        assert ran[0][-1].endswith("attach -t klangk-consent-w")
 
-    async def test_quit_confirm_no_dismisses_false(self):
-        got: list[bool] = []
-        app = _make_app()
-        async with app.run_test() as pilot:
-            app.push_screen(QuitConfirmScreen(), lambda v: got.append(v))
-            await pilot.pause()
-            app.screen.action_no()
-            await pilot.pause()
-        assert got == [False]
+    def test_show_popup_swallows_subprocess_error(self, monkeypatch):
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        monkeypatch.setattr(
+            tui_consent, "hidden_has_client", lambda sock, sess: False
+        )
+        monkeypatch.setattr(
+            tui_consent, "outer_clients", lambda sock, sess: ["clientA"]
+        )
 
-    async def test_quit_confirm_box_renders_text(self):
-        # Regression: the confirm box must not collapse to an empty strip.
-        # The "[y]"/"[n]" in the message are literal (markup=False) and the
-        # box has an explicit width, so the prompt text is visible (#2383).
-        app = _make_app()
-        async with app.run_test(size=(80, 24)) as pilot:
-            app.push_screen(QuitConfirmScreen())
-            await pilot.pause()
-            box = app.screen.query_one("#confirm-box")
-            msg = app.screen.query_one("#confirm-msg", Static)
-            assert box.size.width >= 50  # not a collapsed thin strip
-            assert "deregister" in str(msg.content)
+        def boom(*a, **k):
+            raise OSError("boom")
+
+        monkeypatch.setattr(tui_consent.subprocess, "run", boom)
+        app._show_popup()  # must not raise

@@ -194,23 +194,68 @@ class TestBuilders:
             shlex.quote(sp.popup_viewer_shell_string("/tmp/s.sock", "hidden"))
         )
 
-    def test_popup_hook_cmds(self):
-        cmds = sp.popup_hook_cmds("/tmp/s.sock", "outer", "hidden", w=70, h=14)
-        assert len(cmds) == 2
-        # auto-show on client-attach + the reopen binding
-        assert cmds[0][:5] == [
+    def test_popup_binding_cmds(self):
+        # Just the <prefix> reopen binding — no auto-show hook (the decider
+        # shows the popup itself when a request arrives).
+        cmds = sp.popup_binding_cmds("/tmp/s.sock", "hidden", w=70, h=14)
+        assert len(cmds) == 1
+        assert cmds[0][:4] == ["tmux", "-S", "/tmp/s.sock", "bind-key"]
+        assert cmds[0][4] == sp.REOPEN_KEY
+        assert "display-popup" in cmds[0][5]
+
+    def test_show_popup_argv(self):
+        argv = sp.show_popup_argv(
+            "/tmp/s.sock", "hidden", "clientA", w=70, h=14
+        )
+        assert argv == [
             "tmux",
             "-S",
             "/tmp/s.sock",
-            "set-hook",
-            "-t",
+            "display-popup",
+            "-c",
+            "clientA",
+            "-E",
+            "-w",
+            "70",
+            "-h",
+            "14",
+            "env -u TMUX tmux -S /tmp/s.sock attach -t hidden",
         ]
-        assert cmds[0][5] == "outer"
-        assert cmds[0][6] == "client-attached"
-        assert "display-popup" in cmds[0][7]
-        assert cmds[1][:4] == ["tmux", "-S", "/tmp/s.sock", "bind-key"]
-        assert cmds[1][4] == sp.REOPEN_KEY
-        assert "display-popup" in cmds[1][5]
+
+    def test_outer_clients_excludes_hidden(self):
+        clients = "myclient\touter\nviewer\thidden\nother\touter\n"
+        with patch(
+            "klangk.cli.shell_popup.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout=clients),
+        ):
+            assert sp.outer_clients("/tmp/s.sock", "hidden") == [
+                "myclient",
+                "other",
+            ]
+
+    def test_outer_clients_empty_on_error(self):
+        with patch(
+            "klangk.cli.shell_popup.subprocess.run", side_effect=OSError("x")
+        ):
+            assert sp.outer_clients("/tmp/s.sock", "hidden") == []
+
+    def test_hidden_has_client(self):
+        with patch(
+            "klangk.cli.shell_popup.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout="clientA\n"),
+        ):
+            assert sp.hidden_has_client("/tmp/s.sock", "hidden") is True
+        with patch(
+            "klangk.cli.shell_popup.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout=""),
+        ):
+            assert sp.hidden_has_client("/tmp/s.sock", "hidden") is False
+
+    def test_hidden_has_client_false_on_error(self):
+        with patch(
+            "klangk.cli.shell_popup.subprocess.run", side_effect=OSError("x")
+        ):
+            assert sp.hidden_has_client("/tmp/s.sock", "hidden") is False
 
     def test_attach_kill_has_session(self):
         assert sp.attach_cmd("/tmp/s.sock", "s") == [
@@ -309,8 +354,8 @@ class TestRunConsentShell:
         socket = sp.socket_path("wsid")
         outer = sp.outer_session_name("wsid")
         hidden = sp.hidden_session_name("wsid")
-        # 1 outer session + 3 config + 1 hidden + 2 hooks + 1 attach + 2 kills = 10
-        assert len(ran) == 10
+        # 1 outer session + 3 config + 1 hidden + 1 binding + 1 attach + 2 kills = 9
+        assert len(ran) == 9
         # outer session created with the inner argv, then configured
         assert (
             ran[0]
@@ -331,19 +376,18 @@ class TestRunConsentShell:
         # hidden session
         assert ran[4][1:4] == ["-S", socket, "new-session"]
         assert ran[4][ran[4].index("-s") + 1] == hidden
-        # hooks
-        assert ran[5:7] == sp.popup_hook_cmds(
+        # the reopen binding (no auto-show hook)
+        assert ran[5:6] == sp.popup_binding_cmds(
             socket,
-            outer,
             hidden,
             w=sp.DEFAULT_POPUP_SIZE[0],
             h=sp.DEFAULT_POPUP_SIZE[1],
         )
         # attach to outer
-        assert ran[7] == sp.attach_cmd(socket, outer)
+        assert ran[6] == sp.attach_cmd(socket, outer)
         # cleanup: kill hidden then outer
-        assert ran[8] == sp.kill_session_cmd(socket, hidden)
-        assert ran[9] == sp.kill_session_cmd(socket, outer)
+        assert ran[7] == sp.kill_session_cmd(socket, hidden)
+        assert ran[8] == sp.kill_session_cmd(socket, outer)
 
     def test_returns_attach_exit_code(self):
         def fake_run(argv):
@@ -417,8 +461,8 @@ class TestRunConsentShell:
         # hidden session sized to the popup
         assert hidden_cmd[hidden_cmd.index("-x") + 1] == "50"
         assert hidden_cmd[hidden_cmd.index("-y") + 1] == "10"
-        # popup command uses the popup size
-        assert "-w 50 -h 10" in ran[5][7]
+        # popup command (the reopen binding) uses the popup size
+        assert "-w 50 -h 10" in ran[5][5]
 
 
 # ---------------------------------------------------------------------------

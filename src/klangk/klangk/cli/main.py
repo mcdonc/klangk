@@ -1441,7 +1441,8 @@ def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
     decider = _popup_decider_argv(server, ws.name, socket, hidden)
     _err.print(f"Connecting to [bold]{ws.name}[/bold] with consent popup…")
     _err.print(
-        f"[dim]Popup: {OUTER_PREFIX} {REOPEN_KEY}  ·  hide: q  ·  quit: Q[/dim]"
+        f"[dim]A consent popup appears when an egress request is held; "
+        f"{OUTER_PREFIX} {REOPEN_KEY} reopens  ·  q/Q hides[/dim]"
     )
     return run_consent_shell(
         workspace_id=ws.id, inner_argv=inner, decider_argv=decider
