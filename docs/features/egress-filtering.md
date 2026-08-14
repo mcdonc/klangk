@@ -2,18 +2,33 @@
 
 Klangk can restrict which external hosts a workspace container may reach,
 so a deployment running AI agents or untrusted code isn't an open
-exfiltration vector. The filter is **opt-in** per workspace _and_ per
-deploy: a workspace with no `allowed_domains` keeps unrestricted outbound
-networking exactly as before.
+exfiltration vector. Each workspace picks its posture with an **egress
+mode** (`egress_mode`, default `interactive` for new workspaces):
+
+- **`interactive`** — start closed and consent as the workspace works:
+  each first-time destination is **held** for a human allow/deny decision
+  (Little-Snitch style), with `allowed_domains` entries acting as
+  pre-approvals that skip the prompt. See
+  [Interactive egress consent](#interactive-egress-consent).
+- **`static`** — the classic allow-list: declare `allowed_domains` up
+  front; everything else is denied and recorded for audit. No prompting,
+  ever.
+- **`allow`** — default-permit with a deny-list: every host is reachable
+  except names in `rejected_domains`; off-list egress is recorded and
+  auto-allowed with no prompt (#2406).
+
+A `static` workspace with no `allowed_domains` (and no deploy-wide
+default) keeps unrestricted outbound networking exactly as before; an
+`interactive` workspace is always filtered, even with empty lists
+(#2325).
 
 The mechanism uses a **network sidecar** — a small NET_ADMIN container
 that shares the filtered workspace's network namespace and owns its
-egress ruleset. Each
-workspace that declares an allow-list runs behind the sidecar, which
-default-denies outbound traffic and allow-lists only the declared
+egress ruleset. Every filtered workspace (interactive mode, or any mode
+declaring `allowed_domains`/`rejected_domains`) runs behind the sidecar,
+which default-denies outbound traffic and allow-lists only the approved
 destinations (resolved at runtime by a DNS proxy, so DNS round-robin is
-handled). A workspace **without** an allow-list keeps unrestricted
-outbound networking exactly as before.
+handled).
 
 A step-by-step diagram of a single egressing request — DNS gate, SYN
 gate at NFQUEUE, the consent loop, and the verdict — is in
@@ -21,11 +36,13 @@ gate at NFQUEUE, the consent loop, and the verdict — is in
 
 ## How it works
 
-1. A workspace carries an `allowed_domains` list (`host`, `.host`,
-   `host:port`, `*.domain[:port]` wildcards, or IPv4 CIDR specs — see the
-   [API](#api) section for the full grammar).
-2. On container start, if the workspace declares `allowed_domains`, the
-   backend starts a **network sidecar** container (`klangk-net-<ws-id>`,
+1. A workspace carries an `allowed_domains` list (`host`, `host:port`,
+   `.host`/`*.domain` wildcards, or IPv4 CIDR specs — see the [API](#api)
+   section for the full grammar).
+2. On container start, if the workspace is filtered (`egress_mode` is
+   `interactive`, or any mode declares `allowed_domains`/
+   `rejected_domains`), the backend starts a **network sidecar** container
+   (`klangk-net-<ws-id>`,
    from the `network_sidecar_image` image, which defaults to
    `klangk-network-sidecar`) with `--cap-add NET_ADMIN` and
    `--dns 1.1.1.1`, then starts the workspace with
@@ -56,45 +73,219 @@ gate at NFQUEUE, the consent loop, and the verdict — is in
    over IPv6 (#1936). `allowed_domains` therefore accepts only hostnames
    and IPv4 addresses (no `[ipv6]` literals), and AAAA records returned by
    DNS are ignored.
+6. In interactive mode the ruleset additionally queues every non-approved
+   outbound TCP SYN to the sidecar's own NFQUEUE, where it is **held
+   pending a consent verdict** — the full loop is in
+   [Interactive egress consent](#interactive-egress-consent). The queue is
+   rate-limited (`--limit 5/sec --limit-burst 20`); SYNs past the limit
+   are REJECTed (fast refusal) rather than queued.
 
 The ruleset is in place before the workspace process starts, and the
 workspace lacks `CAP_NET_ADMIN` so it cannot flush the ruleset.
 
-## Egress consent recording (#2242)
+## Consent recording (all modes)
 
-The network sidecar records every blocked destination to the
-`egress_consent` table, regardless of `egress_mode`:
+Every blocked or off-list destination is recorded to the `egress_consent`
+table, regardless of `egress_mode` (#2242):
 
-- **static** (the default) -> recorded as `denied`, `decided_by` NULL (no
-  human), immediately. Static mode is strictly better than the old silent-deny:
-  it logs every denied attempt for audit/review (`scripts/consent-watch.py`
-  shows a live view). One row per (workspace, host, port); repeats don't spam.
-- **interactive** -> recorded as `pending`, then a human can `allow`/`deny` it
-  via the consent UI (**#2244, not yet wired**) before it auto-expires
-  (`egress_consent_timeout`, default 30s; rate-limited per workspace via
-  `egress_consent_rate_limit`, default 50).
+- **static** -> recorded `denied` immediately, `decided_by` NULL (policy,
+  no human). Static mode is strictly better than silent deny: every
+  denied attempt is logged for audit/review (`scripts/consent-watch.py`
+  shows a live view on the server host). One row per (workspace, host,
+  port); repeats don't spam.
+- **interactive** -> recorded `pending`, then decided by a human (below),
+  or auto-expired (`expired` — deliberately distinct from a human deny)
+  when no decider answers within `egress_consent_timeout`.
+- **allow** -> off-list destinations recorded `allowed`, `decided_by`
+  NULL (#2406) — a log of everything the workspace actually reached.
 
-The sidecar consumes its own NFQUEUE (`-j NFQUEUE --queue-num 5139`; it is the
-netns owner with `NET_ADMIN`) and POSTs each blocked packet's destination to
-klangkd's consent endpoint (workspace-JWT-authenticated via Caddy's
-`forward_auth`); it also forwards denied DNS queries with their domain names
-(NFQUEUE only carries raw IPs). The workspace JWT is bind-mounted into the
-sidecar and refreshed on rotation, so it never goes stale.
+## Interactive egress consent
 
-A workspace sets `egress_mode` to `"interactive"` (default `"static"`) via the
-API or CLI.
+Instead of declaring the full allow-list up front, an interactive
+workspace **starts closed and prompts on each new destination**: the
+first connection to a host nobody has approved yet is held mid-`connect()`
+and surfaces as a consent request a human can allow or deny for a chosen
+duration. The allow-list is built interactively as the workspace actually
+reaches out; `allowed_domains` entries (and a deploy-wide default) act as
+pre-approvals that skip the prompt (#2325). Requests are per-workspace —
+there is no per-process attribution.
 
-> **Current status:** static recording works end-to-end (deny + record). The
-> interactive decide/notify UI that lets a human actually allow/deny a pending
-> request **is not wired yet** (#2244) -- until then interactive requests simply
-> expire. Do not enable interactive mode expecting real-time consent prompts.
+### A workspace is interactive only while a decider is connected
+
+`egress_mode = "interactive"` is the opt-in, but interactivity is
+**runtime state** (#2308): a workspace's off-list egress is actually held
+only while **at least one live consent decider** is connected for it (or
+deploy-wide). A decider is a connected client — the `klangk
+consent-decide` TUI, the consent popup inside `klangk shell`, or the web
+UI — and its WebSocket connection _is_ the registration; liveness is
+driven by client pings, and a decider silent for
+`KLANGKD_CONSENT_DECIDER_TIMEOUT` (default 45s) is reaped. The moment the
+last decider disconnects, the workspace reverts to deny-and-record: with
+nobody to ask, off-list connections fail fast (an immediate TCP refusal,
+not a hang) and are recorded.
+
+A `static` workspace refuses decider registration outright, so the
+static/interactive boundary is structural, not just behavioral (#2394).
+
+### How a hold works
+
+1. The sidecar's DNS proxy resolves every query. Allow-listed names (and
+   names covered by an in-effect verdict) resolve and have their IPs
+   learned as usual; `rejected_domains` names get NXDOMAIN. Any **other**
+   name resolves normally, but the proxy records the IP-to-name mapping
+   and installs no allow rule (#2324) — resolution succeeding does _not_
+   mean egress is permitted.
+2. The first packet (the TCP SYN) to a non-approved IP is queued to the
+   sidecar's NFQUEUE. The connection now **stalls inside `connect()`** —
+   that stall is the hold, and the decision window it affords the human
+   is the kernel's connect timeout (~127s).
+3. The sidecar relays the destination to klangkd over its
+   `/ws/egress-sidecar` WebSocket — the hostname, when DNS taught it one —
+   and klangkd persists a pending request and fans it out to every live
+   decider as an `egress_request` frame.
+4. The first verdict (or the timeout) resolves the hold. **Allow**
+   accepts the SYN and learns the IP for the verdict's duration;
+   **deny / timeout / error** forges a TCP RST so `connect()` fails at
+   once (`ECONNREFUSED`), with a short-lived REJECT rule as backstop.
+
+The hold is bounded server-side by `KLANGKD_EGRESS_CONSENT_TIMEOUT`
+(default 120s, sized to the kernel's connect timeout): a request no
+decider answers expires to a deny. If the sidecar's WebSocket to klangkd
+is down, off-list connects fail fast rather than hang. Nothing is ever
+left pending forever.
+
+### Deciding
+
+- **`klangk consent-decide <workspace>`** — a standalone TUI decider
+  (#2310): a live queue of held requests (host:port and a countdown), a
+  duration selector, allow/deny per row, a rules screen (`r`) with revoke
+  (`x`) (#2340, #2341), and pause controls (#2332).
+- **`klangk shell`** — shelling into an interactive workspace wraps the
+  shell in a local tmux that floats the decider over it as a popup: a
+  held request pops up without leaving the shell (`C-a p` reopens it;
+  skip the wrapper with `--no-consent-popup`) (#2383).
+- **Web UI** — the workspace page shows a consent banner with the same
+  allow/deny + duration controls (#2246), plus a **Net Rules** tab
+  listing the in-effect rules with revoke actions.
+- **Deploy-wide** — an admin may connect a decider without a workspace
+  scope (via the `/ws/consent-decider` WebSocket) to decide for every
+  interactive workspace on the deploy. It receives newly-created holds
+  live, but no replay of holds that predate its connection (those simply
+  time out).
+
+Several deciders may be connected at once (two CLI sessions and the web
+UI, say): each pending request is fanned out to all of them and the first
+decision wins (#2244).
+
+**Authorization.** A workspace-scoped decider needs `terminal` access to
+the workspace (owner, member, or spectator); a deploy-wide decider needs
+admin. A verdict can only decide a request inside the decider's own
+workspace. Pausing prompting (below) additionally requires
+`share-terminals` (owner or collaborator).
+
+### Decision durations
+
+A verdict carries a duration, chosen from one selector at allow/deny time
+(default `tilrestart`, #2328):
+
+| Duration                          | Meaning                                                                                                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `once`                            | This one connection only; the next connection to the same host:port prompts again (#2361).                                                                                                                                      |
+| `5m` / `15m` / `1h` / `1d` / `1w` | Timed: allowed (or denied) for the window, then the destination re-prompts.                                                                                                                                                     |
+| `tilrestart`                      | The workspace container's lifetime — the sidecar's in-memory rules; cleared on restart (#2346).                                                                                                                                 |
+| `forever`                         | The workspace's lifetime: an **allow** is appended to `allowed_domains` as `host:port` (#2368); a **deny** to `rejected_domains` (#2369). The sidecar re-reads both lists on start, so the verdict survives container restarts. |
+
+A timed or `forever` verdict is **host-scoped, not IP-scoped**: every IP
+the host resolves to — including CDN rotations — is covered for the
+duration, so a user is not re-prompted for a domain they already decided
+(#2372, #2446). Decisions persist to the workspace only; there is
+currently no promotion of a verdict to a deploy-wide list.
+
+### Pause
+
+A decider can pause prompting workspace-wide for 15m / 1h / 1d (#2332):
+while paused, off-list egress is auto-allowed per-connection with no
+prompt and no hold — a relief valve for a build or crawl that would
+otherwise flood the queue. A recorded deny still blocks while paused.
+The pause self-expires; the decider shows the remaining window.
+
+### Rules view, revoke, audit
+
+Every request and verdict is recorded in the `egress_consent` table:
+destination (host, port), `requested_at`, the `decision`, its `duration`,
+`decided_at`/`decided_by` (the deciding user; NULL means policy decided,
+not a person), and — for a revoke — `revoked_at`/`revoked_by`. A timeout
+is recorded `expired`, distinguishable from a human deny.
+
+The rules view (the `r` screen of `consent-decide`, the web UI's Net
+Rules tab) shows this live over the `egress_rules` stream (#2338): the
+static allow-list and reject-list, every in-effect verdict with its
+remaining window, and the pause state. An in-effect verdict can be
+**revoked** from there (#2339, #2341): the sidecar drops its rule at
+once, the row is marked revoked, and a `forever` verdict's durable list
+entry is retracted so it does not re-apply on the next restart (#2370).
+`scripts/consent-watch.py` renders the raw table live on the server host.
+
+### Operator notes
+
+- **No host-side setup.** Interactive mode needs no kernel logging, no
+  `/dev/kmsg` access, no host iptables and no `nsenter`: the sidecar
+  consumes its own NFQUEUE inside the network namespace it owns, and
+  klangkd coordinates everything over authenticated WebSockets. (An
+  earlier design tailed kernel LOG lines; NFQUEUE replaced it — blocked
+  packets generate no kernel log volume at all.)
+- **Settings** (all SIGHUP-reloadable): `KLANGKD_EGRESS_CONSENT_TIMEOUT`
+  (default 120s — how long a request stays pending before auto-deny),
+  `KLANGKD_EGRESS_CONSENT_RATE_LIMIT` (default 50 pending requests per
+  workspace — at the cap, new holds are denied at once), and
+  `KLANGKD_CONSENT_DECIDER_TIMEOUT` (default 45s — decider liveness; a
+  crashed or half-open decider is reaped within roughly 1.5x that,
+  reverting its workspaces to deny-and-record).
+- **Flood bounds.** The consent queue is rate-limited in the ruleset
+  (5 SYNs/sec, burst 20) — packets past the limit are REJECTed, never
+  queued — and request rows are deduplicated per destination, so a
+  flooding workload cannot overwhelm the decider or spam the table.
+- **klangkd restart** denies every in-flight hold and expires orphaned
+  pending rows at startup; a **sidecar-to-klangkd outage** makes off-list
+  connects fail fast. Both are fail-closed.
+- **Idle timeout.** Egress activity (DNS queries, consented SYNs, byte
+  counts) bumps the workspace idle timer, so an egress-only workload is
+  not reaped mid-transfer (#2479, #2485).
+- **`egress_mode` changes apply at the next container start** (#2409).
+- **`klangk sandbox`** runs its automated install in `allow` mode (no
+  decider is watching), then resets the workspace to `interactive`
+  (#2404).
+
+### Security model
+
+- The workspace container stays unprivileged: no `NET_ADMIN`, no
+  `NET_RAW`. It cannot flush the ruleset, cannot forge the packet mark
+  that exempts the DNS proxy's upstream forwards, and cannot reach the
+  sidecar's queue or control socket.
+- All enforcement — the default-DROP policy, the DNS redirect, the
+  consent queue — lives in the sidecar's own network namespace, installed
+  by the sidecar itself. Nothing egress-related executes on the host or
+  in a privileged context beyond the sidecar's existing `NET_ADMIN`.
+- **Authentication.** The sidecar authenticates to klangkd with the
+  workspace's own JWT (bind-mounted read-only and re-read on rotation);
+  the token is workspace-scoped, so a workspace cannot forge events for
+  another workspace. Deciders authenticate with a user JWT and are
+  authorization-checked per scope (terminal access / admin).
+- **Fail-closed throughout.** No decider -> fast deny. Decider too slow
+  -> timeout deny. klangkd restart -> all holds denied. Sidecar link
+  down -> fast deny. Queue overflow -> reject. Internal error -> deny.
+  No code path silently allows.
+- The [DNS caveats](#caveats) below still apply: this is an egress
+  allow-list, not a complete anti-exfiltration guarantee (DNS tunneling
+  through the proxy remains possible).
 
 ## Enabling it (operator)
 
 Egress filtering is **available by default**: `network_sidecar_image`
-ships with a default (`klangk-network-sidecar`), so a workspace that
-declares `allowed_domains` is filtered out of the box — no configuration
-is required for the common case.
+ships with a default (`klangk-network-sidecar`), so a filtered
+workspace — one declaring `allowed_domains`/`rejected_domains`, or in
+`interactive` mode — is filtered out of the box; no configuration is
+required for the common case.
 
 1. Make the sidecar image available to podman:
    - **All-in-one host image** (`scripts/build-host-image.sh`): nothing to
@@ -104,12 +295,14 @@ is required for the common case.
      `src/containers/network/`.
    - **Other deploys**: publish the image to your registry and point
      `KLANGKD_NETWORK_SIDECAR_IMAGE` at it if you don't use the default name.
-2. Restart klangkd. A workspace that declares `allowed_domains` now starts
-   behind the sidecar.
+2. Restart klangkd. A filtered workspace (`egress_mode: interactive`, or
+   one declaring `allowed_domains`/`rejected_domains`) now starts behind
+   the sidecar.
 
 To **disable** egress filtering entirely, set
 `KLANGKD_NETFILTER_ENABLED=false` (or YAML `netfilter_enabled: false`).
-When disabled, a workspace that declares `allowed_domains` **fails to
+When disabled, a filtered workspace (`egress_mode: interactive`, or one
+declaring `allowed_domains`/`rejected_domains`) **fails to
 start** (fail-closed) rather than running unrestricted — see
 [Fail-closed behavior](#fail-closed-behavior).
 
@@ -132,28 +325,34 @@ netfilter_default_domains:
   - registry.npmjs.org
 ```
 
-Entries use the same `host` / `host:port` / IPv4 CIDR spec as a
-workspace allow-list (`host` allows all ports; `host:port` allows a
-single TCP port, 1–65535; `10.0.0.0/8` allows a whole subnet, optional
-`:port` to scope it — #1935) and are validated server-side at startup.
+Entries use the same grammar as a workspace allow-list (`host` /
+`.domain` / `*.domain` / `host:port` / IPv4 CIDR — see the [API](#api)
+section; #1935, #2377) and are validated server-side at startup.
 A malformed value logs a warning and falls back to "no default" rather
 than aborting the server (#1772). Read at boot and on SIGHUP
 (reloadable).
 
-**Override semantics.** A workspace with a non-empty `allowed_domains`
-**replaces** the default (it does _not_ merge); a workspace with an empty
-list (or `null`) **inherits** the default; if no default is configured,
-the workspace is unrestricted. There is currently **no per-workspace
-opt-out** into truly-unrestricted egress when a default is set — clear
-the default server-side to permit unrestricted workspaces. The Flutter
-create-workspace dialog pre-fills its Netfilter list with this default
-as a starting set (the TUI does not yet — #1931).
+**Application.** The default is a **pre-fill, not a server-side
+merge**: the browser's create-workspace dialog (and any client reading
+it from the authenticated `/config` payload) starts its Netfilter list
+from this default, and the workspace persists whatever the creator
+submits. A workspace's own `allowed_domains` — pre-filled or hand-
+written — is exactly what is enforced; an empty list in `interactive`
+mode means "prompt for everything". (The TUI create form does not
+pre-fill yet — #1931.)
 
 ## Configuring a workspace
 
 Set `allowed_domains` via the workspace **Settings** panel (an
 "Allowed Domains" list editor under Mounts / Environment Variables), the
-CLI, or the API.
+CLI, or the API. The **egress mode** is set alongside it: an "Egress
+mode" selector in the Netfilter pane of the `klangk create` / `klangk
+edit` TUI forms (`interactive (ask first)` / `static (deny + record)` /
+`allow (default-permit)`), the same selector in the browser's
+create-workspace dialog and settings panel, or `"egress_mode"` in the
+API body below. There is no flags-mode CLI option for it — use the
+interactive form or the API. A mode change takes effect at the next
+container start (#2409).
 
 ### CLI
 
@@ -180,8 +379,13 @@ are accepted.
 curl -X PUT https://klangkd/api/v1/workspaces/<id> \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"allowed_domains": ["github.com:443", "pypi.org", "registry.npmjs.org"]}'
+  -d '{"allowed_domains": ["github.com:443", "pypi.org", "registry.npmjs.org"],
+       "egress_mode": "interactive"}'
 ```
+
+`egress_mode` is `"static"`, `"interactive"` (the default for new
+workspaces), or `"allow"` (#2239, #2406); like `allowed_domains`, it
+applies at the next container start.
 
 - `host` allows all ports to that host **only** — the apex, exactly
   (`github.com` does not cover `api.github.com`) (#2377).
@@ -211,27 +415,32 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
   nor enforceable (#1936).
 - Each entry is validated server-side; malformed entries are rejected with
   HTTP 400.
-- An empty list (or `null`) **inherits the deploy-wide default**
-  (`KLANGKD_NETFILTER_DEFAULT_DOMAINS`); if no default is configured, the
-  workspace is **unrestricted**. There is currently no per-workspace opt-out
-  into truly-unrestricted egress when a deploy default is set — clear the
-  default server-side to permit unrestricted workspaces.
+- An empty list (or `null`) means "no pre-approvals": in `interactive`
+  mode every new destination prompts; in `static` mode the workspace is
+  **unrestricted** (nothing to filter on); in `allow` mode everything
+  except `rejected_domains` is permitted. The deploy-wide default
+  (`KLANGKD_NETFILTER_DEFAULT_DOMAINS`) is only a create-dialog pre-fill
+  — see above.
 
 A restart of the workspace container applies the change to a running
 workspace (the ruleset is set at create time).
 
 ## Fail-closed behavior
 
-If a workspace declares `allowed_domains` but egress filtering is **not
-available** on the server — disabled via `KLANGKD_NETFILTER_ENABLED=false`,
-or the sidecar image unset/cleared — the workspace **refuses to start**
-rather than running unrestricted. Silently ignoring an allow-list would
+If a workspace is filtered — it declares `allowed_domains`/
+`rejected_domains`, **or** its `egress_mode` is `interactive` — but
+egress filtering is **not available** on the server (disabled via
+`KLANGKD_NETFILTER_ENABLED=false`, or the sidecar image unset/cleared),
+the workspace **refuses to start** rather than running unrestricted.
+Silently ignoring an allow-list (or the interactive opt-in) would
 disable a security control the user explicitly requested (#2254 review
-B2). The `allowed_domains` value is still persisted, so it takes effect
-the moment filtering is re-enabled.
+B2, #2325). The settings are still persisted, so they take effect the
+moment filtering is re-enabled.
 
-A workspace **without** `allowed_domains` always starts unrestricted,
-regardless of the filtering setting.
+An `allow`-mode workspace with no lists degrades to unrestricted
+instead of failing to start — it asked for permissiveness, not
+lockdown (#2406). A `static` workspace **without** lists always starts
+unrestricted, regardless of the filtering setting.
 
 ## Common service domain lists
 
@@ -278,9 +487,9 @@ If you also need raw file views, release-asset downloads, or Git LFS:
 ### GitHub (full development)
 
 A workspace that uses the web UI, GitHub Packages, or Copilot in
-addition to git typically needs a broader set. Use `.github.com`-style
-leading-dot entries (apex + subdomains) or list the specific subdomains
-you use:
+addition to git typically needs a broader set. Because host matching is
+exact by default (#2377), use `.github.com`-style leading-dot entries
+(apex + subdomains) or list the specific subdomains you use:
 
 | Entry                                       | Purpose                 |
 | ------------------------------------------- | ----------------------- |
@@ -463,9 +672,10 @@ cloud service directly (e.g. from user code or an agent).
 
 ### Bare-domain shortcut
 
-A domain without a port (e.g. `github.com`) allows **all** ports to
-that host. This is convenient for quick iteration but less restrictive
-than pinning individual ports.
+A domain without a port (e.g. `github.com`) allows **all** ports to that
+exact host (and `.github.com` all ports to it and its subdomains). This
+is convenient for quick iteration but less restrictive than pinning
+individual ports.
 
 [gh-ssh-443]: https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port
 [gh-firewall]: https://docs.github.com/en/get-started/using-github/allowing-access-to-githubs-services-from-a-restricted-network
@@ -473,11 +683,11 @@ than pinning individual ports.
 
 ### Deploy-wide default: all common services
 
-The following `klangkd.yaml` snippet applies the union of every service
-listed above as the deploy-wide default. Paste it into your
-`klangkd.yaml` and every workspace that doesn't declare its own
-`allowed_domains` inherits this list. A workspace that sets its own
-list **overrides** (replaces) the default entirely.
+The following `klangkd.yaml` snippet sets the deploy-wide default to
+the union of every service listed above. Workspaces created from the
+browser's create dialog (which pre-fills its Netfilter list with this
+default) start with all of them as pre-approvals; the creator trims the
+list from there.
 
 Remove services you don't need — the tighter the list, the smaller the
 attack surface.
@@ -565,16 +775,17 @@ netfilter_default_domains:
   `ip6tables -P OUTPUT DROP`, so the allow-list can't be bypassed over v6
   (#1936). Hostnames resolve to IPv4 only (AAAA records are ignored), and
   `[ipv6]:port` literals are rejected by the validator. Trade-off: a
-  workspace that genuinely needs IPv6 egress cannot use the filter — clear
-  `allowed_domains` (and the deploy-wide default) to run it unrestricted.
+  workspace that genuinely needs IPv6 egress cannot use the filter —
+  clear `allowed_domains` (and the deploy-wide default) and set
+  `egress_mode` to `static` or `allow` to run it unrestricted.
 - **`0.0.0.0/0` matches all IPv4 — don't use it to "disable" the
   filter.** A `/0` CIDR (e.g. `0.0.0.0/0`) is a valid spec but the
   ACCEPT rule it emits matches the entire IPv4 space, so it effectively
   runs the workspace unrestricted while looking like a real rule. The
   server logs a loud warning whenever a `/0` CIDR appears in an allow-list
   (workspace or deploy default). If you genuinely want unrestricted
-  egress, leave `allowed_domains` empty (or set
-  `KLANGKD_NETFILTER_ENABLED=false`) — those are the documented,
+  egress, set `egress_mode` to `static` or `allow` with an empty list (or
+  set `KLANGKD_NETFILTER_ENABLED=false`) — those are the documented,
   obvious ways to opt out (#1935).
 - **Hostnames resolve at runtime — no restart needed on IP change.** The
   sidecar's DNS proxy resolves each query against a real upstream and
@@ -621,9 +832,29 @@ netfilter_default_domains:
   `podman machine`. The network sidecar runs as a normal container in
   that VM (it owns its netns + iptables), so egress filtering works the
   same way as on Linux — no host `iptables`/`nsenter` is needed.
+- **Interactive mode denies off-list egress with no decider connected.**
+  Interactivity is runtime state (#2308): headless or agent-driven
+  workspaces (auto-started services, CI jobs) that must egress
+  unattended need a connected decider — or `static`/`allow` mode.
+- **A held connection blocks until decided (or it times out).** The hold
+  window is `KLANGKD_EGRESS_CONSENT_TIMEOUT` (default 120s, sized to the
+  kernel's connect timeout); tools with their own shorter connect
+  timeouts may give up before a human answers.
+- **Off-list names resolve in interactive mode.** The consent gate is the
+  connection SYN, not the DNS query (#2324), so a successful
+  `getaddrinfo` does not mean the connection is permitted.
+- **Only `forever` verdicts survive a restart.** `tilrestart` and timed
+  verdicts live in the sidecar's in-memory rules and die with the
+  container; `once` is per-connection by definition (#2346).
+- **Pausing consent auto-allows.** While a pause window (#2332) is open,
+  every destination without a recorded deny is permitted
+  per-connection — treat a pause as a temporary hole, not a hardening
+  step.
 
 ## References
 
 - [FQDN egress via a DNS-proxy sidecar][fqdn-sidecar]
+- [Interactive (Little-Snitch-style) egress consent][interactive-epic]
 
 [fqdn-sidecar]: https://github.com/mcdonc/klangk/issues/2250
+[interactive-epic]: https://github.com/mcdonc/klangk/issues/2239
