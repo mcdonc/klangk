@@ -10,15 +10,18 @@ from unittest.mock import patch
 from klangk.doctor import (
     CheckResult,
     DoctorReport,
+    TMUX_MIN_VERSION,
     check_binary,
     check_gnu_du,
     check_gnu_stat,
     check_gnu_tar,
     check_podman_policy,
     check_subuid,
+    check_tmux_version,
     detect_package_manager,
     format_report,
     install_hint,
+    parse_tmux_version,
     run_doctor,
 )
 
@@ -153,6 +156,82 @@ class TestCheckBinary:
             r = check_binary("suid-helper", [], "apt")
             assert r.ok
             assert "suid-helper ok" in r.message
+
+
+class TestCheckTmuxVersion:
+    """Host tmux >= 3.2 gate for the consent-popup shell layer (#2383)."""
+
+    def test_parse_typical(self):
+        assert parse_tmux_version("tmux 3.6a") == (3, 6)
+
+    def test_parse_no_suffix(self):
+        assert parse_tmux_version("tmux 3.2") == (3, 2)
+
+    def test_parse_double_digit_minor(self):
+        assert parse_tmux_version("tmux 3.10") == (3, 10)
+
+    def test_parse_garbage_is_none(self):
+        assert parse_tmux_version("not a version") is None
+
+    def test_parse_empty_is_none(self):
+        assert parse_tmux_version("") is None
+
+    def test_min_version_is_3_2(self):
+        assert TMUX_MIN_VERSION == (3, 2)
+
+    def test_new_enough_is_ok(self):
+        with (
+            patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
+            patch("klangk.doctor._run", return_value=(0, "tmux 3.6a", "")),
+        ):
+            r = check_tmux_version("apt")
+        assert r.ok
+        assert not r.is_warning
+        assert "3.6" in r.message
+
+    def test_boundary_3_2_is_ok(self):
+        with (
+            patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
+            patch("klangk.doctor._run", return_value=(0, "tmux 3.2", "")),
+        ):
+            r = check_tmux_version("apt")
+        assert r.ok
+
+    def test_old_version_is_warning(self):
+        with (
+            patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
+            patch("klangk.doctor._run", return_value=(0, "tmux 3.1", "")),
+        ):
+            r = check_tmux_version("apt")
+        assert not r.ok
+        assert r.is_warning
+        assert "< 3.2" in r.message
+        assert r.hint  # actionable install hint
+
+    def test_unparseable_version_is_warning(self):
+        with (
+            patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
+            patch("klangk.doctor._run", return_value=(0, "weird output", "")),
+        ):
+            r = check_tmux_version("apt")
+        assert not r.ok
+        assert r.is_warning
+
+    def test_tmux_v_fails_is_warning(self):
+        with (
+            patch("klangk.doctor.shutil.which", return_value="/usr/bin/tmux"),
+            patch("klangk.doctor._run", return_value=(1, "", "segfault")),
+        ):
+            r = check_tmux_version("apt")
+        assert not r.ok
+        assert r.is_warning
+
+    def test_absent_tmux_is_ok(self):
+        # A missing tmux is already flagged by the required-binary check;
+        # the version check has nothing to assess, so it passes.
+        with patch("klangk.doctor.shutil.which", return_value=None):
+            r = check_tmux_version("apt")
+        assert r.ok
 
 
 class TestCheckGnuTar:
@@ -400,6 +479,12 @@ class TestRunDoctor:
         report = run_doctor()
         assert isinstance(report, DoctorReport)
         assert len(report.results) > 0
+
+    def test_includes_tmux_version_check(self):
+        """run_doctor checks host tmux version for the consent popup (#2383)."""
+        report = run_doctor()
+        names = [r.name for r in report.results]
+        assert "tmux (consent popup)" in names
 
     def test_no_fuse_overlayfs_or_slirp4netns_checks(self):
         """fuse-overlayfs and slirp4netns are not checked — modern podman

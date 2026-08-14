@@ -32,6 +32,29 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`klangk shell` consent-decider popup (#2383).** Shelling into an
+  `interactive`-egress workspace now wraps the shell in a local tmux that
+  floats the egress-consent decider over it as a `tmux display-popup`, so
+  held egress requests can be acted on without leaving the shell. The shell
+  itself is unchanged (the normal container tmux, full window machinery
+  incl. the status-bar `+`); the outer local tmux is nearly invisible
+  (`C-a` prefix, no status bar, mouse passes through to the container tmux).
+  `C-a p` reopens the popup, `q` hides it (decider stays registered), `Q`
+  quits for real. Falls back to the plain shell when host tmux < 3.2, stdin
+  is not a tty, or `--no-consent-popup` is passed.
+
+- **`klangkd doctor` tmux version check (#2383).** Doctor now reports the
+  host tmux version and warns when it is below 3.2 — the minimum for the
+  upcoming TUI consent-decider popup over the shell (`tmux display-popup`
+  landed in 3.2). Below 3.2 the shell layer will fall back to a plain
+  attach, so the check is a warning, not an error.
+- **`klangk consent-decide` persistent popup role (#2383).** The decider
+  accepts internal `--popup-socket` / `--popup-session` options (set by the
+  shell-layer wrapper) for its upcoming persistent role inside a hidden tmux
+  session: in that role `q` hides the popup viewer (detaching it, leaving the
+  decider registered) and `Q` confirms a real quit. Standalone `q` still
+  quits immediately.
+
 - **`KLANGKNETWORK_EGRESS_UPSTREAM` — operator-pinnable sidecar DNS upstream (#2424).**
   When set in `klangkd`'s environment, the network sidecar's FQDN proxy forwards
   workspace DNS to this resolver verbatim instead of auto-detecting a host
