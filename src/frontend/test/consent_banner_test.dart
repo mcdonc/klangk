@@ -61,8 +61,9 @@ void main() {
     ConsentDeciderService.testChannelFactory = null;
   });
 
-  testWidgets('renders nothing when there are no pending requests',
-      (tester) async {
+  testWidgets('renders nothing when there are no pending requests', (
+    tester,
+  ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
     svc.connect();
@@ -72,8 +73,9 @@ void main() {
     svc.dispose();
   });
 
-  testWidgets('shows the host + Allow/Deny for a pending request',
-      (tester) async {
+  testWidgets('shows the host + Allow/Deny for a pending request', (
+    tester,
+  ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
     svc.connect();
@@ -97,8 +99,9 @@ void main() {
     svc.dispose();
   });
 
-  testWidgets('tapping Allow sends an allow verdict on the socket',
-      (tester) async {
+  testWidgets('tapping Allow sends an allow verdict on the socket', (
+    tester,
+  ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
     svc.connect();
@@ -124,8 +127,9 @@ void main() {
     svc.dispose();
   });
 
-  testWidgets('tapping Deny sends a deny verdict on the socket',
-      (tester) async {
+  testWidgets('tapping Deny sends a deny verdict on the socket', (
+    tester,
+  ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
     svc.connect();
@@ -149,8 +153,9 @@ void main() {
     svc.dispose();
   });
 
-  testWidgets('Allow carries the default duration (tilrestart)',
-      (tester) async {
+  testWidgets('Allow carries the default duration (tilrestart)', (
+    tester,
+  ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
     svc.connect();
@@ -173,31 +178,47 @@ void main() {
     svc.dispose();
   });
 
-  testWidgets('the global duration selector is a single dropdown',
-      (tester) async {
-    final channel = _FakeChannel();
-    final svc = _serviceWithChannel(channel);
-    svc.connect();
-    channel.serverSend({
-      'type': 'egress_request',
-      'request': {
-        'id': 'r1',
-        'workspace_id': 'ws',
-        'dest_host': 'example.com',
-        'dest_port': 443,
-        'requested_at': 2000.0,
-      },
-    });
-    await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
-    await tester.pump();
-    // Exactly one duration selector (global, in the header) -- not one per row.
-    expect(find.byType(DropdownButton<String>), findsOneWidget);
-    expect(find.text('tilrestart'), findsOneWidget);
-    svc.dispose();
-  });
+  testWidgets(
+    'the global duration selector is one button per duration (#2499)',
+    (tester) async {
+      final channel = _FakeChannel();
+      final svc = _serviceWithChannel(channel);
+      svc.connect();
+      channel.serverSend({
+        'type': 'egress_request',
+        'request': {
+          'id': 'r1',
+          'workspace_id': 'ws',
+          'dest_host': 'example.com',
+          'dest_port': 443,
+          'requested_at': 2000.0,
+        },
+      });
+      await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
+      await tester.pump();
+      // No dropdown anywhere; one button per selectable duration (TUI parity),
+      // and the test-only 5s is not offered (#2487).
+      expect(find.byType(DropdownButton<String>), findsNothing);
+      expect(find.byKey(const ValueKey('dur-5s')), findsNothing);
+      for (final d in kConsentDurations) {
+        expect(find.byKey(ValueKey('dur-$d')), findsOneWidget);
+      }
+      // The default (tilrestart) is the active filled button; others outlined.
+      expect(
+        tester.widget(find.byKey(const ValueKey('dur-tilrestart'))),
+        isA<FilledButton>(),
+      );
+      expect(
+        tester.widget(find.byKey(const ValueKey('dur-1d'))),
+        isA<OutlinedButton>(),
+      );
+      svc.dispose();
+    },
+  );
 
-  testWidgets('selecting a duration applies it to the next Allow',
-      (tester) async {
+  testWidgets('selecting a duration applies it to the next Allow', (
+    tester,
+  ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
     svc.connect();
@@ -213,12 +234,25 @@ void main() {
     });
     await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
     await tester.pump();
-    // Open the single global duration selector and pick '1d'.
-    await tester.tap(find.byType(DropdownButton<String>));
+    // Tap the already-active button (tilrestart): a no-op reselect that
+    // keeps it active -- and exercises the filled button's onPressed.
+    await tester.tap(find.byKey(const ValueKey('dur-tilrestart')));
     await tester.pump();
+    expect(tester.widget(find.byKey(const ValueKey('dur-tilrestart'))),
+        isA<FilledButton>());
+
+    // Tap the 1d duration button -- selecting does NOT submit, it only moves
+    // the highlight; the verdict still needs an Allow/Deny tap.
+    await tester.tap(find.byKey(const ValueKey('dur-1d')));
     await tester.pump();
-    await tester.tap(find.text('1d').last);
-    await tester.pump();
+    expect(
+      tester.widget(find.byKey(const ValueKey('dur-1d'))),
+      isA<FilledButton>(),
+    );
+    expect(
+      tester.widget(find.byKey(const ValueKey('dur-tilrestart'))),
+      isA<OutlinedButton>(),
+    );
     // The chosen duration now rides on the verdict.
     await tester.tap(find.text('Allow'));
     await tester.pump();
@@ -250,8 +284,9 @@ void main() {
     svc.dispose();
   });
 
-  testWidgets('shows a re-login notice when the session auth-failed',
-      (tester) async {
+  testWidgets('shows a re-login notice when the session auth-failed', (
+    tester,
+  ) async {
     final channel = _FakeChannel();
     final svc = _serviceWithChannel(channel);
     svc.connect();
@@ -262,8 +297,9 @@ void main() {
     svc.dispose();
   });
 
-  testWidgets('shows "reconnecting…" when disconnected mid-hold',
-      (tester) async {
+  testWidgets('shows "reconnecting…" when disconnected mid-hold', (
+    tester,
+  ) async {
     final channel = _FakeChannel();
     ConsentDeciderService.testChannelFactory = (_) => channel;
     final svc = ConsentDeciderService(

@@ -1,13 +1,15 @@
 /// Interactive egress-consent banner for the workspace page (#2246).
 ///
 /// A compact banner shown above the workspace body when [ConsentDeciderService]
-/// has pending held requests (interactive `egress_mode` only). The header
-/// carries a single *global* duration selector (default `tilrestart`); each row
-/// shows the destination host:port (+ process + a countdown) and Allow/Deny
-/// buttons that send a `verdict` frame carrying the selected duration. Mirrors
-/// the standalone `klangk consent-decide` TUI (one `#duration-selector` for the
-/// whole list, applied at allow/deny time -- not per row), adapted to an inline
-/// Flutter banner.
+/// has pending held requests (interactive `egress_mode` only). Below the
+/// header it carries a single *global* duration selector (#2499) -- one
+/// compact button per selectable duration (default `tilrestart`), the active
+/// one filled, mirroring the TUI's `#duration-selector` button row -- and
+/// each row shows the destination host:port (+ process + a countdown) and
+/// Allow/Deny buttons that send a `verdict` frame carrying the selected
+/// duration. One selector for the whole list, applied at allow/deny time --
+/// not per row -- matching the standalone `klangk consent-decide` TUI,
+/// adapted to an inline Flutter banner.
 ///
 /// Server error frames, verdict send failures, and verdicts attempted while
 /// disconnected surface as a transient flash row (the service's
@@ -24,6 +26,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 import 'consent_decider_service.dart';
 
@@ -103,18 +106,23 @@ class _ConsentBannerState extends State<ConsentBanner> {
                   'Pending egress consent',
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
-                const SizedBox(width: 12),
-                // One global duration selector (TUI parity): applies to the
-                // next Allow/Deny tapped on any row. Not per row.
-                _DurationMenu(
-                  value: _duration,
-                  onChanged: (v) => setState(() => _duration = v),
-                ),
                 const Spacer(),
                 if (!service.connected)
-                  const Text('reconnecting…',
-                      style: TextStyle(fontStyle: FontStyle.italic)),
+                  const Text(
+                    'reconnecting…',
+                    style: TextStyle(fontStyle: FontStyle.italic),
+                  ),
               ],
+            ),
+          ),
+          // One global duration selector (TUI parity, #2499): applies to the
+          // next Allow/Deny tapped on any row. Not per row. Selecting does NOT
+          // submit -- only a row's Allow/Deny submits with this duration.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: _DurationSelector(
+              value: _duration,
+              onChanged: (v) => setState(() => _duration = v),
             ),
           ),
           if (flash != null)
@@ -122,14 +130,19 @@ class _ConsentBannerState extends State<ConsentBanner> {
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
               child: Row(
                 children: [
-                  const Icon(Icons.error_outline,
-                      size: 16, color: Colors.redAccent),
+                  const Icon(
+                    Icons.error_outline,
+                    size: 16,
+                    color: Colors.redAccent,
+                  ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       flash,
                       style: const TextStyle(
-                          color: Colors.redAccent, fontSize: 13),
+                        color: Colors.redAccent,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ],
@@ -195,24 +208,53 @@ class _BannerSurface extends StatelessWidget {
   }
 }
 
-/// A compact duration selector for one request row.
-class _DurationMenu extends StatelessWidget {
-  const _DurationMenu({required this.value, required this.onChanged});
+/// The global duration selector (#2499): one compact button per selectable
+/// duration, the active one filled -- TUI parity (the `#duration-selector`
+/// row with its accent `dur-sel` class, cli/tui/consent.py), styled like the
+/// Net Rules pause buttons (#2497). Selecting does NOT submit -- only a
+/// row's Allow/Deny submits with the chosen duration.
+class _DurationSelector extends StatelessWidget {
+  const _DurationSelector({required this.value, required this.onChanged});
   final String value;
   final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return DropdownButton<String>(
-      value: value,
-      isDense: true,
-      underline: const SizedBox.shrink(),
-      items: kConsentDurations
-          .map((d) => DropdownMenuItem(value: d, child: Text(d)))
-          .toList(),
-      onChanged: (v) {
-        if (v != null) onChanged(v);
-      },
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: [for (final d in kConsentDurations) _button(d)],
+    );
+  }
+
+  Widget _button(String d) {
+    // The active button mirrors the pause buttons (#2497): amber
+    // background, canvas foreground; inactive stays outlined.
+    final active = d == value;
+    final key = ValueKey('dur-$d');
+    if (active) {
+      return FilledButton(
+        key: key,
+        style: FilledButton.styleFrom(
+          backgroundColor: KColors.accentAmber,
+          foregroundColor: KColors.bgCanvas,
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          textStyle: const TextStyle(fontSize: 12),
+        ),
+        onPressed: () => onChanged(d),
+        child: Text(d),
+      );
+    }
+    return OutlinedButton(
+      key: key,
+      style: OutlinedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        textStyle: const TextStyle(fontSize: 12),
+      ),
+      onPressed: () => onChanged(d),
+      child: Text(d),
     );
   }
 }
