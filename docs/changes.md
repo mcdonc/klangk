@@ -586,6 +586,10 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Egress rules tab renamed to Network (#2510).** The workspace tab
+  previously titled **Net Rules** (originally "Rules", #2457) is now
+  titled **Network**. Presentation only; the tab's contents are
+  unchanged.
 - **Restyled pause/duration option buttons (#2502).** The Net Rules pause
   controls (Unpause / Pause 15m / 1h / 1d) and the consent banner's duration
   selector now share one pill-shaped option-button look with equal sizing,

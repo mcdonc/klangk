@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/colors.dart';
 
 /// One option button in a group of mutually-exclusive choices — e.g. the
-/// pause windows on the Net Rules tab and the verdict durations on the
+/// pause windows on the Network tab and the verdict durations on the
 /// consent banner. Gives every such group the same look so it reads as one
 /// intentional control instead of a loose row of default buttons (#2502):
 /// pill-shaped, a shared minimum size (so the buttons align), the amber
