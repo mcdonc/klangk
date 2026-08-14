@@ -280,6 +280,15 @@ def _cleanup_containers(data_dir: str) -> None:
     The instance id is written to ``<data_dir>/instance-id`` at startup
     (#1553). A crashed/timed-out test can leave workspace containers behind;
     this best-effort sweep prevents them from accumulating across runs.
+
+    Removal is two role-scoped passes — workspaces, then network sidecars —
+    not one bulk ``podman rm -f``. A workspace joins its sidecar's netns via
+    ``--network container:<sidecar>``, so podman refuses to remove a sidecar
+    whose netns a live workspace still shares ("has dependent containers"),
+    and ``-f`` does not override that. A single bulk removal puts sidecars
+    and workspaces in an unspecified order, so a sidecar attempted before its
+    workspace is skipped and left running (#2476). Removing the dependents
+    first tears both down in one go, regardless of list order.
     """
     id_file = os.path.join(data_dir, "instance-id")
     instance_id = ""
@@ -291,21 +300,26 @@ def _cleanup_containers(data_dir: str) -> None:
     if not instance_id:
         return
     try:
-        result = subprocess.run(
-            [
-                "podman",
-                "ps",
-                "-a",
-                "--filter",
-                f"label=klangk.instance={instance_id}",
-                "-q",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        ids = result.stdout.split()
-        if ids:
-            subprocess.run(["podman", "rm", "-f", *ids], capture_output=True)
+        for role in ("workspace", "network-sidecar"):
+            result = subprocess.run(
+                [
+                    "podman",
+                    "ps",
+                    "-a",
+                    "-q",
+                    "--filter",
+                    f"label=klangk.instance={instance_id}",
+                    "--filter",
+                    f"label=klangk.role={role}",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            ids = result.stdout.split()
+            if ids:
+                subprocess.run(
+                    ["podman", "rm", "-f", *ids], capture_output=True
+                )
     except FileNotFoundError:
         # podman not on PATH (e.g. a partial dev env) — nothing to clean.
         pass

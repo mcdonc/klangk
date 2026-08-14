@@ -4676,6 +4676,42 @@ class TestReapInstanceContainers:
             await self.registry.reap_instance_containers()
         mocks.remove_container.assert_awaited_once_with("good-1")
 
+    async def test_removes_workspaces_before_their_sidecars(self):
+        """Dependents (workspaces) are reaped before the sidecars whose netns
+        they share, so no sidecar is skipped this pass (#2476).
+
+        ``list_containers`` returns oldest-first and klangk creates the
+        sidecar before the workspace, so the sidecar is listed first.
+        Without the dependency-order sort that sidecar would be removed
+        first and (against real podman) fail with "has dependent
+        containers"; here we assert the awaited removal order directly.
+        """
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "sidecar-1",
+                        "Labels": {
+                            "klangk.role": "network-sidecar",
+                            "klangk.workspace": "ws-1",
+                        },
+                    },
+                    {
+                        "Id": "workspace-1",
+                        "Labels": {
+                            "klangk.role": "workspace",
+                            "klangk.workspace": "ws-1",
+                        },
+                    },
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            await self.registry.reap_instance_containers()
+        order = [c.args[0] for c in mocks.remove_container.await_args_list]
+        assert order == ["workspace-1", "sidecar-1"]
+
 
 class TestPidAlive:
     """Unit tests for ``container._pid_alive`` — the liveness check the
@@ -4736,6 +4772,47 @@ class TestReapDeadOwnerContainers:
             with patch("klangk.container._pid_alive", return_value=False):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_awaited_once_with("dead-owner-1")
+
+    async def test_removes_workspaces_before_their_sidecars(self):
+        """Dependents (workspaces) are reaped before their sidecars (#2476).
+
+        Same netns-dependency ordering as the per-instance reap
+        (:class:`TestReapInstanceContainers`): the sidecar is listed first
+        (created first) but must be removed after the workspace that joins
+        its netns, or its removal is skipped this pass.
+        """
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[
+                    {
+                        "Id": "sidecar-ghost",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.instance": "ghost",
+                            "klangk.pid": "99999",
+                            "klangk.role": "network-sidecar",
+                            "klangk.workspace": "ws-ghost",
+                        },
+                    },
+                    {
+                        "Id": "workspace-ghost",
+                        "Labels": {
+                            "klangk.managed": "true",
+                            "klangk.instance": "ghost",
+                            "klangk.pid": "99999",
+                            "klangk.role": "workspace",
+                            "klangk.workspace": "ws-ghost",
+                        },
+                    },
+                ]
+            ),
+            remove_container=AsyncMock(),
+        ) as mocks:
+            with patch("klangk.container._pid_alive", return_value=False):
+                await self.registry.reap_dead_owner_containers()
+        order = [c.args[0] for c in mocks.remove_container.await_args_list]
+        assert order == ["workspace-ghost", "sidecar-ghost"]
 
     async def test_skips_container_whose_owner_pid_is_alive(self):
         # A live owner (sibling klangkd, possibly mid-shutdown) always holds
