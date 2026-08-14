@@ -1635,6 +1635,142 @@ class TestBumpActivity:
         await self._drain(c)  # the scheduled send raises internally, swallowed
 
 
+class TestEgressAcct:
+    """mangle-OUTPUT egress byte accounting (#2485): the in-kernel rule the
+    idle-activity sampler polls, scoped to unmarked (workspace) traffic and
+    excluding the WS host so the sidecar's own control plane can't self-sustain
+    the idle timer."""
+
+    def test_acct_match_unmarked_with_exclude(self, proxy):
+        m = proxy.rules._acct_match("10.0.0.1")
+        # mark negation (workspace egress is unmarked) ...
+        assert "mark" in m and "--mark" in m and str(proxy.config.MARK) in m
+        # ... WS-host dest exclusion ...
+        assert "-d" in m and "10.0.0.1" in m
+        # ... comment tag (so acct_bytes can find the line) + ACCEPT target.
+        assert proxy.rules._ACCT_COMMENT in m
+        assert m[-1] == "ACCEPT"
+
+    def test_acct_match_omits_exclude_when_none(self, proxy):
+        m = proxy.rules._acct_match(None)
+        assert "-d" not in m  # no WS host to exclude
+        assert proxy.rules._ACCT_COMMENT in m
+
+    def test_install_acct_idempotent_when_present(self, proxy, monkeypatch):
+        runs = []
+
+        def fake_run(args, **kw):
+            runs.append(args)
+            return types.SimpleNamespace(returncode=0)  # rule exists -> no -A
+
+        monkeypatch.setattr(proxy.subprocess, "run", fake_run)
+        proxy.rules.install_acct("1.2.3.4")
+        assert any("-C" in a for a in runs)  # checked
+        assert not any("-A" in a for a in runs)  # present -> no append
+        # all ops hit the mangle table (never filter, to avoid fighting learned
+        # rules' -I OUTPUT 1 inserts).
+        assert all("-t" in a and "mangle" in a for a in runs)
+
+    def test_install_acct_appends_when_absent(self, proxy, monkeypatch):
+        runs = []
+
+        def fake_run(args, **kw):
+            runs.append(args)
+            return types.SimpleNamespace(returncode=1)  # absent -> -A
+
+        monkeypatch.setattr(proxy.subprocess, "run", fake_run)
+        proxy.rules.install_acct(None)
+        assert any("-A" in a and "OUTPUT" in a for a in runs)
+
+    def test_install_acct_swallows_failure(self, proxy, monkeypatch):
+        def boom(args, **kw):
+            raise OSError("no iptables / no mangle module")
+
+        monkeypatch.setattr(proxy.subprocess, "run", boom)
+        proxy.rules.install_acct(None)  # must not raise
+
+    def test_acct_bytes_parses_counter_line(self, proxy, monkeypatch):
+        out = (
+            "Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)\n"
+            " pkts bytes target prot opt in out source destination\n"
+            "   42 1000000 ACCEPT all -- * * 0.0.0.0/0 0.0.0.0/0"
+            " mark match ! 0x4b /* klangk-acct */\n"
+        )
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(stdout=out, returncode=0),
+        )
+        assert proxy.rules.acct_bytes() == 1000000
+
+    def test_acct_bytes_zero_when_rule_absent(self, proxy, monkeypatch):
+        out = "Chain OUTPUT (policy ACCEPT 0 packets, 0 bytes)\n"  # no acct line
+        monkeypatch.setattr(
+            proxy.subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(stdout=out, returncode=0),
+        )
+        assert proxy.rules.acct_bytes() == 0
+
+    def test_acct_bytes_zero_on_subprocess_failure(self, proxy, monkeypatch):
+        def boom(*a, **k):
+            raise OSError("gone")
+
+        monkeypatch.setattr(proxy.subprocess, "run", boom)
+        assert proxy.rules.acct_bytes() == 0
+
+
+class TestActivitySampler:
+    """Workspace-egress byte sampling -> idle bump (#2485): the sampler polls
+    the scoped byte counter once per gate window and, on a positive delta,
+    bumps the idle timer via bump_activity (which flood-gates the WS send).
+    Per-tick logic is factored into _activity_delta for deterministic tests."""
+
+    def test_delta_positive_bumps(self, proxy):
+        bumped, prev = proxy.consent._activity_delta(lambda: 1000, 0)
+        assert bumped and prev == 1000
+
+    def test_delta_zero_no_bump(self, proxy):
+        bumped, prev = proxy.consent._activity_delta(lambda: 500, 500)
+        assert not bumped and prev == 500
+
+    def test_delta_reset_rebaselines_without_bump(self, proxy):
+        # counter wrapped below prev (rule re-added / restart): NOT activity.
+        bumped, prev = proxy.consent._activity_delta(lambda: 5, 1000)
+        assert not bumped and prev == 5
+
+    def test_safe_bytes_read_failure_is_zero(self, proxy):
+        def boom():
+            raise OSError("iptables gone")
+
+        assert proxy.consent._safe_bytes(boom) == 0
+
+    def test_safe_bytes_non_int_is_zero(self, proxy):
+        assert proxy.consent._safe_bytes(lambda: "nonsense") == 0
+
+    async def test_sampler_bumps_only_on_real_traffic(self, proxy):
+        # One init read then a sequence: quiet, +100 (bump), flat, +150 (bump),
+        # flat, reset (no bump). Once readings exhaust, get_bytes raises
+        # StopIteration -> _safe_bytes -> 0 -> flat. Bumps must total 2.
+        readings = iter([0, 0, 100, 100, 250, 250, 10])
+        bumps = []
+
+        class C:
+            def bump_activity(self):
+                bumps.append(1)
+
+        task = asyncio.create_task(
+            proxy.consent._activity_sampler(C(), lambda: next(readings), 0.001)
+        )
+        await asyncio.sleep(0.1)  # plenty of 1ms ticks to drain the readings
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert len(bumps) == 2  # only the two positive deltas bumped
+
+
 class _FakePkt:
     def __init__(self, payload: bytes) -> None:
         self._payload = payload

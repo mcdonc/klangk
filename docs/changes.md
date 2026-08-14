@@ -55,6 +55,15 @@ operators or integrators to act when upgrading.
   decider registered) and `Q` confirms a real quit. Standalone `q` still
   quits immediately.
 
+- **Egress traffic extends the workspace idle timeout (#2485).** The
+  network sidecar now samples real workspace egress — any TCP/UDP traffic,
+  including long-lived connections and non-DNS UDP that the existing DNS/SYN
+  hooks (#2479) miss — and resets the container's idle timer while bytes are
+  flowing, so an egress-only workload is no longer reaped mid-transfer.
+  Best-effort and scoped to exclude the sidecar's own control traffic. No new
+  config: it reuses `KLANGKNETWORK_EGRESS_ACTIVITY_GATE` (default 60s) as the
+  sample cadence.
+
 - **`KLANGKNETWORK_EGRESS_UPSTREAM` — operator-pinnable sidecar DNS upstream (#2424).**
   When set in `klangkd`'s environment, the network sidecar's FQDN proxy forwards
   workspace DNS to this resolver verbatim instead of auto-detecting a host

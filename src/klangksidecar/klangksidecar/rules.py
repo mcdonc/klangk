@@ -335,6 +335,85 @@ def check_mark() -> None:
         probe.close()
 
 
+# --- workspace-egress accounting (#2485) -------------------------------------
+# A mangle-OUTPUT rule whose in-kernel byte counter the idle-activity sampler
+# (consent._activity_sampler) polls once per ACTIVITY_GATE_S. The kernel bumps
+# the counter on every matching packet at packet-processing time; our code only
+# reads it -- no per-packet/per-flow Python. The match is scoped to UNmarked
+# traffic (the proxy's own upstream DNS carries SO_MARK=MARK; the workspace
+# cannot mark), optionally excluding the klangkd WS host, so it counts only the
+# workspace's real egress -- not the sidecar's own control plane, which would
+# otherwise self-sustain (an activity frame / WS keepalive moves bytes -> looks
+# like traffic -> bumps the timer -> the workspace never goes idle). Mangle,
+# not filter, so the rule never fights the learned ACCEPT/REJECT rules'
+# `-I OUTPUT 1` inserts; `-j ACCEPT` terminates only the mangle chain, leaving
+# the nat REDIRECT + filter OUTPUT path intact.
+_ACCT_COMMENT = "klangk-acct"
+
+
+def _acct_match(exclude_ip: str | None) -> list[str]:
+    """iptables match/target args for the accounting rule: unmarked traffic
+    (workspace egress), optionally excluding the klangkd WS host."""
+    args = ["-m", "mark", "!", "--mark", str(MARK)]
+    if exclude_ip:
+        args += ["!", "-d", exclude_ip]
+    args += ["-m", "comment", "--comment", _ACCT_COMMENT, "-j", "ACCEPT"]
+    return args
+
+
+def install_acct(exclude_ip: str | None = None) -> None:
+    """Install the mangle-OUTPUT egress-accounting rule (#2485), idempotently.
+
+    Best-effort: a failure to install is silent -- the sampler then reads a
+    flat zero counter and never bumps, i.e. falls back to the #2481 DNS/SYN
+    behavior (an egress-only long-lived flow could be reaped, but egress itself
+    is unaffected). Sync (forks iptables) like allow/sweep.
+    """
+    try:
+        check = subprocess.run(
+            [config.IPT, "-t", "mangle", "-C", "OUTPUT", *_acct_match(exclude_ip)],
+            capture_output=True,
+        )
+        if check.returncode == 0:
+            return  # already present
+        subprocess.run(
+            [config.IPT, "-t", "mangle", "-A", "OUTPUT", *_acct_match(exclude_ip)],
+            capture_output=True,
+        )
+    except Exception:
+        pass
+
+
+def acct_bytes() -> int:
+    """Current byte count on the accounting rule, or 0 if absent/unreadable.
+
+    Parsed from ``iptables -t mangle -L OUTPUT -v -x -n``: with ``-v`` the first
+    two columns are pkts/bytes, ``-x`` makes bytes exact (no K/M suffix), and
+    the ``--comment`` tag uniquely identifies the rule line. 0 on any parse /
+    subprocess failure so the sampler treats a missing rule as a flat baseline
+    (never as a burst of activity).
+    """
+    try:
+        out = subprocess.run(
+            [config.IPT, "-t", "mangle", "-L", "OUTPUT", "-v", "-x", "-n"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except Exception:
+        return 0
+    for line in out.splitlines():
+        if _ACCT_COMMENT in line:
+            parts = line.split()  # parts[0]=pkts, parts[1]=bytes (the -v cols)
+            if len(parts) >= 2:
+                try:
+                    return int(parts[1])
+                except ValueError:
+                    return 0
+            return 0
+    return 0
+
+
 def _learn_all(
     recs: list[tuple[str, int]],
     ports: set[int | None],

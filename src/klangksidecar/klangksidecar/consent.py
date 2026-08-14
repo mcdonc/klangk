@@ -314,3 +314,64 @@ class SidecarConsentClient:
                 return f.read().strip()
         except OSError:
             return ""
+
+
+# ---------------------------------------------------------------------------
+# Idle-activity sampler (#2485): poll the workspace-egress byte counter and
+# bump the idle timer on real traffic (long-lived / UDP flows the #2481 DNS+SYN
+# hooks miss). The per-tick logic is factored into _activity_delta so it is
+# unit-testable without driving the infinite loop.
+# ---------------------------------------------------------------------------
+
+
+def _safe_bytes(get_bytes) -> int:
+    """Read the accounting counter; 0 on any failure (so a transient read
+    error or a missing rule reads as a flat baseline, never as activity)."""
+    try:
+        n = get_bytes()
+    except Exception:
+        return 0
+    try:
+        return int(n)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _activity_delta(get_bytes, prev: int) -> tuple[bool, int]:
+    """One sample tick's logic (#2485), factored out for unit tests.
+
+    Returns ``(bumped, new_prev)``: ``bumped`` is True iff the workspace-egress
+    byte counter advanced since the last tick (real traffic), in which case
+    the caller bumps the idle timer. A counter that did NOT advance (quiet) or
+    that RESET (rule re-added / sidecar restart -> counter wraps back below
+    prev) re-baselines without bumping, so a reset can never masquerade as a
+    burst of activity.
+    """
+    cur = _safe_bytes(get_bytes)
+    return cur > prev, cur
+
+
+async def _activity_sampler(client, get_bytes, interval: float) -> None:
+    """Background task: sample the workspace-egress byte counter and, on a
+    positive delta, call ``client.bump_activity`` (#2485).
+
+    ``get_bytes`` -> int is the (mockable) counter reader
+    (:func:`klangksidecar.rules.acct_bytes`); ``interval`` is the sample cadence
+    (= :data:`ACTIVITY_GATE_S`, so one tick yields at most one activity frame
+    per window -- the send itself is flood-gated by ``bump_activity``). The
+    per-tick work is exactly one counter read; the kernel does all the
+    per-packet accounting. Best-effort, like the #2481 hooks: a read failure
+    re-baselines (:func:`_activity_delta`) and ``bump_activity`` is silent on a
+    down WS, so sampling never breaks egress. Mirrors
+    :func:`klangksidecar.rules._async_sweeper` (sleep + work, swallow per-tick
+    errors so one bad tick doesn't kill the task).
+    """
+    _, prev = _activity_delta(get_bytes, 0)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            bumped, prev = _activity_delta(get_bytes, prev)
+            if bumped:
+                client.bump_activity()
+        except Exception:
+            pass  # a transient tick failure defers to the next interval
