@@ -54,6 +54,11 @@ from ..model.workspaces import EGRESS_MODE_INTERACTIVE
 logger = logging.getLogger(__name__)
 
 
+def _log_safe(value: str) -> str:
+    """Strip CR/LF so a forged query param can't inject log lines."""
+    return value.replace("\r", " ").replace("\n", " ")
+
+
 async def _refuse(
     websocket: WebSocket, code: int, reason: str, email: str | None = None
 ) -> None:
@@ -69,8 +74,8 @@ async def _refuse(
         "workspace=%s ua=%s",
         reason,
         code,
-        email or "unknown",
-        websocket.query_params.get("workspace") or "deploy-wide",
+        _log_safe(email or "unknown"),
+        _log_safe(websocket.query_params.get("workspace") or "deploy-wide"),
         websocket.headers.get("user-agent", "?"),
     )
     await websocket.close(code=code, reason=reason)

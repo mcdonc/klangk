@@ -128,6 +128,17 @@ _PING_INTERVAL = 15.0
 # Reconnect backoff (seconds). Caps the spin on a repeatedly-dropping server.
 _RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 
+# How long a flashed message (send failure, server error) stays on the status
+# line before the periodic refresh overwrites it.
+_FLASH_TTL = 5.0
+
+# After two consecutive 403 refusals the decider retries at this fixed slow
+# interval (#2490): bounded log spam (1/min vs the old 1/5s storm), but the
+# decider still self-heals if the workspace flips back to interactive (or
+# permissions are restored) mid-session instead of staying dead until the
+# shell is restarted.
+_REFUSED_RETRY_INTERVAL = 60.0
+
 
 # Sent as the WS handshake User-Agent so klangkd's refusal log (#2490) can
 # attribute a 403 to this client (vs a browser or anything else).
@@ -139,10 +150,6 @@ def _user_agent() -> str:
 
 
 _USER_AGENT = _user_agent()
-
-# How long a flashed message (send failure, server error) stays on the status
-# line before the periodic refresh overwrites it.
-_FLASH_TTL = 5.0
 
 # Frame-application outcomes returned by ConsentDeciderController.apply_frame.
 ADDED = (
@@ -621,9 +628,10 @@ class ConsentDeciderApp(App):
         self._ws = None
         self._connected = False
         self._stop = False
-        # #2490: set when the server refused registration (HTTP 403) twice in
-        # a row -- the reconnect loop has given up and the status line says
-        # so instead of "reconnecting".
+        # #2490: set once registration has been refused (HTTP 403) twice --
+        # the reconnect loop has dropped to its slow fixed interval and the
+        # status line says so instead of "reconnecting". Cleared when a
+        # connect succeeds again (self-heal).
         self._refused = False
         self._flash_msg = ""
         self._flash_until = 0.0
@@ -756,10 +764,14 @@ class ConsentDeciderApp(App):
         A refused handshake (HTTP 403, #2490) is different: the server
         closed *before* accept (authz, egress mode, vanished workspace --
         or an expired token, since the pre-accept close code never reaches
-        us and uvicorn answers every refusal with 403). Retrying cannot
-        fix a real refusal, so after one refresh-and-retry (which recovers
-        the expired-token case) a second consecutive 403 stops the loop
-        for good instead of spamming the server log forever.
+        us and uvicorn answers every refusal with 403). The first refusal
+        refreshes the JWT and retries fast (recovering the expired-token
+        case); once refusals pile up (the counter resets only on a
+        successful connect) the loop backs off to a fixed slow interval
+        (:data:`_REFUSED_RETRY_INTERVAL`) instead of stopping -- bounded
+        log spam, but the decider still self-heals if the refusal cause
+        goes away mid-session (workspace flipped back to interactive,
+        permissions restored).
         """
         attempt = 0
         refusals = 0
@@ -779,6 +791,10 @@ class ConsentDeciderApp(App):
                     self._connected = True
                     attempt = 0
                     refusals = 0
+                    if self._refused:
+                        # Healed: the refusal cause went away -- back to
+                        # normal connected/reconnect reporting.
+                        self._refused = False
                     self._refresh()
                     auth_close = await self._pump(ws)
             except websockets.InvalidStatus as e:
@@ -795,21 +811,28 @@ class ConsentDeciderApp(App):
             if refused:
                 refusals += 1
                 if refusals >= 2:
-                    # Permanent refusal: the decider cannot register (see
-                    # docstring). Stop; the status line shows why (#2490).
-                    self._refused = True
-                    logger.warning(
-                        "consent-decide: registration refused (403) twice; "
-                        "not retrying"
-                    )
-                    self._refresh()
-                    break
-                # First refusal: maybe just an expired token (its 4002 close
-                # code is lost pre-accept) -- refresh and try once more.
+                    # Repeated refusal: registration cannot succeed right
+                    # now (see docstring). Log once, then fall back to the
+                    # slow interval -- not a tight loop, not a dead stop
+                    # (#2490 review: a mid-session flip back to interactive
+                    # must self-heal without restarting the shell).
+                    if not self._refused:
+                        self._refused = True
+                        logger.warning(
+                            "consent-decide: registration refused (403) "
+                            "repeatedly; retrying every %.0fs",
+                            _REFUSED_RETRY_INTERVAL,
+                        )
+                    delay = _REFUSED_RETRY_INTERVAL
+                else:
+                    # First refusal: maybe just an expired token (its 4002
+                    # close code is lost pre-accept) -- refresh and retry
+                    # fast once.
+                    delay = self._backoff(1)
                 new = await self._refresh_token()
                 if new:
                     self.token = new
-                await asyncio.sleep(self._backoff(1))
+                await asyncio.sleep(delay)
                 self._refresh()
                 continue
             if self._stop:
@@ -989,7 +1012,9 @@ class ConsentDeciderApp(App):
             if self._connected:
                 conn = "connected"
             elif self._refused:
-                conn = "refused — not retrying"
+                conn = (
+                    f"refused — retrying every {int(_REFUSED_RETRY_INTERVAL)}s"
+                )
             else:
                 conn = "reconnecting"
             line = (

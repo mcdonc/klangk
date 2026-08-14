@@ -330,13 +330,15 @@ class TestConsentDeciderWS:
         assert app.state.consent_deciders.has_decider(WS) is False
 
     async def test_forbidden_logs_user_and_workspace(self, caplog):
-        # #2490: an authz refusal names the user + workspace in the log.
+        # #2490: an authz refusal names the user + workspace in the log --
+        # and never the token (it rides the query string; leaking it into
+        # the log would leak a live JWT).
         import logging
 
         from klangk.wshandler.decider import handle_consent_decider
 
         app = _ws_app({"id": "u1", "email": "a@x"}, allowed=False)
-        ws = _FakeWS({"token": "tok", "workspace": WS}, [])
+        ws = _FakeWS({"token": "SEKRET-JWT", "workspace": WS}, [])
         with caplog.at_level(
             logging.WARNING, logger="klangk.wshandler.decider"
         ):
@@ -344,6 +346,22 @@ class TestConsentDeciderWS:
         assert "refused: Forbidden" in caplog.text
         assert "user=a@x" in caplog.text
         assert f"workspace={WS}" in caplog.text
+        assert "SEKRET-JWT" not in caplog.text
+
+    async def test_refusal_log_sanitizes_forged_workspace(self, caplog):
+        # #2490: the workspace query param is attacker-controlled pre-auth;
+        # a forged %0A must not inject new lines into the log record.
+        import logging
+
+        from klangk.wshandler.decider import handle_consent_decider
+
+        app = _ws_app({"id": "u1", "email": "a@x"}, allowed=False)
+        ws = _FakeWS({"token": "tok", "workspace": f"{WS}\nFAKED line"}, [])
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.wshandler.decider"
+        ):
+            await handle_consent_decider(ws, app)
+        assert "\nFAKED" not in caplog.text
 
     async def test_static_workspace_scoped_decider_is_forbidden(self):
         # #2394: a workspace with egress_mode=static must refuse a
