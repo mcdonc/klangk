@@ -867,6 +867,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Stale pause in the consent-decide TUI after expiry (#2498).** A finite
+  pause window (15m/1h/1d) whose time elapsed in an idle workspace no longer
+  lingers as `paused 0s` on the pause bar and `Filtering paused (resumes in
+0s)` on the rules screen. Both views now clear the pause locally the
+  moment the window lapses; indefinite (until-restart) pauses and live
+  countdowns still render.
+
 - **Consent-decider 403 storm on refused registration (#2490).** A refused
   decider WebSocket handshake (uvicorn answers every pre-accept close with
   a bare HTTP 403 — e.g. the workspace is no longer `interactive` egress

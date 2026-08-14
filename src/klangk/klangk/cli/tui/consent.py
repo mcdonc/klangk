@@ -414,6 +414,24 @@ class ConsentDeciderController:
             return None
         return max(0.0, rules.paused.until - self._clock())
 
+    def pause_expired(self, rules: EgressRules) -> bool:
+        """Whether a finite pause window has elapsed (#2498).
+
+        The server reverts to prompting at the real expiry but only
+        re-broadcasts ``egress_rules`` on the next discrete event
+        (verdict/revoke/pause/reconnect) -- never on natural expiry -- so an
+        idle workspace must prune the stale pause locally, off the injected
+        clock, or the views keep claiming prompts are suppressed ("paused
+        0s") after holds have actually resumed. An indefinite pause
+        (``until`` None, "until restart") and a not-paused workspace never
+        expire. Mirrors the web client's ``isPauseExpired`` (#2497) and the
+        timed-verdict prune of #2467.
+        """
+        paused = rules.paused
+        if paused is None or paused.until is None:
+            return False
+        return paused.until <= self._clock()
+
     def reset(self) -> None:
         """Drop all pending requests + the cached rules snapshot.
 
@@ -1164,16 +1182,26 @@ class ConsentDeciderApp(App):
         The server's pause frame carries only ``until`` (not which window),
         so the active button is the one matching the user's last pause/unpause
         request (``self._pause_duration``); Unpaused is active when nothing is
-        paused. The exact remaining window comes from the rules frame.
+        paused. The exact remaining window comes from the rules frame. A
+        finite window that has elapsed is treated as not paused (#2498).
         """
+        rules = self.controller.rules
+        expired = rules is not None and self.controller.pause_expired(rules)
+        if expired:
+            # #2498: the finite window elapsed locally -- the workspace is
+            # effectively unpaused, so clear the stale countdown and fall
+            # back to the Unpaused highlight instead of freezing at "paused
+            # 0s" until the next server frame. Forget the requested window
+            # too, so a post-expiry re-broadcast (paused=None) can't
+            # re-light the stale Pause button.
+            self._pause_duration = None
         target = self._pause_duration
         for b in self.query("#pause-bar Button"):
             b.set_class(
                 getattr(b, "pause_duration", None) == target, "pause-active"
             )
         countdown = self.query_one("#pause-countdown", Static)
-        rules = self.controller.rules
-        if rules is not None and rules.paused is not None:
+        if rules is not None and rules.paused is not None and not expired:
             rem = self.controller.pause_remaining(rules)
             countdown.update(
                 "paused until restart"
@@ -1478,8 +1506,15 @@ class RulesScreen(Screen):
         else:
             lines.append("  [dim](none)[/dim]")
 
-        # Pause window (#2332; absent today -> section hidden).
-        if rules is not None and rules.paused is not None:
+        # Pause window (#2332; absent today -> section hidden). A finite
+        # window that already elapsed renders nothing (#2498): the 1s
+        # refresh clears the stale section locally until the next frame
+        # confirms the server's post-expiry state.
+        if (
+            rules is not None
+            and rules.paused is not None
+            and not controller.pause_expired(rules)
+        ):
             lines.append("")
             lines.append("[bold]Pause[/bold]")
             rem = controller.pause_remaining(rules)
