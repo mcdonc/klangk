@@ -1344,6 +1344,30 @@ class RulesScreen(Screen):
         ("x", "revoke", "Revoke"),
     ]
 
+    # #2362: the last highlighted revoke target (id + position), remembered
+    # from ``ListView.Highlighted`` events. ``lv.clear()`` inside a rebuild
+    # resets the highlight to None; without this memory a second rebuild
+    # bursting within the same refresh cycle would capture "no focus" and
+    # drop the restore, leaving the highlight on index 0 -- the newest rule
+    # -- so a subsequent ``x`` would revoke the wrong row.
+    _last_focused_rule_id: str | None = None
+    _last_focused_rule_index: int = 0
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Track the highlighted revoke target (#2362).
+
+        The None event (posted when ``clear()`` or a reset drops the
+        highlight) is ignored so the memory keeps the decider's last real
+        focus through rebuild bursts.
+        """
+        if event.item is None:
+            return
+        self._last_focused_rule_id = getattr(event.item, "rule_id", None)
+        for index, child in enumerate(event.list_view.children):
+            if child is event.item:
+                self._last_focused_rule_index = index
+                break
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static(id="rules-status")
@@ -1430,6 +1454,19 @@ class RulesScreen(Screen):
         rebuilt when the set of revocable rule ids changes, so the 1s refresh
         never flickers it. The static allow-list is intentionally absent -> it
         is never a revoke target.
+
+        Focus survives the rebuild (#2362): the focused rule id is captured
+        *before* ``lv.clear()`` resets the highlight, and restored once the
+        rebuild lands. The capture never reads None-through-a-burst: when
+        ``highlighted_child`` is already None (a first rebuild in the same
+        refresh cycle cleared it and its deferred restore has not landed), it
+        falls back to the id remembered from the last ``Highlighted`` event
+        (:attr:`_last_focused_rule_id`), which a ``clear()`` cannot clobber.
+        So two rule-set changes inside one refresh cycle -- an ``egress_rules``
+        refresh plus a ``revoke_ack``, or two near-simultaneous verdicts --
+        still restore the row the decider focused, never silently index 0
+        (the newest rule) of a reordered list. A subsequent ``x`` then
+        revokes the intended row.
         """
         lv = self.query_one("#rules-list", ListView)
         desired: list[str] = []
@@ -1444,6 +1481,11 @@ class RulesScreen(Screen):
             if lv.highlighted_child is not None
             else None
         )
+        if focused is None:
+            # Burst window: a prior rebuild in this same refresh cycle
+            # cleared the highlight and its restore has not landed yet --
+            # the remembered id is the decider's actual focus (#2362).
+            focused = self._last_focused_rule_id
         lv.clear()
         if rules is not None:
             for r in rules.allowed:
@@ -1458,7 +1500,15 @@ class RulesScreen(Screen):
                 for index, child in enumerate(_lv.children):
                     if getattr(child, "rule_id", None) == _focused:
                         _lv.index = index
-                        break
+                        return
+                # The focused rule left the snapshot (revoke ack elsewhere /
+                # expiry): fall to a deterministic neighbor -- the old focus
+                # position clamped to the new list -- never silently index 0
+                # of a reordered list.
+                if _lv.children:
+                    _lv.index = min(
+                        self._last_focused_rule_index, len(_lv.children) - 1
+                    )
 
             lv.call_after_refresh(_restore_focus)
 
