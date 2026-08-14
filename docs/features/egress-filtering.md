@@ -164,8 +164,10 @@ left pending forever.
   shell in a local tmux that floats the decider over it as a popup: a
   held request pops up without leaving the shell (`C-a p` reopens it;
   skip the wrapper with `--no-consent-popup`) (#2383).
-- **Web UI** — the workspace page shows a consent banner with the same
-  allow/deny + duration controls (#2246), plus a **Network** tab
+- **Web UI** — the workspace page shows a consent banner with per-row
+  allow/deny split buttons: a bare click uses the default duration
+  (until restart), and the attached ▾ menu sends the verdict with any
+  other duration (#2246, #2499), plus a **Network** tab
   listing the in-effect rules with revoke actions.
 - **Deploy-wide** — an admin may connect a decider without a workspace
   scope (via the `/ws/consent-decider` WebSocket) to decide for every

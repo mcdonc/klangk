@@ -223,8 +223,8 @@ operators or integrators to act when upgrading.
 
 - **Interactive egress-consent banner in the web UI (#2246).** Workspaces
   in `interactive` egress mode now show a banner on the workspace page listing
-  pending held egress requests (host:port, process, countdown) with a global
-  duration selector + per-row Allow/Deny, mirroring the `consent-decide`
+  pending held egress requests (host:port, process, countdown) with per-row
+  Allow/Deny verdict buttons, alongside the `consent-decide`
   TUI; verdicts go live over the `/ws/consent-decider` stream. Server error
   frames, verdict send failures, and verdicts attempted while disconnected
   surface as a transient flash so a rejected/lost verdict is never silent.
@@ -590,16 +590,17 @@ operators or integrators to act when upgrading.
   previously titled **Net Rules** (originally "Rules", #2457) is now
   titled **Network**. Presentation only; the tab's contents are
   unchanged.
-- **Restyled pause/duration option buttons (#2502).** The Net Rules pause
-  controls (Unpause / Pause 15m / 1h / 1d) and the consent banner's duration
-  selector now share one pill-shaped option-button look with equal sizing,
-  pause/play icons, and tooltips; the active choice keeps the amber fill.
+- **Restyled pause option buttons (#2502).** The Network tab's pause
+  controls (Unpause / Pause 15m / 1h / 1d) now share one pill-shaped
+  option-button look with equal sizing, pause/play icons, and tooltips;
+  the active choice keeps the amber fill.
   Purely presentational — keys and behavior unchanged.
-- **Consent banner duration buttons (#2499).** The egress-consent banner's
-  verdict-duration dropdown is now a row of compact buttons (one per
-  duration, the selected one highlighted), matching the `consent-decide`
-  TUI's duration selector. Behavior is unchanged: one global selection,
-  default `tilrestart`, applied on the next Allow/Deny.
+- **Consent banner per-row duration menus (#2499).** Each row of the
+  egress-consent banner has a split Allow/Deny button: a bare click sends
+  the verdict with the default duration (until restart), and the attached
+  ▾ menu sends it with any other duration (just once, 5 minutes, …,
+  forever) in one step. The duration is chosen with the click, never armed
+  beforehand, and no longer takes up a button row of its own.
 - **`KLANGKD_IDLE_TIMEOUT_SECONDS` default 30m → 60m (#2480).** The workspace container idle timeout now defaults to 3600s (was 1800s). Existing
   deployments get a longer idle window on upgrade unless the env var is already
   set; set `KLANGKD_IDLE_TIMEOUT_SECONDS=1800` to keep the old 30-minute default.
