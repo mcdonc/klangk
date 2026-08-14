@@ -135,6 +135,25 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _reap_sort_key(c: dict) -> int:
+    """Sort key: remove netns *dependents* (workspaces) before sidecars.
+
+    A workspace joins its network sidecar's netns via
+    ``--network container:<sidecar>``, so the sidecar cannot be removed
+    while the workspace still references it — podman refuses with "has
+    dependent containers", and ``rm -f`` does **not** override that check.
+    klangk creates the sidecar *before* the workspace, and
+    :meth:`Podman.list_containers` returns oldest-first, so an unsorted
+    reap hits the sidecar first, skips it (logged ``PodmanError``), removes
+    the workspace, and orphans the sidecar until the next startup (#2476).
+    Ordering workspaces (``klangk.role=workspace``) ahead of everything else
+    lets each sidecar removal succeed in the same pass.
+    """
+    return (
+        0 if (c.get("Labels") or {}).get("klangk.role") == "workspace" else 1
+    )
+
+
 class ContainerState:
     """Per-workspace container lifecycle state."""
 
@@ -2610,6 +2629,9 @@ class ContainerRegistry:
         except (podman.PodmanError, OSError) as e:
             logger.warning("Error scanning for leftover containers: %s", e)
             return
+        # Remove dependents (workspaces) before the sidecars they reference,
+        # or every sidecar is skipped this pass (#2476 — see _reap_sort_key).
+        containers.sort(key=_reap_sort_key)
         for c in containers:
             cid = c.get("Id") or c.get("ID", "")
             if not cid:
@@ -2672,6 +2694,9 @@ class ContainerRegistry:
         except (podman.PodmanError, OSError) as e:
             logger.warning("Error scanning for dead-owner containers: %s", e)
             return
+        # Remove dependents (workspaces) before the sidecars they reference,
+        # or every sidecar is skipped this pass (#2476 — see _reap_sort_key).
+        containers.sort(key=_reap_sort_key)
         for c in containers:
             cid = c.get("Id") or c.get("ID", "")
             if not cid:
