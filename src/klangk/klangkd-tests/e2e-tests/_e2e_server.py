@@ -285,10 +285,10 @@ def _cleanup_containers(data_dir: str) -> None:
     not one bulk ``podman rm -f``. A workspace joins its sidecar's netns via
     ``--network container:<sidecar>``, so podman refuses to remove a sidecar
     whose netns a live workspace still shares ("has dependent containers"),
-    and ``-f`` does not override that. ``podman ps`` lists oldest-first and
-    klangk creates the sidecar before the workspace, so a single bulk removal
-    hits the sidecar first, removes only the workspaces, and orphans every
-    sidecar (#2476). Removing the dependents first tears both down in one go.
+    and ``-f`` does not override that. A single bulk removal puts sidecars
+    and workspaces in an unspecified order, so a sidecar attempted before its
+    workspace is skipped and left running (#2476). Removing the dependents
+    first tears both down in one go, regardless of list order.
     """
     id_file = os.path.join(data_dir, "instance-id")
     instance_id = ""

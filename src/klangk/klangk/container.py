@@ -142,12 +142,12 @@ def _reap_sort_key(c: dict) -> int:
     ``--network container:<sidecar>``, so the sidecar cannot be removed
     while the workspace still references it — podman refuses with "has
     dependent containers", and ``rm -f`` does **not** override that check.
-    klangk creates the sidecar *before* the workspace, and
-    :meth:`Podman.list_containers` returns oldest-first, so an unsorted
-    reap hits the sidecar first, skips it (logged ``PodmanError``), removes
-    the workspace, and orphans the sidecar until the next startup (#2476).
-    Ordering workspaces (``klangk.role=workspace``) ahead of everything else
-    lets each sidecar removal succeed in the same pass.
+    ``list_containers`` returns containers in no guaranteed role order, so an
+    unsorted reap may hit a sidecar before its workspace, skip it (logged
+    ``PodmanError``), remove the workspace, and orphan the sidecar until the
+    next startup (#2476). Ordering workspaces (``klangk.role=workspace``)
+    ahead of everything else lets each sidecar removal succeed in the same
+    pass regardless of the list order.
     """
     return (
         0 if (c.get("Labels") or {}).get("klangk.role") == "workspace" else 1

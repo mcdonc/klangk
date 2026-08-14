@@ -826,13 +826,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   A workspace joins its sidecar's netns via `--network container:<sidecar>`,
   so podman refuses to remove a sidecar while its workspace still shares that
   netns ("has dependent containers"), and `rm -f` does not override that.
-  klangk creates the sidecar before the workspace, so any bulk/iterative
-  removal ordered oldest-first hit the sidecar first, removed only the
-  workspaces, and left every sidecar running. The startup reapers
-  (`reap_instance_containers`, `reap_dead_owner_containers`) and the e2e
-  teardown sweep now remove `role=workspace` containers before
-  `role=network-sidecar` containers, so both come down in one pass instead of
-  the sidecar lingering until a second startup.
+  klangk creates the sidecar before the workspace, so a bulk removal that did
+  not order by role could hit the sidecar first, remove only the workspaces,
+  and leave every sidecar running. The startup container reapers and the e2e
+  teardown sweep now remove workspace containers before network sidecar
+  containers, so both come down in one pass instead of the sidecar lingering
+  until a second startup.
 - **Egress activity resets the idle timer (#2479).** A workspace whose only
   activity was outbound network egress used to be treated as idle and stopped by
   the idle timeout, because egress (workspace → network sidecar → internet)
