@@ -11,6 +11,7 @@ import asyncio
 import signal
 import socket
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from . import allowlist, config, consent, nfqueue, packets, resolve, rules
 from .config import DEBUG, HOLD_TIMEOUT, LISTEN_PORT, UPSTREAM, WORKSPACE_TOKEN_PATH
@@ -32,6 +33,7 @@ async def _shutdown(
     nfq,
     sock: socket.socket,
     sweep: asyncio.Task | None,
+    sampler: asyncio.Task | None = None,
 ) -> None:
     """Clean teardown on SIGTERM (#2400): stop the consent client, cancel the
     TTL sweeper, unbind NFQUEUE, close the DNS socket.
@@ -57,6 +59,12 @@ async def _shutdown(
             await sweep
         except (asyncio.CancelledError, Exception):
             pass
+    if sampler is not None:
+        sampler.cancel()
+        try:
+            await sampler
+        except (asyncio.CancelledError, Exception):
+            pass
     if nfq is not None:
         try:
             asyncio.get_running_loop().remove_reader(nfq.get_fd())
@@ -70,6 +78,34 @@ async def _shutdown(
         sock.close()
     except Exception:
         pass
+
+
+def _resolve_ws_host(consent_url: str) -> str | None:
+    """Resolve the klangkd WS host to an IP so the egress-accounting rule can
+    exclude it (#2485) -- the WS is the sidecar's own persistent control socket
+    and its keepalives must not self-sustain the idle timer.
+
+    Returns None on any failure (no host in the URL, or unresolvable). IMPORTANT:
+    a None DEFEATS the idle timeout -- the WS keepalive (~50-100 bytes per 20s
+    ping) then counts as workspace egress and bumps the timer every tick, so the
+    workspace is never reaped. In the default deployment CONSENT_URL is
+    host.containers.internal (a /etc/hosts entry, single IP) and resolves
+    locally, so this is a round-robin / DNS-only-backend edge case; it is logged
+    so an operator whose workspaces never idle can find it.
+    """
+    try:
+        host = urlparse(consent_url).hostname
+        ip = socket.gethostbyname(host) if host else None
+    except Exception:
+        ip = None
+    if not ip:
+        print(
+            "egress-sidecar: could not resolve the klangkd WS host to exclude "
+            "it from egress accounting -- its keepalives will count as workspace "
+            "egress and the workspace idle timer may never fire (#2485)",
+            flush=True,
+        )
+    return ip
 
 
 async def _async_main() -> None:
@@ -101,6 +137,7 @@ async def _async_main() -> None:
     _BG_TASKS.add(_sweep)  # strong ref for the loop's lifetime
     _sweep.add_done_callback(_BG_TASKS.discard)
     nfq = None
+    _sampler: asyncio.Task | None = None
     # NFQUEUE consumer is driven by this event loop (get_fd + add_reader) so a
     # slow verdict on one SYN doesn't serialize others (#2324, #2329).
     if config.CONSENT_URL:
@@ -108,6 +145,20 @@ async def _async_main() -> None:
         nfq = nfqueue._setup_nfq_consumer(
             client
         )  # bound NFQUEUE, for _shutdown (#2400)
+        # #2485: egress byte-accounting rule + the sampler that bumps the idle
+        # timer on real workspace traffic (long-lived / UDP flows the #2481
+        # DNS+SYN hooks miss). Best-effort; a missing rule -> flat zero counter
+        # -> sampler never bumps (falls back to #2481). _resolve_ws_host scopes
+        # the rule to exclude the sidecar's own WS so its keepalives can't
+        # self-sustain the timer. Resolve + install run off-loop (gethostbyname
+        # + 2 iptables forks are blocking), matching the rest of startup.
+        ws_ip = await loop.run_in_executor(None, _resolve_ws_host, config.CONSENT_URL)
+        await loop.run_in_executor(None, rules.install_acct, ws_ip)
+        _sampler = asyncio.create_task(
+            consent._activity_sampler(client, rules.acct_bytes, config.ACTIVITY_GATE_S)
+        )
+        _BG_TASKS.add(_sampler)
+        _sampler.add_done_callback(_BG_TASKS.discard)
     # The sidecar is PID 1 (entrypoint.sh execs python). The kernel suppresses
     # default terminate/stop dispositions for a PID-namespace init: a SIGTERM
     # with no handler installed is effectively ignored, so podman's `stop -t 5`
@@ -148,7 +199,7 @@ async def _async_main() -> None:
         if DEBUG:
             print("dns-proxy: stop signal received, shutting down", flush=True)
     finally:
-        await _shutdown(client, nfq, s, _sweep)
+        await _shutdown(client, nfq, s, _sweep, _sampler)
 
 
 def main() -> None:
