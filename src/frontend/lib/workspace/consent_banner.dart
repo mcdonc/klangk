@@ -1,15 +1,17 @@
 /// Interactive egress-consent banner for the workspace page (#2246).
 ///
 /// A compact banner shown above the workspace body when [ConsentDeciderService]
-/// has pending held requests (interactive `egress_mode` only). Below the
-/// header it carries a single *global* duration selector (#2499) -- one
-/// compact button per selectable duration (default `tilrestart`), the active
-/// one filled, mirroring the TUI's `#duration-selector` button row -- and
-/// each row shows the destination host:port (+ process + a countdown) and
-/// Allow/Deny buttons that send a `verdict` frame carrying the selected
-/// duration. One selector for the whole list, applied at allow/deny time --
-/// not per row -- matching the standalone `klangk consent-decide` TUI,
-/// adapted to an inline Flutter banner.
+/// has pending held requests (interactive `egress_mode` only). Each row shows
+/// the destination host:port (+ process + a countdown) and an Allow/Deny
+/// **split button**: a bare click sends the `verdict` frame with the default
+/// duration (`tilrestart`), and the attached `▾` segment opens a menu of
+/// durations -- picking one sends the verdict with that duration immediately.
+/// The duration is chosen with the click, never armed beforehand: the earlier
+/// global duration pill row (#2499) put the selector far from the row actions
+/// and left a selection armed that silently applied to whichever row was
+/// clicked next, so it was replaced by this per-row pattern (the
+/// pointer-first web analogue of the keyboard-first `klangk consent-decide`
+/// TUI's global selector).
 ///
 /// Server error frames, verdict send failures, and verdicts attempted while
 /// disconnected surface as a transient flash row (the service's
@@ -28,7 +30,20 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'consent_decider_service.dart';
-import '../widgets/option_button.dart';
+
+/// Human labels for the verdict durations (menu display only -- the wire
+/// tokens from [kConsentDurations] stay raw). The default gets its "(default)"
+/// suffix in the menu item, not here.
+const Map<String, String> _durationLabels = {
+  'once': 'Just once',
+  '5m': '5 minutes',
+  '15m': '15 minutes',
+  '1h': '1 hour',
+  '1d': '1 day',
+  '1w': '1 week',
+  'tilrestart': 'Until restart',
+  'forever': 'Forever',
+};
 
 /// A banner over the workspace body showing held egress requests + actions.
 ///
@@ -44,10 +59,6 @@ class ConsentBanner extends StatefulWidget {
 }
 
 class _ConsentBannerState extends State<ConsentBanner> {
-  /// The chosen verdict duration, applied to whichever row's Allow/Deny is
-  /// tapped. One selector for the whole banner (default `tilrestart`), mirroring
-  /// the TUI's single global `#duration-selector` -- not a per-row choice.
-  String _duration = kConsentDurationDefault;
   Timer? _tick;
 
   @override
@@ -115,16 +126,6 @@ class _ConsentBannerState extends State<ConsentBanner> {
               ],
             ),
           ),
-          // One global duration selector (TUI parity, #2499): applies to the
-          // next Allow/Deny tapped on any row. Not per row. Selecting does NOT
-          // submit -- only a row's Allow/Deny submits with this duration.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-            child: _DurationSelector(
-              value: _duration,
-              onChanged: (v) => setState(() => _duration = v),
-            ),
-          ),
           if (flash != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
@@ -174,18 +175,18 @@ class _ConsentBannerState extends State<ConsentBanner> {
             ),
           ),
           const SizedBox(width: 8),
-          _ActionChip(
+          _VerdictButton(
             label: 'Allow',
             color: Colors.green,
-            onPressed: () =>
-                service.sendVerdict(req.id, kDecisionAllowed, _duration),
+            menuKey: ValueKey('allow-dur-${req.id}'),
+            onVerdict: (d) => service.sendVerdict(req.id, kDecisionAllowed, d),
           ),
-          const SizedBox(width: 4),
-          _ActionChip(
+          const SizedBox(width: 6),
+          _VerdictButton(
             label: 'Deny',
             color: Colors.red,
-            onPressed: () =>
-                service.sendVerdict(req.id, kDecisionDenied, _duration),
+            menuKey: ValueKey('deny-dur-${req.id}'),
+            onVerdict: (d) => service.sendVerdict(req.id, kDecisionDenied, d),
           ),
         ],
       ),
@@ -208,64 +209,97 @@ class _BannerSurface extends StatelessWidget {
   }
 }
 
-/// The global duration selector (#2499): one compact button per selectable
-/// duration, the active one filled -- TUI parity (the `#duration-selector`
-/// row with its accent `dur-sel` class, cli/tui/consent.py), styled like the
-/// Network pause buttons (#2497). Selecting does NOT submit -- only a
-/// row's Allow/Deny submits with the chosen duration.
-class _DurationSelector extends StatelessWidget {
-  const _DurationSelector({required this.value, required this.onChanged});
-  final String value;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 4,
-      children: [for (final d in kConsentDurations) _button(d)],
-    );
-  }
-
-  Widget _button(String d) {
-    // Shared option-button look (#2502): amber fill for the active choice,
-    // pill shape, aligned minimum size -- same control language as the Net
-    // Rules pause buttons.
-    return KOptionButton(
-      buttonKey: ValueKey('dur-$d'),
-      label: d,
-      active: d == value,
-      onPressed: () => onChanged(d),
-    );
-  }
-}
-
-/// A small colored action button (Allow/Deny) for a request row.
-class _ActionChip extends StatelessWidget {
-  const _ActionChip({
+/// A split action button (Allow/Deny) for one request row: the main segment
+/// submits with the default duration, the attached `▾` segment opens a menu
+/// and a pick submits with that duration right away. Attaching the menu to
+/// the action keeps the duration choice next to the Allow/Deny it applies to
+/// (the #2499 global pill row was replaced by this per-row pattern).
+class _VerdictButton extends StatelessWidget {
+  const _VerdictButton({
     required this.label,
     required this.color,
-    required this.onPressed,
+    required this.menuKey,
+    required this.onVerdict,
   });
+
   final String label;
   final Color color;
-  final VoidCallback onPressed;
+
+  /// Key on the `▾` segment (unique per row, e.g. `allow-dur-<requestId>`).
+  final Key menuKey;
+
+  /// Sends this button's decision with `duration` (a [kConsentDurations]
+  /// token).
+  final void Function(String duration) onVerdict;
+
+  ButtonStyle _style(Color color, BorderRadius radius) {
+    return FilledButton.styleFrom(
+      backgroundColor: color,
+      foregroundColor: Colors.white,
+      minimumSize: const Size(0, 28),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      visualDensity: VisualDensity.compact,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      shape: RoundedRectangleBorder(borderRadius: radius),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 28,
-      child: FilledButton.icon(
-        onPressed: onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: color,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Tooltip(
+          message:
+              '$label ${_durationLabels[kConsentDurationDefault]!.toLowerCase()}'
+              ' — ▾ picks another duration',
+          child: FilledButton(
+            onPressed: () => onVerdict(kConsentDurationDefault),
+            style: _style(
+              color,
+              const BorderRadius.horizontal(left: Radius.circular(6)),
+            ),
+            child: Text(label),
+          ),
         ),
-        icon: const SizedBox.shrink(),
-        label: Text(label),
-      ),
+        // Builder so the menu anchors to the ▾ segment's own render box.
+        Builder(
+          builder: (ctx) => FilledButton(
+            key: menuKey,
+            onPressed: () => _openMenu(ctx),
+            style: _style(
+              color,
+              const BorderRadius.horizontal(right: Radius.circular(6)),
+            ),
+            child: const Icon(Icons.arrow_drop_down, size: 18),
+          ),
+        ),
+      ],
     );
+  }
+
+  /// Open the duration menu below the `▾` segment; a pick submits the verdict
+  /// with the chosen duration, dismissing without a pick sends nothing.
+  void _openMenu(BuildContext context) {
+    final box = context.findRenderObject() as RenderBox;
+    final pos = box.localToGlobal(Offset(0, box.size.height + 4));
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
+      items: [
+        for (final d in kConsentDurations)
+          PopupMenuItem(
+            value: d,
+            child: Text(
+              d == kConsentDurationDefault
+                  ? '${_durationLabels[d]} (default)'
+                  : _durationLabels[d]!,
+            ),
+          ),
+      ],
+    ).then((d) {
+      if (d != null) onVerdict(d);
+    });
   }
 }

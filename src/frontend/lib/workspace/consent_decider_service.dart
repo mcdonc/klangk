@@ -31,7 +31,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 const String kDecisionAllowed = 'allowed';
 const String kDecisionDenied = 'denied';
 
-/// Ordered for the duration selector; the default is `tilrestart` (#2328).
+/// Offered (in order) by the banner's per-row duration menus; the default
+/// is `tilrestart` (#2328).
 /// The test-only `5s` is NOT offered (#2487) -- it's not meant for end users --
 /// but stays recognized for in-effect/countdown math and programmatic/test
 /// callers (it remains in `kConsentDurationSeconds` below).

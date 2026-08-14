@@ -150,6 +150,8 @@ void main() {
     final out = jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
     expect(out['decision'], 'denied');
     expect(out['request_id'], 'r2');
+    // A bare Deny click carries the default duration, like Allow.
+    expect(out['duration'], 'tilrestart');
     svc.dispose();
   });
 
@@ -179,7 +181,7 @@ void main() {
   });
 
   testWidgets(
-    'the global duration selector is one button per duration (#2499)',
+    'the Allow ▾ menu offers every duration and submits the choice',
     (tester) async {
       final channel = _FakeChannel();
       final svc = _serviceWithChannel(channel);
@@ -196,70 +198,73 @@ void main() {
       });
       await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
       await tester.pump();
-      // No dropdown anywhere; one button per selectable duration (TUI parity),
-      // and the test-only 5s is not offered (#2487).
-      expect(find.byType(DropdownButton<String>), findsNothing);
-      expect(find.byKey(const ValueKey('dur-5s')), findsNothing);
-      for (final d in kConsentDurations) {
-        expect(find.byKey(ValueKey('dur-$d')), findsOneWidget);
-      }
-      // The default (tilrestart) is the active filled button; others outlined.
-      expect(
-        tester.widget(find.byKey(const ValueKey('dur-tilrestart'))),
-        isA<FilledButton>(),
-      );
-      expect(
-        tester.widget(find.byKey(const ValueKey('dur-1d'))),
-        isA<OutlinedButton>(),
-      );
+      // The #2499 global pill row is gone; durations live on the row's menu.
+      expect(find.byKey(const ValueKey('dur-1d')), findsNothing);
+      // Open the menu anchored to the ▾ segment.
+      await tester.tap(find.byKey(const ValueKey('allow-dur-r1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      // Every selectable duration is offered (human labels, default marked);
+      // the test-only 5s is not (#2487).
+      expect(find.text('Just once'), findsOneWidget);
+      expect(find.text('1 day'), findsOneWidget);
+      expect(find.text('Until restart (default)'), findsOneWidget);
+      expect(find.text('Forever'), findsOneWidget);
+      expect(find.text('5 seconds'), findsNothing);
+      // Dismissing without a pick sends nothing.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(channel.sent, isEmpty);
+      // Picking a duration submits the verdict with it immediately.
+      await tester.tap(find.byKey(const ValueKey('allow-dur-r1')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('1 day'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final out =
+          jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
+      expect(out['type'], 'verdict');
+      expect(out['request_id'], 'r1');
+      expect(out['decision'], 'allowed');
+      expect(out['duration'], '1d');
       svc.dispose();
     },
   );
 
-  testWidgets('selecting a duration applies it to the next Allow', (
-    tester,
-  ) async {
-    final channel = _FakeChannel();
-    final svc = _serviceWithChannel(channel);
-    svc.connect();
-    channel.serverSend({
-      'type': 'egress_request',
-      'request': {
-        'id': 'r1',
-        'workspace_id': 'ws',
-        'dest_host': 'example.com',
-        'dest_port': 443,
-        'requested_at': 2000.0,
-      },
-    });
-    await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
-    await tester.pump();
-    // Tap the already-active button (tilrestart): a no-op reselect that
-    // keeps it active -- and exercises the filled button's onPressed.
-    await tester.tap(find.byKey(const ValueKey('dur-tilrestart')));
-    await tester.pump();
-    expect(tester.widget(find.byKey(const ValueKey('dur-tilrestart'))),
-        isA<FilledButton>());
-
-    // Tap the 1d duration button -- selecting does NOT submit, it only moves
-    // the highlight; the verdict still needs an Allow/Deny tap.
-    await tester.tap(find.byKey(const ValueKey('dur-1d')));
-    await tester.pump();
-    expect(
-      tester.widget(find.byKey(const ValueKey('dur-1d'))),
-      isA<FilledButton>(),
-    );
-    expect(
-      tester.widget(find.byKey(const ValueKey('dur-tilrestart'))),
-      isA<OutlinedButton>(),
-    );
-    // The chosen duration now rides on the verdict.
-    await tester.tap(find.text('Allow'));
-    await tester.pump();
-    final out = jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
-    expect(out['duration'], '1d');
-    svc.dispose();
-  });
+  testWidgets(
+    'the Deny ▾ menu submits a deny verdict with the chosen duration',
+    (tester) async {
+      final channel = _FakeChannel();
+      final svc = _serviceWithChannel(channel);
+      svc.connect();
+      channel.serverSend({
+        'type': 'egress_request',
+        'request': {
+          'id': 'r2',
+          'workspace_id': 'ws',
+          'dest_host': 'bad.io',
+          'dest_port': 22,
+          'requested_at': 2000.0,
+        },
+      });
+      await tester.pumpWidget(_wrap(ConsentBanner(service: svc)));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('deny-dur-r2')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Forever'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final out =
+          jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
+      expect(out['decision'], 'denied');
+      expect(out['request_id'], 'r2');
+      expect(out['duration'], 'forever');
+      svc.dispose();
+    },
+  );
 
   testWidgets('shows a flash for a server error frame', (tester) async {
     final channel = _FakeChannel();
