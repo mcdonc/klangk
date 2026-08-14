@@ -782,6 +782,7 @@ class TestHandleTerminalStart:
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             terminal=_mock_term,
             workspace_name=None,
+            tmux=None,
         )
         # Should have sent terminal_windows and shared_terminals
         sent = [c[0][0] for c in sock.send_json.call_args_list]
@@ -820,6 +821,83 @@ class TestHandleTerminalStart:
             pass
         registry.revoke_workspace_browsers("ws")
         registry.states.pop("ws", None)
+
+    async def _run_terminal_start(self, msg: dict):
+        """Drive handle_terminal_start to the TerminalSession construction.
+
+        Returns the TerminalSession mock so a test can assert its kwargs
+        (e.g. the per-shell tmux override, #2383).
+        """
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        registry.track_activity("cid", "ws")
+        session = sockets.get_or_create_session("ws", app_state)
+        await session.add_subscriber(sock, "cid")
+        sockets.connections[sock] = conn
+
+        with (
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
+            patch.object(
+                _mock_term,
+                "list_windows",
+                return_value=[
+                    {"id": "@0", "index": 0, "name": "bash", "active": True}
+                ],
+            ),
+            patch.object(_mock_term, "attach_browser", new_callable=AsyncMock),
+            patch.object(
+                _ws_controllers.TerminalController,
+                "_sync_service_windows",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield  # make it an async generator
+
+            mock_session.output = fake_output
+            await conn.handle_terminal_start(msg)
+            await asyncio.sleep(0)
+
+        # Clean up the background task.
+        if conn.terminal_task is not None:
+            conn.terminal_task.cancel()
+            try:
+                await conn.terminal_task
+            except asyncio.CancelledError:
+                pass
+        sockets.sessions.pop("ws", None)
+        sockets.connections.pop(sock, None)
+        registry.states.pop("ws", None)
+        return MockTS
+
+    async def test_terminal_start_passes_tmux_false(self):
+        """A ``tmux: false`` terminal_start reaches the session (#2383)."""
+        mock_ts = await self._run_terminal_start(
+            {"cols": 80, "rows": 24, "tmux": False}
+        )
+        assert mock_ts.call_args.kwargs["tmux"] is False
+
+    async def test_terminal_start_coerces_non_bool_tmux_to_none(self):
+        """Only a JSON bool is honoured; a string/number falls back to global."""
+        mock_ts = await self._run_terminal_start(
+            {"cols": 80, "rows": 24, "tmux": "false"}
+        )
+        assert mock_ts.call_args.kwargs["tmux"] is None
 
     async def test_terminal_start_fires_service_command(self, app_state):
         """terminal_start fires the service command in the agent's service
@@ -1429,6 +1507,7 @@ class TestHandleTerminalStart:
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             terminal=_mock_term,
             workspace_name=None,
+            tmux=None,
         )
         mock_ess.assert_awaited_once_with(
             "cid",
@@ -3370,6 +3449,7 @@ class TestSSHAgentHandlers:
             ssh_agent_socket="/tmp/klangk-ssh-agent-uid.sock",
             terminal=_mock_term,
             workspace_name=None,
+            tmux=None,
         )
 
     async def test_terminal_start_wires_agent_socket_without_relay(

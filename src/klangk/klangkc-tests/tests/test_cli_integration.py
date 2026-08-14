@@ -129,6 +129,112 @@ class TestWsShell:
         assert any("terminal_start" in s for s in sent)
 
     @pytest.mark.asyncio
+    async def test_ws_shell_tmux_false_sent_in_terminal_start(self):
+        """tmux=False is forwarded as a per-shell override (#2383)."""
+        from klangk.cli.client import ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "terminal_output", "data": ""}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            }
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+        with patch(
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
+        ):
+            with (
+                patch("termios.tcgetattr", return_value=None),
+                patch("termios.tcsetattr"),
+                patch("tty.setraw"),
+            ):
+                try:
+                    await ws_shell(
+                        "http://localhost", "token", "ws1", tmux=False
+                    )
+                except Exception:
+                    pass
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        start = next(json.loads(s) for s in sent if "terminal_start" in s)
+        assert start.get("tmux") is False
+
+    @pytest.mark.asyncio
+    async def test_ws_shell_omits_tmux_when_default(self):
+        """No tmux kwarg -> no per-shell override sent (server uses global)."""
+        from klangk.cli.client import ws_shell
+
+        ws_mock = MagicMock()
+
+        async def fake_enter(self):
+            return ws_mock
+
+        async def fake_exit(self, *args):
+            return None
+
+        ws_mock.__aenter__ = fake_enter
+        ws_mock.__aexit__ = fake_exit
+        ws_mock.send = AsyncMock()
+        ws_mock.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "container_ready", "workspaceId": "ws1"}),
+                json.dumps({"type": "terminal_output", "data": ""}),
+                json.dumps(
+                    {
+                        "type": "terminal_windows",
+                        "windows": [
+                            {
+                                "id": "@0",
+                                "index": 0,
+                                "name": "bash",
+                                "active": True,
+                            }
+                        ],
+                    }
+                ),
+                Exception("stop"),
+            ]
+        )
+        with patch(
+            "klangk.cli.transport.websockets.connect", return_value=ws_mock
+        ):
+            with (
+                patch("termios.tcgetattr", return_value=None),
+                patch("termios.tcsetattr"),
+                patch("tty.setraw"),
+            ):
+                try:
+                    await ws_shell("http://localhost", "token", "ws1")
+                except Exception:
+                    pass
+        sent = [c[0][0] for c in ws_mock.send.call_args_list]
+        start = next(json.loads(s) for s in sent if "terminal_start" in s)
+        assert "tmux" not in start
+
+    @pytest.mark.asyncio
     async def test_ws_shell_collects_windows_and_shared(self):
         """Drain loop collects terminal_windows and shared_terminals."""
         from klangk.cli.client import ws_shell

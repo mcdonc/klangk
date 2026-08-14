@@ -1082,6 +1082,7 @@ async def ws_shell(
     forward_agent: bool = False,
     sandbox_setup=None,
     max_size: int = _WS_MAX_SIZE,
+    tmux: bool | None = None,
 ) -> None:
     """Run the interactive PTY shell over WebSocket.
 
@@ -1092,6 +1093,9 @@ async def ws_shell(
     sandbox_setup, if set, is an async callable(ws) invoked after the
     workspace is ready but before the terminal starts.  Used by
     ``sandbox`` to run copy/setup on the same connection.
+    tmux, when set, requests a bare (``False``) or tmux-wrapped (``True``)
+    shell for this connection regardless of the server's global
+    ``KLANGKD_DISABLE_TMUX`` (#2383); None (default) defers to the server.
     """
     async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
         # 1. Connect to workspace
@@ -1131,16 +1135,17 @@ async def ws_shell(
 
         # 2c. Start terminal
         cols, rows = get_terminal_size()
-        await ws.send(
-            json.dumps(
-                {
-                    "cmd": "terminal_start",
-                    "cols": cols,
-                    "rows": rows,
-                    "browser_id": "klangkshell",
-                }
-            )
-        )
+        term_start = {
+            "cmd": "terminal_start",
+            "cols": cols,
+            "rows": rows,
+            "browser_id": "klangkshell",
+        }
+        # Only send the per-shell tmux override when the caller set it; an
+        # absent key lets the server use its global KLANGKD_DISABLE_TMUX.
+        if tmux is not None:
+            term_start["tmux"] = tmux
+        await ws.send(json.dumps(term_start))
 
         # 3. Drain messages until we have what window selection needs.
         # terminal_output may arrive before terminal_windows due to async

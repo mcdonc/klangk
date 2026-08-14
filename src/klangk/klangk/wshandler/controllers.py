@@ -663,6 +663,12 @@ class TerminalController:
         )
         self.cols = cols
         self.rows = rows
+        # Per-shell tmux override (#2383): a bare (non-tmux) shell for the
+        # consent-popup path so the local tmux layer owns the prefix with no
+        # nesting. Only an explicit JSON bool is honoured; anything else
+        # (absent, string, number) falls back to the global setting.
+        tmux_flag = msg.get("tmux")
+        tmux = tmux_flag if isinstance(tmux_flag, bool) else None
 
         # The service command no longer lives in any user's session --
         # it runs in the standalone ``service`` session owned by the agent
@@ -689,6 +695,7 @@ class TerminalController:
             ssh_agent_socket=ssh_agent_socket_path(self._conn.user["id"]),
             terminal=self._conn.app.state.terminal,
             workspace_name=ws.get("name") if ws else None,
+            tmux=tmux,
         )
 
         browser_id = msg.get("browser_id")

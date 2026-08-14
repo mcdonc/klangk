@@ -207,6 +207,51 @@ class TestStart:
         assert s.tmux_session_name is None
         await s.stop()
 
+    async def test_start_per_session_tmux_false_overrides_global(self):
+        # Global tmux enabled, but this terminal_start requested a bare shell
+        # for the consent-popup path (#2383).
+        assert _terminal.tmux_enabled() is True  # global is on
+        fake = FakeShell(block_after_chunks=True)
+        with _patch(fake):
+            s = TerminalSession(
+                "cid", session_name="uid", terminal=_terminal, tmux=False
+            )
+            await s.start(120, 40)
+        argv = fake.argv
+        assert argv[-2:] == ["bash", "-l"]
+        assert "tmux" not in argv
+        assert s.tmux_session_name is None
+        await s.stop()
+
+    async def test_start_per_session_tmux_true_overrides_disabled_global(self):
+        # Global tmux disabled, but this session explicitly wants tmux.
+        _mock_settings.disable_tmux = "1"
+        assert _terminal.tmux_enabled() is False  # global is off
+        fake = FakeShell(block_after_chunks=True)
+        with _patch(fake):
+            s = TerminalSession(
+                "cid", session_name="uid", terminal=_terminal, tmux=True
+            )
+            await s.start(120, 40)
+        assert "tmux" in fake.argv and "new-session" in fake.argv
+        assert s.tmux_session_name is not None
+        await s.stop()
+
+    def test_use_tmux_resolves_override_then_global(self):
+        # Per-shell override wins when set; otherwise the global setting applies.
+        assert _terminal.tmux_enabled() is True
+        assert (
+            TerminalSession("cid", terminal=_terminal, tmux=False)._use_tmux
+            is False
+        )
+        assert (
+            TerminalSession("cid", terminal=_terminal, tmux=True)._use_tmux
+            is True
+        )
+        assert TerminalSession("cid", terminal=_terminal)._use_tmux is True
+        _mock_settings.disable_tmux = "1"
+        assert TerminalSession("cid", terminal=_terminal)._use_tmux is False
+
     async def test_start_unsets_sensitive_env_vars(self, monkeypatch):
         monkeypatch.setenv("KLANGKD_LLM_API_KEY", "secret")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "secret2")

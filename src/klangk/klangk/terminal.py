@@ -897,6 +897,7 @@ class TerminalSession:
         ssh_agent_socket: str | None = None,
         terminal: Terminal | None = None,
         workspace_name: str | None = None,
+        tmux: bool | None = None,
     ):
         self.container_id = container_id
         self._terminal = terminal
@@ -909,6 +910,10 @@ class TerminalSession:
         self.user_handle = user_handle
         self.ssh_agent_socket = ssh_agent_socket
         self.workspace_name = workspace_name
+        # Per-shell tmux override (#2383): a terminal_start may request a
+        # bare (non-tmux) shell for the consent-popup path so the local
+        # tmux layer owns the prefix with no nesting. None -> global setting.
+        self.tmux = tmux
         self._shell: ShellProcess | None = None
         self._output_queue: BoundedOutputQueue[str] = BoundedOutputQueue(
             maxsize=64
@@ -921,6 +926,18 @@ class TerminalSession:
     def _podman(self):
         """Reach podman via the Terminal instance (#1480)."""
         return self._terminal.podman
+
+    @property
+    def _use_tmux(self) -> bool:
+        """Effective tmux for this session: per-shell override else global.
+
+        A ``terminal_start`` may request a bare shell (``tmux=False``) for the
+        consent-popup shell layer (#2383); otherwise the global
+        ``KLANGKD_DISABLE_TMUX`` setting decides, as before.
+        """
+        if self.tmux is not None:
+            return self.tmux
+        return self._terminal.tmux_enabled()
 
     async def start(
         self,
@@ -936,7 +953,7 @@ class TerminalSession:
             self.session_name
             and not self.join_session
             and not self.socket_path
-            and self._terminal.tmux_enabled()
+            and self._use_tmux
         ):
             await self._terminal.ensure_base_session(
                 self.container_id,
@@ -950,7 +967,7 @@ class TerminalSession:
         # bar picks it up.  Runs on every terminal_start (idempotent)
         # because the base session may have been created by older code
         # that didn't set it (#1880).
-        if self.workspace_name and self._terminal.tmux_enabled():
+        if self.workspace_name and self._use_tmux:
             await self._terminal.set_workspace_name(
                 self.container_id, self.workspace_name
             )
@@ -966,7 +983,7 @@ class TerminalSession:
             socket_path=self.socket_path,
             join_session=self.join_session,
             read_only=self.read_only,
-            tmux_enabled=self._terminal.tmux_enabled(),
+            tmux_enabled=self._use_tmux,
             ssh_agent_socket=self.ssh_agent_socket,
             user_id=self.user_id,
             user_handle=self.user_handle,
