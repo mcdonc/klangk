@@ -1436,7 +1436,7 @@ No request body.
   "health": null,
   "health_message": null,
   "idle_seconds": 42.5,
-  "idle_timeout": 1800,
+  "idle_timeout": 3600,
   "ports": [9000, 9001]
 }
 ```
