@@ -2349,3 +2349,16 @@ class TestPersistentPopupRole:
             app.screen.action_no()
             await pilot.pause()
         assert got == [False]
+
+    async def test_quit_confirm_box_renders_text(self):
+        # Regression: the confirm box must not collapse to an empty strip.
+        # The "[y]"/"[n]" in the message are literal (markup=False) and the
+        # box has an explicit width, so the prompt text is visible (#2383).
+        app = _make_app()
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.push_screen(QuitConfirmScreen())
+            await pilot.pause()
+            box = app.screen.query_one("#confirm-box")
+            msg = app.screen.query_one("#confirm-msg", Static)
+            assert box.size.width >= 50  # not a collapsed thin strip
+            assert "deregister" in str(msg.content)
