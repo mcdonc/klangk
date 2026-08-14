@@ -269,26 +269,25 @@ void main() {
       expect(find.text('Settings'), findsOneWidget);
     });
 
-    testWidgets('has Net Rules tab when consentRules provided', (tester) async {
+    testWidgets('has Network tab when consentRules provided', (tester) async {
       await tester.pumpWidget(buildLayout(
         consentRules: const Text('RULES_CONTENT'),
       ));
-      expect(find.text('Net Rules'), findsOneWidget);
+      expect(find.text('Network'), findsOneWidget);
     });
 
-    testWidgets('Net Rules tab content is visible after switch',
-        (tester) async {
+    testWidgets('Network tab content is visible after switch', (tester) async {
       await tester.pumpWidget(buildLayout(
         consentRules: const Text('RULES_CONTENT'),
       ));
-      await tester.tap(find.text('Net Rules'));
+      await tester.tap(find.text('Network'));
       await tester.pumpAndSettle();
       expect(find.text('RULES_CONTENT'), findsOneWidget);
     });
 
-    testWidgets('no Net Rules tab when consentRules is null', (tester) async {
+    testWidgets('no Network tab when consentRules is null', (tester) async {
       await tester.pumpWidget(buildLayout());
-      expect(find.text('Net Rules'), findsNothing);
+      expect(find.text('Network'), findsNothing);
     });
 
     testWidgets('settings tab content is visible after switch', (tester) async {

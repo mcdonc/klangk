@@ -165,7 +165,7 @@ left pending forever.
   held request pops up without leaving the shell (`C-a p` reopens it;
   skip the wrapper with `--no-consent-popup`) (#2383).
 - **Web UI** — the workspace page shows a consent banner with the same
-  allow/deny + duration controls (#2246), plus a **Net Rules** tab
+  allow/deny + duration controls (#2246), plus a **Network** tab
   listing the in-effect rules with revoke actions.
 - **Deploy-wide** — an admin may connect a decider without a workspace
   scope (via the `/ws/consent-decider` WebSocket) to decide for every

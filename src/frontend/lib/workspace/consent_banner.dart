@@ -211,7 +211,7 @@ class _BannerSurface extends StatelessWidget {
 /// The global duration selector (#2499): one compact button per selectable
 /// duration, the active one filled -- TUI parity (the `#duration-selector`
 /// row with its accent `dur-sel` class, cli/tui/consent.py), styled like the
-/// Net Rules pause buttons (#2497). Selecting does NOT submit -- only a
+/// Network pause buttons (#2497). Selecting does NOT submit -- only a
 /// row's Allow/Deny submits with the chosen duration.
 class _DurationSelector extends StatelessWidget {
   const _DurationSelector({required this.value, required this.onChanged});
