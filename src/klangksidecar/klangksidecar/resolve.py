@@ -231,6 +231,13 @@ async def _handle_packet(
         qname = query_name(data)
     except Exception:
         return  # malformed/unparseable query -> drop
+    # Every DNS query is outbound egress activity -- bump klangkd's idle timer
+    # (flood-gated inside the client) so an egress-only workload is not reaped
+    # (#2479). DNS is the broadest signal: every domain connect starts here,
+    # including repeats to an already-allow-listed host whose connects then
+    # bypass NFQUEUE entirely.
+    if client is not None:
+        client.bump_activity()
     # Static deny-list (#2367): a rejected name is NXDOMAIN'd unconditionally,
     # in BOTH static and interactive modes, and takes precedence over the
     # allow-list + consent (a name in both allowed + rejected is rejected).

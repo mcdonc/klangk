@@ -86,6 +86,16 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
                     msg.get("id"), bool(msg.get("ok", False))
                 )
                 continue
+            if mtype == "activity":
+                # Sidecar reports egress/network activity (#2479): an
+                # egress-only workload bypasses klangkd, so without this its
+                # idle timer would never advance and the container would be
+                # reaped mid-egress. The sidecar flood-gates the frame; here
+                # the bump is a single float write on this loop thread.
+                state = app.state.container_registry.states.get(workspace_id)
+                if state is not None:
+                    state.record_activity()
+                continue
             if mtype != "egress":
                 continue
             local_id = msg.get("id")

@@ -69,6 +69,18 @@ VERDICT_CACHE_TTL = float(
 )
 
 
+# Min seconds between idle-activity reports to klangkd (#2479): the sidecar
+# bumps the workspace's idle timer on egress/network activity (a DNS query or a
+# queued connection SYN) so an egress-only workload -- whose traffic bypasses
+# klangkd entirely -- is not reaped by the idle timeout. Flood-gated: at most
+# one frame per workspace per interval (jittered to 0.5x-1.0x of the base so
+# workspaces don't herd onto a shared send cadence), so a connect-heavy workload
+# (a build, a crawler) does not spam the daemon. The first event after a quiet
+# period (>= the jittered interval since the last send) forwards at once, so a
+# single connect after a long idle stretch resets the timer promptly.
+ACTIVITY_GATE_S = float(os.environ.get("KLANGKNETWORK_EGRESS_ACTIVITY_GATE", "60"))
+
+
 # How long a deny keeps its REJECT (tcp-reset) rule so the denied connection
 # fails fast (ECONNREFUSED) instead of waiting for tcp_syn_retries (~127s).
 # Only needs to catch the SYN retransmit (~1 RTO); the verdict cache separately

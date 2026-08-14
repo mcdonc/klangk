@@ -816,6 +816,18 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Egress activity resets the idle timer (#2479).** A workspace whose only
+  activity was outbound network egress used to be treated as idle and stopped by
+  the idle timeout, because egress (workspace → network sidecar → internet)
+  bypasses klangkd and never bumped the container's `last_activity`. The network
+  sidecar now sends a flood-gated `{type:activity}` frame to klangkd on every
+  DNS query and queued connection SYN (`KLANGKNETWORK_EGRESS_ACTIVITY_GATE`,
+  default 60s, jittered to 0.5×–1.0× per send so a fleet of sidecars never herds
+  onto a synchronized frame rate — at most one frame per workspace per ~30–60s,
+  with the first event after a quiet period forwarding immediately), and klangkd
+  bumps the workspace's idle timer on receipt. Reloadable on sidecar restart; no
+  operator action on upgrade.
+
 - **A `once` egress-consent deny no longer blocks later same-host connects (#2463).**
   Denying a single connection once used to install a destination-scoped REJECT
   rule that silently rejected every _new_ connection to the same `host:port` for
