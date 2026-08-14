@@ -618,7 +618,10 @@ class TestShellWiring:
             captured.update(kwargs)
             return 7
 
-        with patch("klangk.cli.main.run_consent_shell", side_effect=fake_run):
+        with (
+            patch("klangk.cli.main.run_consent_shell", side_effect=fake_run),
+            patch("klangk.cli.main.server_url", return_value="http://server"),
+        ):
             rc = cli_main._run_consent_popup(ws, "@1", True)
         assert rc == 7
         assert captured["workspace_id"] == "wsid"
