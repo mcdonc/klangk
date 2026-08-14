@@ -881,6 +881,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Rules-screen focus race (#2362).** In `klangk consent-decide`'s rules
+  view, two rule-set changes landing within one refresh cycle could drop
+  the row highlight to the top of the list, so a subsequent `x` revoked
+  the newest rule instead of the focused one. Focus is now remembered
+  across rebuilds and restored to the focused rule (or a deterministic
+  neighbor if it was revoked elsewhere).
 - **Stale pause in the consent-decide TUI after expiry (#2498).** A finite
   pause window (15m/1h/1d) whose time elapsed in an idle workspace no longer
   lingers as `paused 0s` on the pause bar and `Filtering paused (resumes in

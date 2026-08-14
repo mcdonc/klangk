@@ -2580,6 +2580,80 @@ class TestRulesRevoke:
             assert lv.highlighted_child is not None
             assert getattr(lv.highlighted_child, "rule_id", None) == "a2"
 
+    async def test_burst_rebuilds_keep_focus_on_focused_rule(self):
+        # #2362: two rule-set-changing frames delivered back-to-back -- no
+        # refresh cycle between them, so the first rebuild's clear() has
+        # reset the highlight before the second captures it -- must not
+        # drop the restore. The capture falls back to the id remembered
+        # from the last Highlighted event, so `x` afterwards revokes the
+        # row the decider actually focused, not index 0 (the newest rule).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(
+                _rules_frame(allowed=[_rule("a1"), _rule("a2"), _rule("a3")])
+            )
+            app.action_rules()
+            await pilot.pause()
+            lv = app.screen.query_one("#rules-list", ListView)
+            lv.index = 2  # focus a3; index 0 is the newest rule
+            await pilot.pause()
+            # Burst: a1 revoked elsewhere while n1 is allowed elsewhere.
+            app.controller.apply_frame(
+                _rules_frame(allowed=[_rule("n1"), _rule("a2"), _rule("a3")])
+            )
+            app.screen.refresh_rules()  # rebuild 1 clears the highlight
+            app.controller.apply_frame(
+                _rules_frame(
+                    allowed=[
+                        _rule("n1"),
+                        _rule("n2"),
+                        _rule("a2"),
+                        _rule("a3"),
+                    ]
+                )
+            )
+            app.screen.refresh_rules()  # rebuild 2, same refresh cycle
+            assert lv.highlighted_child is None  # the burst reset it
+            await pilot.pause()
+            await pilot.pause()  # deferred restores land
+            lv = app.screen.query_one("#rules-list", ListView)
+            assert lv.highlighted_child is not None
+            assert getattr(lv.highlighted_child, "rule_id", None) == "a3"
+            # `x` revokes the focused row (a3), not the newest (n2).
+            app.screen.action_revoke()
+            await pilot.pause()
+            assert any('"revoke"' in s and '"a3"' in s for s in ws.sent), (
+                ws.sent
+            )
+            assert not any('"n2"' in s for s in ws.sent), ws.sent
+
+    async def test_focus_clamps_to_neighbor_when_focused_rule_removed(self):
+        # #2362: when the focused rule itself leaves the snapshot (revoke
+        # ack elsewhere / expiry), the highlight falls to a deterministic
+        # neighbor -- the old focus position clamped -- never silently to
+        # index 0 of a reordered list.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(
+                _rules_frame(allowed=[_rule("a1"), _rule("a2"), _rule("a3")])
+            )
+            app.action_rules()
+            await pilot.pause()
+            lv = app.screen.query_one("#rules-list", ListView)
+            lv.index = 2  # focus the last row, a3
+            await pilot.pause()
+            app.controller.apply_frame(
+                _rules_frame(allowed=[_rule("a1"), _rule("a2")])
+            )
+            app.screen.refresh_rules()
+            await pilot.pause()
+            await pilot.pause()  # restore lands; a3 is gone -> clamp
+            lv = app.screen.query_one("#rules-list", ListView)
+            assert lv.highlighted_child is not None
+            assert getattr(lv.highlighted_child, "rule_id", None) == "a2"
+
 
 # ---------------------------------------------------------------------------
 # Persistent popup role: q hides the viewer, Q confirms a real quit (#2383).
