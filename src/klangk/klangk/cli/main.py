@@ -69,6 +69,16 @@ from .sandbox import (
     load_sandbox_config,
     resolve_setup_command,
 )
+from .shell_popup import (
+    EGRESS_INTERACTIVE,
+    OUTER_PREFIX,
+    REOPEN_KEY,
+    hidden_session_name,
+    host_tmux_version,
+    run_consent_shell,
+    should_use_popup,
+    socket_path,
+)
 
 app = typer.Typer(
     name="klangk",
@@ -1363,6 +1373,81 @@ def resolve_forward_agent(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Consent-popup shell wrapper (the "tmux russian-doll", #2383)
+# ---------------------------------------------------------------------------
+
+
+def _klangk_argv(*args: str) -> list[str]:
+    """Argv re-invoking this klangk CLI (same interpreter + module)."""
+    return [sys.executable, "-m", "klangk.cli.main", *args]
+
+
+def _popup_inner_shell_argv(
+    server: str, ws_name: str, target: str | None, forward_agent: bool
+) -> list[str]:
+    """The normal ``klangk shell`` that runs inside the outer tmux window.
+
+    Adds ``--no-consent-popup`` as a recursion guard so the inner does the
+    plain attach instead of re-wrapping.
+    """
+    argv = _klangk_argv("--server", server, "shell", ws_name)
+    if target:
+        argv.append(target)
+    argv.append("--no-consent-popup")
+    argv.append("--forward-agent" if forward_agent else "--no-forward-agent")
+    return argv
+
+
+def _popup_decider_argv(
+    server: str, ws_arg: str, socket: str, hidden: str
+) -> list[str]:
+    """The ``klangk consent-decide`` invocation for the hidden decider session."""
+    return _klangk_argv(
+        "--server",
+        server,
+        "consent-decide",
+        ws_arg,
+        "--popup-socket",
+        socket,
+        "--popup-session",
+        hidden,
+    )
+
+
+def _consent_popup_enabled(ws, no_consent_popup: bool) -> bool:
+    """True when ``klangk shell`` should wrap in the consent-popup russian-doll."""
+    # Cheap checks first so non-interactive / non-tty contexts (incl. the test
+    # suite, which calls shell() directly) never spawn `tmux -V`.
+    if (
+        no_consent_popup
+        or ws.egress_mode != EGRESS_INTERACTIVE
+        or not sys.stdin.isatty()
+    ):
+        return False
+    return should_use_popup(
+        ws.egress_mode,
+        isatty=True,
+        tmux_version=host_tmux_version(),
+    )
+
+
+def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
+    """Bring up the consent-popup russian-doll + attach the user to it (#2383)."""
+    server = server_url()
+    socket = socket_path(ws.id)
+    hidden = hidden_session_name(ws.id)
+    inner = _popup_inner_shell_argv(server, ws.name, terminal, forward_agent)
+    decider = _popup_decider_argv(server, ws.name, socket, hidden)
+    _err.print(f"Connecting to [bold]{ws.name}[/bold] with consent popup…")
+    _err.print(
+        f"[dim]Popup: {OUTER_PREFIX} {REOPEN_KEY}  ·  hide: q  ·  quit: Q[/dim]"
+    )
+    return run_consent_shell(
+        workspace_id=ws.id, inner_argv=inner, decider_argv=decider
+    )
+
+
 @app.command()
 def shell(
     workspace: str | None = typer.Argument(
@@ -1382,12 +1467,24 @@ def shell(
         "-A",
         help="Forward local SSH agent into the container",
     ),
+    no_consent_popup: bool = typer.Option(
+        False,
+        "--no-consent-popup",
+        hidden=True,
+        help=(
+            "Internal: skip the consent-popup shell wrapper. Set by the "
+            "wrapper itself when it re-runs the shell inside the outer tmux "
+            "(#2383)."
+        ),
+    ),
 ) -> None:
     """Connect to a workspace shell."""
     # When called directly (not via typer CLI), forward_agent may be a
     # typer.models.OptionInfo instead of bool/None.  Normalize to None.
     if not isinstance(forward_agent, bool):
         forward_agent = None
+    if not isinstance(no_consent_popup, bool):
+        no_consent_popup = False
     token = _state().get_token(server_url())
     if not token:  # pragma: no cover
         _err.print(
@@ -1430,6 +1527,12 @@ def shell(
         forward_agent,
         config_default=_cfg().get_forward_agent(server_url()) or False,
     )
+    if _consent_popup_enabled(ws, no_consent_popup):
+        # Wrap the normal shell in the consent-popup russian-doll (#2383).
+        # Falls back to the plain attach below when tmux is prevented, opted
+        # out (--no-consent-popup / the inner re-invocation), or the workspace
+        # is not interactive-egress.
+        raise typer.Exit(code=_run_consent_popup(ws, terminal, forward_agent))
     try:
         asyncio.run(
             ws_shell(

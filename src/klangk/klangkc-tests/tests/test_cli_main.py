@@ -1296,6 +1296,40 @@ class TestMainCLI:
 
         client.resolve_workspace.assert_called_once_with("target-ws")
 
+    def test_shell_runs_consent_popup_when_gate_passes(
+        self, logged_in_cfg, monkeypatch, reset_env
+    ):
+        """When the gate passes, shell() runs the popup wrapper + exits (#2383).
+
+        It must NOT fall through to the plain ws_shell attach.
+        """
+        import typer
+
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="wid" + "0" * 51,
+            name="ws",
+            created_at="2025-01-01T00:00:00Z",
+            egress_mode="interactive",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        with patch.object(main, "_client", return_value=client):
+            with patch.object(
+                main, "_consent_popup_enabled", return_value=True
+            ):
+                with patch.object(
+                    main, "_run_consent_popup", return_value=0
+                ) as fake_popup:
+                    with patch.object(main, "ws_shell") as fake_shell:
+                        with pytest.raises(typer.Exit) as exc:
+                            main.shell("ws", "@1")
+        assert exc.value.exit_code == 0
+        fake_popup.assert_called_once()  # the wrapper ran
+        fake_shell.assert_not_called()  # the plain attach did not
+
     def test_shell_with_terminal_arg(
         self, logged_in_cfg, monkeypatch, reset_env
     ):
