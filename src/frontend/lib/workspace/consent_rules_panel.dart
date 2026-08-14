@@ -60,7 +60,9 @@ String ruleExpiryLabel(ConsentRule rule, int? remaining, {required bool deny}) {
 /// Pure (and unit-tested) so the [ConsentRulesPanel] tick -- a real Timer the
 /// coverage gate ignores -- can call it without leaving a coverage gap.
 bool hasLiveCountdown(
-    EgressRules? rules, int? Function(ConsentRule) remaining) {
+  EgressRules? rules,
+  int? Function(ConsentRule) remaining,
+) {
   if (rules == null) return false;
   if (rules.paused != null) return true;
   return rules.allowed.any((r) => remaining(r) != null) ||
@@ -101,7 +103,9 @@ class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
       // at "0s left".
       widget.service.pruneExpiredRules();
       if (hasLiveCountdown(
-          widget.service.rules, widget.service.ruleRemainingSeconds)) {
+        widget.service.rules,
+        widget.service.ruleRemainingSeconds,
+      )) {
         _onChange();
       }
     });
@@ -178,8 +182,28 @@ class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
                             : [
                                 for (final d in rules.allowList)
                                   Padding(
-                                    padding:
-                                        const EdgeInsets.symmetric(vertical: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 2,
+                                    ),
+                                    child: Text(d, style: _KStyles.mono),
+                                  ),
+                              ],
+                      ),
+                      // #2503: the reject list is workspace config (it grows
+                      // when a forever deny lands, #2369), not a consent row
+                      // -- read-only here, no revoke affordance. Editing stays
+                      // in the workspace settings panel.
+                      _Section(
+                        title: 'Static reject-list',
+                        emptyText: '(none)',
+                        children: rules.rejectList.isEmpty
+                            ? null
+                            : [
+                                for (final d in rules.rejectList)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 2,
+                                    ),
                                     child: Text(d, style: _KStyles.mono),
                                   ),
                               ],
@@ -229,9 +253,10 @@ class _Header extends StatelessWidget {
           const SizedBox(width: 8),
           Text('Egress consent rules', style: _KStyles.heading),
           const SizedBox(width: 12),
-          Text('$conn · $held held',
-              style:
-                  const TextStyle(fontSize: 13, color: KColors.textSecondary)),
+          Text(
+            '$conn · $held held',
+            style: const TextStyle(fontSize: 13, color: KColors.textSecondary),
+          ),
         ],
       ),
     );
@@ -253,8 +278,10 @@ class _Flash extends StatelessWidget {
           const Icon(Icons.error_outline, size: 16, color: KColors.accentRed),
           const SizedBox(width: 6),
           Expanded(
-            child: Text(message,
-                style: const TextStyle(fontSize: 13, color: KColors.accentRed)),
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 13, color: KColors.accentRed),
+            ),
           ),
         ],
       ),
@@ -265,11 +292,7 @@ class _Flash extends StatelessWidget {
 /// A titled grouping of the rules body (allow-list, allows, denies). When
 /// [children] is null the section renders its [emptyText] placeholder.
 class _Section extends StatelessWidget {
-  const _Section({
-    required this.title,
-    required this.emptyText,
-    this.children,
-  });
+  const _Section({required this.title, required this.emptyText, this.children});
   final String title;
   final String emptyText;
   final List<Widget>? children;
@@ -360,8 +383,11 @@ class _RuleRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
-          Icon(deny ? Icons.block : Icons.check_circle_outline,
-              size: 16, color: deny ? KColors.accentRed : KColors.accentGreen),
+          Icon(
+            deny ? Icons.block : Icons.check_circle_outline,
+            size: 16,
+            color: deny ? KColors.accentRed : KColors.accentGreen,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: RichText(
@@ -473,13 +499,17 @@ class _PauseStatus extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
         children: [
-          const Icon(Icons.pause_circle_outline,
-              size: 16, color: KColors.accentAmber),
+          const Icon(
+            Icons.pause_circle_outline,
+            size: 16,
+            color: KColors.accentAmber,
+          ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(text,
-                style:
-                    const TextStyle(fontSize: 13, color: KColors.accentAmber)),
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 13, color: KColors.accentAmber),
+            ),
           ),
         ],
       ),
@@ -508,9 +538,15 @@ class _Empty extends StatelessWidget {
 class _KStyles {
   static const heading = TextStyle(fontSize: 14, fontWeight: FontWeight.bold);
   static const title = TextStyle(
-      fontSize: 13, fontWeight: FontWeight.bold, color: KColors.textSecondary);
+    fontSize: 13,
+    fontWeight: FontWeight.bold,
+    color: KColors.textSecondary,
+  );
   static const mono = TextStyle(
-      fontFamily: 'monospace', fontSize: 13, color: KColors.textPrimary);
+    fontFamily: 'monospace',
+    fontSize: 13,
+    color: KColors.textPrimary,
+  );
   static const muted = TextStyle(fontSize: 13, color: KColors.textMuted);
   static const mutedSpan = TextStyle(color: KColors.textMuted);
 }

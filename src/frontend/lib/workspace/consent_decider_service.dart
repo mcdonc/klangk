@@ -130,15 +130,17 @@ class ConsentFrameResult {
   /// ok ack means the pause was cleared).
   final double? pauseUntil;
 
-  const ConsentFrameResult(this.outcome,
-      {this.request,
-      this.resolvedId,
-      this.message,
-      this.rules,
-      this.revokeAckId,
-      this.revokeOk = false,
-      this.pauseOk = false,
-      this.pauseUntil});
+  const ConsentFrameResult(
+    this.outcome, {
+    this.request,
+    this.resolvedId,
+    this.message,
+    this.rules,
+    this.revokeAckId,
+    this.revokeOk = false,
+    this.pauseOk = false,
+    this.pauseUntil,
+  });
 
   static const ignored = ConsentFrameResult(ConsentFrameOutcome.ignored);
 }
@@ -256,8 +258,16 @@ class ConsentRule {
           decidedBy == other.decidedBy;
 
   @override
-  int get hashCode => Object.hash(id, destHost, destPort, processName, decision,
-      duration, decidedAt, decidedBy);
+  int get hashCode => Object.hash(
+        id,
+        destHost,
+        destPort,
+        processName,
+        decision,
+        duration,
+        decidedAt,
+        decidedBy,
+      );
 }
 
 /// Pause window from the `egress_rules` frame (#2332; absent today). `until`
@@ -286,6 +296,13 @@ class EgressPause {
 class EgressRules {
   final String workspaceId;
   final List<String> allowList;
+
+  /// The workspace's static reject list (`rejected_domains`, #2370/#2503):
+  /// names the sidecar NXDOMAINs unconditionally, order preserved like
+  /// [allowList]. Grows when a forever deny lands (#2369) and shrinks when
+  /// that deny is revoked. Not consent rows -- workspace config, so it is
+  /// read-only in the rules view.
+  final List<String> rejectList;
   final List<ConsentRule> allowed;
   final List<ConsentRule> denied;
   final EgressPause? paused;
@@ -295,6 +312,7 @@ class EgressRules {
     required this.allowList,
     required this.allowed,
     required this.denied,
+    this.rejectList = const [],
     this.paused,
   });
 
@@ -308,6 +326,11 @@ class EgressRules {
     final rawAllow = msg['allow_list'];
     final allowList = <String>[
       for (final d in (rawAllow is List ? rawAllow : <Object>[])) d.toString(),
+    ];
+    final rawReject = msg['reject_list'];
+    final rejectList = <String>[
+      for (final d in (rawReject is List ? rawReject : <Object>[]))
+        d.toString(),
     ];
     final allowed = <ConsentRule>[
       for (final o
@@ -327,6 +350,7 @@ class EgressRules {
     return EgressRules(
       workspaceId: wid,
       allowList: allowList,
+      rejectList: rejectList,
       allowed: allowed,
       denied: denied,
       paused: _parsePause(msg['paused']),
@@ -339,13 +363,20 @@ class EgressRules {
       other is EgressRules &&
           workspaceId == other.workspaceId &&
           listEquals(allowList, other.allowList) &&
+          listEquals(rejectList, other.rejectList) &&
           listEquals(allowed, other.allowed) &&
           listEquals(denied, other.denied) &&
           paused == other.paused;
 
   @override
-  int get hashCode => Object.hash(workspaceId, Object.hashAll(allowList),
-      Object.hashAll(allowed), Object.hashAll(denied), paused);
+  int get hashCode => Object.hash(
+        workspaceId,
+        Object.hashAll(allowList),
+        Object.hashAll(rejectList),
+        Object.hashAll(allowed),
+        Object.hashAll(denied),
+        paused,
+      );
 }
 
 /// Parse the `paused` field of an `egress_rules` frame (#2332). Returns null
@@ -361,9 +392,7 @@ EgressPause? _parsePause(Object? obj) {
 /// rows with no `decided_at` last, ties broken by original index (Dart's
 /// [List.sort] isn't stable). Mirrors the TUI's `sorted(...)` over the frame.
 void _sortRulesStable(List<ConsentRule> rules) {
-  final indexed = [
-    for (var i = 0; i < rules.length; i++) (i, rules[i]),
-  ];
+  final indexed = [for (var i = 0; i < rules.length; i++) (i, rules[i])];
   indexed.sort((a, b) {
     final aT = a.$2.decidedAt;
     final bT = b.$2.decidedAt;
@@ -573,6 +602,7 @@ class ConsentDeciderService extends ChangeNotifier {
       _rules = EgressRules(
         workspaceId: r.workspaceId,
         allowList: r.allowList,
+        rejectList: r.rejectList,
         allowed: r.allowed.where((e) => e.id != id).toList(),
         denied: r.denied.where((e) => e.id != id).toList(),
         paused: r.paused,
@@ -603,6 +633,7 @@ class ConsentDeciderService extends ChangeNotifier {
       _rules = EgressRules(
         workspaceId: r.workspaceId,
         allowList: r.allowList,
+        rejectList: r.rejectList,
         allowed: r.allowed,
         denied: r.denied,
         paused: until != null ? EgressPause(until: until) : null,
@@ -767,7 +798,9 @@ class ConsentDeciderService extends ChangeNotifier {
   /// / non-JSON / unknown frames leave [pending] untouched.
   @visibleForTesting
   static ConsentFrameResult applyFrame(
-      Map<String, PendingRequest> pending, String raw) {
+    Map<String, PendingRequest> pending,
+    String raw,
+  ) {
     Map<String, dynamic> msg;
     try {
       final decoded = jsonDecode(raw);
@@ -792,8 +825,10 @@ class ConsentDeciderService extends ChangeNotifier {
       return const ConsentFrameResult(ConsentFrameOutcome.pong);
     }
     if (mtype == 'error') {
-      return ConsentFrameResult(ConsentFrameOutcome.error,
-          message: msg['message']?.toString() ?? '');
+      return ConsentFrameResult(
+        ConsentFrameOutcome.error,
+        message: msg['message']?.toString() ?? '',
+      );
     }
     if (mtype == 'egress_rules') {
       final rules = EgressRules.fromJson(msg);
@@ -802,14 +837,19 @@ class ConsentDeciderService extends ChangeNotifier {
     }
     if (mtype == 'revoke_ack') {
       final rid = msg['request_id'];
-      return ConsentFrameResult(ConsentFrameOutcome.revokeAck,
-          revokeAckId: rid is String ? rid : null, revokeOk: msg['ok'] == true);
+      return ConsentFrameResult(
+        ConsentFrameOutcome.revokeAck,
+        revokeAckId: rid is String ? rid : null,
+        revokeOk: msg['ok'] == true,
+      );
     }
     if (mtype == 'pause_ack') {
       final until = msg['until'];
-      return ConsentFrameResult(ConsentFrameOutcome.pauseAck,
-          pauseOk: msg['ok'] == true,
-          pauseUntil: until is num ? until.toDouble() : null);
+      return ConsentFrameResult(
+        ConsentFrameOutcome.pauseAck,
+        pauseOk: msg['ok'] == true,
+        pauseUntil: until is num ? until.toDouble() : null,
+      );
     }
     return ConsentFrameResult.ignored;
   }
@@ -817,7 +857,10 @@ class ConsentDeciderService extends ChangeNotifier {
   /// Build an outbound verdict frame (JSON string) for a held request.
   @visibleForTesting
   static String buildVerdict(
-      String requestId, String decision, String duration) {
+    String requestId,
+    String decision,
+    String duration,
+  ) {
     return jsonEncode({
       'type': 'verdict',
       'request_id': requestId,
@@ -932,6 +975,7 @@ class ConsentDeciderService extends ChangeNotifier {
     _rules = EgressRules(
       workspaceId: r.workspaceId,
       allowList: r.allowList,
+      rejectList: r.rejectList,
       allowed: allowed,
       denied: denied,
       paused: paused,
