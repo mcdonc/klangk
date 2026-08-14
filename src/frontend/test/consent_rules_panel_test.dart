@@ -306,6 +306,104 @@ void main() {
       svc.dispose();
     });
 
+    testWidgets(
+        'pause controls render once rules land; highlight follows the last request (#2494)',
+        (tester) async {
+      final ch = _FakeChannel();
+      final svc = _serviceWithChannel(ch);
+      svc.connect();
+      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+      // No controls before the first egress_rules frame (loading state).
+      expect(find.text('Pause prompts'), findsNothing);
+      ch.serverSend(_rulesFrame(allowList: ['a.io']));
+      await tester.pump();
+
+      // All four buttons render (Unpause / Pause 15m / 1h / 1d, mirroring
+      // the TUI pause bar); nothing is paused so there is no status line.
+      expect(find.text('Pause prompts'), findsOneWidget);
+      expect(find.text('Unpause'), findsOneWidget);
+      expect(find.text('Pause 15m'), findsOneWidget);
+      expect(find.text('Pause 1h'), findsOneWidget);
+      expect(find.text('Pause 1d'), findsOneWidget);
+      expect(find.textContaining('Filtering paused'), findsNothing);
+
+      // Unpause is the active (filled) button when nothing was last paused.
+      expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
+          isA<FilledButton>());
+      expect(tester.widget(find.byKey(const ValueKey('pause-15m'))),
+          isA<OutlinedButton>());
+
+      // Tapping the active button sends too (unpause is idempotent
+      // server-side) and keeps Unpause as the last request.
+      await tester.tap(find.byKey(const ValueKey('pause-none')));
+      await tester.pump();
+      expect(jsonDecode(ch.sent.last as String), {'type': 'unpause'});
+
+      // Tapping Pause 15m sends the frame and moves the highlight.
+      await tester.tap(find.byKey(const ValueKey('pause-15m')));
+      await tester.pump();
+      expect(jsonDecode(ch.sent.last as String),
+          {'type': 'pause', 'duration': '15m'});
+      expect(tester.widget(find.byKey(const ValueKey('pause-15m'))),
+          isA<FilledButton>());
+      expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
+          isA<OutlinedButton>());
+
+      // The paused status line renders alongside the controls.
+      ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
+      await tester.pump();
+      expect(find.textContaining('Filtering paused'), findsOneWidget);
+
+      // Tapping Unpause sends the unpause frame; the highlight returns.
+      await tester.tap(find.byKey(const ValueKey('pause-none')));
+      await tester.pump();
+      expect(jsonDecode(ch.sent.last as String), {'type': 'unpause'});
+      expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
+          isA<FilledButton>());
+      expect(tester.widget(find.byKey(const ValueKey('pause-15m'))),
+          isA<OutlinedButton>());
+      svc.dispose();
+    });
+
+    testWidgets('pause tap while disconnected flashes instead of sending',
+        (tester) async {
+      final ch = _FakeChannel();
+      ConsentDeciderService.testChannelFactory = (_) => ch;
+      final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          // Long delay so the reconnect Timer never fires during the test.
+          reconnectDelays: const [Duration(minutes: 5)]);
+      svc.connect();
+      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+      ch.serverSend(_rulesFrame(allowList: ['a.io']));
+      await tester.pump();
+      ch.serverClose();
+      await tester.pump();
+      await tester.pump(); // flush onDone -> reconnecting
+      await tester.tap(find.byKey(const ValueKey('pause-1h')));
+      await tester.pump();
+      expect(ch.sent, isEmpty); // nothing left the socket
+      expect(find.textContaining('disconnected'), findsOneWidget); // the flash
+      svc.dispose();
+    });
+
+    testWidgets('a failed pause_ack flashes via the service flash row',
+        (tester) async {
+      final ch = _FakeChannel();
+      final svc = _serviceWithChannel(ch);
+      svc.connect();
+      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+      ch.serverSend(_rulesFrame(allowList: ['a.io']));
+      await tester.pump();
+      ch.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
+      await tester.pump();
+      expect(find.text('pause failed'), findsOneWidget);
+      // The controls stay rendered (state unchanged, never optimistic).
+      expect(find.text('Pause 15m'), findsOneWidget);
+      svc.dispose();
+    });
+
     testWidgets('a revoked row stays until revoke_ack succeeds',
         (tester) async {
       final ch = _FakeChannel();

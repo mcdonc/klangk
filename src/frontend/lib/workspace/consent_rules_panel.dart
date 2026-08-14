@@ -18,6 +18,11 @@
 /// Revoke is never optimistic: the row stays until the server's `revoke_ack`
 /// confirms success -- a still-enforced rule is never hidden silently (mirrors
 /// the TUI). A failed ack surfaces via the service's [flashMessage].
+///
+/// The panel also carries the pause controls (#2494): Unpause / Pause 15m /
+/// 1h / 1d, modeled after the TUI pause bar (#2332). Pause is workspace-wide
+/// and never optimistic -- the server's `pause_ack` + refreshed `egress_rules`
+/// frame drive the displayed state.
 library;
 
 import 'dart:async';
@@ -74,6 +79,24 @@ class ConsentRulesPanel extends StatefulWidget {
 
 class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
   Timer? _tick;
+
+  /// Duration of the user's last pause request, or null after Unpause
+  /// (#2332). The server's pause frame carries only `until` (not which
+  /// window), so the active button follows the user's last request --
+  /// mirrors the TUI `_pause_duration`.
+  String? _lastPauseRequest;
+
+  /// Send a pause (`duration` != null) or unpause (null) frame and highlight
+  /// the tapped button. The sent state itself is never optimistic: the
+  /// server's `pause_ack` + refreshed `egress_rules` frame drive the display.
+  void _onPauseTap(String? duration) {
+    setState(() => _lastPauseRequest = duration);
+    if (duration == null) {
+      widget.service.sendUnpause();
+    } else {
+      widget.service.sendPause(duration);
+    }
+  }
 
   @override
   void initState() {
@@ -192,7 +215,11 @@ class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
                         remaining: service.ruleRemainingSeconds,
                         onRevoke: _confirmRevoke,
                       ),
-                      if (rules.paused != null) _Pause(service: service),
+                      _PauseSection(
+                        service: service,
+                        lastRequest: _lastPauseRequest,
+                        onTap: _onPauseTap,
+                      ),
                     ],
                   ),
                 ),
@@ -384,9 +411,78 @@ class _RuleRow extends StatelessWidget {
   }
 }
 
-/// The pause section (#2332; hidden unless the frame reports a pause).
-class _Pause extends StatelessWidget {
-  const _Pause({required this.service});
+/// The pause section (#2332/#2494): the live window status (when paused)
+/// plus the pause controls -- Unpause / Pause 15m / 1h / 1d -- modeled after
+/// the TUI pause bar (`cli/tui/consent.py`). The button matching the user's
+/// last request is highlighted (Unpause is active when nothing was last
+/// paused); the window itself follows the server's `pause_ack` + refreshed
+/// `egress_rules` frame.
+class _PauseSection extends StatelessWidget {
+  const _PauseSection({
+    required this.service,
+    required this.lastRequest,
+    required this.onTap,
+  });
+  final ConsentDeciderService service;
+  final String? lastRequest;
+  final ValueChanged<String?> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final paused = service.rules?.paused;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Pause prompts', style: _KStyles.title),
+          const SizedBox(height: 6),
+          if (paused != null) _PauseStatus(service: service),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              _pauseButton(null, 'Unpause'),
+              for (final d in kConsentPauseDurations)
+                _pauseButton(d, 'Pause $d'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pauseButton(String? duration, String label) {
+    // The active button mirrors the TUI's `pause-active` style: amber
+    // background, canvas foreground.
+    final active = duration == lastRequest;
+    final key = ValueKey('pause-${duration ?? 'none'}');
+    if (active) {
+      return FilledButton(
+        key: key,
+        style: FilledButton.styleFrom(
+          backgroundColor: KColors.accentAmber,
+          foregroundColor: KColors.bgCanvas,
+          visualDensity: VisualDensity.compact,
+        ),
+        onPressed: () => onTap(duration),
+        child: Text(label),
+      );
+    }
+    return OutlinedButton(
+      key: key,
+      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+      onPressed: () => onTap(duration),
+      child: Text(label),
+    );
+  }
+}
+
+/// The live pause-window status line (#2332; rendered only while the frame
+/// reports a pause).
+class _PauseStatus extends StatelessWidget {
+  const _PauseStatus({required this.service});
   final ConsentDeciderService service;
 
   @override
@@ -397,7 +493,7 @@ class _Pause extends StatelessWidget {
         ? 'Filtering paused until restart'
         : 'Filtering paused (resumes in ${formatDurationCompact(rem)})';
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(bottom: 4),
       child: Row(
         children: [
           const Icon(Icons.pause_circle_outline,

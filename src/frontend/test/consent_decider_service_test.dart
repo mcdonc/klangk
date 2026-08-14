@@ -208,6 +208,17 @@ void main() {
     });
   });
 
+  group('buildPause / buildUnpause', () {
+    test('produces well-formed pause/unpause frames', () {
+      final pause = jsonDecode(ConsentDeciderService.buildPause('15m'))
+          as Map<String, dynamic>;
+      expect(pause, {'type': 'pause', 'duration': '15m'});
+      final unpause = jsonDecode(ConsentDeciderService.buildUnpause())
+          as Map<String, dynamic>;
+      expect(unpause, {'type': 'unpause'});
+    });
+  });
+
   group('ConsentRule.fromJson', () {
     test('parses a full payload', () {
       final r = ConsentRule.fromJson(_ruleJson())!;
@@ -469,6 +480,17 @@ void main() {
       expect(bad.outcome, ConsentFrameOutcome.revokeAck);
       expect(bad.revokeAckId, isNull);
       expect(bad.revokeOk, isFalse);
+    });
+
+    test('pause_ack ok true/false', () {
+      final ok = ConsentDeciderService.applyFrame(
+          {}, jsonEncode({'type': 'pause_ack', 'ok': true, 'until': 1300.0}));
+      expect(ok.outcome, ConsentFrameOutcome.pauseAck);
+      expect(ok.pauseOk, isTrue);
+      final bad = ConsentDeciderService.applyFrame(
+          {}, jsonEncode({'type': 'pause_ack', 'ok': false, 'until': null}));
+      expect(bad.outcome, ConsentFrameOutcome.pauseAck);
+      expect(bad.pauseOk, isFalse);
     });
   });
 
@@ -781,6 +803,69 @@ void main() {
       svc.connect();
       svc.sendRevoke('v1');
       expect(svc.flashMessage, contains('revoke send failed'));
+      svc.dispose();
+    });
+
+    test('sendPause sends a pause frame on the socket', () {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      svc.sendPause('1h');
+      expect(channel.sent, isNotEmpty);
+      final out =
+          jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
+      expect(out, {'type': 'pause', 'duration': '1h'});
+      svc.dispose();
+    });
+
+    test('sendUnpause sends an unpause frame on the socket', () {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      svc.sendUnpause();
+      expect(channel.sent, isNotEmpty);
+      final out =
+          jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
+      expect(out, {'type': 'unpause'});
+      svc.dispose();
+    });
+
+    test('sendPause/sendUnpause flash when disconnected', () {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.sendPause('15m');
+      expect(channel.sent, isEmpty);
+      expect(svc.flashMessage, contains('disconnected'));
+      svc.dispose();
+      final svc2 = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc2.sendUnpause();
+      expect(svc2.flashMessage, contains('disconnected'));
+      svc2.dispose();
+    });
+
+    test('sendPause/sendUnpause flash when the socket send throws', () {
+      ConsentDeciderService.testChannelFactory = (_) => _ThrowingChannel();
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      svc.sendPause('15m');
+      expect(svc.flashMessage, contains('pause send failed'));
+      svc.dispose();
+      final svc2 = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc2.connect();
+      svc2.sendUnpause();
+      expect(svc2.flashMessage, contains('unpause send failed'));
+      svc2.dispose();
+    });
+
+    test('pause_ack failure flashes; success is silent', () async {
+      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+      svc.connect();
+      // Success first: no flash -- the refreshed `egress_rules` frame the
+      // server broadcasts right after carries the new pause state.
+      channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
+      await Future<void>.delayed(Duration.zero);
+      expect(svc.flashMessage, isNull);
+      // Failure flashes so the decider knows the window is unchanged.
+      channel.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
+      await Future<void>.delayed(Duration.zero);
+      expect(svc.flashMessage, contains('pause failed'));
       svc.dispose();
     });
 

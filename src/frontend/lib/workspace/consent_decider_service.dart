@@ -4,9 +4,11 @@
 /// (``cli/tui/consent.py``): connects to the server's ``/ws/consent-decider``
 /// stream for a workspace, holds the snapshot + live pending egress requests,
 /// and sends ``verdict`` frames so the deciding user can allow/deny each held
-/// connection *while the sidecar holds it* (#2311). The verdict protocol +
-/// frame shapes are duplicated from the server (``model/egress_consent.py``)
-/// per the isolation boundary the web client shares with the CLI.
+/// connection *while the sidecar holds it* (#2311), plus ``pause``/``unpause``
+/// frames that silence prompts workspace-wide for a window (#2332). The
+/// verdict + pause protocol and frame shapes are duplicated from the server
+/// (``model/egress_consent.py``) per the isolation boundary the web client
+/// shares with the CLI.
 ///
 /// A decider that goes silent is reaped by the server after
 /// ``consent_decider_timeout`` (45s), reverting the workspace to static
@@ -62,6 +64,11 @@ const Map<String, int> kConsentDurationSeconds = {
 const String kConsentDurationForever = 'forever';
 const String kConsentDurationTilrestart = 'tilrestart';
 
+/// Pause-window tokens the server accepts for silencing prompts (#2332).
+/// A focused set (not the full verdict-duration list); mirrors the TUI's
+/// `PAUSE_DURATIONS` (`cli/tui/consent.py`).
+const List<String> kConsentPauseDurations = ['15m', '1h', '1d'];
+
 /// Inbound-frame application outcomes returned by [ConsentDeciderService.applyFrame].
 enum ConsentFrameOutcome {
   /// A new held request (snapshot or live); [ConsentFrameResult.request] is set.
@@ -84,6 +91,10 @@ enum ConsentFrameOutcome {
   /// The server replied to a revoke (#2339/#2341); [ConsentFrameResult.revokeAckId]
   /// and [ConsentFrameResult.revokeOk] are set.
   revokeAck,
+
+  /// The server replied to a pause/unpause (#2332); [ConsentFrameResult.pauseOk]
+  /// is set.
+  pauseAck,
 
   /// Non-JSON / unknown frame (ignored).
   ignored,
@@ -108,13 +119,18 @@ class ConsentFrameResult {
   /// [ConsentFrameOutcome.revokeAck]).
   final bool revokeOk;
 
+  /// Whether a `pause_ack` confirmed success (outcome ==
+  /// [ConsentFrameOutcome.pauseAck]).
+  final bool pauseOk;
+
   const ConsentFrameResult(this.outcome,
       {this.request,
       this.resolvedId,
       this.message,
       this.rules,
       this.revokeAckId,
-      this.revokeOk = false});
+      this.revokeOk = false,
+      this.pauseOk = false});
 
   static const ignored = ConsentFrameResult(ConsentFrameOutcome.ignored);
 }
@@ -502,6 +518,13 @@ class ConsentDeciderService extends ChangeNotifier {
       case ConsentFrameOutcome.revokeAck:
         _applyRevokeAck(res.revokeAckId, res.revokeOk);
         break;
+      case ConsentFrameOutcome.pauseAck:
+        // A failed pause/unpause flashes so the decider knows the window is
+        // unchanged; success needs no flash -- the refreshed `egress_rules`
+        // frame the server broadcasts carries the new pause state. Mirrors
+        // the TUI's `pause_ack` handling.
+        if (!res.pauseOk) _flash('pause failed');
+        break;
       case ConsentFrameOutcome.error:
         // Surface the rejection to the user (the TUI flashes it); a verdict
         // the server refused must not vanish silently.
@@ -625,6 +648,41 @@ class ConsentDeciderService extends ChangeNotifier {
     }
   }
 
+  /// Pause interactive consent prompting for the workspace for `duration`
+  /// (#2332; one of [kConsentPauseDurations]). While paused, a destination
+  /// with no allow-list rule and no recorded deny is auto-allowed instead of
+  /// prompting. Never optimistic: the UI follows the server's `pause_ack` +
+  /// the refreshed `egress_rules` frame. Flashes (not silent) when
+  /// disconnected or the send fails. Mirrors the TUI.
+  void sendPause(String duration) {
+    final ch = _channel;
+    if (ch == null || !_connected) {
+      _flash('disconnected — reconnecting');
+      return;
+    }
+    try {
+      ch.sink.add(buildPause(duration));
+    } catch (e) {
+      debugPrint('[ConsentDecider] pause send failed: $e');
+      _flash('pause send failed — reconnecting');
+    }
+  }
+
+  /// Resume prompting (clear an active pause) (#2332). Mirrors the TUI.
+  void sendUnpause() {
+    final ch = _channel;
+    if (ch == null || !_connected) {
+      _flash('disconnected — reconnecting');
+      return;
+    }
+    try {
+      ch.sink.add(buildUnpause());
+    } catch (e) {
+      debugPrint('[ConsentDecider] unpause send failed: $e');
+      _flash('unpause send failed — reconnecting');
+    }
+  }
+
   @override
   void dispose() {
     _stopped = true;
@@ -689,6 +747,10 @@ class ConsentDeciderService extends ChangeNotifier {
       return ConsentFrameResult(ConsentFrameOutcome.revokeAck,
           revokeAckId: rid is String ? rid : null, revokeOk: msg['ok'] == true);
     }
+    if (mtype == 'pause_ack') {
+      return ConsentFrameResult(ConsentFrameOutcome.pauseAck,
+          pauseOk: msg['ok'] == true);
+    }
     return ConsentFrameResult.ignored;
   }
 
@@ -711,6 +773,22 @@ class ConsentDeciderService extends ChangeNotifier {
   @visibleForTesting
   static String buildRevoke(String requestId) {
     return jsonEncode({'type': 'revoke', 'request_id': requestId});
+  }
+
+  /// Build an outbound pause frame (JSON string) silencing prompts for a
+  /// window (#2332). `duration` is one of [kConsentPauseDurations]; the
+  /// server replies `pause_ack` and re-broadcasts `egress_rules` with the
+  /// live `paused` window. Mirrors the TUI `make_pause`.
+  @visibleForTesting
+  static String buildPause(String duration) {
+    return jsonEncode({'type': 'pause', 'duration': duration});
+  }
+
+  /// Build an outbound unpause frame (JSON string) resuming prompting
+  /// (#2332). Mirrors the TUI `make_unpause`.
+  @visibleForTesting
+  static String buildUnpause() {
+    return jsonEncode({'type': 'unpause'});
   }
 
   /// Seconds until this hold's countdown hits zero (clamped at 0). The server
