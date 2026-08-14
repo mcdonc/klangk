@@ -6,6 +6,7 @@ command sequence (with the tmux runner / attach injected as recorders).
 
 from __future__ import annotations
 
+import shlex
 from unittest.mock import MagicMock, patch
 
 
@@ -186,8 +187,12 @@ class TestBuilders:
         assert cmd.startswith("display-popup -E ")
         assert "env -u TMUX tmux -S /tmp/s.sock attach -t hidden" in cmd
         assert "-w 70 -h 14" in cmd
-        # docked bottom-right via session-size arithmetic
-        assert "session_width" in cmd and "session_height" in cmd
+        # The shell-command MUST be the final positional (options first) or
+        # tmux swallows the trailing -w/-h into the command and the popup
+        # renders blank (#2383).
+        assert cmd.endswith(
+            shlex.quote(sp.popup_viewer_shell_string("/tmp/s.sock", "hidden"))
+        )
 
     def test_popup_hook_cmds(self):
         cmds = sp.popup_hook_cmds("/tmp/s.sock", "outer", "hidden", w=70, h=14)

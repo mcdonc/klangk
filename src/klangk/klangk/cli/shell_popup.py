@@ -190,17 +190,19 @@ def popup_viewer_shell_string(socket: str, hidden: str) -> str:
 def display_popup_command(socket: str, hidden: str, *, w: int, h: int) -> str:
     """tmux command string that shows the consent popup (hook + binding value).
 
-    Docked bottom-right (``-x``/``-y`` from the session size minus the popup
-    size); ``-E`` closes the popup when its command (the viewer attach) exits
-    — i.e. when the user hides it with ``q`` (which detaches the viewer).
+    ``-E`` closes the popup when its command (the viewer attach) exits — i.e.
+    when the user hides it with ``q`` (which detaches the viewer). The popup
+    uses tmux's default centered position; an earlier bottom-right ``-x/-y``
+    docking was dropped — the ``#{e|-:...}`` arithmetic value made tmux
+    reject the command ("-x expects an argument").
+
+    The shell-command MUST be the final positional: tmux's ``display-popup``
+    treats it as absorbing every trailing token, so all options (``-w -h``)
+    have to come before it or they get swallowed into the command and the
+    popup renders blank.
     """
     viewer = popup_viewer_shell_string(socket, hidden)
-    return (
-        f"display-popup -E {shlex.quote(viewer)}"
-        f" -w {w} -h {h}"
-        f" -x #{{e|-:#{{session_width}},{w}}}"
-        f" -y #{{e|-:#{{session_height}},{h}}}"
-    )
+    return f"display-popup -E -w {w} -h {h} {shlex.quote(viewer)}"
 
 
 def popup_hook_cmds(
