@@ -530,6 +530,10 @@ class ConsentDeciderApp(App):
     :class:`ConsentDeciderController`; all protocol logic lives there.
     """
 
+    # The command palette's "^p palette" Footer entry is noise in the small
+    # consent popup -- disable it there (#2383).
+    ENABLE_COMMAND_PALETTE = False
+
     CSS = """
     Screen { layout: vertical; }
     #status { padding: 0 1; background: $panel; color: $text-muted; }
@@ -608,6 +612,10 @@ class ConsentDeciderApp(App):
         self._flash_msg = ""
         self._flash_until = 0.0
         self._duration = DURATION_DEFAULT
+        # #2332 pause window the user last requested (None = Unpaused). Drives
+        # which pause button is highlighted; the live countdown is shown next
+        # to the buttons (#2383).
+        self._pause_duration: str | None = None
         # Persistent popup role (#2383): the decider runs inside a hidden
         # tmux session a popup viewer attaches to. Set (with popup_socket)
         # when launched by the shell-layer wrapper; None for standalone use.
@@ -622,22 +630,40 @@ class ConsentDeciderApp(App):
     def _apply_bindings(self) -> None:
         """Install persistent vs standalone keybindings, then refresh Footer.
 
-        ``q``, ``Q`` and ``Escape`` all hide the viewer in persistent mode
-        (the decider is persistent — it never quits on a key, only when the
-        shell ends) and all quit in standalone. Only ``q`` is shown in the
-        Footer, labelled ``q/Esc``; ``Q`` and ``Esc`` are active but hidden
-        from the Footer to keep it uncluttered.
+        ``q``, ``Q``, ``Escape`` and ``Ctrl-A`` all hide the viewer in
+        persistent mode (the decider is persistent — it never quits on a key,
+        only when the shell ends) and all quit in standalone. In persistent
+        mode the Footer advertises the shell wrapper's ``C-a p`` toggle
+        (``Ctrl-A`` is the close half — the popup captures input while open,
+        so the outer ``C-a p`` binding can't fire then); ``q``/``Q``/``Esc``
+        are active but hidden. In standalone the Footer shows ``q Quit``.
         """
-        q_label = "Hide" if self._persistent else "Quit"
-        self.BINDINGS = [
-            Binding("a", "allow", "Allow"),
-            Binding("d", "deny", "Deny"),
-            Binding("r", "rules", "Rules"),
-            Binding("q", "q_key", f"q/Esc {q_label}", show=True),
-            Binding("Q", "q_key", q_label, show=False),
-            Binding("escape", "q_key", q_label, show=False),
-            Binding("ctrl+a", "q_key", q_label, show=False),
-        ]
+        if self._persistent:
+            self.BINDINGS = [
+                Binding("a", "allow", "Allow"),
+                Binding("d", "deny", "Deny"),
+                Binding("r", "rules", "Rules"),
+                Binding(
+                    "ctrl+a",
+                    "q_key",
+                    "Hide/Show",
+                    key_display="Ctrl-a p",
+                    show=True,
+                ),
+                Binding("q", "q_key", "Hide", show=False),
+                Binding("Q", "q_key", "Hide", show=False),
+                Binding("escape", "q_key", "Hide", show=False),
+            ]
+        else:
+            self.BINDINGS = [
+                Binding("a", "allow", "Allow"),
+                Binding("d", "deny", "Deny"),
+                Binding("r", "rules", "Rules"),
+                Binding("q", "q_key", "Quit", show=True),
+                Binding("Q", "q_key", "Quit", show=False),
+                Binding("escape", "q_key", "Quit", show=False),
+                Binding("ctrl+a", "q_key", "Quit", show=False),
+            ]
         self.refresh_bindings()
 
     def compose(self) -> ComposeResult:
@@ -649,11 +675,11 @@ class ConsentDeciderApp(App):
             yield ListView(id="requests")
             yield Static("No held requests — connected, waiting.", id="empty")
         # #2332 pause control: silences ALL prompts for the workspace for a
-        # window. Pinned just above the Footer; flagged yellow while a pause
-        # window is live, and the status line shows the remaining window.
+        # window. Pinned just above the Footer; the active window is
+        # highlighted and its countdown shows next to the buttons (#2383).
         yield Horizontal(
-            Static("Pause:", id="pause-label"),
             *self._pause_buttons(),
+            Static("", id="pause-countdown"),
             id="pause-bar",
         )
         yield Footer()
@@ -671,24 +697,24 @@ class ConsentDeciderApp(App):
         return btns
 
     def _pause_buttons(self) -> list[Button]:
-        """The pause-control buttons (#2332): 5m / 15m / 1h / Cancel.
+        """Unpaused / Paused 15m / 1h / 1d (#2332, restyled #2383).
 
-        ``pause_duration`` on each button is the window token, or None for the
-        Cancel button (clears an active pause). Highlighted via ``pause-active``
-        when a pause is live so the bar reads as "filtering off".
+        ``pause_duration`` is None for Unpaused (clears a pause) or a window
+        token; the button matching the user's last request is highlighted via
+        ``pause-active`` (Unpaused is active when nothing is paused).
         """
         btns: list[Button] = []
         for label, dur in (
-            (DURATION_15M, DURATION_15M),
-            (DURATION_1H, DURATION_1H),
-            (DURATION_1D, DURATION_1D),
+            ("Unpause", None),
+            ("Pause 15m", DURATION_15M),
+            ("Pause 1h", DURATION_1H),
+            ("Pause 1d", DURATION_1D),
         ):
-            b = Button(label, id=f"pause-{dur}")
+            b = Button(
+                label, id="pause-none" if dur is None else f"pause-{dur}"
+            )
             b.pause_duration = dur  # type: ignore[attr-defined]
             btns.append(b)
-        cancel = Button("Cancel", id="pause-cancel")
-        cancel.pause_duration = None  # type: ignore[attr-defined]
-        btns.append(cancel)
         return btns
 
     def on_mount(self) -> None:
@@ -876,6 +902,7 @@ class ConsentDeciderApp(App):
         ordered = self.controller.ordered()
         current_ids = {req.id for req in ordered}
         focused_id = self._focused_request_id()
+        focused_index = lv.index  # to refocus above a resolved hold
         # Drop resolved/expired rows (leave survivors untouched -> no flicker).
         for child in list(lv.children):
             rid = getattr(child, "request_id", None)
@@ -891,12 +918,16 @@ class ConsentDeciderApp(App):
                 new_ids.append(req.id)
             else:
                 self._update_item(item, req)
-        # A newly-arrived hold grabs focus so the user can act on it at once;
-        # otherwise keep focus on the previously-focused survivor (#2383).
+        # Focus policy (#2383): a newly-arrived hold grabs focus; else keep
+        # focus on the previously-focused survivor; else (the focused hold was
+        # just resolved) move focus to the hold above it (or the new top) so
+        # deciding doesn't strand the user on an unfocused list.
         if new_ids:
             self._select_by_id(new_ids[0])
-        else:
+        elif focused_id is not None and focused_id in current_ids:
             self._select_by_id(focused_id)
+        elif focused_id is not None:
+            self._select_index((focused_index or 0) - 1)
         empty.display = not ordered
         if self._flash_until > time.time():
             status.update(self._flash_msg)
@@ -906,17 +937,8 @@ class ConsentDeciderApp(App):
                 f" {escape(self.workspace_name)}  ·  {conn}"
                 f"  ·  {len(ordered)} held"
             )
-            # #2332: surface an active pause window in the status line so the
-            # "silences ALL prompts" state is always visible while queuing.
-            rules = self.controller.rules
-            if rules is not None and rules.paused is not None:
-                rem = self.controller.pause_remaining(rules)
-                if rem is None:
-                    line += "  ·  paused until restart"
-                else:
-                    line += f"  ·  paused {_fmt_duration(rem)}"
             status.update(line)
-        # Reflect an active pause on the control bar (highlight the window).
+        # Pause state + countdown live on the pause bar (next to the buttons).
         self._refresh_pause_highlight()
 
     def _host_line(self, req: ConsentRequest) -> str:
@@ -970,6 +992,13 @@ class ConsentDeciderApp(App):
                 lv.index = index
                 return
 
+    def _select_index(self, index: int) -> None:
+        """Focus the request row at *index*, clamped to the list bounds."""
+        lv = self.query_one("#requests", ListView)
+        if not lv.children:
+            return
+        lv.index = max(0, min(index, len(lv.children) - 1))
+
     def _flash(self, message: str, ttl: float = _FLASH_TTL) -> None:
         """Show a transient message in the status line for ``ttl`` seconds.
 
@@ -1019,12 +1048,14 @@ class ConsentDeciderApp(App):
         button.add_class("dur-sel")
 
     def _handle_pause_button(self, button: Button) -> None:
-        """Send a pause (window token) or unpause (Cancel) frame (#2332)."""
+        """Send a pause (window token) or unpause (Unpaused) frame (#2332)."""
         ws = self._ws
         if ws is None:
             self._flash("disconnected — reconnecting")
             return
         dur = getattr(button, "pause_duration", None)
+        # Track the user's request so the matching button stays highlighted.
+        self._pause_duration = dur
         if dur is None:
             asyncio.create_task(self._send_unpause(ws))
         else:
@@ -1043,16 +1074,30 @@ class ConsentDeciderApp(App):
             self._flash("unpause send failed — reconnecting")
 
     def _refresh_pause_highlight(self) -> None:
-        """Flag the pause bar while a pause window is active (#2332).
+        """Highlight the pause button matching the user's last request + show
+        the live countdown next to the buttons (#2332, restyled #2383).
 
-        The pause ``until`` carries no "which button" info, so the whole bar is
-        flagged (the status line + rules screen show the exact remaining
-        window) rather than guessing the pressed button from remaining time.
+        The server's pause frame carries only ``until`` (not which window),
+        so the active button is the one matching the user's last pause/unpause
+        request (``self._pause_duration``); Unpaused is active when nothing is
+        paused. The exact remaining window comes from the rules frame.
         """
-        label = self.query_one("#pause-label", Static)
+        target = self._pause_duration
+        for b in self.query("#pause-bar Button"):
+            b.set_class(
+                getattr(b, "pause_duration", None) == target, "pause-active"
+            )
+        countdown = self.query_one("#pause-countdown", Static)
         rules = self.controller.rules
-        paused = rules is not None and rules.paused is not None
-        label.set_class(paused, "pause-active")
+        if rules is not None and rules.paused is not None:
+            rem = self.controller.pause_remaining(rules)
+            countdown.update(
+                "paused until restart"
+                if rem is None
+                else f"paused {_fmt_duration(rem)}"
+            )
+        else:
+            countdown.update("")
 
     def action_allow(self) -> None:
         # `a` key -> the highlighted row (keyboard path). No-op on the rules
