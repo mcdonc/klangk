@@ -38,8 +38,16 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, ListItem, ListView, Static
+from textual.screen import ModalScreen, Screen
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    ListItem,
+    ListView,
+    OptionList,
+    Static,
+)
 
 from ..auth import refresh_token
 from ..shell_popup import (
@@ -57,11 +65,12 @@ logger = logging.getLogger(__name__)
 DECISION_ALLOWED = "allowed"
 DECISION_DENIED = "denied"
 # Duration tokens mirror the server (model/egress_consent.py); duplicated here
-# per CLI isolation. Ordered for the TUI selector; default is `tilrestart` (#2328).
+# per CLI isolation. Ordered for the duration picker; default is `tilrestart`
+# (#2328).
 DURATION_ONCE = "once"
 # Test-only short duration (#2363, subsumed by #2392): recognized for in-effect
 # math (a `5s` verdict in a rules snapshot counts down correctly) and for
-# programmatic/test callers, but NOT exposed in the human-facing selector
+# programmatic/test callers, but NOT offered in the human-facing picker
 # (see SELECTABLE_DURATIONS below).
 DURATION_5S = "5s"
 DURATION_5M = "5m"
@@ -72,7 +81,7 @@ DURATION_1W = "1w"
 DURATION_TILRESTART = "tilrestart"
 DURATION_FOREVER = "forever"
 # Full set the CLI recognizes (mirrors the server's DURATIONS, incl. the
-# test-only 5s). Drives in-effect/countdown math, not the selector.
+# test-only 5s). Drives in-effect/countdown math, not the picker.
 DURATIONS = (
     DURATION_ONCE,
     DURATION_5S,
@@ -84,10 +93,10 @@ DURATIONS = (
     DURATION_TILRESTART,
     DURATION_FOREVER,
 )
-# Human-facing duration selector: every duration a user can pick. The
-# test-only 5s is NOT offered (#2487) -- it's not meant for end users -- but
-# stays recognized for in-effect/countdown math and programmatic/test callers
-# (it remains in DURATIONS above).
+# Human-facing durations: every duration a user can pick (the `A`/`D`
+# duration picker). The test-only 5s is NOT offered (#2487) -- it's not meant
+# for end users -- but stays recognized for in-effect/countdown math and
+# programmatic/test callers (it remains in DURATIONS above).
 SELECTABLE_DURATIONS = tuple(d for d in DURATIONS if d != DURATION_5S)
 DURATION_DEFAULT = DURATION_TILRESTART
 
@@ -575,7 +584,7 @@ class ConsentDeciderApp(App):
     Screen { layout: vertical; }
     #status { padding: 0 1; background: $panel; color: $text-muted; }
     /* #queue holds the request list + empty state and fills the space between
-    the duration selector and the pause bar, so the pause bar pins to just
+    the status line and the pause bar, so the pause bar pins to just
     above the Footer (#2383). */
     #queue { height: 1fr; }
     #requests { height: 1fr; }
@@ -583,18 +592,6 @@ class ConsentDeciderApp(App):
     #empty { padding: 1 2; color: $text-muted; }
     .req-host { color: $text; }
     #requests Button { height: 1; border: none; padding: 0 1; }
-    #duration-selector { width: auto; height: 1; }
-    /* Non-selected duration buttons carry no background -- not even when focused
-    (#2360). The first button grabs initial focus on mount; without an explicit
-    transparent :focus it rendered with the white focus background, so it read
-    as "selected" alongside the real ``dur-sel`` default (``tilrestart``). The
-    ``dur-sel`` rules are qualified under ``#duration-selector`` so they outrank
-    these ID-based transparent rules on specificity (an unqualified ``.dur-sel``
-    loses to ``#duration-selector Button:focus`` and the accent vanishes). */
-    #duration-selector Button { width: auto; min-width: 0; height: 1; border: none; padding: 0 1; background: transparent; }
-    #duration-selector Button:focus { background: transparent; }
-    #duration-selector .dur-sel { background: $accent; color: $background; }
-    #duration-selector .dur-sel:focus { background: $accent; color: $background; }
     /* #2332 pause control bar: a compact top-bar that silences ALL prompts for
     the workspace for a window. Flagged yellow so it reads as "filtering off". */
     #pause-bar { height: 1; background: $panel; }
@@ -607,7 +604,9 @@ class ConsentDeciderApp(App):
 
     BINDINGS = [
         ("a", "allow", "Allow"),
+        ("A", "allow_duration", "Allow…"),
         ("d", "deny", "Deny"),
+        ("D", "deny_duration", "Deny…"),
         ("r", "rules", "Rules"),
         # q, Q, Escape, and Ctrl-A all hide the viewer in persistent mode (the
         # decider is persistent — it never quits on a key, only when the shell
@@ -653,7 +652,6 @@ class ConsentDeciderApp(App):
         self._refused = False
         self._flash_msg = ""
         self._flash_until = 0.0
-        self._duration = DURATION_DEFAULT
         # #2332 pause window the user last requested (None = Unpaused). Drives
         # which pause button is highlighted; the live countdown is shown next
         # to the buttons (#2383).
@@ -683,7 +681,9 @@ class ConsentDeciderApp(App):
         if self._persistent:
             self.BINDINGS = [
                 Binding("a", "allow", "Allow"),
+                Binding("A", "allow_duration", "Allow…"),
                 Binding("d", "deny", "Deny"),
+                Binding("D", "deny_duration", "Deny…"),
                 Binding("r", "rules", "Rules"),
                 Binding(
                     "ctrl+a",
@@ -699,7 +699,9 @@ class ConsentDeciderApp(App):
         else:
             self.BINDINGS = [
                 Binding("a", "allow", "Allow"),
+                Binding("A", "allow_duration", "Allow…"),
                 Binding("d", "deny", "Deny"),
+                Binding("D", "deny_duration", "Deny…"),
                 Binding("r", "rules", "Rules"),
                 Binding("q", "q_key", "Quit", show=True),
                 Binding("Q", "q_key", "Quit", show=False),
@@ -710,9 +712,6 @@ class ConsentDeciderApp(App):
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
-        # Global duration selector (default `tilrestart`): click to choose; selecting
-        # does NOT submit -- only a row's Allow/Deny submits with this duration.
-        yield Horizontal(*self._duration_buttons(), id="duration-selector")
         with Vertical(id="queue"):
             yield ListView(id="requests")
             yield Static("No held requests — connected, waiting.", id="empty")
@@ -725,18 +724,6 @@ class ConsentDeciderApp(App):
             id="pause-bar",
         )
         yield Footer()
-
-    def _duration_buttons(self) -> list[Button]:
-        btns = []
-        for d in SELECTABLE_DURATIONS:
-            b = Button(
-                d,
-                id=f"dur-{d}",
-                classes=("dur-sel" if d == self._duration else ""),
-            )
-            b.duration = d  # type: ignore[attr-defined]
-            btns.append(b)
-        return btns
 
     def _pause_buttons(self) -> list[Button]:
         """Unpaused / Paused 15m / 1h / 1d (#2332, restyled #2383).
@@ -1054,9 +1041,11 @@ class ConsentDeciderApp(App):
         return escape(f"{host}{proc}  ({secs}s)")
 
     def _render_item(self, req: ConsentRequest) -> ListItem:
-        # Host line + per-row Allow/Deny (the only submit actions). The duration
-        # is chosen once via the global selector above the list (#2328), so the
-        # row stays compact.
+        # Host line + per-row Allow/Deny (the only submit actions). Bare
+        # Allow/Deny (button or `a`/`d`) sends the default duration
+        # (`tilrestart`); `A`/`D` open the per-row duration picker first
+        # (#2511) -- the duration travels with the action, never armed
+        # beforehand.
         item = ListItem(
             Static(self._host_line(req), classes="req-host"),
             Horizontal(
@@ -1124,30 +1113,18 @@ class ConsentDeciderApp(App):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""
-        if bid.startswith("dur-"):
-            # Selecting a duration does NOT submit -- it only sets the global
-            # choice (Allow/Deny submit with it).
-            self._select_duration(event.button)
-        elif bid.startswith("pause-"):
+        if bid.startswith("pause-"):
             self._handle_pause_button(event.button)
         elif bid.startswith("allow-"):
             self._decide_id(
-                bid.removeprefix("allow-"), DECISION_ALLOWED, self._duration
+                bid.removeprefix("allow-"),
+                DECISION_ALLOWED,
+                DURATION_DEFAULT,
             )
         elif bid.startswith("deny-"):
             self._decide_id(
-                bid.removeprefix("deny-"), DECISION_DENIED, self._duration
+                bid.removeprefix("deny-"), DECISION_DENIED, DURATION_DEFAULT
             )
-
-    def _select_duration(self, button: Button) -> None:
-        """Set the global selected duration + highlight it (no submit)."""
-        d = getattr(button, "duration", None)
-        if d is None:
-            return
-        self._duration = d
-        for b in self.query(".dur-sel"):
-            b.remove_class("dur-sel")
-        button.add_class("dur-sel")
 
     def _handle_pause_button(self, button: Button) -> None:
         """Send a pause (window token) or unpause (Unpaused) frame (#2332)."""
@@ -1211,17 +1188,46 @@ class ConsentDeciderApp(App):
         else:
             countdown.update("")
 
+    def _on_queue_screen(self) -> bool:
+        """True when the held-request queue is the active screen.
+
+        ``a``/``d``/``A``/``D`` must be inert on the rules screen (no row is
+        visible there) and while the duration picker modal is up (a stray
+        keypress through the modal must not decide a row behind it).
+        """
+        return not isinstance(self.screen, (RulesScreen, DurationPickerScreen))
+
     def action_allow(self) -> None:
-        # `a` key -> the highlighted row (keyboard path). No-op on the rules
-        # screen so a/d can't decide a queue row that isn't visible there.
-        if isinstance(self.screen, RulesScreen):
+        # `a` key -> the highlighted row, with the default duration
+        # (`tilrestart`): the common case stays one keypress (#2511).
+        if not self._on_queue_screen():
             return
         self._decide(DECISION_ALLOWED)
 
     def action_deny(self) -> None:
-        if isinstance(self.screen, RulesScreen):
+        if not self._on_queue_screen():
             return
         self._decide(DECISION_DENIED)
+
+    def action_allow_duration(self) -> None:
+        """``A``: allow the highlighted row with a picked duration (#2511)."""
+        self._open_duration_picker(DECISION_ALLOWED)
+
+    def action_deny_duration(self) -> None:
+        """``D``: deny the highlighted row with a picked duration (#2511)."""
+        self._open_duration_picker(DECISION_DENIED)
+
+    def _open_duration_picker(self, decision: str) -> None:
+        if not self._on_queue_screen():
+            return
+        rid = self._focused_request_id()
+        if rid is None:
+            return
+        host = next(
+            (r.dest_host for r in self.controller.ordered() if r.id == rid),
+            rid,
+        )
+        self.push_screen(DurationPickerScreen(rid, decision, host))
 
     def action_rules(self) -> None:
         # `r` opens the read-only rules screen (#2335 slice B). Guard against
@@ -1294,7 +1300,7 @@ class ConsentDeciderApp(App):
         rid = self._focused_request_id()
         if rid is None:
             return
-        self._decide_id(rid, decision, self._duration)
+        self._decide_id(rid, decision, DURATION_DEFAULT)
 
     def _decide_id(self, rid: str, decision: str, duration: str) -> None:
         ws = self._ws
@@ -1315,6 +1321,75 @@ class ConsentDeciderApp(App):
             await ws.send(make_verdict(rid, decision, duration))
         except Exception:
             self._flash("verdict send failed — reconnecting")
+
+
+class DurationPickerScreen(ModalScreen[None]):
+    """Per-row duration picker (#2511): pick a duration for one verdict.
+
+    The TUI analogue of the web banner's split Allow/Deny ▾ menu
+    (post-#2499 design): the duration is chosen **with** the action, never
+    armed beforehand -- `a`/`d` (or a row button) send the default
+    (`tilrestart`) directly; `A`/`D` open this picker for the highlighted
+    row first. Enter on an option submits that row's verdict with the chosen
+    duration; ``Esc``/``q`` dismiss without sending anything. A modal screen
+    (centered overlay) because Textual cannot anchor a widget to a specific
+    ListView row -- the row is named in the title instead.
+    """
+
+    CSS = """
+    DurationPickerScreen { align: center middle; background: transparent; }
+    #picker-panel {
+        width: auto; max-width: 64; height: auto;
+        border: round $accent; background: $panel; padding: 0 1;
+    }
+    #picker-title { padding: 0 1; color: $text; }
+    #picker-durations { width: 24; height: auto; max-height: 12; }
+    """
+
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("q", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, request_id: str, decision: str, host: str) -> None:
+        super().__init__()
+        self.request_id = request_id
+        self.decision = decision
+        self.host = host
+
+    @property
+    def _verb(self) -> str:
+        return "Allow" if self.decision == DECISION_ALLOWED else "Deny"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="picker-panel"):
+            yield Static(
+                f"{self._verb} {escape(self.host)} — pick a duration",
+                id="picker-title",
+            )
+            yield OptionList(*SELECTABLE_DURATIONS, id="picker-durations")
+            yield Static("Enter sends · Esc cancels", id="picker-hint")
+
+    def on_mount(self) -> None:
+        ol = self.query_one("#picker-durations", OptionList)
+        # The default duration starts highlighted, so Enter alone repeats
+        # the bare-`a` outcome; arrows then Enter pick any other duration.
+        ol.highlighted = SELECTABLE_DURATIONS.index(DURATION_DEFAULT)
+        ol.focus()
+
+    def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Enter: submit the row's verdict with the chosen duration."""
+        duration = SELECTABLE_DURATIONS[event.option_index]
+        app = self.app
+        if isinstance(app, ConsentDeciderApp):
+            app._decide_id(self.request_id, self.decision, duration)
+        self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        """``Esc``/``q``: dismiss without sending anything."""
+        self.dismiss(None)
 
 
 class RulesScreen(Screen):
