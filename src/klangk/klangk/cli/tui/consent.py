@@ -563,11 +563,12 @@ class ConsentDeciderApp(App):
         ("a", "allow", "Allow"),
         ("d", "deny", "Deny"),
         ("r", "rules", "Rules"),
-        # q and Q both hide the viewer in persistent mode (the decider is
-        # persistent — it never quits on a key, only when the shell ends) and
-        # both quit in standalone (#2383).
+        # q, Q, and Escape all hide the viewer in persistent mode (the decider
+        # is persistent — it never quits on a key, only when the shell ends)
+        # and all quit in standalone (#2383).
         ("q", "q_key", "Quit"),
         ("Q", "q_key", "Quit"),
+        ("escape", "q_key", "Quit"),
     ]
 
     def __init__(  # noqa: PLR0913
@@ -625,6 +626,7 @@ class ConsentDeciderApp(App):
             ("r", "rules", "Rules"),
             ("q", "q_key", q_label),
             ("Q", "q_key", q_label),
+            ("escape", "q_key", q_label),
         ]
         self.refresh_bindings()
 
@@ -1055,12 +1057,14 @@ class ConsentDeciderApp(App):
         self.push_screen(RulesScreen())
 
     def action_q_key(self) -> None:
-        """``q``/``Q``: hide the popup viewer (persistent) or quit (standalone).
+        """``q``/``Q``/``Esc``: hide the popup viewer (persistent) or quit.
 
-        Persistent mode runs the decider inside a hidden tmux session; ``q``
-        and ``Q`` detach the viewer so the always-on decider is never quit by a
-        key (it dies only when the shell ends). Standalone ``q``/``Q`` quit as
-        before. Reopen the popup with the shell wrapper's reopen key.
+        Persistent mode runs the decider inside a hidden tmux session; ``q``,
+        ``Q``, and ``Escape`` detach the viewer so the always-on decider is
+        never quit by a key (it dies only when the shell ends). Standalone
+        quits as before. (On the rules screen ``Esc`` still returns to the
+        queue — that screen's own binding takes precedence.) Reopen the popup
+        with the shell wrapper's reopen key.
         """
         if self._persistent:
             self._hide_viewer()

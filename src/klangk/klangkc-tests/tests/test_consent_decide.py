@@ -2254,6 +2254,7 @@ class TestPersistentPopupRole:
         labels = {b[0]: b[2] for b in app.BINDINGS}
         assert labels["q"] == "Quit"
         assert labels["Q"] == "Quit"
+        assert labels["escape"] == "Quit"
 
     def test_apply_bindings_persistent_labels_q_hide(self):
         app = _make_app(
@@ -2262,9 +2263,10 @@ class TestPersistentPopupRole:
         app._apply_bindings()
         labels = {b[0]: b[2] for b in app.BINDINGS}
         assert labels["q"] == "Hide"
-        # Q hides too in persistent mode — the decider is persistent (it never
-        # quits on a key, only when the shell ends), so Q can't deregister it.
+        # Q and Escape hide too in persistent mode — the decider is persistent
+        # (it never quits on a key, only when the shell ends).
         assert labels["Q"] == "Hide"
+        assert labels["escape"] == "Hide"
 
     def test_q_key_standalone_exits(self):
         # No popup context -> q quits immediately (today's behaviour).
@@ -2288,6 +2290,34 @@ class TestPersistentPopupRole:
         app.action_q_key()
         assert exited == []
         assert ran == [build_detach_command("/tmp/k.sock", "klangk-consent-w")]
+
+    async def test_escape_hides_in_persistent_mode(self, monkeypatch):
+        # Escape detaches the viewer (hides) and does NOT quit/deregister.
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        exited = []
+        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
+        ran: list[list[str]] = []
+        monkeypatch.setattr(
+            tui_consent.subprocess, "run", lambda cmd, **kw: ran.append(cmd)
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+        assert exited == []
+        assert ran == [build_detach_command("/tmp/k.sock", "klangk-consent-w")]
+
+    async def test_escape_quits_in_standalone_mode(self):
+        app = _make_app()
+        exited = []
+        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+        assert exited == [True]
 
     def test_hide_viewer_noop_without_popup(self, monkeypatch):
         from unittest.mock import MagicMock
