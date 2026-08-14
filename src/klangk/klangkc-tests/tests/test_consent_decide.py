@@ -1043,6 +1043,55 @@ class TestAppActions:
             countdown = app.query_one("#pause-countdown", Static)
             assert "paused until restart" in str(countdown.content)
 
+    async def test_countdown_shows_live_pause(self):
+        # A live finite window counts down next to the buttons.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._pause_duration = "15m"
+            app.controller._clock = lambda: 100.0  # deterministic countdown
+            app.controller.apply_frame(
+                _rules_frame(paused={"paused": True, "until": 200.0})
+            )
+            app._refresh()
+            await pilot.pause()
+            countdown = app.query_one("#pause-countdown", Static)
+            assert "paused 1m" in str(countdown.content)
+            assert app.query_one("#pause-15m", Button).has_class(
+                "pause-active"
+            )
+
+    async def test_expired_pause_clears_countdown_and_highlight(self):
+        # #2498: a finite window that elapsed locally renders no pause state
+        # -- no stale "paused 0s", and the Unpaused button re-lights -- without
+        # waiting for a server frame (the 1s refresh drives it).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._pause_duration = "15m"
+            app.controller._clock = lambda: 300.0  # past until=200
+            app.controller.apply_frame(
+                _rules_frame(paused={"paused": True, "until": 200.0})
+            )
+            app._refresh()
+            await pilot.pause()
+            countdown = app.query_one("#pause-countdown", Static)
+            assert str(countdown.content) == ""
+            assert app.query_one("#pause-none", Button).has_class(
+                "pause-active"
+            )
+            assert not app.query_one("#pause-15m", Button).has_class(
+                "pause-active"
+            )
+            # And the stale window doesn't re-light when a post-expiry frame
+            # (paused=None) eventually lands.
+            app.controller.apply_frame(_rules_frame())
+            app._refresh()
+            await pilot.pause()
+            assert app.query_one("#pause-none", Button).has_class(
+                "pause-active"
+            )
+
     async def test_pump_flashes_failed_pause_ack(self):
         # A pause_ack with ok=False flashes so the decider knows it didn't take.
         app = _make_app()
@@ -1770,6 +1819,65 @@ class TestControllerRulesExpiry:
         )
         assert c.pause_remaining(rules) is None
 
+    def test_pause_expired_timed_window_elapsed(self):
+        # #2498: a finite until in the past is expired -- the views must
+        # prune it locally (the server never re-broadcasts on natural expiry).
+        c = ConsentDeciderController(clock=lambda: 150.0)
+        rules = EgressRules(
+            workspace_id="wsid",
+            allow_list=(),
+            allowed=(),
+            denied=(),
+            paused=PauseState(until=100.0),
+        )
+        assert c.pause_expired(rules) is True
+
+    def test_pause_expired_at_boundary(self):
+        # until == clock counts as elapsed (nothing left to count down).
+        c = ConsentDeciderController(clock=lambda: 150.0)
+        rules = EgressRules(
+            workspace_id="wsid",
+            allow_list=(),
+            allowed=(),
+            denied=(),
+            paused=PauseState(until=150.0),
+        )
+        assert c.pause_expired(rules) is True
+
+    def test_pause_expired_live_window_is_false(self):
+        c = ConsentDeciderController(clock=lambda: 150.0)
+        rules = EgressRules(
+            workspace_id="wsid",
+            allow_list=(),
+            allowed=(),
+            denied=(),
+            paused=PauseState(until=200.0),
+        )
+        assert c.pause_expired(rules) is False
+
+    def test_pause_expired_indefinite_is_false(self):
+        # "until restart" has no window to elapse -- it must keep rendering.
+        c = ConsentDeciderController()
+        rules = EgressRules(
+            workspace_id="wsid",
+            allow_list=(),
+            allowed=(),
+            denied=(),
+            paused=PauseState(until=None),
+        )
+        assert c.pause_expired(rules) is False
+
+    def test_pause_expired_not_paused_is_false(self):
+        c = ConsentDeciderController()
+        rules = EgressRules(
+            workspace_id="wsid",
+            allow_list=(),
+            allowed=(),
+            denied=(),
+            paused=None,
+        )
+        assert c.pause_expired(rules) is False
+
 
 def test_fmt_duration_tiers():
     assert tui_consent._fmt_duration(5) == "5s"
@@ -2037,6 +2145,21 @@ class TestRulesScreen:
             await pilot.pause()
             body = str(app.screen.query_one("#rules-content", Static).content)
             assert "paused until restart" in body
+
+    async def test_screen_hides_expired_pause(self):
+        # #2498: a finite window that elapsed locally renders no Pause section
+        # (no stale "resumes in 0s") -- cleared by the 1s refresh, not a frame.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller._clock = lambda: 300.0  # past until=200
+            app.controller.apply_frame(
+                _rules_frame(paused={"paused": True, "until": 200.0})
+            )
+            app.action_rules()
+            await pilot.pause()
+            body = str(app.screen.query_one("#rules-content", Static).content)
+            assert "Filtering paused" not in body
+            assert "[bold]Pause[/bold]" not in body
 
     async def test_screen_status_shows_held_count(self):
         app = _make_app()
