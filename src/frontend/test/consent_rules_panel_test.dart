@@ -66,6 +66,7 @@ Map<String, dynamic> _ruleJson({
 Map<String, dynamic> _rulesFrame({
   String workspaceId = 'ws-1',
   List<String> allowList = const [],
+  List<String> rejectList = const [],
   List<Map<String, dynamic>> allowed = const [],
   List<Map<String, dynamic>> denied = const [],
   Object? paused,
@@ -74,6 +75,7 @@ Map<String, dynamic> _rulesFrame({
       'type': 'egress_rules',
       'workspace_id': workspaceId,
       'allow_list': allowList,
+      'reject_list': rejectList,
       'allowed': allowed,
       'denied': denied,
       if (paused != null) 'paused': paused,
@@ -82,11 +84,16 @@ Map<String, dynamic> _rulesFrame({
 DateTime _at(int epochSec) =>
     DateTime.fromMillisecondsSinceEpoch(epochSec * 1000, isUtc: true);
 
-ConsentDeciderService _serviceWithChannel(_FakeChannel channel,
-    {DateTime Function()? clock}) {
+ConsentDeciderService _serviceWithChannel(
+  _FakeChannel channel, {
+  DateTime Function()? clock,
+}) {
   ConsentDeciderService.testChannelFactory = (_) => channel;
   return ConsentDeciderService(
-      workspaceId: 'ws', token: 't', clock: clock ?? _wallClock);
+    workspaceId: 'ws',
+    token: 't',
+    clock: clock ?? _wallClock,
+  );
 }
 
 DateTime _wallClock() => DateTime.now();
@@ -108,18 +115,21 @@ void main() {
 
   group('ruleExpiryLabel', () {
     ConsentRule rule(String? duration, {double? decidedAt}) => ConsentRule(
-        id: 'r',
-        destHost: 'h',
-        decision: 'allowed',
-        duration: duration,
-        decidedAt: decidedAt);
+          id: 'r',
+          destHost: 'h',
+          decision: 'allowed',
+          duration: duration,
+          decidedAt: decidedAt,
+        );
 
     test('forever', () {
       expect(ruleExpiryLabel(rule('forever'), null, deny: false), 'forever');
     });
     test('tilrestart', () {
-      expect(ruleExpiryLabel(rule('tilrestart'), null, deny: false),
-          'until restart');
+      expect(
+        ruleExpiryLabel(rule('tilrestart'), null, deny: false),
+        'until restart',
+      );
     });
     test('allow timed -> expires in', () {
       expect(ruleExpiryLabel(rule('5m'), 300, deny: false), 'expires in 5m');
@@ -135,27 +145,32 @@ void main() {
   group('hasLiveCountdown', () {
     int? remaining(ConsentRule r) => r.duration == '5m' ? 5 : null;
     final timed = ConsentRule(
-        id: 'a',
-        destHost: 'h',
-        decision: 'allowed',
-        duration: '5m',
-        decidedAt: 1.0);
+      id: 'a',
+      destHost: 'h',
+      decision: 'allowed',
+      duration: '5m',
+      decidedAt: 1.0,
+    );
     final forever = ConsentRule(
-        id: 'b',
-        destHost: 'h',
-        decision: 'allowed',
-        duration: 'forever',
-        decidedAt: 1.0);
+      id: 'b',
+      destHost: 'h',
+      decision: 'allowed',
+      duration: 'forever',
+      decidedAt: 1.0,
+    );
     EgressRules rules(List<ConsentRule> allowed, {EgressPause? paused}) =>
         EgressRules(
-            workspaceId: 'w',
-            allowList: const [],
-            allowed: allowed,
-            denied: const [],
-            paused: paused);
+          workspaceId: 'w',
+          allowList: const [],
+          allowed: allowed,
+          denied: const [],
+          paused: paused,
+        );
 
-    test('null rules -> false',
-        () => expect(hasLiveCountdown(null, remaining), isFalse));
+    test(
+      'null rules -> false',
+      () => expect(hasLiveCountdown(null, remaining), isFalse),
+    );
     test('only forever/tilrestart rules -> false', () {
       expect(hasLiveCountdown(rules([forever]), remaining), isFalse);
     });
@@ -164,16 +179,19 @@ void main() {
     });
     test('a pause -> true', () {
       expect(
-          hasLiveCountdown(
-              rules([forever], paused: const EgressPause(until: 1.0)),
-              remaining),
-          isTrue);
+        hasLiveCountdown(
+          rules([forever], paused: const EgressPause(until: 1.0)),
+          remaining,
+        ),
+        isTrue,
+      );
     });
   });
 
   group('ConsentRulesPanel', () {
-    testWidgets('shows the loading state before the first frame',
-        (tester) async {
+    testWidgets('shows the loading state before the first frame', (
+      tester,
+    ) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch);
       svc.connect();
@@ -182,35 +200,49 @@ void main() {
       svc.dispose();
     });
 
-    testWidgets('renders allow-list + allows + denies sections with labels',
-        (tester) async {
+    testWidgets('renders allow-list + allows + denies sections with labels', (
+      tester,
+    ) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch, clock: () => _at(1000));
       svc.connect();
       await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
-      ch.serverSend(_rulesFrame(
-        allowList: ['github.com'],
-        allowed: [
-          _ruleJson(id: 'a', host: 'f.io', duration: 'forever', decidedAt: 100),
-          _ruleJson(
-              id: 'b', host: 't.io', duration: 'tilrestart', decidedAt: 100),
-          _ruleJson(id: 'c', host: 'm.io', duration: '5m', decidedAt: 1000),
-          _ruleJson(
+      ch.serverSend(
+        _rulesFrame(
+          allowList: ['github.com'],
+          allowed: [
+            _ruleJson(
+              id: 'a',
+              host: 'f.io',
+              duration: 'forever',
+              decidedAt: 100,
+            ),
+            _ruleJson(
+              id: 'b',
+              host: 't.io',
+              duration: 'tilrestart',
+              decidedAt: 100,
+            ),
+            _ruleJson(id: 'c', host: 'm.io', duration: '5m', decidedAt: 1000),
+            _ruleJson(
               id: 'd',
               host: 'n.io',
               port: null,
               proc: null,
               duration: '5m',
-              decidedAt: null),
-        ],
-        denied: const [],
-      ));
+              decidedAt: null,
+            ),
+          ],
+          denied: const [],
+        ),
+      );
       await tester.pump();
       expect(find.text('Static allow-list'), findsOneWidget);
       expect(find.text('github.com'), findsOneWidget);
       expect(find.text('Active allows (4)'), findsOneWidget);
       expect(find.text('Active denies (0)'), findsOneWidget);
-      expect(find.text('(none)'), findsOneWidget); // empty denies
+      // empty denies + empty reject-list (the frame carries no reject_list)
+      expect(find.text('(none)'), findsNWidgets(2));
       // four revocable allow rows (label branches: forever/tilrestart/timed/empty)
       expect(find.byKey(const ValueKey('revoke-a')), findsOneWidget);
       expect(find.byKey(const ValueKey('revoke-b')), findsOneWidget);
@@ -220,14 +252,18 @@ void main() {
       svc.dispose();
     });
 
-    testWidgets('revoke confirms then sends (with process in the prompt)',
-        (tester) async {
+    testWidgets('revoke confirms then sends (with process in the prompt)', (
+      tester,
+    ) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch);
       svc.connect();
       await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
-      ch.serverSend(_rulesFrame(
-          allowed: [_ruleJson(id: 'v1', host: 'a.io', proc: 'curl')]));
+      ch.serverSend(
+        _rulesFrame(
+          allowed: [_ruleJson(id: 'v1', host: 'a.io', proc: 'curl')],
+        ),
+      );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('revoke-v1')));
       await tester.pump();
@@ -237,8 +273,10 @@ void main() {
       expect(find.textContaining('(curl)'), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
       await tester.pump();
-      expect(jsonDecode(ch.sent.last as String),
-          {'type': 'revoke', 'request_id': 'v1'});
+      expect(jsonDecode(ch.sent.last as String), {
+        'type': 'revoke',
+        'request_id': 'v1',
+      });
       svc.dispose();
     });
 
@@ -247,8 +285,11 @@ void main() {
       final svc = _serviceWithChannel(ch);
       svc.connect();
       await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
-      ch.serverSend(_rulesFrame(
-          allowed: [_ruleJson(id: 'v2', host: 'b.io', proc: null)]));
+      ch.serverSend(
+        _rulesFrame(
+          allowed: [_ruleJson(id: 'v2', host: 'b.io', proc: null)],
+        ),
+      );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('revoke-v2')));
       await tester.pump();
@@ -256,8 +297,10 @@ void main() {
       expect(find.textContaining('b.io:443'), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
       await tester.pump();
-      expect(jsonDecode(ch.sent.last as String),
-          {'type': 'revoke', 'request_id': 'v2'});
+      expect(jsonDecode(ch.sent.last as String), {
+        'type': 'revoke',
+        'request_id': 'v2',
+      });
       svc.dispose();
     });
 
@@ -290,8 +333,9 @@ void main() {
       svc.dispose();
     });
 
-    testWidgets('renders the pause section (countdown then until-restart)',
-        (tester) async {
+    testWidgets('renders the pause section (countdown then until-restart)', (
+      tester,
+    ) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch, clock: () => _at(1000));
       svc.connect();
@@ -307,115 +351,137 @@ void main() {
     });
 
     testWidgets(
-        'pause controls render once rules land; highlight follows the last acked request (#2494)',
-        (tester) async {
-      final ch = _FakeChannel();
-      final svc = _serviceWithChannel(ch);
-      svc.connect();
-      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
-      // No controls before the first egress_rules frame (loading state).
-      expect(find.text('Pause prompts'), findsNothing);
-      ch.serverSend(_rulesFrame(allowList: ['a.io']));
-      await tester.pump();
+      'pause controls render once rules land; highlight follows the last acked request (#2494)',
+      (tester) async {
+        final ch = _FakeChannel();
+        final svc = _serviceWithChannel(ch);
+        svc.connect();
+        await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+        // No controls before the first egress_rules frame (loading state).
+        expect(find.text('Pause prompts'), findsNothing);
+        ch.serverSend(_rulesFrame(allowList: ['a.io']));
+        await tester.pump();
 
-      // All four buttons render (Unpause / Pause 15m / 1h / 1d, mirroring
-      // the TUI pause bar); nothing is paused so there is no status line.
-      expect(find.text('Pause prompts'), findsOneWidget);
-      expect(find.text('Unpause'), findsOneWidget);
-      expect(find.text('Pause 15m'), findsOneWidget);
-      expect(find.text('Pause 1h'), findsOneWidget);
-      expect(find.text('Pause 1d'), findsOneWidget);
-      expect(find.textContaining('Filtering paused'), findsNothing);
+        // All four buttons render (Unpause / Pause 15m / 1h / 1d, mirroring
+        // the TUI pause bar); nothing is paused so there is no status line.
+        expect(find.text('Pause prompts'), findsOneWidget);
+        expect(find.text('Unpause'), findsOneWidget);
+        expect(find.text('Pause 15m'), findsOneWidget);
+        expect(find.text('Pause 1h'), findsOneWidget);
+        expect(find.text('Pause 1d'), findsOneWidget);
+        expect(find.textContaining('Filtering paused'), findsNothing);
 
-      // Unpause is the active (filled) button when nothing was last paused.
-      expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
-          isA<FilledButton>());
-      expect(tester.widget(find.byKey(const ValueKey('pause-15m'))),
-          isA<OutlinedButton>());
+        // Unpause is the active (filled) button when nothing was last paused.
+        expect(
+          tester.widget(find.byKey(const ValueKey('pause-none'))),
+          isA<FilledButton>(),
+        );
+        expect(
+          tester.widget(find.byKey(const ValueKey('pause-15m'))),
+          isA<OutlinedButton>(),
+        );
 
-      // Tapping the active button sends too (unpause is idempotent
-      // server-side) and keeps Unpause as the last request.
-      await tester.tap(find.byKey(const ValueKey('pause-none')));
-      await tester.pump();
-      expect(jsonDecode(ch.sent.last as String), {'type': 'unpause'});
+        // Tapping the active button sends too (unpause is idempotent
+        // server-side) and keeps Unpause as the last request.
+        await tester.tap(find.byKey(const ValueKey('pause-none')));
+        await tester.pump();
+        expect(jsonDecode(ch.sent.last as String), {'type': 'unpause'});
 
-      // Tapping Pause 15m sends the frame and moves the highlight.
-      await tester.tap(find.byKey(const ValueKey('pause-15m')));
-      await tester.pump();
-      expect(jsonDecode(ch.sent.last as String),
-          {'type': 'pause', 'duration': '15m'});
-      expect(tester.widget(find.byKey(const ValueKey('pause-15m'))),
-          isA<FilledButton>());
-      expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
-          isA<OutlinedButton>());
+        // Tapping Pause 15m sends the frame and moves the highlight.
+        await tester.tap(find.byKey(const ValueKey('pause-15m')));
+        await tester.pump();
+        expect(jsonDecode(ch.sent.last as String), {
+          'type': 'pause',
+          'duration': '15m',
+        });
+        expect(
+          tester.widget(find.byKey(const ValueKey('pause-15m'))),
+          isA<FilledButton>(),
+        );
+        expect(
+          tester.widget(find.byKey(const ValueKey('pause-none'))),
+          isA<OutlinedButton>(),
+        );
 
-      // A refused pause (nack) reverts the highlight: the button must not
-      // claim a window the server never set.
-      ch.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
-      await tester.pump();
-      expect(find.text('pause failed'), findsOneWidget);
-      expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
-          isA<FilledButton>());
-      expect(tester.widget(find.byKey(const ValueKey('pause-15m'))),
-          isA<OutlinedButton>());
+        // A refused pause (nack) reverts the highlight: the button must not
+        // claim a window the server never set.
+        ch.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
+        await tester.pump();
+        expect(find.text('pause failed'), findsOneWidget);
+        expect(
+          tester.widget(find.byKey(const ValueKey('pause-none'))),
+          isA<FilledButton>(),
+        );
+        expect(
+          tester.widget(find.byKey(const ValueKey('pause-15m'))),
+          isA<OutlinedButton>(),
+        );
 
-      // A successful pause applies from the ack alone (the egress_rules
-      // re-broadcast is best-effort server-side): the status line renders.
-      await tester.tap(find.byKey(const ValueKey('pause-1h')));
-      await tester.pump();
-      expect(jsonDecode(ch.sent.last as String),
-          {'type': 'pause', 'duration': '1h'});
-      ch.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
-      await tester.pump();
-      expect(find.textContaining('Filtering paused'), findsOneWidget);
+        // A successful pause applies from the ack alone (the egress_rules
+        // re-broadcast is best-effort server-side): the status line renders.
+        await tester.tap(find.byKey(const ValueKey('pause-1h')));
+        await tester.pump();
+        expect(jsonDecode(ch.sent.last as String), {
+          'type': 'pause',
+          'duration': '1h',
+        });
+        ch.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
+        await tester.pump();
+        expect(find.textContaining('Filtering paused'), findsOneWidget);
 
-      // Tapping Unpause sends the frame; a successful ack clears the status.
-      await tester.tap(find.byKey(const ValueKey('pause-none')));
-      await tester.pump();
-      expect(jsonDecode(ch.sent.last as String), {'type': 'unpause'});
-      ch.serverSend({'type': 'pause_ack', 'ok': true, 'until': null});
-      await tester.pump();
-      expect(find.textContaining('Filtering paused'), findsNothing);
-      expect(tester.widget(find.byKey(const ValueKey('pause-none'))),
-          isA<FilledButton>());
-      svc.dispose();
-    });
+        // Tapping Unpause sends the frame; a successful ack clears the status.
+        await tester.tap(find.byKey(const ValueKey('pause-none')));
+        await tester.pump();
+        expect(jsonDecode(ch.sent.last as String), {'type': 'unpause'});
+        ch.serverSend({'type': 'pause_ack', 'ok': true, 'until': null});
+        await tester.pump();
+        expect(find.textContaining('Filtering paused'), findsNothing);
+        expect(
+          tester.widget(find.byKey(const ValueKey('pause-none'))),
+          isA<FilledButton>(),
+        );
+        svc.dispose();
+      },
+    );
 
     testWidgets(
-        'a self-expired pause disappears on the next tick (never "resumes in 0s")',
-        (tester) async {
-      var now = _at(1000); // epoch seconds
-      final ch = _FakeChannel();
-      final svc = _serviceWithChannel(ch, clock: () => now);
-      svc.connect();
-      await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
-      // Paused until t=1300; now t=1000 -> live countdown shows.
-      ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
-      await tester.pump();
-      expect(find.textContaining('Filtering paused'), findsOneWidget);
+      'a self-expired pause disappears on the next tick (never "resumes in 0s")',
+      (tester) async {
+        var now = _at(1000); // epoch seconds
+        final ch = _FakeChannel();
+        final svc = _serviceWithChannel(ch, clock: () => now);
+        svc.connect();
+        await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+        // Paused until t=1300; now t=1000 -> live countdown shows.
+        ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
+        await tester.pump();
+        expect(find.textContaining('Filtering paused'), findsOneWidget);
 
-      // Past the window: before the 1s tick fires the (cached) status line
-      // still renders; the tick must prune it, not freeze at "resumes in 0s"
-      // -- the server only re-broadcasts on the next discrete event.
-      now = _at(1400);
-      await tester.pump();
-      expect(find.textContaining('Filtering paused'), findsOneWidget);
-      await tester.pump(const Duration(seconds: 1));
-      expect(find.textContaining('Filtering paused'), findsNothing);
-      // The controls stay rendered for the next request.
-      expect(find.text('Pause prompts'), findsOneWidget);
-      svc.dispose();
-    });
+        // Past the window: before the 1s tick fires the (cached) status line
+        // still renders; the tick must prune it, not freeze at "resumes in 0s"
+        // -- the server only re-broadcasts on the next discrete event.
+        now = _at(1400);
+        await tester.pump();
+        expect(find.textContaining('Filtering paused'), findsOneWidget);
+        await tester.pump(const Duration(seconds: 1));
+        expect(find.textContaining('Filtering paused'), findsNothing);
+        // The controls stay rendered for the next request.
+        expect(find.text('Pause prompts'), findsOneWidget);
+        svc.dispose();
+      },
+    );
 
-    testWidgets('pause tap while disconnected flashes instead of sending',
-        (tester) async {
+    testWidgets('pause tap while disconnected flashes instead of sending', (
+      tester,
+    ) async {
       final ch = _FakeChannel();
       ConsentDeciderService.testChannelFactory = (_) => ch;
       final svc = ConsentDeciderService(
-          workspaceId: 'ws',
-          token: 't',
-          // Long delay so the reconnect Timer never fires during the test.
-          reconnectDelays: const [Duration(minutes: 5)]);
+        workspaceId: 'ws',
+        token: 't',
+        // Long delay so the reconnect Timer never fires during the test.
+        reconnectDelays: const [Duration(minutes: 5)],
+      );
       svc.connect();
       await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
       ch.serverSend(_rulesFrame(allowList: ['a.io']));
@@ -430,8 +496,9 @@ void main() {
       svc.dispose();
     });
 
-    testWidgets('a failed pause_ack flashes via the service flash row',
-        (tester) async {
+    testWidgets('a failed pause_ack flashes via the service flash row', (
+      tester,
+    ) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch);
       svc.connect();
@@ -446,14 +513,16 @@ void main() {
       svc.dispose();
     });
 
-    testWidgets('a revoked row stays until revoke_ack succeeds',
-        (tester) async {
+    testWidgets('a revoked row stays until revoke_ack succeeds', (
+      tester,
+    ) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch);
       svc.connect();
       await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
       ch.serverSend(
-          _rulesFrame(allowed: [_ruleJson(id: 'v1', decidedAt: 100)]));
+        _rulesFrame(allowed: [_ruleJson(id: 'v1', decidedAt: 100)]),
+      );
       await tester.pump();
       expect(find.byKey(const ValueKey('revoke-v1')), findsOneWidget);
       // confirm revoke -> frame sent, but the row stays (never optimistic)
@@ -462,8 +531,10 @@ void main() {
       await tester.pump();
       await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
       await tester.pump();
-      expect(jsonDecode(ch.sent.last as String),
-          {'type': 'revoke', 'request_id': 'v1'});
+      expect(jsonDecode(ch.sent.last as String), {
+        'type': 'revoke',
+        'request_id': 'v1',
+      });
       expect(find.byKey(const ValueKey('revoke-v1')), findsOneWidget);
       // server acks success -> row leaves
       ch.serverSend({'type': 'revoke_ack', 'request_id': 'v1', 'ok': true});
@@ -485,14 +556,54 @@ void main() {
       svc.dispose();
     });
 
-    testWidgets('confirm after the panel is disposed does not send (#2393)',
-        (tester) async {
+    testWidgets(
+      'static reject-list section renders below the allow-list and is read-only (#2503)',
+      (tester) async {
+        final ch = _FakeChannel();
+        final svc = _serviceWithChannel(ch);
+        svc.connect();
+        await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
+        ch.serverSend(
+          _rulesFrame(
+            allowList: ['github.com'],
+            rejectList: ['bad.io', 'evil.io:443'],
+          ),
+        );
+        await tester.pump();
+        // Both static sections render, reject-list after the allow-list.
+        expect(find.text('Static allow-list'), findsOneWidget);
+        expect(find.text('Static reject-list'), findsOneWidget);
+        expect(find.text('bad.io'), findsOneWidget);
+        expect(find.text('evil.io:443'), findsOneWidget);
+        final allowIdx = tester
+            .widgetList<Text>(find.byType(Text))
+            .toList()
+            .indexWhere((t) => t.data == 'Static allow-list');
+        final rejectIdx = tester
+            .widgetList<Text>(find.byType(Text))
+            .toList()
+            .indexWhere((t) => t.data == 'Static reject-list');
+        expect(rejectIdx, greaterThan(allowIdx));
+        // Workspace config, not consent rows: no revoke affordance, and an
+        // empty list shows the shared (none) placeholder.
+        expect(find.byKey(const ValueKey('revoke-bad.io')), findsNothing);
+        ch.serverSend(_rulesFrame(rejectList: []));
+        await tester.pump();
+        expect(find.text('Static reject-list'), findsOneWidget);
+        svc.dispose();
+      },
+    );
+
+    testWidgets('confirm after the panel is disposed does not send (#2393)', (
+      tester,
+    ) async {
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch);
       svc.connect();
       await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
       ch.serverSend(
-          _rulesFrame(allowed: [_ruleJson(id: 'v1', decidedAt: 100)]));
+        _rulesFrame(allowed: [_ruleJson(id: 'v1', decidedAt: 100)]),
+      );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('revoke-v1')));
       await tester.pump();
@@ -512,11 +623,12 @@ void main() {
       final ch = _FakeChannel();
       ConsentDeciderService.testChannelFactory = (_) => ch;
       final svc = ConsentDeciderService(
-          workspaceId: 'ws',
-          token: 't',
-          // Long delay so the reconnect Timer never fires during the test
-          // (dispose cancels it regardless).
-          reconnectDelays: const [Duration(minutes: 5)]);
+        workspaceId: 'ws',
+        token: 't',
+        // Long delay so the reconnect Timer never fires during the test
+        // (dispose cancels it regardless).
+        reconnectDelays: const [Duration(minutes: 5)],
+      );
       svc.connect();
       await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
       ch.serverSend(_rulesFrame(allowList: ['a.io']));
@@ -528,8 +640,9 @@ void main() {
       svc.dispose();
     });
 
-    testWidgets('an expired timed rule disappears on the next tick (#2467)',
-        (tester) async {
+    testWidgets('an expired timed rule disappears on the next tick (#2467)', (
+      tester,
+    ) async {
       var now = _at(1000); // epoch seconds
       final ch = _FakeChannel();
       final svc = _serviceWithChannel(ch, clock: () => now);
@@ -537,11 +650,24 @@ void main() {
       await tester.pumpWidget(_wrap(ConsentRulesPanel(service: svc)));
       // A timed allow (decided now, expires in 5m / at t=1300) + a forever
       // allow (no expiry).
-      ch.serverSend(_rulesFrame(allowed: [
-        _ruleJson(id: 'timed', host: 't.io', duration: '5m', decidedAt: 1000),
-        _ruleJson(
-            id: 'forever', host: 'f.io', duration: 'forever', decidedAt: 1.0),
-      ]));
+      ch.serverSend(
+        _rulesFrame(
+          allowed: [
+            _ruleJson(
+              id: 'timed',
+              host: 't.io',
+              duration: '5m',
+              decidedAt: 1000,
+            ),
+            _ruleJson(
+              id: 'forever',
+              host: 'f.io',
+              duration: 'forever',
+              decidedAt: 1.0,
+            ),
+          ],
+        ),
+      );
       await tester.pump();
       expect(find.text('Active allows (2)'), findsOneWidget);
       expect(find.byKey(const ValueKey('revoke-timed')), findsOneWidget);

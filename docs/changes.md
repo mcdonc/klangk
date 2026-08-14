@@ -32,6 +32,11 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Static reject list on the Net Rules tab (#2503).** The tab now shows
+  the workspace's `rejected_domains` (names the network sidecar blocks
+  unconditionally, e.g. from a _deny forever_ verdict) in a read-only
+  section below the static allow-list. Editing stays in the workspace
+  settings panel.
 - **Pause egress filtering from the web UI (#2494).** The workspace page's
   **Net Rules** tab now has a pause control (Unpause / Pause 15m / 1h / 1d)
   that silences consent prompts workspace-wide for a window, matching the

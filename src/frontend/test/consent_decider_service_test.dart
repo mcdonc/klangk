@@ -69,12 +69,13 @@ class _ThrowingSink extends Fake implements WebSocketSink {
   Future close([int? code, String? reason]) async {}
 }
 
-Map<String, dynamic> _request(
-        {String id = 'r1',
-        String host = 'example.com',
-        int port = 443,
-        String? proc = 'curl',
-        double at = 1000.0}) =>
+Map<String, dynamic> _request({
+  String id = 'r1',
+  String host = 'example.com',
+  int port = 443,
+  String? proc = 'curl',
+  double at = 1000.0,
+}) =>
     {
       'id': id,
       'workspace_id': 'ws-1',
@@ -108,6 +109,7 @@ Map<String, dynamic> _ruleJson({
 Map<String, dynamic> _rulesFrame({
   String workspaceId = 'ws-1',
   List<String> allowList = const [],
+  List<String> rejectList = const [],
   List<Map<String, dynamic>> allowed = const [],
   List<Map<String, dynamic>> denied = const [],
   Object? paused,
@@ -116,6 +118,7 @@ Map<String, dynamic> _rulesFrame({
       'type': 'egress_rules',
       'workspace_id': workspaceId,
       'allow_list': allowList,
+      'reject_list': rejectList,
       'allowed': allowed,
       'denied': denied,
       if (paused != null) 'paused': paused,
@@ -126,11 +129,9 @@ void main() {
     test('egress_request adds the request', () {
       final pending = <String, PendingRequest>{};
       final res = ConsentDeciderService.applyFrame(
-          pending,
-          jsonEncode({
-            'type': 'egress_request',
-            'request': _request(),
-          }));
+        pending,
+        jsonEncode({'type': 'egress_request', 'request': _request()}),
+      );
       expect(res.outcome, ConsentFrameOutcome.added);
       expect(res.request!.id, 'r1');
       expect(pending, contains('r1'));
@@ -140,10 +141,12 @@ void main() {
 
     test('egress_resolved removes the request', () {
       final pending = <String, PendingRequest>{
-        'r1': PendingRequest(id: 'r1', destHost: 'h', requestedAt: 0)
+        'r1': PendingRequest(id: 'r1', destHost: 'h', requestedAt: 0),
       };
       final res = ConsentDeciderService.applyFrame(
-          pending, jsonEncode({'type': 'egress_resolved', 'request_id': 'r1'}));
+        pending,
+        jsonEncode({'type': 'egress_resolved', 'request_id': 'r1'}),
+      );
       expect(res.outcome, ConsentFrameOutcome.resolved);
       expect(res.resolvedId, 'r1');
       expect(pending, isNot(contains('r1')));
@@ -152,14 +155,18 @@ void main() {
     test('pong is non-mutating', () {
       final pending = <String, PendingRequest>{};
       final res = ConsentDeciderService.applyFrame(
-          pending, jsonEncode({'type': 'pong'}));
+        pending,
+        jsonEncode({'type': 'pong'}),
+      );
       expect(res.outcome, ConsentFrameOutcome.pong);
       expect(pending, isEmpty);
     });
 
     test('error surfaces the message', () {
       final res = ConsentDeciderService.applyFrame(
-          {}, jsonEncode({'type': 'error', 'message': 'bad verdict'}));
+        {},
+        jsonEncode({'type': 'error', 'message': 'bad verdict'}),
+      );
       expect(res.outcome, ConsentFrameOutcome.error);
       expect(res.message, 'bad verdict');
     });
@@ -173,14 +180,18 @@ void main() {
 
     test('unknown type is ignored', () {
       final res = ConsentDeciderService.applyFrame(
-          {}, jsonEncode({'type': 'totally_unknown', 'x': 1}));
+        {},
+        jsonEncode({'type': 'totally_unknown', 'x': 1}),
+      );
       expect(res.outcome, ConsentFrameOutcome.ignored);
     });
 
     test('egress_request with a bad request payload is ignored', () {
       final pending = <String, PendingRequest>{};
       final res = ConsentDeciderService.applyFrame(
-          pending, jsonEncode({'type': 'egress_request', 'request': {}}));
+        pending,
+        jsonEncode({'type': 'egress_request', 'request': {}}),
+      );
       expect(res.outcome, ConsentFrameOutcome.ignored);
       expect(pending, isEmpty);
     });
@@ -260,6 +271,18 @@ void main() {
 
   group('ConsentRule equality', () {
     final a = ConsentRule(
+      id: 'v1',
+      destHost: 'h',
+      destPort: 443,
+      processName: 'curl',
+      decision: 'allowed',
+      duration: '5m',
+      decidedAt: 1.0,
+      decidedBy: 'alice',
+    );
+
+    test('equal on all fields with matching hashCode', () {
+      final b = ConsentRule(
         id: 'v1',
         destHost: 'h',
         destPort: 443,
@@ -267,39 +290,35 @@ void main() {
         decision: 'allowed',
         duration: '5m',
         decidedAt: 1.0,
-        decidedBy: 'alice');
-
-    test('equal on all fields with matching hashCode', () {
-      final b = ConsentRule(
-          id: 'v1',
-          destHost: 'h',
-          destPort: 443,
-          processName: 'curl',
-          decision: 'allowed',
-          duration: '5m',
-          decidedAt: 1.0,
-          decidedBy: 'alice');
+        decidedBy: 'alice',
+      );
       expect(a, equals(b));
       expect(a.hashCode, b.hashCode);
     });
 
     test('a differing field breaks equality', () {
       expect(
-          a,
-          isNot(equals(
-              ConsentRule(id: 'v2', destHost: 'h', decision: 'allowed'))));
+        a,
+        isNot(
+          equals(ConsentRule(id: 'v2', destHost: 'h', decision: 'allowed')),
+        ),
+      );
       expect(
-          a,
-          isNot(equals(
-              ConsentRule(id: 'v1', destHost: 'h2', decision: 'allowed'))));
+        a,
+        isNot(
+          equals(ConsentRule(id: 'v1', destHost: 'h2', decision: 'allowed')),
+        ),
+      );
       expect(a, isNot(equals('not a rule')));
     });
   });
 
   group('EgressRules.fromJson', () {
     test('returns null without a workspace_id', () {
-      expect(EgressRules.fromJson({'type': 'egress_rules', 'allow_list': []}),
-          isNull);
+      expect(
+        EgressRules.fromJson({'type': 'egress_rules', 'allow_list': []}),
+        isNull,
+      );
     });
 
     test('non-list allow_list/allowed/denied degrade to empty', () {
@@ -322,7 +341,7 @@ void main() {
         'allowed': [
           {'id': 'ok', 'dest_host': 'h', 'decision': 'allowed'},
           'badrow',
-          5
+          5,
         ],
       })!;
       expect(r.allowList, ['a.io']);
@@ -338,13 +357,13 @@ void main() {
             'id': 'old',
             'dest_host': 'h',
             'decision': 'allowed',
-            'decided_at': 10.0
+            'decided_at': 10.0,
           },
           {
             'id': 'new',
             'dest_host': 'h',
             'decision': 'allowed',
-            'decided_at': 90.0
+            'decided_at': 90.0,
           },
           {'id': 'unknown', 'dest_host': 'h', 'decision': 'allowed'},
         ],
@@ -363,13 +382,13 @@ void main() {
             'id': 'first',
             'dest_host': 'h',
             'decision': 'allowed',
-            'decided_at': 50.0
+            'decided_at': 50.0,
           },
           {
             'id': 'second',
             'dest_host': 'h',
             'decision': 'allowed',
-            'decided_at': 50.0
+            'decided_at': 50.0,
           },
           {'id': 'n1', 'dest_host': 'h', 'decision': 'allowed'},
           {'id': 'n2', 'dest_host': 'h', 'decision': 'allowed'},
@@ -383,100 +402,156 @@ void main() {
     test('absent / not paused -> null', () {
       expect(EgressRules.fromJson({'workspace_id': 'w'})!.paused, isNull);
       expect(
-          EgressRules.fromJson({
-            'workspace_id': 'w',
-            'paused': {'paused': false}
-          })!
-              .paused,
-          isNull);
+        EgressRules.fromJson({
+          'workspace_id': 'w',
+          'paused': {'paused': false},
+        })!
+            .paused,
+        isNull,
+      );
     });
 
-    test('paused true with until -> EgressPause(until); without -> null until',
-        () {
-      expect(
+    test(
+      'paused true with until -> EgressPause(until); without -> null until',
+      () {
+        expect(
           EgressRules.fromJson({
             'workspace_id': 'w',
-            'paused': {'paused': true, 'until': 99.0}
+            'paused': {'paused': true, 'until': 99.0},
           })!
               .paused!
               .until,
-          99.0);
-      expect(
+          99.0,
+        );
+        expect(
           EgressRules.fromJson({
             'workspace_id': 'w',
-            'paused': {'paused': true}
+            'paused': {'paused': true},
           })!
               .paused!
               .until,
-          isNull);
-    });
+          isNull,
+        );
+      },
+    );
   });
 
   group('EgressPause + EgressRules equality', () {
     test('EgressPause equality', () {
       expect(
-          const EgressPause(until: 1.0), equals(const EgressPause(until: 1.0)));
-      expect(const EgressPause(until: 1.0).hashCode,
-          const EgressPause(until: 1.0).hashCode);
-      expect(const EgressPause(until: 1.0),
-          isNot(equals(const EgressPause(until: 2.0))));
+        const EgressPause(until: 1.0),
+        equals(const EgressPause(until: 1.0)),
+      );
+      expect(
+        const EgressPause(until: 1.0).hashCode,
+        const EgressPause(until: 1.0).hashCode,
+      );
+      expect(
+        const EgressPause(until: 1.0),
+        isNot(equals(const EgressPause(until: 2.0))),
+      );
       expect(const EgressPause(until: 1.0), isNot(equals(const EgressPause())));
     });
 
     test('EgressRules equality by content', () {
       final a = EgressRules(
-          workspaceId: 'w',
-          allowList: ['a'],
-          allowed: [ConsentRule(id: '1', destHost: 'h', decision: 'allowed')],
-          denied: const [],
-          paused: const EgressPause(until: 1.0));
+        workspaceId: 'w',
+        allowList: ['a'],
+        allowed: [ConsentRule(id: '1', destHost: 'h', decision: 'allowed')],
+        denied: const [],
+        paused: const EgressPause(until: 1.0),
+      );
       final b = EgressRules(
-          workspaceId: 'w',
-          allowList: ['a'],
-          allowed: [ConsentRule(id: '1', destHost: 'h', decision: 'allowed')],
-          denied: const [],
-          paused: const EgressPause(until: 1.0));
+        workspaceId: 'w',
+        allowList: ['a'],
+        allowed: [ConsentRule(id: '1', destHost: 'h', decision: 'allowed')],
+        denied: const [],
+        paused: const EgressPause(until: 1.0),
+      );
       expect(a, equals(b));
       expect(a.hashCode, b.hashCode);
       expect(
-          a,
-          isNot(equals(EgressRules(
+        a,
+        isNot(
+          equals(
+            EgressRules(
               workspaceId: 'w2',
               allowList: ['a'],
               allowed: const [],
-              denied: const []))));
+              denied: const [],
+            ),
+          ),
+        ),
+      );
       expect(
-          a,
-          isNot(equals(EgressRules(
+        a,
+        isNot(
+          equals(
+            EgressRules(
               workspaceId: 'w',
               allowList: ['b'],
               allowed: const [],
-              denied: const []))));
+              denied: const [],
+            ),
+          ),
+        ),
+      );
+      // #2503: the reject list participates in equality.
+      expect(
+        a,
+        isNot(
+          equals(
+            EgressRules(
+              workspaceId: 'w',
+              allowList: ['a'],
+              rejectList: ['bad.io'],
+              allowed: const [],
+              denied: const [],
+            ),
+          ),
+        ),
+      );
     });
   });
 
   group('applyFrame egress_rules + revoke_ack', () {
     test('egress_rules -> rules outcome with the snapshot', () {
       final res = ConsentDeciderService.applyFrame(
-          {}, jsonEncode(_rulesFrame(allowList: ['a.io'])));
+        {},
+        jsonEncode(_rulesFrame(allowList: ['a.io'], rejectList: ['bad.io'])),
+      );
       expect(res.outcome, ConsentFrameOutcome.rules);
       expect(res.rules!.allowList, ['a.io']);
+      // #2503: the static reject list rides every snapshot frame (#2370);
+      // a missing/malformed field degrades to empty, not a dropped frame.
+      expect(res.rules!.rejectList, ['bad.io']);
+      final noReject = ConsentDeciderService.applyFrame(
+        {},
+        jsonEncode({'type': 'egress_rules', 'workspace_id': 'w'}),
+      );
+      expect(noReject.rules!.rejectList, isEmpty);
     });
 
     test('egress_rules without workspace_id -> ignored', () {
       final res = ConsentDeciderService.applyFrame(
-          {}, jsonEncode({'type': 'egress_rules', 'allow_list': []}));
+        {},
+        jsonEncode({'type': 'egress_rules', 'allow_list': []}),
+      );
       expect(res.outcome, ConsentFrameOutcome.ignored);
     });
 
     test('revoke_ack ok true/false and id coercion', () {
-      final ok = ConsentDeciderService.applyFrame({},
-          jsonEncode({'type': 'revoke_ack', 'request_id': 'v1', 'ok': true}));
+      final ok = ConsentDeciderService.applyFrame(
+        {},
+        jsonEncode({'type': 'revoke_ack', 'request_id': 'v1', 'ok': true}),
+      );
       expect(ok.outcome, ConsentFrameOutcome.revokeAck);
       expect(ok.revokeAckId, 'v1');
       expect(ok.revokeOk, isTrue);
       final bad = ConsentDeciderService.applyFrame(
-          {}, jsonEncode({'type': 'revoke_ack', 'request_id': 5}));
+        {},
+        jsonEncode({'type': 'revoke_ack', 'request_id': 5}),
+      );
       expect(bad.outcome, ConsentFrameOutcome.revokeAck);
       expect(bad.revokeAckId, isNull);
       expect(bad.revokeOk, isFalse);
@@ -484,11 +559,15 @@ void main() {
 
     test('pause_ack ok true/false', () {
       final ok = ConsentDeciderService.applyFrame(
-          {}, jsonEncode({'type': 'pause_ack', 'ok': true, 'until': 1300.0}));
+        {},
+        jsonEncode({'type': 'pause_ack', 'ok': true, 'until': 1300.0}),
+      );
       expect(ok.outcome, ConsentFrameOutcome.pauseAck);
       expect(ok.pauseOk, isTrue);
       final bad = ConsentDeciderService.applyFrame(
-          {}, jsonEncode({'type': 'pause_ack', 'ok': false, 'until': null}));
+        {},
+        jsonEncode({'type': 'pause_ack', 'ok': false, 'until': null}),
+      );
       expect(bad.outcome, ConsentFrameOutcome.pauseAck);
       expect(bad.pauseOk, isFalse);
     });
@@ -525,19 +604,21 @@ void main() {
 
   group('PendingRequest equality', () {
     final a = PendingRequest(
+      id: 'r1',
+      destHost: 'h',
+      destPort: 443,
+      processName: 'curl',
+      requestedAt: 1.0,
+    );
+
+    test('equal on all fields, with matching hashCode', () {
+      final b = PendingRequest(
         id: 'r1',
         destHost: 'h',
         destPort: 443,
         processName: 'curl',
-        requestedAt: 1.0);
-
-    test('equal on all fields, with matching hashCode', () {
-      final b = PendingRequest(
-          id: 'r1',
-          destHost: 'h',
-          destPort: 443,
-          processName: 'curl',
-          requestedAt: 1.0);
+        requestedAt: 1.0,
+      );
       expect(a, equals(b));
       expect(a.hashCode, b.hashCode);
       expect(a, equals(a)); // identical
@@ -545,17 +626,25 @@ void main() {
 
     test('any differing field breaks equality', () {
       expect(
-          a,
-          isNot(equals(PendingRequest(
+        a,
+        isNot(
+          equals(
+            PendingRequest(
               id: 'r1',
               destHost: 'h',
               destPort: 443,
               processName: 'curl',
-              requestedAt: 2.0)))); // requestedAt differs
+              requestedAt: 2.0,
+            ),
+          ),
+        ),
+      ); // requestedAt differs
       expect(
-          a,
-          isNot(equals(PendingRequest(
-              id: 'r2', destHost: 'h', requestedAt: 1.0)))); // id differs
+        a,
+        isNot(
+          equals(PendingRequest(id: 'r2', destHost: 'h', requestedAt: 1.0)),
+        ),
+      ); // id differs
       expect(a, isNot(equals('not a request'))); // wrong type
     });
   });
@@ -579,38 +668,44 @@ void main() {
       svc.dispose();
     });
 
-    test('connect + snapshot populates pending + sends verdict on the socket',
-        () async {
-      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
-      expect(svc.connected, isTrue);
-      // Server's connect snapshot. (Broadcast streams deliver on a microtask,
-      // so flush before asserting.)
-      channel.serverSend(
-          {'type': 'egress_request', 'request': _request(host: 'a.io')});
-      channel.serverSend({
-        'type': 'egress_request',
-        'request': _request(id: 'r2', host: 'b.io', at: 999)
-      });
-      await Future.delayed(Duration.zero);
-      expect(
-          svc.pending.map((r) => r.destHost), ['b.io', 'a.io']); // oldest-first
+    test(
+      'connect + snapshot populates pending + sends verdict on the socket',
+      () async {
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        svc.connect();
+        expect(svc.connected, isTrue);
+        // Server's connect snapshot. (Broadcast streams deliver on a microtask,
+        // so flush before asserting.)
+        channel.serverSend({
+          'type': 'egress_request',
+          'request': _request(host: 'a.io'),
+        });
+        channel.serverSend({
+          'type': 'egress_request',
+          'request': _request(id: 'r2', host: 'b.io', at: 999),
+        });
+        await Future.delayed(Duration.zero);
+        expect(svc.pending.map((r) => r.destHost), [
+          'b.io',
+          'a.io',
+        ]); // oldest-first
 
-      // A live resolve removes it.
-      channel.serverSend({'type': 'egress_resolved', 'request_id': 'r1'});
-      await Future.delayed(Duration.zero);
-      expect(svc.pending.map((r) => r.id), ['r2']);
+        // A live resolve removes it.
+        channel.serverSend({'type': 'egress_resolved', 'request_id': 'r1'});
+        await Future.delayed(Duration.zero);
+        expect(svc.pending.map((r) => r.id), ['r2']);
 
-      // Verdict goes out on the socket.
-      svc.sendVerdict('r2', 'denied', 'once');
-      expect(channel.sent, isNotEmpty);
-      final out =
-          jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
-      expect(out['type'], 'verdict');
-      expect(out['request_id'], 'r2');
-      expect(out['decision'], 'denied');
-      svc.dispose();
-    });
+        // Verdict goes out on the socket.
+        svc.sendVerdict('r2', 'denied', 'once');
+        expect(channel.sent, isNotEmpty);
+        final out =
+            jsonDecode(channel.sent.last as String) as Map<String, dynamic>;
+        expect(out['type'], 'verdict');
+        expect(out['request_id'], 'r2');
+        expect(out['decision'], 'denied');
+        svc.dispose();
+      },
+    );
 
     test('sendVerdict flashes (not silent) when disconnected', () {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
@@ -665,18 +760,20 @@ void main() {
       svc.dispose();
     });
 
-    test('auth-fail close (4001) sets authFailed and stops reconnecting',
-        () async {
-      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
-      channel.serverSend({'type': 'egress_request', 'request': _request()});
-      await Future.delayed(Duration.zero);
-      expect(svc.pending, isNotEmpty);
-      channel.serverClose(4001);
-      await Future.delayed(Duration.zero);
-      expect(svc.authFailed, isTrue);
-      svc.dispose();
-    });
+    test(
+      'auth-fail close (4001) sets authFailed and stops reconnecting',
+      () async {
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        svc.connect();
+        channel.serverSend({'type': 'egress_request', 'request': _request()});
+        await Future.delayed(Duration.zero);
+        expect(svc.pending, isNotEmpty);
+        channel.serverClose(4001);
+        await Future.delayed(Duration.zero);
+        expect(svc.authFailed, isTrue);
+        svc.dispose();
+      },
+    );
 
     test('remainingSeconds counts down from requested_at + holdTimeout', () {
       // Fixed clock at epoch-second 1000; requested at 1000, hold 120s.
@@ -692,77 +789,97 @@ void main() {
       svc.dispose();
     });
 
-    test('pong and unknown frames are no-ops through the live socket',
-        () async {
-      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
-      channel.serverSend({'type': 'egress_request', 'request': _request()});
-      await Future.delayed(Duration.zero);
-      expect(svc.pending, hasLength(1));
-      // A pong and an unknown frame neither mutate pending nor throw.
-      channel.serverSend({'type': 'pong'});
-      channel.serverSend({'type': 'totally_unknown', 'x': 1});
-      await Future.delayed(Duration.zero);
-      expect(svc.pending, hasLength(1));
-      svc.dispose();
-    });
+    test(
+      'pong and unknown frames are no-ops through the live socket',
+      () async {
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        svc.connect();
+        channel.serverSend({'type': 'egress_request', 'request': _request()});
+        await Future.delayed(Duration.zero);
+        expect(svc.pending, hasLength(1));
+        // A pong and an unknown frame neither mutate pending nor throw.
+        channel.serverSend({'type': 'pong'});
+        channel.serverSend({'type': 'totally_unknown', 'x': 1});
+        await Future.delayed(Duration.zero);
+        expect(svc.pending, hasLength(1));
+        svc.dispose();
+      },
+    );
 
-    test('a non-auth close clears connected and schedules a reconnect',
-        () async {
-      final svc = ConsentDeciderService(
-        workspaceId: 'ws',
-        token: 't',
-        // Long delay so the reconnect Timer never fires during the test
-        // (dispose cancels it regardless).
-        reconnectDelays: const [Duration(minutes: 5)],
-      );
-      svc.connect();
-      expect(svc.connected, isTrue);
-      channel.serverClose(); // clean close, no code -> not an auth failure
-      await Future.delayed(Duration.zero);
-      expect(svc.connected, isFalse);
-      expect(svc.authFailed, isFalse);
-      svc.dispose();
-    });
+    test(
+      'a non-auth close clears connected and schedules a reconnect',
+      () async {
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          // Long delay so the reconnect Timer never fires during the test
+          // (dispose cancels it regardless).
+          reconnectDelays: const [Duration(minutes: 5)],
+        );
+        svc.connect();
+        expect(svc.connected, isTrue);
+        channel.serverClose(); // clean close, no code -> not an auth failure
+        await Future.delayed(Duration.zero);
+        expect(svc.connected, isFalse);
+        expect(svc.authFailed, isFalse);
+        svc.dispose();
+      },
+    );
 
-    test('egress_rules frame populates service.rules (sorted, parsed)',
-        () async {
-      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
-      channel.serverSend(_rulesFrame(
-        allowList: ['github.com', 'pypi.org'],
-        allowed: [
-          _ruleJson(id: 'a', decidedAt: 100, host: 'a.io'),
-          _ruleJson(id: 'b', decidedAt: 200, host: 'b.io'),
-        ],
-        denied: [
-          _ruleJson(id: 'd', decision: 'denied', host: 'x.io', decidedAt: 50)
-        ],
-      ));
-      await Future.delayed(Duration.zero);
-      expect(svc.rules, isNotNull);
-      expect(svc.rules!.allowList, ['github.com', 'pypi.org']);
-      expect(svc.rules!.allowed.map((r) => r.id), ['b', 'a']); // newest first
-      expect(svc.rules!.denied.single.id, 'd');
-      svc.dispose();
-    });
+    test(
+      'egress_rules frame populates service.rules (sorted, parsed)',
+      () async {
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        svc.connect();
+        channel.serverSend(
+          _rulesFrame(
+            allowList: ['github.com', 'pypi.org'],
+            allowed: [
+              _ruleJson(id: 'a', decidedAt: 100, host: 'a.io'),
+              _ruleJson(id: 'b', decidedAt: 200, host: 'b.io'),
+            ],
+            denied: [
+              _ruleJson(
+                id: 'd',
+                decision: 'denied',
+                host: 'x.io',
+                decidedAt: 50,
+              ),
+            ],
+          ),
+        );
+        await Future.delayed(Duration.zero);
+        expect(svc.rules, isNotNull);
+        expect(svc.rules!.allowList, ['github.com', 'pypi.org']);
+        expect(svc.rules!.allowed.map((r) => r.id), ['b', 'a']); // newest first
+        expect(svc.rules!.denied.single.id, 'd');
+        svc.dispose();
+      },
+    );
 
     test('revoke_ack success removes the rule; failure flashes', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
       svc.connect();
       channel.serverSend(
-          _rulesFrame(allowed: [_ruleJson(id: 'a', decidedAt: 100)]));
+        _rulesFrame(allowed: [_ruleJson(id: 'a', decidedAt: 100)]),
+      );
       await Future.delayed(Duration.zero);
       expect(svc.rules!.allowed, hasLength(1));
       channel.serverSend({'type': 'revoke_ack', 'request_id': 'a', 'ok': true});
       await Future.delayed(Duration.zero);
       expect(svc.rules!.allowed, isEmpty);
       // failure leaves the row in place and flashes
-      channel.serverSend(_rulesFrame(
-          denied: [_ruleJson(id: 'd', decision: 'denied', decidedAt: 100)]));
+      channel.serverSend(
+        _rulesFrame(
+          denied: [_ruleJson(id: 'd', decision: 'denied', decidedAt: 100)],
+        ),
+      );
       await Future.delayed(Duration.zero);
-      channel
-          .serverSend({'type': 'revoke_ack', 'request_id': 'd', 'ok': false});
+      channel.serverSend({
+        'type': 'revoke_ack',
+        'request_id': 'd',
+        'ok': false,
+      });
       await Future.delayed(Duration.zero);
       expect(svc.rules!.denied, hasLength(1));
       expect(svc.flashMessage, contains('revoke failed'));
@@ -858,47 +975,51 @@ void main() {
       svc2.dispose();
     });
 
-    test('pause_ack nack reverts the highlight and flashes which op failed',
-        () async {
-      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
-      // A refused pause must not leave its button highlighted as active.
-      svc.sendPause('1h');
-      expect(svc.lastPauseRequest, '1h');
-      channel.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
-      await Future<void>.delayed(Duration.zero);
-      expect(svc.flashMessage, contains('pause failed'));
-      expect(svc.lastPauseRequest, isNull);
-      // A refused unpause names itself in the flash.
-      svc.sendUnpause();
-      channel.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
-      await Future<void>.delayed(Duration.zero);
-      expect(svc.flashMessage, contains('unpause failed'));
-      expect(svc.lastPauseRequest, isNull);
-      svc.dispose();
-    });
+    test(
+      'pause_ack nack reverts the highlight and flashes which op failed',
+      () async {
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        svc.connect();
+        // A refused pause must not leave its button highlighted as active.
+        svc.sendPause('1h');
+        expect(svc.lastPauseRequest, '1h');
+        channel.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
+        await Future<void>.delayed(Duration.zero);
+        expect(svc.flashMessage, contains('pause failed'));
+        expect(svc.lastPauseRequest, isNull);
+        // A refused unpause names itself in the flash.
+        svc.sendUnpause();
+        channel.serverSend({'type': 'pause_ack', 'ok': false, 'until': null});
+        await Future<void>.delayed(Duration.zero);
+        expect(svc.flashMessage, contains('unpause failed'));
+        expect(svc.lastPauseRequest, isNull);
+        svc.dispose();
+      },
+    );
 
-    test('pause_ack ok applies the acked window (authoritative fallback)',
-        () async {
-      final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
-      svc.connect();
-      channel.serverSend(_rulesFrame(allowList: ['a.io']));
-      await Future<void>.delayed(Duration.zero);
-      expect(svc.rules!.paused, isNull);
-      // The refreshed egress_rules broadcast normally lands first, but it is
-      // best-effort server-side -- the ack's own until must apply alone.
-      svc.sendPause('15m');
-      channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
-      await Future<void>.delayed(Duration.zero);
-      expect(svc.rules!.paused, const EgressPause(until: 1300.0));
-      expect(svc.flashMessage, isNull); // success never flashes
-      // A successful unpause (ok, until null) clears the window.
-      svc.sendUnpause();
-      channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': null});
-      await Future<void>.delayed(Duration.zero);
-      expect(svc.rules!.paused, isNull);
-      svc.dispose();
-    });
+    test(
+      'pause_ack ok applies the acked window (authoritative fallback)',
+      () async {
+        final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
+        svc.connect();
+        channel.serverSend(_rulesFrame(allowList: ['a.io']));
+        await Future<void>.delayed(Duration.zero);
+        expect(svc.rules!.paused, isNull);
+        // The refreshed egress_rules broadcast normally lands first, but it is
+        // best-effort server-side -- the ack's own until must apply alone.
+        svc.sendPause('15m');
+        channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': 1300.0});
+        await Future<void>.delayed(Duration.zero);
+        expect(svc.rules!.paused, const EgressPause(until: 1300.0));
+        expect(svc.flashMessage, isNull); // success never flashes
+        // A successful unpause (ok, until null) clears the window.
+        svc.sendUnpause();
+        channel.serverSend({'type': 'pause_ack', 'ok': true, 'until': null});
+        await Future<void>.delayed(Duration.zero);
+        expect(svc.rules!.paused, isNull);
+        svc.dispose();
+      },
+    );
 
     test('pause_ack ok before any rules snapshot is a safe no-op', () async {
       final svc = ConsentDeciderService(workspaceId: 'ws', token: 't');
@@ -912,151 +1033,231 @@ void main() {
     });
 
     test(
-        'ruleRemainingSeconds: timed -> value; open-ended/unknown/missing -> null',
-        () {
-      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
-      final svc = ConsentDeciderService(
-          workspaceId: 'ws', token: 't', clock: () => now);
-      // decided at 1000s, 5m (300s) -> 300s left at now=1000s
-      expect(
-          svc.ruleRemainingSeconds(ConsentRule(
+      'ruleRemainingSeconds: timed -> value; open-ended/unknown/missing -> null',
+      () {
+        final now = DateTime.fromMillisecondsSinceEpoch(
+          1000 * 1000,
+          isUtc: true,
+        );
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          clock: () => now,
+        );
+        // decided at 1000s, 5m (300s) -> 300s left at now=1000s
+        expect(
+          svc.ruleRemainingSeconds(
+            ConsentRule(
               id: 'a',
               destHost: 'h',
               decision: 'allowed',
               duration: '5m',
-              decidedAt: 1000.0)),
-          300);
-      // forever / tilrestart / unknown duration -> null
-      expect(
-          svc.ruleRemainingSeconds(ConsentRule(
+              decidedAt: 1000.0,
+            ),
+          ),
+          300,
+        );
+        // forever / tilrestart / unknown duration -> null
+        expect(
+          svc.ruleRemainingSeconds(
+            ConsentRule(
               id: 'b',
               destHost: 'h',
               decision: 'allowed',
               duration: 'forever',
-              decidedAt: 1000.0)),
-          isNull);
-      expect(
-          svc.ruleRemainingSeconds(ConsentRule(
+              decidedAt: 1000.0,
+            ),
+          ),
+          isNull,
+        );
+        expect(
+          svc.ruleRemainingSeconds(
+            ConsentRule(
               id: 'c',
               destHost: 'h',
               decision: 'allowed',
               duration: 'tilrestart',
-              decidedAt: 1000.0)),
-          isNull);
-      expect(
-          svc.ruleRemainingSeconds(ConsentRule(
+              decidedAt: 1000.0,
+            ),
+          ),
+          isNull,
+        );
+        expect(
+          svc.ruleRemainingSeconds(
+            ConsentRule(
               id: 'd',
               destHost: 'h',
               decision: 'allowed',
               duration: 'bogus',
-              decidedAt: 1000.0)),
-          isNull);
-      // missing decided_at -> null
-      expect(
-          svc.ruleRemainingSeconds(ConsentRule(
-              id: 'e', destHost: 'h', decision: 'allowed', duration: '5m')),
-          isNull);
-      // clamped at 0 past expiry
-      expect(
-          svc.ruleRemainingSeconds(ConsentRule(
+              decidedAt: 1000.0,
+            ),
+          ),
+          isNull,
+        );
+        // missing decided_at -> null
+        expect(
+          svc.ruleRemainingSeconds(
+            ConsentRule(
+              id: 'e',
+              destHost: 'h',
+              decision: 'allowed',
+              duration: '5m',
+            ),
+          ),
+          isNull,
+        );
+        // clamped at 0 past expiry
+        expect(
+          svc.ruleRemainingSeconds(
+            ConsentRule(
               id: 'f',
               destHost: 'h',
               decision: 'allowed',
               duration: '5m',
-              decidedAt: 100.0)),
-          0);
-      svc.dispose();
-    });
+              decidedAt: 100.0,
+            ),
+          ),
+          0,
+        );
+        svc.dispose();
+      },
+    );
 
     test(
-        'pauseRemainingSeconds: null when not paused / indefinite; value when set',
-        () {
-      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
-      final svc = ConsentDeciderService(
-          workspaceId: 'ws', token: 't', clock: () => now);
-      final base = EgressRules(
+      'pauseRemainingSeconds: null when not paused / indefinite; value when set',
+      () {
+        final now = DateTime.fromMillisecondsSinceEpoch(
+          1000 * 1000,
+          isUtc: true,
+        );
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          clock: () => now,
+        );
+        final base = EgressRules(
           workspaceId: 'w',
           allowList: const [],
           allowed: const [],
-          denied: const []);
-      expect(svc.pauseRemainingSeconds(base), isNull); // paused null
-      expect(
-          svc.pauseRemainingSeconds(EgressRules(
+          denied: const [],
+        );
+        expect(svc.pauseRemainingSeconds(base), isNull); // paused null
+        expect(
+          svc.pauseRemainingSeconds(
+            EgressRules(
               workspaceId: 'w',
               allowList: const [],
               allowed: const [],
               denied: const [],
-              paused: const EgressPause())),
-          isNull); // until null
-      expect(
-          svc.pauseRemainingSeconds(EgressRules(
+              paused: const EgressPause(),
+            ),
+          ),
+          isNull,
+        ); // until null
+        expect(
+          svc.pauseRemainingSeconds(
+            EgressRules(
               workspaceId: 'w',
               allowList: const [],
               allowed: const [],
               denied: const [],
-              paused: const EgressPause(until: 1300.0))),
-          300); // 1300 - 1000
-      svc.dispose();
-    });
+              paused: const EgressPause(until: 1300.0),
+            ),
+          ),
+          300,
+        ); // 1300 - 1000
+        svc.dispose();
+      },
+    );
   });
 
   group('isRuleExpired', () {
-    test('timed past expiry -> true; open-ended / unknown / missing -> false',
-        () {
-      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
-      final svc = ConsentDeciderService(
-          workspaceId: 'ws', token: 't', clock: () => now);
-      ConsentRule rule(String? duration, {double? decidedAt}) => ConsentRule(
-          id: 'r',
-          destHost: 'h',
-          decision: 'allowed',
-          duration: duration,
-          decidedAt: decidedAt);
-      // decided at 1000s, 5m (300s) -> expires at 1300s; now=1000s -> live.
-      expect(svc.isRuleExpired(rule('5m', decidedAt: 1000.0)), isFalse);
-      // decided at 100s -> expired long ago (remaining clamps to 0).
-      expect(svc.isRuleExpired(rule('5m', decidedAt: 100.0)), isTrue);
-      // open-ended / unknown / missing decided_at -> never expire.
-      expect(svc.isRuleExpired(rule('forever', decidedAt: 100.0)), isFalse);
-      expect(svc.isRuleExpired(rule('tilrestart', decidedAt: 100.0)), isFalse);
-      expect(svc.isRuleExpired(rule('bogus', decidedAt: 100.0)), isFalse);
-      expect(svc.isRuleExpired(rule('5m')), isFalse);
-      svc.dispose();
-    });
+    test(
+      'timed past expiry -> true; open-ended / unknown / missing -> false',
+      () {
+        final now = DateTime.fromMillisecondsSinceEpoch(
+          1000 * 1000,
+          isUtc: true,
+        );
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          clock: () => now,
+        );
+        ConsentRule rule(String? duration, {double? decidedAt}) => ConsentRule(
+              id: 'r',
+              destHost: 'h',
+              decision: 'allowed',
+              duration: duration,
+              decidedAt: decidedAt,
+            );
+        // decided at 1000s, 5m (300s) -> expires at 1300s; now=1000s -> live.
+        expect(svc.isRuleExpired(rule('5m', decidedAt: 1000.0)), isFalse);
+        // decided at 100s -> expired long ago (remaining clamps to 0).
+        expect(svc.isRuleExpired(rule('5m', decidedAt: 100.0)), isTrue);
+        // open-ended / unknown / missing decided_at -> never expire.
+        expect(svc.isRuleExpired(rule('forever', decidedAt: 100.0)), isFalse);
+        expect(
+          svc.isRuleExpired(rule('tilrestart', decidedAt: 100.0)),
+          isFalse,
+        );
+        expect(svc.isRuleExpired(rule('bogus', decidedAt: 100.0)), isFalse);
+        expect(svc.isRuleExpired(rule('5m')), isFalse);
+        svc.dispose();
+      },
+    );
   });
 
   group('isPauseExpired', () {
     EgressRules rules(EgressPause? paused) => EgressRules(
-        workspaceId: 'w',
-        allowList: const [],
-        allowed: const [],
-        denied: const [],
-        paused: paused);
+          workspaceId: 'w',
+          allowList: const [],
+          allowed: const [],
+          denied: const [],
+          paused: paused,
+        );
 
-    test('finite until past -> true; future / indefinite / not paused -> false',
-        () {
-      final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
-      final svc = ConsentDeciderService(
-          workspaceId: 'ws', token: 't', clock: () => now);
-      // until 1300s, now 1000s -> live.
-      expect(
-          svc.isPauseExpired(rules(const EgressPause(until: 1300.0))), isFalse);
-      // until 900s -> elapsed.
-      expect(
-          svc.isPauseExpired(rules(const EgressPause(until: 900.0))), isTrue);
-      // Indefinite (until restart) and not-paused never expire.
-      expect(
-          svc.isPauseExpired(rules(const EgressPause(until: null))), isFalse);
-      expect(svc.isPauseExpired(rules(null)), isFalse);
-      svc.dispose();
-    });
+    test(
+      'finite until past -> true; future / indefinite / not paused -> false',
+      () {
+        final now = DateTime.fromMillisecondsSinceEpoch(
+          1000 * 1000,
+          isUtc: true,
+        );
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          clock: () => now,
+        );
+        // until 1300s, now 1000s -> live.
+        expect(
+          svc.isPauseExpired(rules(const EgressPause(until: 1300.0))),
+          isFalse,
+        );
+        // until 900s -> elapsed.
+        expect(
+          svc.isPauseExpired(rules(const EgressPause(until: 900.0))),
+          isTrue,
+        );
+        // Indefinite (until restart) and not-paused never expire.
+        expect(
+          svc.isPauseExpired(rules(const EgressPause(until: null))),
+          isFalse,
+        );
+        expect(svc.isPauseExpired(rules(null)), isFalse);
+        svc.dispose();
+      },
+    );
   });
 
   group('pruneExpiredRules', () {
     test('no-op (returns false) before the first egress_rules frame', () {
       final now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
       final svc = ConsentDeciderService(
-          workspaceId: 'ws', token: 't', clock: () => now);
+        workspaceId: 'ws',
+        token: 't',
+        clock: () => now,
+      );
       expect(svc.pruneExpiredRules(), isFalse);
       expect(svc.rules, isNull);
       svc.dispose();
@@ -1067,26 +1268,36 @@ void main() {
       final ch = _FakeChannel();
       ConsentDeciderService.testChannelFactory = (_) => ch;
       final svc = ConsentDeciderService(
-          workspaceId: 'ws', token: 't', clock: () => now);
+        workspaceId: 'ws',
+        token: 't',
+        clock: () => now,
+      );
       svc.connect();
-      ch.serverSend(_rulesFrame(
-        allowList: ['github.com'],
-        allowed: [
-          // timed: decided now (t=1000), 5m -> expires at t=1300; live for now.
-          _ruleJson(id: 'timed', host: 't.io', decidedAt: 1000.0),
-          // open-ended: never expires.
-          _ruleJson(
-              id: 'forever', host: 'f.io', duration: 'forever', decidedAt: 1.0),
-        ],
-        denied: [
-          // timed deny: also expires at t=1300.
-          _ruleJson(
+      ch.serverSend(
+        _rulesFrame(
+          allowList: ['github.com'],
+          allowed: [
+            // timed: decided now (t=1000), 5m -> expires at t=1300; live for now.
+            _ruleJson(id: 'timed', host: 't.io', decidedAt: 1000.0),
+            // open-ended: never expires.
+            _ruleJson(
+              id: 'forever',
+              host: 'f.io',
+              duration: 'forever',
+              decidedAt: 1.0,
+            ),
+          ],
+          denied: [
+            // timed deny: also expires at t=1300.
+            _ruleJson(
               id: 'd-timed',
               host: 'dt.io',
               decision: 'denied',
-              decidedAt: 1000.0),
-        ],
-      ));
+              decidedAt: 1000.0,
+            ),
+          ],
+        ),
+      );
       await Future.delayed(Duration.zero); // flush the broadcast listener
       // Sorted newest-decided-first: 'timed' (1000) before 'forever' (1).
       expect(svc.rules!.allowed.map((r) => r.id), ['timed', 'forever']);
@@ -1118,32 +1329,37 @@ void main() {
       svc.dispose();
     });
 
-    test('drops a self-expired pause; keeps a live or indefinite one (#2494)',
-        () async {
-      var now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
-      final ch = _FakeChannel();
-      ConsentDeciderService.testChannelFactory = (_) => ch;
-      final svc = ConsentDeciderService(
-          workspaceId: 'ws', token: 't', clock: () => now);
-      svc.connect();
-      // Live window: until t=1300, now t=1000.
-      ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
-      await Future.delayed(Duration.zero);
-      expect(svc.pruneExpiredRules(), isFalse); // still live -> kept
-      expect(svc.rules!.paused, const EgressPause(until: 1300.0));
+    test(
+      'drops a self-expired pause; keeps a live or indefinite one (#2494)',
+      () async {
+        var now = DateTime.fromMillisecondsSinceEpoch(1000 * 1000, isUtc: true);
+        final ch = _FakeChannel();
+        ConsentDeciderService.testChannelFactory = (_) => ch;
+        final svc = ConsentDeciderService(
+          workspaceId: 'ws',
+          token: 't',
+          clock: () => now,
+        );
+        svc.connect();
+        // Live window: until t=1300, now t=1000.
+        ch.serverSend(_rulesFrame(paused: {'paused': true, 'until': 1300.0}));
+        await Future.delayed(Duration.zero);
+        expect(svc.pruneExpiredRules(), isFalse); // still live -> kept
+        expect(svc.rules!.paused, const EgressPause(until: 1300.0));
 
-      // Past expiry: the pause is pruned (never lingers at "resumes in 0s").
-      now = DateTime.fromMillisecondsSinceEpoch(1400 * 1000, isUtc: true);
-      expect(svc.pruneExpiredRules(), isTrue);
-      expect(svc.rules!.paused, isNull);
+        // Past expiry: the pause is pruned (never lingers at "resumes in 0s").
+        now = DateTime.fromMillisecondsSinceEpoch(1400 * 1000, isUtc: true);
+        expect(svc.pruneExpiredRules(), isTrue);
+        expect(svc.rules!.paused, isNull);
 
-      // An indefinite pause (until restart) never expires.
-      ch.serverSend(_rulesFrame(paused: {'paused': true}));
-      await Future.delayed(Duration.zero);
-      expect(svc.pruneExpiredRules(), isFalse);
-      expect(svc.rules!.paused, const EgressPause(until: null));
-      ConsentDeciderService.testChannelFactory = null;
-      svc.dispose();
-    });
+        // An indefinite pause (until restart) never expires.
+        ch.serverSend(_rulesFrame(paused: {'paused': true}));
+        await Future.delayed(Duration.zero);
+        expect(svc.pruneExpiredRules(), isFalse);
+        expect(svc.rules!.paused, const EgressPause(until: null));
+        ConsentDeciderService.testChannelFactory = null;
+        svc.dispose();
+      },
+    );
   });
 }
