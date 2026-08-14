@@ -533,6 +533,10 @@ class ConsentDeciderApp(App):
     CSS = """
     Screen { layout: vertical; }
     #status { padding: 0 1; background: $panel; color: $text-muted; }
+    /* #queue holds the request list + empty state and fills the space between
+    the duration selector and the pause bar, so the pause bar pins to just
+    above the Footer (#2383). */
+    #queue { height: 1fr; }
     #requests { height: 1fr; }
     #requests ListItem { height: 2; }
     #empty { padding: 1 2; color: $text-muted; }
@@ -637,21 +641,21 @@ class ConsentDeciderApp(App):
         self.refresh_bindings()
 
     def compose(self) -> ComposeResult:
-        yield Header()
         yield Static(id="status")
         # Global duration selector (default `tilrestart`): click to choose; selecting
         # does NOT submit -- only a row's Allow/Deny submits with this duration.
         yield Horizontal(*self._duration_buttons(), id="duration-selector")
+        with Vertical(id="queue"):
+            yield ListView(id="requests")
+            yield Static("No held requests — connected, waiting.", id="empty")
         # #2332 pause control: silences ALL prompts for the workspace for a
-        # window. Flagged yellow; the status line shows the remaining window.
+        # window. Pinned just above the Footer; flagged yellow while a pause
+        # window is live, and the status line shows the remaining window.
         yield Horizontal(
             Static("Pause:", id="pause-label"),
             *self._pause_buttons(),
             id="pause-bar",
         )
-        with Vertical():
-            yield ListView(id="requests")
-            yield Static("No held requests — connected, waiting.", id="empty")
         yield Footer()
 
     def _duration_buttons(self) -> list[Button]:
