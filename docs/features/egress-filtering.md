@@ -15,11 +15,15 @@ destinations (resolved at runtime by a DNS proxy, so DNS round-robin is
 handled). A workspace **without** an allow-list keeps unrestricted
 outbound networking exactly as before.
 
+A step-by-step diagram of a single egressing request — DNS gate, SYN
+gate at NFQUEUE, the consent loop, and the verdict — is in
+[Anatomy of an egressing request](../architecture/egress-flow.md).
+
 ## How it works
 
-1. A workspace carries an `allowed_domains` list (`host`, `host:port`,
-   `*.domain[:port]` wildcards, or IPv4 CIDR specs — see the [API](#api)
-   section for the full grammar).
+1. A workspace carries an `allowed_domains` list (`host`, `.host`,
+   `host:port`, `*.domain[:port]` wildcards, or IPv4 CIDR specs — see the
+   [API](#api) section for the full grammar).
 2. On container start, if the workspace declares `allowed_domains`, the
    backend starts a **network sidecar** container (`klangk-net-<ws-id>`,
    from the `network_sidecar_image` image, which defaults to
@@ -179,15 +183,19 @@ curl -X PUT https://klangkd/api/v1/workspaces/<id> \
   -d '{"allowed_domains": ["github.com:443", "pypi.org", "registry.npmjs.org"]}'
 ```
 
-- `host` allows all ports to that host **and its subdomains**
-  (`github.com` also covers `api.github.com`).
-- `host:port` allows a single TCP port (port must be 1–65535) to that host
-  and its subdomains.
-- `*.domain` allows **subdomains only, not the apex** — `*.pypi.org` matches
-  `downloads.pypi.org`-style subdomains but not `pypi.org` itself. Append
-  a port to scope it (`*.pypi.org:443`). This is distinct from a bare
-  `domain` (which includes the apex), so you can allow subdomains without the
-  apex or vice-versa (#2256).
+- `host` allows all ports to that host **only** — the apex, exactly
+  (`github.com` does not cover `api.github.com`) (#2377).
+- `.host` allows all ports to that host **and its subdomains**
+  (`.github.com` covers both `github.com` and `api.github.com`).
+- `host:port` / `.host:port` allow a single TCP port (1–65535) with the
+  same apex-only / apex-plus-subdomains distinction.
+- `*.domain` allows **subdomains only, not the apex** — `*.pypi.org`
+  matches `downloads.pypi.org`-style subdomains but not `pypi.org`
+  itself. Append a port to scope it (`*.pypi.org:443`). The three forms
+  (bare, leading dot, `*.`) let you allow the apex only, apex plus
+  subdomains, or subdomains without the apex (#2256, #2377).
+  Matching always respects the dot boundary, so `evilexample.com` never
+  matches an `example.com` spec.
 - `10.0.0.0/8` allows an entire IPv4 subnet (CIDR notation); append a
   port to scope it, e.g. `10.0.0.0/8:443`. A CIDR is installed as a
   single iptables `-d <ip>/<plen>` rule and is **not** DNS-resolved, so
@@ -270,9 +278,9 @@ If you also need raw file views, release-asset downloads, or Git LFS:
 ### GitHub (full development)
 
 A workspace that uses the web UI, GitHub Packages, or Copilot in
-addition to git typically needs a broader set. Because klangk's
-netfilter resolves at container-create time and doesn't support
-wildcards, list the specific subdomains you use:
+addition to git typically needs a broader set. Use `.github.com`-style
+leading-dot entries (apex + subdomains) or list the specific subdomains
+you use:
 
 | Entry                                       | Purpose                 |
 | ------------------------------------------- | ----------------------- |
@@ -367,7 +375,7 @@ firewall resolves CNAMEs or inspects SNI you may also need:
 | `nix-cache.s3.amazonaws.com:443` | S3 origin for cache.nixos.org |
 
 If using [Cachix](https://cachix.org) binary caches, add each cache
-you use (klangk's netfilter doesn't support wildcards):
+you use:
 
 | Entry                          | Purpose                       |
 | ------------------------------ | ----------------------------- |
