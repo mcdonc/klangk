@@ -34,7 +34,6 @@ from klangk.cli.tui.consent import (
     ConsentRule,
     EgressRules,
     PauseState,
-    QuitConfirmScreen,
     RulesScreen,
     build_detach_command,
     make_pause,
@@ -490,6 +489,113 @@ class TestAppRender:
             await pilot.pause()
             assert app._focused_request_id() == "r2"
 
+    async def test_refresh_focuses_newly_arrived_hold(self):
+        # A newly-arrived hold grabs focus so the user can act on it at once.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            app.query_one("#requests", ListView).index = 0  # focus r1
+            await pilot.pause()
+            # a new hold arrives
+            app.controller.apply_frame(_req_frame("r2", host="b.com"))
+            app._refresh()
+            await pilot.pause()
+            assert app._focused_request_id() == "r2"
+
+    async def test_refresh_focuses_hold_above_after_resolution(self):
+        # r1 (older, above) and r2; focus r2; r2 resolved -> focus r1 (above).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app.controller.apply_frame(_req_frame("r2", host="b.com"))
+            app._refresh()
+            await pilot.pause()
+            app.query_one("#requests", ListView).index = 1  # focus r2
+            await pilot.pause()
+            app.controller.apply_frame(
+                json.dumps(
+                    {
+                        "type": "egress_resolved",
+                        "request_id": "r2",
+                        "decision": "denied",
+                    }
+                )
+            )
+            app._refresh()
+            await pilot.pause()
+            assert app._focused_request_id() == "r1"  # the hold above
+
+    async def test_refresh_focuses_new_top_when_resolved_hold_was_topmost(
+        self,
+    ):
+        # Focus the topmost hold; resolve it -> focus the new top (was below).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app.controller.apply_frame(_req_frame("r2", host="b.com"))
+            app._refresh()
+            await pilot.pause()
+            app.query_one("#requests", ListView).index = 0  # focus r1 (top)
+            await pilot.pause()
+            app.controller.apply_frame(
+                json.dumps(
+                    {
+                        "type": "egress_resolved",
+                        "request_id": "r1",
+                        "decision": "allowed",
+                    }
+                )
+            )
+            app._refresh()
+            await pilot.pause()
+            assert app._focused_request_id() == "r2"  # now the top
+
+    def test_select_by_id_none_is_noop(self):
+        # Defensive guard: must not raise and must not query unmounted widgets.
+        _make_app()._select_by_id(None)
+
+    async def test_select_index_clamps_to_bounds(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app.controller.apply_frame(_req_frame("r2", host="b.com"))
+            app._refresh()
+            await pilot.pause()
+            app._select_index(99)  # above the top -> last row
+            await pilot.pause()
+            assert app.query_one("#requests", ListView).index == 1
+            app._select_index(-5)  # below the bottom -> first row
+            await pilot.pause()
+            assert app.query_one("#requests", ListView).index == 0
+
+    async def test_select_index_empty_list_is_noop(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._select_index(0)  # no rows -> must not raise
+            await pilot.pause()
+            assert app.query_one("#requests", ListView).index is None
+
+    async def test_refresh_no_focus_when_last_hold_resolved(self):
+        # Resolving the only hold empties the list; _select_index must no-op.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            app.query_one("#requests", ListView).index = 0
+            await pilot.pause()
+            app.controller.apply_frame(
+                json.dumps({"type": "egress_resolved", "request_id": "r1"})
+            )
+            app._refresh()
+            await pilot.pause()
+            assert (
+                app._focused_request_id() is None
+            )  # list empty, nothing focused
+
     async def test_render_item_with_process_and_port(self):
         app = _make_app()
         req = ConsentRequest(
@@ -803,40 +909,28 @@ class TestAppActions:
             assert app._duration == "tilrestart"  # unchanged (default)
 
     async def test_pause_bar_mounts(self):
-        # #2332: the pause control bar mounts with a window button + Cancel.
+        # #2332: the pause control bar mounts Unpaused + the three windows +
+        # a countdown.
         app = _make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.query_one("#pause-15m", Button) is not None
-            assert app.query_one("#pause-1h", Button) is not None
-            assert app.query_one("#pause-1d", Button) is not None
-            assert app.query_one("#pause-cancel", Button) is not None
+            for bid in ("#pause-none", "#pause-15m", "#pause-1h", "#pause-1d"):
+                assert app.query_one(bid, Button) is not None, bid
+            assert app.query_one("#pause-countdown", Static) is not None
 
     async def test_pause_buttons_render_on_screen(self):
-        # Regression (#2332): the ``Pause:`` label must not expand to fill the
-        # bar (which pushed the window buttons off-screen). All four controls
-        # must sit within the viewport, in order, after the label.
+        # All four controls sit on-screen, in order.
         app = _make_app()
         async with app.run_test(size=(120, 24)) as pilot:
             app._refresh()
             await pilot.pause()
             await pilot.pause()
-            lbl = app.query_one("#pause-label", Static)
-            assert (
-                lbl.outer_size.width < 20
-            )  # "Pause:" + padding, not full width
-            prev_x = lbl.region.x
-            for bid in (
-                "#pause-15m",
-                "#pause-1h",
-                "#pause-1d",
-                "#pause-cancel",
-            ):
+            prev_x = 0
+            for bid in ("#pause-none", "#pause-15m", "#pause-1h", "#pause-1d"):
                 b = app.query_one(bid, Button)
-                # each button starts where the previous ended and is on-screen
-                assert b.region.x >= prev_x
+                assert b.region.x >= prev_x, bid
                 assert b.region.x + b.region.width <= 120, bid
-                assert b.region.width > 0
+                assert b.region.width > 0, bid
                 prev_x = b.region.x + b.region.width
 
     async def test_pause_button_sends_pause_frame(self):
@@ -856,8 +950,8 @@ class TestAppActions:
                 ws.sent
             )
 
-    async def test_cancel_button_sends_unpause_frame(self):
-        # The Cancel button clears an active pause.
+    async def test_unpaused_button_sends_unpause_frame(self):
+        # The Unpaused button clears an active pause.
         app = _make_app()
         async with app.run_test() as pilot:
             ws = FakeWS([])
@@ -865,7 +959,7 @@ class TestAppActions:
             await pilot.pause()
             app.on_button_pressed(
                 types.SimpleNamespace(
-                    button=app.query_one("#pause-cancel", Button)
+                    button=app.query_one("#pause-none", Button)
                 )
             )
             await pilot.pause()
@@ -884,21 +978,35 @@ class TestAppActions:
             await pilot.pause()
             assert app._flash_until > 0  # a flash was set
 
-    async def test_pause_highlights_bar_when_active(self):
-        # An egress_rules frame with a live pause flags the bar label.
+    async def test_pause_highlights_matching_button(self):
+        # The button matching the user's last pause request is highlighted.
         app = _make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
-            app.controller.apply_frame(
-                _rules_frame(paused={"paused": True, "until": 9999.0})
-            )
+            app._pause_duration = "15m"
             app._refresh()
             await pilot.pause()
-            label = app.query_one("#pause-label", Static)
-            assert label.has_class("pause-active")
+            assert app.query_one("#pause-15m", Button).has_class(
+                "pause-active"
+            )
+            assert not app.query_one("#pause-none", Button).has_class(
+                "pause-active"
+            )
 
-    async def test_status_shows_indefinite_pause(self):
-        # A pause with no fixed expiry (until=None) reads "paused until restart".
+    async def test_unpaused_highlighted_by_default(self):
+        # With no pause requested, the Unpaused button is the active one.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._refresh()
+            await pilot.pause()
+            assert app.query_one("#pause-none", Button).has_class(
+                "pause-active"
+            )
+
+    async def test_countdown_shows_indefinite_pause(self):
+        # An indefinite pause (until=None) reads "paused until restart" next to
+        # the pause buttons (#2383).
         app = _make_app()
         async with app.run_test() as pilot:
             await pilot.pause()
@@ -907,8 +1015,8 @@ class TestAppActions:
             )
             app._refresh()
             await pilot.pause()
-            status = app.query_one("#status", Static)
-            assert "paused until restart" in str(status.content)
+            countdown = app.query_one("#pause-countdown", Static)
+            assert "paused until restart" in str(countdown.content)
 
     async def test_pump_flashes_failed_pause_ack(self):
         # A pause_ack with ok=False flashes so the decider knows it didn't take.
@@ -2252,18 +2360,41 @@ class TestPersistentPopupRole:
     def test_apply_bindings_standalone_labels_q_quit(self):
         app = _make_app()
         app._apply_bindings()
-        labels = {b[0]: b[2] for b in app.BINDINGS}
-        assert labels["q"] == "Quit"
-        assert labels["Q"] == "Quit"
+        shown = {b.key: b.description for b in app.BINDINGS if b.show}
+        assert shown == {
+            "a": "Allow",
+            "d": "Deny",
+            "r": "Rules",
+            "q": "Quit",
+        }
+        # Q, Esc, Ctrl-A are active but hidden from the Footer
+        assert {b.key for b in app.BINDINGS if not b.show} == {
+            "Q",
+            "escape",
+            "ctrl+a",
+        }
 
-    def test_apply_bindings_persistent_labels_q_hide(self):
+    def test_apply_bindings_persistent_labels_ctrl_a_toggle(self):
         app = _make_app(
             popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
         )
         app._apply_bindings()
-        labels = {b[0]: b[2] for b in app.BINDINGS}
-        assert labels["q"] == "Hide"
-        assert labels["Q"] == "Quit"
+        shown = {b.key: b.description for b in app.BINDINGS if b.show}
+        # The Footer advertises the shell wrapper's C-a p toggle.
+        assert shown == {
+            "a": "Allow",
+            "d": "Deny",
+            "r": "Rules",
+            "ctrl+a": "Hide/Show",
+        }
+        ctrl_a = next(b for b in app.BINDINGS if b.key == "ctrl+a" and b.show)
+        assert ctrl_a.key_display == "Ctrl-a p"
+        # q, Q, Esc are active but hidden from the Footer
+        assert {b.key for b in app.BINDINGS if not b.show} == {
+            "q",
+            "Q",
+            "escape",
+        }
 
     def test_q_key_standalone_exits(self):
         # No popup context -> q quits immediately (today's behaviour).
@@ -2288,6 +2419,34 @@ class TestPersistentPopupRole:
         assert exited == []
         assert ran == [build_detach_command("/tmp/k.sock", "klangk-consent-w")]
 
+    async def test_escape_hides_in_persistent_mode(self, monkeypatch):
+        # Escape detaches the viewer (hides) and does NOT quit/deregister.
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        exited = []
+        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
+        ran: list[list[str]] = []
+        monkeypatch.setattr(
+            tui_consent.subprocess, "run", lambda cmd, **kw: ran.append(cmd)
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+        assert exited == []
+        assert ran == [build_detach_command("/tmp/k.sock", "klangk-consent-w")]
+
+    async def test_escape_quits_in_standalone_mode(self):
+        app = _make_app()
+        exited = []
+        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+        assert exited == [True]
+
     def test_hide_viewer_noop_without_popup(self, monkeypatch):
         from unittest.mock import MagicMock
 
@@ -2309,56 +2468,76 @@ class TestPersistentPopupRole:
         monkeypatch.setattr(tui_consent.subprocess, "run", boom)
         app._hide_viewer()  # must not raise
 
-    def test_on_confirm_quit_true_exits(self):
-        app = _make_app()
-        exited = []
-        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
-        app._on_confirm_quit(True)
-        assert exited == [True]
+    def test_show_popup_noop_without_popup_context(self, monkeypatch):
+        # Standalone: no popup socket/session, nothing to show.
+        from unittest.mock import MagicMock
 
-    def test_on_confirm_quit_false_does_not_exit(self):
         app = _make_app()
-        exited = []
-        app.exit = lambda: exited.append(True)  # type: ignore[method-assign]
-        app._on_confirm_quit(False)
-        assert exited == []
+        run = MagicMock()
+        monkeypatch.setattr(tui_consent.subprocess, "run", run)
+        app._show_popup()
+        assert not run.called
 
-    async def test_confirm_quit_pushes_confirm_screen(self):
-        app = _make_app()
-        async with app.run_test() as pilot:
-            app.action_confirm_quit()
-            await pilot.pause()
-            assert isinstance(app.screen, QuitConfirmScreen)
+    def test_show_popup_noop_when_already_open(self, monkeypatch):
+        # Hidden session already has a viewer (popup open) -> don't re-show.
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        monkeypatch.setattr(
+            tui_consent, "hidden_has_client", lambda sock, sess: True
+        )
+        called: list = []
+        monkeypatch.setattr(
+            tui_consent.subprocess, "run", lambda *a, **k: called.append(a)
+        )
+        app._show_popup()
+        assert called == []
 
-    async def test_quit_confirm_yes_dismisses_true(self):
-        got: list[bool] = []
-        app = _make_app()
-        async with app.run_test() as pilot:
-            app.push_screen(QuitConfirmScreen(), lambda v: got.append(v))
-            await pilot.pause()
-            app.screen.action_yes()
-            await pilot.pause()
-        assert got == [True]
+    def test_show_popup_targets_outer_clients(self, monkeypatch):
+        # A held request arrived: show the popup on each outer (shell) client.
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        monkeypatch.setattr(
+            tui_consent, "hidden_has_client", lambda sock, sess: False
+        )
+        monkeypatch.setattr(
+            tui_consent,
+            "outer_clients",
+            lambda sock, sess: ["clientA", "clientB"],
+        )
+        ran: list[list[str]] = []
+        monkeypatch.setattr(
+            tui_consent.subprocess, "run", lambda cmd, **kw: ran.append(cmd)
+        )
+        app._show_popup()
+        assert len(ran) == 2
+        # each is a display-popup -c <client> on the local socket
+        assert ran[0][:5] == [
+            "tmux",
+            "-S",
+            "/tmp/k.sock",
+            "display-popup",
+            "-c",
+        ]
+        assert ran[0][5] == "clientA"
+        assert ran[1][5] == "clientB"
+        # the viewer attaches to the hidden session (last positional)
+        assert ran[0][-1].endswith("attach -t klangk-consent-w")
 
-    async def test_quit_confirm_no_dismisses_false(self):
-        got: list[bool] = []
-        app = _make_app()
-        async with app.run_test() as pilot:
-            app.push_screen(QuitConfirmScreen(), lambda v: got.append(v))
-            await pilot.pause()
-            app.screen.action_no()
-            await pilot.pause()
-        assert got == [False]
+    def test_show_popup_swallows_subprocess_error(self, monkeypatch):
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        monkeypatch.setattr(
+            tui_consent, "hidden_has_client", lambda sock, sess: False
+        )
+        monkeypatch.setattr(
+            tui_consent, "outer_clients", lambda sock, sess: ["clientA"]
+        )
 
-    async def test_quit_confirm_box_renders_text(self):
-        # Regression: the confirm box must not collapse to an empty strip.
-        # The "[y]"/"[n]" in the message are literal (markup=False) and the
-        # box has an explicit width, so the prompt text is visible (#2383).
-        app = _make_app()
-        async with app.run_test(size=(80, 24)) as pilot:
-            app.push_screen(QuitConfirmScreen())
-            await pilot.pause()
-            box = app.screen.query_one("#confirm-box")
-            msg = app.screen.query_one("#confirm-msg", Static)
-            assert box.size.width >= 50  # not a collapsed thin strip
-            assert "deregister" in str(msg.content)
+        def boom(*a, **k):
+            raise OSError("boom")
+
+        monkeypatch.setattr(tui_consent.subprocess, "run", boom)
+        app._show_popup()  # must not raise

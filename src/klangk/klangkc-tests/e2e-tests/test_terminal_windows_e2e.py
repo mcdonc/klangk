@@ -103,7 +103,7 @@ def _cli_check_window(ws_name, env, timeout=25):
     script = f"""
 set timeout {timeout}
 log_user 0
-spawn klangk shell {ws_name}
+spawn klangk shell {ws_name} --no-consent-popup
 expect {{
     -re {{\\$ }} {{}}
     timeout {{ puts "TIMEOUT"; exit 1 }}
@@ -135,9 +135,9 @@ wait
 def _cli_hold_and_check(ws_name, window_name, hold_seconds, env):
     """Start CLI shell, check window before and after a hold period."""
     if window_name:
-        cmd = f"klangk shell {ws_name} {window_name}"
+        cmd = f"klangk shell {ws_name} {window_name} --no-consent-popup"
     else:
-        cmd = f"klangk shell {ws_name}"
+        cmd = f"klangk shell {ws_name} --no-consent-popup"
     script = f"""
 set timeout 30
 log_user 0
@@ -420,7 +420,7 @@ class TestTerminalWindows:
         script = f"""
 set timeout 30
 log_user 0
-spawn klangk shell {WS_NAME}
+spawn klangk shell {WS_NAME} --no-consent-popup
 set s1 $spawn_id
 expect -re {{\\$ }}
 sleep 3
@@ -428,7 +428,7 @@ send "echo B1S; tmux display-message -p '#I:#W'; echo B1E\\r"
 expect -re {{B1S\\r?\\n(\\d+:\\S+)\\r?\\nB1E}}
 set b1 $expect_out(1,string)
 
-spawn klangk shell {WS_NAME} named1
+spawn klangk shell {WS_NAME} named1 --no-consent-popup
 set s2 $spawn_id
 expect -re {{\\$ }}
 sleep 3
@@ -616,7 +616,7 @@ puts "AFTER=$a1"
             script = f"""
 set timeout 25
 log_user 0
-spawn klangk shell {WS_NAME} shared
+spawn klangk shell {WS_NAME} shared --no-consent-popup
 expect {{
     -re {{\\$ }} {{}}
     timeout {{ puts "TIMEOUT"; exit 1 }}
