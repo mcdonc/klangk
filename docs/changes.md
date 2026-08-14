@@ -32,6 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Egress request-flow diagram (#2376).** New "Anatomy of an egressing
+  request" page under Architecture: a Mermaid flowchart of a single
+  egressing request — DNS gate → NFQUEUE SYN gate → consent loop →
+  verdict — plus the host-matching grammar, the allow-vs-deny asymmetry,
+  and persistence boundaries. Linked from
+  [Egress Filtering](features/egress-filtering.md), whose spec
+  grammar bullets were also corrected to the nginx-style scopes
+  (bare host = apex only, `.host` = apex + subdomains) of #2377.
+
 - **`klangk shell` consent-decider popup (#2383).** Shelling into an
   `interactive`-egress workspace now wraps the shell in a local tmux that
   floats the egress-consent decider over it as a `tmux display-popup`, so
