@@ -881,6 +881,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Login-banner redirect loop on return visits.** Opening the app with
+  a saved login token while a login banner was pending (`login_banner_every_visit`
+  on, or a banner whose text changed since it was last accepted) hit a
+  `/consent` ⇄ `/workspaces` redirect loop instead of showing the banner.
+  The banner gate is now terminal while a banner is pending, so the
+  consent page renders and accepting it proceeds as before.
 - **Rules-screen focus race (#2362).** In `klangk consent-decide`'s rules
   view, two rule-set changes landing within one refresh cycle could drop
   the row highlight to the top of the list, so a subsequent `x` revoked

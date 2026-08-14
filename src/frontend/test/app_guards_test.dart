@@ -212,6 +212,38 @@ void main() {
       expect(pendingRedirect, isNull);
     });
 
+    test('banner gate is terminal: logged-in user stays on /consent', () {
+      // Regression: with a persisted token and bannerRequired true
+      // (login_banner_every_visit on a return visit), the logged-in-on-
+      // public guard used to bounce /consent -> /workspaces -> /consent
+      // in an infinite loop. The banner gate must decide alone here.
+      expect(
+        evaluateGuards(
+          isLoggedIn: true,
+          bannerRequired: true,
+          loc: '/consent',
+          currentUri: '/consent',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+        ),
+        isNull,
+      );
+    });
+
+    test('banner gate forces /consent even for logged-in users', () {
+      expect(
+        evaluateGuards(
+          isLoggedIn: true,
+          bannerRequired: true,
+          loc: '/workspaces',
+          currentUri: '/workspaces',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+        ),
+        '/consent',
+      );
+    });
+
     test('logged-out protected route -> /login with pendingRedirect', () {
       expect(
         evaluateGuards(
