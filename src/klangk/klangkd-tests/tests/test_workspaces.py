@@ -621,60 +621,61 @@ class TestStartWorkspace:
     async def test_idle_timeout_override_is_applied(self, user, app_state):
         """A settings.idle_timeout override pins the container state (#864).
 
-        Only an explicit override is materialized onto the container state;
-        when no override is present the state stays None so
-        ``get_idle_timeout()`` lazily reads the live deploy default
-        (reload-safe). See ``test_does_not_pin_idle_timeout`` for that path.
+        The bag is applied inside ``ContainerRegistry.start_container`` --
+        the single start choke point every path funnels through (POST
+        /start AND a WebSocket connect; the WS path used to miss it, found
+        by the idle fuzz harness #2514). Only an explicit override is
+        materialized onto the container state; when no override is present
+        the state stays None so ``get_idle_timeout()`` lazily reads the
+        live deploy default (reload-safe). See
+        ``test_no_idle_override_stays_lazy`` for that path.
         """
         registry = app_state.state.container_registry
-        ws = await app_state.state.workspaces.create_workspace(
-            user["id"],
-            "start-ws-idle-override",
-            settings={"idle_timeout": 600},
-        )
         from klangk.container import ContainerState
 
-        registry.states[ws["id"]] = ContainerState(ws["id"], "cid-z", registry)
+        state = ContainerState("ws-apply", "cid-z", registry)
+        registry.states["ws-apply"] = state
         try:
             with patch.object(
                 registry,
-                "start_container",
+                "_start_container_inner",
                 new_callable=AsyncMock,
                 return_value=("cid-z", "created"),
-            ) as mock_start:
-                await app_state.state.workspaces.start_workspace(ws)
+            ):
+                await registry.start_container(
+                    "ws-apply",
+                    "/host",
+                    "/home",
+                    workspace_settings={"idle_timeout": 600},
+                )
             # The override is materialized onto the live state.
-            assert registry.states[ws["id"]].idle_timeout == 600
-            # The settings bag is threaded through to start_container so
-            # resource limits resolve per-workspace too.
-            assert mock_start.call_args.kwargs["workspace_settings"] == {
-                "idle_timeout": 600
-            }
+            assert state.idle_timeout == 600
         finally:
-            registry.states.pop(ws["id"], None)
+            registry.states.pop("ws-apply", None)
 
     async def test_no_idle_override_stays_lazy(self, user, app_state):
         """No idle_timeout in the bag -> state stays None (lazy fallback)."""
         registry = app_state.state.container_registry
-        ws = await app_state.state.workspaces.create_workspace(
-            user["id"],
-            "start-ws-no-override",
-            settings={"cpu_limit": 2.0},  # other key set, not idle
-        )
         from klangk.container import ContainerState
 
-        registry.states[ws["id"]] = ContainerState(ws["id"], "cid-w", registry)
+        state = ContainerState("ws-lazy", "cid-w", registry)
+        registry.states["ws-lazy"] = state
         try:
             with patch.object(
                 registry,
-                "start_container",
+                "_start_container_inner",
                 new_callable=AsyncMock,
                 return_value=("cid-w", "created"),
             ):
-                await app_state.state.workspaces.start_workspace(ws)
-            assert registry.states[ws["id"]].idle_timeout is None
+                await registry.start_container(
+                    "ws-lazy",
+                    "/host",
+                    "/home",
+                    workspace_settings={"cpu_limit": 2.0},  # not idle
+                )
+            assert state.idle_timeout is None
         finally:
-            registry.states.pop(ws["id"], None)
+            registry.states.pop("ws-lazy", None)
 
 
 async def test_idle_timeout_zero_pins_alive(user, app_state):
@@ -687,26 +688,24 @@ async def test_idle_timeout_zero_pins_alive(user, app_state):
     pinning the workspace alive forever.
     """
     registry = app_state.state.container_registry
-    ws = await app_state.state.workspaces.create_workspace(
-        user["id"],
-        "start-ws-idle-zero",
-        settings={"idle_timeout": 0},
-    )
     from klangk.container import ContainerState
 
-    registry.states[ws["id"]] = ContainerState(ws["id"], "cid-0", registry)
+    state = ContainerState("ws-zero", "cid-0", registry)
+    registry.states["ws-zero"] = state
     try:
         with patch.object(
             registry,
-            "start_container",
+            "_start_container_inner",
             new_callable=AsyncMock,
             return_value=("cid-0", "created"),
-        ) as mock_start:
-            await app_state.state.workspaces.start_workspace(ws)
+        ):
+            await registry.start_container(
+                "ws-zero",
+                "/host",
+                "/home",
+                workspace_settings={"idle_timeout": 0},
+            )
         # 0 is materialized (not treated as "absent" by a truthiness check).
-        assert registry.states[ws["id"]].idle_timeout == 0
-        assert mock_start.call_args.kwargs["workspace_settings"] == {
-            "idle_timeout": 0
-        }
+        assert state.idle_timeout == 0
     finally:
-        registry.states.pop(ws["id"], None)
+        registry.states.pop("ws-zero", None)

@@ -1,0 +1,46 @@
+name: "Fuzz idle: daily run"
+
+# Runs the idle-timeout fuzz harness for 10 minutes against a real klangkd
+# with real podman workspaces (#2514). Exercises the idle reaper with
+# randomized timeouts, overrides, runtime changes, and activity patterns
+# (terminal, egress-only, mixed); exits 1 on any invariant violation,
+# server 5xx, or traceback — so a green run means the reaper behaved.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "10 6 * * *" # daily, 06:10 UTC (offset from fuzz-api's 06:00)
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz-idle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
+      KLANGKD_PODMAN_BIN: /usr/bin/podman
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-workspace-image
+
+      - name: Run idle fuzzer (10 min)
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- python scripts/fuzz-idle.py --duration 10 \
+            --log-dir fuzz-idle-run
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-idle-logs
+          path: |
+            fuzz-idle-run/server.log
+            fuzz-idle-run/scenarios.json
+          if-no-files-found: ignore

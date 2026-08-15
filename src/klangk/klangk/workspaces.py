@@ -509,7 +509,8 @@ class Workspaces:
         inside ``start_container`` (see ``ContainerRegistry._bringup``, #1244),
         so they no longer live here.
 
-        ``idle_timeout`` is left at its default; only
+        ``idle_timeout`` overrides from the settings bag are applied inside
+        ``start_container`` (the single start choke point); only
         ``auto_start_workspaces`` (the boot path) pins it to 0.
 
         Returns ``(container_id, status)``.
@@ -540,20 +541,6 @@ class Workspaces:
             workspace_settings=ws.get("settings"),
             egress_mode=ws.get("egress_mode", model.EGRESS_MODE_INTERACTIVE),
         )
-        # Apply the per-workspace idle-timeout override from the settings
-        # bag (#864), *only* when the workspace actually declares one.
-        # When no override is present we leave the container state's
-        # idle_timeout at None so ``get_idle_timeout()`` lazily falls back
-        # to the live deploy default — that keeps a SIGHUP settings reload
-        # effective for running containers (a materialized value would
-        # freeze it). The auto_start boot path pins the container alive
-        # (0) after this call returns, so a service workspace never idles
-        # out regardless of its settings bag.
-        bag = ws.get("settings") or {}
-        if "idle_timeout" in bag:
-            self.app.state.container_registry.set_workspace_idle_timeout(
-                workspace_id, bag["idle_timeout"]
-            )
         return cid, status
 
     async def auto_start_workspaces(self) -> int:
