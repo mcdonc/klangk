@@ -590,11 +590,16 @@ operators or integrators to act when upgrading.
   previously titled **Net Rules** (originally "Rules", #2457) is now
   titled **Network**. Presentation only; the tab's contents are
   unchanged.
+- **`consent-decide` TUI: duration attached to the verdict action (#2511).**
+  The global duration-selector row is gone. `a`/`d` (and the row buttons)
+  now always send the default duration (`tilrestart`); `A`/`D` open a
+  per-request duration picker (Enter sends, Esc cancels). A duration can
+  no longer be pre-armed and silently applied to the next Allow/Deny —
+  matching the web banner's split Allow/Deny controls.
 - **Restyled pause option buttons (#2502).** The Network tab's pause
   controls (Unpause / Pause 15m / 1h / 1d) now share one pill-shaped
   option-button look with equal sizing, pause/play icons, and tooltips;
-  the active choice keeps the amber fill.
-  Purely presentational — keys and behavior unchanged.
+  the active choice keeps the amber fill. Purely presentational — keys and behavior unchanged.
 - **Consent banner per-row duration menus (#2499).** Each row of the
   egress-consent banner has a split Allow/Deny button: a bare click sends
   the verdict with the default duration (until restart), and the attached

@@ -16,7 +16,7 @@ import types
 
 import pytest
 import websockets
-from textual.widgets import Button, ListView, Static
+from textual.widgets import Button, ListView, OptionList, Static
 
 from klangk.cli.tui import consent as tui_consent
 from klangk.cli.tui.consent import (
@@ -865,9 +865,9 @@ class TestAppActions:
             await pilot.pause()
             assert any('"denied"' in s and '"r1"' in s for s in ws.sent)
 
-    async def test_duration_selection_does_not_submit(self):
-        # Clicking a global duration button selects it (highlights + stores) but
-        # sends NO verdict -- only Allow/Deny submit (#2328).
+    async def test_allow_defaults_to_tilrestart(self):
+        # A bare Allow (button or `a`) sends the default duration; the
+        # duration is never armed beforehand (#2511).
         app = _make_app()
         async with app.run_test() as pilot:
             ws = FakeWS([])
@@ -875,25 +875,6 @@ class TestAppActions:
             app.controller.apply_frame(_req_frame("r1", host="a.com"))
             app._refresh()
             await pilot.pause()
-            btn = app.query_one("#dur-1d", Button)
-            app.on_button_pressed(types.SimpleNamespace(button=btn))
-            await pilot.pause()
-            assert ws.sent == []  # selecting a duration does NOT submit
-            assert app._duration == "1d"
-            assert btn.has_class("dur-sel")
-
-    async def test_allow_submits_with_selected_duration(self):
-        # Allow sends the verdict carrying the global selected duration.
-        app = _make_app()
-        async with app.run_test() as pilot:
-            ws = FakeWS([])
-            app._ws = ws
-            app.controller.apply_frame(_req_frame("r1", host="a.com"))
-            app._refresh()
-            await pilot.pause()
-            app.on_button_pressed(
-                types.SimpleNamespace(button=app.query_one("#dur-1h", Button))
-            )
             app.on_button_pressed(
                 types.SimpleNamespace(
                     button=types.SimpleNamespace(id="allow-r1")
@@ -901,13 +882,13 @@ class TestAppActions:
             )
             await pilot.pause()
             assert any(
-                '"allowed"' in s and '"r1"' in s and '"1h"' in s
+                '"allowed"' in s and '"r1"' in s and '"tilrestart"' in s
                 for s in ws.sent
             ), ws.sent
 
-    async def test_duration_defaults_to_tilrestart(self):
-        # A fresh row defaults to `tilrestart`; Allow without changing it sends
-        # `tilrestart`.
+    async def test_a_key_allows_with_default_duration(self):
+        # `a` on the highlighted row sends allowed + tilrestart directly --
+        # the common case stays one keypress (#2511).
         app = _make_app()
         async with app.run_test() as pilot:
             ws = FakeWS([])
@@ -915,23 +896,207 @@ class TestAppActions:
             app.controller.apply_frame(_req_frame("r1", host="a.com"))
             app._refresh()
             await pilot.pause()
-            app.on_button_pressed(
-                types.SimpleNamespace(
-                    button=types.SimpleNamespace(id="allow-r1")
-                )
-            )
+            await pilot.press("a")
             await pilot.pause()
-            assert any('"tilrestart"' in s for s in ws.sent), ws.sent
+            assert any(
+                '"allowed"' in s and '"r1"' in s and '"tilrestart"' in s
+                for s in ws.sent
+            ), ws.sent
 
-    async def test_duration_selector_guards(self):
-        # Defensive guard: a button without a duration attr is a no-op.
+    async def test_d_key_denies_with_default_duration(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.press("d")
+            await pilot.pause()
+            assert any(
+                '"denied"' in s and '"r1"' in s and '"tilrestart"' in s
+                for s in ws.sent
+            ), ws.sent
+
+    async def test_A_opens_picker_enter_sends_picked_duration(self):
+        # `A` opens the per-row picker; Enter on a picked duration submits
+        # allow with exactly that duration (#2511).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.press("A")
+            await pilot.pause()
+            assert isinstance(app.screen, tui_consent.DurationPickerScreen)
+            picker = app.screen
+            assert picker.request_id == "r1"
+            assert picker.decision == tui_consent.DECISION_ALLOWED
+            ol = app.screen.query_one("#picker-durations", OptionList)
+            ol.highlighted = tui_consent.SELECTABLE_DURATIONS.index("1d")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert any(
+                '"allowed"' in s and '"r1"' in s and '"1d"' in s
+                for s in ws.sent
+            ), ws.sent
+            # The modal is gone after submit.
+            assert not isinstance(app.screen, tui_consent.DurationPickerScreen)
+
+    async def test_D_opens_picker_enter_sends_picked_duration(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.press("D")
+            await pilot.pause()
+            assert isinstance(app.screen, tui_consent.DurationPickerScreen)
+            ol = app.screen.query_one("#picker-durations", OptionList)
+            ol.highlighted = tui_consent.SELECTABLE_DURATIONS.index("forever")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert any(
+                '"denied"' in s and '"r1"' in s and '"forever"' in s
+                for s in ws.sent
+            ), ws.sent
+
+    async def test_picker_enter_alone_sends_default_duration(self):
+        # The picker highlights the default first, so bare Enter repeats the
+        # bare-`a` outcome (#2511).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.press("A")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert any(
+                '"allowed"' in s and '"tilrestart"' in s for s in ws.sent
+            ), ws.sent
+
+    async def test_picker_escape_sends_nothing(self):
+        # Dismissing the picker without a pick sends no verdict (#2511).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.press("A")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert ws.sent == []
+            assert not isinstance(app.screen, tui_consent.DurationPickerScreen)
+
+    async def test_picker_offers_selectable_durations_only(self):
+        # Every human-facing duration is offered, in token order; the
+        # test-only 5s is not (#2487).
         app = _make_app()
         async with app.run_test() as pilot:
             app.controller.apply_frame(_req_frame("r1", host="a.com"))
             app._refresh()
             await pilot.pause()
-            app._select_duration(types.SimpleNamespace(duration=None))
-            assert app._duration == "tilrestart"  # unchanged (default)
+            await pilot.press("A")
+            await pilot.pause()
+            ol = app.screen.query_one("#picker-durations", OptionList)
+            assert ol.option_count == len(tui_consent.SELECTABLE_DURATIONS)
+            prompts = [
+                str(ol.get_option_at_index(i).prompt)
+                for i in range(ol.option_count)
+            ]
+            assert prompts == list(tui_consent.SELECTABLE_DURATIONS)
+            assert "5s" not in prompts
+
+    async def test_A_with_no_focused_row_is_noop(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.press("A")
+            await pilot.press("D")
+            await pilot.pause()
+            assert not isinstance(app.screen, tui_consent.DurationPickerScreen)
+
+    async def test_A_on_rules_screen_is_noop(self):
+        # No row is visible on the rules screen, so A/D must not open a
+        # picker (nor a/d decide) there.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.press("r")
+            await pilot.pause()
+            assert isinstance(app.screen, tui_consent.RulesScreen)
+            await pilot.press("A")
+            await pilot.press("a")
+            await pilot.pause()
+            assert isinstance(app.screen, tui_consent.RulesScreen)
+
+    async def test_keys_inert_while_picker_open(self):
+        # While the picker modal is up, a/d/A/D must not decide the row
+        # behind it -- only Enter submits, Esc cancels (#2511).
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app._refresh()
+            await pilot.pause()
+            await pilot.press("A")
+            await pilot.pause()
+            await pilot.press("a")
+            await pilot.press("d")
+            await pilot.press("A")
+            await pilot.press("D")
+            await pilot.pause()
+            assert ws.sent == []
+            assert isinstance(app.screen, tui_consent.DurationPickerScreen)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert ws.sent == []
+
+    async def test_picker_decides_second_row(self):
+        # The picker targets the *highlighted* row, not always the first.
+        app = _make_app()
+        async with app.run_test() as pilot:
+            ws = FakeWS([])
+            app._ws = ws
+            app.controller.apply_frame(_req_frame("r1", host="a.com"))
+            app.controller.apply_frame(_req_frame("r2", host="b.com"))
+            app._refresh()
+            await pilot.pause()
+            lv = app.query_one("#requests", ListView)
+            lv.index = 1
+            await pilot.pause()
+            await pilot.press("A")
+            await pilot.pause()
+            picker = app.screen
+            assert isinstance(picker, tui_consent.DurationPickerScreen)
+            assert picker.request_id == "r2"
+            assert "b.com" in str(
+                app.screen.query_one("#picker-title", Static).content
+            )
+            ol = app.screen.query_one("#picker-durations", OptionList)
+            ol.highlighted = tui_consent.SELECTABLE_DURATIONS.index("1w")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert any(
+                '"allowed"' in s and '"r2"' in s and '"1w"' in s
+                for s in ws.sent
+            ), ws.sent
 
     async def test_pause_bar_mounts(self):
         # #2332: the pause control bar mounts Unpaused + the three windows +
@@ -1123,54 +1288,6 @@ class TestAppActions:
             await pilot.pause()
             status = app.query_one("#status", Static)
             assert "unpause send failed" in str(status.content)
-
-    async def test_only_selected_duration_has_background_at_first_render(self):
-        # Regression (#2360): the first duration button ("once") grabbed
-        # initial focus on mount and, with no explicit transparent :focus,
-        # rendered the white focus background -- so it read as "selected"
-        # alongside the real ``dur-sel`` default (``tilrestart``). Only the
-        # selected button may carry a background; every other (focused or
-        # not) must be transparent at first render. Asserted opacity-only so
-        # it holds across light/dark themes (the exact accent hue is the
-        # theme's business; the bug was a *second* visible background).
-        app = _make_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            opaque = [
-                d
-                for d in tui_consent.SELECTABLE_DURATIONS
-                if app.query_one(f"#dur-{d}", Button).styles.background.a != 0
-            ]
-            assert opaque == [tui_consent.DURATION_DEFAULT], (
-                f"expected only {tui_consent.DURATION_DEFAULT!r} to carry a "
-                f"background at first render, got {opaque!r}"
-            )
-
-    async def test_selected_duration_keeps_accent_when_focused(self):
-        # The ``.dur-sel`` rules must be specific enough to outrank the
-        # transparent ``#duration-selector Button:focus`` (#2360): selecting a
-        # duration both adds ``dur-sel`` and focuses the button, and the
-        # accent must survive focus -- else the just-selected button goes
-        # transparent and looks unselected. The previously-selected default
-        # drops to transparent.
-        app = _make_app()
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            btn = app.query_one(f"#dur-{tui_consent.DURATION_5M}", Button)
-            app.on_button_pressed(types.SimpleNamespace(button=btn))
-            btn.focus()
-            await pilot.pause()
-            assert app.focused is btn  # focus really landed on it
-            assert btn.has_class("dur-sel")
-            assert btn.styles.background.a != 0, (
-                f"selected+focused button lost its background "
-                f"(got {btn.styles.background!r})"
-            )
-            default_btn = app.query_one(
-                f"#dur-{tui_consent.DURATION_DEFAULT}", Button
-            )
-            assert not default_btn.has_class("dur-sel")
-            assert default_btn.styles.background.a == 0
 
 
 class TestWsLoop:
@@ -2690,7 +2807,9 @@ class TestPersistentPopupRole:
         shown = {b.key: b.description for b in app.BINDINGS if b.show}
         assert shown == {
             "a": "Allow",
+            "A": "Allow…",
             "d": "Deny",
+            "D": "Deny…",
             "r": "Rules",
             "q": "Quit",
         }
@@ -2710,7 +2829,9 @@ class TestPersistentPopupRole:
         # The Footer advertises the shell wrapper's C-a p toggle.
         assert shown == {
             "a": "Allow",
+            "A": "Allow…",
             "d": "Deny",
+            "D": "Deny…",
             "r": "Rules",
             "ctrl+a": "Hide/Show",
         }

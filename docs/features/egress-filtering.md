@@ -157,8 +157,10 @@ left pending forever.
 ### Deciding
 
 - **`klangk consent-decide <workspace>`** — a standalone TUI decider
-  (#2310): a live queue of held requests (host:port and a countdown), a
-  duration selector, allow/deny per row, a rules screen (`r`) with revoke
+  (#2310): a live queue of held requests (host:port and a countdown),
+  allow/deny per row with the duration chosen at the action — bare
+  `a`/`d` (or the row buttons) send the default `tilrestart`, `A`/`D`
+  open a duration picker first (#2511) — a rules screen (`r`) with revoke
   (`x`) (#2340, #2341), and pause controls (#2332).
 - **`klangk shell`** — shelling into an interactive workspace wraps the
   shell in a local tmux that floats the decider over it as a popup: a
@@ -187,8 +189,10 @@ workspace. Pausing prompting (below) additionally requires
 
 ### Decision durations
 
-A verdict carries a duration, chosen from one selector at allow/deny time
-(default `tilrestart`, #2328):
+A verdict carries a duration, chosen with the allow/deny action (default
+`tilrestart`, #2328): bare `a`/`d` in the TUI — or a plain button click
+on the web banner — send the default; the TUI's `A`/`D` picker (#2511)
+chooses any other duration in the same step.
 
 | Duration                          | Meaning                                                                                                                                                                                                                         |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
