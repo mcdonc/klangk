@@ -42,6 +42,9 @@ jobs:
           done
           ls /run/current-system/sw/bin >/dev/null 2>&1 && echo "current-system sw/bin exists"
 
+      - name: Prepare klangk devenv
+        run: devenv shell -- true
+
       - name: Build workspace + sidecar images
         if: steps.filter.outputs.e2e == 'true'
         run: devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
