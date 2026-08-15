@@ -33,6 +33,15 @@ jobs:
               - 'devenv.yaml'
               - '.github/workflows/backend-e2e-tests.yml'
 
+      - name: Debug PATH probe
+        run: |
+          echo "PATH=$PATH"
+          echo "shell=$SHELL"
+          for b in devenv nix podman git newuidmap; do
+            printf '%s: ' "$b"; command -v "$b" || echo MISSING
+          done
+          ls /run/current-system/sw/bin >/dev/null 2>&1 && echo "current-system sw/bin exists"
+
       - name: Build workspace + sidecar images
         if: steps.filter.outputs.e2e == 'true'
         run: devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
