@@ -32,6 +32,12 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGKNETWORK_EGRESS_ACTIVITY_GATE` forwarding (#2514).** The
+  sidecar's idle-activity report interval is now honored when set in
+  klangkd's environment (forwarded to the sidecar like
+  `KLANGKNETWORK_EGRESS_MIN_TTL`). Operators can lower the default 60s
+  gate on deploys with short idle timeouts so egress-only workspaces'
+  keep-alive bumps stay prompt relative to the check interval.
 - **Static reject list on the Net Rules tab (#2503).** The tab now shows
   the workspace's `rejected_domains` (names the network sidecar blocks
   unconditionally, e.g. from a _deny forever_ verdict) in a read-only
@@ -891,6 +897,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Per-workspace idle timeout ignored on web-UI starts (#2514).** A
+  workspace's `idle_timeout` settings override (#864) was only applied
+  when started via `POST /workspaces/{id}/start`; a workspace started by
+  connecting in the browser silently used the deploy-wide default. The
+  override is now applied at the single container-start choke point, so
+  every start path honors it (`0` = never idle out still works).
+- **Traceback when a terminal open races an idle reap (#2514).** podman's
+  "can only create exec sessions on running containers" refusal during a
+  terminal open is now treated as the expected container-recycle race it
+  is (clean warning + client error frame, #2178), not an ERROR traceback
+  in the server log.
 - **Add Workspace dialog netfilter section (#2508).** The
   allowed-domains editor now has an "Allowed Domains" title and
   description, matching the rejected-domains editor and the workspace

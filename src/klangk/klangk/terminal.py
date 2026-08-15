@@ -590,8 +590,15 @@ class Terminal:
             # "container gone" is a recoverable condition (the container
             # was recycled between terminal start and this call), not a
             # tmux/server failure — surface it distinctly so callers can
-            # avoid tracebacking an expected race (#2178).
-            if classify(stderr) == 404:
+            # avoid tracebacking an expected race (#2178). Podman reports
+            # a *stopped* container (an idle-reap racing this exec) as
+            # "state improper" / "can only create exec sessions on running
+            # containers" — same recycle race, found by the idle fuzz
+            # harness (#2514), so it maps to the same exception.
+            if classify(stderr) == 404 or (
+                "state improper" in stderr.lower()
+                or "running containers" in stderr.lower()
+            ):
                 raise ContainerGoneError(
                     f"container {container_id!r} is gone: {stderr.strip()}"
                 )

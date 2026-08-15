@@ -1367,10 +1367,14 @@ class ContainerRegistry:
         # (or a test) sets them. The sidecar defaults (MIN_TTL=30s, sweep=5s,
         # proxy.py) floor any verdict TTL, so the egress smoketest lowers both
         # to make a short timed verdict expire in seconds. Absent -> defaults.
+        # ACTIVITY_GATE (default 60s) likewise: the idle fuzz harness
+        # (scripts/fuzz-idle.py, #2514) lowers it so the sidecar's
+        # egress-activity bumps are observable at its seconds-scale timeouts.
         for _opt in (
             "KLANGKNETWORK_EGRESS_MIN_TTL",
             "KLANGKNETWORK_EGRESS_SWEEP_INTERVAL",
             "KLANGKNETWORK_EGRESS_DEBUG_RST",
+            "KLANGKNETWORK_EGRESS_ACTIVITY_GATE",
         ):
             _v = os.environ.get(_opt)
             if _v:
@@ -1584,7 +1588,7 @@ class ContainerRegistry:
         don't race to create the same container.
         """
         async with self._get_workspace_lock(workspace_id):
-            return await self._start_container_inner(
+            result = await self._start_container_inner(
                 workspace_id,
                 host_path,
                 home_path,
@@ -1606,6 +1610,27 @@ class ContainerRegistry:
                 workspace_settings=workspace_settings,
                 egress_mode=egress_mode,
             )
+            # Apply the per-workspace idle-timeout override from the
+            # settings bag (#864) at this single start choke point, so
+            # EVERY start path gets it -- a workspace started by a
+            # WebSocket connect (the normal web-UI flow,
+            # wshandler.connection) lands here just like POST /start
+            # (Workspaces.start_workspace), and previously only the
+            # latter applied the bag, so a WS-started workspace silently
+            # ignored its override (found by the idle fuzz harness,
+            # #2514). Only when actually declared: an absent key leaves
+            # the container state's ``idle_timeout`` at None so
+            # ``get_idle_timeout()`` lazily follows the live deploy
+            # default (a SIGHUP settings reload stays effective for
+            # running containers). The auto_start boot path pins 0 after
+            # this returns, so a service workspace never idles out
+            # regardless of its bag (#1244).
+            bag = workspace_settings or {}
+            if "idle_timeout" in bag:
+                self.idle.set_workspace_idle_timeout(
+                    workspace_id, bag["idle_timeout"]
+                )
+            return result
 
     async def _handle_existing_container(
         self,

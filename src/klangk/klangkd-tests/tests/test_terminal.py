@@ -794,6 +794,24 @@ class TestTmuxCommand:
                 await _terminal.tmux_command("cid", "sess", ["list-windows"])
         assert mock_exec.await_count == 1  # no retry for a gone container
 
+    async def test_raises_container_gone_on_stopped_container(self):
+        # podman refuses exec on a *stopped* container ("state improper") —
+        # an idle reap racing the exec is the same recycle race as a 404,
+        # not a tmux failure (found by the idle fuzz harness, #2514).
+        stderr = (
+            "Error: can only create exec sessions on running containers: "
+            "container state improper"
+        )
+        with patch.object(
+            _mock_pod,
+            "exec_container",
+            new_callable=AsyncMock,
+            return_value=(1, "", stderr),
+        ) as mock_exec:
+            with pytest.raises(ContainerGoneError, match="is gone"):
+                await _terminal.tmux_command("cid", "sess", ["list-windows"])
+        assert mock_exec.await_count == 1  # no retry for a gone container
+
     async def test_retries_on_socket_not_found(self):
         with (
             patch.object(
