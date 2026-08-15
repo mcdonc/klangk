@@ -13,6 +13,7 @@ from klangk.model.egress_consent import (
     DECISION_REVOKED,
     DURATIONS,
     DURATION_5M,
+    DURATION_1W,
     DURATION_FOREVER,
     DURATION_TILRESTART,
 )
@@ -945,3 +946,181 @@ async def test_active_verdict_for_no_port(ec, ws, user):
     assert row["decision"] == DECISION_DENIED
     # a port-specific lookup does not match a port-less verdict
     assert await ec.active_verdict_for(w["id"], "noport.com", 443) is None
+
+
+# -- prune: retention + row cap (#2303) --
+
+RETENTION_DEFAULT = 30  # matches Settings.egress_consent_retention_days
+
+
+async def _backdate(
+    app_state, row_id, *, requested=None, decided=None, revoked=None
+):
+    """Shift a row's timestamps into the past (retention-window tests)."""
+    sets, params = [], []
+    if requested is not None:
+        sets.append("requested_at = ?")
+        params.append(requested)
+    if decided is not None:
+        sets.append("decided_at = ?")
+        params.append(decided)
+    if revoked is not None:
+        sets.append("revoked_at = ?")
+        params.append(revoked)
+    params.append(row_id)
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            f"UPDATE egress_consent SET {', '.join(sets)} WHERE id = ?",  # noqa: S608
+            tuple(params),
+        )
+
+
+async def test_prune_deletes_old_terminal_rows(ec, ws, user, app_state):
+    """Everything terminal-and-not-in-effect past the window goes; rows that
+    are enforcement state (in-effect verdicts) stay even when old."""
+    import time as _time
+
+    now = _time.time()
+    old = now - (RETENTION_DEFAULT + 5) * 86400
+    w = await ws.create_workspace(user["id"], "prune-terminal")
+    # static policy denial, old
+    await ec.record_static_denial(w["id"], "static-old.com", 443)
+    # expired (timed-out pending), old
+    exp = await ec.create_request(w["id"], "expired.com", 443)
+    await ec.expire_pending(exp["id"])
+    # revoked forever verdict (undone -> never in effect), old
+    rev = await ec.create_request(w["id"], "revoked.com", 443)
+    await ec.decide(rev["id"], DECISION_ALLOWED, user["id"], DURATION_FOREVER)
+    await ec.revoke(rev["id"], user["id"])
+    # elapsed timed verdict, old
+    elapsed = await ec.create_request(w["id"], "elapsed.com", 443)
+    await ec.decide(elapsed["id"], DECISION_DENIED, user["id"], DURATION_5M)
+    # stale pending (dead for sure after the retention window), old
+    stale = await ec.create_request(w["id"], "stale-pending.com", 443)
+    # in-effect verdicts, equally old: must be KEPT
+    forever = await ec.create_request(w["id"], "forever.com", 443)
+    await ec.decide(
+        forever["id"], DECISION_ALLOWED, user["id"], DURATION_FOREVER
+    )
+    tilrestart = await ec.create_request(w["id"], "tilrestart.com", 443)
+    await ec.decide(
+        tilrestart["id"], DECISION_DENIED, user["id"], DURATION_TILRESTART
+    )
+    for r in (exp, rev, elapsed, stale, forever, tilrestart):
+        await _backdate(
+            app_state, r["id"], requested=old, decided=old, revoked=old
+        )
+    # the static row has no pending stage; backdate its single timestamp pair
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "UPDATE egress_consent SET requested_at = ?, decided_at = ?"
+            " WHERE workspace_id = ? AND dest_host = 'static-old.com'",
+            (old, old, w["id"]),
+        )
+
+    deleted = await ec.prune(now=now)
+    assert deleted == 5  # static-old, expired, revoked, elapsed, stale
+    hosts = {r["dest_host"] for r in await ec.list_requests(w["id"], None)}
+    assert hosts == {"forever.com", "tilrestart.com"}
+
+
+async def test_prune_keeps_timed_verdict_still_in_window(
+    ec, ws, user, app_state
+):
+    """A retention window shorter than the verdict duration must not delete a
+    verdict still in effect (fail-safe: enforcement beats tidiness)."""
+    import time as _time
+
+    app_state.state.settings.egress_consent_retention_days = 1
+    now = _time.time()
+    w = await ws.create_workspace(user["id"], "prune-in-window")
+    req = await ec.create_request(w["id"], "week.com", 443)
+    await ec.decide(req["id"], DECISION_ALLOWED, user["id"], DURATION_1W)
+    # decided 2 days ago: past the 1-day retention, inside the 1-week window
+    await _backdate(app_state, req["id"], decided=now - 2 * 86400)
+
+    assert await ec.prune(now=now) == 0
+    row = await ec.get_request(req["id"])
+    assert row is not None and row["decision"] == DECISION_ALLOWED
+
+
+async def test_prune_fresh_rows_untouched(ec, ws, user):
+    """Rows inside the window are never candidates."""
+    w = await ws.create_workspace(user["id"], "prune-fresh")
+    await ec.record_static_denial(w["id"], "fresh-static.com", 443)
+    assert await ec.prune() == 0
+    # row still there: the dedup index is still saturated
+    assert (
+        await ec.record_static_denial(w["id"], "fresh-static.com", 443) is None
+    )
+
+
+async def test_prune_disabled_when_both_zero(ec, ws, user, app_state):
+    app_state.state.settings.egress_consent_retention_days = 0
+    app_state.state.settings.egress_consent_row_cap = 0
+    w = await ws.create_workspace(user["id"], "prune-off")
+    await ec.record_static_denial(w["id"], "kept.com", 443)
+    assert await ec.prune() == 0
+    rows = await ec.list_requests(w["id"], None)
+    assert len(rows) == 1 and rows[0]["dest_host"] == "kept.com"
+
+
+async def test_prune_row_cap_trims_oldest_eligible(ec, ws, user, app_state):
+    """Over-cap workspaces keep the newest rows + every in-effect verdict;
+    live pending rows are never cap-pruned."""
+    import time as _time
+
+    app_state.state.settings.egress_consent_row_cap = 3
+    now = _time.time()
+    w = await ws.create_workspace(user["id"], "prune-cap")
+    # 3 eligible elapsed verdicts, oldest first
+    elapsed_hosts = ["old1.com", "old2.com", "old3.com", "new1.com"]
+    for i, host in enumerate(elapsed_hosts):
+        r = await ec.create_request(w["id"], host, 443)
+        await ec.decide(r["id"], DECISION_DENIED, user["id"], DURATION_5M)
+        await _backdate(app_state, r["id"], decided=now - 1000 + i * 10)
+    # in-effect forever allow + a live pending: exempt from the cap
+    keep = await ec.create_request(w["id"], "keep.com", 443)
+    await ec.decide(keep["id"], DECISION_ALLOWED, user["id"], DURATION_FOREVER)
+    live = await ec.create_request(w["id"], "live-pending.com", 443)
+    assert await ec.count_pending(w["id"]) == 1  # only the live one
+
+    deleted = await ec.prune(now=now)
+    # total 6 rows, cap 3 -> 3 over: the 3 oldest eligible go (old1..old3)
+    assert deleted == 3
+    hosts = {r["dest_host"] for r in await ec.list_requests(w["id"], None)}
+    assert hosts == {"new1.com", "keep.com", "live-pending.com"}
+    assert await ec.get_request(live["id"]) is not None
+
+
+async def test_prune_cap_never_drops_in_effect_rows(ec, ws, user, app_state):
+    """Even far over cap, in-effect verdicts survive (enforcement state)."""
+    app_state.state.settings.egress_consent_row_cap = 1
+    w = await ws.create_workspace(user["id"], "prune-cap-keep")
+    a = await ec.create_request(w["id"], "a.com", 443)
+    await ec.decide(a["id"], DECISION_ALLOWED, user["id"], DURATION_FOREVER)
+    d = await ec.create_request(w["id"], "d.com", 443)
+    await ec.decide(d["id"], DECISION_DENIED, user["id"], DURATION_FOREVER)
+
+    await ec.prune()
+    hosts = {r["dest_host"] for r in await ec.list_requests(w["id"], None)}
+    assert hosts == {"a.com", "d.com"}
+
+
+async def test_prune_retention_zero_cap_active(ec, ws, user, app_state):
+    """Retention off, cap on: only the cap pass runs."""
+    import time as _time
+
+    app_state.state.settings.egress_consent_retention_days = 0
+    app_state.state.settings.egress_consent_row_cap = 2
+    now = _time.time()
+    w = await ws.create_workspace(user["id"], "prune-cap-only")
+    kept = []
+    for i, host in enumerate(["x.com", "y.com", "z.com"]):
+        r = await ec.create_request(w["id"], host, 443)
+        await ec.decide(r["id"], DECISION_ALLOWED, user["id"], DURATION_5M)
+        await _backdate(app_state, r["id"], decided=now - 1000 + i * 10)
+        kept.append(r["id"])
+    assert await ec.prune(now=now) == 1  # only the oldest exceeds the cap
+    hosts = {r["dest_host"] for r in await ec.list_requests(w["id"], None)}
+    assert hosts == {"y.com", "z.com"}
