@@ -272,35 +272,37 @@ port: "8997"
 
 ### Container / workspace
 
-| Key                          | Default                         | Env var                              |
-| ---------------------------- | ------------------------------- | ------------------------------------ |
-| `data_dir`                   | `<state_dir>/data`              | `KLANGKD_DATA_DIR`                   |
-| `state_dir`                  | `$XDG_STATE_HOME/klangkd`       | `KLANGKD_STATE_DIR`                  |
-| `config_dir`                 | `$XDG_CONFIG_HOME/klangkd`      | `KLANGKD_CONFIG_DIR`                 |
-| `customize_dir`              | `<config_dir>/custom`           | `KLANGKD_CUSTOMIZE_DIR`              |
-| `features_enable`            | _(unset → manifest `defaults`)_ | `KLANGKD_FEATURES_ENABLE`            |
-| `image_name`                 | `klangk-workspace`              | `KLANGKD_IMAGE_NAME`                 |
-| `image_pull_policy`          | `never`                         | `KLANGKD_IMAGE_PULL_POLICY`          |
-| `allowed_images`             |                                 | `KLANGKD_ALLOWED_IMAGES`             |
-| `allowed_mount_roots`        |                                 | `KLANGKD_ALLOWED_MOUNT_ROOTS`        |
-| `allow_autostart`            |                                 | `KLANGKD_ALLOW_AUTOSTART`            |
-| `allow_sudo`                 |                                 | `KLANGKD_ALLOW_SUDO`                 |
-| `container_subnets`          | _(auto-derived)_                | `KLANGKD_CONTAINER_SUBNETS`          |
-| `userns`                     |                                 | `KLANGKD_USERNS`                     |
-| `enable_ping`                | `true`                          | `KLANGKD_ENABLE_PING`                |
-| `podman_bin`                 | `podman`                        | `KLANGKD_PODMAN_BIN`                 |
-| `disable_tmux`               |                                 | `KLANGKD_DISABLE_TMUX`               |
-| `netfilter_enabled`          | `true`                          | `KLANGKD_NETFILTER_ENABLED`          |
-| `netfilter_default_domains`  | _(unset)_                       | `KLANGKD_NETFILTER_DEFAULT_DOMAINS`  |
-| `container_cpu_limit`        | `2.0`                           | `KLANGKD_CONTAINER_CPU_LIMIT`        |
-| `container_memory_limit`     | `8g`                            | `KLANGKD_CONTAINER_MEMORY_LIMIT`     |
-| `container_pids_limit`       | `16384`                         | `KLANGKD_CONTAINER_PIDS_LIMIT`       |
-| `health_check_interval`      |                                 | `KLANGKD_HEALTH_CHECK_INTERVAL`      |
-| `health_check_startup_grace` |                                 | `KLANGKD_HEALTH_CHECK_STARTUP_GRACE` |
-| `health_check_timeout`       |                                 | `KLANGKD_HEALTH_CHECK_TIMEOUT`       |
-| `hosted_ports_per_workspace` | `5`                             | `KLANGKD_HOSTED_PORTS_PER_WORKSPACE` |
-| `test_mode`                  |                                 | `KLANGKD_TEST_MODE`                  |
-| `version_file`               |                                 | `KLANGKD_VERSION_FILE`               |
+| Key                             | Default                         | Env var                                 |
+| ------------------------------- | ------------------------------- | --------------------------------------- |
+| `data_dir`                      | `<state_dir>/data`              | `KLANGKD_DATA_DIR`                      |
+| `state_dir`                     | `$XDG_STATE_HOME/klangkd`       | `KLANGKD_STATE_DIR`                     |
+| `config_dir`                    | `$XDG_CONFIG_HOME/klangkd`      | `KLANGKD_CONFIG_DIR`                    |
+| `customize_dir`                 | `<config_dir>/custom`           | `KLANGKD_CUSTOMIZE_DIR`                 |
+| `features_enable`               | _(unset → manifest `defaults`)_ | `KLANGKD_FEATURES_ENABLE`               |
+| `image_name`                    | `klangk-workspace`              | `KLANGKD_IMAGE_NAME`                    |
+| `image_pull_policy`             | `never`                         | `KLANGKD_IMAGE_PULL_POLICY`             |
+| `allowed_images`                |                                 | `KLANGKD_ALLOWED_IMAGES`                |
+| `allowed_mount_roots`           |                                 | `KLANGKD_ALLOWED_MOUNT_ROOTS`           |
+| `allow_autostart`               |                                 | `KLANGKD_ALLOW_AUTOSTART`               |
+| `allow_sudo`                    |                                 | `KLANGKD_ALLOW_SUDO`                    |
+| `container_subnets`             | _(auto-derived)_                | `KLANGKD_CONTAINER_SUBNETS`             |
+| `userns`                        |                                 | `KLANGKD_USERNS`                        |
+| `enable_ping`                   | `true`                          | `KLANGKD_ENABLE_PING`                   |
+| `podman_bin`                    | `podman`                        | `KLANGKD_PODMAN_BIN`                    |
+| `disable_tmux`                  |                                 | `KLANGKD_DISABLE_TMUX`                  |
+| `netfilter_enabled`             | `true`                          | `KLANGKD_NETFILTER_ENABLED`             |
+| `netfilter_default_domains`     | _(unset)_                       | `KLANGKD_NETFILTER_DEFAULT_DOMAINS`     |
+| `egress_consent_retention_days` | `30`                            | `KLANGKD_EGRESS_CONSENT_RETENTION_DAYS` |
+| `egress_consent_row_cap`        | `2000`                          | `KLANGKD_EGRESS_CONSENT_ROW_CAP`        |
+| `container_cpu_limit`           | `2.0`                           | `KLANGKD_CONTAINER_CPU_LIMIT`           |
+| `container_memory_limit`        | `8g`                            | `KLANGKD_CONTAINER_MEMORY_LIMIT`        |
+| `container_pids_limit`          | `16384`                         | `KLANGKD_CONTAINER_PIDS_LIMIT`          |
+| `health_check_interval`         |                                 | `KLANGKD_HEALTH_CHECK_INTERVAL`         |
+| `health_check_startup_grace`    |                                 | `KLANGKD_HEALTH_CHECK_STARTUP_GRACE`    |
+| `health_check_timeout`          |                                 | `KLANGKD_HEALTH_CHECK_TIMEOUT`          |
+| `hosted_ports_per_workspace`    | `5`                             | `KLANGKD_HOSTED_PORTS_PER_WORKSPACE`    |
+| `test_mode`                     |                                 | `KLANGKD_TEST_MODE`                     |
+| `version_file`                  |                                 | `KLANGKD_VERSION_FILE`                  |
 
 ### LLM
 
