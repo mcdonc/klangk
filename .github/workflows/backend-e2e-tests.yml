@@ -49,6 +49,19 @@ jobs:
         if: steps.filter.outputs.e2e == 'true'
         run: devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
 
+      - name: Clean leftover CI podman networks
+        if: steps.filter.outputs.e2e == 'true'
+        # The runner shares chrism's rootless podman with interactive sessions.
+        # Failed fixture setups leak e2e networks; each new network restarts
+        # aardvark-dns for the whole network set, and a wide set + concurrent
+        # xdist workers makes the restart race ("bind udp 10.89.0.1:53: address
+        # already in use", podman exit 126). Scoped to CI-owned name prefixes
+        # — never touches interactive-session resources.
+        run: |
+          podman network ls --format '{{.Name}}' \
+            | grep -E '^(netc-e2e|consent-e2e|egress-e2e|netc-pp)' \
+            | xargs -r -n1 podman network rm -f >/dev/null 2>&1 || true
+
       - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'
         env:
