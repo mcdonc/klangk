@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from .acl import ACLModel
 from .egress_consent import EgressConsentModel
 from .server_schedules import ServerSchedulesModel
+from .process_launch import ProcessLaunchModel
 from .ports import PortsModel
 from .sessions import SessionsModel
 from .tokens import TokensModel
@@ -51,6 +52,7 @@ class Model:
         self.workspaces = WorkspacesModel(app)
         self.egress_consent = EgressConsentModel(app)
         self.server_schedules = ServerSchedulesModel(app)
+        self.process_launch = ProcessLaunchModel(app)
 
     def reconfigure(self, app) -> None:
         self.app = app

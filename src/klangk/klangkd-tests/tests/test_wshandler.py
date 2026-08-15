@@ -109,6 +109,10 @@ def _make_app_state(registry=None, sockets=None):
     app_state.state.files = files_mod.Files(app_state)
     app_state.state.email = emailsvc_mod.EmailService(app_state)
     app_state.state.util = util_mod.Util(app_state)
+    # #2520: input paths reach the process ledger's note_input hint.
+    from klangk.process_ledger import ProcessLedger
+
+    app_state.state.process_ledger = ProcessLedger(app_state)
 
     app_state.state.auth = auth_mod.Auth(app_state)
     # #1572: ContainerRegistry reaches app_state.state.model.ports; Auth reaches
@@ -2901,6 +2905,8 @@ class TestExecController:
                 "email": "testuser@example.com",
                 "handle": "testuser",
             },
+            # #2520: the ledger input hint keys on the workspace
+            workspace_id="ws-exec-hint",
         )
         return ExecController(conn), sock, conn
 
@@ -3081,6 +3087,20 @@ class TestExecController:
         ctrl.session = session
         await ctrl.input({"data": base64.b64encode(b"x").decode()})
         session.write.assert_not_awaited()
+
+    async def test_input_notes_process_ledger_hint(self, app_state):
+        """#2520: live input records the pane-input hint on the ledger."""
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        ctrl, _, _ = self._controller(app_state=app_state)
+        session = AsyncMock()
+        session.is_alive = True
+        ctrl.session = session
+        with patch.object(registry, "record_activity"):
+            await ctrl.input({"data": base64.b64encode(b"x").decode()})
+        session.write.assert_awaited_once()
+        hint = app_state.state.process_ledger._last_input.get("ws-exec-hint")
+        assert hint is not None and hint[0] == "testuser"
 
     async def test_input_oversized_dropped(self, app_state):
         app_state = _make_app_state()
@@ -6735,6 +6755,19 @@ class TestTerminalController:
         with patch.object(_mock_term, "select_window") as sel:
             await ctrl.select_window({"window_id": "@2"})
         sel.assert_called_once_with("cid", "grouped", "@2")
+
+    async def test_input_notes_process_ledger_hint(self, app_state):
+        """#2520: live terminal input records the pane-input hint."""
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        ctrl, _, _ = self._controller(app_state=app_state)
+        session = _mock_terminal()
+        ctrl.session = session
+        with patch.object(registry, "record_activity"):
+            await ctrl.input({"data": "ls\n"})
+        session.write.assert_awaited_once()
+        hint = app_state.state.process_ledger._last_input.get("ws-1")
+        assert hint is not None and hint[0] == "alice"  # conn user handle
 
     async def test_select_window_falls_back_to_tmux_session_name(self):
         ctrl, _, _ = self._controller()

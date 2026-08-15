@@ -49,11 +49,16 @@ _mock_registry.clear_service_fire_pending = MagicMock()
 # settings-bearing wrapper + Terminal are recreated.
 _mock_settings = MagicMock()
 _mock_settings.disable_tmux = ""
+# #2520: Terminal's anchor paths reach app.state.process_ledger (reusing
+# the module-level MagicMock import above).
+_MM = MagicMock
+
 _app_state = types.SimpleNamespace(
     state=types.SimpleNamespace(
         podman=_mock_pod,
         container_registry=_mock_registry,
         settings=_mock_settings,
+        process_ledger=_MM(),
     )
 )
 _terminal = Terminal(_app_state)
@@ -73,6 +78,7 @@ def _fresh_terminal():
     _mock_settings.disable_tmux = ""
     _app_state = types.SimpleNamespace(
         state=types.SimpleNamespace(
+            process_ledger=_MM(),
             podman=_mock_pod,
             container_registry=_mock_registry,
             settings=_mock_settings,
@@ -2115,10 +2121,13 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session("cid", "cmd")
         cmds = [c.args[1] for c in mock_exec.call_args_list]
-        assert len(cmds) == 1  # exactly one exec: the send-keys retry
+        # two execs: the send-keys retry + the process-ledger anchor
+        # lookup that follows a successful send (#2520)
+        assert len(cmds) == 2
         assert "send-keys" in cmds[0]
         assert "service:service-cmd" in cmds[0]
         assert "cmd" in cmds[0]
+        assert "list-panes" in cmds[1]
         assert not any("new-window" in c for c in cmds)
         _mock_registry.clear_service_fire_pending.assert_called_with("cid")
         _mock_registry.mark_service_started.assert_called_once_with("cid")

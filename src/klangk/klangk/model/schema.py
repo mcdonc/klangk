@@ -3,6 +3,7 @@
 from .acl import PRINCIPAL_USER
 from .egress_consent import DECISIONS, DURATIONS
 from .migrations import run_migrations
+from .process_launch import KINDS, METHODS
 from .users import AGENT_USER_ID, backfill_handles
 
 # The duration + decision CHECK value lists are generated from the single
@@ -10,6 +11,8 @@ from .users import AGENT_USER_ID, backfill_handles
 # from the Python enums (#2338, #2339).
 _DURATION_CHECK_VALUES = ", ".join(f"'{d}'" for d in sorted(DURATIONS))
 _DECISION_CHECK_VALUES = ", ".join(f"'{d}'" for d in sorted(DECISIONS))
+_KIND_CHECK_VALUES = ", ".join(f"'{k}'" for k in sorted(KINDS))
+_METHOD_CHECK_VALUES = ", ".join(f"'{m}'" for m in sorted(METHODS))
 
 
 async def init_db(db) -> None:
@@ -426,6 +429,33 @@ async def init_db(db) -> None:
         await db.execute("""
             CREATE INDEX IF NOT EXISTS idx_egress_consent_workspace
             ON egress_consent(workspace_id, decision)
+        """)
+        # process_launch: the per-workspace launch ledger (#2520). One row
+        # per captured exec/birth event inside a workspace container, with
+        # best-effort principal attribution. CHECKs keep the kind/method
+        # enums from drifting (same DB-backstop philosophy as above).
+        await db.execute(f"""
+            CREATE TABLE IF NOT EXISTS process_launch (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL
+                    REFERENCES workspaces(id) ON DELETE CASCADE,
+                pid INTEGER NOT NULL,
+                ppid INTEGER,
+                uid INTEGER,
+                comm TEXT,
+                argv TEXT,
+                started_at REAL NOT NULL,
+                principal TEXT NOT NULL,
+                attribution_method TEXT NOT NULL
+                    CHECK (attribution_method IN ({_METHOD_CHECK_VALUES})),
+                pane_hint TEXT,
+                event_kind TEXT NOT NULL DEFAULT 'birth'
+                    CHECK (event_kind IN ({_KIND_CHECK_VALUES}))
+            )
+        """)
+        await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_process_launch_workspace
+            ON process_launch(workspace_id, started_at)
         """)
         # At most one pending request per (workspace, host, port). The
         # partial index makes INSERT OR IGNORE the atomic dedup path,

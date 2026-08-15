@@ -36,6 +36,7 @@ from . import (
     nix,
     podman,
     netfilter,
+    process_ledger,
     sidecar_connections,
     ssl_trust,
     terminal,
@@ -199,6 +200,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # structurally impossible for these domains). The not-yet-converted
     # domains still go through the _current_db ContextVar backstop.
     app.state.model = model.Model(app)
+    app.state.process_ledger = process_ledger.ProcessLedger(app)
     # #1577: ACL(app_state) owns the FastAPI permission layer — the
     # resource-tree walk / principal resolution that the ``has_permission``
     # dependency (resolved per-request from ``request.app.state.acl``) and

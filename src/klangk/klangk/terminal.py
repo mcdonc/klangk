@@ -521,7 +521,23 @@ class Terminal:
             )
         except Exception:
             return False
-        return rc == 0
+        if rc != 0:
+            return False
+        # Process-ledger agent anchor (#2520): resolve the service
+        # window's pane pid and register it — launches descending from
+        # it are attributed to the agent. Best effort: a failed lookup
+        # logs and skips (attribution degrades to unknown, never breaks
+        # the terminal path). Covers both the fresh-fire and the
+        # pending-retry send paths.
+        try:
+            await self._register_service_anchor(container_id)
+        except Exception:
+            logger.warning(
+                "process-ledger: could not resolve service anchor"
+                " for container %s",
+                container_id,
+            )
+        return True
 
     async def ensure_service_session(
         self,
@@ -715,6 +731,97 @@ class Terminal:
                 raise
 
     # --- container-side helpers ---
+
+    async def register_window_anchors(
+        self,
+        container_id: str,
+        session_name: str,
+        windows: list[dict],
+        principal: str,
+    ) -> None:
+        """Register pane pids for *windows* as *principal*'s anchors (#2520).
+
+        One exec resolves every window's pane pid via ``list-panes -a``
+        scoped to the session; each becomes an attribution anchor. The
+        pids are container-internal (see _register_service_anchor).
+        """
+        rc, output, _err = await self.podman.exec_container(
+            container_id,
+            [
+                "tmux",
+                "list-panes",
+                "-a",
+                "-t",
+                session_name,
+                "-F",
+                "#{window_id}\t#{pane_pid}",
+            ],
+            user=CONTAINER_USER,
+            timeout=5,
+        )
+        if rc != 0 or not output.strip():
+            return
+        ws_id = self._workspace_id_for_container(container_id)
+        if not ws_id:
+            return
+        want = {w["id"] for w in windows if "id" in w}
+        for line in output.strip().splitlines():
+            parts = line.split("\t")
+            if len(parts) != 2:
+                continue
+            window_id, pane_pid = parts[0].strip(), parts[1].strip()
+            if want and window_id not in want:
+                continue
+            if not pane_pid.isdigit():
+                continue
+            self._app.state.process_ledger.set_anchor(
+                int(pane_pid), f"user:{principal}", ws_id
+            )
+
+    async def _register_service_anchor(self, container_id: str) -> None:
+        """Resolve the service window's pane pid and anchor it (#2520).
+
+        Runs ``tmux list-panes -t service:service-cmd -F '#{pane_pid}'``
+        inside the container; the host-side pid is then resolved by the
+        ledger's root walk (pane pid lives in the container's pidns, so
+        the anchor is registered by *name* and resolved against the
+        watcher's host-pid ancestry via the workspace root). Best-effort.
+        """
+        rc, output, _err = await self.podman.exec_container(
+            container_id,
+            [
+                "tmux",
+                "list-panes",
+                "-t",
+                f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                "-F",
+                "#{pane_pid}",
+            ],
+            user=CONTAINER_USER,
+            timeout=5,
+        )
+        if rc != 0 or not output.strip():
+            return
+        for line in output.strip().splitlines():
+            line = line.strip()
+            if not line.isdigit():
+                continue
+            # container-internal pid; the ledger maps it through the
+            # workspace's root subtree. Stored with a "cpid:" prefix so
+            # the ledger knows it needs translation.
+            self._app.state.process_ledger.set_anchor(
+                int(line),
+                "agent",
+                self._workspace_id_for_container(container_id) or "",
+            )
+
+    def _workspace_id_for_container(self, container_id: str) -> str | None:
+        """Look up the workspace id owning this container (best-effort)."""
+        registry = self._app.state.container_registry
+        for ws_id, state in registry.states.items():
+            if state.container_id == container_id:
+                return ws_id
+        return None
 
     async def attach_browser(self, container_id: str, browser_id: str) -> None:
         """Run ``klangk-attach-browser <browser_id>`` inside the container.

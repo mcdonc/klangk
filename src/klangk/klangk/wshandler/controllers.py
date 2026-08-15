@@ -439,6 +439,17 @@ class ExecController:
         self._conn.app.state.container_registry.record_activity(
             self._conn.container_id
         )
+        # Process-ledger pane-input hint (#2520), mirroring the terminal
+        # input path.
+        try:
+            ledger = self._conn.app.state.process_ledger
+            if self._conn.workspace_id:
+                ledger.note_input(
+                    self._conn.workspace_id,
+                    self._conn.user.get("handle") or self._conn.user["email"],
+                )
+        except Exception:  # pragma: no cover - defensive
+            pass
         await session.write(raw)
 
     async def close_stdin(self) -> None:
@@ -876,6 +887,18 @@ class TerminalController:
         self._conn.app.state.container_registry.record_activity(
             self._conn.container_id
         )
+        # Process-ledger pane-input hint (#2520): who last typed into
+        # this workspace's terminals — the attribution fallback for
+        # launches the poller can't anchor. Best-effort, non-blocking.
+        try:
+            ledger = self._conn.app.state.process_ledger
+            if self._conn.workspace_id:
+                ledger.note_input(
+                    self._conn.workspace_id,
+                    self._conn.user.get("handle") or self._conn.user["email"],
+                )
+        except Exception:  # pragma: no cover - defensive
+            pass
         await session.write(data)
         elapsed = time.monotonic() - t0
         if elapsed > 0.1:  # pragma: no cover
@@ -1006,6 +1029,19 @@ class TerminalController:
             self.sync_terminal_windows(windows)
             self.notify_user_terminal_windows(windows)
             self._notify_terminals_changed(windows)
+            # Process-ledger user anchor (#2520): register the new
+            # window's pane pids as this user's anchors — launches
+            # descending from them are attributed to user:<handle>.
+            # Best-effort; attribution only.
+            try:
+                await self._conn.app.state.terminal.register_window_anchors(
+                    self._conn.container_id,
+                    session_name,
+                    windows,
+                    self._conn.user.get("handle") or self._conn.user["email"],
+                )
+            except Exception:  # pragma: no cover - defensive
+                pass
         except Exception as e:
             logger.exception("Failed to create window: %s", e)
             send_error(self._conn.sock, "Failed to create window")

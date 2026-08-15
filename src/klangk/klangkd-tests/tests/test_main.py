@@ -64,6 +64,10 @@ def _make_app_state(settings=None):
     app_state.state.features = features.Features(app_state)
     app_state.state.workspaces = workspaces.Workspaces(app_state)
     app_state.state.files = files_mod.Files(app_state)
+    # #2520: lifespan start/stop reaches the process ledger.
+    from klangk.process_ledger import ProcessLedger
+
+    app_state.state.process_ledger = ProcessLedger(app_state)
     # #1520: the lifespan binds app.state.db as the active DB for its context;
     # mirror build_app so lifespan-driven tests have it.
     from klangk.model import db as db_mod
@@ -893,6 +897,7 @@ class TestLifespan:
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
+        app.state.process_ledger = app_state.state.process_ledger
         app.state.email = emailsvc_mod.EmailService(app)
         app.state.util = util_mod.Util(app)
 
@@ -966,6 +971,7 @@ class TestLifespan:
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
+        app.state.process_ledger = app_state.state.process_ledger
         app.state.email = emailsvc_mod.EmailService(app)
         app.state.util = util_mod.Util(app)
 
@@ -2508,6 +2514,7 @@ class TestStartupShutdownRestart:
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
+        app.state.process_ledger = app_state.state.process_ledger
         app.state.email = emailsvc_mod.EmailService(app)
         app.state.util = util_mod.Util(app)
 

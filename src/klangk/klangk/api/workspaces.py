@@ -824,6 +824,61 @@ async def workspace_status(
     }
 
 
+# --- Process-launch ledger endpoints (#2520) ---
+
+
+@router.get("/workspaces/{workspace_id}/processes")
+async def workspace_processes(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    app=Depends(get_app_dep),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """Return the workspace's process-launch ledger rows (#2520).
+
+    Newest-first capture events (birth/exec) with principal attribution
+    (``agent`` / ``user:<handle>`` / ``unknown``), attribution method, and
+    the pane-input hint. Requires ``terminal`` permission — the ledger
+    reveals process activity, same sensitivity class as the terminal.
+    """
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    rows = await app.state.model.process_launch.list_launches(
+        workspace_id, limit=limit, offset=offset
+    )
+    total = await app.state.model.process_launch.count_launches(workspace_id)
+    return {"items": rows, "total": total}
+
+
+@router.get("/workspaces/{workspace_id}/process-ledger")
+async def workspace_process_ledger_status(
+    workspace_id: str,
+    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    app=Depends(get_app_dep),
+):
+    """Return the ledger's capture status for this workspace (#2520).
+
+    Surfaces the backend (C watcher vs Python fallback), the effective
+    interval, and coverage gaps — degraded coverage must be visible, not
+    silent.
+    """
+    workspace = await app.state.model.workspaces.get_workspace(workspace_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    status = app.state.process_ledger.status()
+    return {
+        "workspace_id": workspace_id,
+        "enabled": status["enabled"],
+        "backend": status["backend"],
+        "effective_interval_ms": status["effective_interval_ms"],
+        "started_at": status["started_at"],
+        "anchors": status["anchors"],
+        "gaps": status["gaps"],
+    }
+
+
 # --- Workspace export/import endpoints ---
 
 

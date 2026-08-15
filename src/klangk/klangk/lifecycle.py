@@ -441,6 +441,10 @@ class Lifecycle:
         registry.start_cleanup_loop()
         registry.start_health_loop()
         registry.start_crash_loop()
+        # Process-launch ledger (#2520): no-op unless
+        # process_ledger_enabled. Started after the registry so its
+        # root-pid refresh sees settled container state.
+        await state.process_ledger.start()
         n = await state.workspaces.auto_start_workspaces()
         if n:  # pragma: no cover
             logger.info("Auto-started %d workspace(s)", n)
@@ -456,6 +460,7 @@ class Lifecycle:
         """
         state = self.app.state
         await wshandler.disconnect_all_websockets(state.sockets)
+        await state.process_ledger.stop()
         await state.container_registry.shutdown()
 
     async def process_shutdown(self) -> None:
@@ -658,6 +663,7 @@ class Lifecycle:
             "files",
             "db",
             "model",
+            "process_ledger",
             "agents",
             "acl",
             "email",

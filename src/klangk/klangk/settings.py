@@ -1036,6 +1036,31 @@ class KlangkSettings(BaseSettings):
     # getaddrinfo). Read live (SIGHUP reload-safe).
     egress_consent_rate_limit: int = 50
     egress_consent_timeout: float = 120.0
+    # Process-launch ledger (#2520): per-workspace audit log of every
+    # process launched inside a running workspace container, with
+    # best-effort principal attribution (agent / user:<handle> / unknown).
+    # process_ledger_enabled gates the whole subsystem (default off until
+    # the C watcher ships everywhere; the Python fallback keeps coverage
+    # when the binary is absent). Read live (SIGHUP reload-safe).
+    process_ledger_enabled: bool = False
+    # Watcher poll-interval target in ms. The contract (#2520) is 80 ms
+    # at <=1% of one core; the value is a ceiling the watcher's duty-cycle
+    # governor may stretch on cost spikes (degrades to skipped polls,
+    # never runs hot).
+    process_ledger_interval_ms: int = 80
+    # Python-fallback poll interval (seconds) when the C watcher is
+    # unavailable — budget-derived, multi-second by design; the effective
+    # interval is surfaced via the ledger status API so degraded coverage
+    # is never silent.
+    process_ledger_fallback_interval_s: float = 3.0
+    # Retention (#2303 lesson): prune launch rows older than this many
+    # seconds (default 7 days), and cap the table at this many rows
+    # (newest kept). Pruning runs opportunistically from the ledger loop.
+    process_ledger_retention_seconds: float = 604800.0
+    process_ledger_retention_rows: int = 50000
+    # Explicit path to the C watcher binary; empty = wheel-adjacent
+    # default (klangk/procleddy).
+    process_ledger_watcher: str = ""
     # consent_decider_timeout (#2308): a consent decider (a live client that
     # can approve/deny held egress) is registered while its WebSocket is
     # connected and pinging. This is the liveness window -- a decider whose

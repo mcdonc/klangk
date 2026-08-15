@@ -93,6 +93,10 @@ async def app(db, temp_data_dir):
     from klangk import server_schedule as server_schedule_mod
 
     app.state.server_scheduler = server_schedule_mod.ServerScheduler(app)
+    # #2520: the process-ledger endpoints reach state.process_ledger.
+    from klangk.process_ledger import ProcessLedger
+
+    app.state.process_ledger = ProcessLedger(app)
     # #1572: wire DB + Model so converted domains (tokens,
     # login_attempts, invitations, ports) reached via app.state.model.*
     # resolve the same per-test DB.
@@ -2959,6 +2963,75 @@ class TestWorkspaceRoutes:
             assert restart["gave_up_at"] is not None
         finally:
             registry.crash.trackers.pop(ws_id, None)
+
+    async def test_workspace_processes_ledger(self, client, user, app, db):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "ledger-api-ws"},
+        )
+        ws_id = create_resp.json()["id"]
+        await app.state.model.process_launch.record_launch(
+            workspace_id=ws_id,
+            pid=42,
+            ppid=1,
+            uid=1000,
+            comm="sh",
+            argv="/bin/sh -c ls",
+            started_at=1.0,
+            principal="agent",
+            attribution_method="anchor",
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/processes",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert data["items"][0]["pid"] == 42
+        assert data["items"][0]["principal"] == "agent"
+
+    async def test_workspace_processes_missing_ws_forbidden(
+        self, client, user
+    ):
+        """ACL default-deny fires before the 404 lookup (no existence
+        leak) — the missing-workspace branch is exercised directly in
+        test_process_ledger_lifecycle's handler-level tests."""
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/v1/workspaces/does-not-exist/processes",
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_workspace_process_ledger_status(self, client, user, app):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "ledger-status-ws"},
+        )
+        ws_id = create_resp.json()["id"]
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/process-ledger",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["workspace_id"] == ws_id
+        assert data["backend"] == "stopped"
+
+    async def test_workspace_process_ledger_status_missing_ws(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        resp = await client.get(
+            "/api/v1/workspaces/nope/process-ledger",
+            headers=headers,
+        )
+        assert resp.status_code == 403
 
     async def test_workspace_status_not_found(self, client, user, app_state):
         headers = await _auth_headers(client)

@@ -443,6 +443,16 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   via workspace deletion or the `tilrestart` reap as before. Swept at
   startup and hourly (wall-clock deadline — event traffic never postpones
   it) by the consent monitor; both settings are reloadable on SIGHUP.
+- **Process-launch ledger (#2520).** New opt-in audit log of every
+  process launched inside a running workspace container, with best-effort
+  principal attribution (`agent` / `user:<handle>` / `unknown`), argv,
+  and a pane-input hint. Captured host-side by a C watcher subprocess
+  (`procleddy`) at an 80 ms poll under a ≤1%-of-one-core budget; degrades
+  to a Python poller (multi-second interval, loudly surfaced) when the
+  binary is absent. Read via
+  `GET /api/v1/workspaces/{id}/processes`; retention bounded by default.
+  Enable with `KLANGKD_PROCESS_LEDGER_ENABLED=true`. See
+  [Process Ledger](features/process-ledger.md).
 - **`KLANGKNETWORK_EGRESS_ACTIVITY_GATE` forwarding (#2514).** The
   sidecar's idle-activity report interval is now honored when set in
   klangkd's environment (forwarded to the sidecar like
