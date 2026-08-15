@@ -294,10 +294,7 @@ in
   # *remote* mode against the VM, which has its own policy, so leave this empty
   # there.
   env.CONTAINERS_SIGNATURE_POLICY = lib.mkOverride 1500 (
-    if pkgs.stdenv.hostPlatform.isDarwin then
-      ""
-    else
-      config.devenv.state + "/klangk/podman/policy.json"
+    if pkgs.stdenv.hostPlatform.isDarwin then "" else config.devenv.state + "/klangk/podman/policy.json"
   );
   # Same story for registries.conf (#286): rootless podman from nix ships
   # none, so any build whose Dockerfile uses a short image name (alpine:3.21,
@@ -351,6 +348,11 @@ in
   # The dev klangkd's DB (klangk.db) lives under $dataDir.
   scripts.consent-watch.exec = ''
     exec python3 "$DEVENV_ROOT/scripts/consent-watch.py" --data-dir "${dataDir}" "$@"
+  '';
+  # Live, rich-rendered view of a workspace's process-launch ledger
+  # (#2520). The dev klangkd's DB (klangk.db) lives under $dataDir.
+  scripts.ledger-watch.exec = ''
+    exec python3 "$DEVENV_ROOT/scripts/ledger-watch.py" --data-dir "${dataDir}" "$@"
   '';
   # Interactive accept/deny of a workspace's pending consent requests (#2242).
   scripts.consent-decide.exec = ''
