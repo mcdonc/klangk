@@ -106,8 +106,10 @@ terminal rows older than it, and a per-workspace cap
 when a workspace floods decided requests past the cap. Verdicts still
 in effect (`forever`, `tilrestart`, or a timed window not yet elapsed)
 are enforcement state and are never pruned — they leave via workspace
-deletion or the `tilrestart` reap. Swept hourly by the consent monitor;
-both settings are SIGHUP-reloadable.
+deletion or the `tilrestart` reap. The consent monitor sweeps at
+startup and then hourly on a wall-clock deadline (event traffic never
+postpones it); both settings are SIGHUP-reloadable — a reload applies on
+the next sweep.
 
 ## Interactive egress consent
 
@@ -260,7 +262,7 @@ entry is retracted so it does not re-apply on the next restart (#2370).
   pair `KLANGKD_EGRESS_CONSENT_RETENTION_DAYS` (default 30) /
   `KLANGKD_EGRESS_CONSENT_ROW_CAP` (default 2000) — see
   [Consent recording](#consent-recording-all-modes); a reload applies on
-  the next hourly sweep.
+  the next sweep.
 - **Flood bounds.** The consent queue is rate-limited in the ruleset
   (5 SYNs/sec, burst 20) — packets past the limit are REJECTed, never
   queued — and request rows are deduplicated per destination, so a

@@ -1124,3 +1124,50 @@ async def test_prune_retention_zero_cap_active(ec, ws, user, app_state):
     assert await ec.prune(now=now) == 1  # only the oldest exceeds the cap
     hosts = {r["dest_host"] for r in await ec.list_requests(w["id"], None)}
     assert hosts == {"y.com", "z.com"}
+
+
+async def test_prune_multi_chunk_delete(ec, ws, user, app_state):
+    """The chunked _delete_ids path (>100 stale rows) deletes them all."""
+    import time as _time
+
+    now = _time.time()
+    old = now - (RETENTION_DEFAULT + 5) * 86400
+    w = await ws.create_workspace(user["id"], "prune-chunks")
+    # 105 distinct static denials (dedup is per host), all past retention
+    for i in range(105):
+        await ec.record_static_denial(w["id"], f"host{i}.example.com", 443)
+    async with app_state.state.db.transaction() as conn:
+        await conn.execute(
+            "UPDATE egress_consent SET requested_at = ?, decided_at = ?"
+            " WHERE workspace_id = ?",
+            (old, old, w["id"]),
+        )
+
+    assert await ec.prune(now=now) == 105  # two chunks (100 + 5)
+    assert await ec.list_requests(w["id"], None) == []
+
+
+async def test_prune_pending_toctou_guard(ec, ws, user, app_state):
+    """A pending row snapshotted as prunable but decided before the DELETE
+    must survive: the delete re-checks decision='pending' (TOCTOU guard)."""
+    import time as _time
+
+    now = _time.time()
+    old = now - (RETENTION_DEFAULT + 5) * 86400
+    w = await ws.create_workspace(user["id"], "prune-toctou")
+    stale = await ec.create_request(w["id"], "decided-late.com", 443)
+    await _backdate(app_state, stale["id"], requested=old)
+    # Simulate the race: the retention snapshot already happened (the row
+    # qualified as an old pending), and a decider lands a forever allow
+    # before the sweep's DELETE runs.
+    await ec.decide(
+        stale["id"], DECISION_ALLOWED, user["id"], DURATION_FOREVER
+    )
+    # ... but the eligibility snapshot had it as pending; the guarded delete
+    # re-checks and skips it:
+    removed = await ec._delete_ids(
+        [stale["id"]], require_decision=DECISION_PENDING
+    )
+    assert removed == 0
+    row = await ec.get_request(stale["id"])
+    assert row is not None and row["decision"] == DECISION_ALLOWED

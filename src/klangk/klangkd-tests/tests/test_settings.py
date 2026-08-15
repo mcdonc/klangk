@@ -1388,3 +1388,17 @@ class TestEgressConsentPruneSettings:
     def test_malformed_raises(self, key, value):
         with pytest.raises(Exception, match=key):
             make_settings({key: value})
+
+    def test_env_string_float_rejected(self):
+        with pytest.raises(Exception, match="RETENTION_DAYS"):
+            make_settings({"KLANGKD_EGRESS_CONSENT_RETENTION_DAYS": "0.5"})
+
+    @pytest.mark.parametrize("value", [0.5, True])
+    def test_native_yaml_float_and_bool_rejected(self, value, tmp_path):
+        # A YAML float (retention-days: 0.5) must abort rather than truncate
+        # (int(0.5) == 0 would silently disable the feature); a YAML bool
+        # (true -> 1) is a typo, not a window.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"egress-consent-retention-days: {value!s}\n")
+        with pytest.raises(Exception, match="RETENTION_DAYS"):
+            make_settings({}, config_file=str(cfg))

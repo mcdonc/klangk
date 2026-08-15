@@ -673,8 +673,30 @@ class EgressConsentModel:
                     (cutoff,),
                 )
                 rows = await cursor.fetchall()
-            ids = [r["id"] for r in rows if self._prune_eligible(r, now)]
-            deleted += await self._delete_ids(ids)
+            # TOCTOU guard: the snapshot and the deletes run in separate
+            # transactions, so a row snapshotted as pending may have been
+            # decided in between -- deleting it would silently drop a fresh
+            # verdict. Pending candidates are therefore re-checked against
+            # their decision at DELETE time. Non-pending candidates need no
+            # re-check: their eligibility is monotonic (allowed/denied can
+            # only transition to revoked, still eligible; expired/revoked/
+            # static rows never change decision).
+            pending_ids = [
+                r["id"]
+                for r in rows
+                if r["decision"] == DECISION_PENDING
+                and self._prune_eligible(r, now)
+            ]
+            other_ids = [
+                r["id"]
+                for r in rows
+                if r["decision"] != DECISION_PENDING
+                and self._prune_eligible(r, now)
+            ]
+            deleted += await self._delete_ids(
+                pending_ids, require_decision=DECISION_PENDING
+            )
+            deleted += await self._delete_ids(other_ids)
 
         if row_cap > 0:
             async with self.app.state.db.transaction() as db:
@@ -706,17 +728,27 @@ class EgressConsentModel:
                 deleted += await self._delete_ids(ids)
         return deleted
 
-    async def _delete_ids(self, ids: list[str]) -> int:
-        """DELETE the given ids in bounded chunks; returns rows removed."""
+    async def _delete_ids(
+        self, ids: list[str], *, require_decision: str | None = None
+    ) -> int:
+        """DELETE the given ids in bounded chunks; returns rows removed.
+
+        ``require_decision`` re-checks the row's decision at DELETE time --
+        the TOCTOU guard for pending candidates (see :meth:`prune`): a row
+        snapshotted as pending but decided before the DELETE must not be
+        removed. Chunks of 100 keep well under SQLite's parameter limit.
+        """
         removed = 0
         for start in range(0, len(ids), 100):
             chunk = ids[start : start + 100]
             placeholders = ",".join("?" * len(chunk))
+            sql = f"DELETE FROM egress_consent WHERE id IN ({placeholders})"  # noqa: S608
+            params: tuple = tuple(chunk)
+            if require_decision is not None:
+                sql += " AND decision = ?"
+                params = params + (require_decision,)
             async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    f"DELETE FROM egress_consent WHERE id IN ({placeholders})",  # noqa: S608
-                    tuple(chunk),
-                )
+                cursor = await db.execute(sql, params)
                 removed += cursor.rowcount
         return removed
 

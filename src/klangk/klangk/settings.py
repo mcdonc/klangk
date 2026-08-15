@@ -98,11 +98,24 @@ def _coerce_prune_int(v, name: str, *, default: int) -> int:
     """Shared coercion for the #2303 prune knobs (retention days / row cap).
 
     Accepts an integer string (env) or a real int (YAML); ``None`` / empty
-    -> the field default; a negative value raises (0 = disabled is the
-    meaningful floor for both knobs).
+    -> the field default. A native YAML float (e.g. ``7.5``) or bool
+    (``true``) is rejected rather than silently truncated / coerced --
+    same strict-on-malformed posture as ``container_pids_limit`` (a
+    truncated ``0.5`` days would silently disable the feature). ``0`` is
+    the meaningful floor for both knobs (it disables).
     """
     if v is None or v == "":
         return default
+    if isinstance(v, bool):
+        raise ValueError(
+            f"{name}={v!r} must be a non-negative integer (0 disables), "
+            "not a boolean."
+        )
+    if isinstance(v, float):
+        raise ValueError(
+            f"{name}={v!r} must be a non-negative integer (0 disables) -- "
+            "use an integer like 30, not 0.5."
+        )
     try:
         value = int(v)
     except (TypeError, ValueError) as exc:
