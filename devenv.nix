@@ -28,24 +28,37 @@ let
   # activate it only when KLANGK_E2E_VERBOSE_PODMAN=1 is set in the calling
   # environment (the self-hosted nix CI runner sets it in the workflow).
   podmanStderrPlugin = pkgs.writeTextDir "klangk_podman_stderr.py" ''
-    """Print captured podman output when a CalledProcessError fails a test."""
+    """Print captured podman output when a CalledProcessError fails a test.
+
+    Uses pytest_runtest_makereport (not pytest_exception_interact) because the
+    latter does not fire inside xdist workers, and these suites run -n 2.
+    """
 
     import subprocess
 
+    import pytest
 
-    def pytest_exception_interact(node, call, report):
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_makereport(item, call):
+        rep = yield
+        if not rep.failed or call.excinfo is None:
+            return rep
         exc = call.excinfo.value
         if not isinstance(exc, subprocess.CalledProcessError):
-            return
-        tw = node.config.get_terminal_writer()
-        tw.line("")
-        tw.sep("~", "podman exit {}: {} ...".format(exc.returncode, " ".join(exc.cmd[:5])))
+            return rep
+        # Append to the longrepr rather than writing to the terminal writer:
+        # under xdist the worker's stdout is not forwarded at makereport time,
+        # but the (serialized) longrepr is.
+        extra = ["", "~" * 30 + " podman exit " + str(exc.returncode) + " " * 30]
         for label, data in (
             ("stdout", getattr(exc, "stdout", None)),
             ("stderr", getattr(exc, "stderr", None)),
         ):
             if data:
-                tw.line("[podman {}] {}".format(label, data.strip()))
+                extra.append("[podman {}] {}".format(label, data.strip()))
+        rep.longrepr = "{}\n{}".format(rep.longrepr, "\n".join(extra))
+        return rep
   '';
 in
 {
