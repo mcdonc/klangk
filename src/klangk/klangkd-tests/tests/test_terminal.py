@@ -44,11 +44,16 @@ _mock_registry.mark_service_started = MagicMock()
 # settings-bearing wrapper + Terminal are recreated.
 _mock_settings = MagicMock()
 _mock_settings.disable_tmux = ""
+# #2520: Terminal's anchor paths reach app.state.process_ledger (reusing
+# the module-level MagicMock import above).
+_MM = MagicMock
+
 _app_state = types.SimpleNamespace(
     state=types.SimpleNamespace(
         podman=_mock_pod,
         container_registry=_mock_registry,
         settings=_mock_settings,
+        process_ledger=_MM(),
     )
 )
 _terminal = Terminal(_app_state)
@@ -68,6 +73,7 @@ def _fresh_terminal():
     _mock_settings.disable_tmux = ""
     _app_state = types.SimpleNamespace(
         state=types.SimpleNamespace(
+            process_ledger=_MM(),
             podman=_mock_pod,
             container_registry=_mock_registry,
             settings=_mock_settings,
