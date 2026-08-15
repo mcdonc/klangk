@@ -68,15 +68,6 @@ jobs:
             | grep -E '^(netc-e2e|consent-e2e|egress-e2e|netc-pp)' \
             | xargs -r -n1 podman network rm -f >/dev/null 2>&1 || true
 
-      - name: Debug podman env (self-hosted only)
-        if: runner.name != '' && !startsWith(runner.name, 'github')
-        run: |
-          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
-          id
-          echo "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-unset} HOME=$HOME"
-          ls -ld "${XDG_RUNTIME_DIR:-/run/user/none}" 2>/dev/null || echo "no XDG dir"
-          podman info --format '{{.Host.Runroot}} {{.Host.GraphRoot}}' 2>&1 | tail -1
-
       - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'
         env:
