@@ -39,9 +39,13 @@ never exact deadlines):
 Usage:
     scripts/fuzz-idle.py [--duration MINUTES] [--seed SEED]
                          [--max-concurrent N] [--waves N] [--log-dir DIR]
+                         [--image IMAGE]
 
 Exit code 0 = no anomalies, 1 = any invariant violation / 5xx / traceback.
 Requires: podman available, klangk workspace image built
+(``devenv shell -- klangk:build-workspace-image``; inside the devenv shell
+the image name resolves from the ambient KLANGKD_IMAGE_NAME — no --image
+needed).
 (``devenv shell -- klangk:build-workspace-image``).
 """
 
@@ -1123,6 +1127,9 @@ async def run(args) -> int:
     global_timeout = 3600 if bogus_global else int(global_raw)
 
     server_env = {"KLANGKD_IDLE_TIMEOUT_SECONDS": global_raw}
+    # Image default: the ambient KLANGKD_IMAGE_NAME (forwarded by clean_env
+    # for the devenv-built image) or the plain settings default. --image
+    # overrides.
     if args.image:
         server_env["KLANGKD_IMAGE_NAME"] = args.image
 
