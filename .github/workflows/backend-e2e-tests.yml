@@ -51,6 +51,11 @@ jobs:
 
       - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'
+        env:
+          # devenv.nix loads the klangk_podman_stderr pytest plugin when this
+          # is set — surfaces the captured podman stderr of failed subprocess
+          # calls (the e2e helpers swallow it otherwise).
+          KLANGK_E2E_VERBOSE_PODMAN: "1"
         run: devenv shell -- test-backend-e2e
 
       - name: Skip notice

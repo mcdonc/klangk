@@ -20,6 +20,33 @@ let
   # (#1542). kill-port-holders frees both before startup.
   browserPort = "8997";
   egressPort = "8995";
+  # Pytest plugin that surfaces the captured stdout/stderr of a subprocess
+  # (podman) whose CalledProcessError fails a test or fixture setup — the e2e
+  # helpers run podman with capture_output=True, so the runtime's actual error
+  # ("error running container: ...") is otherwise invisible in CI logs. Not
+  # loaded by default: test-backend-e2e exports PYTEST_PLUGINS + PYTHONPATH to
+  # activate it only when KLANGK_E2E_VERBOSE_PODMAN=1 is set in the calling
+  # environment (the self-hosted nix CI runner sets it in the workflow).
+  podmanStderrPlugin = pkgs.writeTextDir "klangk_podman_stderr.py" ''
+    """Print captured podman output when a CalledProcessError fails a test."""
+
+    import subprocess
+
+
+    def pytest_exception_interact(node, call, report):
+        exc = call.excinfo.value
+        if not isinstance(exc, subprocess.CalledProcessError):
+            return
+        tw = node.config.get_terminal_writer()
+        tw.line("")
+        tw.sep("~", "podman exit {}: {} ...".format(exc.returncode, " ".join(exc.cmd[:5])))
+        for label, data in (
+            ("stdout", getattr(exc, "stdout", None)),
+            ("stderr", getattr(exc, "stderr", None)),
+        ):
+            if data:
+                tw.line("[podman {}] {}".format(label, data.strip()))
+  '';
 in
 {
   languages.javascript = {
@@ -346,6 +373,10 @@ in
   # service-command) due to podman resource contention. #2059
   scripts.test-backend-e2e.exec = ''
     cd $DEVENV_ROOT
+    if [ -n "''${KLANGK_E2E_VERBOSE_PODMAN:-}" ]; then
+      export PYTEST_PLUGINS=klangk_podman_stderr
+      export PYTHONPATH="${podmanStderrPlugin}''${PYTHONPATH:+:$PYTHONPATH}"
+    fi
     exec python -m pytest src/klangk/klangkd-tests/e2e-tests \
       -v --no-cov -n 2 --dist=loadscope "$@"
   '';
