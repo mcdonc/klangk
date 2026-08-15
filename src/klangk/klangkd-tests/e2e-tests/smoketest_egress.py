@@ -746,9 +746,10 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("port scope: ", "PORT-SCOPE-VIOLATION"),
     # Co-resident hosts (#2440): pin per-IP allow/revoke sharing (canary for #2352).
     ("co-resident: allow A did NOT leak to B", "CORESIDENT-ALLOW-FLIP"),
-    ("co-resident: revoke A did NOT uncover B", "CORESIDENT-REVOKE-FLIP"),
+    ("co-resident: revoke A uncovered B", "CORESIDENT-REVOKE-FLIP"),
     ("co-resident: A did NOT prompt", "NO-EXPECTED-REQUEST"),
     ("co-resident: post-revoke B hung", "HUNG-NFQUEUE-DNS"),
+    ("co-resident: post-revoke B not clean", "HUNG-NFQUEUE-DNS"),
     ("co-resident: B did not connect cleanly", "HUNG-NFQUEUE-DNS"),
     ("co-resident phase failed", "UNEXPECTED-ERROR"),
     # allow egress mode (#2411): off-list must connect (coordinator record+allow),
@@ -816,7 +817,7 @@ OUTCOME_NAMES: dict[str, str] = {
     "HOST-SCOPE-VIOLATION": "an nginx-style host scope (exact/inclusive/subdomains, #2377) let the wrong name through / blocked the right one.",
     "PORT-SCOPE-VIOLATION": "a port-scoped allow (host:443) permitted a different port (:80), or vice-versa.",
     "CORESIDENT-ALLOW-FLIP": "co-resident allow canary flipped: allowing host A no longer leaked to host B on the same IP -- per-host allow may have landed (#2352/#2440).",
-    "CORESIDENT-REVOKE-FLIP": "co-resident revoke canary flipped: revoking host A no longer dropped coverage for host B on the same IP -- per-host revoke may have landed (#2352/#2440).",
+    "CORESIDENT-REVOKE-FLIP": "co-resident revoke canary flipped: revoking host A now uncovers host B on the same IP (B re-prompted post-revoke) -- per-host or reverse-index revoke may have landed (#2352/#2440); update the pin.",
     "SNAPSHOT-REPLAY": "a resolved-while-away row replayed (or a held row vanished) in the reconnect snapshot -- now deterministic under controlled DNS (#2424).",
     "ALLOWMODE-REFUSED": "an allow-mode (default-permit) off-list host was refused or hung -- it must connect (#2411/#2406).",
     "ALLOWMODE-DECIDER-ACCEPTED": "a consent decider registered (or ambiguously attached) against an allow-mode workspace -- it must be refused, same gate as static (#2395/#2406).",
@@ -2939,16 +2940,23 @@ class SmokeTest:
     async def run_coresident_phase(self, pilot) -> None:
         """Pin co-resident-host behavior as a canary for #2352 (#2440).
 
-        Per-host allow/revoke is L3/L4-only today: two hostnames that resolve
-        to the SAME IP share one iptables rule, so allowing host A also lets
-        host B through, and revoking A drops the shared rule so B loses
-        coverage too (#2352, OPEN). This phase points two controlled hostnames
-        at one IP and pins BOTH halves of that limitation:
+        Per-host allow/revoke is L3/L4-only today: two hostnames that
+        resolve to the SAME IP share one iptables rule, so allowing host A
+        also lets host B through (#2352, OPEN). This phase points two
+        controlled hostnames at one IP and pins both halves of that
+        limitation as canaries:
 
           1. Allow A (learn a per-IP ACCEPT) -> B (same IP) connects with NO
-             prompt (today's behavior).
-          2. Revoke A -> the shared rule is dropped -> B re-prompts (today's
-             behavior).
+             prompt (the per-IP allow leak).
+          2. Revoke A -> B STILL connects with no re-prompt (the revoke is a
+             NO-op). Canary #1's B connect resolves B after A's allow, and
+             ``_record_hosts`` keeps only the LATEST name per IP, so
+             ``_LEARNED[ip]["host"]`` is ``core-b`` when
+             ``drop_for_host("core-a")`` scans it: no rule is dropped and
+             both hosts stay reachable (the under-removal half of #2352;
+             the over-removal half -- revoke A of the name still on record
+             uncovers B -- needs B to NOT resolve in between, which this
+             sequence cannot produce).
 
         Both assertions are CANARIES: they PASS while #2352 is unfixed and
         FLIP to MISMATCH when per-host allow/revoke lands, so a silent fix
@@ -3084,37 +3092,54 @@ class SmokeTest:
                 await d.close()
                 return
 
-            # 2) Revoke A -> the shared per-IP rule is dropped.
+            # 2) Revoke A -> today a NO-OP for this sequence. Canary #1's
+            #    B connect re-resolved the shared IP, and _record_hosts
+            #    keeps only the LATEST name per IP, so
+            #    _LEARNED[ip]["host"] is core-b by now;
+            #    drop_for_host("core-a") matches nothing, the shared ACCEPT
+            #    survives, and A itself also stays reachable -- the
+            #    under-removal half of #2352.
             try:
                 await d.revoke(rid_a)
             except Exception:
                 pass
             await asyncio.sleep(2.0)  # let the server + sidecar drop the rule
 
-            # CANARY #2: B re-prompts (the shared rule that covered it is
-            # gone). Today revoking A uncovers B too. When #2352 lands
-            # per-host revoke, revoking A leaves B's own coverage intact ->
-            # this flips. (Under a full #2352 fix CANARY #1 already fired
-            # above, so this pin is the second half for the per-host-REVOKE
-            # work specifically.)
+            # CANARY #2: B connects with NO re-prompt (the revoke was a
+            # no-op; the shared rule still covers it). When per-host (or
+            # reverse-index) revoke lands, revoking A drops the shared rule
+            # -> B re-prompts -> this flips. (Under a full #2352 fix CANARY
+            # #1 already fired above, so this pin is the second half for the
+            # per-host-REVOKE work specifically.)
             of_b2 = "/tmp/smoke_cr_b2.out"
             _trigger(cont, host_b, of_b2)
             rid_b2 = await d.wait_for(cb, 12.0)
             if rid_b2 is not None:
+                # B re-prompted: what covered B is gone -- the canary flip.
+                # Resolve the prompt so the run can continue cleanly.
                 await d.verdict(rid_b2, DECISION_DENIED, DURATION_ONCE)
                 await d.wait_resolution(rid_b2, 15.0)
                 ec2 = _parse_exit(await _wait_result(cont, of_b2))
                 sx2, dx2 = (
-                    PASS,
-                    "co-resident: revoke A uncovered B (shared per-IP rule "
-                    "dropped, #2352) -- CANARY: flips when per-host revoke "
-                    "lands",
+                    MISMATCH,
+                    "co-resident: revoke A uncovered B (B re-prompted; "
+                    "the shared rule was dropped) -- CANARY FLIP: per-host "
+                    "or reverse-index revoke may have landed (#2352); "
+                    "update this pin",
                 )
             else:
                 ec2 = _parse_exit(
                     await _wait_result(cont, of_b2, timeout=10.0)
                 )
-                if ec2 is None:
+                if ec2 == 0:
+                    sx2, dx2 = (
+                        PASS,
+                        "co-resident: revoke A did NOT uncover B (no "
+                        "re-prompt; revoke no-op: B's resolve overwrote the "
+                        "host record, #2352 under-removal) -- CANARY: flips "
+                        "when per-host revoke lands",
+                    )
+                elif ec2 is None:
                     sx2, dx2 = (
                         FINDING,
                         "co-resident: post-revoke B hung (NFQUEUE/DNS; not a "
@@ -3122,13 +3147,12 @@ class SmokeTest:
                     )
                 else:
                     sx2, dx2 = (
-                        MISMATCH,
-                        f"co-resident: revoke A did NOT uncover B (no "
-                        f"re-prompt, exit {ec2}) -- CANARY FLIP: per-host "
-                        f"revoke may have landed (#2352); update this pin",
+                        FINDING,
+                        f"co-resident: post-revoke B not clean (exit {ec2}, "
+                        f"no re-prompt); not a #2352 signal (NFQUEUE/DNS)",
                     )
             self._record_probe(
-                parent, "revoke A -> B", "re-prompt", ec2, sx2, dx2
+                parent, "revoke A -> B", "no-reprompt", ec2, sx2, dx2
             )
             if sx2 == MISMATCH and not self.args.continue_run:
                 self._abort = True
