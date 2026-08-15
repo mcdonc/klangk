@@ -1,0 +1,6 @@
+# Custom self-hosted runner labels (actionlint validates runs-on against
+# these in addition to GitHub-hosted labels).
+self-hosted-runner:
+  labels:
+    - nix
+    - keithmoon

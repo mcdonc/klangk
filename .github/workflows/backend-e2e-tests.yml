@@ -12,11 +12,12 @@ concurrency:
 
 jobs:
   test-backend-e2e:
-    runs-on: ubuntu-latest
+    # Self-hosted NixOS runner (label "nix", keithmoon). nix, devenv, git,
+    # and rootless podman (SUID newuidmap shims) come from the host config,
+    # so the devenv-setup bootstrap (nix installer + apt podman + disk
+    # scrubbing, all Ubuntu-runner specific) is not used here.
+    runs-on: nix
     timeout-minutes: 30
-    env:
-      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
-      KLANGKD_PODMAN_BIN: /usr/bin/podman
     steps:
       - uses: actions/checkout@v7
 
@@ -32,16 +33,13 @@ jobs:
               - 'devenv.yaml'
               - '.github/workflows/backend-e2e-tests.yml'
 
-      - uses: ./.github/actions/devenv-setup
+      - name: Build workspace + sidecar images
         if: steps.filter.outputs.e2e == 'true'
-        with:
-          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar
+        run: devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
 
       - name: Run backend E2E tests
         if: steps.filter.outputs.e2e == 'true'
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- test-backend-e2e
+        run: devenv shell -- test-backend-e2e
 
       - name: Skip notice
         if: steps.filter.outputs.e2e != 'true'
