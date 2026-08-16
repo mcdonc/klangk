@@ -12,23 +12,12 @@ concurrency:
 
 jobs:
   test-backend-e2e:
-    # Self-hosted NixOS runner (label "nix", keithmoon). nix, devenv, git,
-    # and rootless podman (SUID newuidmap shims) come from the host config,
-    # so the devenv-setup bootstrap (nix installer + apt podman + disk
-    # scrubbing, all Ubuntu-runner specific) is not used here.
+    # Self-hosted NixOS runner (label "nix", klangk-ci VM). nix, devenv, git,
+    # and rootless podman (SUID newuidmap shims) come from the host config;
+    # the shared action handles devenv prep, image builds, cleanup, and the
+    # suite itself.
     runs-on: nix
     timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    env:
-      # The self-hosted runner service exports this, but GitHub's runner
-      # filters service-env vars when constructing job step shells — only
-      # explicit job env reaches them. Rootless podman on the klangk-ci VM
-      # needs the ci user's session bus dir for its systemd cgroup manager.
-      # Value is per-runner (host uid 1000, VM ci users 1101/1102), so each
-      # step exports it from id -u.
-      XDG_RUNTIME_DIR_SET: "1"
     steps:
       - uses: actions/checkout@v7
 
@@ -43,42 +32,11 @@ jobs:
               - 'devenv.nix'
               - 'devenv.yaml'
               - '.github/workflows/backend-e2e-tests.yml'
+              - '.github/actions/e2e-suite/**'
 
-      - name: Prepare klangk devenv
-        run: |
-          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
-          devenv shell -- true
-
-      - name: Build workspace + sidecar images
-        if: steps.filter.outputs.e2e == 'true'
-        run: |
-          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
-          devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
-
-      - name: Clean leftover CI podman networks
-        if: steps.filter.outputs.e2e == 'true'
-        # The runner shares chrism's rootless podman with interactive sessions.
-        # Failed fixture setups leak e2e networks; each new network restarts
-        # aardvark-dns for the whole network set, and a wide set + concurrent
-        # xdist workers makes the restart race ("bind udp 10.89.0.1:53: address
-        # already in use", podman exit 126). Scoped to CI-owned name prefixes
-        # — never touches interactive-session resources.
-        run: |
-          podman network ls --format '{{.Name}}' \
-            | grep -E '^(netc-e2e|consent-e2e|egress-e2e|netc-pp)' \
-            | xargs -r -n1 podman network rm -f >/dev/null 2>&1 || true
-
-      - name: Run backend E2E tests
-        if: steps.filter.outputs.e2e == 'true'
-        env:
-          # devenv.nix loads the klangk_podman_stderr pytest plugin when this
-          # is set — surfaces the captured podman stderr of failed subprocess
-          # calls (the e2e helpers swallow it otherwise).
-          KLANGK_E2E_VERBOSE_PODMAN: "1"
-        run: |
-          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
-          devenv shell -- test-backend-e2e
-
-      - name: Skip notice
-        if: steps.filter.outputs.e2e != 'true'
-        run: echo "No backend/docker/feature changes — skipping backend E2E tests"
+      - uses: ./.github/actions/e2e-suite
+        with:
+          run: ${{ steps.filter.outputs.e2e }}
+          suite: test-backend-e2e
+          suite-name: backend
+          verbose-podman: "true"

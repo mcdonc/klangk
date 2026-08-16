@@ -1,0 +1,68 @@
+name: E2E suite on self-hosted NixOS runner
+description: Shared prepare/build/cleanup/run steps for the e2e suites on the
+  klangk-ci VM runners (label "nix")
+
+inputs:
+  run:
+    description: "'true' to run the suite (wire steps.filter.outputs.e2e here); anything else skips it"
+    required: true
+  suite:
+    description: "devenv script to execute (test-backend-e2e / test-cli-e2e)"
+    required: true
+  suite-name:
+    description: "Human-readable suite name for step names and the skip notice"
+    required: true
+  verbose-podman:
+    description: "Set KLANGK_E2E_VERBOSE_PODMAN=1 (pytest plugin surfacing podman stderr of failed calls)"
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # Rootless podman needs the ci user's session bus (systemd cgroup
+    # manager). GitHub's runner filters service-env vars from job step
+    # shells, so each step exports it from id -u (VM ci users are uid
+    # 1101/1102 — per-runner, hence not a static env here).
+    - name: Prepare klangk devenv
+      shell: bash
+      run: |
+        XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+        devenv shell -- true
+
+    - name: Build workspace + sidecar images
+      if: inputs.run == 'true'
+      shell: bash
+      run: |
+        XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+        devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
+
+    - name: Clean leftover CI podman state
+      if: inputs.run == 'true'
+      shell: bash
+      # Non-ephemeral runners keep podman state across jobs: failed fixtures
+      # leak e2e networks (each new network restarts aardvark-dns for the
+      # whole set, racing concurrent xdist workers) and klangk-managed
+      # containers (workspace containers + network sidecars, all labeled
+      # klangk.workspace). Both cleanups are scoped to CI-owned names and
+      # labels — never interactive-session resources.
+      run: |
+        XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+        podman network ls --format '{{.Name}}' \
+          | grep -E '^(netc-e2e|consent-e2e|egress-e2e|netc-pp)' \
+          | xargs -r -n1 podman network rm -f >/dev/null 2>&1 || true
+        podman ps -aq --filter label=klangk.workspace \
+          | xargs -r podman rm -f >/dev/null 2>&1 || true
+
+    - name: Run ${{ inputs.suite-name }} E2E tests
+      if: inputs.run == 'true'
+      shell: bash
+      env:
+        KLANGK_E2E_VERBOSE_PODMAN: ${{ inputs.verbose-podman == 'true' && '1' || '' }}
+      run: |
+        XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+        devenv shell -- ${{ inputs.suite }}
+
+    - name: Skip notice
+      if: inputs.run != 'true'
+      shell: bash
+      run: echo "No e2e-relevant changes — skipping ${{ inputs.suite-name }} E2E tests"
