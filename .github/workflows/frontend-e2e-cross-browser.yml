@@ -10,25 +10,17 @@ on:
 
 jobs:
   test-frontend-e2e-cross-browser:
-    runs-on: ubuntu-latest
+    runs-on: nix
     timeout-minutes: 60
-    env:
-      KLANGK_JWT_SECRET: e2e-test-secret
-      KLANGK_DEFAULT_USER: admin@plope.com
-      KLANGK_DEFAULT_PASSWORD: admin
-      KLANGK_TEST_MODE: "1"
-      KLANGKD_PODMAN_BIN: /usr/bin/podman
     steps:
       - uses: actions/checkout@v7
 
-      - uses: ./.github/actions/devenv-setup
+      - uses: ./.github/actions/e2e-suite
         with:
-          build-tasks: klangk:build-workspace-image klangk:flutter-build
-
-      - name: Run E2E tests (firefox + webkit)
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- test-frontend-e2e --project=firefox --project=webkit --no-deps
+          run: "true"
+          suite: test-frontend-e2e --project=firefox --project=webkit --no-deps
+          suite-name: cross-browser
+          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar klangk:flutter-build
 
       - name: Upload test results
         if: always()

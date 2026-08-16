@@ -7,11 +7,14 @@ inputs:
     description: "'true' to run the suite (wire steps.filter.outputs.e2e here); anything else skips it"
     required: true
   suite:
-    description: "devenv script to execute (test-backend-e2e / test-cli-e2e)"
+    description: "devenv shell command to execute (e.g. test-backend-e2e, 'test-frontend-e2e --project=chromium')"
     required: true
   suite-name:
     description: "Human-readable suite name for step names and the skip notice"
     required: true
+  build-tasks:
+    description: "Space-separated devenv tasks for the build step"
+    default: "klangk:build-workspace-image klangk:build-network-sidecar"
   verbose-podman:
     description: "Set KLANGK_E2E_VERBOSE_PODMAN=1 (pytest plugin surfacing podman stderr of failed calls)"
     default: "false"
@@ -29,12 +32,12 @@ runs:
         XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
         devenv shell -- true
 
-    - name: Build workspace + sidecar images
+    - name: Build images
       if: inputs.run == 'true'
       shell: bash
       run: |
         XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
-        devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
+        devenv tasks run ${{ inputs.build-tasks }}
 
     - name: Clean leftover CI podman state
       if: inputs.run == 'true'

@@ -22,15 +22,8 @@ concurrency:
 jobs:
   # Chromium + API tests — gates PR merges
   test-frontend-e2e:
-    runs-on: ubuntu-latest
+    runs-on: nix
     timeout-minutes: 30
-    env:
-      KLANGK_JWT_SECRET: e2e-test-secret
-      KLANGK_DEFAULT_USER: admin@plope.com
-      KLANGK_DEFAULT_PASSWORD: admin
-      KLANGK_TEST_MODE: "1"
-      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
-      KLANGKD_PODMAN_BIN: /usr/bin/podman
     steps:
       - uses: actions/checkout@v7
 
@@ -47,20 +40,17 @@ jobs:
               - 'devenv.nix'
               - 'devenv.yaml'
               - '.github/workflows/frontend-e2e-tests.yml'
+              - '.github/actions/e2e-suite/**'
 
-      - uses: ./.github/actions/devenv-setup
-        if: steps.filter.outputs.e2e == 'true'
+      - uses: ./.github/actions/e2e-suite
         with:
+          run: ${{ steps.filter.outputs.e2e }}
+          suite: >-
+            test-frontend-e2e
+            ${{ inputs.project && format('--project={0} --no-deps', inputs.project) || '--project=chromium-api --project=chromium --no-deps' }}
+            ${{ inputs.grep && format('-g "{0}"', inputs.grep) || '' }}
+          suite-name: frontend
           build-tasks: klangk:build-workspace-image klangk:build-network-sidecar klangk:flutter-build
-
-      - name: Run E2E tests (chromium + API)
-        if: steps.filter.outputs.e2e == 'true'
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          ARGS=(--project=chromium-api --project=chromium --no-deps)
-          if [ -n "${{ inputs.project }}" ]; then ARGS=(--project="${{ inputs.project }}" --no-deps); fi
-          if [ -n "${{ inputs.grep }}" ]; then ARGS+=(-g "${{ inputs.grep }}"); fi
-          devenv shell -- test-frontend-e2e "${ARGS[@]}"
 
       - name: Upload test results
         if: always() && steps.filter.outputs.e2e == 'true'
@@ -71,7 +61,3 @@ jobs:
           path: |
             src/frontend/e2e-tests/test-results/
             src/frontend/e2e-tests/logs/
-
-      - name: Skip notice
-        if: steps.filter.outputs.e2e != 'true'
-        run: echo "No code changes — skipping Flutter E2E tests"
