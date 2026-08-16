@@ -19,6 +19,7 @@ IMAGE="ghcr.io/mcdonc/klangk/klangk-workspace-base"
 echo "==> Building base image $VERSION (${KLANGKBUILD_PLATFORM:-linux/amd64})"
 "$PODMAN" build \
   "${SIG_POLICY_ARGS[@]}" \
+  "${BUILD_SECURITY_ARGS[@]}" \
   --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
   -f src/containers/workspace/Dockerfile.base \
   -t "$IMAGE:latest" \

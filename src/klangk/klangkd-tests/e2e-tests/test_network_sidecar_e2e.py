@@ -341,7 +341,10 @@ def stack(env):
     net = f"netc-e2e-{uuid.uuid4().hex[:8]}"
     fu = f"netc-fu-{uuid.uuid4().hex[:8]}"
     nc = f"netc-nc-{uuid.uuid4().hex[:8]}"
-    _podman("network", "create", net)
+    # --disable-dns: nothing on these networks resolves by container name
+    # (raw IPs via _ip_of), and aardvark-dns restarts race under concurrent
+    # xdist workers ("bind udp 10.89.0.1:53: address already in use").
+    _podman("network", "create", "--disable-dns", net)
     try:
         # Fake upstream: reuse the network sidecar image (python3 + dnspython),
         # override the entrypoint to run the fake server. Listens on :53.
@@ -546,7 +549,8 @@ class TestNetworkSidecarE2E:
         # is installed before the proxy runs; no fake upstream needed).
         net = f"netc-nf-{uuid.uuid4().hex[:8]}"
         nc = f"netc-nf-{uuid.uuid4().hex[:8]}"
-        _podman("network", "create", net)
+        # --disable-dns: see stack() — aardvark races under xdist.
+        _podman("network", "create", "--disable-dns", net)
         try:
             _podman(
                 "run",
@@ -656,7 +660,8 @@ class TestNetworkSidecarE2E:
         net = f"netc-pp-{uuid.uuid4().hex[:8]}"
         nc = f"netc-pp-nc-{uuid.uuid4().hex[:8]}"
         ws = f"netc-pp-ws-{uuid.uuid4().hex[:8]}"
-        _podman("network", "create", net)
+        # --disable-dns: see stack() — aardvark races under xdist.
+        _podman("network", "create", "--disable-dns", net)
         try:
             # The sidecar owns the netns and publishes host_port -> :8000.
             _podman(
@@ -848,7 +853,8 @@ def consent_stack(env):
     fu_c = f"consent-fu-{uuid.uuid4().hex[:8]}"
     ver_c = f"consent-ver-{uuid.uuid4().hex[:8]}"
     nc = f"consent-nc-{uuid.uuid4().hex[:8]}"
-    _podman("network", "create", net)
+    # --disable-dns: see stack() — aardvark races under xdist.
+    _podman("network", "create", "--disable-dns", net)
     try:
         _podman(
             "run",

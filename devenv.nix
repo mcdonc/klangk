@@ -20,6 +20,46 @@ let
   # (#1542). kill-port-holders frees both before startup.
   browserPort = "8997";
   egressPort = "8995";
+  # Pytest plugin that surfaces the captured stdout/stderr of a subprocess
+  # (podman) whose CalledProcessError fails a test or fixture setup — the e2e
+  # helpers run podman with capture_output=True, so the runtime's actual error
+  # ("error running container: ...") is otherwise invisible in CI logs. Not
+  # loaded by default: test-backend-e2e exports PYTEST_PLUGINS + PYTHONPATH to
+  # activate it only when KLANGK_E2E_VERBOSE_PODMAN=1 is set in the calling
+  # environment (the self-hosted nix CI runner sets it in the workflow).
+  podmanStderrPlugin = pkgs.writeTextDir "klangk_podman_stderr.py" ''
+    """Print captured podman output when a CalledProcessError fails a test.
+
+    Uses pytest_runtest_makereport (not pytest_exception_interact) because the
+    latter does not fire inside xdist workers, and these suites run -n 2.
+    """
+
+    import subprocess
+
+    import pytest
+
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_makereport(item, call):
+        rep = yield
+        if not rep.failed or call.excinfo is None:
+            return rep
+        exc = call.excinfo.value
+        if not isinstance(exc, subprocess.CalledProcessError):
+            return rep
+        # Append to the longrepr rather than writing to the terminal writer:
+        # under xdist the worker's stdout is not forwarded at makereport time,
+        # but the (serialized) longrepr is.
+        extra = ["", "~" * 30 + " podman exit " + str(exc.returncode) + " " * 30]
+        for label, data in (
+            ("stdout", getattr(exc, "stdout", None)),
+            ("stderr", getattr(exc, "stderr", None)),
+        ):
+            if data:
+                extra.append("[podman {}] {}".format(label, data.strip()))
+        rep.longrepr = "{}\n{}".format(rep.longrepr, "\n".join(extra))
+        return rep
+  '';
 in
 {
   languages.javascript = {
@@ -346,6 +386,10 @@ in
   # service-command) due to podman resource contention. #2059
   scripts.test-backend-e2e.exec = ''
     cd $DEVENV_ROOT
+    if [ -n "''${KLANGK_E2E_VERBOSE_PODMAN:-}" ]; then
+      export PYTEST_PLUGINS=klangk_podman_stderr
+      export PYTHONPATH="${podmanStderrPlugin}''${PYTHONPATH:+:$PYTHONPATH}"
+    fi
     exec python -m pytest src/klangk/klangkd-tests/e2e-tests \
       -v --no-cov -n 2 --dist=loadscope "$@"
   '';

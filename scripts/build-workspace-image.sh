@@ -98,6 +98,7 @@ for old_tag in $("$PODMAN" images --format '{{.Tag}}' --filter "reference=${KLAN
 done
 "$PODMAN" build \
   "${SIG_POLICY_ARGS[@]}" \
+  "${BUILD_SECURITY_ARGS[@]}" \
   --pull=newer \
   --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
   --build-context features="$STAGING/features" \

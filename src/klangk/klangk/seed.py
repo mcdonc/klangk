@@ -135,6 +135,10 @@ async def _build_image(
         (Path(ctx) / "Dockerfile").write_text(dockerfile_text)
         args: list[str] = ["build"]
         args += _sig_policy_args()
+        # Prevent OCI maskedPaths/readonlyPaths overmounts on /proc inside
+        # the build container — without this, the kernel rejects proc
+        # mounts in nested user namespaces ("VFS: Mount too revealing").
+        args += ["--security-opt", "unmask=ALL"]
         if platform:
             args += ["--platform", platform]
         if no_cache:

@@ -18,5 +18,7 @@ uv build --package klangksidecar --wheel --out-dir "$STAGING"
 
 echo "Building network sidecar image ..."
 "$PODMAN" build -t klangk-network-sidecar \
+  "${SIG_POLICY_ARGS[@]}" \
+  "${BUILD_SECURITY_ARGS[@]}" \
   --build-context sidecar="$STAGING" \
   -f src/containers/network/Dockerfile src/containers/network
