@@ -12,11 +12,21 @@ concurrency:
 
 jobs:
   test-cli-e2e:
-    runs-on: ubuntu-latest
+    # Self-hosted NixOS runner (label "nix", klangk-ci VM). nix, devenv, git,
+    # and rootless podman (SUID newuidmap shims) come from the host config,
+    # so the devenv-setup bootstrap (nix installer + apt podman + disk
+    # scrubbing, all Ubuntu-runner specific) is not used here.
+    runs-on: nix
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     env:
-      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
-      KLANGKD_PODMAN_BIN: /usr/bin/podman
+      # Rootless podman on the klangk-ci runners needs the ci user's session
+      # bus dir for its systemd cgroup manager. GitHub's runner filters
+      # service-env vars from job step shells, so each step exports it from
+      # id -u (VM ci users are uid 1101/1102).
+      XDG_RUNTIME_DIR_SET: "1"
     steps:
       - uses: actions/checkout@v7
 
@@ -32,15 +42,33 @@ jobs:
               - 'devenv.yaml'
               - '.github/workflows/cli-e2e-tests.yml'
 
-      - uses: ./.github/actions/devenv-setup
+      - name: Prepare klangk devenv
+        run: |
+          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+          devenv shell -- true
+
+      - name: Build workspace + sidecar images
         if: steps.filter.outputs.e2e == 'true'
-        with:
-          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar
+        run: |
+          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+          devenv tasks run klangk:build-workspace-image klangk:build-network-sidecar
+
+      - name: Clean leftover klangk containers
+        if: steps.filter.outputs.e2e == 'true'
+        # The runners are non-ephemeral: servers from failed runs leak
+        # workspace containers and network sidecars into the ci user's
+        # rootless podman. Everything klangk-managed carries the
+        # klangk.workspace label, so this is scoped to klangk's own
+        # containers — never touches anything else in the user's podman.
+        run: |
+          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+          podman ps -aq --filter label=klangk.workspace \
+            | xargs -r podman rm -f >/dev/null 2>&1 || true
 
       - name: Run CLI E2E tests
         if: steps.filter.outputs.e2e == 'true'
         run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
           devenv shell -- test-cli-e2e
 
       - name: Skip notice
