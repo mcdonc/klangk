@@ -22,21 +22,25 @@ inputs:
 runs:
   using: composite
   steps:
-    # Rootless podman needs the ci user's session bus (systemd cgroup
-    # manager). GitHub's runner filters service-env vars from job step
-    # shells, so each step exports it from id -u (VM ci users are uid
-    # 1101/1102 — per-runner, hence not a static env here).
+    # Rootless podman needs the ci user's XDG_RUNTIME_DIR (for the
+    # podman pause process, container state) and DBUS_SESSION_BUS_ADDRESS
+    # (so crun can create systemd scopes via sd-bus). GitHub's runner
+    # filters service-level env vars from job step shells, so each step
+    # must export both from the uid. The ci users are uid 1101..1104
+    # (per-runner), hence dynamic rather than static.
     - name: Prepare klangk devenv
       shell: bash
       run: |
-        XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
         devenv shell -- true
 
     - name: Build images
       if: inputs.run == 'true'
       shell: bash
       run: |
-        XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
         devenv tasks run ${{ inputs.build-tasks }}
 
     - name: Clean leftover CI podman state
@@ -49,7 +53,8 @@ runs:
       # klangk.workspace). Both cleanups are scoped to CI-owned names and
       # labels — never interactive-session resources.
       run: |
-        XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
         podman network ls --format '{{.Name}}' \
           | grep -E '^(netc-e2e|consent-e2e|egress-e2e|netc-pp)' \
           | xargs -r -n1 podman network rm -f >/dev/null 2>&1 || true
@@ -62,7 +67,8 @@ runs:
       env:
         KLANGK_E2E_VERBOSE_PODMAN: ${{ inputs.verbose-podman == 'true' && '1' || '' }}
       run: |
-        XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
         devenv shell -- ${{ inputs.suite }}
 
     - name: Skip notice
