@@ -16,7 +16,7 @@ const BASE_URL =
 const chromiumUse = {
   launchOptions: {
     executablePath: process.env.CHROME_PATH || undefined,
-    args: ["--enable-unsafe-swiftshader"],
+    args: ["--disable-gpu"],
   },
 };
 
