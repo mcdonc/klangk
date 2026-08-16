@@ -16,8 +16,16 @@
 # We deliberately do NOT fall back to /etc/containers/policy.json: that file
 # is not guaranteed to exist and is the wrong place on Nix/rootless setups.
 
-# shellcheck disable=SC2034 # SIG_POLICY_ARGS is consumed by the sourcing script
+# shellcheck disable=SC2034 # SIG_POLICY_ARGS / BUILD_SECURITY_ARGS consumed by sourcing script
 SIG_POLICY_ARGS=()
+
+# Rootless podman masks /proc paths inside build containers (OCI
+# maskedPaths/readonlyPaths). In a nested user namespace (rootless
+# podman inside a systemd service) the kernel's mnt_already_visible()
+# sees those overmounts and rejects a fresh proc mount in the child
+# pidns as "VFS: Mount too revealing". unmask=ALL prevents the
+# overmounts, letting concurrent rootless builds succeed.
+BUILD_SECURITY_ARGS=(--security-opt unmask=ALL)
 if [ -n "${CONTAINERS_SIGNATURE_POLICY:-}" ]; then
   if [ ! -f "$CONTAINERS_SIGNATURE_POLICY" ]; then
     mkdir -p "$(dirname "$CONTAINERS_SIGNATURE_POLICY")"
