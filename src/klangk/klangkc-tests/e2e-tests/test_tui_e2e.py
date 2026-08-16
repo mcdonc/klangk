@@ -53,6 +53,19 @@ async def _settle(app, pilot):
     await pilot.pause()
 
 
+async def _wait_for_worker(app, pilot, name, timeout=10.0):
+    """Wait for a named worker to finish, with a timeout."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        workers = [
+            w for w in app.workers if w.name == name and not w.is_finished
+        ]
+        if not workers:
+            break
+        await pilot.pause()
+    await pilot.pause()
+
+
 # ── server fixture ──────────────────────────────────────────────────────
 
 
@@ -328,8 +341,7 @@ class TestTuiE2E:
             # Delete via API and refresh the list.
             _api_delete_workspace(base_url, token, ws_id)
             app.screen.refresh_lists()
-            await pilot.pause()
-            await pilot.pause()
+            await _wait_for_worker(app, pilot, "refresh-lists")
 
             # Verify it's gone — check .ws-name labels specifically.
             lv = app.screen.query_one("#owned_list", ListView)

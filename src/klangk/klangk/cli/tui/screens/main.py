@@ -813,6 +813,7 @@ class MainScreen(Screen):
         """Kick off an async refresh (non-blocking)."""
         self.run_worker(
             self._refresh_lists_async,
+            name="refresh-lists",
             exit_on_error=False,
             exclusive=True,
         )

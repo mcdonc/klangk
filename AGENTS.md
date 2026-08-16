@@ -72,7 +72,7 @@ Fall back to the full suite (or re-baseline) when testmon can under-select:
 `--no-cov` in the task is intentional: a scoped run exercises only a
 fraction of the package, so the 100% gate does not apply to it.
 
-### Before commit: the full suite, always
+### Before commit: the full unit-test suite, always
 
 testmon is a **local accelerator only**. CI always runs the full suite
 with `-n auto` and coverage, so before committing (and before trusting any
@@ -85,6 +85,14 @@ devenv --quiet -O dotenv.enable:bool false shell -- test-backend
 Operational notes: `.testmondata` is per-worktree (rootdir-relative) and
 gitignored; concurrent `testmon` runs in the same worktree serialize on
 sqlite's busy-lock (a brief stall, not corruption).
+
+### Do not run E2E tests locally "to make sure"
+
+Do **not** run the E2E suites (`test-backend-e2e`, `test-cli-e2e`) locally
+as a pre-commit sanity check. The CI runner is a VM on the same machine, so
+a local E2E run duplicates exactly the same work CI will do moments later —
+it wastes time without adding signal. Run targeted E2E tests locally only
+when actively debugging a specific E2E failure (with `-k <test_name>`).
 
 ## Verifying behavior empirically (avoid repro loops)
 
