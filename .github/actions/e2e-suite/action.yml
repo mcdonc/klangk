@@ -22,50 +22,24 @@ inputs:
 runs:
   using: composite
   steps:
-    # Rootless podman needs three env vars that GitHub's runner filters
-    # from job step shells (set on the systemd unit but don't reach
-    # child processes). Each step exports them:
-    #
-    #   XDG_RUNTIME_DIR         — podman pause process, container state
-    #   DBUS_SESSION_BUS_ADDRESS — crun sd-bus → systemd scopes
-    #   CONTAINERS_STORAGE_CONF — pin graphroot to ext4 (/home/ci-N),
-    #       not tmpfs ($HOME=/run/github-runner/...) which triggers
-    #       "VFS: Mount too revealing" on kernel 6.12+
-    #
-    # The ci users are uid 1101..1104 (per-runner), hence dynamic.
+    # The JIT runner's .env file provides XDG_RUNTIME_DIR,
+    # DBUS_SESSION_BUS_ADDRESS, and XDG_CACHE_HOME to every step
+    # automatically — no per-step export needed.
     - name: Prepare klangk devenv
       shell: bash
-      run: |
-        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        _sc="/home/$(whoami)/.config/containers/storage.conf"
-        [ -f "$_sc" ] && export CONTAINERS_STORAGE_CONF="$_sc"
-        devenv shell -- true
+      run: devenv shell -- true
 
     - name: Build images
       if: inputs.run == 'true'
       shell: bash
-      run: |
-        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        _sc="/home/$(whoami)/.config/containers/storage.conf"
-        [ -f "$_sc" ] && export CONTAINERS_STORAGE_CONF="$_sc"
-        devenv tasks run ${{ inputs.build-tasks }}
+      run: devenv tasks run ${{ inputs.build-tasks }}
 
     - name: Clean leftover CI podman state
       if: inputs.run == 'true'
       shell: bash
-      # Non-ephemeral runners keep podman state across jobs: failed fixtures
-      # leak e2e networks (each new network restarts aardvark-dns for the
-      # whole set, racing concurrent xdist workers) and klangk-managed
-      # containers (workspace containers + network sidecars, all labeled
-      # klangk.workspace). Both cleanups are scoped to CI-owned names and
-      # labels — never interactive-session resources.
+      # Ephemeral JIT VMs shouldn't have leftover state, but guard
+      # against incomplete prior boots or pool restarts.
       run: |
-        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        _sc="/home/$(whoami)/.config/containers/storage.conf"
-        [ -f "$_sc" ] && export CONTAINERS_STORAGE_CONF="$_sc"
         podman rm -f klangk-prewarm >/dev/null 2>&1 || true
         podman ps -aq --filter label=klangk.managed=true \
           | xargs -r podman rm -f >/dev/null 2>&1 || true
@@ -78,12 +52,7 @@ runs:
       shell: bash
       env:
         KLANGK_E2E_VERBOSE_PODMAN: ${{ inputs.verbose-podman == 'true' && '1' || '' }}
-      run: |
-        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-        export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        _sc="/home/$(whoami)/.config/containers/storage.conf"
-        [ -f "$_sc" ] && export CONTAINERS_STORAGE_CONF="$_sc"
-        devenv shell -- ${{ inputs.suite }}
+      run: devenv shell -- ${{ inputs.suite }}
 
     - name: Skip notice
       if: inputs.run != 'true'
