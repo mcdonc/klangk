@@ -38,7 +38,8 @@ runs:
       run: |
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
+        _sc="/home/$(whoami)/.config/containers/storage.conf"
+        [ -f "$_sc" ] && export CONTAINERS_STORAGE_CONF="$_sc"
         devenv shell -- true
 
     - name: Build images
@@ -47,7 +48,8 @@ runs:
       run: |
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
+        _sc="/home/$(whoami)/.config/containers/storage.conf"
+        [ -f "$_sc" ] && export CONTAINERS_STORAGE_CONF="$_sc"
         devenv tasks run ${{ inputs.build-tasks }}
 
     - name: Clean leftover CI podman state
@@ -62,7 +64,8 @@ runs:
       run: |
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
+        _sc="/home/$(whoami)/.config/containers/storage.conf"
+        [ -f "$_sc" ] && export CONTAINERS_STORAGE_CONF="$_sc"
         podman rm -f klangk-prewarm >/dev/null 2>&1 || true
         podman ps -aq --filter label=klangk.managed=true \
           | xargs -r podman rm -f >/dev/null 2>&1 || true
@@ -78,7 +81,8 @@ runs:
       run: |
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
+        _sc="/home/$(whoami)/.config/containers/storage.conf"
+        [ -f "$_sc" ] && export CONTAINERS_STORAGE_CONF="$_sc"
         devenv shell -- ${{ inputs.suite }}
 
     - name: Skip notice
