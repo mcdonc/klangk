@@ -22,12 +22,15 @@ inputs:
 runs:
   using: composite
   steps:
-    # Rootless podman needs two env vars that GitHub's runner filters
-    # from job step shells (they're set on the systemd unit but don't
-    # reach child processes). Each step sources this preamble:
+    # Rootless podman needs three env vars that GitHub's runner filters
+    # from job step shells (set on the systemd unit but don't reach
+    # child processes). Each step exports them:
     #
-    #   XDG_RUNTIME_DIR  — podman pause process, container runtime state
+    #   XDG_RUNTIME_DIR         — podman pause process, container state
     #   DBUS_SESSION_BUS_ADDRESS — crun sd-bus → systemd scopes
+    #   CONTAINERS_STORAGE_CONF — pin graphroot to ext4 (/home/ci-N),
+    #       not tmpfs ($HOME=/run/github-runner/...) which triggers
+    #       "VFS: Mount too revealing" on kernel 6.12+
     #
     # The ci users are uid 1101..1104 (per-runner), hence dynamic.
     - name: Prepare klangk devenv
@@ -35,6 +38,7 @@ runs:
       run: |
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+        export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
         devenv shell -- true
 
     - name: Build images
@@ -43,6 +47,7 @@ runs:
       run: |
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+        export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
         devenv tasks run ${{ inputs.build-tasks }}
 
     - name: Clean leftover CI podman state
@@ -57,6 +62,7 @@ runs:
       run: |
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+        export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
         podman network ls --format '{{.Name}}' \
           | grep -E '^(netc-e2e|consent-e2e|egress-e2e|netc-pp)' \
           | xargs -r -n1 podman network rm -f >/dev/null 2>&1 || true
@@ -71,6 +77,7 @@ runs:
       run: |
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+        export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
         devenv shell -- ${{ inputs.suite }}
 
     - name: Skip notice
