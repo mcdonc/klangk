@@ -30,6 +30,7 @@ import re
 import socket
 import struct
 import subprocess
+import time
 
 import pytest
 import websockets
@@ -37,6 +38,16 @@ import websockets
 from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 
 _AGENT_PROTOCOL_TIMEOUT = 3.0  # per local-agent round-trip, seconds
+
+
+def _socat_count(out: str) -> int | None:
+    """Parse ``pgrep -c socat`` output: last non-empty integer line."""
+    counts = [
+        int(ln.strip())
+        for ln in out.strip().splitlines()
+        if ln.strip().isdigit()
+    ]
+    return counts[-1] if counts else None
 
 
 def _have(*bins: str) -> bool:
@@ -262,8 +273,15 @@ async def _exec_collect(received, *, start_idx: int, timeout=30.0):
     deadline = loop.time() + timeout
     buf = bytearray()
     code: int | None = None
+    # Cursor over *received*: advance past each processed message so a
+    # chunk is appended exactly once. Re-scanning the whole slice each
+    # poll pass (the old behavior) re-appended every prior chunk once per
+    # 0.1s pass — a single "0" line became "0\n0\n0\n0\n" and garbled
+    # both the assertions and their failure messages (#2535).
+    cursor = start_idx
     while loop.time() < deadline:
-        for m in received[start_idx:]:
+        for m in received[cursor:]:
+            cursor += 1
             if m.get("type") == "exec_output":
                 buf.extend(base64.b64decode(m.get("data", "")))
             elif m.get("type") == "exec_exit":
@@ -271,6 +289,26 @@ async def _exec_collect(received, *, start_idx: int, timeout=30.0):
                 return bytes(buf), code
         await asyncio.sleep(0.1)
     return bytes(buf), code
+
+
+async def _exec_once(ws, received, *, command: list[str], login: bool = False):
+    """Run one exec_start and collect its (stdout, exit_code).
+
+    No agent relay: for commands that don't touch the forwarded socket
+    (like the socat count check), so a retry doesn't restart the relay
+    under test (#2535).
+    """
+    # Index-based boundary: only consider messages received AFTER this
+    # point as the exec's own output (the reader appends without a
+    # timestamp, so time-windowing would misclassify them as old).
+    start_idx = len(received)
+    await ws.send(
+        json.dumps({"cmd": "exec_start", "command": command, "login": login})
+    )
+    out, code = await _exec_collect(
+        received, start_idx=start_idx, timeout=30.0
+    )
+    return out.decode("utf-8", "replace"), code
 
 
 async def _run_agent_and_exec(
@@ -282,7 +320,10 @@ async def _run_agent_and_exec(
     ``ssh-add`` can reach the host agent through the forwarded socket.
     """
     # (Re)start the relay. ssh_agent_start is idempotent-ish: the server
-    # reaps any prior relay on the deterministic path first (#2001).
+    # reaps any prior relay on the deterministic path first (#2001), and
+    # gates the ssh_agent_started event on the relay socket being bound
+    # (#2535), so by the time the exec below runs the new socat is
+    # visible in the container.
     await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
     started = await _drain(
         received,
@@ -296,19 +337,10 @@ async def _run_agent_and_exec(
         _pump_relay(received, ws, agent_sock, stop=stop)
     )
     try:
-        # Index-based boundary: only consider messages received AFTER this
-        # point as the exec's own output (the reader appends without a
-        # timestamp, so time-windowing would misclassify them as old).
-        start_idx = len(received)
-        await ws.send(
-            json.dumps(
-                {"cmd": "exec_start", "command": command, "login": login}
-            )
+        out, code = await _exec_once(
+            ws, received, command=command, login=login
         )
-        out, code = await _exec_collect(
-            received, start_idx=start_idx, timeout=30.0
-        )
-        return out.decode("utf-8", "replace"), code
+        return out, code
     finally:
         stop.set()
         try:
@@ -431,8 +463,14 @@ class TestSshAgentForwarding:
             )
             assert code2 == 0 and fingerprint in out2, (code2, out2)
 
-            # Exactly one socat listening on the per-user path: a leak would
-            # show >= 2. pgrep -c returns the count (login shell for PATH).
+            # Exactly one socat listening on the per-user path: a leak
+            # would show >= 2 (pgrep -c prints one number; login shell for
+            # PATH). The server gates ssh_agent_started on the socket
+            # being bound (#2535), so a count of 0 should no longer
+            # happen — but if one slips through (readiness timeout under
+            # load), retry briefly instead of failing: the assertion
+            # under test is "no leak", and a leak shows >= 2 on the very
+            # first check, not after a delay.
             out3, code3 = await _run_agent_and_exec(
                 ws,
                 received,
@@ -441,15 +479,23 @@ class TestSshAgentForwarding:
                 login=True,
             )
             assert code3 == 0, (code3, out3)
-            # Take the last non-empty integer line (pgrep -c prints one number).
-            counts = [
-                int(ln.strip())
-                for ln in out3.strip().splitlines()
-                if ln.strip().isdigit()
-            ]
-            assert counts, f"no socat count in output: {out3!r}"
-            assert counts[-1] == 1, (
-                f"expected exactly 1 socat after reconnect, got {counts[-1]} "
+            count = _socat_count(out3)
+            deadline = time.monotonic() + 10.0
+            while count == 0 and time.monotonic() < deadline:
+                # Retry with a bare exec (no ssh_agent_start) so the
+                # retry doesn't itself restart the relay under test.
+                out3, code3 = await _exec_once(
+                    ws,
+                    received,
+                    command=["bash", "-lc", "pgrep -c socat || true"],
+                    login=True,
+                )
+                assert code3 == 0, (code3, out3)
+                count = _socat_count(out3)
+                if count == 0:
+                    await asyncio.sleep(0.5)
+            assert count == 1, (
+                f"expected exactly 1 socat after reconnect, got {count} "
                 f"(relay leak): {out3!r}"
             )
         finally:

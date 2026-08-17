@@ -29,6 +29,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# SSH-agent relay readiness (#2535): ``ssh_agent_started`` must mean the
+# container-side socat is *listening*, not merely that the local
+# ``podman exec`` client was spawned. ``create_subprocess_exec`` returns
+# as soon as the client process exists — the container-side socat appears
+# some conmon/crun latency later — so a client that fires a follow-up exec
+# immediately (the e2e suite's ``pgrep -c socat``, or any scripted
+# ``ssh-add``) can land before the relay is visible, and under load that
+# window widens. socat's stderr is DEVNULL (no startup message to poll
+# for), so the readiness signal is the bound socket file: ``unlink-early``
+# removes any stale file and ``bind()`` creates this one, so its existence
+# means a live listener.
+_SSH_AGENT_READY_TIMEOUT = 10.0
+_SSH_AGENT_READY_POLL = 0.1
+
 # Read-only ("spectate") terminal-input whitelist (issue #1716).
 #
 # A read-only joiner may only send the terminal-protocol RESPONSES that
@@ -203,6 +217,19 @@ class SshAgentForwarder:
         self.proc = proc
         self.socket = sock_path
         self.task = asyncio.create_task(self.forward_output())
+        # Gate the "started" event on the relay actually listening
+        # (#2535). A timeout is not fatal — the socat exec may still be
+        # working its way through the runtime (headroom under load), so
+        # the event is emitted anyway and the failure mode stays the old
+        # one (a too-early client sees an inert socket) instead of a new
+        # one (clients waiting on an event that never comes).
+        if not await self._wait_until_listening(container_id, sock_path):
+            logger.warning(
+                "SSH agent socket %s not bound after %.0fs; "
+                "continuing anyway (relay may still be starting)",
+                sock_path,
+                _SSH_AGENT_READY_TIMEOUT,
+            )
         self._conn.sock.send_json(
             {
                 "type": "ssh_agent_started",
@@ -214,6 +241,35 @@ class SshAgentForwarder:
             user_id,
             sock_path,
         )
+
+    async def _wait_until_listening(
+        self, container_id: str, sock_path: str
+    ) -> bool:
+        """True once socat has bound *sock_path*; False on timeout or error.
+
+        Polls ``test -S`` inside the container until the socket file exists
+        (see the constants above for why the file is the readiness
+        signal). A podman launch failure returns False immediately — the
+        relay is dead either way, and ``stop()`` (on disconnect or the
+        next start) handles teardown.
+        """
+        deadline = time.monotonic() + _SSH_AGENT_READY_TIMEOUT
+        while True:
+            try:
+                (
+                    rc,
+                    _out,
+                    _err,
+                ) = await self._conn.app.state.podman.exec_container(
+                    container_id, ["test", "-S", sock_path], timeout=5.0
+                )
+            except Exception:
+                return False
+            if rc == 0:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(_SSH_AGENT_READY_POLL)
 
     async def forward_output(self) -> None:
         """Read from socat stdout and send to the CLI as ssh_agent_response."""
