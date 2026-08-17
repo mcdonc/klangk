@@ -63,11 +63,12 @@ runs:
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
         export CONTAINERS_STORAGE_CONF="/home/$(whoami)/.config/containers/storage.conf"
+        podman rm -f klangk-prewarm >/dev/null 2>&1 || true
+        podman ps -aq --filter label=klangk.managed=true \
+          | xargs -r podman rm -f >/dev/null 2>&1 || true
         podman network ls --format '{{.Name}}' \
           | grep -E '^(netc-e2e|consent-e2e|egress-e2e|netc-pp)' \
           | xargs -r -n1 podman network rm -f >/dev/null 2>&1 || true
-        podman ps -aq --filter label=klangk.workspace \
-          | xargs -r podman rm -f >/dev/null 2>&1 || true
 
     - name: Run ${{ inputs.suite-name }} E2E tests
       if: inputs.run == 'true'
