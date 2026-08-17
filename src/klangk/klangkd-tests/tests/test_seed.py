@@ -189,12 +189,17 @@ async def test_build_image_args(tmp_path, monkeypatch):
     monkeypatch.setenv(
         "CONTAINERS_SIGNATURE_POLICY", str(tmp_path / "pol.json")
     )
+    # nix CI runner signal: --security-opt unmask=ALL must be applied
+    # (d66ec5cc) — set explicitly so the branch is covered on every
+    # runner, not only where the env happens to carry it.
+    monkeypatch.setenv("CONTAINERS_STORAGE_CONF", "/tmp/storage.conf")
     await seed._build_image(_PODMAN, "FROM x\n", no_cache=True)
     a = captured["args"]
     assert a[0] == "build"
     assert "--signature-policy" in a
     assert "--platform" in a and "linux/arm64" in a
     assert "--no-cache" in a
+    assert "--security-opt" in a and "unmask=ALL" in a
     assert "-t" in a and seed._IMAGE in a
     assert captured["kw"]["timeout"] == 2400.0
 
@@ -210,11 +215,13 @@ async def test_build_image_minimal(monkeypatch):
     monkeypatch.setattr(seed, "_run", fake_run)
     monkeypatch.delenv("KLANGKBUILD_PLATFORM", raising=False)
     monkeypatch.delenv("CONTAINERS_SIGNATURE_POLICY", raising=False)
+    monkeypatch.delenv("CONTAINERS_STORAGE_CONF", raising=False)
     await seed._build_image(_PODMAN, "FROM x\n", no_cache=False)
     a = captured["args"]
     assert "--platform" not in a
     assert "--signature-policy" not in a
     assert "--no-cache" not in a
+    assert "--security-opt" not in a
 
 
 # --- _export_to_dir_sync (the streaming tarfile extraction) ----------------
