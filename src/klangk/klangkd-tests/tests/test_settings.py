@@ -1333,3 +1333,72 @@ class TestNixSeedConfig:
         s = make_settings({})
         assert s.nix_seed.path is None
         assert s.nix_seed.type == "fuse-overlayfs"  # the default
+
+
+# ---------------------------------------------------------------------------
+# egress_consent prune knobs (#2303)
+# ---------------------------------------------------------------------------
+
+
+class TestEgressConsentPruneSettings:
+    def test_defaults(self):
+        s = make_settings({})
+        assert s.egress_consent_retention_days == 30
+        assert s.egress_consent_row_cap == 2000
+
+    def test_env_overrides(self):
+        s = make_settings(
+            {
+                "KLANGKD_EGRESS_CONSENT_RETENTION_DAYS": "7",
+                "KLANGKD_EGRESS_CONSENT_ROW_CAP": "500",
+            }
+        )
+        assert s.egress_consent_retention_days == 7
+        assert s.egress_consent_row_cap == 500
+
+    def test_zero_disables(self):
+        s = make_settings(
+            {
+                "KLANGKD_EGRESS_CONSENT_RETENTION_DAYS": "0",
+                "KLANGKD_EGRESS_CONSENT_ROW_CAP": "0",
+            }
+        )
+        assert s.egress_consent_retention_days == 0
+        assert s.egress_consent_row_cap == 0
+
+    def test_empty_string_falls_back_to_default(self):
+        s = make_settings(
+            {
+                "KLANGKD_EGRESS_CONSENT_RETENTION_DAYS": "",
+                "KLANGKD_EGRESS_CONSENT_ROW_CAP": "",
+            }
+        )
+        assert s.egress_consent_retention_days == 30
+        assert s.egress_consent_row_cap == 2000
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("KLANGKD_EGRESS_CONSENT_RETENTION_DAYS", "-1"),
+            ("KLANGKD_EGRESS_CONSENT_ROW_CAP", "-5"),
+            ("KLANGKD_EGRESS_CONSENT_RETENTION_DAYS", "soon"),
+            ("KLANGKD_EGRESS_CONSENT_ROW_CAP", "1.5"),
+        ],
+    )
+    def test_malformed_raises(self, key, value):
+        with pytest.raises(Exception, match=key):
+            make_settings({key: value})
+
+    def test_env_string_float_rejected(self):
+        with pytest.raises(Exception, match="RETENTION_DAYS"):
+            make_settings({"KLANGKD_EGRESS_CONSENT_RETENTION_DAYS": "0.5"})
+
+    @pytest.mark.parametrize("value", [0.5, True])
+    def test_native_yaml_float_and_bool_rejected(self, value, tmp_path):
+        # A YAML float (retention-days: 0.5) must abort rather than truncate
+        # (int(0.5) == 0 would silently disable the feature); a YAML bool
+        # (true -> 1) is a typo, not a window.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"egress-consent-retention-days: {value!s}\n")
+        with pytest.raises(Exception, match="RETENTION_DAYS"):
+            make_settings({}, config_file=str(cfg))

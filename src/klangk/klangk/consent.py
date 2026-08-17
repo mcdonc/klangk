@@ -21,10 +21,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from .model.workspaces import EGRESS_MODE_INTERACTIVE
 
 logger = logging.getLogger(__name__)
+
+# Retention sweep interval (#2303): how often egress_consent rows past the
+# retention window / over the per-workspace cap are pruned. Pruning is
+# day-scale housekeeping, so an hour between sweeps is plenty. The deadline
+# is wall-clock (a monotonic ``next_prune`` compared at every loop top), NOT
+# a queue-idle timeout: event traffic must never postpone the sweep -- a
+# flooding workspace that keeps the queue busy is exactly the case the row
+# cap exists for. Mirrors the idle monitor's throttled piggyback sweeps.
+PRUNE_INTERVAL = 3600.0
 
 
 async def workspace_is_interactive(app, workspace_id: str) -> bool:
@@ -91,9 +101,36 @@ class EgressConsentMonitor:
             task.cancel()
 
     async def _run(self) -> None:
+        # Wall-clock sweep deadline: 0.0 sweeps once immediately on startup
+        # (a prior run may have left the table past the window / over the
+        # cap), then every PRUNE_INTERVAL regardless of event traffic.
+        next_prune = 0.0
         try:
             while True:
-                workspace_id, dst_ip, dst_port = await self._queue.get()
+                if time.monotonic() >= next_prune:
+                    # Retention sweep: bounded table growth (#2303). A failed
+                    # sweep logs and retries an interval later -- housekeeping,
+                    # not a correctness path.
+                    try:
+                        await self._prune()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.warning(
+                            "egress consent: retention sweep failed",
+                            exc_info=True,
+                        )
+                    next_prune = time.monotonic() + PRUNE_INTERVAL
+                # Wait for the next event, but never past the deadline: a
+                # busy queue must not postpone the sweep (see PRUNE_INTERVAL).
+                timeout = max(0.0, next_prune - time.monotonic())
+                try:
+                    item = await asyncio.wait_for(
+                        self._queue.get(), timeout=timeout
+                    )
+                except asyncio.TimeoutError:
+                    continue  # deadline passed -> sweep at loop top
+                workspace_id, dst_ip, dst_port = item
                 try:
                     await self._handle_event(workspace_id, dst_ip, dst_port)
                 except asyncio.CancelledError:
@@ -104,6 +141,18 @@ class EgressConsentMonitor:
                     logger.exception("egress consent: event handling failed")
         except asyncio.CancelledError:
             pass
+
+    async def _prune(self) -> None:
+        """One retention sweep: prune rows past retention / over the cap.
+
+        Settings are read live inside the model call (SIGHUP reload-safe:
+        a reload applies on the next sweep).
+        """
+        deleted = await self.app.state.model.egress_consent.prune()
+        if deleted:
+            logger.info(
+                "egress consent: pruned %d row(s) past retention/cap", deleted
+            )
 
     async def _handle_event(
         self, workspace_id: str, dst_ip: str, dst_port: int | None

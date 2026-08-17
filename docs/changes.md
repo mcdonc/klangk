@@ -32,6 +32,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGKD_EGRESS_CONSENT_RETENTION_DAYS` / `KLANGKD_EGRESS_CONSENT_ROW_CAP`
+  (#2303).** The `egress_consent` table is now bounded on long-lived deploys:
+  a retention window (default 30 days; `0` disables) deletes terminal rows
+  older than it, and a per-workspace row cap (default 2000; `0` disables)
+  trims the oldest rows when a workspace floods decided requests past the
+  cap. Verdicts still in effect (`forever`, `tilrestart`, or a timed window
+  not yet elapsed) are enforcement state and are never pruned; they leave
+  via workspace deletion or the `tilrestart` reap as before. Swept at
+  startup and hourly (wall-clock deadline — event traffic never postpones
+  it) by the consent monitor; both settings are reloadable on SIGHUP.
 - **`KLANGKNETWORK_EGRESS_ACTIVITY_GATE` forwarding (#2514).** The
   sidecar's idle-activity report interval is now honored when set in
   klangkd's environment (forwarded to the sidecar like

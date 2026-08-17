@@ -94,6 +94,42 @@ _CONTAINER_MEM_LIMIT_RE = re.compile(
 _XDG_SUBDIR = "klangkd"
 
 
+def _coerce_prune_int(v, name: str, *, default: int) -> int:
+    """Shared coercion for the #2303 prune knobs (retention days / row cap).
+
+    Accepts an integer string (env) or a real int (YAML); ``None`` / empty
+    -> the field default. A native YAML float (e.g. ``7.5``) or bool
+    (``true``) is rejected rather than silently truncated / coerced --
+    same strict-on-malformed posture as ``container_pids_limit`` (a
+    truncated ``0.5`` days would silently disable the feature). ``0`` is
+    the meaningful floor for both knobs (it disables).
+    """
+    if v is None or v == "":
+        return default
+    if isinstance(v, bool):
+        raise ValueError(
+            f"{name}={v!r} must be a non-negative integer (0 disables), "
+            "not a boolean."
+        )
+    if isinstance(v, float):
+        raise ValueError(
+            f"{name}={v!r} must be a non-negative integer (0 disables) -- "
+            "use an integer like 30, not 0.5."
+        )
+    try:
+        value = int(v)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name}={v!r} must be a non-negative integer (0 disables)."
+        ) from exc
+    if value < 0:
+        raise ValueError(
+            f"{name}={v!r} must be >= 0 (0 disables; negative is not a "
+            "meaningful window)."
+        )
+    return value
+
+
 def _xdg_config_home() -> str:
     """Return ``$XDG_CONFIG_HOME`` with the documented unset fallback.
 
@@ -741,6 +777,19 @@ class KlangkSettings(BaseSettings):
     # falsely "interactive" with a dead decider. Read live (SIGHUP
     # reload-safe).
     consent_decider_timeout: float = 45.0
+    # egress_consent_retention_days / egress_consent_row_cap (#2303): bound
+    # the ``egress_consent`` table on long-lived deploys. retention_days
+    # deletes terminal rows older than the window (static policy records,
+    # expired, revoked, and elapsed timed verdicts; rows still in effect --
+    # ``forever``/``tilrestart`` or a timed window not yet elapsed -- are
+    # enforcement state and are never pruned; they leave via workspace
+    # deletion / the tilrestart reap). row_cap is a per-workspace
+    # belt-and-suspenders cap on total rows (a flood of decided requests can
+    # outpace age-based pruning; in-effect rows are exempt there too). 0
+    # disables either knob. Swept hourly by the consent monitor; read live
+    # (SIGHUP reload-safe -- a reload applies on the next sweep).
+    egress_consent_retention_days: int = 30
+    egress_consent_row_cap: int = 2000
     # Container resource limits (#34): deploy-wide CPU / memory / PIDs caps
     # passed to every workspace container as podman --cpus / --memory /
     # --pids-limit. Ships with protective defaults (2 CPUs / 8g / 16384 PIDs,
@@ -1264,6 +1313,35 @@ class KlangkSettings(BaseSettings):
         if float(m.group("num")) <= 0:
             raise ValueError(f"KLANGKD_CONTAINER_TMP_SIZE={v!r} must be > 0.")
         return s
+
+    @field_validator("egress_consent_retention_days", mode="before")
+    @classmethod
+    def _coerce_egress_consent_retention_days(cls, v):
+        """Coerce + validate ``KLANGKD_EGRESS_CONSENT_RETENTION_DAYS`` (#2303).
+
+        Integer string (env) or int (YAML); ``None`` / empty -> the default.
+        Negative raises and aborts startup (a negative retention window is a
+        misconfiguration, not a "keep everything" request -- that is ``0``).
+        """
+        return _coerce_prune_int(
+            v,
+            "KLANGKD_EGRESS_CONSENT_RETENTION_DAYS",
+            default=30,
+        )
+
+    @field_validator("egress_consent_row_cap", mode="before")
+    @classmethod
+    def _coerce_egress_consent_row_cap(cls, v):
+        """Coerce + validate ``KLANGKD_EGRESS_CONSENT_ROW_CAP`` (#2303).
+
+        Integer string (env) or int (YAML); ``None`` / empty -> the default.
+        Negative raises and aborts startup (``0`` disables the cap).
+        """
+        return _coerce_prune_int(
+            v,
+            "KLANGKD_EGRESS_CONSENT_ROW_CAP",
+            default=2000,
+        )
 
     @field_validator("llm_models", mode="before")
     @classmethod

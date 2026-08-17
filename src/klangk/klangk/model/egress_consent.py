@@ -612,6 +612,146 @@ class EgressConsentModel:
             )
             return cursor.rowcount
 
+    # Pruning (#2303): what the retention sweep may delete. Rows still in
+    # effect are *enforcement state*, not history -- deleting a forever or
+    # tilrestart (or un-elapsed timed) verdict would silently stop it working
+    # (e.g. the consent-pause path reads recorded denies via
+    # :meth:`active_verdict_for`; pruning one would auto-allow the host). They
+    # leave via their own lifecycle instead: workspace deletion cascades, and
+    # :meth:`clear_tilrestart_duration` drops tilrestart rows at container
+    # restart. Stale ``pending`` rows (older than the retention window) and
+    # all terminal-but-not-in-effect rows -- static policy records, expired,
+    # revoked, elapsed verdicts -- are fair game.
+    _PRUNE_KEEP_DECISIONS = (DECISION_ALLOWED, DECISION_DENIED)
+
+    def _prune_eligible(self, row, now: float) -> bool:
+        """Whether a consent row may be pruned (see the block comment above)."""
+        decision = row["decision"]
+        if decision not in self._PRUNE_KEEP_DECISIONS:
+            # pending (stale by age), expired, revoked -- never in effect.
+            return True
+        if row["decided_by"] is None:
+            # Static policy record (audit-only; enforcement is the iptables
+            # allow-list, and the dedup index re-records on the next hit).
+            return True
+        return not self._duration_in_effect(
+            row["duration"], row["decided_at"], now
+        )
+
+    async def prune(self, now: float | None = None) -> int:
+        """Bound the table: delete rows past retention / over the per-workspace
+        cap (#2303). Returns the number of rows deleted.
+
+        Two passes, both skipping rows still in effect (see
+        :meth:`_prune_eligible`):
+
+        - **Retention** (``egress_consent_retention_days`` > 0): delete rows
+          whose terminal timestamp (``revoked_at`` / ``decided_at`` /
+          ``requested_at``, first non-NULL) is older than the window.
+        - **Row cap** (``egress_consent_row_cap`` > 0): per workspace, if the
+          row count exceeds the cap, delete the oldest eligible rows down to
+          it -- belt-and-suspenders against a flood of decided requests
+          outpacing age-based pruning. Live ``pending`` rows are never
+          deleted by this pass (only stale-by-retention ones are).
+        """
+        settings = self.app.state.settings
+        retention_days = settings.egress_consent_retention_days
+        row_cap = settings.egress_consent_row_cap
+        if retention_days <= 0 and row_cap <= 0:
+            return 0
+        if now is None:
+            now = time.time()
+        deleted = 0
+
+        if retention_days > 0:
+            cutoff = now - retention_days * 86400.0
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "SELECT id, decision, duration, decided_at, decided_by"
+                    " FROM egress_consent"
+                    " WHERE COALESCE(revoked_at, decided_at, requested_at) < ?",
+                    (cutoff,),
+                )
+                rows = await cursor.fetchall()
+            # TOCTOU guard: the snapshot and the deletes run in separate
+            # transactions, so a row snapshotted as pending may have been
+            # decided in between -- deleting it would silently drop a fresh
+            # verdict. Pending candidates are therefore re-checked against
+            # their decision at DELETE time. Non-pending candidates need no
+            # re-check: their eligibility is monotonic (allowed/denied can
+            # only transition to revoked, still eligible; expired/revoked/
+            # static rows never change decision).
+            pending_ids = [
+                r["id"]
+                for r in rows
+                if r["decision"] == DECISION_PENDING
+                and self._prune_eligible(r, now)
+            ]
+            other_ids = [
+                r["id"]
+                for r in rows
+                if r["decision"] != DECISION_PENDING
+                and self._prune_eligible(r, now)
+            ]
+            deleted += await self._delete_ids(
+                pending_ids, require_decision=DECISION_PENDING
+            )
+            deleted += await self._delete_ids(other_ids)
+
+        if row_cap > 0:
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    "SELECT workspace_id, COUNT(*) AS cnt"
+                    " FROM egress_consent GROUP BY workspace_id HAVING cnt > ?",
+                    (row_cap,),
+                )
+                over = await cursor.fetchall()
+            for entry in over:
+                excess = entry["cnt"] - row_cap
+                async with self.app.state.db.transaction() as db:
+                    cursor = await db.execute(
+                        "SELECT id, decision, duration, decided_at, decided_by"
+                        " FROM egress_consent"
+                        " WHERE workspace_id = ? AND decision != ?"
+                        " ORDER BY COALESCE(revoked_at, decided_at,"
+                        " requested_at) ASC",
+                        (entry["workspace_id"], DECISION_PENDING),
+                    )
+                    rows = await cursor.fetchall()
+                ids = []
+                for r in rows:
+                    if excess <= 0:
+                        break
+                    if self._prune_eligible(r, now):
+                        ids.append(r["id"])
+                        excess -= 1
+                deleted += await self._delete_ids(ids)
+        return deleted
+
+    async def _delete_ids(
+        self, ids: list[str], *, require_decision: str | None = None
+    ) -> int:
+        """DELETE the given ids in bounded chunks; returns rows removed.
+
+        ``require_decision`` re-checks the row's decision at DELETE time --
+        the TOCTOU guard for pending candidates (see :meth:`prune`): a row
+        snapshotted as pending but decided before the DELETE must not be
+        removed. Chunks of 100 keep well under SQLite's parameter limit.
+        """
+        removed = 0
+        for start in range(0, len(ids), 100):
+            chunk = ids[start : start + 100]
+            placeholders = ",".join("?" * len(chunk))
+            sql = f"DELETE FROM egress_consent WHERE id IN ({placeholders})"  # noqa: S608
+            params: tuple = tuple(chunk)
+            if require_decision is not None:
+                sql += " AND decision = ?"
+                params = params + (require_decision,)
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(sql, params)
+                removed += cursor.rowcount
+        return removed
+
 
 def _row_to_dict(row) -> dict:
     return {

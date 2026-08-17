@@ -99,6 +99,18 @@ table, regardless of `egress_mode` (#2242):
 - **allow** -> off-list destinations recorded `allowed`, `decided_by`
   NULL (#2406) — a log of everything the workspace actually reached.
 
+The table is bounded (#2303): a retention window
+(`KLANGKD_EGRESS_CONSENT_RETENTION_DAYS`, default 30 days) deletes
+terminal rows older than it, and a per-workspace cap
+(`KLANGKD_EGRESS_CONSENT_ROW_CAP`, default 2000) trims the oldest rows
+when a workspace floods decided requests past the cap. Verdicts still
+in effect (`forever`, `tilrestart`, or a timed window not yet elapsed)
+are enforcement state and are never pruned — they leave via workspace
+deletion or the `tilrestart` reap. The consent monitor sweeps at
+startup and then hourly on a wall-clock deadline (event traffic never
+postpones it); both settings are SIGHUP-reloadable — a reload applies on
+the next sweep.
+
 ## Interactive egress consent
 
 Instead of declaring the full allow-list up front, an interactive
@@ -243,10 +255,14 @@ entry is retracted so it does not re-apply on the next restart (#2370).
 - **Settings** (all SIGHUP-reloadable): `KLANGKD_EGRESS_CONSENT_TIMEOUT`
   (default 120s — how long a request stays pending before auto-deny),
   `KLANGKD_EGRESS_CONSENT_RATE_LIMIT` (default 50 pending requests per
-  workspace — at the cap, new holds are denied at once), and
+  workspace — at the cap, new holds are denied at once),
   `KLANGKD_CONSENT_DECIDER_TIMEOUT` (default 45s — decider liveness; a
   crashed or half-open decider is reaped within roughly 1.5x that,
-  reverting its workspaces to deny-and-record).
+  reverting its workspaces to deny-and-record), and the table-bounding
+  pair `KLANGKD_EGRESS_CONSENT_RETENTION_DAYS` (default 30) /
+  `KLANGKD_EGRESS_CONSENT_ROW_CAP` (default 2000) — see
+  [Consent recording](#consent-recording-all-modes); a reload applies on
+  the next sweep.
 - **Flood bounds.** The consent queue is rate-limited in the ruleset
   (5 SYNs/sec, burst 20) — packets past the limit are REJECTed, never
   queued — and request rows are deduplicated per destination, so a
