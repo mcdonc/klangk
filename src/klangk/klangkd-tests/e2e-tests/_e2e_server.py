@@ -63,8 +63,9 @@ _UDS_HOST = "http://klangkd"
 _UDS_WS_HOST = "ws://klangkd"
 
 # How long to wait for the server to answer /health at startup. Container-less
-# readiness is ~1-2s; the headroom absorbs a loaded runner / first-boot seeding.
-_READINESS_TIMEOUT = 60
+# readiness is ~1-2s; the headroom absorbs a loaded runner / first-boot seeding
+# and concurrent VM resource contention on the JIT CI pool.
+_READINESS_TIMEOUT = 120
 
 
 def _drain_stdout(proc: Popen, log_path: str | None = None) -> str:

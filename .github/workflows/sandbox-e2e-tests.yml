@@ -13,30 +13,16 @@ concurrency:
 
 jobs:
   test-sandbox-e2e:
-    runs-on: ubuntu-latest
+    runs-on: nix
     # openclaw + hermes both do real installs (npm/uv + git clone) that take
     # several minutes each; they run sequentially in one job.
     timeout-minutes: 60
-    env:
-      # Use system podman on Ubuntu runners (nix podman lacks SUID newuidmap)
-      KLANGKD_PODMAN_BIN: /usr/bin/podman
     steps:
       - uses: actions/checkout@v7
 
-      - uses: ./.github/actions/devenv-setup
+      - uses: ./.github/actions/e2e-suite
         with:
-          build-tasks: klangk:build-workspace-image
-
-      # Runs every sandbox test suite under sandboxes/tests/. There is
-      # currently only openclaw; more will be added over time. Each suite
-      # is responsible for its own server/container teardown (SIGKILL on
-      # shutdown) so they don't leak across runs. Requires network (real
-      # installs). Ports are free-allocated and container cleanup is
-      # instance-scoped (#1393), so xdist is no longer forcibly disabled;
-      # the suites run serially (no -n) because each does real installs
-      # (npm/uv + git clone) that take several minutes. Opt into xdist
-      # with -n auto --dist=loadscope.
-      - name: Run sandbox e2e tests
-        run: |
-          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-          devenv shell -- pytest sandboxes/tests -v --no-cov
+          run: "true"
+          suite: pytest sandboxes/tests -v --no-cov
+          suite-name: sandbox
+          build-tasks: klangk:build-workspace-image klangk:build-network-sidecar

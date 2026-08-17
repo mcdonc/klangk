@@ -330,9 +330,10 @@ class TestTuiE2E:
 
         app = KlangkApp(tui_state)
         async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.pause()
+            await _settle(app, pilot)
             assert isinstance(app.screen, MainScreen)
+            # Wait for the initial list load to complete.
+            await _wait_for_worker(app, pilot, "refresh-lists")
             # Verify workspace is in the list.
             lv = app.screen.query_one("#owned_list", ListView)
             names = [str(lab.render()) for lab in lv.query(Label)]
