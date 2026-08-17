@@ -897,6 +897,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **SSH agent forwarding readiness (#2535).** The `ssh_agent_started`
+  event now fires only after the in-container relay socket is actually
+  bound, instead of when the relay process was merely spawned. Commands
+  issued immediately after starting forwarding (e.g. a scripted
+  `ssh-add`) no longer race the relay startup under load.
 - **Per-workspace idle timeout ignored on web-UI starts (#2514).** A
   workspace's `idle_timeout` settings override (#864) was only applied
   when started via `POST /workspaces/{id}/start`; a workspace started by

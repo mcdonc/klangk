@@ -27,6 +27,7 @@ from klangk import (
     workspaces as ws_mod,
 )
 from klangk.exceptions import ContainerGoneError, TerminalError
+from klangk.podman import PodmanError
 from klangk.model.chat import ChatModel
 from _helpers import make_settings
 from klangk.wshandler import (
@@ -3214,7 +3215,7 @@ class TestSSHAgentHandlers:
             patch.object(
                 _mock_pod,
                 "exec_container",
-                new=AsyncMock(),
+                new=AsyncMock(return_value=(0, "", "")),
             ),
             patch(
                 "asyncio.create_subprocess_exec",
@@ -3231,6 +3232,116 @@ class TestSSHAgentHandlers:
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "ssh_agent_started"
         assert "socket" in msg
+
+    async def test_ssh_agent_start_waits_for_socket_bound(self):
+        """ssh_agent_start polls until the relay socket is bound (#2535).
+
+        The first readiness poll misses (socket not bound yet), the second
+        hits — the event must fire only after the bound poll.
+        """
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = AsyncMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        # exec_container call order in start(): pkill, rm, then readiness
+        # polls. First poll misses (rc=1), second sees the bound socket.
+        exec_mock = AsyncMock(
+            side_effect=[
+                (0, "", ""),
+                (0, "", ""),
+                (1, "", ""),
+                (0, "", ""),
+            ]
+        )
+        with (
+            patch.object(_mock_pod, "exec_container", new=exec_mock),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+            patch("klangk.wshandler.controllers._SSH_AGENT_READY_POLL", 0.0),
+        ):
+            await conn.handle_ssh_agent_start()
+            assert conn.ssh_agent.task is not None
+            await conn.ssh_agent.task
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "ssh_agent_started"
+        # Exactly one readiness poll missed then one hit: 4 exec calls.
+        assert exec_mock.await_count == 4
+
+    async def test_ssh_agent_start_ready_timeout_sends_started_anyway(self):
+        """Readiness timeout still emits ssh_agent_started (#2535).
+
+        The event is best-effort gated: a slow runtime must not leave
+        clients waiting on an event that never comes.
+        """
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = AsyncMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        # Every readiness poll misses.
+        exec_mock = AsyncMock(return_value=(1, "", ""))
+        with (
+            patch.object(_mock_pod, "exec_container", new=exec_mock),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+            patch(
+                "klangk.wshandler.controllers._SSH_AGENT_READY_TIMEOUT", 0.05
+            ),
+            patch("klangk.wshandler.controllers._SSH_AGENT_READY_POLL", 0.01),
+        ):
+            await conn.handle_ssh_agent_start()
+            assert conn.ssh_agent.task is not None
+            await conn.ssh_agent.task
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "ssh_agent_started"
+        # pkill + rm + at least one (timed-out) readiness poll.
+        assert exec_mock.await_count >= 3
+
+    async def test_ssh_agent_start_ready_error_sends_started_anyway(self):
+        """A podman failure during the readiness poll is not fatal (#2535)."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        mock_proc = AsyncMock()
+        mock_proc.stdout = AsyncMock()
+        mock_proc.stdout.read = AsyncMock(return_value=b"")
+        mock_proc.stdin = AsyncMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock()
+        # pkill/rm succeed; the readiness poll itself blows up.
+        exec_mock = AsyncMock(
+            side_effect=[
+                (0, "", ""),
+                (0, "", ""),
+                PodmanError(1, "podman exec exploded"),
+            ]
+        )
+        with (
+            patch.object(_mock_pod, "exec_container", new=exec_mock),
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=mock_proc),
+            ),
+        ):
+            await conn.handle_ssh_agent_start()
+            assert conn.ssh_agent.task is not None
+            await conn.ssh_agent.task
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "ssh_agent_started"
+        assert exec_mock.await_count == 3
 
     async def test_ssh_agent_data_writes_to_stdin(self):
         import base64
