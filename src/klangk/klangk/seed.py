@@ -138,7 +138,10 @@ async def _build_image(
         # Prevent OCI maskedPaths/readonlyPaths overmounts on /proc inside
         # the build container — without this, the kernel rejects proc
         # mounts in nested user namespaces ("VFS: Mount too revealing").
-        args += ["--security-opt", "unmask=ALL"]
+        # Only on nix CI runners (signaled by CONTAINERS_STORAGE_CONF);
+        # older podman on ubuntu doesn't support this option.
+        if os.environ.get("CONTAINERS_STORAGE_CONF"):
+            args += ["--security-opt", "unmask=ALL"]
         if platform:
             args += ["--platform", platform]
         if no_cache:

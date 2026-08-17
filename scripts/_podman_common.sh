@@ -25,7 +25,12 @@ SIG_POLICY_ARGS=()
 # sees those overmounts and rejects a fresh proc mount in the child
 # pidns as "VFS: Mount too revealing". unmask=ALL prevents the
 # overmounts, letting concurrent rootless builds succeed.
-BUILD_SECURITY_ARGS=(--security-opt unmask=ALL)
+# Only set when CONTAINERS_STORAGE_CONF is present (nix CI runner);
+# older podman on ubuntu-latest doesn't support this option.
+BUILD_SECURITY_ARGS=()
+if [ -n "${CONTAINERS_STORAGE_CONF:-}" ]; then
+  BUILD_SECURITY_ARGS=(--security-opt unmask=ALL)
+fi
 if [ -n "${CONTAINERS_SIGNATURE_POLICY:-}" ]; then
   if [ ! -f "$CONTAINERS_SIGNATURE_POLICY" ]; then
     mkdir -p "$(dirname "$CONTAINERS_SIGNATURE_POLICY")"
