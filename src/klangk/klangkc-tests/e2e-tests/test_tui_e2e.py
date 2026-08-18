@@ -66,6 +66,16 @@ async def _wait_for_worker(app, pilot, name, timeout=10.0):
     await pilot.pause()
 
 
+async def _wait_for_screen(app, pilot, screen_type, timeout=30.0):
+    """Wait for the app's active screen to be an instance of *screen_type*."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if isinstance(app.screen, screen_type):
+            break
+        await pilot.pause()
+    await pilot.pause()
+
+
 # ── server fixture ──────────────────────────────────────────────────────
 
 
@@ -362,8 +372,7 @@ class TestTuiE2E:
                 await pilot.pause()
                 await pilot.pause()
                 app.push_screen(WorkspaceDetailScreen(ws_name))
-                await pilot.pause()
-                await pilot.pause()
+                await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
                 assert isinstance(app.screen, WorkspaceDetailScreen)
         finally:
             _api_delete_workspace(base_url, token, ws_id)
@@ -381,8 +390,7 @@ class TestTuiE2E:
                 await pilot.pause()
                 await pilot.pause()
                 app.push_screen(WorkspaceDetailScreen(ws_name))
-                await pilot.pause()
-                await pilot.pause()
+                await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
                 # Workspace was just created, not started — should show
                 # "running: no".
                 body = str(
@@ -408,8 +416,7 @@ class TestTuiE2E:
 
                 # Trigger the create action.
                 app.screen.action_create()
-                await pilot.pause()
-                await pilot.pause()
+                await _wait_for_screen(app, pilot, CreateWorkspaceScreen)
                 assert isinstance(app.screen, CreateWorkspaceScreen)
 
                 # Fill in the name.
@@ -500,17 +507,12 @@ class TestTuiE2E:
                 await _settle(app, pilot)
                 # Navigate to detail screen.
                 app.push_screen(WorkspaceDetailScreen(ws_name))
-                await pilot.pause()
-                await _settle(app, pilot)
+                await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
                 assert isinstance(app.screen, WorkspaceDetailScreen)
                 # Open edit form.  action_edit spawns async workers
-                # (images + autostart fetch) before pushing the screen,
-                # so poll until the edit screen appears (#2223).
+                # (images + autostart fetch) before pushing the screen.
                 app.screen.action_edit()
-                for _ in range(20):
-                    await pilot.pause()
-                    if isinstance(app.screen, EditWorkspaceScreen):
-                        break
+                await _wait_for_screen(app, pilot, EditWorkspaceScreen)
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Name should be pre-populated.
                 name_val = app.screen.query_one("#name", Input).value
@@ -530,14 +532,10 @@ class TestTuiE2E:
                 await pilot.pause()
                 await _settle(app, pilot)
                 app.push_screen(WorkspaceDetailScreen(ws_name))
-                await pilot.pause()
-                await _settle(app, pilot)
+                await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
                 # Open edit form.
                 app.screen.action_edit()
-                for _ in range(20):
-                    await pilot.pause()
-                    if isinstance(app.screen, EditWorkspaceScreen):
-                        break
+                await _wait_for_screen(app, pilot, EditWorkspaceScreen)
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Change the name.
                 app.screen.query_one("#name", Input).value = new_name
@@ -565,13 +563,9 @@ class TestTuiE2E:
                 await pilot.pause()
                 await _settle(app, pilot)
                 app.push_screen(WorkspaceDetailScreen(ws_name))
-                await pilot.pause()
-                await _settle(app, pilot)
+                await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
                 app.screen.action_edit()
-                for _ in range(20):
-                    await pilot.pause()
-                    if isinstance(app.screen, EditWorkspaceScreen):
-                        break
+                await _wait_for_screen(app, pilot, EditWorkspaceScreen)
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Change the name but cancel.
                 app.screen.query_one("#name", Input).value = "should-not-save"
@@ -595,13 +589,9 @@ class TestTuiE2E:
                 await pilot.pause()
                 await _settle(app, pilot)
                 app.push_screen(WorkspaceDetailScreen(ws_name))
-                await pilot.pause()
-                await _settle(app, pilot)
+                await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
                 app.screen.action_edit()
-                for _ in range(20):
-                    await pilot.pause()
-                    if isinstance(app.screen, EditWorkspaceScreen):
-                        break
+                await _wait_for_screen(app, pilot, EditWorkspaceScreen)
                 assert isinstance(app.screen, EditWorkspaceScreen)
                 # Clear name and submit.
                 app.screen.query_one("#name", Input).value = ""
