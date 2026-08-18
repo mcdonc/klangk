@@ -344,6 +344,10 @@ class TestTuiE2E:
                 await pilot.pause()
                 await pilot.pause()
                 assert isinstance(app.screen, MainScreen)
+                # Wait for the initial list load to complete — two pauses
+                # alone race the refresh-lists worker under CI load and the
+                # list is still empty (same class as the #2539 flake).
+                await _wait_for_worker(app, pilot, "refresh-lists")
                 lv = app.screen.query_one("#owned_list", ListView)
                 names = [str(lab.render()) for lab in lv.query(Label)]
                 assert any(ws_name in n for n in names), (
@@ -502,6 +506,8 @@ class TestTuiE2E:
                 await pilot.pause()
                 await pilot.pause()
                 assert isinstance(app.screen, MainScreen)
+                # Wait for the initial list load (see #2539 flake class).
+                await _wait_for_worker(app, pilot, "refresh-lists")
                 lv = app.screen.query_one("#owned_list", ListView)
                 for item in lv.query(ListItem):
                     rendered = str(item.query_one(".ws-name", Label).render())

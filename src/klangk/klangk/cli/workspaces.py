@@ -289,11 +289,7 @@ def dup(
     """Duplicate a workspace."""
     context.require_auth()
     client = context._client()
-    try:
-        ws = client.resolve_workspace(source)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{source}'")
-        raise typer.Exit(code=1) from None
+    ws = context.resolve_or_exit(client, source)
     resp = client.post(
         f"/api/v1/workspaces/{ws.id}/duplicate", json={"name": new_name}
     )
@@ -334,11 +330,7 @@ def members(
     """List members of a workspace by role."""
     context.require_auth()
     client = context._client()
-    try:
-        ws = client.resolve_workspace(workspace)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{workspace}'")
-        raise typer.Exit(code=1) from None
+    ws = context.resolve_or_exit(client, workspace)
     resp = client.get(f"/api/v1/workspaces/{ws.id}/roles")
     client.check_auth(resp)
     resp.raise_for_status()
@@ -408,11 +400,7 @@ def export_workspace(
     """Export a workspace to a .tar.gz archive (admin only)."""
     context.require_auth()
     client = context._client()
-    try:
-        ws = client.resolve_workspace(name)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{name}'")
-        raise typer.Exit(code=1) from None
+    ws = context.resolve_or_exit(client, name)
     out_path = output or Path(f"{name}.tar.gz")
     if out_path.exists() and output is None:
         # Don't overwrite — find a unique name

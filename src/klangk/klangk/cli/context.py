@@ -84,6 +84,33 @@ def _client() -> KlangkClient:  # pragma: no cover
     return KlangkClient(server_url(), _state().get_token(server_url()))
 
 
+def resolve_or_exit(client, name: str):
+    """Resolve a workspace by name/id or exit with the standard error.
+
+    The shared form of the resolve-then-Exit preamble repeated across the
+    command modules (#2546): on ``WorkspaceNotFoundError`` prints
+    ``No workspace named '<name>'`` to stderr and raises ``typer.Exit(1)``.
+    """
+    from .client import WorkspaceNotFoundError
+
+    try:
+        return client.resolve_workspace(name)
+    except WorkspaceNotFoundError:
+        _err.print(f"[red]No workspace named[/red] '{name}'")
+        raise typer.Exit(code=1) from None
+
+
+def session_token() -> str:
+    """The active server's token, after require_auth.
+
+    Collapses the repeated ``_state().get_token(server_url())`` preamble
+    (#2546). Callers pair it with ``require_auth()`` (which guarantees a
+    token exists), so an empty return is the caller's pragma-nocover
+    guard, unchanged from the inline form.
+    """
+    return _state().get_token(server_url())
+
+
 def ws_max_size() -> int:
     return _cfg().get_ws_max_size(server_url())
 

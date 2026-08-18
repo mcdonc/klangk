@@ -17,7 +17,7 @@ from pathlib import Path
 import typer
 import websockets
 
-from .client import exec_on_ws, wait_container_ready, WorkspaceNotFoundError
+from .client import exec_on_ws, workspace_ws, WorkspaceNotFoundError
 from . import context
 from .sandbox import (
     build_all_mounts,
@@ -26,7 +26,6 @@ from .sandbox import (
     load_sandbox_config,
     resolve_setup_command,
 )
-from .transport import ws_connect
 
 
 def _resolve_workspace_and_url(
@@ -35,16 +34,8 @@ def _resolve_workspace_and_url(
     """Resolve a workspace by name and return (ws, server_spec, token)."""
     context.require_auth()
     client = context._client()
-    try:
-        ws = client.resolve_workspace(workspace_name)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{workspace_name}'")
-        raise typer.Exit(code=1) from None
-    return (
-        ws,
-        context.server_url(),
-        context._state().get_token(context.server_url()),
-    )
+    ws = context.resolve_or_exit(client, workspace_name)
+    return (ws, context.server_url(), context.session_token())
 
 
 async def sandbox_setup(ws, config, sandbox_root, handle):
@@ -136,7 +127,7 @@ def sandbox(
     volumes, copies files, and runs the setup script.  Use
     ``klangk shell`` afterwards to connect.
     """
-    token = context._state().get_token(context.server_url())
+    token = context.session_token()
     if not token:  # pragma: no cover
         context._err.print(
             "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
@@ -286,8 +277,9 @@ async def sandbox_setup_only(
     complete, #1033); when the container is stopped it instead re-fires
     at the create choke point on the next start.
     """
-    async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
-        await wait_container_ready(ws, workspace_id)
+    async with workspace_ws(
+        server_spec, token, workspace_id, max_size=max_size
+    ) as ws:
         # Re-enter 'pending' before running setup (#1033). On first
         # create the workspace is already 'pending', but on --force
         # re-setup it may be 'complete'/'failed'; either way this is

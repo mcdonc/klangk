@@ -286,7 +286,7 @@ def monitor(
     """
     context.require_auth()
     surl = context.server_url()
-    token = context._state().get_token(surl)
+    token = context.session_token()
     if (
         not token
     ):  # pragma: no cover  # context.require_auth already guards this

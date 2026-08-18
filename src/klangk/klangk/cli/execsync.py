@@ -18,7 +18,6 @@ from rich.console import Console
 
 from .client import (
     ws_exec,
-    WorkspaceNotFoundError,
 )
 from . import context
 
@@ -71,14 +70,10 @@ def exec_cmd(
         raise typer.Exit(code=1)
 
     client = context._client()
-    try:
-        ws = client.resolve_workspace(workspace)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{workspace}'")
-        raise typer.Exit(code=1) from None
+    ws = context.resolve_or_exit(client, workspace)
 
     surl = context.server_url()
-    token = context._state().get_token(surl)
+    token = context.session_token()
 
     exit_code = asyncio.run(
         ws_exec(
