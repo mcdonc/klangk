@@ -1984,7 +1984,7 @@ class TestStartContainer:
         # #2277: if the proxy never prints its listening line within the
         # readiness window, refuse to start (fail-closed). Monkeypatch the
         # timeout/poll constants small so the test doesn't wait 30s.
-        import klangk.container as _c_mod
+        import klangk.container.sidecar as _c_mod
 
         monkeypatch.setattr(_c_mod, "_NETWORK_SIDECAR_READY_TIMEOUT", 0.05)
         monkeypatch.setattr(_c_mod, "_NETWORK_SIDECAR_READY_POLL", 0.01)
@@ -4493,7 +4493,7 @@ class TestCleanupIdleContainers:
             queried,
         )
         monkeypatch.setattr(
-            "klangk.container.os.listdir",
+            "klangk.container.sidecar.os.listdir",
             MagicMock(side_effect=OSError("io")),
         )
         assert await self.registry._sweep_orphaned_sidecar_tokens() == 0
@@ -4514,7 +4514,7 @@ class TestCleanupIdleContainers:
             AsyncMock(return_value=set()),
         )
         monkeypatch.setattr(
-            "klangk.container.os.unlink",
+            "klangk.container.sidecar.os.unlink",
             MagicMock(side_effect=OSError("busy")),
         )
         removed = await self.registry._sweep_orphaned_sidecar_tokens()
@@ -4718,18 +4718,22 @@ class TestPidAlive:
     dead-owner reap keys on (#2342)."""
 
     def test_alive_when_process_exists(self):
-        with patch("klangk.container.os.kill", return_value=None):
+        with patch("klangk.container.registry.os.kill", return_value=None):
             assert container._pid_alive(12345) is True
 
     def test_dead_when_no_such_process(self):
-        with patch("klangk.container.os.kill", side_effect=ProcessLookupError):
+        with patch(
+            "klangk.container.registry.os.kill", side_effect=ProcessLookupError
+        ):
             assert container._pid_alive(12345) is False
 
     def test_alive_when_permission_denied(self):
         # EPERM: the process exists but belongs to another user (e.g. a
         # sibling klangkd under a different account) — assume alive so its
         # containers are left alone.
-        with patch("klangk.container.os.kill", side_effect=PermissionError):
+        with patch(
+            "klangk.container.registry.os.kill", side_effect=PermissionError
+        ):
             assert container._pid_alive(12345) is True
 
     def test_current_process_is_alive_without_mock(self):
@@ -4769,7 +4773,9 @@ class TestReapDeadOwnerContainers:
             ),
             remove_container=AsyncMock(),
         ) as mocks:
-            with patch("klangk.container._pid_alive", return_value=False):
+            with patch(
+                "klangk.container.registry._pid_alive", return_value=False
+            ):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_awaited_once_with("dead-owner-1")
 
@@ -4809,7 +4815,9 @@ class TestReapDeadOwnerContainers:
             ),
             remove_container=AsyncMock(),
         ) as mocks:
-            with patch("klangk.container._pid_alive", return_value=False):
+            with patch(
+                "klangk.container.registry._pid_alive", return_value=False
+            ):
                 await self.registry.reap_dead_owner_containers()
         order = [c.args[0] for c in mocks.remove_container.await_args_list]
         assert order == ["workspace-ghost", "sidecar-ghost"]
@@ -4833,7 +4841,9 @@ class TestReapDeadOwnerContainers:
             ),
             remove_container=AsyncMock(),
         ) as mocks:
-            with patch("klangk.container._pid_alive", return_value=True):
+            with patch(
+                "klangk.container.registry._pid_alive", return_value=True
+            ):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_not_awaited()
 
@@ -4933,7 +4943,9 @@ class TestReapDeadOwnerContainers:
             ),
             remove_container=AsyncMock(),
         ) as mocks:
-            with patch("klangk.container._pid_alive", return_value=False):
+            with patch(
+                "klangk.container.registry._pid_alive", return_value=False
+            ):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_awaited_once_with("real-1")
 
@@ -4972,7 +4984,9 @@ class TestReapDeadOwnerContainers:
                 side_effect=podman.PodmanError(500, "remove failed")
             ),
         ) as mocks:
-            with patch("klangk.container._pid_alive", return_value=False):
+            with patch(
+                "klangk.container.registry._pid_alive", return_value=False
+            ):
                 await self.registry.reap_dead_owner_containers()
         mocks.remove_container.assert_awaited_once_with("dead-owner-bad")
 
