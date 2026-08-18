@@ -1,0 +1,152 @@
+"""Shared CLI context: config/state caches, server resolution, the auth gate.
+
+Part of the #2542 split of the former 3061-line
+``klangk/cli/main.py``; commands and helpers live in
+single-responsibility modules, all imported back into
+``klangk.cli.main`` for backwards compatibility.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import typer
+from rich.console import Console
+
+from .auth import fetch_config, local_login, seed_config, _UNREACHABLE
+from .client import KlangkClient
+from .config import CLIConfig, CLIState, default_server_uds_path
+
+
+_cfg_cache: CLIConfig | None = None
+_state_cache: CLIState | None = None
+
+# The shared typer app lives here (not in main.py) so command modules can
+# decorate against it at import time without a circular import; main.py
+# imports it back as the CLI's entrypoint app (#2542 split).
+app = typer.Typer(
+    name="klangk",
+    help="Klangk Client",
+    rich_markup_mode="rich",
+    # Run the callback even with no subcommand so bare `klangk` can launch
+    # the interactive TUI (see main._maybe_launch_tui). `--help`/`--version`
+    # are still handled by click before the callback runs, so they keep
+    # precedence.
+    invoke_without_command=True,
+)
+
+_err = Console(stderr=True)
+
+
+def _cfg() -> CLIConfig:
+    global _cfg_cache  # pragma: no cover
+    if _cfg_cache is None:  # pragma: no cover
+        _cfg_cache = CLIConfig.load()  # pragma: no cover
+    return _cfg_cache
+
+
+def _state() -> CLIState:
+    global _state_cache  # pragma: no cover
+    if _state_cache is None:  # pragma: no cover
+        _state_cache = CLIState.load()  # pragma: no cover
+    return _state_cache
+
+
+_server_override: str | None = None
+
+
+def server_url() -> str:
+    if _server_override is not None:
+        return _server_override
+    active = _state().active_server
+    if active is not None:
+        return active
+    # Single-host convenience (#1676): if a co-located klangkd has bound
+    # its default UDS, talk to it without forcing a `klangk login` step.
+    # Gated on existence so a host with no klangkd keeps the helpful
+    # "not configured" error. Note this is ``exists()``, not a connect
+    # probe: a *stale* socket left behind by a crashed klangkd still
+    # passes, and the unreachable connect is then surfaced by
+    # ``require_auth`` as a clear "Cannot connect to klangkd" message
+    # rather than a misleading "Not logged in".
+    default_uds = default_server_uds_path()
+    if Path(default_uds).exists():
+        return default_uds
+    _err.print(
+        "[red]No server configured[/red] — run"
+        " [bold]klangk login <server>[/bold] first,"
+        " or pass [bold]--server[/bold]."
+    )
+    raise typer.Exit(code=1)
+
+
+def _client() -> KlangkClient:  # pragma: no cover
+    return KlangkClient(server_url(), _state().get_token(server_url()))
+
+
+def ws_max_size() -> int:
+    return _cfg().get_ws_max_size(server_url())
+
+
+def require_auth() -> None:
+    """Ensure the active server has a usable token.
+
+    In ``none`` (no-auth) mode the server freely issues a token for the
+    seeded default user, so any command auto-logs in on first run rather
+    than demanding a prior ``klangk login`` (#1374). The server's mode is
+    probed live (not cached) so a mode switch takes effect immediately:
+    flipping none->password after a command auto-logged in still leaves
+    that token valid until it expires, but a *fresh* command with no
+    stored token will see the new mode and not auto-login.
+    """
+    state = _state()
+    url = server_url()
+    if state.get_token(url):
+        return
+    config = fetch_config(url)
+    if _maybe_none_login(state, url, config):
+        return
+    # A UDS server that's down (e.g. a stale default socket left behind
+    # by a crashed klangkd, #1676) must not be reported as "not logged
+    # in" — running `klangk login` against it would just fail to connect
+    # the same way. Tell the user the server is unreachable instead.
+    # (TCP servers keep the existing "Not logged in" path; a reachability
+    # hint for them is a separate UX change.)
+    if config == _UNREACHABLE and url.startswith("/"):
+        _err.print(
+            f"[red]Cannot connect to klangkd[/red] at {url} — is it running?"
+        )
+        raise typer.Exit(code=1)
+    _err.print(
+        "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
+    )
+    raise typer.Exit(code=1)
+
+
+def _maybe_none_login(
+    state: CLIState, url: str, config: dict | str | None = None
+) -> bool:
+    """If the server is in ``none`` mode, fetch a free token and store it.
+
+    Returns True on success (token stored, ``require_auth`` proceeds).
+    Returns False if the server is not in ``none`` mode or unreachable,
+    leaving the caller to emit the normal "Not logged in" error. The
+    mode is probed live via /config (no cache) — cheap for a single
+    command entry point, and the only way to stay correct across a mode
+    switch. ``require_auth`` passes the config it already fetched so we
+    don't probe twice; a caller without one pays the single fetch here.
+    """
+    if config is None:
+        config = fetch_config(url)
+    if not isinstance(config, dict):
+        return False
+    if config.get("auth_modes") != "none":
+        return False
+    try:
+        email, token = local_login(url)
+    except SystemExit:
+        return False
+    state.set_credentials(url, email, token)
+    state.save()
+    seed_config(url, email)
+    return True

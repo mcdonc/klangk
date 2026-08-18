@@ -1,0 +1,317 @@
+"""The `klangk monitor` command: event stream, reconnect backoff, token refresh.
+
+Part of the #2542 split of the former 3061-line
+``klangk/cli/main.py``; commands and helpers live in
+single-responsibility modules, all imported back into
+``klangk.cli.main`` for backwards compatibility.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import random
+import subprocess
+import sys
+
+import typer
+import websockets
+
+from .auth import local_login, refresh_token
+from .client import _server_mode_is_none
+from . import context
+from .transport import ws_connect
+
+
+def _dispatch_monitor_event(msg: dict, command: list[str]) -> None:
+    """Act on one server event.
+
+    With no *command*, the event is streamed as line-delimited JSON to
+    stdout. With a command, its stdin gets the event JSON and env vars
+    ``KLANGK_EVENT``, ``KLANGK_EVENT_TYPE``, ``KLANGK_WORKSPACE_ID`` and
+    (for health events) ``KLANGK_HEALTHY`` / ``KLANGK_HEALTH_MESSAGE``
+    are set.
+
+    Pure (no WebSocket) so it can be unit-tested in isolation.
+    """
+    payload = json.dumps(msg)
+    if not command:
+        sys.stdout.write(payload + "\n")
+        sys.stdout.flush()
+        return
+    env = dict(os.environ)
+    env["KLANGK_EVENT"] = payload
+    env["KLANGK_EVENT_TYPE"] = str(msg.get("type", ""))
+    wid = msg.get("workspace_id")
+    if wid is not None:
+        env["KLANGK_WORKSPACE_ID"] = str(wid)
+    if msg.get("type") == "service_health":
+        env["KLANGK_HEALTHY"] = "true" if msg.get("healthy") else "false"
+        # ``running`` distinguishes "unhealthy check" from "container
+        # stopped" -- both have healthy=false, but a death frame carries
+        # running=false (#1175 item 2).  Defaults to true for older
+        # servers that don't send the field.
+        env["KLANGK_RUNNING"] = "true" if msg.get("running", True) else "false"
+        health_msg = msg.get("health_message")
+        if health_msg:
+            env["KLANGK_HEALTH_MESSAGE"] = str(health_msg)
+        checked_at = msg.get("health_checked_at")
+        if checked_at:
+            env["KLANGK_HEALTH_CHECKED_AT"] = str(checked_at)
+        seq = msg.get("seq")
+        if seq is not None:
+            env["KLANGK_HEALTH_SEQ"] = str(seq)
+    # FileNotFoundError (missing binary) propagates to the caller.
+    subprocess.run(command, input=payload.encode(), env=env, check=False)
+
+
+async def monitor_connection(
+    server_spec: str,
+    token: str,
+    max_size: int,
+    command: list[str],
+    types: list[str],
+    workspaces: list[str],
+) -> None:
+    """One connection: dispatch events until the socket closes.
+
+    Network/auth errors propagate to :func:`monitor_run`, which owns
+    reconnect + refresh. Filtering by event type and workspace id is
+    applied here so the dispatcher only sees relevant events.
+    """
+    type_filter = {t for t in types}
+    ws_filter = {w for w in workspaces}
+    async with ws_connect(server_spec, token=token, max_size=max_size) as conn:
+        async for raw in conn:
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            etype = msg.get("type")
+            if etype is None:
+                continue  # control/ack messages aren't events
+            if type_filter and etype not in type_filter:
+                continue
+            wid = msg.get("workspace_id")
+            if ws_filter and (wid is None or wid not in ws_filter):
+                continue
+            _dispatch_monitor_event(msg, command)
+
+
+def monitor_backoff(attempt: int, max_delay: float) -> float:
+    """Capped exponential backoff with jitter (mirrors the web UI)."""
+    base = min(1 << attempt, max_delay)
+    jitter = random.random() * base
+    return (base + jitter) / 2
+
+
+async def refresh_token_threaded(server_url: str, token: str) -> str | None:
+    """Refresh the JWT off-loop; returns the new token or None.
+
+    In ``none`` (no-auth) mode a refresh failure falls back to a free
+    re-login via ``/auth/local`` — re-login costs nothing, so it's
+    strictly better than reconnecting with a dead token (#1374).
+    """
+    new = await asyncio.to_thread(refresh_token, server_url, token)
+    if new:
+        return new
+    if await asyncio.to_thread(_server_mode_is_none, server_url):
+        try:
+            _email, new = await asyncio.to_thread(local_login, server_url)
+        except SystemExit:
+            return None
+        return new
+    return None
+
+
+async def monitor_run(
+    server_spec: str,
+    token: str,
+    max_size: int,
+    command: list[str],
+    types: list[str],
+    workspaces: list[str],
+    *,
+    max_reconnects: int | None,
+    max_delay: float,
+) -> None:
+    """Run the monitor with automatic reconnect + JWT refresh.
+
+    Reconnects indefinitely when *max_reconnects* is ``None`` (the
+    default), or up to that many times, with capped exponential
+    backoff. On an auth-related close (HTTP/WS 4001 or 4002) it tries
+    to refresh the JWT via the server's refresh endpoint before
+    reconnecting; if refresh fails it keeps retrying with the current
+    token so the monitor self-heals once the server/token recovers.
+    """
+    current_token = token
+    context._err.print(
+        "[green]Monitoring events. Press Ctrl+C to stop.[/green]"
+    )
+    attempt = 0
+    while True:
+        auth_close = False
+        try:
+            await monitor_connection(
+                server_spec,
+                current_token,
+                max_size,
+                command,
+                types,
+                workspaces,
+            )
+            reason = "connection closed"
+        except websockets.ConnectionClosed as exc:
+            code = exc.rcvd.code if exc.rcvd else None
+            auth_close = code in (4001, 4002)
+            reason = f"closed (code {code})"
+        except websockets.InvalidStatus as exc:
+            code = exc.response.status_code
+            auth_close = code in (4001, 4002)
+            reason = f"rejected (HTTP {code})"
+        except (OSError, asyncio.TimeoutError) as exc:
+            reason = f"network error: {exc}"
+
+        # On an auth-related close, try to refresh the JWT. A successful
+        # refresh lets the next attempt authenticate cleanly; a failed
+        # one still reconnects (the server/token may recover).
+        if auth_close:
+            new = await refresh_token_threaded(server_spec, current_token)
+            if new:
+                current_token = new
+                context._err.print("[green]Token refreshed.[/green]")
+            else:
+                context._err.print(
+                    "[yellow]Token refresh failed; retrying with the"
+                    " current token.[/yellow]"
+                )
+
+        if max_reconnects is not None and attempt >= max_reconnects:
+            context._err.print(
+                f"[red]{reason}; max reconnects ({max_reconnects})"
+                " reached, giving up.[/red]"
+            )
+            raise typer.Exit(code=1)
+        attempt += 1
+        delay = monitor_backoff(attempt, max_delay)
+        context._err.print(
+            f"[yellow]{reason}; reconnecting in {delay:.1f}s"
+            f" (attempt {attempt})...[/yellow]"
+        )
+        await asyncio.sleep(delay)
+
+
+@context.app.command()
+def monitor(
+    command: list[str] = typer.Argument(
+        None,
+        help=(
+            "Optional command to run for each event. Pass it after '--' "
+            "so its own flags aren't parsed by klangk."
+        ),
+    ),
+    event_type: list[str] = typer.Option(
+        [],
+        "--type",
+        "-t",
+        help=(
+            "Only react to these event types (repeatable). Common: "
+            "service_health, container_status, workspaces_changed."
+        ),
+    ),
+    workspace: list[str] = typer.Option(
+        [],
+        "--workspace",
+        "-w",
+        help="Only react to events for these workspace ids (repeatable).",
+    ),
+    no_reconnect: bool = typer.Option(
+        False,
+        "--no-reconnect",
+        help="Exit after the first disconnect instead of reconnecting.",
+    ),
+    max_reconnects: int | None = typer.Option(
+        None,
+        "--max-reconnects",
+        help=(
+            "Stop after this many failed reconnects. Default: retry"
+            " forever. Implied as 0 by --no-reconnect."
+        ),
+    ),
+    max_delay: float = typer.Option(
+        60.0,
+        "--max-delay",
+        help="Cap (seconds) on the reconnect backoff.",
+    ),
+) -> None:
+    """Stream server events, optionally running a command for each.
+
+    Connects to the server and listens for the same events the web UI
+    receives (health-check transitions, container starts/stops, workspace
+    changes). With no command, events are printed as line-delimited JSON
+    (pipe to jq to inspect). With a command after '--', the command's
+    stdin gets the event JSON and env vars KLANGK_EVENT_TYPE,
+    KLANGK_WORKSPACE_ID, and (for health events) KLANGK_HEALTHY,
+    KLANGK_RUNNING, KLANGK_HEALTH_MESSAGE, KLANGK_HEALTH_CHECKED_AT and
+    KLANGK_HEALTH_SEQ are set.
+
+    ``service_health`` frames now carry ``running`` (#1175 item 2): a
+    container death emits a frame with ``healthy=false`` *and*
+    ``running=false`` (KLANGK_RUNNING=false), so a command can tell
+    "check failed" from "container stopped" without also subscribing
+    to ``container_status``. ``health_checked_at`` / ``seq`` give
+    freshness and gap detection.
+
+    A separate ``service_health_heartbeat`` event type is available for
+    liveness: send ``{"cmd": "subscribe_health_heartbeat", "enabled":
+    true}`` to opt in, and the server ticks a heartbeat each health-loop
+    interval. It's its own type, so ``--type service_health`` filters it
+    out; drop the filter to observe it.
+
+    The monitor reconnects automatically (by default forever, with
+    capped exponential backoff) and refreshes its JWT on auth failures,
+    so it survives server restarts and token expiry. Use
+    ``--max-reconnects`` or ``--no-reconnect`` to bound it.
+
+    \b
+    Examples:
+      klangk monitor                                # stream all events
+      klangk monitor --type service_health | jq .   # pretty health events
+      klangk monitor --type service_health -- sh -c \
+        '[ "$KLANGK_HEALTHY" = false ] && notify-send "Service unhealthy"'
+      klangk monitor --type service_health -- sh -c \
+        '[ "$KLANGK_RUNNING" = false ] && echo "container stopped"'
+      klangk monitor --workspace <id> --type service_health
+    """
+    context.require_auth()
+    surl = context.server_url()
+    token = context._state().get_token(surl)
+    if (
+        not token
+    ):  # pragma: no cover  # context.require_auth already guards this
+        context._err.print(
+            "[red]Not logged in. Run `klangk login` first.[/red]"
+        )
+        raise typer.Exit(code=1)
+    effective_max = 0 if no_reconnect else max_reconnects
+    try:
+        asyncio.run(
+            monitor_run(
+                surl,
+                token,
+                max_size=context.ws_max_size(),
+                command=list(command) if command else [],
+                types=event_type,
+                workspaces=workspace,
+                max_reconnects=effective_max,
+                max_delay=max_delay,
+            )
+        )
+    except websockets.InvalidStatus as e:
+        # A rejection during the very first connect (before the loop's
+        # reconnect path is established).
+        context._err.print(f"[red]Connection rejected: {e}[/red]")
+        raise typer.Exit(code=1) from None
+    except KeyboardInterrupt:
+        context._err.print("[dim]Stopped.[/dim]")

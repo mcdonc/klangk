@@ -14,6 +14,7 @@ import websockets
 import io
 from io import BytesIO
 
+import klangk.cli.monitor  # noqa: E402
 from klangk.cli.config import (
     CLIConfig,
     CLIState,
@@ -2150,7 +2151,7 @@ class TestRequireAuthNoneMode:
         state.save()
         # No stored token -> probe /config live, it reports none.
         monkeypatch.setattr(
-            "klangk.cli.main.fetch_config",
+            "klangk.cli.context.fetch_config",
             lambda _: {"auth_modes": "none", "oidc_providers": []},
         )
         local_resp = MagicMock()
@@ -2179,7 +2180,7 @@ class TestRequireAuthNoneMode:
         state.active_server = "http://localhost:8995"
         state.save()
         monkeypatch.setattr(
-            "klangk.cli.main.fetch_config",
+            "klangk.cli.context.fetch_config",
             lambda _: {"auth_modes": "password", "oidc_providers": []},
         )
         with patch("klangk.cli.transport.httpx.request") as post:
@@ -2206,7 +2207,7 @@ class TestRequireAuthNoneMode:
         state.save()
         # Live probe now reports password (server switched modes).
         monkeypatch.setattr(
-            "klangk.cli.main.fetch_config",
+            "klangk.cli.context.fetch_config",
             lambda _: {"auth_modes": "password", "oidc_providers": []},
         )
         with patch("klangk.cli.transport.httpx.request") as post:
@@ -2225,7 +2226,7 @@ class TestRequireAuthNoneMode:
         state = CLIState()
         state.active_server = "http://localhost:8995"
         state.save()
-        monkeypatch.setattr("klangk.cli.main.fetch_config", lambda _: None)
+        monkeypatch.setattr("klangk.cli.context.fetch_config", lambda _: None)
         with patch("klangk.cli.transport.httpx.request") as post:
             with pytest.raises(typer.Exit):
                 main.require_auth()
@@ -2244,10 +2245,10 @@ class TestRequireAuthNoneMode:
         state.active_server = "http://localhost:8995"
         state.save()
         monkeypatch.setattr(
-            "klangk.cli.main.fetch_config",
+            "klangk.cli.context.fetch_config",
             lambda _: {"auth_modes": "none", "oidc_providers": []},
         )
-        with patch("klangk.cli.main.local_login", side_effect=SystemExit(1)):
+        with patch("klangk.cli.monitor.local_login", side_effect=SystemExit(1)):
             with pytest.raises(typer.Exit):
                 main.require_auth()
 
@@ -2261,12 +2262,12 @@ class TestMonitorNoneRelogin:
     ):
         from klangk.cli import main
 
-        with patch("klangk.cli.main.refresh_token", return_value=None):
+        with patch("klangk.cli.monitor.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.main._server_mode_is_none", return_value=True
+                "klangk.cli.monitor._server_mode_is_none", return_value=True
             ):
                 with patch(
-                    "klangk.cli.main.local_login",
+                    "klangk.cli.monitor.local_login",
                     return_value=("a@x.com", "fresh-token"),
                 ):
                     new = await main.refresh_token_threaded(
@@ -2280,12 +2281,12 @@ class TestMonitorNoneRelogin:
     ):
         from klangk.cli import main
 
-        with patch("klangk.cli.main.refresh_token", return_value=None):
+        with patch("klangk.cli.monitor.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.main._server_mode_is_none", return_value=True
+                "klangk.cli.monitor._server_mode_is_none", return_value=True
             ):
                 with patch(
-                    "klangk.cli.main.local_login", side_effect=SystemExit(1)
+                    "klangk.cli.monitor.local_login", side_effect=SystemExit(1)
                 ):
                     new = await main.refresh_token_threaded(
                         "http://srv", "old"
@@ -2298,11 +2299,11 @@ class TestMonitorNoneRelogin:
     ):
         from klangk.cli import main
 
-        with patch("klangk.cli.main.refresh_token", return_value=None):
+        with patch("klangk.cli.monitor.refresh_token", return_value=None):
             with patch(
-                "klangk.cli.main._server_mode_is_none", return_value=False
+                "klangk.cli.monitor._server_mode_is_none", return_value=False
             ):
-                with patch("klangk.cli.main.local_login") as m:
+                with patch("klangk.cli.monitor.local_login") as m:
                     new = await main.refresh_token_threaded(
                         "http://srv", "old"
                     )
@@ -4233,6 +4234,7 @@ class TestMonitor:
     async def test_reconnects_after_disconnect(self):
         # Two clean closes → monitor_connection called twice, with a
         # backoff sleep in between.
+        import klangk.cli.monitor
         from klangk.cli import main as main_mod
 
         calls = {"conn": 0, "sleep": 0}
@@ -4248,9 +4250,9 @@ class TestMonitor:
             assert delay > 0
 
         with (
-            patch.object(main_mod, "monitor_connection", fake_conn),
+            patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.01),
+            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.01),
         ):
             with pytest.raises(typer.Exit) as exc_info:
                 await main_mod.monitor_run(
@@ -4280,9 +4282,9 @@ class TestMonitor:
             sleeps.append(delay)
 
         with (
-            patch.object(main_mod, "monitor_connection", fake_conn),
+            patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.0),
+            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0),
         ):
             with pytest.raises(typer.Exit) as exc_info:
                 await main_mod.monitor_run(
@@ -4310,7 +4312,7 @@ class TestMonitor:
             pytest.fail("should not sleep before giving up")
 
         with (
-            patch.object(main_mod, "monitor_connection", fake_conn),
+            patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
         ):
             with pytest.raises(typer.Exit) as exc_info:
@@ -4346,10 +4348,10 @@ class TestMonitor:
             pass
 
         with (
-            patch.object(main_mod, "monitor_connection", fake_conn),
-            patch.object(main_mod, "refresh_token_threaded", fake_refresh),
+            patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
+            patch.object(klangk.cli.monitor, "refresh_token_threaded", fake_refresh),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.0),
+            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0),
         ):
             # Stop the loop after the second connect via max_reconnects.
             with pytest.raises(typer.Exit):
@@ -4383,10 +4385,10 @@ class TestMonitor:
             pass
 
         with (
-            patch.object(main_mod, "monitor_connection", fake_conn),
-            patch.object(main_mod, "refresh_token_threaded", fake_refresh),
+            patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
+            patch.object(klangk.cli.monitor, "refresh_token_threaded", fake_refresh),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.0),
+            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0),
         ):
             with pytest.raises(typer.Exit):
                 await main_mod.monitor_run(
@@ -4444,8 +4446,10 @@ class TestMonitor:
         # and returns whatever it yields.
         from klangk.cli import main as main_mod
 
+        import klangk.cli.monitor as monitor_mod
+
         with patch.object(
-            main_mod, "refresh_token", return_value="FRESH"
+            monitor_mod, "refresh_token", return_value="FRESH"
         ) as mock_refresh:
             result = await main_mod.refresh_token_threaded("http://x", "OLD")
         assert result == "FRESH"
@@ -4470,10 +4474,10 @@ class TestMonitor:
             pass
 
         with (
-            patch.object(main_mod, "monitor_connection", fake_conn),
-            patch.object(main_mod, "refresh_token_threaded", fake_refresh),
+            patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
+            patch.object(klangk.cli.monitor, "refresh_token_threaded", fake_refresh),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(main_mod, "monitor_backoff", lambda a, m: 0.0),
+            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0),
         ):
             with pytest.raises(typer.Exit):
                 await main_mod.monitor_run(

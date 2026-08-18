@@ -1,0 +1,352 @@
+"""Terminal commands: terminal ls, window share/unshare, workspace share/unshare.
+
+Part of the #2542 split of the former 3061-line
+``klangk/cli/main.py``; commands and helpers live in
+single-responsibility modules, all imported back into
+``klangk.cli.main`` for backwards compatibility.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+import typer
+from rich.table import Table
+
+from .client import (
+    get_terminal_size,
+    send_ignore_closed,
+    wait_container_ready,
+    WorkspaceNotFoundError,
+)
+from . import context
+from .sandboxcmd import _resolve_workspace_and_url
+from .transport import ws_connect
+
+
+terminal_app = typer.Typer(
+    name="terminal",
+    help="Manage workspace terminals.",
+    rich_markup_mode="rich",
+)
+context.app.add_typer(terminal_app, name="terminal")
+
+
+@terminal_app.command("ls")
+def terminals(
+    workspace: str = typer.Argument(help="Workspace name"),
+) -> None:
+    """List all terminals (own + shared) in a workspace."""
+    ws, sspec, token = _resolve_workspace_and_url(workspace)
+    max_size = context.ws_max_size()
+
+    # We need to start a terminal to get the window list, then also
+    # get shared terminals. Use _ws_command to get each.
+    async def _list() -> None:
+        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
+            await wait_container_ready(conn, ws.id)
+
+            await conn.send(json.dumps({"cmd": "ui_ready"}))
+
+            # Wait for container_ready, collecting shared_terminals along
+            # the way (sent during ui_ready).
+            shared: list[dict] = []
+            deadline = asyncio.get_event_loop().time() + 60
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    raise asyncio.TimeoutError
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "shared_terminals":
+                    shared = msg.get("terminals", [])
+                if (
+                    msg.get("type") == "event"
+                    and isinstance(msg.get("event"), dict)
+                    and msg["event"].get("name") == "container_ready"
+                ):
+                    break
+
+            # Start terminal to get own windows.
+            # terminal_windows arrives after terminal_started — skip
+            # terminal_output and other messages until we get it.
+            cols, rows = get_terminal_size()
+            await conn.send(
+                json.dumps(
+                    {"cmd": "terminal_start", "cols": cols, "rows": rows}
+                )
+            )
+            own_windows: list[dict] = []
+            deadline = asyncio.get_event_loop().time() + 30
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "terminal_windows":
+                    own_windows = msg.get("windows", [])
+                    break
+
+            # Print results
+            table = Table(title=f"Terminals in {ws.name}")
+            table.add_column("ID")
+            table.add_column("Name")
+            table.add_column("Type")
+            table.add_column("Owner")
+            for w in own_windows:
+                table.add_row(w.get("id", ""), w["name"], "own", "")
+            for t in shared:
+                table.add_row(
+                    t.get("window_id", ""),
+                    t["window_name"],
+                    "shared",
+                    t.get("handle", ""),
+                )
+            context._err.print(table)
+
+            await send_ignore_closed(
+                conn, json.dumps({"cmd": "terminal_stop"})
+            )
+
+    asyncio.run(_list())
+
+
+_VALID_ROLES = ["owner", "coder", "collaborator", "spectator"]
+_ROLE_TO_GROUP = {
+    "owner": "owners",
+    "coder": "coders",
+    "collaborator": "collaborators",
+    "spectator": "spectators",
+}
+
+
+@context.app.command("share")
+def share_workspace(
+    workspace: str = typer.Argument(help="Workspace name"),
+    email: str = typer.Argument(help="Email or handle of user to add"),
+    role: str = typer.Option(
+        "coder", help="Role: owner, coder, collaborator, or spectator"
+    ),
+) -> None:
+    """Share a workspace with a user."""
+    context.require_auth()
+    if role not in _VALID_ROLES:
+        context._err.print(
+            f"[red]Invalid role '{role}'[/red]."
+            f" Choose from: {', '.join(_VALID_ROLES)}"
+        )
+        raise typer.Exit(code=1)
+    group_suffix = _ROLE_TO_GROUP[role]
+    try:
+        result = context._client().add_workspace_member(
+            workspace, email, role=group_suffix
+        )
+    except WorkspaceNotFoundError:
+        context._err.print(f"[red]No workspace named[/red] '{workspace}'")
+        raise typer.Exit(code=1) from None
+    typer.echo(
+        f"Shared workspace {workspace} with {result['email']} as {role}"
+    )
+
+
+@context.app.command("unshare")
+def unshare_workspace(
+    workspace: str = typer.Argument(help="Workspace name"),
+    email: str = typer.Argument(help="Email or handle of user to remove"),
+) -> None:
+    """Remove a user's access to a workspace."""
+    context.require_auth()
+    try:
+        context._client().remove_workspace_member(workspace, email)
+    except WorkspaceNotFoundError as e:
+        context._err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Removed {email} from workspace {workspace}")
+
+
+def _resolve_own_window(
+    own_windows: list[dict], terminal: str
+) -> tuple[dict | None, str | None]:
+    """Resolve a terminal reference to one own window.
+
+    *terminal* is an ``@N`` window id (exact) or a name. Names are not
+    unique (#2192): a name matching several windows is an error rather
+    than a silent first match. Returns ``(match, error)`` — exactly one
+    is set.
+    """
+    if terminal.startswith("@"):
+        match = next((w for w in own_windows if w.get("id") == terminal), None)
+        if match is None:
+            return None, f"Window '{terminal}' no longer exists"
+        return match, None
+    name_matches = [w for w in own_windows if w.get("name") == terminal]
+    if len(name_matches) > 1:
+        ids = ", ".join(w["id"] for w in name_matches if w.get("id"))
+        return None, (
+            f"Multiple terminals named '{terminal}'; specify one by id: {ids}"
+        )
+    if not name_matches:
+        return None, f"Terminal '{terminal}' not found"
+    return name_matches[0], None
+
+
+@terminal_app.command("share")
+def share_terminal(
+    workspace: str = typer.Argument(help="Workspace name"),
+    terminal: str = typer.Argument(
+        help="Terminal to share: @N (exact id) or name (see `klangk terminal ls`)"
+    ),
+) -> None:
+    """Share a terminal with other workspace members."""
+    ws, sspec, token = _resolve_workspace_and_url(workspace)
+    max_size = context.ws_max_size()
+
+    async def _share() -> None:
+        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
+            await wait_container_ready(conn, ws.id)
+
+            await conn.send(json.dumps({"cmd": "ui_ready"}))
+
+            # Wait for container_ready
+            deadline = asyncio.get_event_loop().time() + 60
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    raise asyncio.TimeoutError
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if (
+                    msg.get("type") == "event"
+                    and isinstance(msg.get("event"), dict)
+                    and msg["event"].get("name") == "container_ready"
+                ):
+                    break
+
+            # Start terminal to get window list
+            cols, rows = get_terminal_size()
+            await conn.send(
+                json.dumps(
+                    {"cmd": "terminal_start", "cols": cols, "rows": rows}
+                )
+            )
+            own_windows: list[dict] = []
+            deadline = asyncio.get_event_loop().time() + 30
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "terminal_windows":
+                    own_windows = msg.get("windows", [])
+                    break
+            match, err = _resolve_own_window(own_windows, terminal)
+            if err is not None:
+                context._err.print(f"[red]{err}[/red]")
+                raise typer.Exit(code=1)
+
+            await conn.send(
+                json.dumps({"cmd": "share_window", "window_id": match["id"]})
+            )
+            # Wait for shared_terminals confirmation
+            deadline = asyncio.get_event_loop().time() + 10
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "shared_terminals":
+                    context._err.print(
+                        f"[green]Terminal '{terminal}' is now shared[/green]"
+                    )
+                    break
+
+            await send_ignore_closed(
+                conn, json.dumps({"cmd": "terminal_stop"})
+            )
+
+    asyncio.run(_share())
+
+
+@terminal_app.command("unshare")
+def unshare_terminal(
+    workspace: str = typer.Argument(help="Workspace name"),
+    terminal: str = typer.Argument(
+        help="Terminal to unshare: @N (exact id) or name (see `klangk terminal ls`)"
+    ),
+) -> None:
+    """Stop sharing a terminal."""
+    ws, sspec, token = _resolve_workspace_and_url(workspace)
+    max_size = context.ws_max_size()
+
+    async def _unshare() -> None:
+        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
+            await wait_container_ready(conn, ws.id)
+
+            await conn.send(json.dumps({"cmd": "ui_ready"}))
+
+            # Wait for container_ready
+            deadline = asyncio.get_event_loop().time() + 60
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    raise asyncio.TimeoutError
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if (
+                    msg.get("type") == "event"
+                    and isinstance(msg.get("event"), dict)
+                    and msg["event"].get("name") == "container_ready"
+                ):
+                    break
+
+            # Start terminal to get window list
+            cols, rows = get_terminal_size()
+            await conn.send(
+                json.dumps(
+                    {"cmd": "terminal_start", "cols": cols, "rows": rows}
+                )
+            )
+            own_windows: list[dict] = []
+            deadline = asyncio.get_event_loop().time() + 30
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "terminal_windows":
+                    own_windows = msg.get("windows", [])
+                    break
+
+            match, err = _resolve_own_window(own_windows, terminal)
+            if err is not None:
+                context._err.print(f"[red]{err}[/red]")
+                raise typer.Exit(code=1)
+
+            await conn.send(
+                json.dumps({"cmd": "unshare_window", "window_id": match["id"]})
+            )
+            # Wait for shared_terminals confirmation
+            deadline = asyncio.get_event_loop().time() + 10
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "shared_terminals":
+                    context._err.print(
+                        f"[green]Terminal '{terminal}' is no longer"
+                        " shared[/green]"
+                    )
+                    break
+
+            await send_ignore_closed(
+                conn, json.dumps({"cmd": "terminal_stop"})
+            )
+
+    asyncio.run(_unshare())

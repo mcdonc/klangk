@@ -598,7 +598,7 @@ class TestShellWiring:
         ws = SimpleNamespace(egress_mode="interactive")
         with (
             patch("klangk.cli.main.sys.stdin.isatty", return_value=True),
-            patch("klangk.cli.main.host_tmux_version", return_value=(3, 6)),
+            patch("klangk.cli.shellcmd.host_tmux_version", return_value=(3, 6)),
         ):
             assert cli_main._consent_popup_enabled(ws, False) is True
 
@@ -606,7 +606,7 @@ class TestShellWiring:
         ws = SimpleNamespace(egress_mode="interactive")
         with (
             patch("klangk.cli.main.sys.stdin.isatty", return_value=True),
-            patch("klangk.cli.main.host_tmux_version", return_value=(3, 1)),
+            patch("klangk.cli.shellcmd.host_tmux_version", return_value=(3, 1)),
         ):
             assert cli_main._consent_popup_enabled(ws, False) is False
 
@@ -619,8 +619,8 @@ class TestShellWiring:
             return 7
 
         with (
-            patch("klangk.cli.main.run_consent_shell", side_effect=fake_run),
-            patch("klangk.cli.main.server_url", return_value="http://server"),
+            patch("klangk.cli.shellcmd.run_consent_shell", side_effect=fake_run),
+            patch("klangk.cli.context.server_url", return_value="http://server"),
         ):
             rc = cli_main._run_consent_popup(ws, "@1", True)
         assert rc == 7
