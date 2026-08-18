@@ -1,4 +1,4 @@
-"""Tests for :mod:`klangk.consent_coordinator` -- the synchronous hold/resolve
+"""Tests for :mod:`klangk.consent.coordinator` -- the synchronous hold/resolve
 coordinator (#2311) -- and the egress-sidecar WebSocket endpoint that drives it.
 
 The coordinator gate-checks each blocked egress (hold iff interactive + a live
@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, Mock
 from fastapi import WebSocketDisconnect
 
 from klangk import auth
-from klangk.consent_coordinator import (
+from klangk.consent.coordinator import (
     ConsentCoordinator,
     PAUSE_15M,
     PAUSE_1D,
@@ -186,7 +186,7 @@ class TestConsentCoordinatorRevoke:
 
     async def test_revoke_sidecar_ack_timeout_returns_false(self, monkeypatch):
         # A sidecar that never acks -> wait_for times out -> leave enforced.
-        import klangk.consent_coordinator as cc
+        import klangk.consent.coordinator as cc
 
         monkeypatch.setattr(cc, "_REVOKE_ACK_TIMEOUT", 0.05)
         app = _app()

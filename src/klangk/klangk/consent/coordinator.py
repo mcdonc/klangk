@@ -35,8 +35,8 @@ import asyncio
 import logging
 import time
 
-from .consent import workspace_is_interactive
-from .model.egress_consent import (
+from .egress import workspace_is_interactive
+from ..model.egress_consent import (
     DECISION_ALLOWED,
     DECISION_DENIED,
     DECISION_PENDING,
@@ -44,7 +44,7 @@ from .model.egress_consent import (
     DURATION_FOREVER,
     DURATION_ONCE,
 )
-from .model.workspaces import EGRESS_MODE_ALLOW
+from ..model.workspaces import EGRESS_MODE_ALLOW
 
 logger = logging.getLogger(__name__)
 

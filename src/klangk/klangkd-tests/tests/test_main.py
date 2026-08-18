@@ -20,8 +20,6 @@ from klangk import (
     auth as auth_mod,
     caddy as caddy_mod,
     consent,
-    consent_coordinator,
-    consent_deciders,
     sidecar_connections,
     emailsvc as emailsvc_mod,
     files as files_mod,
@@ -810,12 +808,8 @@ class TestLifespan:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_monitor = consent.EgressConsentMonitor(app)
-        app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(
-            app
-        )
-        app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
-            app
-        )
+        app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
+        app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
             app
         )
@@ -873,12 +867,8 @@ class TestLifespan:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_monitor = consent.EgressConsentMonitor(app)
-        app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(
-            app
-        )
-        app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
-            app
-        )
+        app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
+        app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
             app
         )
@@ -1421,12 +1411,8 @@ class TestStartupShutdownRestart:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_monitor = consent.EgressConsentMonitor(app)
-        app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(
-            app
-        )
-        app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(
-            app
-        )
+        app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
+        app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
             app
         )

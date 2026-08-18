@@ -3,7 +3,7 @@
 A decider (a live client that can approve/deny held egress -- the ``klangk``
 CLI in #2310, or a Flutter client) connects here to register its live presence
 for a workspace (or deploy-wide) AND to act on held requests. The connection
-lifecycle drives the :class:`~klangk.consent_deciders.ConsentDeciderRegistry`:
+lifecycle drives the :class:`~klangk.consent.deciders.ConsentDeciderRegistry`:
 connect -> register, client ``ping`` -> touch (liveness), disconnect ->
 deregister. While at least one decider is registered the workspace is
 "interactive" (its blocked egress is held for a decision, #2311); with none,

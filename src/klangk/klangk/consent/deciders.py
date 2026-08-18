@@ -31,7 +31,7 @@ import asyncio
 import logging
 import time
 
-from .wshandler.safe_websocket import WS_ERRORS
+from ..wshandler.safe_websocket import WS_ERRORS
 
 logger = logging.getLogger(__name__)
 

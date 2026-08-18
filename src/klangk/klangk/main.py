@@ -20,8 +20,6 @@ from . import (
     auth,
     container,
     consent,
-    consent_coordinator,
-    consent_deciders,
     emailsvc,
     files,
     model,
@@ -918,8 +916,8 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # sidecar's interactive-mode LOG lines and persists pending consent
     # requests (started/stopped in the lifespan; WS notify lands with #2244).
     app.state.consent_monitor = consent.EgressConsentMonitor(app)
-    app.state.consent_coordinator = consent_coordinator.ConsentCoordinator(app)
-    app.state.consent_deciders = consent_deciders.ConsentDeciderRegistry(app)
+    app.state.consent_coordinator = consent.ConsentCoordinator(app)
+    app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
     # #2339: live network-sidecar sockets by workspace, so a revoke can push a
     # rule-drop to a workspace's sidecar + correlate the ack.
     app.state.sidecar_connections = sidecar_connections.SidecarConnections(app)
