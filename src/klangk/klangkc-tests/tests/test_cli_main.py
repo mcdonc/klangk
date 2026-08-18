@@ -1,6 +1,7 @@
 """Tests for klangk CLI commands (main.py)."""
 
 import json
+import klangk.cli.execsync
 import os
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +12,16 @@ import typer
 import websockets
 
 from klangk.cli.client import WorkspaceNotFoundError
+import klangk.cli.sandboxcmd
+import klangk.cli.edit
+import klangk.cli.monitor
+import klangk.cli.admin
+import klangk.cli.authcmds
+import klangk.cli.workspaces
+import klangk.cli.terminals
+import klangk.cli.shellcmd
+import klangk.cli.authcmds as authcmds_mod  # noqa: E402
+import klangk.cli.context as context_mod  # noqa: E402
 from klangk.cli.config import (
     CLIConfig,
     CLIState,
@@ -49,18 +60,18 @@ def logged_in_cfg(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def reset_main_state():
     """Reset module-level CLI state before and after each test."""
-    import klangk.cli.main as _main
+    import klangk.cli.context as _ctx
 
-    orig_cfg = _main._cfg_cache
-    orig_state = _main._state_cache
-    orig_server = _main._server_override
-    _main._cfg_cache = None
-    _main._state_cache = None
-    _main._server_override = None
+    orig_cfg = _ctx._cfg_cache
+    orig_state = _ctx._state_cache
+    orig_server = _ctx._server_override
+    _ctx._cfg_cache = None
+    _ctx._state_cache = None
+    _ctx._server_override = None
     yield
-    _main._cfg_cache = orig_cfg
-    _main._state_cache = orig_state
-    _main._server_override = orig_server
+    _ctx._cfg_cache = orig_cfg
+    _ctx._state_cache = orig_state
+    _ctx._server_override = orig_server
 
 
 @pytest.fixture
@@ -230,7 +241,7 @@ class TestMainCLI:
         # regardless of whether a real klangkd is running on localhost:8995
         # in none mode (which would auto-login and skip the Exit).
         monkeypatch.setattr(
-            "klangk.cli.main.fetch_config",
+            "klangk.cli.context.fetch_config",
             lambda url: {"auth_modes": "password"},
         )
 
@@ -270,7 +281,7 @@ class TestMainCLI:
     def test_server_url_override_wins(self, logged_in_cfg):
         from klangk.cli import main
 
-        main._server_override = "http://override:9999"
+        context_mod._server_override = "http://override:9999"
         assert main.server_url() == "http://override:9999"
 
     def test_server_url_falls_back_to_default_uds(self, tmp_path, monkeypatch):
@@ -451,7 +462,7 @@ class TestMainCLI:
         sock_dir.mkdir()
         srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
         srv.bind(str(sock_dir / "klangk.sock"))
-        main._server_override = "http://override:9999"
+        context_mod._server_override = "http://override:9999"
         try:
             assert main.server_url() == "http://override:9999"
         finally:
@@ -476,9 +487,9 @@ class TestMainCLI:
         # Resolve to a UDS path without relying on disk existence: the
         # --server override bypasses server_url()'s exists() gate.
         stale = str(tmp_path / "stale.sock")
-        main._server_override = stale
+        context_mod._server_override = stale
         monkeypatch.setattr(
-            "klangk.cli.main.fetch_config", lambda url: _UNREACHABLE
+            "klangk.cli.context.fetch_config", lambda url: _UNREACHABLE
         )
 
         with pytest.raises(typer.Exit):
@@ -507,7 +518,7 @@ class TestMainCLI:
             types.SimpleNamespace(invoked_subcommand="status"),
             server="prod",
         )
-        assert main._server_override == "http://prod:8995"
+        assert context_mod._server_override == "http://prod:8995"
 
     def test_list_workspaces_empty(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
@@ -515,7 +526,7 @@ class TestMainCLI:
         client = MagicMock()
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = []
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo") as mock_echo:
             main.list_workspaces(shared=True)
@@ -533,7 +544,7 @@ class TestMainCLI:
         client = MagicMock()
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = [shared_ws]
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo") as mock_echo:
             main.list_workspaces(plain=True, shared=True)
@@ -557,11 +568,11 @@ class TestMainCLI:
         client = MagicMock()
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = [shared_ws]
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         buf = StringIO()
         with patch.object(
-            main,
+            klangk.cli.workspaces,
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
@@ -580,7 +591,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.list_workspaces.return_value = [ws]
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo") as mock_echo:
             main.list_workspaces(plain=True)
@@ -600,11 +611,11 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.list_workspaces.return_value = [ws]
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         buf = StringIO()
         with patch.object(
-            main,
+            klangk.cli.workspaces,
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
@@ -628,7 +639,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.list_workspaces.return_value = [ws]
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo") as mock_echo:
             main.list_workspaces(plain=True)
@@ -658,11 +669,11 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.list_workspaces.return_value = [ws]
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         buf = StringIO()
         with patch.object(
-            main,
+            klangk.cli.workspaces,
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
@@ -689,7 +700,7 @@ class TestMainCLI:
         client = MagicMock()
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = [shared_ws]
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo") as mock_echo:
             main.list_workspaces(plain=True, shared=True)
@@ -707,7 +718,7 @@ class TestMainCLI:
         client = MagicMock()
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = []
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         main.list_workspaces(
             limit=10,
@@ -731,7 +742,7 @@ class TestMainCLI:
         client = MagicMock()
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = []
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         main.list_workspaces(
             limit=50,
@@ -757,7 +768,7 @@ class TestMainCLI:
         client = MagicMock()
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = []
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         main.list_workspaces(
             limit=10,
@@ -795,11 +806,11 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.create_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         buf = StringIO()
         with patch.object(
-            main,
+            klangk.cli.workspaces,
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
@@ -819,7 +830,7 @@ class TestMainCLI:
         client.create_workspace.side_effect = httpx.HTTPStatusError(
             "bad", request=MagicMock(), response=mock_response
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.create("dup")
@@ -828,7 +839,7 @@ class TestMainCLI:
         from klangk.cli import main
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo"):
             main.rm("my-ws")
@@ -842,7 +853,7 @@ class TestMainCLI:
 
         client = MagicMock()
         client.delete_workspace.side_effect = WorkspaceNotFoundError("nope")
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.rm("nope")
@@ -865,7 +876,7 @@ class TestMainCLI:
             {"role": "spectators", "members": []},
         ]
         client.get.return_value = roles_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         calls = []
         monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
@@ -887,7 +898,7 @@ class TestMainCLI:
             {"role": "coders", "members": []},
         ]
         client.get.return_value = roles_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         calls = []
         monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
@@ -899,7 +910,7 @@ class TestMainCLI:
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.members("nope")
@@ -912,7 +923,7 @@ class TestMainCLI:
             "email": "alice@test.com",
             "role": "coders",
         }
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         calls = []
         monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
@@ -931,7 +942,7 @@ class TestMainCLI:
             "email": "alice@test.com",
             "role": "spectators",
         }
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         calls = []
         monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
@@ -943,7 +954,7 @@ class TestMainCLI:
     def test_share_workspace_invalid_role(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
-        monkeypatch.setattr(main, "_client", lambda: MagicMock())
+        monkeypatch.setattr(context_mod, "_client", lambda: MagicMock())
 
         with pytest.raises(typer.Exit):
             main.share_workspace("my-ws", "a@b.com", role="admin")
@@ -955,7 +966,7 @@ class TestMainCLI:
         client.add_workspace_member.side_effect = WorkspaceNotFoundError(
             "nope"
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.share_workspace("nope", "alice@test.com", role="coder")
@@ -964,7 +975,7 @@ class TestMainCLI:
         from klangk.cli import main
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         calls = []
         monkeypatch.setattr("typer.echo", lambda s: calls.append(s))
@@ -978,7 +989,7 @@ class TestMainCLI:
         client.remove_workspace_member.side_effect = WorkspaceNotFoundError(
             "not a member"
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.unshare_workspace("my-ws", "nobody@test.com")
@@ -987,7 +998,7 @@ class TestMainCLI:
         from klangk.cli import main
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo"):
             main.restart("my-ws")
@@ -1001,7 +1012,7 @@ class TestMainCLI:
 
         client = MagicMock()
         client.restart_workspace.side_effect = WorkspaceNotFoundError("nope")
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.restart("nope")
@@ -1010,7 +1021,7 @@ class TestMainCLI:
         from klangk.cli import main
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo"):
             main.stop("my-ws")
@@ -1024,7 +1035,7 @@ class TestMainCLI:
 
         client = MagicMock()
         client.stop_workspace.side_effect = WorkspaceNotFoundError("nope")
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.stop("nope")
@@ -1033,7 +1044,7 @@ class TestMainCLI:
         from klangk.cli import main
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with patch("typer.echo"):
             main.start("my-ws")
@@ -1047,7 +1058,7 @@ class TestMainCLI:
 
         client = MagicMock()
         client.start_workspace.side_effect = WorkspaceNotFoundError("nope")
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.start("nope")
@@ -1090,7 +1101,7 @@ class TestMainCLI:
         # The admin probe is a best-effort network call; fail it fast so this
         # test (server/user only) doesn't wait on a real ~6s timeout. The
         # admin path is covered by the test_*_shows_admin_* tests (#1989).
-        monkeypatch.setattr(main, "_client", _raise_no_network)
+        monkeypatch.setattr(context_mod, "_client", _raise_no_network)
         main.status(plain=True)
         output = capsys.readouterr().out
         assert "test@example.com" in output
@@ -1103,10 +1114,10 @@ class TestMainCLI:
 
         from klangk.cli import main
 
-        monkeypatch.setattr(main, "_client", _raise_no_network)
+        monkeypatch.setattr(context_mod, "_client", _raise_no_network)
         buf = StringIO()
         with patch.object(
-            main,
+            klangk.cli.authcmds,
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
@@ -1132,7 +1143,7 @@ class TestMainCLI:
 
         buf = StringIO()
         with patch.object(
-            main,
+            klangk.cli.authcmds,
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
@@ -1143,7 +1154,7 @@ class TestMainCLI:
     def test_status_plain_logged_in(self, logged_in_cfg, capsys, monkeypatch):
         from klangk.cli import main
 
-        monkeypatch.setattr(main, "_client", _raise_no_network)
+        monkeypatch.setattr(context_mod, "_client", _raise_no_network)
         main.status(plain=True)
         output = capsys.readouterr().out
         assert "server=http://localhost:8995" in output
@@ -1232,8 +1243,8 @@ class TestMainCLI:
         async def fake_shell(*args, **kwargs):
             pass
 
-        with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "ws_shell", fake_shell):
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch.object(klangk.cli.shellcmd, "ws_shell", fake_shell):
                 os.environ["TERM"] = "xterm-256color"
                 with patch("termios.tcgetattr", return_value=None):
                     main.shell(None)
@@ -1246,7 +1257,7 @@ class TestMainCLI:
 
         client = MagicMock()
         client.list_workspaces.return_value = []
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.shell(None)
@@ -1268,8 +1279,8 @@ class TestMainCLI:
         async def fake_shell(*args, **kwargs):
             pass
 
-        with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "ws_shell", fake_shell):
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch.object(klangk.cli.shellcmd, "ws_shell", fake_shell):
                 with patch("builtins.input", return_value="1"):  # select first
                     with patch("termios.tcgetattr", return_value=None):
                         main.shell(None)
@@ -1288,8 +1299,8 @@ class TestMainCLI:
         async def fake_shell(*args, **kwargs):
             pass
 
-        with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "ws_shell", fake_shell):
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch.object(klangk.cli.shellcmd, "ws_shell", fake_shell):
                 os.environ["TERM"] = "xterm-256color"
                 with patch("termios.tcgetattr", return_value=None):
                     main.shell("target-ws")
@@ -1316,14 +1327,14 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch.object(
-                main, "_consent_popup_enabled", return_value=True
+                klangk.cli.shellcmd, "_consent_popup_enabled", return_value=True
             ):
                 with patch.object(
-                    main, "_run_consent_popup", return_value=0
+                    klangk.cli.shellcmd, "_run_consent_popup", return_value=0
                 ) as fake_popup:
-                    with patch.object(main, "ws_shell") as fake_shell:
+                    with patch.object(klangk.cli.shellcmd, "ws_shell") as fake_shell:
                         with pytest.raises(typer.Exit) as exc:
                             main.shell("ws", "@1")
         assert exc.value.exit_code == 0
@@ -1348,8 +1359,8 @@ class TestMainCLI:
         async def fake_shell(*args, **kwargs):
             captured_kwargs.update(kwargs)
 
-        with patch.object(main, "_client", return_value=client):
-            with patch.object(main, "ws_shell", fake_shell):
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch.object(klangk.cli.shellcmd, "ws_shell", fake_shell):
                 os.environ["TERM"] = "xterm-256color"
                 with patch("termios.tcgetattr", return_value=None):
                     main.shell("target-ws", "build")
@@ -1378,9 +1389,9 @@ class TestMainCLI:
         # Patch _cfg to return a config with forward_agent=True
         cfg = CLIConfig(forward_agent=True)
         with (
-            patch.object(main, "_cfg", return_value=cfg),
-            patch.object(main, "_client", return_value=client),
-            patch.object(main, "ws_shell", fake_shell),
+            patch.object(context_mod, "_cfg", return_value=cfg),
+            patch.object(context_mod, "_client", return_value=client),
+            patch.object(klangk.cli.shellcmd, "ws_shell", fake_shell),
         ):
             os.environ["TERM"] = "xterm-256color"
             os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
@@ -1410,9 +1421,9 @@ class TestMainCLI:
 
         cfg = CLIConfig(forward_agent=True)
         with (
-            patch.object(main, "_cfg", return_value=cfg),
-            patch.object(main, "_client", return_value=client),
-            patch.object(main, "ws_shell", fake_shell),
+            patch.object(context_mod, "_cfg", return_value=cfg),
+            patch.object(context_mod, "_client", return_value=client),
+            patch.object(klangk.cli.shellcmd, "ws_shell", fake_shell),
         ):
             os.environ["TERM"] = "xterm-256color"
             os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
@@ -1449,9 +1460,9 @@ class TestMainCLI:
             },
         )
         with (
-            patch.object(main, "_cfg", return_value=cfg),
-            patch.object(main, "_client", return_value=client),
-            patch.object(main, "ws_shell", fake_shell),
+            patch.object(context_mod, "_cfg", return_value=cfg),
+            patch.object(context_mod, "_client", return_value=client),
+            patch.object(klangk.cli.shellcmd, "ws_shell", fake_shell),
         ):
             os.environ["TERM"] = "xterm-256color"
             os.environ["SSH_AUTH_SOCK"] = "/tmp/agent.sock"
@@ -1470,7 +1481,7 @@ class TestMainCLI:
                 ),
             },
         )
-        with patch.object(main, "_cfg", return_value=cfg):
+        with patch.object(context_mod, "_cfg", return_value=cfg):
             assert main.ws_max_size() == 999
 
     def test_terminals_command(self, logged_in_cfg, monkeypatch, reset_env):
@@ -1525,7 +1536,7 @@ class TestMainCLI:
         mock_ws.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch(
                 "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
@@ -1585,7 +1596,7 @@ class TestMainCLI:
         mock_ws.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch(
                 "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
@@ -1642,7 +1653,7 @@ class TestMainCLI:
         mock_ws.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch(
                 "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
@@ -1693,7 +1704,7 @@ class TestMainCLI:
         mock_ws.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch(
                 "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
@@ -1708,7 +1719,7 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with pytest.raises(typer.Exit):
                 main.terminals("nope")
 
@@ -1736,7 +1747,7 @@ class TestMainCLI:
         mock_ws.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch(
                 "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
@@ -1769,7 +1780,7 @@ class TestMainCLI:
         mock_ws.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch(
                 "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
@@ -1802,7 +1813,7 @@ class TestMainCLI:
         mock_ws.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch(
                 "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
@@ -1847,7 +1858,7 @@ class TestMainCLI:
         mock_ws.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch(
                 "klangk.cli.transport.websockets.connect", return_value=mock_ws
             ),
@@ -1870,7 +1881,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -1900,7 +1911,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -1926,7 +1937,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -1953,7 +1964,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep name, keep image, change command, skip add mount, skip add env
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=["", "", "pi", "", "", "", "", ""],
@@ -1985,7 +1996,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep name/image/command, set health check, skip mounts/env
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2024,7 +2035,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # change name, image, command; skip add mount, (no mounts to remove)
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2063,7 +2074,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep name/image/command; add a mount, then skip add, (now has mount) skip remove
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2102,7 +2113,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep name/image/command; skip add, remove mount 1; skip add, skip remove
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=["", "", "", "", "", "1", "", "", "", "", ""],
@@ -2133,7 +2144,7 @@ class TestMainCLI:
 
         # keep all; add /new:/new (loops back), skip add, remove 1 (/old:/old),
         # skip add, skip remove
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2177,7 +2188,7 @@ class TestMainCLI:
 
         # keep all; skip add, bad number "99" (loops), skip add, "abc" (loops),
         # skip add, skip remove
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2221,7 +2232,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep all; skip add, remove 1; skip add (no mounts left, so no remove prompt)
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=["", "", "", "", "", "1", "", "", "", ""],
@@ -2251,7 +2262,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep all; try invalid mount "bad", then valid "/a:/b", skip add, (no remove)
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2281,7 +2292,7 @@ class TestMainCLI:
     def test_create_invalid_mount_flag(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
-        monkeypatch.setattr(main, "_client", lambda: MagicMock())
+        monkeypatch.setattr(context_mod, "_client", lambda: MagicMock())
 
         from typer.testing import CliRunner
 
@@ -2301,7 +2312,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -2321,7 +2332,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -2345,7 +2356,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -2381,7 +2392,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -2405,7 +2416,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         from typer.testing import CliRunner
 
         runner = CliRunner()
@@ -2427,7 +2438,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
 
         # keep name, image, command; skip add mount (no mounts, no remove prompt)
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input", side_effect=["", "", "", "", "", "", "", ""]
             ):
@@ -2453,7 +2464,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep all; skip mounts; add env FOO=bar, skip add env
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=["", "", "", "", "", "FOO=bar", "", "", "", ""],
@@ -2482,7 +2493,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep all; skip mounts; try "bad" (no =), then "A=1", skip add, skip remove
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=["", "", "", "", "", "bad", "A=1", "", "", "", ""],
@@ -2505,7 +2516,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.create_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -2535,7 +2546,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.create_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -2558,7 +2569,7 @@ class TestMainCLI:
     def test_create_with_invalid_env_flag(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
-        monkeypatch.setattr(main, "_client", lambda: MagicMock())
+        monkeypatch.setattr(context_mod, "_client", lambda: MagicMock())
 
         from typer.testing import CliRunner
 
@@ -2576,7 +2587,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.create_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -2615,7 +2626,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.create_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -2645,7 +2656,7 @@ class TestMainCLI:
         from klangk.cli import main
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         from typer.testing import CliRunner
 
         runner = CliRunner()
@@ -2663,7 +2674,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.create_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -2705,7 +2716,7 @@ class TestMainCLI:
     def test_create_with_invalid_allow_flag(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
-        monkeypatch.setattr(main, "_client", lambda: MagicMock())
+        monkeypatch.setattr(context_mod, "_client", lambda: MagicMock())
 
         from typer.testing import CliRunner
 
@@ -2728,7 +2739,7 @@ class TestMainCLI:
         resp = MagicMock()
         resp.status_code = 200
         client.put.return_value = resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -2761,7 +2772,7 @@ class TestMainCLI:
         )
         client = MagicMock()
         client.resolve_workspace.return_value = ws
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -2784,7 +2795,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2824,7 +2835,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2866,7 +2877,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2908,7 +2919,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2951,7 +2962,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -2991,7 +3002,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -3033,7 +3044,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -3074,7 +3085,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -3116,7 +3127,7 @@ class TestMainCLI:
         client.put.return_value = MagicMock(status_code=200)
 
         # keep all; skip mounts; skip add env, remove env 1; skip add, skip remove
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=["", "", "", "", "", "", "1", "", "", "", ""],
@@ -3146,7 +3157,7 @@ class TestMainCLI:
 
         # keep all; skip mounts; skip add env, bad number "99" (loops),
         # skip add env, "abc" (loops), skip add, skip remove
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
                 side_effect=[
@@ -3185,7 +3196,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3207,7 +3218,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3230,7 +3241,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3269,7 +3280,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch("builtins.input", return_value="n"):
                 from typer.testing import CliRunner
 
@@ -3297,7 +3308,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch("builtins.input", return_value="y"):
                 from typer.testing import CliRunner
 
@@ -3325,7 +3336,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3352,7 +3363,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=200)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3380,7 +3391,7 @@ class TestMainCLI:
             json=MagicMock(return_value={"id": "new-id", "name": "copy"}),
         )
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3394,7 +3405,7 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3413,7 +3424,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.post.return_value = MagicMock(status_code=409)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3432,7 +3443,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.post.return_value = MagicMock(status_code=404)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3445,7 +3456,7 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3466,7 +3477,7 @@ class TestMainCLI:
         client.resolve_workspace.return_value = ws
         client.put.return_value = MagicMock(status_code=404)
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -3488,9 +3499,9 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch.object(
-                main, "ws_exec", AsyncMock(return_value=0)
+                klangk.cli.execsync, "ws_exec", AsyncMock(return_value=0)
             ) as mock_exec:
                 runner = CliRunner()
                 result = runner.invoke(
@@ -3517,9 +3528,9 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch.object(
-                main, "ws_exec", AsyncMock(return_value=0)
+                klangk.cli.execsync, "ws_exec", AsyncMock(return_value=0)
             ) as mock_exec:
                 runner = CliRunner()
                 result = runner.invoke(
@@ -3547,9 +3558,9 @@ class TestMainCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             with patch.object(
-                main, "ws_exec", AsyncMock(return_value=0)
+                klangk.cli.execsync, "ws_exec", AsyncMock(return_value=0)
             ) as mock_exec:
                 runner = CliRunner()
                 result = runner.invoke(
@@ -3574,7 +3585,7 @@ class TestMainCLI:
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         ctx = MagicMock()
         ctx.args = ["ls"]
@@ -3659,7 +3670,7 @@ class TestVolumes:
                 ]
             ),
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3676,7 +3687,7 @@ class TestVolumes:
             status_code=200,
             json=MagicMock(return_value=[]),
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3695,7 +3706,7 @@ class TestVolumes:
                 return_value=[{"name": "vol-1", "created": "2026-01-01"}]
             ),
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3709,7 +3720,7 @@ class TestVolumes:
 
         client = MagicMock()
         client.post.return_value = MagicMock(status_code=200)
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3723,7 +3734,7 @@ class TestVolumes:
 
         client = MagicMock()
         client.post.return_value = MagicMock(status_code=409)
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3736,7 +3747,7 @@ class TestVolumes:
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=200)
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3750,7 +3761,7 @@ class TestVolumes:
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=404)
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3763,7 +3774,7 @@ class TestVolumes:
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=409)
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3776,7 +3787,7 @@ class TestVolumes:
 
         client = MagicMock()
         client.delete.return_value = MagicMock(status_code=403)
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3801,7 +3812,7 @@ class TestExportImportCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
         client.export_workspace.side_effect = _fake_export
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         out = tmp_path / "out.tar.gz"
         main.export_workspace(name="my-ws", output=out)
@@ -3823,7 +3834,7 @@ class TestExportImportCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
         client.export_workspace.side_effect = _fake_export
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         main.export_workspace(name="test-ws", output=None)
         client.export_workspace.assert_called_once()
@@ -3845,7 +3856,7 @@ class TestExportImportCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
         client.export_workspace.side_effect = _fake_export
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         # Create existing files in cwd
         monkeypatch.chdir(tmp_path)
@@ -3861,7 +3872,7 @@ class TestExportImportCLI:
 
         client = MagicMock()
         client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.export_workspace(name="nope", output=None)
@@ -3878,7 +3889,7 @@ class TestExportImportCLI:
         client.export_workspace.side_effect = httpx.HTTPStatusError(
             "err", request=MagicMock(), response=resp
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         with pytest.raises(typer.Exit):
             main.export_workspace(name="err-ws", output=tmp_path / "o.tar.gz")
@@ -3898,7 +3909,7 @@ class TestExportImportCLI:
 
         client = MagicMock()
         client.import_workspace.side_effect = _fake_import
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         archive = tmp_path / "test.tar.gz"
         archive.write_bytes(b"fake")
@@ -3926,7 +3937,7 @@ class TestExportImportCLI:
         client.import_workspace.side_effect = httpx.HTTPStatusError(
             "err", request=MagicMock(), response=resp
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         archive = tmp_path / "test.tar.gz"
         archive.write_bytes(b"fake")
@@ -3947,7 +3958,7 @@ class TestInviteCLI:
                 "status": "pending",
             },
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3967,7 +3978,7 @@ class TestInviteCLI:
             json=lambda: {"detail": "already exists"},
             text="already exists",
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -3986,7 +3997,7 @@ class TestInviteCLI:
             json=lambda: {"detail": "Invitations are disabled"},
             text="Invitations are disabled",
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -4017,7 +4028,7 @@ class TestInviteCLI:
                 "pending_count": 1,
             },
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -4040,7 +4051,7 @@ class TestInviteCLI:
                 "pending_count": 0,
             },
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -4058,7 +4069,7 @@ class TestInviteCLI:
         resp.text = "Permission denied"
         resp.headers = {"content-type": "application/json"}
         client.get.return_value = resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
 
         from typer.testing import CliRunner
 
@@ -4193,7 +4204,7 @@ class TestSandboxCommand:
         client = MagicMock()
         client.get_handle.return_value = "admin"
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -4211,7 +4222,7 @@ class TestSandboxCommand:
         client = MagicMock()
         client.get_handle.return_value = "admin"
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -4242,8 +4253,8 @@ class TestSandboxCommand:
             pass
 
         with (
-            patch.object(main, "_client", return_value=client),
-            patch.object(main, "sandbox_setup_only", fake_setup),
+            patch.object(context_mod, "_client", return_value=client),
+            patch.object(klangk.cli.sandboxcmd, "sandbox_setup_only", fake_setup),
         ):
             from typer.testing import CliRunner
 
@@ -4289,7 +4300,7 @@ class TestSandboxCommand:
         client.get_handle.return_value = "admin"
         client.resolve_workspace.return_value = ws
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -4323,8 +4334,8 @@ class TestSandboxCommand:
             setup_called.append(True)
 
         with (
-            patch.object(main, "_client", return_value=client),
-            patch.object(main, "sandbox_setup_only", fake_setup),
+            patch.object(context_mod, "_client", return_value=client),
+            patch.object(klangk.cli.sandboxcmd, "sandbox_setup_only", fake_setup),
         ):
             from typer.testing import CliRunner
 
@@ -4364,8 +4375,8 @@ class TestSandboxCommand:
             raise ConnectionError("connection refused")
 
         with (
-            patch.object(main, "_client", return_value=client),
-            patch.object(main, "sandbox_setup_only", failing_setup),
+            patch.object(context_mod, "_client", return_value=client),
+            patch.object(klangk.cli.sandboxcmd, "sandbox_setup_only", failing_setup),
         ):
             from typer.testing import CliRunner
 
@@ -4394,7 +4405,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.sandboxcmd.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -4442,7 +4453,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.sandboxcmd.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -4494,7 +4505,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.sandboxcmd.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -4543,7 +4554,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.sandboxcmd.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -4595,7 +4606,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.sandboxcmd.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -4644,7 +4655,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.sandboxcmd.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -4685,7 +4696,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.sandboxcmd.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -4729,7 +4740,7 @@ class TestSandboxSetupOnly:
 
         with (
             patch("klangk.cli.transport.websockets.connect") as mock_connect,
-            patch("klangk.cli.main.sandbox_setup") as mock_setup,
+            patch("klangk.cli.sandboxcmd.sandbox_setup") as mock_setup,
         ):
             mock_connect.return_value.__aenter__ = AsyncMock(
                 return_value=mock_ws
@@ -4775,7 +4786,7 @@ class TestSandboxSetupOnly:
             )
             return 0
 
-        with patch("klangk.cli.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert len(exec_calls) == 1
@@ -4797,7 +4808,7 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 1  # failure
 
-        with patch("klangk.cli.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
     async def test_copy_missing_file_warns(self, tmp_path, capsys):
@@ -4810,7 +4821,7 @@ class TestSandboxSetupOnly:
 
         ws = AsyncMock()
 
-        with patch("klangk.cli.main.exec_on_ws", AsyncMock(return_value=0)):
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", AsyncMock(return_value=0)):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         # exec_on_ws should not have been called (file doesn't exist)
@@ -4831,7 +4842,7 @@ class TestSandboxSetupOnly:
             exec_calls.append(cmd)
             return 0
 
-        with patch("klangk.cli.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert len(exec_calls) == 1
@@ -4853,7 +4864,7 @@ class TestSandboxSetupOnly:
             exec_calls.append(cmd)
             return 0
 
-        with patch("klangk.cli.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         shell_cmd = exec_calls[0][2]
@@ -4877,7 +4888,7 @@ class TestSandboxSetupOnly:
             captured_timeout.append(timeout)
             return 0
 
-        with patch("klangk.cli.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         assert captured_timeout == [60]
@@ -4897,7 +4908,7 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 124
 
-        with patch("klangk.cli.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         err = capsys.readouterr().err
@@ -4917,7 +4928,7 @@ class TestSandboxSetupOnly:
         async def fake_exec(ws, cmd, stdin=None, stdout=None, timeout=None):
             return 1
 
-        with patch("klangk.cli.main.exec_on_ws", fake_exec):
+        with patch("klangk.cli.sandboxcmd.exec_on_ws", fake_exec):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
     def test_connection_error_exits_cleanly(self, logged_in_cfg, tmp_path):
@@ -4938,9 +4949,9 @@ class TestSandboxSetupOnly:
         client.create_workspace.return_value = ws
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch.object(
-                main,
+                klangk.cli.sandboxcmd,
                 "asyncio",
                 MagicMock(
                     run=MagicMock(
@@ -4950,8 +4961,8 @@ class TestSandboxSetupOnly:
                     )
                 ),
             ),
-            patch.object(main, "reset_terminal"),
-            patch.object(main, "drain_stdin"),
+            patch.object(klangk.cli.shellcmd, "reset_terminal"),
+            patch.object(klangk.cli.shellcmd, "drain_stdin"),
         ):
             from typer.testing import CliRunner
 
@@ -4968,7 +4979,7 @@ class TestMonitorCommand:
         from klangk.cli import main
 
         mock_run = AsyncMock(return_value=None)
-        with patch.object(main, "monitor_run", new=mock_run):
+        with patch.object(klangk.cli.monitor, "monitor_run", new=mock_run):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -4985,7 +4996,7 @@ class TestMonitorCommand:
         from klangk.cli import main
 
         mock_run = AsyncMock(return_value=None)
-        with patch.object(main, "monitor_run", new=mock_run):
+        with patch.object(klangk.cli.monitor, "monitor_run", new=mock_run):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -4999,7 +5010,7 @@ class TestMonitorCommand:
         async def _raise(*a, **kw):
             raise websockets.InvalidStatus(MagicMock(status_code=4001))
 
-        with patch.object(main, "monitor_run", new=_raise):
+        with patch.object(klangk.cli.monitor, "monitor_run", new=_raise):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -5013,7 +5024,7 @@ class TestMonitorCommand:
         async def _kb(*a, **kw):
             raise KeyboardInterrupt
 
-        with patch.object(main, "monitor_run", new=_kb):
+        with patch.object(klangk.cli.monitor, "monitor_run", new=_kb):
             from typer.testing import CliRunner
 
             runner = CliRunner()
@@ -5026,7 +5037,6 @@ class TestStatusAdminFlag:
     """`status` derives admin from /my-permissions and degrades gracefully."""
 
     def _perms_client(self, perms, monkeypatch):
-        from klangk.cli import main
 
         client = MagicMock()
         resp = MagicMock(
@@ -5035,7 +5045,7 @@ class TestStatusAdminFlag:
         )
         resp.headers = {"content-type": "application/json"}
         client.get.return_value = resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         return client
 
     def test_plain_shows_admin_yes(self, logged_in_cfg, capsys, monkeypatch):
@@ -5064,7 +5074,7 @@ class TestStatusAdminFlag:
         self._perms_client({"/admin": ["*"]}, monkeypatch)
         buf = StringIO()
         with patch.object(
-            main,
+            klangk.cli.authcmds,
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
@@ -5081,7 +5091,7 @@ class TestStatusAdminFlag:
         self._perms_client({"/admin": []}, monkeypatch)
         buf = StringIO()
         with patch.object(
-            main,
+            klangk.cli.authcmds,
             "Console",
             return_value=Console(file=buf, force_terminal=True),
         ):
@@ -5095,7 +5105,7 @@ class TestStatusAdminFlag:
 
         client = MagicMock()
         client.get.side_effect = Exception("offline")
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         main.status(plain=True)
         out = capsys.readouterr().out
         # No admin line, but the rest is still reported.
@@ -5129,7 +5139,7 @@ class TestAdminUsersCLI:
                 "total": 1,
             },
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(main.app, ["admin", "users", "ls"])
         assert result.exit_code == 0
         assert "admin@example.com" in result.stdout
@@ -5143,7 +5153,7 @@ class TestAdminUsersCLI:
             status_code=200,
             json=lambda: {"users": [], "total": 0},
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(main.app, ["admin", "users", "ls"])
         assert result.exit_code == 0
         assert "No users" in result.stdout
@@ -5158,7 +5168,7 @@ class TestAdminUsersCLI:
         resp.text = "Permission denied"
         resp.headers = {"content-type": "application/json"}
         client.get.return_value = resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(main.app, ["admin", "users", "ls"])
         assert result.exit_code == 1
 
@@ -5183,7 +5193,7 @@ class TestAdminUsersCLI:
                 "total": 5,
             },
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(main.app, ["admin", "users", "ls"])
         assert result.exit_code == 0
         assert "Showing 1 of 5" in result.stdout
@@ -5198,7 +5208,7 @@ class TestAdminUsersCLI:
         search_resp.text = "boom"
         search_resp.headers = {"content-type": "application/json"}
         client.get.return_value = search_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(
             main.app,
             [
@@ -5229,7 +5239,7 @@ class TestAdminUsersCLI:
         patch_resp.headers = {"content-type": "application/json"}
         client.get.return_value = search_resp
         client.patch.return_value = patch_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(
             main.app,
             [
@@ -5263,7 +5273,7 @@ class TestAdminUsersCLI:
         patch_resp.headers = {"content-type": "application/json"}
         client.get.return_value = search_resp
         client.patch.return_value = patch_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(
             main.app,
             [
@@ -5293,7 +5303,7 @@ class TestAdminUsersCLI:
         patch_resp.headers = {"content-type": "application/json"}
         client.get.return_value = search_resp
         client.patch.return_value = patch_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         # Two identical prompts.
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask",
@@ -5314,7 +5324,7 @@ class TestAdminUsersCLI:
             {"id": "u-1", "email": "hero@example.com", "handle": "hero"}
         ]
         client.get.return_value = search_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         answers = iter(["newpw123", "different"])
 
         def _ask(*a, **k):
@@ -5337,7 +5347,7 @@ class TestAdminUsersCLI:
             {"id": "u-2", "email": "other@example.com", "handle": "other"}
         ]
         client.get.return_value = search_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(
             main.app,
             [
@@ -5367,7 +5377,7 @@ class TestAdminUsersCLI:
         patch_resp.headers = {"content-type": "application/json"}
         client.get.return_value = search_resp
         client.patch.return_value = patch_resp
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(
             main.app,
             [
@@ -5395,7 +5405,7 @@ class TestAccountCommands:
             "email": "me@x.example",
             "handle": "me",
         }
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(main.app, ["account", "show"])
         assert result.exit_code == 0
         out = result.output
@@ -5407,8 +5417,8 @@ class TestAccountCommands:
         from typer.testing import CliRunner
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
-        monkeypatch.setattr(main.account, "password_min_length", lambda url: 4)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+        monkeypatch.setattr(authcmds_mod.account, "password_min_length", lambda url: 4)
         answers = iter(["oldpw", "newpw12", "newpw12"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
@@ -5422,7 +5432,7 @@ class TestAccountCommands:
         from typer.testing import CliRunner
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         answers = iter(["oldpw", "newpw12", "different"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
@@ -5436,9 +5446,9 @@ class TestAccountCommands:
         from typer.testing import CliRunner
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
-            main.account, "password_min_length", lambda url: 12
+            authcmds_mod.account, "password_min_length", lambda url: 12
         )
         answers = iter(["oldpw", "short", "short"])
         monkeypatch.setattr(
@@ -5460,8 +5470,8 @@ class TestAccountCommands:
         client.change_password.side_effect = httpx.HTTPStatusError(
             "401: Current password is incorrect", request=req, response=bad
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
-        monkeypatch.setattr(main.account, "password_min_length", lambda url: 4)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+        monkeypatch.setattr(authcmds_mod.account, "password_min_length", lambda url: 4)
         answers = iter(["oldpw", "newpw12", "newpw12"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
@@ -5486,7 +5496,7 @@ class TestAccountCommands:
         client.change_handle.side_effect = httpx.HTTPStatusError(
             "400: Handle taken", request=req, response=bad
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         answers = iter(["newhandle", "pw"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
@@ -5509,7 +5519,7 @@ class TestAccountCommands:
         client.change_email.side_effect = httpx.HTTPStatusError(
             "400: Email already in use", request=req, response=bad
         )
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         answers = iter(["new@x.example", "pw"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
@@ -5528,7 +5538,7 @@ class TestAccountCommands:
             "handle": "old",
         }
         client.change_handle.return_value = "newhandle"
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         answers = iter(["newhandle", "pw"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
@@ -5545,7 +5555,7 @@ class TestAccountCommands:
         from typer.testing import CliRunner
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: "Bad Handle!"
         )
@@ -5563,7 +5573,7 @@ class TestAccountCommands:
             "email": "me@x.example",
             "handle": "old",
         }
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: "newhandle"
         )
@@ -5582,7 +5592,7 @@ class TestAccountCommands:
         from typer.testing import CliRunner
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         answers = iter(["new@x.example", "pw"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
@@ -5600,7 +5610,7 @@ class TestAccountCommands:
         from typer.testing import CliRunner
 
         client = MagicMock()
-        monkeypatch.setattr(main, "_client", lambda: client)
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: "not-an-email"
         )
@@ -5682,7 +5692,7 @@ class TestConsentDecideCommand:
         launched, fake_run = self._launch_capture()
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
         ):
             from typer.testing import CliRunner
@@ -5706,7 +5716,7 @@ class TestConsentDecideCommand:
         launched, fake_run = self._launch_capture()
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
         ):
             from typer.testing import CliRunner
@@ -5726,7 +5736,7 @@ class TestConsentDecideCommand:
         launched, fake_run = self._launch_capture()
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
         ):
             from typer.testing import CliRunner
@@ -5746,7 +5756,7 @@ class TestConsentDecideCommand:
         launched, fake_run = self._launch_capture()
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
         ):
             from typer.testing import CliRunner
@@ -5764,7 +5774,7 @@ class TestConsentDecideCommand:
         client.list_workspaces.return_value = []
         client.list_shared_workspaces.return_value = []
 
-        with patch.object(main, "_client", return_value=client):
+        with patch.object(context_mod, "_client", return_value=client):
             from typer.testing import CliRunner
 
             result = CliRunner().invoke(main.app, ["consent-decide", "ghost"])
@@ -5782,7 +5792,7 @@ class TestConsentDecideCommand:
         launched, fake_run = self._launch_capture()
 
         with (
-            patch.object(main, "_client", return_value=client),
+            patch.object(context_mod, "_client", return_value=client),
             patch.object(tui_consent.ConsentDeciderApp, "run", fake_run),
         ):
             from typer.testing import CliRunner

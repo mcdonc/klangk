@@ -18,7 +18,7 @@ def _isolate_cli_state(tmp_path, monkeypatch):
     *import* time from ``XDG_CONFIG_HOME`` / ``XDG_STATE_HOME`` (with
     ~/.config / ~/.local/state fallbacks), so setting the env vars later
     has no effect — the module globals are patched directly, and the
-    ``_cfg()`` / ``_state()`` caches in ``klangk.cli.main`` are reset so
+    ``_cfg()`` / ``_state()`` caches in ``klangk.cli.context`` are reset so
     the next call re-loads from the isolated path.
 
     Without this, a unit test that invokes the real CLI in-process (e.g.
@@ -27,12 +27,12 @@ def _isolate_cli_state(tmp_path, monkeypatch):
     revoking the live TUI's token (#1900).
     """
     import klangk.cli.config as _cfg
-    import klangk.cli.main as _main
+    import klangk.cli.context as _ctx
 
     monkeypatch.setattr(_cfg, "_CONFIG_PATH", tmp_path / "klangk.yaml")
     monkeypatch.setattr(_cfg, "_STATE_PATH", tmp_path / "klangk-state.yaml")
-    monkeypatch.setattr(_main, "_cfg_cache", None)
-    monkeypatch.setattr(_main, "_state_cache", None)
+    monkeypatch.setattr(_ctx, "_cfg_cache", None)
+    monkeypatch.setattr(_ctx, "_state_cache", None)
 
 
 @pytest.fixture(autouse=True)

@@ -11,6 +11,7 @@ import pytest
 import websockets
 
 from klangk.cli.config import CLIConfig, CLIState
+import klangk.cli.context as context_mod  # noqa: E402
 
 
 class TestWsShell:
@@ -1428,11 +1429,11 @@ class TestImagesCommand:
             "default": "klangk",
             "allowed": ["klangk", "klangk-custom"],
         }
-        monkeypatch.setattr(cli_main, "_client", lambda: mock_client)
+        monkeypatch.setattr(context_mod, "_client", lambda: mock_client)
         state = CLIState()
         state.set_credentials("http://localhost:8995", "t@t", "tok")
-        monkeypatch.setattr(cli_main, "_state", lambda: state)
-        monkeypatch.setattr(cli_main, "_server_override", None)
+        monkeypatch.setattr(context_mod, "_state", lambda: state)
+        monkeypatch.setattr(context_mod, "_server_override", None)
 
         from typer.testing import CliRunner
 
@@ -1515,9 +1516,9 @@ class TestShellConnectionError:
         """Set up common mocks for shell tests."""
         state = CLIState()
         state.set_credentials("http://localhost:8995", "test@test.com", "fake")
-        monkeypatch.setattr("klangk.cli.main._state", lambda: state)
-        monkeypatch.setattr("klangk.cli.main._server_override", None)
-        monkeypatch.setattr("klangk.cli.main._cfg", lambda: CLIConfig())
+        monkeypatch.setattr("klangk.cli.context._state", lambda: state)
+        monkeypatch.setattr("klangk.cli.context._server_override", None)
+        monkeypatch.setattr("klangk.cli.context._cfg", lambda: CLIConfig())
 
     def test_shell_catches_connection_error(self, monkeypatch):
         """shell() catches ConnectionError from ws_shell and exits cleanly."""
@@ -1528,14 +1529,14 @@ class TestShellConnectionError:
 
         fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
         monkeypatch.setattr(
-            "klangk.cli.main._client",
+            "klangk.cli.context._client",
             lambda: MagicMock(
                 resolve_workspace=MagicMock(return_value=fake_ws)
             ),
         )
 
         monkeypatch.setattr(
-            "klangk.cli.main.asyncio.run",
+            "klangk.cli.shellcmd.asyncio.run",
             MagicMock(side_effect=ConnectionError("Server error")),
         )
         monkeypatch.setattr("klangk.cli.client.drain_stdin", lambda: None)
@@ -1555,14 +1556,14 @@ class TestShellConnectionError:
 
         fake_ws = Workspace(id="ws1", name="ws", created_at="2026-01-01")
         monkeypatch.setattr(
-            "klangk.cli.main._client",
+            "klangk.cli.context._client",
             lambda: MagicMock(
                 resolve_workspace=MagicMock(return_value=fake_ws)
             ),
         )
 
         monkeypatch.setattr(
-            "klangk.cli.main.asyncio.run",
+            "klangk.cli.shellcmd.asyncio.run",
             MagicMock(side_effect=side_effect),
         )
         monkeypatch.setattr("klangk.cli.client.drain_stdin", lambda: None)

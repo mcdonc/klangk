@@ -10219,7 +10219,7 @@ def test_subcommand_does_not_launch_tui(monkeypatch):
     # Never let this in-process invoke POST a real logout at a live server.
     # The klangkc-tests conftest isolates CLI state to a tmp dir, but this
     # guard keeps the test safe even if a fixture pre-seeds credentials (#1900).
-    monkeypatch.setattr("klangk.cli.main.do_logout", lambda *a, **k: None)
+    monkeypatch.setattr("klangk.cli.authcmds.do_logout", lambda *a, **k: None)
     CliRunner().invoke(app, ["logout"])
     assert launched["v"] is False
 
