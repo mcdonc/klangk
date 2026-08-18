@@ -350,6 +350,13 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     ("POST", f"{P}/workspaces/{{workspace_id}}/start", None, None),
     ("POST", f"{P}/workspaces/{{workspace_id}}/stop", None, None),
     ("GET", f"{P}/workspaces/{{workspace_id}}/status", None, None),
+    (
+        "GET",
+        f"{P}/workspaces/{{workspace_id}}/processes",
+        None,
+        {"limit": "int", "offset": "int"},
+    ),
+    ("GET", f"{P}/workspaces/{{workspace_id}}/process-ledger", None, None),
     ("GET", f"{P}/workspaces/{{workspace_id}}/export", None, None),
     (
         "POST",

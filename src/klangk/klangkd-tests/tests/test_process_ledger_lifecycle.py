@@ -29,6 +29,9 @@ class _LaunchRecorder:
         self.launches.append(kw)
         return {"id": "r", **kw}
 
+    async def prune(self, *, keep_rows, keep_seconds):  # noqa: ARG002
+        return 0
+
 
 def _app(tmp_path, *, enabled=True, watcher=None):
     app = types.SimpleNamespace()
@@ -92,7 +95,6 @@ async def test_start_with_watcher_and_event_flow(tmp_path):
     app, rec = _app(tmp_path, watcher=str(wpath))
     led = pl.ProcessLedger(app)
     led.set_root(WS, 100)
-    led._anchors[101] = ("agent", WS)
     await led.start()
     assert led.backend == "c-watcher"
     # push an event through the reader
@@ -104,6 +106,10 @@ async def test_start_with_watcher_and_event_flow(tmp_path):
     # heartbeat already sent). Give the reader a moment.
     await asyncio.sleep(0.3)
     assert led.effective_interval_ms == pytest.approx(80.0)
+    # Set the anchor *after* start so the background _refresh_roots /
+    # prune_stale_anchors cycle doesn't discard the fake host-pid before
+    # the event is handled.
+    led._anchors[101] = ("agent", WS)
     # simulate an event arriving on stdout via the public handler
     await led._handle_event(
         {
