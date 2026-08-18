@@ -35,6 +35,21 @@ _NETWORK_SIDECAR_NFQUEUE = 5139
 ORPHAN_TOKEN_SWEEP_INTERVAL = 300
 
 
+def container_ident(c: dict) -> str:
+    """Best-effort identifier for a ``podman ps`` container dict.
+
+    ``podman ps --format json`` emits ``Id`` on some versions and ``ID``
+    on others; fall back to the first container name when neither is
+    present. Shared by the sidecar removal sweep and the registry reaps
+    (#2548).
+    """
+    ident = c.get("Id") or c.get("ID") or ""
+    if not ident:
+        names = c.get("Names") or []
+        ident = names[0] if names else ""
+    return ident
+
+
 class NetworkSidecarMixin:
     """Sidecar lifecycle methods mixed into ``ContainerRegistry``.
 
@@ -376,10 +391,7 @@ class NetworkSidecarMixin:
             labels = c.get("Labels") or {}
             if labels.get("klangk.role") != "network-sidecar":
                 continue
-            ident = c.get("Id") or c.get("ID") or ""
-            if not ident:
-                names = c.get("Names") or []
-                ident = names[0] if names else ""
+            ident = container_ident(c)
             if not ident:
                 continue
             try:
