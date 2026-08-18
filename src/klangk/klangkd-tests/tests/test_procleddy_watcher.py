@@ -41,6 +41,8 @@ def _have_cc() -> bool:
 
 @pytest.fixture(scope="module")
 def watcher_bin(tmp_path_factory):
+    if os.uname().sysname != "Linux":
+        pytest.skip("procleddy requires Linux (getdents64)")
     if not _have_cc():
         pytest.skip("no C toolchain in this environment")
     out = tmp_path_factory.mktemp("procleddy") / "procleddy"
