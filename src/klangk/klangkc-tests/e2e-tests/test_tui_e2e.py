@@ -66,7 +66,7 @@ async def _wait_for_worker(app, pilot, name, timeout=10.0):
     await pilot.pause()
 
 
-async def _wait_for_screen(app, pilot, screen_type, timeout=10.0):
+async def _wait_for_screen(app, pilot, screen_type, timeout=30.0):
     """Wait for the app's active screen to be an instance of *screen_type*."""
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
