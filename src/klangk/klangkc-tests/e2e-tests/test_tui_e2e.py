@@ -76,6 +76,27 @@ async def _wait_for_screen(app, pilot, screen_type, timeout=30.0):
     await pilot.pause()
 
 
+async def _wait_for_workspace_loaded(app, pilot, timeout=30.0):
+    """Wait until the detail screen's workspace data has loaded.
+
+    ``WorkspaceDetailScreen.on_mount`` fetches the workspace from the API
+    into ``screen._ws``; ``action_edit`` silently no-ops while ``_ws`` is
+    still None, so a test that calls it right after the screen appears
+    races the fetch under load (the edit screen is never pushed and
+    ``_wait_for_screen`` times out). Poll until the data is there.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        screen = app.screen
+        if (
+            isinstance(screen, WorkspaceDetailScreen)
+            and screen._ws is not None
+        ):
+            return
+        await pilot.pause()
+    await pilot.pause()
+
+
 # ── server fixture ──────────────────────────────────────────────────────
 
 
@@ -511,6 +532,9 @@ class TestTuiE2E:
                 assert isinstance(app.screen, WorkspaceDetailScreen)
                 # Open edit form.  action_edit spawns async workers
                 # (images + autostart fetch) before pushing the screen.
+                # The edit action no-ops until the workspace data has
+                # loaded; wait so the test doesn't race the fetch.
+                await _wait_for_workspace_loaded(app, pilot)
                 app.screen.action_edit()
                 await _wait_for_screen(app, pilot, EditWorkspaceScreen)
                 assert isinstance(app.screen, EditWorkspaceScreen)
@@ -534,6 +558,9 @@ class TestTuiE2E:
                 app.push_screen(WorkspaceDetailScreen(ws_name))
                 await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
                 # Open edit form.
+                # The edit action no-ops until the workspace data has
+                # loaded; wait so the test doesn't race the fetch.
+                await _wait_for_workspace_loaded(app, pilot)
                 app.screen.action_edit()
                 await _wait_for_screen(app, pilot, EditWorkspaceScreen)
                 assert isinstance(app.screen, EditWorkspaceScreen)
@@ -564,6 +591,9 @@ class TestTuiE2E:
                 await _settle(app, pilot)
                 app.push_screen(WorkspaceDetailScreen(ws_name))
                 await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
+                # The edit action no-ops until the workspace data has
+                # loaded; wait so the test doesn't race the fetch.
+                await _wait_for_workspace_loaded(app, pilot)
                 app.screen.action_edit()
                 await _wait_for_screen(app, pilot, EditWorkspaceScreen)
                 assert isinstance(app.screen, EditWorkspaceScreen)
@@ -590,6 +620,9 @@ class TestTuiE2E:
                 await _settle(app, pilot)
                 app.push_screen(WorkspaceDetailScreen(ws_name))
                 await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
+                # The edit action no-ops until the workspace data has
+                # loaded; wait so the test doesn't race the fetch.
+                await _wait_for_workspace_loaded(app, pilot)
                 app.screen.action_edit()
                 await _wait_for_screen(app, pilot, EditWorkspaceScreen)
                 assert isinstance(app.screen, EditWorkspaceScreen)
