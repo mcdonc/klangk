@@ -1,4 +1,4 @@
-"""Tests for :mod:`klangk.consent_deciders` -- the live-decider registry (#2308)."""
+"""Tests for :mod:`klangk.consent.deciders` -- the live-decider registry (#2308)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import types
 from unittest.mock import AsyncMock
 
-from klangk.consent_deciders import ConsentDeciderRegistry
+from klangk.consent.deciders import ConsentDeciderRegistry
 from klangk.model.workspaces import EGRESS_MODE_INTERACTIVE
 
 WS = "ws-aaaa1111-2222-3333-4444-555566667777"

@@ -250,7 +250,7 @@ class TestEgressConsentMonitor:
 
     async def test_run_sweeps_retention_on_idle_interval(self, monkeypatch):
         """Queue idle for PRUNE_INTERVAL -> one prune pass (#2303)."""
-        monkeypatch.setattr(consent, "PRUNE_INTERVAL", 0.01)
+        monkeypatch.setattr(consent.egress, "PRUNE_INTERVAL", 0.01)
         app = _app()
         app.state.model.egress_consent.prune = AsyncMock(return_value=3)
         mon = consent.EgressConsentMonitor(app)
@@ -264,7 +264,7 @@ class TestEgressConsentMonitor:
 
     async def test_run_sweep_failure_does_not_kill_loop(self, monkeypatch):
         """A failing sweep logs + retries later; events still flow."""
-        monkeypatch.setattr(consent, "PRUNE_INTERVAL", 0.01)
+        monkeypatch.setattr(consent.egress, "PRUNE_INTERVAL", 0.01)
         app = _app(egress_mode="static", static_denial=_denial())
         app.state.model.egress_consent.prune = AsyncMock(
             side_effect=RuntimeError("db locked")
@@ -295,7 +295,7 @@ class TestEgressConsentMonitor:
     async def test_run_sweep_then_event_ordering(self, monkeypatch):
         """After a sweep fires, a later event is still processed (the queue
         wait restarts after each sweep)."""
-        monkeypatch.setattr(consent, "PRUNE_INTERVAL", 0.01)
+        monkeypatch.setattr(consent.egress, "PRUNE_INTERVAL", 0.01)
         req = {
             "id": "r2",
             "workspace_id": FULL_WS,
@@ -321,7 +321,7 @@ class TestEgressConsentMonitor:
     async def test_stop_during_sweep_cancels_cleanly(self, monkeypatch):
         """Cancelling the monitor mid-sweep re-raises out of _prune and ends
         the loop via the outer CancelledError handler (no stray traceback)."""
-        monkeypatch.setattr(consent, "PRUNE_INTERVAL", 0.01)
+        monkeypatch.setattr(consent.egress, "PRUNE_INTERVAL", 0.01)
         app = _app()
         started = asyncio.Event()
         release = asyncio.Event()
@@ -360,7 +360,7 @@ class TestEgressConsentMonitor:
         """Steady event traffic must not starve the sweep: the deadline is
         wall-clock, not a queue-idle timeout (the row cap exists for exactly
         the flooding workspace that keeps the queue busy)."""
-        monkeypatch.setattr(consent, "PRUNE_INTERVAL", 0.05)
+        monkeypatch.setattr(consent.egress, "PRUNE_INTERVAL", 0.05)
         req = {
             "id": "r3",
             "workspace_id": FULL_WS,

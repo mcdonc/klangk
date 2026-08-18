@@ -23,7 +23,7 @@ import asyncio
 import logging
 import time
 
-from .model.workspaces import EGRESS_MODE_INTERACTIVE
+from ..model.workspaces import EGRESS_MODE_INTERACTIVE
 
 logger = logging.getLogger(__name__)
 
