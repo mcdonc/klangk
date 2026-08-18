@@ -321,7 +321,7 @@ def consent_decide(
     context.require_auth()
     client = context._client()
     ws = _resolve_workspace_for_consent(client, workspace)
-    token = context._state().get_token(context.server_url())
+    token = context.session_token()
     # Lazy import so the textual dep only loads on this command path.
     from .tui.consent import ConsentDeciderApp  # noqa: allow-deferred-import
 

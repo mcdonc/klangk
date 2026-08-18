@@ -15,14 +15,37 @@ import typer
 from rich.table import Table
 
 from .client import (
+    is_container_ready_event,
+    recv_until,
     get_terminal_size,
     send_ignore_closed,
-    wait_container_ready,
+    workspace_ws,
     WorkspaceNotFoundError,
 )
 from . import context
 from .sandboxcmd import _resolve_workspace_and_url
-from .transport import ws_connect
+
+
+async def recv_until_event(conn, timeout: float, on_message=None):
+    """Wait for the post-``ui_ready`` container_ready event frame.
+
+    Thin wrapper over :func:`client.recv_until` adding the optional
+    side-channel callback the ``terminal ls`` path needs (capturing
+    shared_terminals frames that arrive before the ready event).
+    """
+    if on_message is None:
+        return await recv_until(conn, is_container_ready_event, timeout)
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:  # pragma: no cover
+            raise asyncio.TimeoutError
+        raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+        msg = json.loads(raw)
+        on_message(msg)
+        if is_container_ready_event(msg):
+            return msg
 
 
 terminal_app = typer.Typer(
@@ -44,29 +67,20 @@ def terminals(
     # We need to start a terminal to get the window list, then also
     # get shared terminals. Use _ws_command to get each.
     async def _list() -> None:
-        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
-            await wait_container_ready(conn, ws.id)
-
+        async with workspace_ws(
+            sspec, token, ws.id, max_size=max_size
+        ) as conn:
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
             # Wait for container_ready, collecting shared_terminals along
             # the way (sent during ui_ready).
             shared: list[dict] = []
-            deadline = asyncio.get_event_loop().time() + 60
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    raise asyncio.TimeoutError
-                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if msg.get("type") == "shared_terminals":
-                    shared = msg.get("terminals", [])
-                if (
-                    msg.get("type") == "event"
-                    and isinstance(msg.get("event"), dict)
-                    and msg["event"].get("name") == "container_ready"
-                ):
-                    break
+
+            def _capture_shared(m):
+                if m.get("type") == "shared_terminals":
+                    shared[:] = m.get("terminals", [])
+
+            await recv_until_event(conn, 60, on_message=_capture_shared)
 
             # Start terminal to get own windows.
             # terminal_windows arrives after terminal_started — skip
@@ -77,17 +91,10 @@ def terminals(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
                 )
             )
-            own_windows: list[dict] = []
-            deadline = asyncio.get_event_loop().time() + 30
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    break
-                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if msg.get("type") == "terminal_windows":
-                    own_windows = msg.get("windows", [])
-                    break
+            msg = await recv_until(
+                conn, lambda m: m.get("type") == "terminal_windows", 30
+            )
+            own_windows: list[dict] = msg.get("windows", [])
 
             # Print results
             table = Table(title=f"Terminals in {ws.name}")
@@ -204,25 +211,13 @@ def share_terminal(
     max_size = context.ws_max_size()
 
     async def _share() -> None:
-        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
-            await wait_container_ready(conn, ws.id)
-
+        async with workspace_ws(
+            sspec, token, ws.id, max_size=max_size
+        ) as conn:
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
             # Wait for container_ready
-            deadline = asyncio.get_event_loop().time() + 60
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    raise asyncio.TimeoutError
-                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if (
-                    msg.get("type") == "event"
-                    and isinstance(msg.get("event"), dict)
-                    and msg["event"].get("name") == "container_ready"
-                ):
-                    break
+            await recv_until_event(conn, 60)
 
             # Start terminal to get window list
             cols, rows = get_terminal_size()
@@ -231,17 +226,10 @@ def share_terminal(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
                 )
             )
-            own_windows: list[dict] = []
-            deadline = asyncio.get_event_loop().time() + 30
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    break
-                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if msg.get("type") == "terminal_windows":
-                    own_windows = msg.get("windows", [])
-                    break
+            msg = await recv_until(
+                conn, lambda m: m.get("type") == "terminal_windows", 30
+            )
+            own_windows: list[dict] = msg.get("windows", [])
             match, err = _resolve_own_window(own_windows, terminal)
             if err is not None:
                 context._err.print(f"[red]{err}[/red]")
@@ -251,18 +239,12 @@ def share_terminal(
                 json.dumps({"cmd": "share_window", "window_id": match["id"]})
             )
             # Wait for shared_terminals confirmation
-            deadline = asyncio.get_event_loop().time() + 10
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    break
-                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if msg.get("type") == "shared_terminals":
-                    context._err.print(
-                        f"[green]Terminal '{terminal}' is now shared[/green]"
-                    )
-                    break
+            await recv_until(
+                conn, lambda m: m.get("type") == "shared_terminals", 10
+            )
+            context._err.print(
+                f"[green]Terminal '{terminal}' is now shared[/green]"
+            )
 
             await send_ignore_closed(
                 conn, json.dumps({"cmd": "terminal_stop"})
@@ -283,25 +265,13 @@ def unshare_terminal(
     max_size = context.ws_max_size()
 
     async def _unshare() -> None:
-        async with ws_connect(sspec, token=token, max_size=max_size) as conn:
-            await wait_container_ready(conn, ws.id)
-
+        async with workspace_ws(
+            sspec, token, ws.id, max_size=max_size
+        ) as conn:
             await conn.send(json.dumps({"cmd": "ui_ready"}))
 
             # Wait for container_ready
-            deadline = asyncio.get_event_loop().time() + 60
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    raise asyncio.TimeoutError
-                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if (
-                    msg.get("type") == "event"
-                    and isinstance(msg.get("event"), dict)
-                    and msg["event"].get("name") == "container_ready"
-                ):
-                    break
+            await recv_until_event(conn, 60)
 
             # Start terminal to get window list
             cols, rows = get_terminal_size()
@@ -310,17 +280,10 @@ def unshare_terminal(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
                 )
             )
-            own_windows: list[dict] = []
-            deadline = asyncio.get_event_loop().time() + 30
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    break
-                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if msg.get("type") == "terminal_windows":
-                    own_windows = msg.get("windows", [])
-                    break
+            msg = await recv_until(
+                conn, lambda m: m.get("type") == "terminal_windows", 30
+            )
+            own_windows: list[dict] = msg.get("windows", [])
 
             match, err = _resolve_own_window(own_windows, terminal)
             if err is not None:
@@ -331,19 +294,12 @@ def unshare_terminal(
                 json.dumps({"cmd": "unshare_window", "window_id": match["id"]})
             )
             # Wait for shared_terminals confirmation
-            deadline = asyncio.get_event_loop().time() + 10
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    break
-                raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if msg.get("type") == "shared_terminals":
-                    context._err.print(
-                        f"[green]Terminal '{terminal}' is no longer"
-                        " shared[/green]"
-                    )
-                    break
+            await recv_until(
+                conn, lambda m: m.get("type") == "shared_terminals", 10
+            )
+            context._err.print(
+                f"[green]Terminal '{terminal}' is no longer shared[/green]"
+            )
 
             await send_ignore_closed(
                 conn, json.dumps({"cmd": "terminal_stop"})

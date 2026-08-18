@@ -19,7 +19,6 @@ from .client import (
     drain_stdin,
     reset_terminal,
     ws_shell,
-    WorkspaceNotFoundError,
 )
 from . import context
 from .shell_popup import (
@@ -171,7 +170,7 @@ def shell(
         forward_agent = None
     if not isinstance(no_consent_popup, bool):
         no_consent_popup = False
-    token = context._state().get_token(context.server_url())
+    token = context.session_token()
     if not token:  # pragma: no cover
         context._err.print(
             "[red]Not logged in[/red] — run [bold]klangk login[/bold] first."
@@ -182,11 +181,7 @@ def shell(
 
     # Resolve workspace
     if workspace:
-        try:
-            ws = client.resolve_workspace(workspace)
-        except WorkspaceNotFoundError:  # pragma: no cover
-            context._err.print(f"[red]No workspace named[/red] '{workspace}'")
-            raise typer.Exit(code=1) from None
+        ws = context.resolve_or_exit(client, workspace)
     else:
         workspaces = client.list_workspaces(all_pages=True)
         if not workspaces:

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import typer
 
-from .client import WorkspaceNotFoundError
 from . import context
 from .workspaces import _build_settings, _parse_env_list, _prompt, _SENTINEL
 from .mount import validate_allowed_domain_spec, validate_mount_spec
@@ -82,11 +81,7 @@ def edit(
     """
     context.require_auth()
     client = context._client()
-    try:
-        ws = client.resolve_workspace(workspace)
-    except WorkspaceNotFoundError:
-        context._err.print(f"[red]No workspace named[/red] '{workspace}'")
-        raise typer.Exit(code=1) from None
+    ws = context.resolve_or_exit(client, workspace)
 
     has_flags = (
         name is not None

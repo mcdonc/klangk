@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import asyncio
+from contextlib import asynccontextmanager
 import base64
 import io
 import json
@@ -807,56 +808,35 @@ class KlangkClient:
     @staticmethod
     async def _drain_until_ready(conn, timeout: float = 30.0) -> None:
         """Read frames until the post-``ui_ready`` container_ready event."""
-        loop = asyncio.get_event_loop()
-        end = loop.time() + timeout
-        while True:
-            remaining = end - loop.time()
-            if remaining <= 0:  # pragma: no cover
-                raise asyncio.TimeoutError
-            raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-            msg = json.loads(raw)
-            if (
-                msg.get("type") == "event"
-                and isinstance(msg.get("event"), dict)
-                and msg["event"].get("name") == "container_ready"
-            ):
-                return
+        await recv_until(conn, is_container_ready_event, timeout)
 
     @staticmethod
     async def _recv_windows(conn, timeout: float = 30.0) -> list[dict]:
         """Read frames until a ``terminal_windows`` frame arrives."""
-        loop = asyncio.get_event_loop()
-        end = loop.time() + timeout
-        while True:
-            remaining = end - loop.time()
-            if remaining <= 0:  # pragma: no cover
-                raise asyncio.TimeoutError
-            raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-            msg = json.loads(raw)
-            if msg.get("type") == "terminal_windows":
-                return msg.get("windows") or []
-            if msg.get("type") == "error":
-                # Surface server errors immediately instead of looping
-                # until the 30s timeout (#1966 review).
-                raise ConnectionError(msg.get("message", "terminal error"))
+
+        def _match(m):
+            # Surface server errors immediately instead of looping
+            # until the 30s timeout (#1966 review).
+            if m.get("type") == "error":
+                raise ConnectionError(m.get("message", "terminal error"))
+            return m.get("type") == "terminal_windows"
+
+        msg = await recv_until(conn, _match, timeout)
+        return msg.get("windows") or []
 
     @staticmethod
     async def _recv_shared_terminals(
         conn, timeout: float = 30.0
     ) -> list[dict]:
         """Read frames until a ``shared_terminals`` frame arrives."""
-        loop = asyncio.get_event_loop()
-        end = loop.time() + timeout
-        while True:
-            remaining = end - loop.time()
-            if remaining <= 0:  # pragma: no cover
-                raise asyncio.TimeoutError
-            raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
-            msg = json.loads(raw)
-            if msg.get("type") == "shared_terminals":
-                return msg.get("terminals") or []
-            if msg.get("type") == "error":
-                raise ConnectionError(msg.get("message", "terminal error"))
+
+        def _match(m):
+            if m.get("type") == "error":
+                raise ConnectionError(m.get("message", "terminal error"))
+            return m.get("type") == "shared_terminals"
+
+        msg = await recv_until(conn, _match, timeout)
+        return msg.get("terminals") or []
 
     def export_workspace(
         self,
@@ -960,6 +940,48 @@ class AuthError(Exception):
 
 
 # --- Shell session ---
+
+
+async def recv_until(conn, predicate, timeout: float = 30.0):
+    """Receive frames until *predicate(msg)* is true; return the msg.
+
+    Shared bounded receive loop for the WebSocket command paths (#2546).
+    Raises asyncio.TimeoutError when the deadline passes first. Callers
+    that must surface server ``error`` frames immediately add the check
+    to their predicate and raise from there.
+    """
+    loop = asyncio.get_event_loop()
+    end = loop.time() + timeout
+    while True:
+        remaining = end - loop.time()
+        if remaining <= 0:  # pragma: no cover
+            raise asyncio.TimeoutError
+        raw = await asyncio.wait_for(conn.recv(), timeout=remaining)
+        msg = json.loads(raw)
+        if predicate(msg):
+            return msg
+
+
+def is_container_ready_event(msg) -> bool:
+    """True for the post-``ui_ready`` container_ready event frame."""
+    return (
+        msg.get("type") == "event"
+        and isinstance(msg.get("event"), dict)
+        and msg["event"].get("name") == "container_ready"
+    )
+
+
+@asynccontextmanager
+async def workspace_ws(server_spec, token, workspace_id, max_size=None):
+    """Connected workspace WebSocket, ready for commands.
+
+    Connects, sends ``workspace_connect``, and waits for
+    ``container_ready`` — the shared preamble of every ws command path
+    (#2546). Yields the connected socket.
+    """
+    async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
+        await wait_container_ready(ws, workspace_id)
+        yield ws
 
 
 async def send_ignore_closed(ws, msg: str) -> None:
@@ -1837,8 +1859,9 @@ async def ws_exec(
     terminal -- #1041); ``klangk exec --raw`` and the rsync transport
     pass False for raw argv.
     """
-    async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
-        await wait_container_ready(ws, workspace_id)
+    async with workspace_ws(
+        server_spec, token, workspace_id, max_size=max_size
+    ) as ws:
         return await exec_on_ws(
             ws,
             command,
@@ -1861,8 +1884,9 @@ async def ws_exec_piped(
     Returns ``(exit_code, stdout_text)``.  Does not touch real
     stdin/stdout — designed for programmatic use (file copy, setup).
     """
-    async with ws_connect(server_spec, token=token, max_size=max_size) as ws:
-        await wait_container_ready(ws, workspace_id)
+    async with workspace_ws(
+        server_spec, token, workspace_id, max_size=max_size
+    ) as ws:
         stdin_buf = io.BytesIO(stdin_data) if stdin_data else None
         stdout_buf = io.BytesIO()
         exit_code = await exec_on_ws(
