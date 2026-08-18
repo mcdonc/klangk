@@ -29,7 +29,7 @@ from .ports import (
     DEFAULT_PORTS_PER_WORKSPACE,
     PortAllocator,
 )
-from .sidecar import NetworkSidecarMixin
+from .sidecar import NetworkSidecarMixin, container_ident
 from .state import ContainerState
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,22 @@ def _reap_sort_key(c: dict) -> int:
     return (
         0 if (c.get("Labels") or {}).get("klangk.role") == "workspace" else 1
     )
+
+
+async def safe_remove(podman_inst, container_id: str, *, what: str) -> bool:
+    """Remove a container, 404-tolerant, logging failures as warnings.
+
+    The shared tail of every reap/sweep path (#2548):
+    ``remove_container`` itself is 404-tolerant; any other error is
+    logged with *what* context and swallowed so one bad container never
+    aborts a sweep. Returns True on success.
+    """
+    try:
+        await podman_inst.remove_container(container_id)
+        return True
+    except podman.PodmanError as e:
+        logger.warning("Failed to reap %s %s: %s", what, container_id[:12], e)
+        return False
 
 
 class ContainerRegistry(NetworkSidecarMixin):
@@ -581,6 +597,15 @@ class ContainerRegistry(NetworkSidecarMixin):
             setup_state=setup_state,
         )
 
+    def _ws_setting(self, workspace_settings: dict | None):
+        """Wrap a workspace-settings dict for the ``ws_settings`` resolvers.
+
+        The resolvers (#864) take ``{"settings": ...}``; every per-workspace
+        limit below resolves with the same wrapper shape, so build it once
+        (#2548).
+        """
+        return {"settings": workspace_settings}
+
     def _resolve_cpu_limit(
         self, workspace_settings: dict | None
     ) -> float | None:
@@ -592,7 +617,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         as-is with no clamping.
         """
         return ws_settings.resolve_cpu_limit(
-            {"settings": workspace_settings},
+            self._ws_setting(workspace_settings),
             self.app.state.settings.container_cpu_limit,
         )
 
@@ -601,7 +626,7 @@ class ContainerRegistry(NetworkSidecarMixin):
     ) -> str | None:
         """Per-workspace memory limit (``--memory``), #864 / #34."""
         return ws_settings.resolve_memory_limit(
-            {"settings": workspace_settings},
+            self._ws_setting(workspace_settings),
             self.app.state.settings.container_memory_limit,
         )
 
@@ -610,7 +635,7 @@ class ContainerRegistry(NetworkSidecarMixin):
     ) -> int | None:
         """Per-workspace PIDs limit (``--pids-limit``), #864 / #34."""
         return ws_settings.resolve_pids_limit(
-            {"settings": workspace_settings},
+            self._ws_setting(workspace_settings),
             self.app.state.settings.container_pids_limit,
         )
 
@@ -622,7 +647,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         explicit ``size=`` option (podman sizes it at half of RAM).
         """
         return ws_settings.resolve_tmp_size(
-            {"settings": workspace_settings},
+            self._ws_setting(workspace_settings),
             self.app.state.settings.container_tmp_size,
         )
 
@@ -1078,7 +1103,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             f"klangk.instance={self.app.state.util.instance_id()}"
         )
         for c in stale:
-            stale_id = c.get("Id") or c.get("ID", "")
+            stale_id = container_ident(c)
             if stale_id == cid:
                 continue
             info = await podman.inspect_container(stale_id)
@@ -1728,16 +1753,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         # or every sidecar is skipped this pass (#2476 — see _reap_sort_key).
         containers.sort(key=_reap_sort_key)
         for c in containers:
-            cid = c.get("Id") or c.get("ID", "")
+            cid = container_ident(c)
             if not cid:
                 continue
             logger.info("Reaping leftover container %s on startup", cid[:12])
-            try:
-                await self.app.state.podman.remove_container(cid)
-            except podman.PodmanError as e:
-                logger.warning(
-                    "Failed to reap leftover container %s: %s", cid[:12], e
-                )
+            await safe_remove(
+                self.app.state.podman, cid, what="leftover container"
+            )
 
     async def reap_dead_owner_containers(self) -> None:
         """Reap managed containers whose owning klangkd is no longer running.
@@ -1793,7 +1815,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # or every sidecar is skipped this pass (#2476 — see _reap_sort_key).
         containers.sort(key=_reap_sort_key)
         for c in containers:
-            cid = c.get("Id") or c.get("ID", "")
+            cid = container_ident(c)
             if not cid:
                 continue
             labels = c.get("Labels") or {}
@@ -1813,14 +1835,9 @@ class ContainerRegistry(NetworkSidecarMixin):
                 cid[:12],
                 owner_pid,
             )
-            try:
-                await self.app.state.podman.remove_container(cid)
-            except podman.PodmanError as e:
-                logger.warning(
-                    "Failed to reap dead-owner container %s: %s",
-                    cid[:12],
-                    e,
-                )
+            await safe_remove(
+                self.app.state.podman, cid, what="dead-owner container"
+            )
 
     # --- Shutdown ---
 
@@ -1846,7 +1863,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 f"klangk.instance={self.app.state.util.instance_id()}"
             )
             for c in containers:
-                cid = c.get("Id") or c.get("ID", "")
+                cid = container_ident(c)
                 if cid not in tracked_ids:
                     logger.info(
                         "Removing orphaned klangk container %s",

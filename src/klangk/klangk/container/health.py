@@ -200,6 +200,31 @@ class HealthMonitor:
         if new_status != old_status:
             self._broadcast(state, new_status, state.health_message)
 
+    def _emit(
+        self,
+        state: ContainerState,
+        *,
+        healthy: bool,
+        message: str | None,
+        running: bool,
+    ) -> None:
+        """Single emit point for ``service_health`` frames (#2548).
+
+        Both the transition (:meth:`_broadcast`) and death
+        (:meth:`broadcast_death`) paths bump ``health_seq`` and fan out
+        the same payload shape; keeping one emit means the #1175 contract
+        fields can never diverge between them again.
+        """
+        state.health_seq += 1
+        self.connections.notify_service_health(
+            state.workspace_id,
+            healthy=healthy,
+            message=message,
+            running=running,
+            health_checked_at=state.health_checked_at,
+            seq=state.health_seq,
+        )
+
     def _broadcast(
         self,
         state: ContainerState,
@@ -221,14 +246,11 @@ class HealthMonitor:
         ``seq`` (#1175 item 4) bumped on every emit so a reconnecting
         consumer can detect a missed transition.
         """
-        state.health_seq += 1
-        self.connections.notify_service_health(
-            state.workspace_id,
+        self._emit(
+            state,
             healthy=status == "healthy",
             message=message,
             running=True,
-            health_checked_at=state.health_checked_at,
-            seq=state.health_seq,
         )
 
     def broadcast_death(self, state: ContainerState) -> None:
@@ -245,14 +267,11 @@ class HealthMonitor:
         and ``healthy=False`` *before* the state is dropped, so a single
         stream is a single source of truth.
         """
-        state.health_seq += 1
-        self.connections.notify_service_health(
-            state.workspace_id,
+        self._emit(
+            state,
             healthy=False,
             message=None,
             running=False,
-            health_checked_at=state.health_checked_at,
-            seq=state.health_seq,
         )
 
     async def run_health_loop(self) -> None:
