@@ -91,6 +91,41 @@ def sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
     return f"ORDER BY {p}{col} {direction}, {p}id {direction}"
 
 
+# Shared workspace-row SELECT fragments + mapper (#2551): the full-row
+# lookups select the same columns and build the same dict (JSON-blob
+# fields decoded); one definition keeps them from drifting.
+_WORKSPACE_FULL_COLUMNS = (
+    "SELECT id, user_id, name, container_id, num_ports, image,"
+    " service_command, auto_start, setup_state, health_check,"
+    " mounts, env, allowed_domains, rejected_domains, settings, egress_mode"
+)
+
+
+def _workspace_row_to_dict(row, *, auto_start=True) -> dict:
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "name": row["name"],
+        "container_id": row["container_id"],
+        "num_ports": row["num_ports"],
+        "image": row["image"],
+        "service_command": row["service_command"],
+        "auto_start": bool(row["auto_start"]) if auto_start else True,
+        "setup_state": row["setup_state"],
+        "health_check": row["health_check"],
+        "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
+        "env": json.loads(row["env"]) if row["env"] else None,
+        "allowed_domains": json.loads(row["allowed_domains"])
+        if row["allowed_domains"]
+        else None,
+        "rejected_domains": json.loads(row["rejected_domains"])
+        if row["rejected_domains"]
+        else None,
+        "settings": json.loads(row["settings"]) if row["settings"] else None,
+        "egress_mode": row["egress_mode"],
+    }
+
+
 class WorkspacesModel:
     """Workspace CRUD/members/listings, resolved through ``app_state.db``.
 
@@ -527,82 +562,29 @@ class WorkspacesModel:
         async with self.app.state.db.transaction() as db:
             if user_id is not None:
                 cursor = await db.execute(
-                    "SELECT id, user_id, name, container_id, num_ports, image,"
-                    " service_command, auto_start, setup_state, health_check,"
-                    " mounts, env, allowed_domains, rejected_domains, settings, egress_mode"
-                    " FROM workspaces WHERE id = ? AND user_id = ?",
+                    _WORKSPACE_FULL_COLUMNS
+                    + " FROM workspaces WHERE id = ? AND user_id = ?",
                     (workspace_id, user_id),
                 )
             else:
                 cursor = await db.execute(
-                    "SELECT id, user_id, name, container_id, num_ports, image,"
-                    " service_command, auto_start, setup_state, health_check,"
-                    " mounts, env, allowed_domains, rejected_domains, settings, egress_mode"
-                    " FROM workspaces WHERE id = ?",
+                    _WORKSPACE_FULL_COLUMNS + " FROM workspaces WHERE id = ?",
                     (workspace_id,),
                 )
             row = await cursor.fetchone()
             if row is None:
                 return None
-            return {
-                "id": row["id"],
-                "user_id": row["user_id"],
-                "name": row["name"],
-                "container_id": row["container_id"],
-                "num_ports": row["num_ports"],
-                "image": row["image"],
-                "service_command": row["service_command"],
-                "auto_start": bool(row["auto_start"]),
-                "setup_state": row["setup_state"],
-                "health_check": row["health_check"],
-                "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
-                "env": json.loads(row["env"]) if row["env"] else None,
-                "allowed_domains": json.loads(row["allowed_domains"])
-                if row["allowed_domains"]
-                else None,
-                "rejected_domains": json.loads(row["rejected_domains"])
-                if row["rejected_domains"]
-                else None,
-                "settings": json.loads(row["settings"])
-                if row["settings"]
-                else None,
-                "egress_mode": row["egress_mode"],
-            }
+            return _workspace_row_to_dict(row)
 
     async def get_workspace_by_id(self, workspace_id: str) -> dict | None:
         """Get a workspace by ID without access control (for admin use)."""
         row = await self.app.state.db.fetchone(
-            "SELECT id, user_id, name, container_id, num_ports, image,"
-            " service_command, setup_state, health_check, mounts, env,"
-            " allowed_domains, rejected_domains, settings, egress_mode"
-            " FROM workspaces WHERE id = ?",
+            _WORKSPACE_FULL_COLUMNS + " FROM workspaces WHERE id = ?",
             (workspace_id,),
         )
         if row is None:
             return None
-        return {
-            "id": row["id"],
-            "user_id": row["user_id"],
-            "name": row["name"],
-            "container_id": row["container_id"],
-            "num_ports": row["num_ports"],
-            "image": row["image"],
-            "service_command": row["service_command"],
-            "setup_state": row["setup_state"],
-            "health_check": row["health_check"],
-            "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
-            "env": json.loads(row["env"]) if row["env"] else None,
-            "allowed_domains": json.loads(row["allowed_domains"])
-            if row["allowed_domains"]
-            else None,
-            "rejected_domains": json.loads(row["rejected_domains"])
-            if row["rejected_domains"]
-            else None,
-            "settings": json.loads(row["settings"])
-            if row["settings"]
-            else None,
-            "egress_mode": row["egress_mode"],
-        }
+        return _workspace_row_to_dict(row)
 
     async def existing_workspace_ids(self) -> set[str]:
         """Return the IDs of every workspace row (for orphan-file sweeps).
@@ -1153,38 +1135,13 @@ class WorkspacesModel:
         """List all workspaces with auto_start enabled."""
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
-                "SELECT id, user_id, name, container_id, num_ports, image,"
-                " service_command, auto_start, setup_state, health_check,"
-                " mounts, env, allowed_domains, rejected_domains, settings, egress_mode"
-                " FROM workspaces WHERE auto_start = 1",
+                _WORKSPACE_FULL_COLUMNS
+                + " FROM workspaces WHERE auto_start = 1",
             )
             rows = await cursor.fetchall()
+            # auto_start is pinned True by the WHERE clause; the mapper's
+            # bool() would also be True, but pass the explicit form so the
+            # query's intent stays readable at the call site.
             return [
-                {
-                    "id": row["id"],
-                    "user_id": row["user_id"],
-                    "name": row["name"],
-                    "container_id": row["container_id"],
-                    "num_ports": row["num_ports"],
-                    "image": row["image"],
-                    "service_command": row["service_command"],
-                    "auto_start": True,
-                    "setup_state": row["setup_state"],
-                    "health_check": row["health_check"],
-                    "mounts": json.loads(row["mounts"])
-                    if row["mounts"]
-                    else None,
-                    "env": json.loads(row["env"]) if row["env"] else None,
-                    "allowed_domains": json.loads(row["allowed_domains"])
-                    if row["allowed_domains"]
-                    else None,
-                    "rejected_domains": json.loads(row["rejected_domains"])
-                    if row["rejected_domains"]
-                    else None,
-                    "settings": json.loads(row["settings"])
-                    if row["settings"]
-                    else None,
-                    "egress_mode": row["egress_mode"],
-                }
-                for row in rows
+                _workspace_row_to_dict(row, auto_start=True) for row in rows
             ]

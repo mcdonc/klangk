@@ -21,6 +21,23 @@ ADMIN_INVITATION_SORT_COLUMNS = {
 }
 
 
+# Shared invitation-row SELECT + mapper (#2551).
+_INVITATION_COLUMNS = (
+    "SELECT id, email, invited_by, status, created_at, accepted_at"
+)
+
+
+def _invitation_row_to_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "invited_by": row["invited_by"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "accepted_at": row["accepted_at"],
+    }
+
+
 class InvitationsModel:
     """Invitation lifecycle, resolved through ``app_state.db``.
 
@@ -61,38 +78,23 @@ class InvitationsModel:
     async def get_invitation(self, invitation_id: str) -> dict | None:
         """Get an invitation by ID."""
         row = await self.app.state.db.fetchone(
-            "SELECT id, email, invited_by, status, created_at, accepted_at"
-            " FROM invitations WHERE id = ?",
+            _INVITATION_COLUMNS + " FROM invitations WHERE id = ?",
             (invitation_id,),
         )
         if row is None:
             return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "invited_by": row["invited_by"],
-            "status": row["status"],
-            "created_at": row["created_at"],
-            "accepted_at": row["accepted_at"],
-        }
+        return _invitation_row_to_dict(row)
 
     async def get_pending_invitation_by_email(self, email: str) -> dict | None:
         """Get a pending invitation for the given email."""
         row = await self.app.state.db.fetchone(
-            "SELECT id, email, invited_by, status, created_at, accepted_at"
-            " FROM invitations WHERE email = ? AND status = 'pending'",
+            _INVITATION_COLUMNS
+            + " FROM invitations WHERE email = ? AND status = 'pending'",
             (email,),
         )
         if row is None:
             return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "invited_by": row["invited_by"],
-            "status": row["status"],
-            "created_at": row["created_at"],
-            "accepted_at": row["accepted_at"],
-        }
+        return _invitation_row_to_dict(row)
 
     async def list_invitations(
         self,
