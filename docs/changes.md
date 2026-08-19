@@ -41,6 +41,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **FIPS 140-3 workspace image (#2570, #2577).** New
+  `src/containers/workspace/Dockerfile.fips` variant builds on the
+  workspace image with the CMVP-validated OpenSSL 3.1.2 FIPS provider
+  (certificate #4985): system OpenSSL, python, and Node.js (including
+  the pi coding agent) route through the validated module, non-approved
+  algorithms fail closed, and the build verifies activation
+  automatically. Docs: [FIPS 140-3 Mode](../deployment/fips.md).
+
 - **`KLANGKD_EGRESS_CONSENT_RETENTION_DAYS` / `KLANGKD_EGRESS_CONSENT_ROW_CAP`
   (#2303).** The `egress_consent` table is now bounded on long-lived deploys:
   a retention window (default 30 days; `0` disables) deletes terminal rows

@@ -1,0 +1,148 @@
+# FIPS 140-3 variant of the workspace image (#2570).
+#
+# Builds on the regular workspace image (Dockerfile) and layers the
+# OpenSSL FIPS provider on top:
+#
+#   stage 1  — compile OpenSSL 3.1.2 with `enable-fips` and extract
+#               ONLY fips.so (the CMVP-validated module, certificate
+#               #4985, active until 2030-03-10).
+#   stage 2  — workspace image + fips.so in the multiarch modules dir
+#               (a bare `-provider fips` cannot find it elsewhere),
+#               fipsinstall run by the system 3.5.x CLI, an activation
+#               config (fips + base, no default), and OPENSSL_CONF
+#               exported image-wide.
+#
+# The validated 3.1.2 module is forward-compatible with newer libcrypto
+# (the validation announcement covers "3.0 ... future 3.5"), so the
+# distro libcrypto stays in place and distro python3 keeps working —
+# no whole-set swap, no python rebuild. Verified on trixie (libcrypto
+# 3.5.6): see the test notes on #2570.
+#
+# Caveat: things that never route through libcrypto are unaffected by
+# the provider switch — CPython's built-in `_md5` fallback for
+# hashlib.md5, and any statically-linked crypto in user tooling. Node
+# IS covered: its bundled libcrypto loads the validated fips.so via the
+# `nodejs_conf` config section + OPENSSL_MODULES (verified: node
+# createHash('md5') is rejected, TLS/sha/pbkdf2 route through the
+# provider, no node rebuild needed — #2577). The FIPS posture applies
+# to everything that dynamically links libcrypto.so.3 (distro python's
+# `_hashlib`/`_ssl`, curl, git over https, the openssl CLI) plus node's
+# bundled libcrypto via the provider config.
+
+# Base: the full workspace image — pi, uv, process-compose, features,
+# entrypoint, and node all live there (Dockerfile.base alone has none of
+# those, and node is required by the build-time proof below). Default is
+# the locally-built image from the devenv task (klangk:build-workspace-
+# image → `klangk-workspace`); override with a published GHCR tag
+# (ghcr.io/mcdonc/klangk/klangk-workspace:<calver>-<commit>) for CI —
+# the registry never carries a `:latest` tag.
+ARG WORKSPACE_IMAGE=klangk-workspace:latest
+
+# --- Stage 1: build the validated FIPS module -------------------------------
+FROM debian:trixie-slim AS fips-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential perl wget ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+ARG OPENSSL_FIPS_VERSION=3.1.2
+ARG OPENSSL_FIPS_SHA256=a0ce69b8b97ea6a35b96875235aa453b966ba3cba8af2de23657d8b6767d6539
+WORKDIR /src
+RUN wget -q "https://www.openssl.org/source/openssl-${OPENSSL_FIPS_VERSION}.tar.gz" && \
+    echo "${OPENSSL_FIPS_SHA256}  openssl-${OPENSSL_FIPS_VERSION}.tar.gz" | sha256sum -c - && \
+    tar xzf "openssl-${OPENSSL_FIPS_VERSION}.tar.gz"
+WORKDIR "/src/openssl-${OPENSSL_FIPS_VERSION}"
+# Only the module is needed downstream; libcrypto/libssl from this build
+# are deliberately NOT installed into the final image.
+RUN ./Configure enable-fips --prefix=/opt/ossl-fips --libdir=lib && \
+    make -j"$(nproc)" && \
+    make install_fips
+
+# --- Stage 2: workspace image + FIPS activation ------------------------------
+FROM $WORKSPACE_IMAGE
+
+# amd64-only today: the module path and OPENSSL_MODULES below hardcode
+# the x86_64 multiarch dir. On other architectures OPENSSL_MODULES would
+# shadow the distro base.so in the arch dir — fail the build loudly
+# instead of half-working.
+RUN test "$(dpkg --print-architecture)" = "amd64"
+
+# The `openssl` CLI (needed for fipsinstall at build time and for
+# runtime verification probes) is not in the base workspace image;
+# libcrypto.so.3 already is (dependency of python3/curl).
+# chown /var/log/apt: apt-created logs land root:adm, which causes crun
+# fchownat errors under --userns=keep-id — same fix every apt layer in
+# Dockerfile.base applies.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && \
+    rm -rf /var/lib/apt/lists/* && \
+    chown -R root:root /var/log/apt
+
+# Multiarch dir: the default provider search path — anywhere else needs
+# OPENSSL_MODULES set for explicit loads.
+COPY --from=fips-builder /opt/ossl-fips/lib/ossl-modules/fips.so \
+     /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so
+
+# Module MAC + install status, computed by the system (3.5.x) CLI.
+# The 3.5.x fipsinstall defaults to -self_test_onload: no per-boot
+# status is written, the KAT/PCT suite re-runs on every module load,
+# and the config carries no machine-specific data (README-FIPS's
+# do-not-copy-across-machines warning doesn't apply — the image ships
+# one config for one module everywhere).
+RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
+      -out /etc/ssl/fipsmodule.cnf
+
+# Activation config: fips + base, no default provider. The include
+# references the fipsinstall-generated section — redefining [fips_sect]
+# here would clobber the module MAC and silently fall back to default.
+# nodejs_conf alias: node ignores `openssl_conf` and reads only the
+# section named `nodejs_conf` (BUILDING.md, --openssl-conf-name); both
+# keys point at the same section so one config serves system OpenSSL
+# and node's bundled libcrypto.
+#
+# The config is written directly to the STOCK path (/etc/ssl/openssl.cnf,
+# replacing the distro file) so that environment-less lookups —
+# sudoers env_reset strips OPENSSL_CONF for non-login `sudo <cmd>`
+# (trixie's PAM stack has no pam_env, and profile.d is not sourced
+# there) — still activate FIPS instead of silently falling back to
+# the default provider.
+RUN printf '%s\n' \
+      'openssl_conf = openssl_init' \
+      'nodejs_conf = openssl_init' \
+      '' \
+      '.include /etc/ssl/fipsmodule.cnf' \
+      '' \
+      '[openssl_init]' \
+      'providers = provider_sect' \
+      '' \
+      '[provider_sect]' \
+      'fips = fips_sect' \
+      'base = base_sect' \
+      '' \
+      '[base_sect]' \
+      'activate = 1' \
+      > /etc/ssl/openssl.cnf
+
+# Image-wide activation. Docker/podman ENV reaches the entrypoint and
+# every exec; the profile.d drop-in additionally covers login shells
+# reached through sudo -i / su (which reset the environment).
+# OPENSSL_MODULES is required for node: its bundled (statically linked)
+# libcrypto has a build-time modules dir baked in, so it cannot find
+# fips.so in the distro multiarch dir without it. Harmless for system
+# OpenSSL (same directory).
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf \
+    OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules
+RUN printf '%s\n' \
+      'export OPENSSL_CONF=/etc/ssl/openssl.cnf' \
+      'export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules' \
+      > /etc/profile.d/openssl-fips.sh
+
+# Build-time proof that the provider actually activates: fail the build
+# if md5 is fetchable or the fips provider is missing. Covers the
+# system CLI and node (nodejs_conf section + OPENSSL_MODULES), plus
+# the env-stripped case (env -i simulates sudo env_reset — the stock
+# config path must keep FIPS active with no environment at all).
+RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
+    ! echo hello | openssl md5 > /dev/null 2>&1 && \
+    ! node -e "require('crypto').createHash('md5').update('x').digest('hex')" \
+      > /dev/null 2>&1 && \
+    env -i /usr/bin/openssl list -providers \
+      | grep -q 'OpenSSL FIPS Provider' && \
+    ! env -i /usr/bin/sh -c 'echo hello | openssl md5' > /dev/null 2>&1

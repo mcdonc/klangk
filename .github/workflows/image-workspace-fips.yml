@@ -1,0 +1,95 @@
+name: FIPS Workspace Image Check
+
+# Build the FIPS variant of the workspace image (src/containers/workspace/
+# Dockerfile.fips) and run its build-time proof on every change, plus a
+# weekly schedule to catch rot when the base image, the trixie openssl CLI,
+# or the NodeSource node changes behavior under us.
+#
+# The Dockerfile's final layers fail the build if the validated FIPS
+# provider does not activate, if CLI md5 is fetchable, if node can compute
+# md5, or if an environment-stripped shell (sudo env_reset simulation)
+# falls back to the default provider — so a green build here IS the
+# compliance check (#2570, #2577).
+#
+# Does not publish anything; the image is throwaway per run.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/containers/workspace/Dockerfile.fips"
+      - "src/containers/workspace/Dockerfile"
+      - "src/containers/workspace/Dockerfile.base"
+      - ".github/workflows/image-workspace-fips.yml"
+  schedule:
+    # Mondays 07:00 UTC (after the trivy scan slot)
+    - cron: "0 7 * *  1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # Stage 1 (fips-builder) compiles OpenSSL 3.1.2 (~2 min); stage 2
+      # layers onto the regular workspace image, which the devenv task
+      # builds. The podman build itself enforces the FIPS proof layers.
+      - name: Build workspace image
+        uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-workspace-image
+
+      - name: Build FIPS image (proof runs as final layers)
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- podman build \
+            -f src/containers/workspace/Dockerfile.fips \
+            -t klangk-workspace-fips:ci \
+            src/containers/workspace
+
+      - name: Runtime spot-check
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          set -euxo pipefail
+          devenv shell -- podman run -i --rm --entrypoint /bin/bash \
+            klangk-workspace-fips:ci -s <<'EOS'
+          set -euxo pipefail
+          # Providers: fips + base active, default absent.
+          openssl list -providers | tee /dev/stderr \
+            | grep -q "OpenSSL FIPS Provider"
+          if openssl list -providers | grep -q "OpenSSL Default Provider"; then
+            echo "FAIL: default provider active" >&2
+            exit 1
+          fi
+          # Python provider-path probe (the _md5 fallback caveat is
+          # documented; _hashlib is the provider-gated path).
+          python3 - <<'PY'
+          import _hashlib
+          import hashlib
+          try:
+              _hashlib.openssl_md5(b"x")
+              raise SystemExit("FAIL: openssl_md5 not blocked")
+          except ValueError:
+              pass
+          hashlib.pbkdf2_hmac("sha512", b"pw", b"s" * 4, 1000)
+          print("python probes ok")
+          PY
+          # Node probe, no flags (image ENV only).
+          node -e "try{require('crypto').createHash('md5').update('x').digest('hex');console.error('FAIL: node md5 not blocked');process.exit(1)}catch{}"
+          # Env-stripped probe (sudo env_reset simulation): the stock
+          # /etc/ssl/openssl.cnf must keep FIPS active with no env at all.
+          if env -i /usr/bin/sh -c "echo x | openssl md5" >/dev/null 2>&1; then
+            echo "FAIL: env-stripped md5 succeeded" >&2
+            exit 1
+          fi
+          echo FIPS-RUNTIME-OK
+          EOS
