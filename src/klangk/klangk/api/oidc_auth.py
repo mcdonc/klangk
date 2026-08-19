@@ -106,6 +106,7 @@ async def oidc_login(
         key=f"oidc_{provider_id}",
         value=cookie_value,
         httponly=True,
+        secure=True,
         max_age=600,
         samesite="lax",
         path="/",
