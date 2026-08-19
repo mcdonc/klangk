@@ -157,6 +157,26 @@ ADMIN_USER_SORT_COLUMNS = {
 }
 
 
+# Shared user-row SELECT fragment and mapper (#2551): every user lookup
+# selects the same columns and builds the same dict; one definition keeps
+# new columns from drifting between lookups.
+_USER_COLUMNS = (
+    "SELECT id, email, password_hash, verified, provider, external_id, handle"
+)
+
+
+def _user_row_to_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "password_hash": row["password_hash"],
+        "verified": bool(row["verified"]),
+        "provider": row["provider"],
+        "external_id": row["external_id"],
+        "handle": row["handle"],
+    }
+
+
 class UsersModel:
     """User/group/handle operations, resolved through ``app_state.db``.
 
@@ -205,37 +225,15 @@ class UsersModel:
             raise ValueError(f"'{handle}' is reserved for the workspace agent")
 
     async def unique_handle(self, db, base: str) -> str:
-        """Return *base* if available, else append -2, -3, … until unique.
+        """Return a unique handle on the passed connection.
 
-        The live agent handle is always treated as taken (#1160) — even if
-        the agent row hasn't been seeded yet — so a derived handle never
-        collides with ``/home/<agent_handle>``.
-
-        Resolves the agent handle on the *passed* connection (not via the
-        cached :meth:`agent_handle`, which opens a fresh connection): this
-        runs during DB migration where the ``handle`` column's schema change
-        is uncommitted on *db* but invisible to a new connection.
+        Thin delegation to the module-level :func:`unique_handle` (the
+        single implementation — the copies had drifted only in a
+        docstring cross-reference): both the model path and the DB-migration
+        path resolve the agent handle on the *passed* connection for the
+        same uncommitted-schema reason (see that function's docstring).
         """
-        cursor = await db.execute(
-            "SELECT handle FROM users WHERE id = ?", (AGENT_USER_ID,)
-        )
-        row = await cursor.fetchone()
-        agent = row[0] if row and row[0] else _DEFAULT_AGENT_HANDLE
-        # Try base, then base-2, base-3, …; skip the agent handle each time.
-        candidate = base
-        i = 1
-        while i < 10000:
-            if candidate != agent:
-                cursor = await db.execute(
-                    "SELECT 1 FROM users WHERE handle = ?", (candidate,)
-                )
-                if await cursor.fetchone() is None:
-                    return candidate
-            i += 1
-            candidate = f"{base}-{i}"
-            if len(candidate) > MAX_HANDLE_LEN:
-                candidate = f"{base[: MAX_HANDLE_LEN - len(str(i)) - 1]}-{i}"
-        return hash_fallback_handle(base)
+        return await unique_handle(db, base)
 
     async def generate_handle(self, db, email: str) -> str:
         """Return a unique handle derived from *email* on connection *db*.
@@ -358,22 +356,13 @@ class UsersModel:
     ) -> dict | None:
         """Find a user by OIDC provider + external ID."""
         row = await self.app.state.db.fetchone(
-            "SELECT id, email, password_hash, verified, provider,"
-            " external_id, handle"
-            " FROM users WHERE provider = ? AND external_id = ?",
+            _USER_COLUMNS
+            + " FROM users WHERE provider = ? AND external_id = ?",
             (provider, external_id),
         )
         if row is None:
             return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "password_hash": row["password_hash"],
-            "verified": bool(row["verified"]),
-            "provider": row["provider"],
-            "external_id": row["external_id"],
-            "handle": row["handle"],
-        }
+        return _user_row_to_dict(row)
 
     async def link_oidc_identity(
         self, user_id: str, provider: str, external_id: str
@@ -610,22 +599,12 @@ class UsersModel:
 
     async def get_user_by_email(self, email: str) -> dict | None:
         row = await self.app.state.db.fetchone(
-            "SELECT id, email, password_hash, verified, provider,"
-            " external_id, handle"
-            " FROM users WHERE email = ?",
+            _USER_COLUMNS + " FROM users WHERE email = ?",
             (email,),
         )
         if row is None:
             return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "password_hash": row["password_hash"],
-            "verified": bool(row["verified"]),
-            "provider": row["provider"],
-            "external_id": row["external_id"],
-            "handle": row["handle"],
-        }
+        return _user_row_to_dict(row)
 
     async def get_user_by_identifier(self, identifier: str) -> dict | None:
         """Resolve a user by email or handle (#616).
@@ -642,22 +621,12 @@ class UsersModel:
         if "@" in identifier:
             return await self.get_user_by_email(identifier)
         row = await self.app.state.db.fetchone(
-            "SELECT id, email, password_hash, verified, provider,"
-            " external_id, handle"
-            " FROM users WHERE handle = ?",
+            _USER_COLUMNS + " FROM users WHERE handle = ?",
             (identifier,),
         )
         if row is None:
             return None
-        return {
-            "id": row["id"],
-            "email": row["email"],
-            "password_hash": row["password_hash"],
-            "verified": bool(row["verified"]),
-            "provider": row["provider"],
-            "external_id": row["external_id"],
-            "handle": row["handle"],
-        }
+        return _user_row_to_dict(row)
 
     async def list_users(
         self,
