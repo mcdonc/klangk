@@ -828,6 +828,9 @@ class TestRunShell:
             return (120, 40) if call_idx[0] > 1 else (80, 24)
 
         monkeypatch.setattr(cli_client, "get_terminal_size", cycling_size)
+        # Shrink the poll interval so the test does not race the 1s tick
+        # on slow runners (#2574).
+        monkeypatch.setattr(cli_client, "_RESIZE_POLL_INTERVAL", 0.05)
 
         # select returns empty so stdin_loop keeps looping without reading EOF
         with patch(
@@ -837,7 +840,15 @@ class TestRunShell:
             task = asyncio.create_task(
                 cli_client.run_shell(ws, 80, 24, stdin=fake_buf)
             )
-            await asyncio.sleep(2.5)
+            # Wait (bounded) for the resize send instead of a fixed sleep,
+            # so a loaded runner cannot cancel before the send lands.
+            for _ in range(250):  # 5s ceiling
+                if any(
+                    "terminal_resize" in c[0][0]
+                    for c in ws.send.call_args_list
+                ):
+                    break
+                await asyncio.sleep(0.02)
             task.cancel()
             try:
                 await task
@@ -853,6 +864,12 @@ class TestRunShell:
             f"Expected at least 1 resize send, got {ws.send.call_count} total "
             f"sends: {[c[0][0] for c in ws.send.call_args_list]}"
         )
+        # Exactly the changed size is sent, with the new dimensions.
+        assert json.loads(resize_msgs[0]) == {
+            "cmd": "terminal_resize",
+            "cols": 120,
+            "rows": 40,
+        }
 
 
 class TestIsTerminalResponse:
