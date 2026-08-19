@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from klangk import container
 from klangk import workspaces as ws_mod
 
 
@@ -50,7 +51,7 @@ class TestCreateWorkspace:
         monkeypatch.setattr(registry, "start_container", fake)
         await app_state.state.workspaces.start_workspace(ws)
         fake.assert_awaited_once()
-        assert fake.call_args.kwargs["egress_mode"] == "interactive"
+        assert fake.call_args.args[0].egress_mode == "interactive"
 
     async def test_allocates_ports(self, user, app_state):
         ws = await app_state.state.workspaces.create_workspace(
@@ -584,7 +585,7 @@ class TestStartWorkspace:
             mock_start.assert_awaited_once()
             # The service_command is threaded through to start_container
             # so the create choke point (bringup) can fire it.
-            assert mock_start.call_args.kwargs["service_command"] == (
+            assert mock_start.call_args.args[0].service_command == (
                 "openclaw gateway"
             )
         finally:
@@ -643,10 +644,12 @@ class TestStartWorkspace:
                 return_value=("cid-z", "created"),
             ):
                 await registry.start_container(
-                    "ws-apply",
-                    "/host",
-                    "/home",
-                    workspace_settings={"idle_timeout": 600},
+                    container.ContainerStartSpec(
+                        "ws-apply",
+                        "/host",
+                        "/home",
+                        workspace_settings={"idle_timeout": 600},
+                    )
                 )
             # The override is materialized onto the live state.
             assert state.idle_timeout == 600
@@ -668,10 +671,12 @@ class TestStartWorkspace:
                 return_value=("cid-w", "created"),
             ):
                 await registry.start_container(
-                    "ws-lazy",
-                    "/host",
-                    "/home",
-                    workspace_settings={"cpu_limit": 2.0},  # not idle
+                    container.ContainerStartSpec(
+                        "ws-lazy",
+                        "/host",
+                        "/home",
+                        workspace_settings={"cpu_limit": 2.0},  # not idle
+                    )
                 )
             assert state.idle_timeout is None
         finally:
@@ -700,10 +705,12 @@ async def test_idle_timeout_zero_pins_alive(user, app_state):
             return_value=("cid-0", "created"),
         ):
             await registry.start_container(
-                "ws-zero",
-                "/host",
-                "/home",
-                workspace_settings={"idle_timeout": 0},
+                container.ContainerStartSpec(
+                    "ws-zero",
+                    "/host",
+                    "/home",
+                    workspace_settings={"idle_timeout": 0},
+                )
             )
         # 0 is materialized (not treated as "absent" by a truthiness check).
         assert state.idle_timeout == 0

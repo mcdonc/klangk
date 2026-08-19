@@ -279,30 +279,32 @@ class Connection:
             container_id,
             container_status,
         ) = await self.app.state.container_registry.start_container(
-            workspace_id,
-            host_path,
-            home_path,
-            workspace.get("container_id"),
-            num_ports=workspace.get(
-                "num_ports", container.DEFAULT_PORTS_PER_WORKSPACE
-            ),
-            hosting_hostname=hosting_hostname,
-            hosting_proto=hosting_proto,
-            hosting_base_path=hosting_base_path,
-            image=workspace.get("image"),
-            config_path=cfg_path,
-            extra_mounts=workspace.get("mounts"),
-            extra_env=workspace.get("env"),
-            user_id=self.user["id"],
-            health_check=workspace.get("health_check"),
-            setup_state=workspace.get("setup_state"),
-            service_command=workspace.get("service_command"),
-            allowed_domains=workspace.get("allowed_domains"),
-            rejected_domains=workspace.get("rejected_domains"),
-            workspace_settings=workspace.get("settings"),
-            egress_mode=workspace.get(
-                "egress_mode", model.EGRESS_MODE_INTERACTIVE
-            ),
+            container.ContainerStartSpec(
+                workspace_id=workspace_id,
+                host_path=host_path,
+                home_path=home_path,
+                existing_container_id=workspace.get("container_id"),
+                num_ports=workspace.get(
+                    "num_ports", container.DEFAULT_PORTS_PER_WORKSPACE
+                ),
+                hosting_hostname=hosting_hostname,
+                hosting_proto=hosting_proto,
+                hosting_base_path=hosting_base_path,
+                image=workspace.get("image"),
+                config_path=cfg_path,
+                extra_mounts=workspace.get("mounts"),
+                extra_env=workspace.get("env"),
+                user_id=self.user["id"],
+                health_check=workspace.get("health_check"),
+                setup_state=workspace.get("setup_state"),
+                service_command=workspace.get("service_command"),
+                allowed_domains=workspace.get("allowed_domains"),
+                rejected_domains=workspace.get("rejected_domains"),
+                workspace_settings=workspace.get("settings"),
+                egress_mode=workspace.get(
+                    "egress_mode", model.EGRESS_MODE_INTERACTIVE
+                ),
+            )
         )
         self.container_status = container_status
         self.workspace_id = workspace_id

@@ -3,8 +3,10 @@
 ``ContainerRegistry`` composes :class:`PortAllocator`,
 :class:`BrowserRouter`, :class:`IdleMonitor`, and :class:`HealthMonitor`
 as collaborators, and mixes in :class:`NetworkSidecarMixin` for the FQDN
-egress sidecar.  Constructed once in :func:`build_app` and stored on
-``app.state.container_registry`` (#1426).
+egress sidecar.  Spec assembly (env/mounts/volumes/limits/create
+kwargs, plus the :class:`ContainerStartSpec` start-parameter object)
+lives in :mod:`.spec` (#2566).  Constructed once in :func:`build_app`
+and stored on ``app.state.container_registry`` (#1426).
 """
 
 import asyncio
@@ -13,13 +15,9 @@ import os
 import time
 
 from .. import podman
-from .. import workspace_settings as ws_settings
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
-from ..ssl_trust import (  # noqa: F401 (re-exported via the package)
-    SSL_MOUNT_DEST as _SSL_MOUNT_DEST,
-    ssl_env_vars,
-)
+from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
 from .browsers import BrowserRouter
 from .health import HealthMonitor
 from .idle import IdleMonitor
@@ -30,12 +28,21 @@ from .ports import (
     PortAllocator,
 )
 from .sidecar import NetworkSidecarMixin, container_ident
+from .spec import (
+    ContainerStartSpec,
+    _is_named_volume,
+    _split_csv,
+    build_create_kwargs,
+    build_env,
+    build_mounts,
+    ensure_volumes,
+    image_pull_policy,
+    nix_binds,
+)
 from .state import ContainerState
 
 logger = logging.getLogger(__name__)
 
-
-_VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
 _VALID_MOUNT_OPTIONS = {
     "ro",
@@ -53,11 +60,6 @@ _PROTECTED_PATHS = [
     "/run/docker.sock",
     "/run/podman/podman.sock",
 ]
-
-
-def _is_named_volume(source: str) -> bool:
-    """A mount source with no '/' that doesn't start with '.' is a volume."""
-    return "/" not in source and not source.startswith(".")
 
 
 def _pid_alive(pid: int) -> bool:
@@ -182,25 +184,16 @@ class ContainerRegistry(NetworkSidecarMixin):
         return self.app.state.settings.image_name or "klangk-workspace"
 
     @property
-    def terminal_banner(self) -> str:
-        return self.app.state.settings.terminal_banner or ""
-
-    @property
     def allowed_images(self) -> set[str]:
-        imgs: set[str] = set()
-        raw = self.app.state.settings.allowed_images
-        if raw:
-            imgs = {i.strip() for i in raw.split(",") if i.strip()}
+        imgs = set(_split_csv(self.app.state.settings.allowed_images))
         imgs.add(self.image_name)
         return imgs
 
     @property
     def allowed_mount_roots(self) -> list[str]:
-        raw = self.app.state.settings.allowed_mount_roots
-        if not raw:
-            return []
         return [
-            os.path.realpath(p.strip()) for p in raw.split(",") if p.strip()
+            os.path.realpath(p)
+            for p in _split_csv(self.app.state.settings.allowed_mount_roots)
         ]
 
     @property
@@ -225,25 +218,15 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     def container_dns_config(self) -> list[str]:
         """Return DNS server list from settings.dns_servers."""
-        raw = self.app.state.settings.dns_servers
-        return [d.strip() for d in raw.split(",") if d.strip()]
+        return _split_csv(self.app.state.settings.dns_servers)
 
     def container_dns_search_config(self) -> list[str]:
         """Return DNS search-domain list from settings.dns_search (#2055)."""
-        raw = self.app.state.settings.dns_search
-        return [d.strip() for d in raw.split(",") if d.strip()]
+        return _split_csv(self.app.state.settings.dns_search)
 
     def image_pull_policy(self) -> str:
         """Resolve the workspace-image pull policy from settings."""
-        policy = self.app.state.settings.image_pull_policy
-        if policy not in _VALID_PULL_POLICIES:
-            logger.warning(
-                "Invalid KLANGKD_IMAGE_PULL_POLICY=%r (valid: %s); using 'never'.",
-                policy,
-                ", ".join(sorted(_VALID_PULL_POLICIES)),
-            )
-            return "never"
-        return policy
+        return image_pull_policy(self.app)
 
     def _is_protected(self, source: str) -> bool:
         """True if source is a protected host path that must never be mounted."""
@@ -597,82 +580,8 @@ class ContainerRegistry(NetworkSidecarMixin):
             setup_state=setup_state,
         )
 
-    def _ws_setting(self, workspace_settings: dict | None):
-        """Wrap a workspace-settings dict for the ``ws_settings`` resolvers.
-
-        The resolvers (#864) take ``{"settings": ...}``; every per-workspace
-        limit below resolves with the same wrapper shape, so build it once
-        (#2548).
-        """
-        return {"settings": workspace_settings}
-
-    def _resolve_cpu_limit(
-        self, workspace_settings: dict | None
-    ) -> float | None:
-        """Per-workspace CPU limit (``--cpus``), #864 / #34.
-
-        Workspace override > deploy default > None (no flag, unbounded).
-        Override semantics (#34): a deploy-wide value is a plain default,
-        not a cap or floor — a creator may go larger *or* smaller, applied
-        as-is with no clamping.
-        """
-        return ws_settings.resolve_cpu_limit(
-            self._ws_setting(workspace_settings),
-            self.app.state.settings.container_cpu_limit,
-        )
-
-    def _resolve_memory_limit(
-        self, workspace_settings: dict | None
-    ) -> str | None:
-        """Per-workspace memory limit (``--memory``), #864 / #34."""
-        return ws_settings.resolve_memory_limit(
-            self._ws_setting(workspace_settings),
-            self.app.state.settings.container_memory_limit,
-        )
-
-    def _resolve_pids_limit(
-        self, workspace_settings: dict | None
-    ) -> int | None:
-        """Per-workspace PIDs limit (``--pids-limit``), #864 / #34."""
-        return ws_settings.resolve_pids_limit(
-            self._ws_setting(workspace_settings),
-            self.app.state.settings.container_pids_limit,
-        )
-
-    def _resolve_tmp_size(self, workspace_settings: dict | None) -> str | None:
-        """Per-workspace ``/tmp`` tmpfs size (``--tmpfs /tmp:...,size=<n>``).
-
-        #2378: same precedence as the other resolvers (workspace override >
-        deploy default > none). ``None`` means mount ``/tmp`` with no
-        explicit ``size=`` option (podman sizes it at half of RAM).
-        """
-        return ws_settings.resolve_tmp_size(
-            self._ws_setting(workspace_settings),
-            self.app.state.settings.container_tmp_size,
-        )
-
     async def start_container(
-        self,
-        workspace_id: str,
-        host_path: str,
-        home_path: str,
-        existing_container_id: str | None = None,
-        num_ports: int = DEFAULT_PORTS_PER_WORKSPACE,
-        hosting_hostname: str | None = None,
-        hosting_proto: str | None = None,
-        hosting_base_path: str | None = None,
-        image: str | None = None,
-        config_path: str | None = None,
-        extra_mounts: list[str] | None = None,
-        extra_env: dict[str, str] | None = None,
-        user_id: str | None = None,
-        health_check: str | None = None,
-        setup_state: str | None = None,
-        service_command: str | None = None,
-        allowed_domains: list[str] | None = None,
-        rejected_domains: list[str] | None = None,
-        workspace_settings: dict | None = None,
-        egress_mode: str = "static",
+        self, spec: ContainerStartSpec
     ) -> tuple[str, str]:
         """Start (or restart) a Pi container for a workspace.
 
@@ -680,50 +589,33 @@ class ContainerRegistry(NetworkSidecarMixin):
         'connected' (already running), 'restarted', or 'created'.
 
         Serialized per workspace so concurrent WebSocket connections
-        don't race to create the same container.
+        don't race to create the same container. All parameters travel
+        on the :class:`ContainerStartSpec` (#2566) shared with
+        :meth:`_start_container_inner`, so adding a start parameter is a
+        single spec field instead of a two-signature edit.
+
+        Applies the per-workspace idle-timeout override from the
+        settings bag (#864) at this single start choke point, so
+        EVERY start path gets it -- a workspace started by a
+        WebSocket connect (the normal web-UI flow,
+        wshandler.connection) lands here just like POST /start
+        (Workspaces.start_workspace), and previously only the
+        latter applied the bag, so a WS-started workspace silently
+        ignored its override (found by the idle fuzz harness,
+        #2514). Only when actually declared: an absent key leaves
+        the container state's ``idle_timeout`` at None so
+        ``get_idle_timeout()`` lazily follows the live deploy
+        default (a SIGHUP settings reload stays effective for
+        running containers). The auto_start boot path pins 0 after
+        this returns, so a service workspace never idles out
+        regardless of its bag (#1244).
         """
-        async with self._get_workspace_lock(workspace_id):
-            result = await self._start_container_inner(
-                workspace_id,
-                host_path,
-                home_path,
-                existing_container_id=existing_container_id,
-                num_ports=num_ports,
-                hosting_hostname=hosting_hostname,
-                hosting_proto=hosting_proto,
-                hosting_base_path=hosting_base_path,
-                image=image,
-                config_path=config_path,
-                extra_mounts=extra_mounts,
-                extra_env=extra_env,
-                user_id=user_id,
-                health_check=health_check,
-                setup_state=setup_state,
-                service_command=service_command,
-                allowed_domains=allowed_domains,
-                rejected_domains=rejected_domains,
-                workspace_settings=workspace_settings,
-                egress_mode=egress_mode,
-            )
-            # Apply the per-workspace idle-timeout override from the
-            # settings bag (#864) at this single start choke point, so
-            # EVERY start path gets it -- a workspace started by a
-            # WebSocket connect (the normal web-UI flow,
-            # wshandler.connection) lands here just like POST /start
-            # (Workspaces.start_workspace), and previously only the
-            # latter applied the bag, so a WS-started workspace silently
-            # ignored its override (found by the idle fuzz harness,
-            # #2514). Only when actually declared: an absent key leaves
-            # the container state's ``idle_timeout`` at None so
-            # ``get_idle_timeout()`` lazily follows the live deploy
-            # default (a SIGHUP settings reload stays effective for
-            # running containers). The auto_start boot path pins 0 after
-            # this returns, so a service workspace never idles out
-            # regardless of its bag (#1244).
-            bag = workspace_settings or {}
+        async with self._get_workspace_lock(spec.workspace_id):
+            result = await self._start_container_inner(spec)
+            bag = spec.workspace_settings or {}
             if "idle_timeout" in bag:
                 self.idle.set_workspace_idle_timeout(
-                    workspace_id, bag["idle_timeout"]
+                    spec.workspace_id, bag["idle_timeout"]
                 )
             return result
 
@@ -792,7 +684,8 @@ class ContainerRegistry(NetworkSidecarMixin):
         ``num_ports`` is clamped down to the server-wide cap
         (``KLANGKD_HOSTED_PORTS_PER_WORKSPACE``). At cap 0 every workspace
         releases all of its allocations; the returned empty list then
-        suppresses the hosting env in :meth:`_build_env` (#1237).
+        suppresses the hosting env in :func:`klangk.container.spec.build_env`
+        (#1237).
         """
         num_ports = min(num_ports, self.ports_per_workspace_cap())
         async with self.port_lock:
@@ -815,181 +708,6 @@ class ContainerRegistry(NetworkSidecarMixin):
                 )
                 host_ports = host_ports[:num_ports]
         return host_ports
-
-    def _build_env(
-        self,
-        workspace_id: str,
-        host_ports: list[int],
-        hosting_hostname: str | None,
-        hosting_proto: str | None,
-        hosting_base_path: str | None,
-        agent_home: str,
-        extra_env: dict[str, str] | None,
-        ssl_dir: str | None = None,
-    ) -> list[str]:
-        """Build the container environment variable list.
-
-        ``hosting_hostname``/``hosting_proto``/``hosting_base_path`` are
-        optional: callers with a live request pass the values they derived
-        from its headers (``wshandler.connection``), and callers without one
-        (``start_workspace`` — autostart/create, no connection yet) pass
-        ``None``. Resolving the floor here, at the single choke point, means
-        no start path can bypass the override: when a caller omits them we
-        derive the env / bare-localhost floor via ``derive_hosting_info``
-        (the same resolver the request paths use), so a deployer's
-        ``KLANGKD_HOSTING_HOSTNAME`` is honored on every start — eager or not.
-        """
-        if (
-            hosting_hostname is None
-            or hosting_proto is None
-            or hosting_base_path is None
-        ):
-            h, p, b = self.app.state.util.derive_hosting_info(None, None)
-            # Use ``is None`` (not ``or``): an explicit empty base_path
-            # (root deployment) is a legitimate value that must survive,
-            # not be clobbered by the resolved floor.
-            if hosting_hostname is None:
-                hosting_hostname = h
-            if hosting_proto is None:
-                hosting_proto = p
-            if hosting_base_path is None:
-                hosting_base_path = b
-        env_vars: list[str] = []
-        egress_port = self.app.state.settings.egress_port
-        proxy_url = f"http://host.containers.internal:{egress_port}/llm-proxy"
-        env_vars.append(f"KLANGKWS_LLM_PROXY_URL={proxy_url}")
-        env_vars.append("PI_SKIP_VERSION_CHECK=1")
-        logger.info("Container LLM proxy: %s", proxy_url)
-
-        # Hosted-app serving env. Omit entirely when the workspace has
-        # no host ports (KLANGKD_HOSTED_PORTS_PER_WORKSPACE=0, or a
-        # per-workspace value of 0): KLANGKWS_PORT_MAPPINGS absent makes
-        # klangk-hosted-url / get_hosted_url error out cleanly, and the
-        # KLANGKWS_HOSTING_* vars are meaningless without hosting. #1237
-        if host_ports:
-            mappings = [
-                f"{CONTAINER_PORT_START + i}:{hp}"
-                for i, hp in enumerate(host_ports)
-            ]
-            env_vars.append(f"KLANGKWS_PORT_MAPPINGS={','.join(mappings)}")
-            env_vars.append(f"KLANGKWS_HOSTING_HOSTNAME={hosting_hostname}")
-            env_vars.append(f"KLANGKWS_HOSTING_PROTO={hosting_proto}")
-            env_vars.append(f"KLANGKWS_HOSTING_BASE_PATH={hosting_base_path}")
-        env_vars.append(f"KLANGKWS_WORKSPACE_ID={workspace_id}")
-        env_vars.append(f"KLANGKWS_AGENT_HOME={agent_home}")
-        env_vars.append(
-            f"KLANGKWS_BRIDGE_URL=http://host.containers.internal:{egress_port}"
-        )
-        # #2153: Set USER/LOGNAME so tools inside the container (git,
-        # shell prompts, sudo audit, Pi agent identity) see the correct
-        # UNIX user — containers have no login process to set these.
-        env_vars.append("USER=klangk")
-        env_vars.append("LOGNAME=klangk")
-        if self.terminal_banner:
-            env_vars.append(f"KLANGKWS_TERMINAL_BANNER={self.terminal_banner}")
-
-        # Runtime SSL/CA trust (#1181): point OpenSSL/Python/curl/Node
-        # at the bundle the entrypoint builds from the mounted certs.
-        # Appended before feature/extra env so a deployer can override if
-        # ever needed. Emitted only when a trustable cert dir is present.
-        env_vars.extend(ssl_env_vars(ssl_dir))
-
-        for k, v in self.app.state.features.container_env().items():
-            env_vars.append(f"{k}={v}")
-
-        if extra_env:
-            for k, v in extra_env.items():
-                env_vars.append(f"{k}={v}")
-
-        return env_vars
-
-    async def _ensure_volumes(
-        self,
-        extra_mounts: list[str] | None,
-        user_id: str | None,
-        podman,
-    ) -> None:
-        """Create named volumes and validate bind-mount sources."""
-        if not extra_mounts:
-            return
-        for mount_spec in extra_mounts:
-            source = mount_spec.split(":")[0]
-            if _is_named_volume(source):
-                info = await podman.inspect_volume(source)
-                if info is None:
-                    labels = {
-                        "klangk.managed": "true",
-                        "klangk.instance": self.app.state.util.instance_id(),
-                    }
-                    if user_id:
-                        labels["klangk.user-id"] = user_id
-                    await podman.create_volume(source, labels)
-                else:
-                    vol_labels = info.get("Labels") or {}
-                    if (
-                        vol_labels.get("klangk.instance")
-                        != self.app.state.util.instance_id()
-                    ):
-                        raise ValueError(
-                            f"Volume {source!r} is not managed "
-                            "by this klangk instance"
-                        )
-                    vol_owner = vol_labels.get("klangk.user-id")
-                    if vol_owner and user_id and vol_owner != user_id:
-                        raise ValueError(
-                            f"Volume {source!r} belongs to another user"
-                        )
-            elif not os.path.exists(source):
-                raise ValueError(f"Bind mount source does not exist: {source}")
-
-    async def _nix_binds(
-        self, workspace_id: str, workspace_settings: dict | None
-    ) -> tuple[list[str], list[str]]:
-        """Bind specs + env for the workspace's per-workspace /nix (#2201), or ([], []).
-
-        Only when the workspace has its per-workspace ``nix`` setting enabled
-        (#2202) AND a nix backend is configured (``nix_seed``, #2219/#2220) does
-        ensure_workspace_nix provision the per-workspace
-        /nix and return a mountpoint; the mountpoint's /nix + nix.conf are
-        bind-mounted into the container, and KLANGKWS_NIX=1 is set so the
-        baked /etc/profile.d activation (see src/containers/workspace/Dockerfile)
-        puts nix on PATH by default. Image selection is untouched.
-
-        Returns ``(binds, env_extras)``.
-        """
-        if not (workspace_settings or {}).get("nix"):
-            return [], []
-        mountpoint = await self.app.state.nix.ensure_workspace_nix(
-            workspace_id
-        )
-        if not mountpoint:
-            return [], []
-        return (
-            [
-                f"{mountpoint}/nix:/nix",
-                f"{mountpoint}/nix.conf:/etc/nix/nix.conf:ro",
-            ],
-            # Signal the baked profile.d activation that the feature mounted
-            # /nix (checked alongside /nix/nix-profile presence).
-            ["KLANGKWS_NIX=1"],
-        )
-
-    @staticmethod
-    def _build_mounts(
-        home_path: str,
-        config_path: str | None,
-        extra_mounts: list[str] | None,
-        ssl_dir: str | None = None,
-    ) -> list[str]:
-        """Build the bind-mount list for the container."""
-        binds = [f"{home_path}:/home"]
-        if config_path:
-            binds.append(f"{config_path}:/opt/klangk/config:ro")
-        if ssl_dir:
-            # Read-only mount of deployer CA certs (#1181).
-            binds.append(f"{ssl_dir}:{_SSL_MOUNT_DEST}:ro")
-        binds += extra_mounts or []
-        return binds
 
     async def _create_and_start(
         self,
@@ -1182,29 +900,34 @@ class ContainerRegistry(NetworkSidecarMixin):
                 raise last_exc
 
     async def _start_container_inner(
-        self,
-        workspace_id: str,
-        host_path: str,
-        home_path: str,
-        existing_container_id: str | None = None,
-        num_ports: int = DEFAULT_PORTS_PER_WORKSPACE,
-        hosting_hostname: str | None = None,
-        hosting_proto: str | None = None,
-        hosting_base_path: str | None = None,
-        image: str | None = None,
-        config_path: str | None = None,
-        extra_mounts: list[str] | None = None,
-        extra_env: dict[str, str] | None = None,
-        user_id: str | None = None,
-        health_check: str | None = None,
-        setup_state: str | None = None,
-        service_command: str | None = None,
-        allowed_domains: list[str] | None = None,
-        rejected_domains: list[str] | None = None,
-        workspace_settings: dict | None = None,
-        egress_mode: str = "static",
+        self, spec: ContainerStartSpec
     ) -> tuple[str, str]:
-        """Inner implementation of start_container (called under lock)."""
+        """Inner implementation of start_container (called under lock).
+
+        Unpacks the spec once (#2566); the body reads plain locals, same
+        as the pre-spec signature. ``spec.host_path`` is accepted for
+        interface compatibility but unused here — mounts are driven by
+        ``home_path`` / ``config_path`` / ``extra_mounts``.
+        """
+        workspace_id = spec.workspace_id
+        home_path = spec.home_path
+        existing_container_id = spec.existing_container_id
+        num_ports = spec.num_ports
+        hosting_hostname = spec.hosting_hostname
+        hosting_proto = spec.hosting_proto
+        hosting_base_path = spec.hosting_base_path
+        image = spec.image
+        config_path = spec.config_path
+        extra_mounts = spec.extra_mounts
+        extra_env = spec.extra_env
+        user_id = spec.user_id
+        health_check = spec.health_check
+        setup_state = spec.setup_state
+        service_command = spec.service_command
+        allowed_domains = spec.allowed_domains
+        rejected_domains = spec.rejected_domains
+        workspace_settings = spec.workspace_settings
+        egress_mode = spec.egress_mode
         t_start = time.monotonic()
         resolved_image = image or self.image_name
         if resolved_image not in self.allowed_images:
@@ -1282,7 +1005,7 @@ class ContainerRegistry(NetworkSidecarMixin):
 
         # Build environment and mounts.
         t_env = time.monotonic()
-        # Resolve the agent home at this async seam (``_build_env`` is
+        # Resolve the agent home at this async seam (``build_env`` is
         # sync) so every exec process inherits KLANGKWS_AGENT_HOME (#1157).
         agent_home = f"/home/{await self.app.state.model.users.agent_handle()}"
         ssl_dir = self.app.state.ssl_trust.ssl_cert_dir()
@@ -1292,7 +1015,8 @@ class ContainerRegistry(NetworkSidecarMixin):
                 ssl_dir,
                 _SSL_MOUNT_DEST,
             )
-        env_vars = self._build_env(
+        env_vars = build_env(
+            self.app,
             workspace_id,
             host_ports,
             hosting_hostname,
@@ -1302,19 +1026,17 @@ class ContainerRegistry(NetworkSidecarMixin):
             extra_env,
             ssl_dir,
         )
-        await self._ensure_volumes(
-            extra_mounts, user_id, self.app.state.podman
+        await ensure_volumes(
+            self.app, extra_mounts, user_id, self.app.state.podman
         )
-        binds = self._build_mounts(
-            home_path, config_path, extra_mounts, ssl_dir
-        )
+        binds = build_mounts(home_path, config_path, extra_mounts, ssl_dir)
         # #2201: when nix is enabled, bind the workspace's btrfs-snapshot /nix
         # (and the seed's nix.conf) into the container, and signal the baked
         # /etc/profile.d activation (KLANGKWS_NIX) so nix is on PATH by default.
-        nix_binds, nix_env = await self._nix_binds(
-            workspace_id, workspace_settings
+        nix_bind_specs, nix_env = await nix_binds(
+            self.app, workspace_id, workspace_settings
         )
-        binds += nix_binds
+        binds += nix_bind_specs
         env_vars += nix_env
 
         publish = [
@@ -1337,47 +1059,15 @@ class ContainerRegistry(NetworkSidecarMixin):
             "true",
             "yes",
         )
-        # #2378: per-workspace /tmp tmpfs size. Default (``2g``) preserves
-        # the pre-#2378 mount; ``None`` (explicit unset) -> no ``size=``
-        # option, so podman sizes it at half of RAM.
-        tmp_size = self._resolve_tmp_size(workspace_settings)
-        tmp_opts = "rw,exec,nosuid"
-        if tmp_size:
-            tmp_opts += f",size={tmp_size}"
-
-        create_kwargs = dict(
-            labels={
-                "klangk.managed": "true",
-                "klangk.instance": iid,
-                # The main klangkd daemon process's PID — the liveness signal
-                # the dead-owner reap keys on (#2342).
-                "klangk.pid": str(os.getpid()),
-                # #2286: shared label + role so one `podman ps --filter
-                # label=klangk.workspace=<id>` correlates the workspace with its
-                # network sidecar; the slug mirrors the name for exact-match
-                # filtering. (Supersedes the old write-only klangk.workspace-id.)
-                "klangk.workspace": workspace_id,
-                "klangk.role": "workspace",
-                "klangk.workspace-name": slug,
-            },
+        create_kwargs = build_create_kwargs(
+            self.app,
+            workspace_id=workspace_id,
+            iid=iid,
+            slug=slug,
             binds=binds,
-            tmpfs={
-                "/tmp": tmp_opts,
-                "/run": "rw,noexec,nosuid,size=256m",
-                "/var/log": "rw,noexec,nosuid,size=256m",
-            },
+            env_vars=env_vars,
             publish=publish,
-            add_hosts=["host.containers.internal:host-gateway"],
-            dns=self.container_dns_config() or None,
-            dns_search=self.container_dns_search_config() or None,
-            env=env_vars,
-            init=True,
-            interactive=True,
-            userns=self.app.state.settings.userns,
-            cpus=self._resolve_cpu_limit(workspace_settings),
-            memory=self._resolve_memory_limit(workspace_settings),
-            pids_limit=self._resolve_pids_limit(workspace_settings),
-            pull=self.image_pull_policy(),
+            workspace_settings=workspace_settings,
         )
 
         # Egress filtering (#1365): the FQDN network sidecar is the only egress

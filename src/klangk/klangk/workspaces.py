@@ -521,25 +521,29 @@ class Workspaces:
         h_path = str(self.get_home_host_path(workspace_id))
         cfg_path = str(self.get_config_host_path(workspace_id))
         cid, status = await self.app.state.container_registry.start_container(
-            workspace_id,
-            host_path,
-            h_path,
-            ws.get("container_id"),
-            num_ports=ws.get(
-                "num_ports", container.DEFAULT_PORTS_PER_WORKSPACE
-            ),
-            image=ws.get("image"),
-            config_path=cfg_path,
-            extra_mounts=ws.get("mounts"),
-            extra_env=ws.get("env"),
-            user_id=owner_id,
-            health_check=ws.get("health_check"),
-            setup_state=ws.get("setup_state"),
-            service_command=ws.get("service_command"),
-            allowed_domains=ws.get("allowed_domains"),
-            rejected_domains=ws.get("rejected_domains"),
-            workspace_settings=ws.get("settings"),
-            egress_mode=ws.get("egress_mode", model.EGRESS_MODE_INTERACTIVE),
+            container.ContainerStartSpec(
+                workspace_id=workspace_id,
+                host_path=host_path,
+                home_path=h_path,
+                existing_container_id=ws.get("container_id"),
+                num_ports=ws.get(
+                    "num_ports", container.DEFAULT_PORTS_PER_WORKSPACE
+                ),
+                image=ws.get("image"),
+                config_path=cfg_path,
+                extra_mounts=ws.get("mounts"),
+                extra_env=ws.get("env"),
+                user_id=owner_id,
+                health_check=ws.get("health_check"),
+                setup_state=ws.get("setup_state"),
+                service_command=ws.get("service_command"),
+                allowed_domains=ws.get("allowed_domains"),
+                rejected_domains=ws.get("rejected_domains"),
+                workspace_settings=ws.get("settings"),
+                egress_mode=ws.get(
+                    "egress_mode", model.EGRESS_MODE_INTERACTIVE
+                ),
+            )
         )
         return cid, status
 
