@@ -19,11 +19,15 @@
 # 3.5.6): see the test notes on #2570.
 #
 # Caveat: things that never route through libcrypto are unaffected by
-# the provider switch — Node (NodeSource builds bundle their own
-# OpenSSL), CPython's built-in `_md5` fallback for hashlib.md5, and any
-# statically-linked crypto in user tooling. The FIPS posture applies to
-# everything that dynamically links libcrypto.so.3 (distro python's
-# `_hashlib`/`_ssl`, curl, git over https, the openssl CLI).
+# the provider switch — CPython's built-in `_md5` fallback for
+# hashlib.md5, and any statically-linked crypto in user tooling. Node
+# IS covered: its bundled libcrypto loads the validated fips.so via the
+# `nodejs_conf` config section + OPENSSL_MODULES (verified: node
+# createHash('md5') is rejected, TLS/sha/pbkdf2 route through the
+# provider, no node rebuild needed — #2577). The FIPS posture applies
+# to everything that dynamically links libcrypto.so.3 (distro python's
+# `_hashlib`/`_ssl`, curl, git over https, the openssl CLI) plus node's
+# bundled libcrypto via the provider config.
 
 ARG WORKSPACE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace:latest
 
@@ -66,8 +70,13 @@ RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
 # Activation config: fips + base, no default provider. The include
 # references the fipsinstall-generated section — redefining [fips_sect]
 # here would clobber the module MAC and silently fall back to default.
+# nodejs_conf alias: node ignores `openssl_conf` and reads only the
+# section named `nodejs_conf` (BUILDING.md, --openssl-conf-name); both
+# keys point at the same section so one config serves system OpenSSL
+# and node's bundled libcrypto.
 RUN printf '%s\n' \
       'openssl_conf = openssl_init' \
+      'nodejs_conf = openssl_init' \
       '' \
       '.include /etc/ssl/fipsmodule.cnf' \
       '' \
@@ -85,12 +94,21 @@ RUN printf '%s\n' \
 # Image-wide activation. Docker/podman ENV reaches the entrypoint and
 # every exec; the profile.d drop-in additionally covers login shells
 # reached through sudo -i / su (which reset the environment).
-ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf
+# OPENSSL_MODULES is required for node: its bundled (statically linked)
+# libcrypto has a build-time modules dir baked in, so it cannot find
+# fips.so in the distro multiarch dir without it. Harmless for system
+# OpenSSL (same directory).
+ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf \
+    OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules
 RUN printf '%s\n' \
       'export OPENSSL_CONF=/etc/ssl/openssl-fips.cnf' \
+      'export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules' \
       > /etc/profile.d/openssl-fips.sh
 
 # Build-time proof that the provider actually activates: fail the build
-# if md5 is fetchable or the fips provider is missing.
+# if md5 is fetchable or the fips provider is missing. Covers the
+# system CLI and node (nodejs_conf section + OPENSSL_MODULES).
 RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
-    ! echo hello | openssl md5 > /dev/null 2>&1
+    ! echo hello | openssl md5 > /dev/null 2>&1 && \
+    ! node -e "require('crypto').createHash('md5').update('x').digest('hex')" \
+      > /dev/null 2>&1
