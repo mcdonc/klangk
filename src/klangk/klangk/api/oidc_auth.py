@@ -3,6 +3,7 @@
 import json
 import logging
 import secrets
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import (
@@ -33,10 +34,25 @@ def _valid_cli_redirect(url: str | None) -> bool:
     cli_redirect stored there must be re-validated at callback time —
     otherwise a tampered cookie could redirect the freshly-minted
     access token to an attacker-controlled host (#936).
+
+    The URL is parsed rather than prefix-matched: ``startswith`` is
+    blind to userinfo, so ``http://localhost:1@attacker.example/``
+    would pass the guard while routing to ``attacker.example`` (#2571).
     """
-    return bool(url) and url.startswith(
-        ("http://localhost:", "http://127.0.0.1:")
-    )
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        return (
+            parsed.scheme == "http"
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.hostname in ("localhost", "127.0.0.1")
+            and parsed.port is not None
+        )
+    except ValueError:
+        # Malformed URL (e.g. non-integer port) — reject, don't 500.
+        return False
 
 
 # --- OIDC endpoints ---

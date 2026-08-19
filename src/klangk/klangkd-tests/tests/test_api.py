@@ -9420,6 +9420,43 @@ class TestOIDCLogin:
         assert resp.status_code == 400
         assert "localhost" in resp.json()["detail"]
 
+    async def test_cli_redirect_userinfo_bypass_rejected(
+        self, client, app, monkeypatch
+    ):
+        """URLs whose *prefix* looks localhost-y but whose userinfo makes
+        them route to an attacker host must be rejected at login time.
+
+        Regression test for #2571: ``startswith`` prefix matching was
+        blind to userinfo, so ``http://localhost:1@attacker.example/``
+        passed the guard while ``urlparse(...).hostname`` is
+        ``attacker.example``.
+        """
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(
+            app.state.oidc, "oidc_login_allowed", lambda *args: True
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
+        for payload in (
+            "http://localhost:1@attacker.example/steal",
+            "http://localhost:@attacker.example/steal",
+            "http://127.0.0.1:80@attacker.example/steal",
+            # Non-integer port: urlparse raises ValueError on .port —
+            # must be rejected, not 500.
+            "http://localhost:notaport/callback",
+        ):
+            resp = await client.get(
+                "/api/v1/auth/oidc/test/login",
+                params={"cli_redirect": payload},
+            )
+            assert resp.status_code == 400, payload
+            assert "localhost" in resp.json()["detail"]
+
     async def test_oidc_login_redirects(self, client, app, monkeypatch):
         provider = api.oidc.OIDCProvider(
             id="test",
@@ -9732,6 +9769,71 @@ class TestOIDCCallback:
         # Falls back to the web flow, still carrying the token in-house.
         assert "oidc-complete" in location
         assert "token=" in location
+
+    async def test_callback_userinfo_cli_redirect_falls_back(
+        self, client, app, monkeypatch, db
+    ):
+        """A cli_redirect with userinfo smuggling an attacker host in the
+        state cookie must NOT receive the token — fall back to web flow.
+
+        Regression test for #2571: the callback-time re-validation used
+        the same prefix-match guard as login, so userinfo payloads
+        (``http://localhost:1@attacker.example/steal``) slipped through
+        both checks and exfiltrated the token to ``attacker.example``.
+        """
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
+        monkeypatch.setattr(
+            app.state.oidc,
+            "exchange_code",
+            AsyncMock(return_value={"id_token": "idt", "access_token": "at"}),
+        )
+        monkeypatch.setattr(
+            app.state.oidc,
+            "validate_id_token",
+            AsyncMock(
+                return_value={
+                    "sub": "evil-sub",
+                    "email": "evil@example.com",
+                    "email_verified": True,
+                }
+            ),
+        )
+        for payload in (
+            "http://localhost:1@attacker.example/steal",
+            "http://localhost:@attacker.example/steal",
+            "http://127.0.0.1:80@attacker.example/steal",
+        ):
+            cookie_data = json_mod.dumps(
+                {
+                    "state": "s",
+                    "verifier": "v",
+                    "redirect_uri": "https://klangk.example.com/cb",
+                    "cli_redirect": payload,
+                }
+            )
+            client.cookies.set("oidc_test", cookie_data)
+            resp = await client.get(
+                "/api/v1/auth/oidc/test/callback",
+                params={"code": "code", "state": "s"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 302, payload
+            location = resp.headers["location"]
+            # Must NOT redirect to the attacker host with the token.
+            assert "attacker.example" not in location, payload
+            # Falls back to the web flow, still carrying the token in-house.
+            assert "oidc-complete" in location, payload
+            assert "token=" in location, payload
+            client.cookies.delete("oidc_test")
 
     async def test_callback_token_exchange_failure(
         self, client, app, monkeypatch, db

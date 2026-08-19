@@ -1328,6 +1328,15 @@ users(id)`, so the decider handler passing the decider's email violated the
 
 ### Security
 
+- **OIDC `cli_redirect` userinfo bypass (#2571).** The localhost-only
+  guard on the CLI login redirect used prefix matching, so a crafted
+  `cli_redirect` like `http://localhost:1@attacker.example/` passed the
+  check while actually routing to the attacker's host — a victim
+  completing a normal IdP login had their session token redirected to
+  it. The target is now parsed and must be plain `http` to `localhost`
+  or `127.0.0.1` with a port and no userinfo; anything else falls back to
+  the web flow.
+
 - **Network sidecar: filtered workspaces with `allow_sudo` drop `net_raw` as
   defense-in-depth (#2276).** The primary `SO_MARK`-bypass guard is
   user-namespace isolation — the workspace runs in its own keep-id userns,
