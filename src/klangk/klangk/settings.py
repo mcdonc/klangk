@@ -130,31 +130,111 @@ def _coerce_prune_int(v, name: str, *, default: int) -> int:
     return value
 
 
-def _xdg_config_home() -> str:
-    """Return ``$XDG_CONFIG_HOME`` with the documented unset fallback.
+def _coerce_positive_float(v, name: str) -> float | None:
+    """Coerce *v* to a finite positive float or None; raise with *name*.
 
-    Per the XDG base-dir spec, an unset ``XDG_CONFIG_HOME`` resolves to
-    ``~/.config``. This applies on Linux *and* macOS (where the var is also
-    unset by default; we deliberately do not switch to
-    ``~/Library/Application Support`` — see #1607's cross-platform note).
+    Shared body of the numeric limit validators (#2562): ``None``/empty
+    → ``None`` (no cap); non-numeric, non-finite (``nan``/``inf``), or
+    ``<= 0`` raises ``ValueError`` naming *name* (the ENV_VAR string) so
+    ``KlangkSettings(...)`` construction fails and the server refuses to
+    boot (#34: a safety control must not silently disable itself on a
+    typo).
+    """
+    if v is None or v == "":
+        return None
+    try:
+        value = float(v)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name}={v!r} must be a positive number, or unset."
+        ) from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"{name}={v!r} must be a finite, positive number "
+            "(nan/inf and <= 0 are rejected)."
+        )
+    return value
+
+
+def _coerce_positive_int(v, name: str) -> int | None:
+    """Coerce *v* to a positive int or None; raise with *name*.
+
+    Shared body of the integer limit validators (#2562): ``None``/empty
+    → ``None`` (no cap); a native float (e.g. YAML ``1.5``) is rejected
+    rather than silently truncated; non-integer or ``<= 0`` raises
+    (``0`` is "unset", not a cap).
+    """
+    if v is None or v == "":
+        return None
+    if isinstance(v, float):
+        raise ValueError(
+            f"{name}={v!r} must be a positive integer "
+            "(got a float — use an integer, not 1.5)."
+        )
+    try:
+        value = int(v)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name}={v!r} must be a positive integer, or unset."
+        ) from exc
+    if value <= 0:
+        raise ValueError(f"{name}={v!r} must be > 0.")
+    return value
+
+
+def _coerce_podman_size(v, name: str) -> str | None:
+    """Validate a podman size-string (``2g``/``512mb``/``1024``) or None.
+
+    Shared body of the size-string validators (#2562): the
+    go-units/ParseSize grammar via :data:`_CONTAINER_MEM_LIMIT_RE`
+    (b/k/m/g/t/p + optional trailing b, case-insensitive; no IEC
+    i-forms), ``None``/empty → ``None``, malformed or ``<= 0`` raises
+    naming *name*. Returns the stripped string unchanged (podman remains
+    the authority on what the runtime can apply).
+    """
+    if v is None or v == "":
+        return None
+    s = str(v).strip()
+    m = _CONTAINER_MEM_LIMIT_RE.match(s)
+    if m is None:
+        raise ValueError(
+            f"{name}={v!r} is invalid. Expected a positive size with an "
+            "optional unit suffix (b/k/m/g/t/p, e.g. 2g, 2gb, 512m, 1024)."
+        )
+    if float(m.group("num")) <= 0:
+        raise ValueError(f"{name}={v!r} must be > 0.")
+    return s
+
+
+def _xdg_dir(var: str, fallback: str) -> str:
+    """``$VAR`` or the XDG base-dir spec *fallback* expanded (#2562).
+
+    The shared resolution of ``XDG_CONFIG_HOME``→``~/.config`` and
+    ``XDG_STATE_HOME``→``~/.local/state``: unset/empty resolves to the
+    spec's default. Applies on Linux *and* macOS (we deliberately do not
+    switch to ``~/Library/Application Support`` — see #1607's
+    cross-platform note).
+    """
+    return os.environ.get(var) or os.path.expanduser(fallback)
+
+
+def _xdg_config_home() -> str:
+    """``$XDG_CONFIG_HOME`` (→ ``~/.config``).
+
     Used for the config-tree default of ``config_dir`` (→ ``customize_dir``,
     #1644/#1649).
     """
-    return os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return _xdg_dir("XDG_CONFIG_HOME", "~/.config")
 
 
 def _xdg_state_home() -> str:
-    """Return ``$XDG_STATE_HOME`` with the documented unset fallback.
+    """``$XDG_STATE_HOME`` (→ ``~/.local/state``).
 
-    Per the XDG base-dir spec, an unset ``XDG_STATE_HOME`` resolves to
-    ``~/.local/state`` (Linux and macOS both). Used for the default
-    ``state_dir`` (#1644): the UDS, rendered proxy conf/pid, ssh-agent log,
-    and the DB are disposable runtime state, so ``XDG_STATE_HOME`` is the
-    principled home.
+    Used for the default ``state_dir`` (#1644): the UDS, rendered proxy
+    conf/pid, ssh-agent log, and the DB are disposable runtime state, so
+    ``XDG_STATE_HOME`` is the principled home.
     """
-    return os.environ.get("XDG_STATE_HOME") or os.path.expanduser(
-        "~/.local/state"
-    )
+    return _xdg_dir("XDG_STATE_HOME", "~/.local/state")
 
 
 def _safe_getuser() -> str:
@@ -1193,22 +1273,7 @@ class KlangkSettings(BaseSettings):
         restart — invalid configuration", and keeps the runtime on the old
         (valid) config.
         """
-        if v is None or v == "":
-            return None
-        try:
-            value = float(v)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"KLANGKD_CONTAINER_CPU_LIMIT={v!r} must be a positive "
-                "number of CPUs (e.g. 1.5), or unset."
-            ) from exc
-        if not math.isfinite(value) or value <= 0:
-            raise ValueError(
-                f"KLANGKD_CONTAINER_CPU_LIMIT={v!r} must be a finite, "
-                "positive number of CPUs (use 1 for one full CPU, 0.5 for "
-                "half). nan/inf are rejected."
-            )
-        return value
+        return _coerce_positive_float(v, "KLANGKD_CONTAINER_CPU_LIMIT")
 
     @field_validator("container_memory_limit", mode="before")
     @classmethod
@@ -1232,23 +1297,7 @@ class KlangkSettings(BaseSettings):
         delegation, etc.) and will fail loudly at ``podman create`` if it
         can't honour the value.
         """
-        if v is None or v == "":
-            return None
-        s = str(v).strip()
-        m = _CONTAINER_MEM_LIMIT_RE.match(s)
-        if m is None:
-            raise ValueError(
-                f"KLANGKD_CONTAINER_MEMORY_LIMIT={v!r} is invalid. Expected "
-                "a positive size with an optional unit suffix "
-                "(b/k/m/g/t/p, e.g. 2g, 2gb, 512m, 1024)."
-            )
-        if float(m.group("num")) <= 0:
-            raise ValueError(
-                f"KLANGKD_CONTAINER_MEMORY_LIMIT={v!r} must be > 0 "
-                "(podman treats --memory=0 as 'no limit'; unset the var "
-                "instead)."
-            )
-        return s
+        return _coerce_podman_size(v, "KLANGKD_CONTAINER_MEMORY_LIMIT")
 
     @field_validator("container_pids_limit", mode="before")
     @classmethod
@@ -1267,25 +1316,7 @@ class KlangkSettings(BaseSettings):
         just an unset var, so 0 is rejected to keep the semantics
         unambiguous.)
         """
-        if v is None or v == "":
-            return None
-        if isinstance(v, float):
-            raise ValueError(
-                f"KLANGKD_CONTAINER_PIDS_LIMIT={v!r} must be a positive "
-                "integer (got a float — use an integer like 512, not 1.5)."
-            )
-        try:
-            value = int(v)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"KLANGKD_CONTAINER_PIDS_LIMIT={v!r} must be a positive "
-                "integer (e.g. 512), or unset."
-            ) from exc
-        if value <= 0:
-            raise ValueError(
-                f"KLANGKD_CONTAINER_PIDS_LIMIT={v!r} must be > 0."
-            )
-        return value
+        return _coerce_positive_int(v, "KLANGKD_CONTAINER_PIDS_LIMIT")
 
     @field_validator("container_tmp_size", mode="before")
     @classmethod
@@ -1300,19 +1331,7 @@ class KlangkSettings(BaseSettings):
         ``/tmp`` tmpfs size. A malformed or ``<= 0`` value raises and aborts
         startup, same posture as the other container limits (#34).
         """
-        if v is None or v == "":
-            return None
-        s = str(v).strip()
-        m = _CONTAINER_MEM_LIMIT_RE.match(s)
-        if m is None:
-            raise ValueError(
-                f"KLANGKD_CONTAINER_TMP_SIZE={v!r} is invalid. Expected "
-                "a positive size with an optional unit suffix "
-                "(b/k/m/g/t/p, e.g. 2g, 2gb, 512m, 1024)."
-            )
-        if float(m.group("num")) <= 0:
-            raise ValueError(f"KLANGKD_CONTAINER_TMP_SIZE={v!r} must be > 0.")
-        return s
+        return _coerce_podman_size(v, "KLANGKD_CONTAINER_TMP_SIZE")
 
     @field_validator("egress_consent_retention_days", mode="before")
     @classmethod
