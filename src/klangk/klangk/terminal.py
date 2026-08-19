@@ -218,6 +218,50 @@ def _build_exec_argv(
 # ---------------------------------------------------------------------------
 
 
+# tmux window-list wire format (#2564): one window per line, fields joined
+# by "|||" (a separator that cannot appear in a window name). Shared by
+# list_windows and new_window's combined create+list script so the format
+# string and the parser cannot drift apart.
+_WINDOW_FMT = (
+    "#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}"
+)
+
+
+def _parse_windows(output: str) -> list[dict]:
+    """Parse tmux ``list-windows -F _WINDOW_FMT`` output into dicts."""
+    windows = []
+    for line in output.strip().splitlines():
+        parts = line.split("|||")
+        if len(parts) >= 4:
+            windows.append(
+                {
+                    "id": parts[0],  # e.g. "@0" — unique, never reused
+                    "index": int(parts[1]),
+                    "name": parts[2],
+                    "active": parts[3] == "1",
+                }
+            )
+    return windows
+
+
+def _window_target(
+    session_name: str, target: int | str, *, allow_id: bool = False
+) -> str:
+    """A tmux window target string for *target* in *session_name*.
+
+    By default the target is always session-qualified so that in a
+    session group the command affects only the caller's grouped session,
+    not whichever session tmux considers "most recent" (#1883) — even a
+    window id (``@N``), which stays qualified for the same reason
+    (rename/select callers rely on this). With ``allow_id=True``
+    (close_window) a window id is used unqualified: ids are globally
+    unique, so kill-window needs no session scoping.
+    """
+    if allow_id and isinstance(target, str) and target.startswith("@"):
+        return target
+    return f"{session_name}:{target}"
+
+
 class Terminal:
     """Groups the ~25 tmux-session management functions that share a
     :class:`~klangk.podman.Podman` dependency.
@@ -612,27 +656,9 @@ class Terminal:
         output = await self.tmux_command(
             container_id,
             session_name,
-            [
-                "list-windows",
-                "-t",
-                session_name,
-                "-F",
-                "#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}",
-            ],
+            ["list-windows", "-t", session_name, "-F", _WINDOW_FMT],
         )
-        windows = []
-        for line in output.strip().splitlines():
-            parts = line.split("|||")
-            if len(parts) >= 4:
-                windows.append(
-                    {
-                        "id": parts[0],  # e.g. "@0" — unique, never reused
-                        "index": int(parts[1]),
-                        "name": parts[2],
-                        "active": parts[3] == "1",
-                    }
-                )
-        return windows
+        return _parse_windows(output)
 
     async def new_window(
         self,
@@ -662,7 +688,7 @@ class Terminal:
             'sn="$1"; lbl="$2";'
             ' tmux new-window -t "$sn" -n "$lbl";'
             ' tmux list-windows -t "$sn"'
-            " -F '#{window_id}|||#{window_index}|||#{window_name}|||#{window_active}'"
+            f" -F '{_WINDOW_FMT}'"
         )
         argv = ["bash", "-c", script, "bash", session_name, label]
         rc, output, stderr = await self.podman.exec_container(
@@ -673,19 +699,7 @@ class Terminal:
         )
         if rc != 0:
             raise TerminalError(f"new_window failed: {stderr.strip()}")
-        windows = []
-        for line in output.strip().splitlines():
-            parts = line.split("|||")
-            if len(parts) >= 4:
-                windows.append(
-                    {
-                        "id": parts[0],
-                        "index": int(parts[1]),
-                        "name": parts[2],
-                        "active": parts[3] == "1",
-                    }
-                )
-        return windows
+        return _parse_windows(output)
 
     async def rename_window(
         self,
@@ -705,7 +719,12 @@ class Terminal:
         await self.tmux_command(
             container_id,
             session_name,
-            ["rename-window", "-t", f"{session_name}:{index}", name],
+            [
+                "rename-window",
+                "-t",
+                _window_target(session_name, index),
+                name,
+            ],
         )
 
     async def select_window(
@@ -724,11 +743,14 @@ class Terminal:
         session, not whichever session tmux considers "most recent"
         (#1883).
         """
-        t = f"{session_name}:{target}"
         await self.tmux_command(
             container_id,
             session_name,
-            ["select-window", "-t", t],
+            [
+                "select-window",
+                "-t",
+                _window_target(session_name, target),
+            ],
         )
 
     async def close_window(
@@ -742,14 +764,14 @@ class Terminal:
         *target* can be a window index (int), window name (str), or
         window id (``@N`` string — preferred, globally unique).
         """
-        if isinstance(target, str) and target.startswith("@"):
-            t = target
-        else:
-            t = f"{session_name}:{target}"
         await self.tmux_command(
             container_id,
             session_name,
-            ["kill-window", "-t", t],
+            [
+                "kill-window",
+                "-t",
+                _window_target(session_name, target, allow_id=True),
+            ],
         )
         return await self.list_windows(container_id, session_name)
 
