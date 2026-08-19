@@ -140,6 +140,47 @@ def _prune_session_allows() -> None:
     ]
 
 
+def _add_session_entry(lst: list, host: str, port: int, ttl: float) -> None:
+    """Add/refresh an EXACT ``(host, port)`` entry in *lst* (#2554).
+
+    The shared body of :func:`_add_session_host` (allows) and
+    :func:`_add_session_deny` (denies): deduped, a re-add refreshes the
+    expiry (``max`` -- never shortens an unexpired entry). Loop-only
+    (no lock). Callers prune first.
+    """
+    expire = time.time() + ttl
+    spec = (host, port, _EXACT)
+    for i, (h, p, mode, _exp) in enumerate(lst):
+        if (h, p, mode) == spec:
+            lst[i] = (h, p, mode, max(_exp, expire))
+            return
+    lst.append((host, port, _EXACT, expire))
+
+
+def _session_entry_ttl(lst: list, host: str, port: int) -> float | None:
+    """Max remaining TTL of an entry in *lst* covering ``host:port``, or None.
+
+    The shared body of :func:`_session_host_allows_ttl` and
+    :func:`_session_host_denies_ttl`: matches via :func:`_host_matches`
+    (nginx-style scope; entries are added EXACT, so only the exact host
+    matches, #2377); port must match (or the entry is all-ports).
+    Loop-only (no lock). Callers prune first.
+    """
+    if not host:
+        return None
+    now = time.time()
+    best: float | None = None
+    for h, p, mode, exp in lst:
+        if exp <= now:
+            continue  # belt-and-suspenders: _prune ran above, but a just-expired
+            # entry can survive the microseconds between its `now` and this one.
+        if _host_matches(host, h, mode) and (p == port or p is None):
+            remaining = exp - now
+            if best is None or remaining > best:
+                best = remaining
+    return best
+
+
 def _add_session_host(host: str, port: int, ttl: float) -> None:
     """Allow-list ``host:port`` in-session for a consent allow verdict (#2372,
     #2434).
@@ -157,13 +198,7 @@ def _add_session_host(host: str, port: int, ttl: float) -> None:
     a reconnect re-prompts). Loop-only (no lock).
     """
     _prune_session_allows()
-    expire = time.time() + ttl
-    spec = (host, port, _EXACT)
-    for i, (h, p, mode, _exp) in enumerate(state._SESSION_HOST_ALLOWS):
-        if (h, p, mode) == spec:
-            state._SESSION_HOST_ALLOWS[i] = (h, p, mode, max(_exp, expire))
-            return
-    state._SESSION_HOST_ALLOWS.append((host, port, _EXACT, expire))
+    _add_session_entry(state._SESSION_HOST_ALLOWS, host, port, ttl)
 
 
 def _session_host_allows_ttl(host: str, port: int) -> float | None:
@@ -183,17 +218,7 @@ def _session_host_allows_ttl(host: str, port: int) -> float | None:
     if not host:
         return None
     _prune_session_allows()
-    now = time.time()
-    best: float | None = None
-    for h, p, mode, exp in state._SESSION_HOST_ALLOWS:
-        if exp <= now:
-            continue  # belt-and-suspenders: _prune ran above, but a just-expired
-            # entry can survive the microseconds between its `now` and this one.
-        if _host_matches(host, h, mode) and (p == port or p is None):
-            remaining = exp - now
-            if best is None or remaining > best:
-                best = remaining
-    return best
+    return _session_entry_ttl(state._SESSION_HOST_ALLOWS, host, port)
 
 
 def _session_allow_rule_cap(qname: str) -> float | None:
@@ -277,13 +302,7 @@ def _add_session_deny(host: str, port: int, ttl: float) -> None:
     so a reconnect re-prompts). Loop-only (no lock).
     """
     _prune_session_denies()
-    expire = time.time() + ttl
-    spec = (host, port, _EXACT)
-    for i, (h, p, mode, _exp) in enumerate(state._SESSION_HOST_DENIES):
-        if (h, p, mode) == spec:
-            state._SESSION_HOST_DENIES[i] = (h, p, mode, max(_exp, expire))
-            return
-    state._SESSION_HOST_DENIES.append((host, port, _EXACT, expire))
+    _add_session_entry(state._SESSION_HOST_DENIES, host, port, ttl)
 
 
 def _session_host_denies_ttl(host: str, port: int) -> float | None:
@@ -302,17 +321,7 @@ def _session_host_denies_ttl(host: str, port: int) -> float | None:
     if not host:
         return None
     _prune_session_denies()
-    now = time.time()
-    best: float | None = None
-    for h, p, mode, exp in state._SESSION_HOST_DENIES:
-        if exp <= now:
-            continue  # belt-and-suspenders: _prune ran above, but a just-expired
-            # entry can survive the microseconds between its `now` and this one.
-        if _host_matches(host, h, mode) and (p == port or p is None):
-            remaining = exp - now
-            if best is None or remaining > best:
-                best = remaining
-    return best
+    return _session_entry_ttl(state._SESSION_HOST_DENIES, host, port)
 
 
 def _drop_session_hosts(host: str) -> None:
