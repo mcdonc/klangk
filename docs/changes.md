@@ -30,6 +30,15 @@ operators or integrators to act when upgrading.
 
 ## [Unreleased]
 
+### Security
+
+- **WebSocket error responses (#1718).** Terminal- and shared-terminal
+  failure frames sent over the workspace WebSocket no longer include raw
+  exception text (which could leak backend paths, image names, or
+  tmux/podman internals to the caller). Clients now receive a fixed
+  message (e.g. `Failed to create window`); the full exception detail is
+  logged server-side instead.
+
 ### Added
 
 - **`KLANGKD_EGRESS_CONSENT_RETENTION_DAYS` / `KLANGKD_EGRESS_CONSENT_ROW_CAP`

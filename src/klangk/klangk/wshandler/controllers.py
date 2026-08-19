@@ -826,7 +826,7 @@ class TerminalController:
                 conn.browser_id = None
                 logger.exception("Terminal start failed: %s", e)
                 try:
-                    send_error(conn.sock, f"Terminal start failed: {e}")
+                    send_error(conn.sock, "Terminal start failed")
                 except WS_ERRORS:
                     pass
 
@@ -1031,7 +1031,8 @@ class TerminalController:
             self.notify_user_terminal_windows(windows)
             self._notify_terminals_changed(windows)
         except Exception as e:
-            send_error(self._conn.sock, f"Failed to create window: {e}")
+            logger.exception("Failed to create window: %s", e)
+            send_error(self._conn.sock, "Failed to create window")
 
     async def select_window(self, msg: dict) -> None:
         t0 = time.monotonic()
@@ -1060,7 +1061,8 @@ class TerminalController:
                 time.monotonic() - t0,
             )
         except Exception as e:
-            send_error(self._conn.sock, f"Failed to select window: {e}")
+            logger.exception("Failed to select window: %s", e)
+            send_error(self._conn.sock, "Failed to select window")
 
     async def close_window(self, msg: dict) -> None:
         if not self._conn.container_id or not self._conn._user_home:
@@ -1089,7 +1091,8 @@ class TerminalController:
             self.notify_user_terminal_windows(windows)
             self._notify_terminals_changed(windows)
         except Exception as e:
-            send_error(self._conn.sock, f"Failed to close window: {e}")
+            logger.exception("Failed to close window: %s", e)
+            send_error(self._conn.sock, "Failed to close window")
 
     async def rename_window(self, msg: dict) -> None:
         if not self._conn.container_id or not self._conn._user_home:
@@ -1116,7 +1119,8 @@ class TerminalController:
             self.notify_user_terminal_windows(windows)
             self._notify_terminals_changed(windows)
         except Exception as e:
-            send_error(self._conn.sock, f"Failed to rename window: {e}")
+            logger.exception("Failed to rename window: %s", e)
+            send_error(self._conn.sock, "Failed to rename window")
 
     async def list_windows(self) -> None:
         if not self._conn.container_id or not self._conn._user_home:
@@ -1139,7 +1143,8 @@ class TerminalController:
                 {"type": "terminal_windows", "windows": windows}
             )
         except Exception as e:
-            send_error(self._conn.sock, f"Failed to list windows: {e}")
+            logger.exception("Failed to list windows: %s", e)
+            send_error(self._conn.sock, "Failed to list windows")
 
     async def claim_and_stop(self) -> None:
         session = self.session
@@ -1501,7 +1506,7 @@ class SharedTerminalController:
                 logger.exception("Shared terminal join failed: %s", e)
                 send_error(
                     conn.sock,
-                    f"Failed to join shared terminal: {e}",
+                    "Failed to join shared terminal",
                 )
 
         self._conn.terminal_task = asyncio.create_task(_start_shared())
@@ -1563,9 +1568,8 @@ class SharedTerminalController:
                 name=name,
             )
         except Exception as e:
-            send_error(
-                self._conn.sock, f"Failed to create shared terminal: {e}"
-            )
+            logger.exception("Failed to create shared terminal: %s", e)
+            send_error(self._conn.sock, "Failed to create shared terminal")
             return
         # The newly created window is the active one. Identify it by its
         # window id (@N), not its name — names are display-only and may
@@ -1644,9 +1648,8 @@ class SharedTerminalController:
                 window_id,
             )
         except Exception as e:
-            send_error(
-                self._conn.sock, f"Failed to delete shared terminal: {e}"
-            )
+            logger.exception("Failed to delete shared terminal: %s", e)
+            send_error(self._conn.sock, "Failed to delete shared terminal")
             return
         owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
         owner_windows[:] = [
@@ -1666,4 +1669,5 @@ class SharedTerminalController:
     async def handle_list_error(
         self, e: Exception
     ) -> None:  # pragma: no cover
-        send_error(self._conn.sock, f"Failed to list shared terminals: {e}")
+        logger.exception("Failed to list shared terminals: %s", e)
+        send_error(self._conn.sock, "Failed to list shared terminals")
