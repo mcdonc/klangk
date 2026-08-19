@@ -280,7 +280,13 @@ in
   env.KLANGKBUILD_PLATFORM = lib.mkOverride 1500 (
     if pkgs.stdenv.hostPlatform.isAarch64 then "linux/arm64" else "linux/amd64"
   );
-  env.KLANGKD_IMAGE_NAME = lib.mkOverride 1500 "klangk-workspace";
+  # NOTE: KLANGKD_IMAGE_NAME is deliberately NOT set via env.* — the
+  # devenv env.* export would clobber an externally exported value, and
+  # running the stack against a variant image (e.g. the FIPS build, #2570)
+  # must be possible with `KLANGKD_IMAGE_NAME=... devenv shell -- ...`
+  # without editing nix. The default is seeded in enterShell with the
+  # "default only when unset" pattern; a devenv.local.nix env.* override
+  # still wins (exported before enterShell runs).
   env.KLANGKD_NETWORK_SIDECAR_IMAGE = lib.mkOverride 1500 "klangk-network-sidecar";
 
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
@@ -602,6 +608,11 @@ in
   };
 
   enterShell = ''
+    # Default workspace image name — here (not env.*) so an externally
+    # exported KLANGKD_IMAGE_NAME survives into the shell (#2570 FIPS
+    # variant runs `KLANGKD_IMAGE_NAME=klangk-workspace-fips devenv shell`).
+    export KLANGKD_IMAGE_NAME="''${KLANGKD_IMAGE_NAME:-klangk-workspace}"
+
     if [ ! -f "$DEVENV_ROOT/klangkd.yaml" ]; then
       cp "$DEVENV_ROOT/klangkd.yaml.devenv" "$DEVENV_ROOT/klangkd.yaml"
       echo "Created klangkd.yaml from klangkd.yaml.devenv — edit it to taste."
