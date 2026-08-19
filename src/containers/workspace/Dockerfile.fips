@@ -29,7 +29,14 @@
 # `_hashlib`/`_ssl`, curl, git over https, the openssl CLI) plus node's
 # bundled libcrypto via the provider config.
 
-ARG WORKSPACE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace:latest
+# Base: the full workspace image — pi, uv, process-compose, features,
+# entrypoint, and node all live there (Dockerfile.base alone has none of
+# those, and node is required by the build-time proof below). Default is
+# the locally-built image from the devenv task (klangk:build-workspace-
+# image → `klangk-workspace`); override with a published GHCR tag
+# (ghcr.io/mcdonc/klangk/klangk-workspace:<calver>-<commit>) for CI —
+# the registry never carries a `:latest` tag.
+ARG WORKSPACE_IMAGE=klangk-workspace:latest
 
 # --- Stage 1: build the validated FIPS module -------------------------------
 FROM debian:trixie-slim AS fips-builder
