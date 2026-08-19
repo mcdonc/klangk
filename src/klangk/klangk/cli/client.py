@@ -49,6 +49,7 @@ _WS_MAX_SIZE = int(os.environ.get("KLANGK_WEBSOCKET_MSG_SIZE_MAX", 2**24))
 logger = logging.getLogger(__name__)
 
 _RETRY_ATTEMPTS = 3
+_RESIZE_POLL_INTERVAL = 1.0  # seconds between terminal size checks
 _RETRY_BACKOFF = 2.0  # seconds, doubled each retry
 
 _WS_CONNECT_TIMEOUT = 60  # seconds to wait for container_ready
@@ -1606,7 +1607,9 @@ class TerminalSession(_ShellSession):
     async def resize_loop(self) -> None:
         while not self.stop.is_set():
             try:
-                await asyncio.wait_for(self.stop.wait(), timeout=1)
+                await asyncio.wait_for(
+                    self.stop.wait(), timeout=_RESIZE_POLL_INTERVAL
+                )
                 return  # pragma: no cover
             except asyncio.TimeoutError:
                 pass
