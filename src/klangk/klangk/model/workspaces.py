@@ -833,6 +833,64 @@ class WorkspacesModel:
             )
             return cursor.rowcount > 0
 
+    async def _mutate_domain_list(
+        self, workspace_id: str, column: str, *, add: bool, entry: str
+    ) -> bool:
+        """Append/remove *entry* on a workspace's domain-list column (#2552).
+
+        The shared body of the add/remove allowed/rejected quartet
+        (#2368/#2369/#2370): normalize via :func:`parse_allowed_domains`,
+        then compare-and-swap on the JSON blob (like
+        :meth:`update_workspace_settings`) so two concurrent mutations
+        can't lose one. Case-insensitive de-dup (add) / match (remove).
+        Returns True if the workspace exists and *entry* is in the wanted
+        state afterwards (idempotent); False if the workspace is missing
+        or *entry* is malformed.
+        """
+        try:
+            normalized = parse_allowed_domains([entry])
+        except ValueError:
+            return False
+        if not normalized:
+            return False
+        spec = normalized[0].lower()
+        for _ in range(_SETTINGS_CAS_RETRIES):
+            async with self.app.state.db.transaction() as db:
+                cursor = await db.execute(
+                    f"SELECT {column} FROM workspaces WHERE id = ?",
+                    (workspace_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return False
+                old_blob = row[column]
+                current = json.loads(old_blob) if old_blob else []
+                if add:
+                    if spec in (s.lower() for s in current):
+                        return True  # already present (idempotent)
+                    current.append(spec)
+                else:
+                    idx = next(
+                        (
+                            i
+                            for i, s in enumerate(current)
+                            if s.lower() == spec
+                        ),
+                        None,
+                    )
+                    if idx is None:
+                        return True  # already absent (idempotent)
+                    current.pop(idx)
+                new_blob = json.dumps(current)
+                cursor = await db.execute(
+                    f"UPDATE workspaces SET {column} = ?"
+                    f" WHERE id = ? AND {column} IS ?",
+                    (new_blob, workspace_id, old_blob),
+                )
+                if cursor.rowcount == 1:
+                    return True
+        return False  # pragma: no cover - CAS exhausted under contention
+
     async def add_allowed_domain(self, workspace_id: str, entry: str) -> bool:
         """Append ``entry`` (``host[:port]``) to a workspace's
         ``allowed_domains`` (#2368).
@@ -852,36 +910,9 @@ class WorkspacesModel:
         workspace is missing or ``entry`` is malformed (the caller -- the
         verdict path -- must not break on a persistence failure).
         """
-        try:
-            normalized = parse_allowed_domains([entry])
-        except ValueError:
-            return False
-        if not normalized:
-            return False
-        spec = normalized[0].lower()
-        for _ in range(_SETTINGS_CAS_RETRIES):
-            async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    "SELECT allowed_domains FROM workspaces WHERE id = ?",
-                    (workspace_id,),
-                )
-                row = await cursor.fetchone()
-                if row is None:
-                    return False
-                old_blob = row["allowed_domains"]
-                current = json.loads(old_blob) if old_blob else []
-                if spec in (s.lower() for s in current):
-                    return True  # already present (idempotent)
-                current.append(spec)
-                new_blob = json.dumps(current)
-                cursor = await db.execute(
-                    "UPDATE workspaces SET allowed_domains = ?"
-                    " WHERE id = ? AND allowed_domains IS ?",
-                    (new_blob, workspace_id, old_blob),
-                )
-                if cursor.rowcount == 1:
-                    return True
-        return False  # pragma: no cover - CAS exhausted under contention
+        return await self._mutate_domain_list(
+            workspace_id, "allowed_domains", add=True, entry=entry
+        )
 
     async def add_rejected_domain(self, workspace_id: str, entry: str) -> bool:
         """Append ``entry`` (``host[:port]``) to a workspace's
@@ -904,36 +935,9 @@ class WorkspacesModel:
         symmetry with :meth:`add_allowed_domain` and the audit row, not for
         scoping.
         """
-        try:
-            normalized = parse_allowed_domains([entry])
-        except ValueError:
-            return False
-        if not normalized:
-            return False
-        spec = normalized[0].lower()
-        for _ in range(_SETTINGS_CAS_RETRIES):
-            async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    "SELECT rejected_domains FROM workspaces WHERE id = ?",
-                    (workspace_id,),
-                )
-                row = await cursor.fetchone()
-                if row is None:
-                    return False
-                old_blob = row["rejected_domains"]
-                current = json.loads(old_blob) if old_blob else []
-                if spec in (s.lower() for s in current):
-                    return True  # already present (idempotent)
-                current.append(spec)
-                new_blob = json.dumps(current)
-                cursor = await db.execute(
-                    "UPDATE workspaces SET rejected_domains = ?"
-                    " WHERE id = ? AND rejected_domains IS ?",
-                    (new_blob, workspace_id, old_blob),
-                )
-                if cursor.rowcount == 1:
-                    return True
-        return False  # pragma: no cover - CAS exhausted under contention
+        return await self._mutate_domain_list(
+            workspace_id, "rejected_domains", add=True, entry=entry
+        )
 
     async def remove_allowed_domain(
         self, workspace_id: str, entry: str
@@ -950,40 +954,9 @@ class WorkspacesModel:
         absent -- idempotent); False if the workspace is missing or ``entry``
         is malformed.
         """
-        try:
-            normalized = parse_allowed_domains([entry])
-        except ValueError:
-            return False
-        if not normalized:
-            return False
-        spec = normalized[0].lower()
-        for _ in range(_SETTINGS_CAS_RETRIES):
-            async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    "SELECT allowed_domains FROM workspaces WHERE id = ?",
-                    (workspace_id,),
-                )
-                row = await cursor.fetchone()
-                if row is None:
-                    return False
-                old_blob = row["allowed_domains"]
-                current = json.loads(old_blob) if old_blob else []
-                idx = next(
-                    (i for i, s in enumerate(current) if s.lower() == spec),
-                    None,
-                )
-                if idx is None:
-                    return True  # already absent (idempotent)
-                current.pop(idx)
-                new_blob = json.dumps(current)
-                cursor = await db.execute(
-                    "UPDATE workspaces SET allowed_domains = ?"
-                    " WHERE id = ? AND allowed_domains IS ?",
-                    (new_blob, workspace_id, old_blob),
-                )
-                if cursor.rowcount == 1:
-                    return True
-        return False  # pragma: no cover - CAS exhausted under contention
+        return await self._mutate_domain_list(
+            workspace_id, "allowed_domains", add=False, entry=entry
+        )
 
     async def remove_rejected_domain(
         self, workspace_id: str, entry: str
@@ -1000,40 +973,9 @@ class WorkspacesModel:
         absent -- idempotent); False if the workspace is missing or ``entry``
         is malformed.
         """
-        try:
-            normalized = parse_allowed_domains([entry])
-        except ValueError:
-            return False
-        if not normalized:
-            return False
-        spec = normalized[0].lower()
-        for _ in range(_SETTINGS_CAS_RETRIES):
-            async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    "SELECT rejected_domains FROM workspaces WHERE id = ?",
-                    (workspace_id,),
-                )
-                row = await cursor.fetchone()
-                if row is None:
-                    return False
-                old_blob = row["rejected_domains"]
-                current = json.loads(old_blob) if old_blob else []
-                idx = next(
-                    (i for i, s in enumerate(current) if s.lower() == spec),
-                    None,
-                )
-                if idx is None:
-                    return True  # already absent (idempotent)
-                current.pop(idx)
-                new_blob = json.dumps(current)
-                cursor = await db.execute(
-                    "UPDATE workspaces SET rejected_domains = ?"
-                    " WHERE id = ? AND rejected_domains IS ?",
-                    (new_blob, workspace_id, old_blob),
-                )
-                if cursor.rowcount == 1:
-                    return True
-        return False  # pragma: no cover - CAS exhausted under contention
+        return await self._mutate_domain_list(
+            workspace_id, "rejected_domains", add=False, entry=entry
+        )
 
     async def transfer_workspace(
         self,
