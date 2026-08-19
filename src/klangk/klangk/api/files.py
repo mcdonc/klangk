@@ -40,6 +40,27 @@ def _require_container(workspace_id: str, container_registry) -> str:
     return state.container_id
 
 
+def _files_http_error(
+    e: Exception, *, not_found: str = "Path not found"
+) -> HTTPException:
+    """Translate a files-layer exception to its HTTP response (#2553).
+
+    The shared except-ladder of the file routes: ValueError -> 400 (the
+    caller's message), FileNotFoundError -> 404 (*not_found* wording
+    varies per route), FileExistsError -> 409, OSError -> 500. Routes
+    with an extra case (or none of these) keep their own handling.
+    """
+    if isinstance(e, ValueError):
+        return HTTPException(status_code=400, detail=str(e))
+    if isinstance(e, FileNotFoundError):
+        return HTTPException(status_code=404, detail=not_found)
+    if isinstance(e, FileExistsError):
+        return HTTPException(
+            status_code=409, detail="Destination already exists"
+        )
+    return HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/workspaces/{workspace_id}/files")
 async def list_files(
     workspace_id: str,
@@ -83,12 +104,8 @@ async def delete_file(
     cid = _require_container(workspace_id, app.state.container_registry)
     try:
         deleted = await app.state.files.delete_path(cid, path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Path not found")
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except (ValueError, FileNotFoundError, OSError) as e:
+        raise _files_http_error(e) from None
     return {"path": deleted, "status": "deleted"}
 
 
@@ -109,16 +126,8 @@ async def rename_file(
         renamed = await app.state.files.rename_path(
             cid, body.old_path, body.new_path
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Source not found")
-    except FileExistsError:
-        raise HTTPException(
-            status_code=409, detail="Destination already exists"
-        )
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except (ValueError, FileNotFoundError, FileExistsError, OSError) as e:
+        raise _files_http_error(e, not_found="Source not found") from None
     return {"path": renamed, "status": "renamed"}
 
 
@@ -184,10 +193,8 @@ async def upload_file(
         saved_path = await app.state.files.write_file(
             cid, filename, buf.getvalue()
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except (ValueError, OSError) as e:
+        raise _files_http_error(e) from None
     return {"path": saved_path, "status": "uploaded"}
 
 

@@ -416,6 +416,10 @@ class TestTuiE2E:
                 await pilot.pause()
                 app.push_screen(WorkspaceDetailScreen(ws_name))
                 await _wait_for_screen(app, pilot, WorkspaceDetailScreen)
+                # Wait for the workspace data to load — the body renders
+                # empty until the on_mount fetch lands (same race class as
+                # the #2539 flake).
+                await _wait_for_workspace_loaded(app, pilot)
                 # Workspace was just created, not started — should show
                 # "running: no".
                 body = str(
