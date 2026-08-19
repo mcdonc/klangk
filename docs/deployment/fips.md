@@ -129,6 +129,64 @@ FIPS-approvable; the switch to PBKDF2-HMAC-SHA512 via `hashlib`
 (which routes through the validated provider) is tracked in
 [#2576](https://github.com/mcdonc/klangk/issues/2576).
 
+## Why the container meets FIPS requirements
+
+The strongest form of the argument, in the order an assessor is likely
+to probe it:
+
+1. **The validated thing is the module, and we use that exact
+   module.** FIPS 140-3 validates a specific cryptographic module
+   binary — here the OpenSSL 3.1.2 FIPS Provider, CMVP certificate
+   #4985. The image compiles that exact version from the official
+   tarball (sha256-pinned to the OpenSSL project's published checksum)
+   with the required `enable-fips` configuration. The provenance chain
+   is reproducible from the Dockerfile.
+2. **The hosting arrangement is the one the certificate's owner
+   documents.** The OpenSSL validation announcement states the module
+   "is compatible with any version of OpenSSL 3.0, 3.1, 3.2, 3.3, 3.4
+   and future 3.5" — forward-compatibility across libcrypto cores is a
+   supported, endorsed deployment mode, not an ad-hoc stretch. Debian
+   trixie's 3.5.x libcrypto and Node.js's bundled 3.5.7 libcrypto both
+   host the module under that allowance. This is also how the OpenSSL
+   maintainers themselves direct distributors to combine a validated
+   FIPS provider with a current libcrypto.
+3. **The module operates in its approved mode.** Validation applies
+   "when operated in approved mode": the activation config loads `fips`
+   (and the non-cryptographic `base` provider) and disables `default`,
+   so the module's power-on self-tests run (enforced by `fipsinstall`
+   at build time) and non-approved algorithms fail closed — verified
+   for the CLI, python's OpenSSL path, and Node.js, at **build time**
+   (the image refuses to build otherwise) and re-checkable at runtime
+   with the probes above.
+4. **Power-on self-test evidence is generated, not assumed.**
+   `fipsinstall` executes the module's KAT/PCT suite and writes the
+   module-MAC configuration the provider verifies on every load. A
+   tampered module or config fails self-test and the provider enters
+   its error state — the failure mode is visible, not silent.
+5. **Per NIST IG G.5 (FIPS 140-2) and its 140-3 successor guidance,** a
+   validated software module may be used on platforms beyond those
+   listed in its certificate, provided the operating environment does
+   not violate the module's security policy. The container does not
+   modify the module or its boundary; general-purpose compute (Debian
+   userspace on a Linux kernel) is the module's documented operational
+   environment.
+6. **What is claimed is scoped honestly.** The claim is about the
+   workspace container's cryptographic services: TLS, hashing, KDFs,
+   signatures, and encryption performed via OpenSSL (system CLI,
+   dynamically-linked tools, python `_ssl`/`_hashlib`, Node.js
+   `crypto`/`tls`). The boundary table above states what is outside
+   (CPython's built-in `_md5` fallback, statically-linked crypto in
+   user-installed tooling) and the deploying organization's
+   responsibilities (proxy TLS, kernel crypto, key management, the
+   ATO). An assessor can verify each line of the table empirically
+   with the documented probes.
+
+The honest counterpoints an assessor may raise — and the answers — are
+in the [Notes for auditors](#notes-for-auditors) section below; the
+strongest residual risk is item 4 there (one LibreSSL/BoringSSL-derived
+bundled core in Node.js), which the module's forward-compatibility
+allowance addresses but a strict reading may not accept.
+
 ## Notes for auditors
 
 - The validated module is the OpenSSL 3.1.2 FIPS Provider, certificate
@@ -144,3 +202,9 @@ FIPS-approvable; the switch to PBKDF2-HMAC-SHA512 via `hashlib`
   Node.js `--shared-openssl` against the distro libcrypto; klangk does
   not ship such a build today (defense-in-depth refinement, not a
   correctness requirement).
+- One residual consideration: Node.js's bundled libcrypto is a
+  Node-maintained OpenSSL build (not the Debian package). It loads the
+  same validated `fips.so` under the same forward-compatibility
+  allowance, and Node's project documentation states no rebuild is
+  needed for provider-based FIPS. A strict single-core reading can be
+  satisfied with the `--shared-openssl` build above.
