@@ -12,6 +12,8 @@ patch/import) so callers keep working unchanged:
 - :mod:`.idle`     - ``IdleMonitor``
 - :mod:`.health`   - ``HealthMonitor`` + ``unhealthy_message``
 - :mod:`.sidecar`  - network sidecar lifecycle (mixin + constants)
+- :mod:`.spec`    - container spec assembly (``ContainerStartSpec``, env/
+  mounts/volumes/nix builders, limit resolvers, create kwargs)
 - :mod:`.registry` - ``ContainerRegistry`` (lifecycle, bringup, reaps)
 
 Patch-target note: monkeypatching module globals must now target the
@@ -43,4 +45,5 @@ from .registry import (
     _reap_sort_key as _reap_sort_key,
 )
 from .sidecar import NetworkSidecarMixin as NetworkSidecarMixin
+from .spec import ContainerStartSpec as ContainerStartSpec
 from .state import ContainerState as ContainerState
