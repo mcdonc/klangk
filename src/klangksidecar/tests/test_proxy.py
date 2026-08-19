@@ -1547,6 +1547,11 @@ class TestBumpActivity:
     def _client(self, proxy, tmp_path):
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
         c._connected.set()
+        # Deterministic gate on the first bump regardless of machine uptime:
+        # time.monotonic() on a fresh CI VM is the boot clock (~a minute),
+        # which can be SMALLER than the jittered gate window (30-60s for the
+        # default 60s base), suppressing even the first send (#2557 CI flake).
+        c._last_activity_send = float("-inf")
         sent = []
 
         class _FakeWS:

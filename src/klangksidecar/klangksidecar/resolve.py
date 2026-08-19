@@ -118,6 +118,30 @@ def _decision(qname: str, ports: set[int] | None) -> tuple[bool, set[int | None]
     return False, ports if ports is not None else {None}
 
 
+async def _forward_marked(data: bytes) -> bytes | None:
+    """Forward a DNS wire to UPSTREAM on a fwmark'd non-blocking socket.
+
+    The shared preamble of :func:`_forward_and_learn` and
+    :func:`_forward_and_record` (#2554): a MARK'd UDP socket (so the
+    entrypoint's rule exempt the proxy's own egress, #2264), send +
+    bounded receive on the loop's sock_* helpers, closed on success,
+    error, AND cancellation. Returns the response wire, or None on any
+    upstream failure/timeout.
+    """
+    loop = asyncio.get_running_loop()
+    us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    us.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, MARK)
+    us.setblocking(False)
+    try:
+        await asyncio.wait_for(loop.sock_sendto(us, data, UPSTREAM), 3)
+        resp, _ = await asyncio.wait_for(loop.sock_recvfrom(us, 65535), 3)
+        return resp
+    except Exception:
+        return None
+    finally:
+        us.close()  # closed on success, error, AND cancellation
+
+
 async def _forward_and_learn(
     s: socket.socket,
     data: bytes,
@@ -132,17 +156,9 @@ async def _forward_and_learn(
     socket + the loop's sock_* helpers so the await yields to other holds +
     the WS receive loop while the upstream is pending.
     """
-    loop = asyncio.get_running_loop()
-    us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    us.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, MARK)
-    us.setblocking(False)
-    try:
-        await asyncio.wait_for(loop.sock_sendto(us, data, UPSTREAM), 3)
-        resp, _ = await asyncio.wait_for(loop.sock_recvfrom(us, 65535), 3)
-    except Exception:
+    resp = await _forward_marked(data)
+    if resp is None:
         return
-    finally:
-        us.close()  # closed on success, error, AND cancellation
     await _respond_allowed(s, resp, addr, qname, port_set)
 
 
@@ -192,17 +208,9 @@ async def _forward_and_record(
     resolver's <=30s getaddrinfo cap. Uses a non-blocking socket + the loop's
     sock_* helpers like :func:`_forward_and_learn`.
     """
-    loop = asyncio.get_running_loop()
-    us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    us.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, MARK)
-    us.setblocking(False)
-    try:
-        await asyncio.wait_for(loop.sock_sendto(us, data, UPSTREAM), 3)
-        resp, _ = await asyncio.wait_for(loop.sock_recvfrom(us, 65535), 3)
-    except Exception:
+    resp = await _forward_marked(data)
+    if resp is None:
         return
-    finally:
-        us.close()
     await _respond_recorded(s, resp, addr, qname)
 
 
