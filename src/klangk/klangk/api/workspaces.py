@@ -175,6 +175,23 @@ def _annotate_running(items: list[dict], container_registry) -> list[dict]:
     return items
 
 
+async def _list_response(fetch, app, limit, offset):
+    """Shared list-endpoint body (#2553): bare/envelope shape + running
+    annotation. *fetch* is a callable(limit, offset) returning the model's
+    pagination result. Without ``limit``/``offset`` (backward-compatible)
+    returns a bare list; with them, the envelope dict.
+    """
+    bare = limit is None and offset is None
+    result = await fetch(
+        limit=BARE_LIST_LIMIT if bare else limit,
+        offset=offset or 0,
+    )
+    _annotate_running(result["items"], app.state.container_registry)
+    if bare:
+        return result["items"]
+    return result
+
+
 @router.get("/workspaces")
 async def list_workspaces(
     user: dict = Depends(auth.get_current_user),
@@ -193,19 +210,14 @@ async def list_workspaces(
     ``sort`` (``name``/``created``), ``order`` (``asc``/``desc``) and ``q``
     (name substring) apply in both shapes.
     """
-    bare = limit is None and offset is None
-    result = await app.state.workspaces.list_workspaces(
-        user["id"],
-        limit=BARE_LIST_LIMIT if bare else limit,
-        offset=offset or 0,
-        sort=sort,
-        order=order,
-        q=q,
+    return await _list_response(
+        lambda limit, offset: app.state.workspaces.list_workspaces(
+            user["id"], limit=limit, offset=offset, sort=sort, order=order, q=q
+        ),
+        app,
+        limit,
+        offset,
     )
-    _annotate_running(result["items"], app.state.container_registry)
-    if bare:
-        return result["items"]
-    return result
 
 
 @router.get("/workspaces/shared")
@@ -223,19 +235,21 @@ async def list_shared_workspaces(
     Without ``limit``/``offset`` (backward-compatible) returns a bare list.
     With pagination params returns an envelope (see ``list_workspaces``).
     """
-    bare = limit is None and offset is None
-    result = await app.state.model.workspaces.list_shared_workspaces(
-        user["id"],
-        limit=BARE_LIST_LIMIT if bare else limit,
-        offset=offset or 0,
-        sort=sort,
-        order=order,
-        q=q,
+    return await _list_response(
+        lambda limit, offset: (
+            app.state.model.workspaces.list_shared_workspaces(
+                user["id"],
+                limit=limit,
+                offset=offset,
+                sort=sort,
+                order=order,
+                q=q,
+            )
+        ),
+        app,
+        limit,
+        offset,
     )
-    _annotate_running(result["items"], app.state.container_registry)
-    if bare:
-        return result["items"]
-    return result
 
 
 class CreateWorkspaceRequest(BaseModel):
@@ -1132,6 +1146,20 @@ async def add_workspace_member(
     }
 
 
+async def _remove_principals(app, workspace_id: str, predicate) -> None:
+    """Drop every ACL entry matching *predicate* and renumber the rest.
+
+    Shared by member and group removal (#2553): fetch the workspace's
+    entries, filter, re-assign sequential positions, and rewrite atomically.
+    """
+    resource = f"/workspaces/{workspace_id}"
+    entries = await app.state.model.acl.get_acl_entries(resource)
+    remaining = [e for e in entries if not predicate(e)]
+    for i, entry in enumerate(remaining):
+        entry["position"] = i
+    await app.state.model.acl.replace_acl_entries(resource, remaining)
+
+
 @router.delete("/workspaces/{workspace_id}/members/{member_id}")
 async def remove_workspace_member(
     workspace_id: str,
@@ -1140,19 +1168,13 @@ async def remove_workspace_member(
     app=Depends(get_app_dep),
 ):
     # Remove all ACL entries for this user on this workspace
-    resource = f"/workspaces/{workspace_id}"
-    entries = await app.state.model.acl.get_acl_entries(resource)
-    remaining = [
-        e
-        for e in entries
-        if not (
+    await _remove_principals(
+        app,
+        workspace_id,
+        lambda e: (
             e["principal_type"] == PRINCIPAL_USER and e["user_id"] == member_id
-        )
-    ]
-    # Rewrite entries with new positions
-    for i, entry in enumerate(remaining):
-        entry["position"] = i
-    await app.state.model.acl.replace_acl_entries(resource, remaining)
+        ),
+    )
     app.state.sockets.notify_user_workspaces_changed(user["id"])
     app.state.sockets.notify_user_workspaces_changed(member_id)
     return {"status": "removed"}
@@ -1347,19 +1369,14 @@ async def remove_workspace_group(
     app=Depends(get_app_dep),
 ):
     """Remove all ACL entries for a group on this workspace."""
-    resource = f"/workspaces/{workspace_id}"
-    entries = await app.state.model.acl.get_acl_entries(resource)
-    remaining = [
-        e
-        for e in entries
-        if not (
+    await _remove_principals(
+        app,
+        workspace_id,
+        lambda e: (
             e["principal_type"] == PRINCIPAL_GROUP
             and e["group_id"] == group_id
-        )
-    ]
-    for i, entry in enumerate(remaining):
-        entry["position"] = i
-    await app.state.model.acl.replace_acl_entries(resource, remaining)
+        ),
+    )
     return {"status": "removed"}
 
 
