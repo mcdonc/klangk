@@ -59,18 +59,33 @@ RUN ./Configure enable-fips --prefix=/opt/ossl-fips --libdir=lib && \
 # --- Stage 2: workspace image + FIPS activation ------------------------------
 FROM $WORKSPACE_IMAGE
 
-# The `openssl` CLI (needed for fipsinstall at build time and for the
-# startup verification probe at runtime) is not in the base workspace
-# image; libcrypto.so.3 already is (dependency of python3/curl).
+# amd64-only today: the module path and OPENSSL_MODULES below hardcode
+# the x86_64 multiarch dir. On other architectures OPENSSL_MODULES would
+# shadow the distro base.so in the arch dir — fail the build loudly
+# instead of half-working.
+RUN test "$(dpkg --print-architecture)" = "amd64"
+
+# The `openssl` CLI (needed for fipsinstall at build time and for
+# runtime verification probes) is not in the base workspace image;
+# libcrypto.so.3 already is (dependency of python3/curl).
+# chown /var/log/apt: apt-created logs land root:adm, which causes crun
+# fchownat errors under --userns=keep-id — same fix every apt layer in
+# Dockerfile.base applies.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    chown -R root:root /var/log/apt
 
 # Multiarch dir: the default provider search path — anywhere else needs
 # OPENSSL_MODULES set for explicit loads.
 COPY --from=fips-builder /opt/ossl-fips/lib/ossl-modules/fips.so \
      /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so
 
-# Module MAC + self-test status, computed by the system (3.5.x) CLI.
+# Module MAC + install status, computed by the system (3.5.x) CLI.
+# The 3.5.x fipsinstall defaults to -self_test_onload: no per-boot
+# status is written, the KAT/PCT suite re-runs on every module load,
+# and the config carries no machine-specific data (README-FIPS's
+# do-not-copy-across-machines warning doesn't apply — the image ships
+# one config for one module everywhere).
 RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
       -out /etc/ssl/fipsmodule.cnf
 
@@ -81,6 +96,13 @@ RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
 # section named `nodejs_conf` (BUILDING.md, --openssl-conf-name); both
 # keys point at the same section so one config serves system OpenSSL
 # and node's bundled libcrypto.
+#
+# The config is written directly to the STOCK path (/etc/ssl/openssl.cnf,
+# replacing the distro file) so that environment-less lookups —
+# sudoers env_reset strips OPENSSL_CONF for non-login `sudo <cmd>`
+# (trixie's PAM stack has no pam_env, and profile.d is not sourced
+# there) — still activate FIPS instead of silently falling back to
+# the default provider.
 RUN printf '%s\n' \
       'openssl_conf = openssl_init' \
       'nodejs_conf = openssl_init' \
@@ -96,7 +118,7 @@ RUN printf '%s\n' \
       '' \
       '[base_sect]' \
       'activate = 1' \
-      > /etc/ssl/openssl-fips.cnf
+      > /etc/ssl/openssl.cnf
 
 # Image-wide activation. Docker/podman ENV reaches the entrypoint and
 # every exec; the profile.d drop-in additionally covers login shells
@@ -105,17 +127,22 @@ RUN printf '%s\n' \
 # libcrypto has a build-time modules dir baked in, so it cannot find
 # fips.so in the distro multiarch dir without it. Harmless for system
 # OpenSSL (same directory).
-ENV OPENSSL_CONF=/etc/ssl/openssl-fips.cnf \
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf \
     OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules
 RUN printf '%s\n' \
-      'export OPENSSL_CONF=/etc/ssl/openssl-fips.cnf' \
+      'export OPENSSL_CONF=/etc/ssl/openssl.cnf' \
       'export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules' \
       > /etc/profile.d/openssl-fips.sh
 
 # Build-time proof that the provider actually activates: fail the build
 # if md5 is fetchable or the fips provider is missing. Covers the
-# system CLI and node (nodejs_conf section + OPENSSL_MODULES).
+# system CLI and node (nodejs_conf section + OPENSSL_MODULES), plus
+# the env-stripped case (env -i simulates sudo env_reset — the stock
+# config path must keep FIPS active with no environment at all).
 RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
     ! echo hello | openssl md5 > /dev/null 2>&1 && \
     ! node -e "require('crypto').createHash('md5').update('x').digest('hex')" \
-      > /dev/null 2>&1
+      > /dev/null 2>&1 && \
+    env -i /usr/bin/openssl list -providers \
+      | grep -q 'OpenSSL FIPS Provider' && \
+    ! env -i /usr/bin/sh -c 'echo hello | openssl md5' > /dev/null 2>&1

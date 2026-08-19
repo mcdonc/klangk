@@ -79,12 +79,12 @@ Point klangkd at the image with `KLANGKD_IMAGE_NAME=klangk-workspace-fips`.
 
 Inside the workspace container:
 
-| Component                                                         | Covered?           | Why                                                                                                                                                                                                                                                                                         |
-| ----------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `openssl` CLI, curl, git (https), distro python `_ssl`/`_hashlib` | **Yes**            | Dynamically link the distro `libcrypto.so.3`, which loads the FIPS provider via `OPENSSL_CONF`.                                                                                                                                                                                             |
-| Node.js `crypto`/`tls` (including the pi coding agent)            | **Yes**            | Node's bundled libcrypto reads the `nodejs_conf` config section (the image aliases it) and loads the validated `fips.so` via `OPENSSL_MODULES`. Verified: `createHash('md5')` is rejected, TLS and approved digests route through the provider. No Node rebuild is needed.                  |
-| CPython's `hashlib.md5()`                                         | **No — by design** | CPython falls back to its built-in `_md5` module when the provider refuses; that code never touches OpenSSL and no provider can gate it. This is PEP 452's `usedforsecurity` behavior: legacy non-security MD5 (etags, cache keys) keeps working. Klangk itself does not call MD5 anywhere. |
-| Statically-linked crypto in third-party tooling users install     | **No**             | Outside the provider model entirely; such tools bring their own crypto.                                                                                                                                                                                                                     |
+| Component                                                         | Covered?           | Why                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openssl` CLI, curl, git (https), distro python `_ssl`/`_hashlib` | **Yes**            | Dynamically link the distro `libcrypto.so.3`, which loads the FIPS provider via `OPENSSL_CONF`.                                                                                                                                                                                                                                                                      |
+| Node.js `crypto`/`tls` (including the pi coding agent)            | **Yes**            | Node's bundled libcrypto reads the `nodejs_conf` config section (the image aliases it) and loads the validated `fips.so` via `OPENSSL_MODULES`. Verified: `createHash('md5')` is rejected, TLS and approved digests route through the provider. No Node rebuild is involved — provider-based FIPS is a runtime configuration of the OpenSSL that Node already links. |
+| CPython's `hashlib.md5()`                                         | **No — by design** | CPython falls back to its built-in `_md5` module when the provider refuses; that code never touches OpenSSL and no provider can gate it. This is PEP 452's `usedforsecurity` behavior: legacy non-security MD5 (etags, cache keys) keeps working. Klangk itself does not call MD5 anywhere.                                                                          |
+| Statically-linked crypto in third-party tooling users install     | **No**             | Outside the provider model entirely; such tools bring their own crypto.                                                                                                                                                                                                                                                                                              |
 
 **Out of scope (the deploying organization's responsibility):** TLS
 termination at the reverse proxy, kernel crypto (dm-crypt, IPsec), key
@@ -110,7 +110,8 @@ node -e "require('crypto').createHash('md5').update('x').digest('hex')"
 
 A planned `KLANGKD_FIPS_MODE` startup check (see [#2570]) will automate
 this: verify the provider is active at workspace start and fail loudly
-if not.
+if not. Until it ships, the probes above are the manual equivalent
+(and the image build runs them automatically on every build).
 
 ## Upgrading the module
 
@@ -163,13 +164,14 @@ to probe it:
    module-MAC configuration the provider verifies on every load. A
    tampered module or config fails self-test and the provider enters
    its error state — the failure mode is visible, not silent.
-5. **Per NIST IG G.5 (FIPS 140-2) and its 140-3 successor guidance,** a
-   validated software module may be used on platforms beyond those
-   listed in its certificate, provided the operating environment does
-   not violate the module's security policy. The container does not
-   modify the module or its boundary; general-purpose compute (Debian
-   userspace on a Linux kernel) is the module's documented operational
-   environment.
+5. **Platform portability is sanctioned.** The module's own Security
+   Policy (the certificate #4985 entry in the CMVP registry) defines
+   its operational environment; the OpenSSL validation announcement
+   states the module "is compatible with any version of OpenSSL 3.0,
+   3.1, 3.2, 3.3, 3.4 and future 3.5". The container runs the
+   validated module binary unmodified on general-purpose compute
+   (Debian userspace on a Linux kernel) and does not alter the module
+   or its boundary.
 6. **What is claimed is scoped honestly.** The claim is about the
    workspace container's cryptographic services: TLS, hashing, KDFs,
    signatures, and encryption performed via OpenSSL (system CLI,
@@ -183,9 +185,10 @@ to probe it:
 
 The honest counterpoints an assessor may raise — and the answers — are
 in the [Notes for auditors](#notes-for-auditors) section below; the
-strongest residual risk is item 4 there (one LibreSSL/BoringSSL-derived
-bundled core in Node.js), which the module's forward-compatibility
-allowance addresses but a strict reading may not accept.
+strongest residual risk is the last item there (Node.js ships its own
+bundled OpenSSL core, a Node-maintained build of upstream OpenSSL —
+not the Debian package), which the module's forward-compatibility
+allowance addresses but a strict single-core reading may not accept.
 
 ## Notes for auditors
 
@@ -203,8 +206,10 @@ allowance addresses but a strict reading may not accept.
   not ship such a build today (defense-in-depth refinement, not a
   correctness requirement).
 - One residual consideration: Node.js's bundled libcrypto is a
-  Node-maintained OpenSSL build (not the Debian package). It loads the
-  same validated `fips.so` under the same forward-compatibility
-  allowance, and Node's project documentation states no rebuild is
-  needed for provider-based FIPS. A strict single-core reading can be
-  satisfied with the `--shared-openssl` build above.
+  Node-maintained build of upstream OpenSSL (not the Debian package).
+  It loads the same validated `fips.so` under the same forward-
+  compatibility allowance; provider-based FIPS is a runtime
+  configuration of that OpenSSL (the `nodejs_conf` section and
+  `OPENSSL_CONF` mechanism Node documents), so no rebuild is involved.
+  A strict single-core reading can be satisfied with the
+  `--shared-openssl` build above.
