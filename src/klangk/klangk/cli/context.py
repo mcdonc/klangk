@@ -94,7 +94,7 @@ def resolve_or_exit(client, name: str):
     # Deferred: context is imported by every command module; this keeps
     # client.py's httpx/websockets import weight off commands that never
     # build a client (check_deferred_imports allowlist).
-    from .client import WorkspaceNotFoundError  # noqa: allow-deferred-import
+    from .client import WorkspaceNotFoundError  # allow-deferred-import
 
     try:
         return client.resolve_workspace(name)

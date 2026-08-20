@@ -399,7 +399,8 @@ class MainScreen(Screen):
                     lv.index = 0
 
     def action_switch_server(self) -> None:
-        from .server import ServerSwitchScreen  # noqa: allow-deferred-import
+        # allow-deferred-import
+        from .server import ServerSwitchScreen
 
         self.app.push_screen(ServerSwitchScreen())
 
@@ -548,7 +549,8 @@ class MainScreen(Screen):
         self._refresh_action_hints()
 
     def action_duplicate(self) -> None:
-        from ._base import DuplicateScreen  # noqa: allow-deferred-import
+        # allow-deferred-import
+        from ._base import DuplicateScreen
 
         name = self._require_highlighted()
         if not name:
@@ -608,7 +610,8 @@ class MainScreen(Screen):
         self.run_worker(self._do_edit(name), exit_on_error=False)
 
     async def _do_edit(self, name: str) -> None:
-        from .workspace_form import EditWorkspaceScreen  # noqa: allow-deferred-import
+        # allow-deferred-import
+        from .workspace_form import EditWorkspaceScreen
 
         state = self.app.tui_state
         try:
@@ -744,7 +747,8 @@ class MainScreen(Screen):
             self.refresh_lists()
 
     async def _do_create(self) -> None:
-        from .workspace_form import CreateWorkspaceScreen  # noqa: allow-deferred-import
+        # allow-deferred-import
+        from .workspace_form import CreateWorkspaceScreen
 
         state = self.app.tui_state
         try:
@@ -793,7 +797,8 @@ class MainScreen(Screen):
 
         def _offer(open_it: bool) -> None:
             if open_it:
-                from .workspace_detail import WorkspaceDetailScreen  # noqa: allow-deferred-import
+                # allow-deferred-import
+                from .workspace_detail import WorkspaceDetailScreen
 
                 self.app.push_screen(WorkspaceDetailScreen(name))
 
@@ -1067,7 +1072,8 @@ class MainScreen(Screen):
             pass  # Widget not mounted yet; status will refresh on mount.
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        from .workspace_detail import WorkspaceDetailScreen  # noqa: allow-deferred-import
+        # allow-deferred-import
+        from .workspace_detail import WorkspaceDetailScreen
 
         name = getattr(event.item, "name", "") or ""
         if name:
@@ -1211,7 +1217,8 @@ class MainScreen(Screen):
 
     def _forward_status_to_detail(self, event: dict) -> None:
         """Mirror a live status broadcast onto an open detail screen."""
-        from .workspace_detail import WorkspaceDetailScreen  # noqa: allow-deferred-import
+        # allow-deferred-import
+        from .workspace_detail import WorkspaceDetailScreen
 
         for screen in reversed(self.app.screen_stack):
             if isinstance(screen, WorkspaceDetailScreen):

@@ -323,7 +323,7 @@ def consent_decide(
     ws = _resolve_workspace_for_consent(client, workspace)
     token = context.session_token()
     # Lazy import so the textual dep only loads on this command path.
-    from .tui.consent import ConsentDeciderApp  # noqa: allow-deferred-import
+    from .tui.consent import ConsentDeciderApp  # allow-deferred-import
 
     ConsentDeciderApp(
         context.server_url(),

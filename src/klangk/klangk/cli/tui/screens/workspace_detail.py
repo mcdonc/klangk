@@ -445,7 +445,8 @@ class WorkspaceDetailScreen(Screen):
         self.run_worker(self._do_edit, exit_on_error=False)
 
     async def _do_edit(self) -> None:
-        from .workspace_form import EditWorkspaceScreen  # noqa: allow-deferred-import
+        # allow-deferred-import
+        from .workspace_form import EditWorkspaceScreen
 
         state = self.app.tui_state
         try:
@@ -484,7 +485,8 @@ class WorkspaceDetailScreen(Screen):
             self.run_worker(self._reload_after_edit, exit_on_error=False)
 
     async def _reload_after_edit(self) -> None:
-        from .main import MainScreen  # noqa: allow-deferred-import
+        # allow-deferred-import
+        from .main import MainScreen
 
         await self._load()
         try:
