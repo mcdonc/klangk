@@ -38,6 +38,10 @@ from _e2e_logs import (  # noqa: F401,E402
     pytest_runtest_setup,
 )
 
+# NOTE: the hooks only attach logs for servers launched with a file
+# ``log_path`` — which is ``start_server``'s default since #2623, so every
+# server this suite (and the backend e2e suite) launches is covered.
+
 _E2E_TIMEOUT_SECONDS = 300
 
 

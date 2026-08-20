@@ -86,18 +86,19 @@ def _drain_stdout(proc: Popen, log_path: str | None = None) -> str:
     """Read the child's captured combined output (for failure diagnostics).
 
     When the server logs to a file (``log_path``), read that instead of the
-    (None) pipe.
+    (None) pipe. The ``_wait_ready`` failure paths call this *after*
+    terminating the child, so the file is fully flushed.
     """
-    if proc.stdout is not None:
-        try:
-            return (proc.stdout.read() or b"").decode(errors="replace")
-        except Exception:
-            return ""
     if log_path:
         try:
             with open(log_path) as fh:
                 return fh.read()
         except OSError:
+            return ""
+    if proc.stdout is not None:
+        try:
+            return (proc.stdout.read() or b"").decode(errors="replace")
+        except Exception:
             return ""
     return ""
 
@@ -196,9 +197,14 @@ def start_server(
         config-reload E2E writes a YAML file and points klangkd at it.
     log_path:
         Optional path to redirect the server's combined stdout/stderr to a
-        file instead of a captured pipe. The CLI / frontend E2E suites use
-        this to avoid the OS pipe-buffer (64 KB) deadlock on long runs
-        (#364). ``None`` (default) → captured pipe (drained on failure).
+        file instead of a captured pipe. The CLI / frontend E2E suites pass
+        explicit paths; the default (``None``) derives one at
+        ``<data_dir>/klangkd.log`` so every server's output survives on
+        failure (``_e2e_logs`` attaches it to failing tests, #2623) instead
+        of dying in a pipe that is only drained at process exit. Pass
+        ``log_path=None`` is impossible after defaulting — pass an explicit
+        path to override, or ``data_dir`` to control where the default lands.
+        Pass ``log_path=""`` (empty string) to force the captured pipe.
     **env_overrides:
         Forwarded to :func:`_e2e_env.clean_env` as the test's explicit
         ``KLANGKD_*`` config (JWT secret, default user, auth mode, etc.).
@@ -217,6 +223,14 @@ def start_server(
         state_dir = os.path.realpath(
             tempfile.mkdtemp(prefix="klangk-e2e-state-")
         )
+    # Default to a file-streamed log inside the data dir so the failure
+    # hooks in ``_e2e_logs`` can attach what the server said (#2623); a
+    # captured pipe is only drainable at process exit and vanishes with
+    # the data dir. An explicit "" forces the old captured-pipe behavior
+    # (the smoketest reads its log while the server runs). #364 still
+    # applies: file streaming also avoids the 64 KB pipe-buffer deadlock.
+    if log_path is None:
+        log_path = os.path.join(data_dir, "klangkd.log")
 
     overrides = dict(env_overrides)
     overrides.setdefault("KLANGKD_DATA_DIR", data_dir)
@@ -263,9 +277,13 @@ def start_server(
     else:
         cmd.append("--config=none")
     # When a log_path is given, stream the server's output to a file so a
-    # long-lived run can't fill the 64 KB OS pipe buffer and deadlock (#364).
-    # Otherwise capture to a pipe (drained only on failure for diagnostics).
-    log_file = open(log_path, "w") if log_path is not None else None  # noqa: SIM115
+    # long-lived run can't fill the 64 KB OS pipe buffer and deadlock (#364)
+    # and the failure hooks can read it back (#2623). An empty string means
+    # the caller explicitly wants the captured pipe (drained on failure).
+    if log_path == "":
+        log_file = None
+    else:
+        log_file = open(log_path, "w")  # noqa: SIM115
     proc = subprocess.Popen(
         cmd,
         cwd=BACKEND_DIR,
@@ -279,7 +297,7 @@ def start_server(
     _wait_ready(proc, uds_path=uds_path, url=url, log_path=log_path)
 
     client = httpx_client({"uds_path": uds_path, "url": url})
-    if log_path is not None:
+    if log_file is not None:
         _active_log_paths.append(log_path)
     return {
         "proc": proc,
@@ -369,11 +387,8 @@ def stop_server(server: dict[str, Any]) -> None:
         pass
     # Unregister before the rmtree below deletes the log file (#2623).
     log_path = server.get("log_path")
-    if log_path is not None:
-        try:
-            _active_log_paths.remove(log_path)
-        except ValueError:
-            pass
+    if log_path is not None and log_path in _active_log_paths:
+        _active_log_paths.remove(log_path)
     data_dir = server["data_dir"]
     _cleanup_containers(data_dir)
     shutil.rmtree(data_dir, ignore_errors=True)
