@@ -76,6 +76,17 @@ operators or integrators to act when upgrading.
   unverified account clears the counter, matching login semantics.
   The 60s per-email resend cooldown is unchanged.
 
+- **`KLANGKD_INACTIVITY_DISABLE_DAYS` (#2588).** Accounts whose newest
+  activity signal — last authenticated API access (tracked per user,
+  migration 0005), last login, or creation — is older than the window
+  (default `35` days; `0` disables) are disabled by an hourly sweep.
+  Login, token refresh, and authenticated requests then fail with
+  `403 Account disabled` and live WebSocket connections are closed
+  (4001 → client logout) until an admin re-enables the account via
+  `PATCH /api/v1/admin/users/{id}`. Admin-group members and the system
+  agent are exempt; the setting is reloadable on SIGHUP. See
+  [Authentication](docs/features/authentication.md).
+
 - **Last successful login time (#2583).** Every login (password,
   SSO, no-auth, and the auto-login after register/verify/reset/invite
   acceptance) now stamps a `last_login_at` timestamp on the user.

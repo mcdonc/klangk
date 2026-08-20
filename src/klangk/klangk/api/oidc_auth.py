@@ -331,6 +331,8 @@ async def oidc_callback(
     user = await _find_or_create_user(
         request.app, provider_id, claims["sub"], email
     )
+    # A disabled account must not mint a session via SSO (#2588).
+    auth.ensure_not_disabled(user)
 
     if hook_groups is not None:
         await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)

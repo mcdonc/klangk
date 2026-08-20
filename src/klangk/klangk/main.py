@@ -21,6 +21,7 @@ from . import (
     consent,
     emailsvc,
     files,
+    inactivity,
     model,
     caddy as caddy_mod,
     oidc,
@@ -510,6 +511,7 @@ class Lifecycle:
             "sockets",
             "container_registry",
             "consent_sweeper",
+            "inactivity_sweeper",
             "consent_coordinator",
             "consent_deciders",
             "sidecar_connections",
@@ -743,6 +745,7 @@ async def lifespan(app: FastAPI):
         reaped,
     )
     app.state.consent_sweeper.start()
+    app.state.inactivity_sweeper.start()
     app.state.consent_coordinator.start()
     app.state.consent_deciders.start()
     app.state.sidecar_connections.start()
@@ -765,6 +768,7 @@ async def lifespan(app: FastAPI):
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
         await app.state.consent_sweeper.stop()
+        await app.state.inactivity_sweeper.stop()
         await app.state.consent_coordinator.stop()
         await app.state.consent_deciders.stop()
         await app.state.sidecar_connections.stop()
@@ -949,6 +953,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Consent events themselves arrive over the sidecar WS
     # (/ws/egress-sidecar) and are handled by the coordinator.
     app.state.consent_sweeper = consent.EgressConsentSweeper(app)
+    # #2588: dormant-account sweeper — disables accounts (except the
+    # agent and admin-group members) whose last activity is older than
+    # KLANGKD_INACTIVITY_DISABLE_DAYS.
+    app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
     app.state.consent_coordinator = consent.ConsentCoordinator(app)
     app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
     # #2339: live network-sidecar sockets by workspace, so a revoke can push a

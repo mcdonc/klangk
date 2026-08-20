@@ -72,6 +72,7 @@ from .helpers import (
     get_shared_terminals as get_shared_terminals,
     send_event as send_event,
     disconnect_all_websockets as disconnect_all_websockets,
+    disconnect_user as disconnect_user,
     refresh_user_handle as refresh_user_handle,
     reset_workspace_state as reset_workspace_state,
     send_error as send_error,

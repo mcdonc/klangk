@@ -748,6 +748,14 @@ class KlangkSettings(BaseSettings):
     # revoked via the token blocklist (its next HTTP request 401s and
     # its next WS connect is rejected with 4001 -> client logout).
     max_sessions_per_user: int | None = 0
+    # Dormant-account auto-disable (#2588). Accounts (except the system
+    # agent and members of the admin group) whose newest activity
+    # signal — last API access, last login, or creation — is older than
+    # this many days are disabled by an hourly sweep; login and API
+    # access then fail with 403 until an admin re-enables them via
+    # PATCH /admin/users/{id}. 0 disables the sweep. Reloadable on
+    # SIGHUP (read live by the sweeper each pass).
+    inactivity_disable_days: int = 35
     disable_registration: str = ""
     disable_invites: str = ""
     invite_expire_hours: int | None = 72
@@ -1294,6 +1302,7 @@ class KlangkSettings(BaseSettings):
         "max_sessions_per_user",
         "invite_expire_hours",
         "password_history_count",
+        "inactivity_disable_days",
         "port_range_start",
         "websocket_msg_size_max",
         "file_upload_size_max",
@@ -1318,8 +1327,10 @@ class KlangkSettings(BaseSettings):
         # (min_password_length), disables lockout (the login_lockout_*
         # trio, guarded by ``> 0`` in auth.py), disables the session cap
         # (max_sessions_per_user), disables hosted ports
-        # (hosted_ports_per_workspace). Elsewhere 0 is nonsense (port 0,
-        # zero-byte uploads, empty port range) and is rejected.
+        # (hosted_ports_per_workspace), disables password-reuse checking
+        # (password_history_count), disables the dormant-account sweep
+        # (inactivity_disable_days, #2588). Elsewhere 0 is nonsense (port
+        # 0, zero-byte uploads, empty port range) and is rejected.
         _ZERO_MEANINGFUL = {
             "min_password_length",
             "login_lockout_failures",
@@ -1328,6 +1339,7 @@ class KlangkSettings(BaseSettings):
             "max_sessions_per_user",
             "hosted_ports_per_workspace",
             "password_history_count",
+            "inactivity_disable_days",
         }
         minimum = 0 if info.field_name in _ZERO_MEANINGFUL else 1
         return _coerce_setting_int(

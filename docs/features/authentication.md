@@ -165,6 +165,41 @@ records the proxy's address and no audit records are ever written — see
 [Behind a Reverse Proxy: concurrent-logon auditing](../deployment/behind-a-proxy.md#concurrent-logon-auditing-depends-on-the-proxy-chain)
 for how to verify the setup.
 
+## Dormant-account auto-disable
+
+Accounts that go unused for too long are disabled automatically. Set
+`KLANGKD_INACTIVITY_DISABLE_DAYS` (default `35`; `0` disables the
+sweep) to change the window. An account counts as active when it makes
+any authenticated API request — klangkd stamps a per-user
+`last_activity_at` (throttled to one write per minute) on the token
+auth path, so a client that stays logged in via token refresh stays
+counted even though it never logs in again. Logins and (for
+never-used accounts) the creation date are also counted as activity —
+the sweep judges on the **newest** of the three.
+
+The sweep runs at startup and hourly. When it disables an account,
+login (password, OIDC, and no-auth local), token refresh, and every
+authenticated API request fail with `403 Account disabled`; the
+WebSocket rejects new connects for that user. Disabling an account
+also **closes its live WebSocket connections** (close code `4001`,
+which logs the client out) — admin disable and the inactivity sweep
+both do this. A disabled account is also sent no password-reset
+email (the reset endpoint refuses it anyway; the forgot-password
+response stays `"sent"` so the disabled state is not revealed).
+
+Two classes of account are never auto-disabled:
+
+- members of the `admin` group — an idle deployment must not lock out
+  every operator, and
+- the system agent (it does not authenticate).
+
+A disabled account keeps all of its data; an admin re-enables it via
+`PATCH /api/v1/admin/users/{id}` with `{"disabled": false}` (admins
+cannot disable their own account through the same endpoint).
+`GET /api/v1/admin/users` reports each user's `disabled`,
+`last_login_at`, and `last_activity_at` fields. The setting is
+reloadable on SIGHUP.
+
 ## Consent banner
 
 If `KLANGKD_LOGIN_BANNER` is set, users see a consent page before

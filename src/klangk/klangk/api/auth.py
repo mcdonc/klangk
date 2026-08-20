@@ -166,6 +166,8 @@ async def verify_email(token: str, request: Request):
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
     user = await request.app.state.model.users.get_user_by_id(user_id)
+    # The auto-login must not resurrect a disabled account (#2588).
+    auth.ensure_not_disabled(user)
     source_ip, user_agent = workstation(request)
     access_token = await request.app.state.auth.issue_token(
         user_id,
@@ -282,6 +284,14 @@ async def forgot_password(
         # Don't reveal whether the email exists
         return {"status": "sent"}
 
+    # Disabled accounts get no reset email (#2588): the reset itself is
+    # refused (403 below), so a link would only confuse — and letting a
+    # disabled account drive outbound mail is its own nuisance. Still
+    # answer ``"sent"`` so the endpoint never reveals the disabled
+    # state to an anonymous caller.
+    if user.get("disabled"):
+        return {"status": "sent"}
+
     # Rate limit: one reset email per address per minute
     now = time.time()
     prune_timestamps(reset_timestamps, RESET_COOLDOWN_SECONDS, now)
@@ -329,15 +339,19 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
             status_code=400,
             detail="Cannot set a password on the system agent user",
         )
+    # Refuse the whole reset for a disabled account (#2588) — the
+    # password change AND the auto-login below.
+    user = await request.app.state.model.users.get_user_by_id(user_id)
+    if user is None:  # pragma: no cover — a valid reset token names a
+        # live user (the row is only gone if deleted mid-flight)
+        raise HTTPException(status_code=404, detail="User not found")
+    auth.ensure_not_disabled(user)
     await request.app.state.auth.validate_password_not_reused(
         user_id, req.password
     )
     password_hash = await asyncio.to_thread(auth.hash_password, req.password)
     await request.app.state.model.users.update_password(user_id, password_hash)
     # Auto-login after reset
-    user = await request.app.state.model.users.get_user_by_id(user_id)
-    if user is None:  # pragma: no cover
-        raise HTTPException(status_code=404, detail="User not found")
     source_ip, user_agent = workstation(request)
     token = await request.app.state.auth.issue_token(
         user_id,
@@ -410,6 +424,8 @@ async def local_login(request: Request):
             status_code=500,
             detail="Default user is not seeded",
         )
+    # A disabled default account must not mint a session (#2588).
+    auth.ensure_not_disabled(user)
     source_ip, user_agent = workstation(request)
     token = await request.app.state.auth.issue_token(
         user["id"],

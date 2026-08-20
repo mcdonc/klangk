@@ -1608,3 +1608,81 @@ class TestConcurrentLogonAudit:
         assert [r["jti"] for r in rows] == [new_jti]
         assert rows[0]["source_ip"] == "198.51.100.9"
         assert rows[0]["user_agent"] == "ua-register"
+
+
+class TestDisabledAccounts:
+    """#2588: disabled accounts fail auth at every choke point."""
+
+    async def test_login_rejected(self, user, db):
+        a = _auth()
+        await a.app.state.model.users.set_user_disabled(user["id"], True)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.login(
+                auth.LoginRequest(
+                    identifier="testuser@example.com", password="testpass"
+                )
+            )
+        assert exc_info.value.status_code == 403
+        assert "disabled" in exc_info.value.detail
+
+    async def test_refresh_rejected(self, user, db):
+        """A pre-disable token cannot rotate its way back in (#2588)."""
+        a = _auth()
+        token = a.create_token(user["id"], user["email"])
+        await a.app.state.model.users.set_user_disabled(user["id"], True)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.refresh_token(token)
+        assert exc_info.value.status_code == 403
+
+    async def test_ws_token_rejected(self, user, db):
+        """get_user_from_token returns None for a disabled account — the
+        WS connect rejects like any dead token."""
+        a = _auth()
+        token = a.create_token(user["id"], user["email"])
+        await a.app.state.model.users.set_user_disabled(user["id"], True)
+        assert await a.get_user_from_token(token) is None
+
+    async def test_ensure_not_disabled_passes_enabled(self, user):
+        auth.ensure_not_disabled({"disabled": False})  # no raise
+
+    async def test_ensure_not_disabled_raises(self):
+        with pytest.raises(HTTPException) as exc_info:
+            auth.ensure_not_disabled({"disabled": True})
+        assert exc_info.value.status_code == 403
+
+
+class TestRecordActivity:
+    """#2588: throttled last_activity_at stamping."""
+
+    async def test_stamps_and_throttles(self, user, db):
+        a = _auth()
+        await a.record_activity(user["id"])
+        row = await a.app.state.model.users.get_user_by_id(user["id"])
+        assert row["last_activity_at"] is not None
+        # A second call inside the interval skips the DB write.
+        await a.record_activity(user["id"])
+        row2 = await a.app.state.model.users.get_user_by_id(user["id"])
+        assert row2["last_activity_at"] == row["last_activity_at"]
+        # After the interval elapses, the stamp refreshes.
+        a.activity_stamps[user["id"]] -= auth.ACTIVITY_STAMP_INTERVAL
+        await a.record_activity(user["id"])
+        row3 = await a.app.state.model.users.get_user_by_id(user["id"])
+        assert row3["last_activity_at"] >= row["last_activity_at"]
+
+    async def test_ws_token_path_stamps_activity(self, user, db):
+        """The WS auth path stamps activity on every (unthrottled)
+        authenticated lookup (#2588)."""
+        a = _auth()
+        token = a.create_token(user["id"], user["email"])
+        assert await a.get_user_from_token(token) is not None
+        row = await a.app.state.model.users.get_user_by_id(user["id"])
+        assert row["last_activity_at"] is not None
+
+    async def test_refresh_stamps_activity(self, user, db):
+        """#2588 review: a token refresh is authenticated API use — a
+        headless client that only refreshes still counts as active."""
+        a = _auth()
+        token = a.create_token(user["id"], user["email"])
+        await a.refresh_token(token)
+        row = await a.app.state.model.users.get_user_by_id(user["id"])
+        assert row["last_activity_at"] is not None
