@@ -530,19 +530,22 @@ class TestPortsPerWorkspaceCap:
             == 0
         )
 
-    def test_garbage_falls_back_to_default(self, monkeypatch):
+    def test_none_falls_back_to_default(self, monkeypatch):
+        # #2603: the field is int-typed; None (explicitly emptied) means
+        # the default at the cap property. Garbage and negatives are
+        # rejected at construction (see test_settings.py).
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "hosted_ports_per_workspace",
-            "abc",
+            None,
         )
         assert self.registry.ports_per_workspace_cap() == 5
 
-    def test_negative_clamped_to_zero(self, monkeypatch):
+    def test_zero_disables_via_property(self, monkeypatch):
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "hosted_ports_per_workspace",
-            "-2",
+            0,
         )
         assert self.registry.ports_per_workspace_cap() == 0
 
@@ -3013,7 +3016,7 @@ class TestStartContainer:
     async def test_cap_clamps_allocation_down(self, workspace, monkeypatch):
         """KLANGKD_HOSTED_PORTS_PER_WORKSPACE clamps num_ports down (#1237)."""
         monkeypatch.setattr(
-            self.registry.app.state.settings, "hosted_ports_per_workspace", "3"
+            self.registry.app.state.settings, "hosted_ports_per_workspace", 3
         )
         with patch_podman(self.registry):
             await self.registry.start_container(
@@ -3032,7 +3035,7 @@ class TestStartContainer:
     ):
         """cap=0 trims an existing workspace's allocations on next start."""
         monkeypatch.setattr(
-            self.registry.app.state.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app.state.settings, "hosted_ports_per_workspace", 0
         )
         await app_state.state.model.ports.find_and_allocate_ports(
             workspace["id"], 5, self.registry.port_range_start
@@ -3052,7 +3055,7 @@ class TestStartContainer:
     async def test_cap_zero_omits_hosting_env(self, workspace, monkeypatch):
         """cap=0 suppresses KLANGKWS_PORT_MAPPINGS / KLANGKWS_HOSTING_* (#1237)."""
         monkeypatch.setattr(
-            self.registry.app.state.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app.state.settings, "hosted_ports_per_workspace", 0
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
@@ -3081,7 +3084,7 @@ class TestStartContainer:
         not just trim on the container's first start.
         """
         monkeypatch.setattr(
-            self.registry.app.state.settings, "hosted_ports_per_workspace", "0"
+            self.registry.app.state.settings, "hosted_ports_per_workspace", 0
         )
         await self.registry.allocate_ports(workspace["id"], 5)
         assert await self.registry.get_workspace_ports(workspace["id"]) == []
@@ -5778,7 +5781,7 @@ class TestHealthMonitorLoopSkips:
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
                 patch.object(
-                    reg.app.state.settings, "health_check_interval", "0.01"
+                    reg.app.state.settings, "health_check_interval", 0.01
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
@@ -5803,7 +5806,7 @@ class TestHealthMonitorLoopSkips:
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
                 patch.object(
-                    reg.app.state.settings, "health_check_interval", "0.01"
+                    reg.app.state.settings, "health_check_interval", 0.01
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
@@ -5828,7 +5831,7 @@ class TestHealthMonitorLoopSkips:
                     monitor, "_check_workspace", AsyncMock()
                 ) as check,
                 patch.object(
-                    reg.app.state.settings, "health_check_interval", "0.01"
+                    reg.app.state.settings, "health_check_interval", 0.01
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())
@@ -6037,7 +6040,7 @@ class TestHealthLoopHeartbeat:
             with (
                 patch.object(monitor, "_check_workspace", AsyncMock()),
                 patch.object(
-                    reg.app.state.settings, "health_check_interval", "0.01"
+                    reg.app.state.settings, "health_check_interval", 0.01
                 ),
             ):
                 task = asyncio.create_task(monitor.run_health_loop())

@@ -155,31 +155,31 @@ class Auth:
 
     @property
     def token_expire_hours(self) -> float:
-        return float(self.app.state.settings.access_token_hours)
+        return self.app.state.settings.access_token_hours
 
     @property
     def min_password_length(self) -> int:
-        return int(self.app.state.settings.min_password_length)
+        return self.app.state.settings.min_password_length
 
     @property
     def login_lockout_failures(self) -> int:
-        return int(self.app.state.settings.login_lockout_failures)
+        return self.app.state.settings.login_lockout_failures
 
     @property
     def login_lockout_duration(self) -> int:
-        return int(self.app.state.settings.login_lockout_duration)
+        return self.app.state.settings.login_lockout_duration
 
     @property
     def login_lockout_window(self) -> int:
-        return int(self.app.state.settings.login_lockout_window)
+        return self.app.state.settings.login_lockout_window
 
     @property
     def invite_token_expire_hours(self) -> int:
-        return int(self.app.state.settings.invite_expire_hours)
+        return self.app.state.settings.invite_expire_hours
 
     @property
     def workspace_token_expire_hours(self) -> float:
-        return float(self.app.state.settings.workspace_token_hours)
+        return self.app.state.settings.workspace_token_hours
 
     # --- secret / startup guard ---
 

@@ -182,6 +182,103 @@ def _coerce_positive_int(v, name: str) -> int | None:
     return value
 
 
+def _resolve_numeric_indirection(v, name: str):
+    """Resolve ``file:``/``cmd:`` on a raw numeric-setting value (#2603).
+
+    Retyping the numeric fields to ``int``/``float`` takes them out of
+    ``_resolve_indirections``' str-only pass, so a value that arrives as
+    an indirection reference (``smtp_port: file:/run/secrets/port`` —
+    legal while the field was ``str``) must be resolved **here**, before
+    coercion. Plain strings pass through unchanged; a failed resolution
+    raises so construction fails fast (matching the
+    ``_resolve_indirections`` posture).
+    """
+    if isinstance(v, str) and v.startswith(("file:", "cmd:")):
+        resolved = _resolve_indirection(v, name)
+        if resolved is None:
+            raise ValueError(
+                f"KLANGKD_{name.upper()} could not be resolved: the "
+                "file:/cmd: reference failed. See logs for detail."
+            )
+        return resolved
+    return v
+
+
+def _coerce_setting_int(
+    v, name: str, *, minimum: int = 1, default: int | None = None
+) -> int | None:
+    """Coerce a numeric setting to int; raise with *name* (#2603).
+
+    Accepts every input form the sources produce: a native ``int`` (bare
+    YAML ``login-lockout-failures: 5``), an integer string (env var,
+    quoted YAML), or a ``file:``/``cmd:`` reference that resolves to one.
+    ``None``/empty → *default* — the field's declared default, so an
+    explicitly-emptied value can never surface as ``None`` on a field
+    whose consumers assume a number (the request-time ``int(None)``
+    crashes of #2603's review). Fields whose default **is** None (the
+    ``health_check_*`` trio) pass ``default=None`` and stay optional.
+    Bools, native floats (``1.5`` — silently truncating would hide a
+    typo), non-integers, and values below *minimum* raise so the server
+    refuses to boot on a malformed config instead of failing at request
+    time.
+    """
+    v = _resolve_numeric_indirection(v, name)
+    if v is None or v == "":
+        return default
+    if isinstance(v, bool):
+        raise ValueError(
+            f"{name}={v!r} must be an integer >= {minimum}, not a boolean."
+        )
+    if isinstance(v, float):
+        raise ValueError(
+            f"{name}={v!r} must be an integer, not a float "
+            "(use 5, not 5.0)."
+        )
+    try:
+        value = int(v)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name}={v!r} must be an integer >= {minimum}, or unset."
+        ) from exc
+    if value < minimum:
+        raise ValueError(f"{name}={v!r} must be >= {minimum}.")
+    return value
+
+
+def _coerce_setting_float(
+    v, name: str, *, default: float | None = None
+) -> float | None:
+    """Coerce a numeric setting to a positive float (#2603).
+
+    Same contract as :func:`_coerce_setting_int` for float fields:
+    native float (bare YAML), numeric string (env / quoted YAML),
+    ``file:``/``cmd:`` reference, ``None``/empty → *default* (the
+    declared field default; None only for genuinely-optional fields).
+    Bools, non-finite or non-numeric values, and values <= 0 raise (a
+    token lifetime or health-check interval of 0 or less is always a
+    typo).
+    """
+    v = _resolve_numeric_indirection(v, name)
+    if v is None or v == "":
+        return default
+    if isinstance(v, bool):
+        raise ValueError(
+            f"{name}={v!r} must be a positive number, not a boolean."
+        )
+    try:
+        value = float(v)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name}={v!r} must be a positive number, or unset."
+        ) from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"{name}={v!r} must be a finite, positive number "
+            "(nan/inf and <= 0 are rejected)."
+        )
+    return value
+
+
 def _coerce_podman_size(v, name: str) -> str | None:
     """Validate a podman size-string (``2g``/``512mb``/``1024``) or None.
 
@@ -604,15 +701,20 @@ class KlangkSettings(BaseSettings):
     prevent_insecure_jwt_secret: str = ""
     default_user: str | None = None
     default_password: str | None = None
-    access_token_hours: str | None = "24"
-    workspace_token_hours: str | None = "24"
-    min_password_length: str | None = "8"
-    login_lockout_failures: str | None = "5"
-    login_lockout_duration: str | None = "900"
-    login_lockout_window: str | None = "300"
+    # Numeric settings are typed int/float and accept every source form —
+    # bare YAML numbers (``access-token-hours: 48``), quoted strings
+    # (``"48"``), env strings, and file:/cmd: references — via the
+    # _coerce_numeric_* before-validators (#2603). ``None`` (unset) means
+    # the caller-side default applies.
+    access_token_hours: float | None = 24.0
+    workspace_token_hours: float | None = 24.0
+    min_password_length: int | None = 8
+    login_lockout_failures: int | None = 5
+    login_lockout_duration: int | None = 900
+    login_lockout_window: int | None = 300
     disable_registration: str = ""
     disable_invites: str = ""
-    invite_expire_hours: str | None = "72"
+    invite_expire_hours: int | None = 72
     allow_insecure_no_auth: str = ""
     reject_proxy_headers: str | None = None
     trusted_proxy_cidrs: str | None = "127.0.0.1,::1"
@@ -672,7 +774,7 @@ class KlangkSettings(BaseSettings):
     # **Callers read ``settings.egress_port`` — nothing reads ``proxy_port``
     # except that one validator.**
     proxy_port: str | None = None
-    port_range_start: str | None = "9000"
+    port_range_start: int | None = 9000
     # socket: the backend UDS path klangkd binds. Default
     # ``<state_dir>/klangk.sock`` (derived in ``_resolve_socket_and_ports``
     # after ``state_dir`` is resolved). A fail-fast validator rejects resolved
@@ -715,7 +817,7 @@ class KlangkSettings(BaseSettings):
     # websocket_msg_size_max: max WebSocket message size (bytes), passed to uvicorn.
     # Default 16 MiB; klangkd reads it through the typed config (config file +
     # file:/cmd: resolution), not raw env.
-    websocket_msg_size_max: str | None = "16777216"
+    websocket_msg_size_max: int | None = 16777216
     cors_origins: str | None = None
     # dns_servers: comma-separated DNS nameserver IPs passed to workspace
     # containers via podman --dns (container_dns_config() → create_container).
@@ -801,10 +903,10 @@ class KlangkSettings(BaseSettings):
     enable_ping: bool = True
     podman_bin: str | None = "podman"
     disable_tmux: str = ""
-    health_check_interval: str | None = None
-    health_check_startup_grace: str | None = None
-    health_check_timeout: str | None = None
-    hosted_ports_per_workspace: str = "5"
+    health_check_interval: float | None = None
+    health_check_startup_grace: float | None = None
+    health_check_timeout: float | None = None
+    hosted_ports_per_workspace: int | None = 5
     # netfilter_enabled: master on/off switch for per-workspace egress
     # filtering (#1774). Defaults to True — together with the defaulted
     # network_sidecar_image, FQDN egress filtering is available out of the
@@ -907,7 +1009,7 @@ class KlangkSettings(BaseSettings):
 
     # --- SMTP / email ---
     smtp_host: str | None = None
-    smtp_port: str | None = "587"
+    smtp_port: int | None = 587
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_from: str | None = None
@@ -937,7 +1039,7 @@ class KlangkSettings(BaseSettings):
     terminal_banner: str = ""
 
     # --- File upload ---
-    file_upload_size_max: str | None = "524288000"
+    file_upload_size_max: int | None = 524288000
 
     # --- Feature / feature config (#1659) ---
     # A config-file source for feature-declared dynamic keys (the keys the
@@ -1147,6 +1249,112 @@ class KlangkSettings(BaseSettings):
                 "default <state_dir>/...sock and the bind fails.) "
                 "See #1531 / #1636."
             )
+
+    @field_validator(
+        "min_password_length",
+        "login_lockout_failures",
+        "login_lockout_duration",
+        "login_lockout_window",
+        "invite_expire_hours",
+        "port_range_start",
+        "websocket_msg_size_max",
+        "file_upload_size_max",
+        "hosted_ports_per_workspace",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_numeric_int_fields(cls, v, info):
+        """Int settings accept int, integer string, or file:/cmd: (#2603).
+
+        Bare YAML numbers (``min-password-length: 12``) used to fail
+        validation because the fields were str-typed; now a native int,
+        an integer string (env var / quoted YAML), and an indirection
+        reference all work. Bools, floats, garbage, and negatives abort
+        startup with the field named — ``min_password_length``
+        previously had **no** validator and only exploded at request
+        time. Zero stays legal exactly where the consuming code has
+        explicit zero-handling (see ``_ZERO_MEANINGFUL`` below).
+        """
+        # 0 keeps its pre-existing per-field meaning where the code has
+        # explicit zero handling: disables the length floor
+        # (min_password_length), disables lockout (the login_lockout_*
+        # trio, guarded by ``> 0`` in auth.py), disables hosted ports
+        # (hosted_ports_per_workspace). Elsewhere 0 is nonsense (port 0,
+        # zero-byte uploads, empty port range) and is rejected.
+        _ZERO_MEANINGFUL = {
+            "min_password_length",
+            "login_lockout_failures",
+            "login_lockout_duration",
+            "login_lockout_window",
+            "hosted_ports_per_workspace",
+        }
+        minimum = 0 if info.field_name in _ZERO_MEANINGFUL else 1
+        return _coerce_setting_int(
+            v,
+            info.field_name,
+            minimum=minimum,
+            default=cls.model_fields[info.field_name].default,
+        )
+
+    @field_validator("port_range_start", mode="after")
+    @classmethod
+    def _check_port_range_start(cls, v):
+        """Reject a start above the last legal host port (#2603).
+
+        The allocator hands out ``start..start+MAX_HOST_PORT``, so a start
+        beyond 65535 (or near enough to run past it) can never allocate a
+        valid port. Checked after coercion, on the int.
+        """
+        if v is not None and v > 65535:
+            raise ValueError(
+                f"port_range_start={v!r} must be <= 65535 (the last legal "
+                "host port)."
+            )
+        return v
+
+    @field_validator("smtp_port", mode="before")
+    @classmethod
+    def _coerce_smtp_port(cls, v):
+        """SMTP port accepts int/string/indirection and must be 1-65535."""
+        coerced = _coerce_setting_int(v, "smtp_port", minimum=1, default=587)
+        if coerced is not None and coerced > 65535:
+            raise ValueError(
+                f"smtp_port={coerced!r} must be between 1 and 65535."
+            )
+        return coerced
+
+    @field_validator(
+        "access_token_hours",
+        "workspace_token_hours",
+        "health_check_interval",
+        "health_check_startup_grace",
+        "health_check_timeout",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_numeric_float_fields(cls, v, info):
+        """Float settings accept float, numeric string, or file:/cmd:
+        (#2603) — same contract as the int fields above."""
+        return _coerce_setting_float(
+            v, info.field_name, default=cls.model_fields[info.field_name].default
+        )
+
+    @field_validator("smtp_use_tls", mode="before")
+    @classmethod
+    def _coerce_smtp_use_tls(cls, v):
+        """Accept a native YAML bool for the tls toggle (#2603).
+
+        The field stays str-typed (consumers match "1"/"true"/"yes"
+        case-insensitively), but ``smtp-use-tls: true`` in YAML parses as
+        a bool and used to fail validation. Translate the two bools to
+        their canonical strings; everything else passes through to the
+        consumers' own matching.
+        """
+        if v is True:
+            return "true"
+        if v is False:
+            return "false"
+        return v
 
     @field_validator("log_level")
     @classmethod

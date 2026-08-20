@@ -198,21 +198,19 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     @property
     def port_range_start(self) -> int:
-        return int(self.app.state.settings.port_range_start or "9000")
+        return self.app.state.settings.port_range_start or 9000
 
     @property
     def health_check_interval(self) -> float:
-        return float(self.app.state.settings.health_check_interval or "30")
+        return self.app.state.settings.health_check_interval or 30.0
 
     @property
     def health_check_timeout(self) -> float:
-        return float(self.app.state.settings.health_check_timeout or "10")
+        return self.app.state.settings.health_check_timeout or 10.0
 
     @property
     def health_check_startup_grace(self) -> float:
-        return float(
-            self.app.state.settings.health_check_startup_grace or "30"
-        )
+        return self.app.state.settings.health_check_startup_grace or 30.0
 
     # --- settings-derived methods (were module functions, #1487) ---
 
@@ -300,17 +298,14 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     def ports_per_workspace_cap(self) -> int:
         """Server-wide ceiling on hosted-app ports per workspace."""
+        # int-typed + validated at construction since #2603; None
+        # (explicitly emptied) means the default. A legitimate 0 (which
+        # disables hosted ports) must not be swallowed by an `or` — test
+        # against None explicitly.
         raw = self.app.state.settings.hosted_ports_per_workspace
-        try:
-            return max(0, int(raw))
-        except ValueError:
-            logger.warning(
-                "KLANGKD_HOSTED_PORTS_PER_WORKSPACE=%r is not an int; "
-                "using default %d",
-                raw,
-                DEFAULT_PORTS_PER_WORKSPACE,
-            )
+        if raw is None:
             return DEFAULT_PORTS_PER_WORKSPACE
+        return raw
 
     def set_idle_timeout(self, seconds: int) -> None:
         """Set the global idle timeout (replaces api mutating module globals)."""

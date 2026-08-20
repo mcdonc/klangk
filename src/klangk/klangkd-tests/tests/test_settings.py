@@ -550,7 +550,7 @@ class TestDualFormKeys:
         s = make_settings({}, config_file=str(cfg))
         assert s.product_name == "Kebab"
         assert s.trusted_proxy_cidrs == "10.0.0.0/8"
-        assert s.login_lockout_window == "600"
+        assert s.login_lockout_window == 600
 
     def test_kebab_required_dir(self, tmp_path):
         """state-dir (kebab) satisfies the required-dir validator."""
@@ -823,7 +823,7 @@ class TestEnvConstructor:
         assert s.auth_modes is None
         # default_user is derived from the invoking Unix user (#1645).
         assert s.default_user == f"{getpass.getuser()}@example.com"
-        assert s.min_password_length == "8"
+        assert s.min_password_length == 8
 
     def test_default_user_falls_back_when_getuser_fails(self, monkeypatch):
         # In containers/CI where the uid has no passwd entry, getpass.getuser()
@@ -1402,3 +1402,232 @@ class TestEgressConsentPruneSettings:
         cfg.write_text(f"egress-consent-retention-days: {value!s}\n")
         with pytest.raises(Exception, match="RETENTION_DAYS"):
             make_settings({}, config_file=str(cfg))
+
+
+class TestNumericSettingCoercion:
+    """Numeric settings accept int/float, string, and file:/cmd: (#2603).
+
+    Every field must accept all three source forms: a bare YAML number
+    (``min-password-length: 12`` parses as an int and used to fail the
+    str-typed field), a quoted string / env string, and a ``file:`` or
+    ``cmd:`` reference (legal while the fields were str-typed; the
+    indirection is resolved before coercion).
+    """
+
+    INT_FIELDS = [
+        "min_password_length",
+        "login_lockout_failures",
+        "login_lockout_duration",
+        "login_lockout_window",
+        "invite_expire_hours",
+        "port_range_start",
+        "websocket_msg_size_max",
+        "file_upload_size_max",
+        "hosted_ports_per_workspace",
+        "smtp_port",
+    ]
+    # 0 is legal here (disable semantics), so only these get the 0-rejection
+    INT_NO_ZERO_FIELDS = [
+        "invite_expire_hours",
+        "port_range_start",
+        "websocket_msg_size_max",
+        "file_upload_size_max",
+        "smtp_port",
+    ]
+    FLOAT_FIELDS = [
+        "access_token_hours",
+        "workspace_token_hours",
+        "health_check_interval",
+        "health_check_timeout",
+        "health_check_startup_grace",
+    ]
+
+    @pytest.mark.parametrize(
+        "field,bad",
+        [
+            (f, True) for f in INT_FIELDS
+        ] + [(f, "abc") for f in INT_FIELDS]
+        + [(f, 1.5) for f in INT_FIELDS]
+        + [(f, -1) for f in INT_FIELDS]
+        + [
+            # 0 is rejected where it has no zero-semantics (empty port
+            # range, 0-byte uploads, instantly-expiring invites). The
+            # documented-disable fields (length floor, lockout trio,
+            # hosted ports) are asserted separately below.
+            (f, 0) for f in INT_NO_ZERO_FIELDS
+        ]
+        + [("smtp_port", 70000)],
+    )
+    def test_int_field_rejections(self, field, bad):
+        with pytest.raises(Exception, match=field):
+            make_settings({f"KLANGKD_{field.upper()}": str(bad)})
+
+    def test_port_range_start_above_last_port_rejected(self):
+        with pytest.raises(Exception, match="port_range_start"):
+            make_settings({"KLANGKD_PORT_RANGE_START": "70000"})
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "min_password_length",
+            "login_lockout_failures",
+            "login_lockout_duration",
+            "login_lockout_window",
+            "hosted_ports_per_workspace",
+        ],
+    )
+    def test_zero_keeps_disable_semantics(self, field):
+        """0 stays legal where the code treats it as "off" (length floor,
+        lockout) — tightening to >= 1 would silently re-enable controls an
+        operator deliberately disabled."""
+        s = make_settings({f"KLANGKD_{field.upper()}": "0"})
+        assert getattr(s, field) == 0
+
+    @pytest.mark.parametrize(
+        "field,bad",
+        [
+            (f, True) for f in FLOAT_FIELDS
+        ] + [(f, "abc") for f in FLOAT_FIELDS]
+        + [(f, -1) for f in FLOAT_FIELDS],
+    )
+    def test_float_field_rejections(self, field, bad):
+        with pytest.raises(Exception, match=field):
+            make_settings({f"KLANGKD_{field.upper()}": str(bad)})
+
+    def test_yaml_bare_numbers_accepted(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "min-password-length: 12\n"  # kebab + bare int
+            "login_lockout_window: 600\n"
+            "access-token-hours: 48\n"  # bare int for a float field
+            "health-check-interval: 15.5\n"  # bare float
+            "smtp_port: 25\n"
+            "smtp-use-tls: false\n"  # native bool for the tls toggle
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.min_password_length == 12
+        assert s.login_lockout_window == 600
+        assert s.access_token_hours == 48.0
+        assert s.health_check_interval == 15.5
+        assert s.smtp_port == 25
+        assert s.smtp_use_tls == "false"
+
+    @pytest.mark.parametrize(
+        "yaml_value",
+        ["true", "1.5"],  # native YAML bool / float for an int field
+    )
+    def test_yaml_native_bool_and_float_rejected(self, yaml_value, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"min-password-length: {yaml_value}\n")
+        with pytest.raises(Exception, match="min_password_length"):
+            make_settings({}, config_file=str(cfg))
+
+    def test_yaml_native_bool_rejected_for_float_field(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("access-token-hours: true\n")
+        with pytest.raises(Exception, match="access_token_hours"):
+            make_settings({}, config_file=str(cfg))
+
+    def test_yaml_quoted_strings_still_accepted(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('min-password-length: "12"\naccess_token_hours: "1.5"\n')
+        s = make_settings({}, config_file=str(cfg))
+        assert s.min_password_length == 12
+        assert s.access_token_hours == 1.5
+
+    def test_env_strings_still_accepted(self):
+        s = make_settings(
+            {
+                "KLANGKD_MIN_PASSWORD_LENGTH": "10",
+                "KLANGKD_ACCESS_TOKEN_HOURS": "1.5",
+                "KLANGKD_SMTP_PORT": "2525",
+            }
+        )
+        assert s.min_password_length == 10
+        assert s.access_token_hours == 1.5
+        assert s.smtp_port == 2525
+
+    def test_file_indirection_still_works(self, tmp_path):
+        secret = tmp_path / "port"
+        secret.write_text("2525\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"smtp_port: file:{secret}\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.smtp_port == 2525
+
+    def test_file_indirection_failure_fails_fast(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("smtp_port: file:/nonexistent/definitely-missing\n")
+        with pytest.raises(Exception, match="smtp_port"):
+            make_settings({}, config_file=str(cfg))
+
+    def test_defaults_unchanged(self):
+        s = make_settings({})
+        assert s.min_password_length == 8
+        assert s.login_lockout_failures == 5
+        assert s.login_lockout_duration == 900
+        assert s.login_lockout_window == 300
+        assert s.invite_expire_hours == 72
+        assert s.access_token_hours == 24.0
+        assert s.workspace_token_hours == 24.0
+        assert s.port_range_start == 9000
+        assert s.websocket_msg_size_max == 16777216
+        assert s.smtp_port == 587
+        assert s.file_upload_size_max == 524288000
+        assert s.health_check_interval is None
+        assert s.health_check_timeout is None
+        assert s.hosted_ports_per_workspace == 5
+
+    @pytest.mark.parametrize(
+        "field,default",
+        [
+            ("min_password_length", 8),
+            ("login_lockout_failures", 5),
+            ("login_lockout_duration", 900),
+            ("login_lockout_window", 300),
+            ("invite_expire_hours", 72),
+            ("port_range_start", 9000),
+            ("websocket_msg_size_max", 16777216),
+            ("smtp_port", 587),
+            ("file_upload_size_max", 524288000),
+            ("hosted_ports_per_workspace", 5),
+            ("access_token_hours", 24.0),
+            ("workspace_token_hours", 24.0),
+        ],
+    )
+    def test_empty_env_falls_back_to_field_default(self, field, default):
+        """Empty/None -> the declared default, never None (#2605 review).
+
+        Consumers assume a number on these fields (``len(pw) < None`` would
+        500 /api/config pre-auth; ``int(None)`` crashes emailsvc, the
+        upload check, and the launcher). Empty-as-disable is expressed by
+        the explicit 0, not by unsetting the field.
+        """
+        s = make_settings({f"KLANGKD_{field.upper()}": ""})
+        assert getattr(s, field) == default
+
+    @pytest.mark.parametrize(
+        "field",
+        ["health_check_interval", "health_check_timeout",
+         "health_check_startup_grace"],
+    )
+    def test_empty_env_stays_none_for_optional_floats(self, field):
+        # The health_check_* trio is genuinely optional (None = the
+        # consumer-side 30/10/30 defaults); empty keeps that meaning.
+        s = make_settings({f"KLANGKD_{field.upper()}": ""})
+        assert getattr(s, field) is None
+
+    @pytest.mark.parametrize(
+        "value", ["true", "false", True, False]
+    )
+    def test_smtp_use_tls_accepts_bool_and_string(self, value, tmp_path):
+        if isinstance(value, bool):
+            cfg = tmp_path / "config.yaml"
+            cfg.write_text(f"smtp-use-tls: {str(value).lower()}\n")
+            s = make_settings({}, config_file=str(cfg))
+            assert s.smtp_use_tls == str(value).lower()
+        else:
+            s = make_settings(
+                {"KLANGKD_SMTP_USE_TLS": value}
+            )
+            assert s.smtp_use_tls == value

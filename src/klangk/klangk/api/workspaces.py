@@ -1020,7 +1020,7 @@ async def import_workspace(
     extracts the home directory from the archive.
     """
     archive_path = await _stream_upload_to_tempfile(
-        file, int(app.state.settings.file_upload_size_max)
+        file, app.state.settings.file_upload_size_max
     )
     ws = None
     try:
