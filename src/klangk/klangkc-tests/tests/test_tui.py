@@ -6926,13 +6926,15 @@ def test_fmt_login_ts_invalid():
 
 
 def test_fmt_login_ts_localizes():
-    from datetime import datetime
+    """A UTC ISO timestamp renders in the local timezone, not UTC —
+    computed via the local offset rather than the implementation's own
+    expression (#2583)."""
+    from datetime import datetime, timezone
 
-    iso = "2026-08-20T10:00:00+00:00"
-    expected = (
-        datetime.fromisoformat(iso).astimezone().strftime("%Y-%m-%d %H:%M")
-    )
-    assert MainScreen._fmt_login_ts(iso) == expected
+    utc_naive = datetime(2026, 8, 20, 10)
+    local = utc_naive.replace(tzinfo=timezone.utc).astimezone()
+    expected = (utc_naive + local.utcoffset()).strftime("%Y-%m-%d %H:%M")
+    assert MainScreen._fmt_login_ts("2026-08-20T10:00:00+00:00") == expected
 
 
 async def test_main_screen_shows_last_login(monkeypatch):
@@ -6975,6 +6977,39 @@ async def test_main_screen_last_login_none_omitted(monkeypatch):
         assert "last login" not in str(
             app.screen.query_one("#status", StatusBar).render()
         )
+
+
+async def test_reload_last_login_refetches_after_server_switch(monkeypatch):
+    """reload_last_login re-fetches the stamp, so a server switch
+    doesn't keep the previous server's (possibly another user's) login
+    time beside the new identity (#2583)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    monkeypatch.setattr(MainScreen, "_load_last_login", _real_load_last_login)
+    iso_a = "2026-08-20T10:00:00+00:00"
+    iso_b = "2026-08-21T12:00:00+00:00"
+    current = {"iso": iso_a}
+    st = _ws(owned=[_wsobj("alpha")], last_login_at=lambda: current["iso"])
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert MainScreen._fmt_login_ts(iso_a) in rendered
+
+        # "Switch servers": the state now reports the new identity's
+        # (different) stamp; the reload replaces the shown one.
+        current["iso"] = iso_b
+        app.screen.reload_last_login()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert MainScreen._fmt_login_ts(iso_b) in rendered
+        assert MainScreen._fmt_login_ts(iso_a) not in rendered
 
 
 async def test_main_screen_auth_expired_shows_overlay(monkeypatch):
@@ -11031,6 +11066,10 @@ async def test_server_changed_pops_to_main_and_refreshes(monkeypatch):
     monkeypatch.setattr(
         MainScreen, "refresh_lists", lambda self: refreshed.append(True)
     )
+    reloaded = []
+    monkeypatch.setattr(
+        MainScreen, "reload_last_login", lambda self: reloaded.append(True)
+    )
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -11044,6 +11083,7 @@ async def test_server_changed_pops_to_main_and_refreshes(monkeypatch):
             isinstance(s, ServerSwitchScreen) for s in app.screen_stack
         )
         assert refreshed  # MainScreen refreshed after the switch
+        assert reloaded  # last-login stamp re-fetched for the new identity
 
 
 async def test_server_changed_clears_stack_when_main_absent(monkeypatch):

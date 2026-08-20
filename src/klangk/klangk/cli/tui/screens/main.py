@@ -265,7 +265,10 @@ class MainScreen(Screen):
         # The user's last successful login, rendered for the status bar
         # (#2583). Fetched once on mount by ``_load_last_login`` (a
         # blocking /auth/me hit, so it runs in a worker) and None until
-        # that returns.
+        # that returns. Re-fetched by ``reload_last_login`` after a
+        # server switch — the App reuses this screen there, so on_mount
+        # does not re-run and the old server's value would linger next
+        # to the new identity.
         self._last_login: str | None = None
         self.query_one("#filter_bar").display = False
         self._refresh_action_hints()
@@ -278,7 +281,30 @@ class MainScreen(Screen):
             self.app.run_worker(self._status_loop, name="status-ws")
             self.app.run_worker(self._token_refresh_loop, name="token-refresh")
             self.app.run_worker(
-                self._load_last_login, name="last-login", exit_on_error=False
+                self._load_last_login,
+                name="last-login",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    def reload_last_login(self) -> None:
+        """Drop the shown last login and re-fetch it (#2583).
+
+        Called by ``App.server_changed``: that path reuses this screen,
+        so without this the status bar would keep showing the previous
+        server's (possibly another user's) login time beside the new
+        server/user identity. Exclusive, so a still-running on-mount
+        fetch for the old server is cancelled rather than racing this
+        one.
+        """
+        self._last_login = None
+        self._refresh_status()
+        if self.app.tui_state.is_authenticated():
+            self.app.run_worker(
+                self._load_last_login,
+                name="last-login",
+                exclusive=True,
+                exit_on_error=False,
             )
 
     async def _load_last_login(self) -> None:

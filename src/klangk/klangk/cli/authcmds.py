@@ -161,7 +161,7 @@ def _fmt_last_login(iso: str | None) -> str | None:
         return (
             datetime.fromisoformat(iso).astimezone().strftime("%Y-%m-%d %H:%M")
         )
-    except ValueError:
+    except (ValueError, TypeError):
         return None
 
 

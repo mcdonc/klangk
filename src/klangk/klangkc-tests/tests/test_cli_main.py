@@ -5451,6 +5451,13 @@ class TestAccountCommands:
         assert result.exit_code == 0
         assert "Last login" not in result.output
 
+        # A non-string value raises TypeError, not ValueError — the
+        # command must not crash on it (#2583 review).
+        client.get_me.return_value["last_login_at"] = 42
+        result = CliRunner().invoke(main.app, ["account", "show"])
+        assert result.exit_code == 0
+        assert "Last login" not in result.output
+
     def test_account_passwd_success(self, logged_in_cfg, monkeypatch):
         from klangk.cli import account, main
         from typer.testing import CliRunner
