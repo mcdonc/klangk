@@ -1293,6 +1293,118 @@ class TestResendVerification:
         api.resend_timestamps.clear()
 
 
+class TestResendVerificationLockout:
+    """Failed credential checks against resend-verification count toward
+    the login lockout (#2618).
+
+    Without this the endpoint is an unthrottled password-guessing oracle:
+    the 60s per-email cooldown only bounds email sending, and only applies
+    after the credential check succeeds. Failures share the login counter
+    (keyed on the resolved user's canonical email, raw input for unknown
+    addresses)."""
+
+    async def _create_unverified_user(self, app_state):
+        password_hash = auth_mod.hash_password("testpass")
+        await app_state.state.model.users.create_user(
+            "unverified@example.com", password_hash, verified=False
+        )
+
+    async def _post(self, client, email, password):
+        return await client.post(
+            "/api/v1/auth/resend-verification",
+            json={"email": email, "password": password},
+        )
+
+    async def test_lockout_after_max_attempts(self, client, db, app_state):
+        """N-1 wrong passwords 401; the Nth triggers the 429 lockout, and
+        even the correct password is then rejected before the verify."""
+        await self._create_unverified_user(app_state)
+        failures = app_state.state.settings.login_lockout_failures
+        for i in range(failures):
+            resp = await self._post(client, "unverified@example.com", "wrong")
+            assert resp.status_code == (401 if i < failures - 1 else 429)
+        resp = await self._post(client, "unverified@example.com", "testpass")
+        assert resp.status_code == 429
+
+    async def test_lockout_shared_with_login(self, client, db, app_state):
+        """Resend failures key the same counter as login, so exhausting
+        the threshold via resend locks the account's login too."""
+        await self._create_unverified_user(app_state)
+        failures = app_state.state.settings.login_lockout_failures
+        for _ in range(failures):
+            await self._post(client, "unverified@example.com", "wrong")
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "unverified@example.com",
+                "password": "testpass",
+            },
+        )
+        assert resp.status_code == 429
+
+    async def test_unknown_email_also_rate_limited(
+        self, client, db, app_state
+    ):
+        """Guesses against a made-up address are counted under the raw
+        input, so unknown accounts get the same lockout protection."""
+        failures = app_state.state.settings.login_lockout_failures
+        for i in range(failures):
+            resp = await self._post(client, "ghost@example.com", "guess")
+            assert resp.status_code == (401 if i < failures - 1 else 429)
+
+    async def test_success_clears_attempts(self, client, db, app_state):
+        """A correct credential check clears the counter, like a
+        successful login does."""
+        await self._create_unverified_user(app_state)
+        attempts = app_state.state.model.login_attempts
+        for _ in range(2):
+            await self._post(client, "unverified@example.com", "wrong")
+        info = await attempts.get_login_attempt_info("unverified@example.com")
+        assert info["attempt_count"] == 2
+        api.resend_timestamps.pop("unverified@example.com", None)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_verification_email",
+            new_callable=AsyncMock,
+        ):
+            resp = await self._post(
+                client, "unverified@example.com", "testpass"
+            )
+        assert resp.status_code == 200
+        assert (
+            await attempts.get_login_attempt_info("unverified@example.com")
+            is None
+        )
+        api.resend_timestamps.pop("unverified@example.com", None)
+
+    async def test_window_reset_not_lockout(self, client, db, app_state):
+        """A near-threshold count whose first failure predates the window
+        resets instead of locking: old failures stop counting."""
+        from datetime import datetime, timedelta, timezone
+
+        await self._create_unverified_user(app_state)
+        old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        async with app_state.state.db.transaction() as raw_db:
+            await raw_db.execute(
+                "INSERT INTO login_attempts"
+                " (email, attempt_count, first_attempt_at)"
+                " VALUES (?, ?, ?)",
+                (
+                    "unverified@example.com",
+                    app_state.state.settings.login_lockout_failures - 1,
+                    old,
+                ),
+            )
+        resp = await self._post(client, "unverified@example.com", "wrong")
+        assert resp.status_code == 401  # reset, not 429
+        info = (
+            await app_state.state.model.login_attempts.get_login_attempt_info(
+                "unverified@example.com"
+            )
+        )
+        assert info["attempt_count"] == 1
+
+
 class TestForgotPassword:
     async def _create_user(self, app_state):
         password_hash = auth_mod.hash_password("oldpass")

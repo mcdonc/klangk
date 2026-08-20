@@ -32,6 +32,11 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Login timing equalization (#2618).** Login and resend-verification
+  now burn one full password verify even when the account is unknown or
+  OIDC-only, so response timing no longer reveals whether an account
+  exists.
+
 - **OIDC state cookie hardening (#2573).** The OIDC callback no longer
   trusts the `redirect_uri` stored in the unsigned state cookie when
   exchanging the authorization code with the IdP; it now re-derives the
@@ -63,6 +68,13 @@ operators or integrators to act when upgrading.
   the web flow.
 
 ### Added
+
+- **Resend-verification lockout (#2618).** Failed password checks on
+  `POST /auth/resend-verification` now count toward the login lockout
+  (`KLANGKD_LOGIN_LOCKOUT_*`), keyed like login on the account's email.
+  A locked-out account gets `429` there too; a correct check on an
+  unverified account clears the counter, matching login semantics.
+  The 60s per-email resend cooldown is unchanged.
 
 - **Last successful login time (#2583).** Every login (password,
   SSO, no-auth, and the auto-login after register/verify/reset/invite
