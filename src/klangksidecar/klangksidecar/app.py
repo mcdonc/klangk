@@ -18,7 +18,7 @@ from .config import DEBUG, HOLD_TIMEOUT, LISTEN_PORT, UPSTREAM, WORKSPACE_TOKEN_
 from .state import _BG_TASKS
 
 if TYPE_CHECKING:
-    from .consent import SidecarConsentClient  # allow-deferred-import (annotation-only)
+    from .consent import SidecarConsentClient
 
 # Bound on the consent client's teardown during SIGTERM shutdown (#2400):
 # client.stop() closes the WS (close_timeout=5s), and during klangkd shutdown

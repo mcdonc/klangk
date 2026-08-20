@@ -1504,11 +1504,15 @@ class TestConsentForward:
 
     # --- _run_nfq_consumer: graceful no-op without netfilterqueue ---
 
-    def test_setup_nfq_consumer_noop_without_netfilterqueue(self, proxy, capsys):
-        # The server venv has no netfilterqueue -> lazy import fails -> logs +
+    def test_setup_nfq_consumer_noop_without_netfilterqueue(
+        self, proxy, monkeypatch, capsys
+    ):
+        # netfilterqueue absent (dev venv without the [nfqueue] extra) -> the
+        # guarded module-scope import left NetfilterQueue = None -> logs +
         # returns instead of raising (before touching the event loop).
+        monkeypatch.setattr(proxy.nfqueue, "NetfilterQueue", None)
         proxy._setup_nfq_consumer(None)
-        assert "netfilterqueue unavailable" in capsys.readouterr().out
+        assert "netfilterqueue not installed" in capsys.readouterr().out
 
 
 # --- helpers for the NFQUEUE callback + _handle_packet tests (#2311 half B) ---
@@ -3006,11 +3010,13 @@ class TestSigtermShutdown:
 
     async def test_setup_nfq_consumer_returns_nfq_for_unbind(self, proxy, monkeypatch):
         # _setup_nfq_consumer returns the bound NFQUEUE so _shutdown can unbind
-        # it on SIGTERM (clean PID-1 teardown, #2400).
+        # it on SIGTERM (clean PID-1 teardown, #2400). The import is a guarded
+        # module-scope one; patch the resolved symbol directly.
         nfq = MagicMock()
         nfq.get_fd = MagicMock(return_value=7)
-        fake_mod = types.SimpleNamespace(NetfilterQueue=MagicMock(return_value=nfq))
-        monkeypatch.setitem(sys.modules, "netfilterqueue", fake_mod)
+        monkeypatch.setattr(
+            proxy.nfqueue, "NetfilterQueue", MagicMock(return_value=nfq)
+        )
         loop = asyncio.get_running_loop()
         monkeypatch.setattr(loop, "add_reader", MagicMock())
         assert proxy._setup_nfq_consumer(None) is nfq
@@ -3019,10 +3025,11 @@ class TestSigtermShutdown:
     async def test_setup_nfq_consumer_bind_failure_returns_none(
         self, proxy, monkeypatch, capsys
     ):
-        fake_mod = types.SimpleNamespace(
-            NetfilterQueue=MagicMock(side_effect=RuntimeError("bind boom"))
+        monkeypatch.setattr(
+            proxy.nfqueue,
+            "NetfilterQueue",
+            MagicMock(side_effect=RuntimeError("bind boom")),
         )
-        monkeypatch.setitem(sys.modules, "netfilterqueue", fake_mod)
         assert proxy._setup_nfq_consumer(None) is None
         assert "nfqueue consumer failed" in capsys.readouterr().out
 

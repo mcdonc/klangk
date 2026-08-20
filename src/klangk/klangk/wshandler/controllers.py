@@ -24,8 +24,8 @@ from .constants import MAX_INPUT_SIZE
 from .helpers import send_error, send_event, get_shared_terminals
 
 if TYPE_CHECKING:
-    from .connection import Connection  # allow-deferred-import
-    from .session import WorkspaceSession  # allow-deferred-import
+    from .connection import Connection
+    from .session import WorkspaceSession
 
 logger = logging.getLogger(__name__)
 

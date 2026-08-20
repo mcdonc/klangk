@@ -746,7 +746,7 @@ def setup_logfire(app: FastAPI) -> bool:
     """Enable Logfire instrumentation if LOGFIRE_TOKEN is set."""
     if not os.environ.get("LOGFIRE_TOKEN"):
         return False
-    import logfire  # allow-deferred-import
+    import logfire  # allow-deferred-import (opt-in, ~440ms)
 
     base_url = os.environ.get("LOGFIRE_BASE_URL")
     environment = os.environ.get("LOGFIRE_ENVIRONMENT")

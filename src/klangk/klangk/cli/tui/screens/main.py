@@ -39,10 +39,13 @@ from ..ws import listen_for_status
 from ._base import (
     CheatsheetScreen,
     ConfirmScreen,
+    DuplicateScreen,
     InputScreen,
     TransferScreen,
     WorkspaceListView,
 )
+from .server import ServerSwitchScreen
+from .workspace_form import CreateWorkspaceScreen, EditWorkspaceScreen
 
 logger = logging.getLogger(__name__)
 
@@ -399,9 +402,6 @@ class MainScreen(Screen):
                     lv.index = 0
 
     def action_switch_server(self) -> None:
-        # allow-deferred-import
-        from .server import ServerSwitchScreen
-
         self.app.push_screen(ServerSwitchScreen())
 
     # --- per-workspace actions (act on the highlighted row, #1878) ---
@@ -549,9 +549,6 @@ class MainScreen(Screen):
         self._refresh_action_hints()
 
     def action_duplicate(self) -> None:
-        # allow-deferred-import
-        from ._base import DuplicateScreen
-
         name = self._require_highlighted()
         if not name:
             return
@@ -610,9 +607,6 @@ class MainScreen(Screen):
         self.run_worker(self._do_edit(name), exit_on_error=False)
 
     async def _do_edit(self, name: str) -> None:
-        # allow-deferred-import
-        from .workspace_form import EditWorkspaceScreen
-
         state = self.app.tui_state
         try:
             ws = await asyncio.to_thread(state.find_workspace, name)
@@ -747,9 +741,6 @@ class MainScreen(Screen):
             self.refresh_lists()
 
     async def _do_create(self) -> None:
-        # allow-deferred-import
-        from .workspace_form import CreateWorkspaceScreen
-
         state = self.app.tui_state
         try:
             data = await asyncio.to_thread(state.list_images)
@@ -797,6 +788,9 @@ class MainScreen(Screen):
 
         def _offer(open_it: bool) -> None:
             if open_it:
+                # Deferred: genuine cycle — workspace_detail imports
+                # MainScreen; see the other WorkspaceDetailScreen import
+                # in this module for the full note.
                 # allow-deferred-import
                 from .workspace_detail import WorkspaceDetailScreen
 
@@ -1072,6 +1066,9 @@ class MainScreen(Screen):
             pass  # Widget not mounted yet; status will refresh on mount.
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        # Deferred: genuine cycle (workspace_detail imports MainScreen;
+        # screens/__init__ imports main). Both modules load textual at
+        # module scope anyway, so this defers cycle resolution, not weight.
         # allow-deferred-import
         from .workspace_detail import WorkspaceDetailScreen
 
@@ -1217,6 +1214,9 @@ class MainScreen(Screen):
 
     def _forward_status_to_detail(self, event: dict) -> None:
         """Mirror a live status broadcast onto an open detail screen."""
+        # Deferred: genuine cycle (workspace_detail imports MainScreen;
+        # screens/__init__ imports main). Both modules load textual at
+        # module scope anyway, so this defers cycle resolution, not weight.
         # allow-deferred-import
         from .workspace_detail import WorkspaceDetailScreen
 

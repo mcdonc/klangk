@@ -370,7 +370,8 @@ def main(  # pragma: no cover
     # ``module:app`` string import). This avoids the module-level
     # ``app = build_app()`` global — there's one ``build_app(settings)`` call,
     # one registry, wired correctly (#1464, #1454).
-    from klangk.main import build_app  # allow-deferred-import
+    # allow-deferred-import (serve-time import)
+    from klangk.main import build_app
 
     asgi_app = build_app(settings)
     # Arm the UDS trust flag on the Util instance: over a UDS,
@@ -410,7 +411,8 @@ def doctor(  # pragma: no cover
     ),
 ) -> None:
     """Check for missing dependencies and common misconfigurations."""
-    from klangk.doctor import doctor_main  # allow-deferred-import
+    # allow-deferred-import (subcommand-scoped)
+    from klangk.doctor import doctor_main
 
     raise SystemExit(doctor_main(verbose=verbose))
 

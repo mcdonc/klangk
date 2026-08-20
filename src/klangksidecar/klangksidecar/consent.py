@@ -12,6 +12,7 @@ import json
 import random
 import time
 import uuid
+import websockets
 
 from . import allowlist, rules
 from .config import ACTIVITY_GATE_S, DEBUG
@@ -104,8 +105,6 @@ class SidecarConsentClient:
         self._fail_close_pending()
 
     async def _run(self) -> None:
-        import websockets  # allow-deferred-import (sidecar-only dep; lazy so the module loads without it)
-
         backoff = 1.0
         while not self._stop:
             token = self._read_token()

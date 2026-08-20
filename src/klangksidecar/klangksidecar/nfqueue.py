@@ -24,8 +24,17 @@ from .packets import parse_dest, parse_syn_tuple
 from .rules import _host_for
 from .state import _BG_TASKS, _INFLIGHT, _VERDICT_CACHE
 
+# netfilterqueue is a sidecar-only optional dep ([nfqueue] extra: it links
+# libnetfilter_queue, a C library, and may be absent in dev environments).
+# Guarded module-scope import: importing the module works everywhere, and
+# _setup_nfq_consumer reports the absence at bind time.
+try:
+    from netfilterqueue import NetfilterQueue
+except ImportError:  # the [nfqueue] extra is not installed
+    NetfilterQueue = None
+
 if TYPE_CHECKING:
-    from .consent import SidecarConsentClient  # allow-deferred-import (annotation-only)
+    from .consent import SidecarConsentClient
 
 
 def _setup_nfq_consumer(client: SidecarConsentClient | None):
@@ -44,18 +53,15 @@ def _setup_nfq_consumer(client: SidecarConsentClient | None):
     does NOT serialize others -- distinct flows are held concurrently
     (netfilterqueue supports deferred verdicts; outstanding packets count
     against the kernel queue size, and the iptables rate-limit bounds arrivals).
-    netfilterqueue is a sidecar-only dep, imported lazily so the module loads
-    without it. Returns the bound ``NetfilterQueue`` (so :func:`_shutdown` can
-    unbind it on SIGTERM, #2400) or ``None`` on failure.
+    netfilterqueue is optional ([nfqueue] extra). Returns the bound
+    ``NetfilterQueue`` (so :func:`_shutdown` can unbind it on SIGTERM,
+    #2400) or ``None`` on failure.
     """
-    try:
-        # allow-deferred-import (sidecar-only; lazy so the module loads without it)
-        from netfilterqueue import NetfilterQueue as _NFQ
-    except Exception as exc:
-        print(f"nfqueue: netfilterqueue unavailable ({exc})", flush=True)
+    if NetfilterQueue is None:
+        print("nfqueue: netfilterqueue not installed", flush=True)
         return None
     try:
-        nfq = _NFQ()
+        nfq = NetfilterQueue()
         nfq.bind(QUEUE_NUM, lambda pkt: _cb(pkt, client))
         loop = asyncio.get_running_loop()
         # When the netlink socket is readable, process all pending packets on
