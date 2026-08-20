@@ -1,9 +1,7 @@
 """Chat messages and @handle mention resolution.
 
 ``ChatModel`` is the ``app_state``-owned form, reached via
-``app_state.model.chat`` (#1563 / #1576). The module-level free functions
-are the pre-existing ``_current_db`` ContextVar delegates, kept as the
-backstop until #1578 dissolves the ContextVar. The message-type constants
+``app_state.model.chat`` (#1563 / #1576). The message-type constants
 (``MSG_USER`` / ``MSG_AGENT`` / ``MSG_SYSTEM``) and the ``MENTION_RE``
 pattern stay module-level — they are imported as literal values by the
 ``wshandler`` package and ``api/chat.py``.
@@ -27,8 +25,7 @@ class ChatModel:
     """Chat data access, through ``app_state.db``.
 
     Reached via ``app_state.model.chat``. Reaches the DB through
-    ``self.app.state.db`` (the single DB instance for the whole app). The
-    method bodies mirror the module-level free functions below (backstop);
+    ``self.app.state.db`` (the single DB instance for the whole app);
     the message-type constants and ``MENTION_RE`` stay module-level.
     """
 
@@ -156,110 +153,96 @@ class ChatModel:
         self, workspace_id: str, before_id: str, limit: int = 50
     ) -> list[dict]:
         """Get older chat messages before a given message ID."""
-        async with self.app.state.db.transaction() as db:
-            # Get the created_at and rowid of the anchor message
-            cursor = await db.execute(
-                "SELECT created_at, rowid FROM chat_messages WHERE id = ?",
-                (before_id,),
-            )
-            anchor = await cursor.fetchone()
-            if anchor is None:
-                return []
-            anchor_ts = anchor["created_at"]
-            anchor_rowid = anchor["rowid"]
+        # Get the created_at and rowid of the anchor message
+        anchor = await self.app.state.db.fetchone(
+            "SELECT created_at, rowid FROM chat_messages WHERE id = ?",
+            (before_id,),
+        )
+        if anchor is None:
+            return []
+        anchor_ts = anchor["created_at"]
+        anchor_rowid = anchor["rowid"]
 
-            cursor = await db.execute(
-                "SELECT c.id, c.workspace_id, c.user_id, c.user_email,"
-                " c.message, c.message_type, c.created_at,"
-                " u.handle AS user_handle"
-                " FROM chat_messages c LEFT JOIN users u ON c.user_id = u.id"
-                " WHERE c.workspace_id = ?"
-                " AND (c.created_at < ? OR (c.created_at = ? AND c.rowid < ?))"
-                " ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?",
-                (workspace_id, anchor_ts, anchor_ts, anchor_rowid, limit),
+        rows = await self.app.state.db.fetchall(
+            "SELECT c.id, c.workspace_id, c.user_id, c.user_email,"
+            " c.message, c.message_type, c.created_at,"
+            " u.handle AS user_handle"
+            " FROM chat_messages c LEFT JOIN users u ON c.user_id = u.id"
+            " WHERE c.workspace_id = ?"
+            " AND (c.created_at < ? OR (c.created_at = ? AND c.rowid < ?))"
+            " ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?",
+            (workspace_id, anchor_ts, anchor_ts, anchor_rowid, limit),
+        )
+        messages = list(
+            reversed(
+                [
+                    {
+                        "id": row["id"],
+                        "workspace_id": row["workspace_id"],
+                        "user_id": row["user_id"],
+                        "user_email": row["user_email"],
+                        "user_handle": row["user_handle"],
+                        "message": row["message"],
+                        "message_type": row["message_type"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
             )
-            rows = await cursor.fetchall()
-            messages = list(
-                reversed(
-                    [
-                        {
-                            "id": row["id"],
-                            "workspace_id": row["workspace_id"],
-                            "user_id": row["user_id"],
-                            "user_email": row["user_email"],
-                            "user_handle": row["user_handle"],
-                            "message": row["message"],
-                            "message_type": row["message_type"],
-                            "created_at": row["created_at"],
-                        }
-                        for row in rows
-                    ]
-                )
-            )
-            if messages:
-                msg_ids = [m["id"] for m in messages]
-                placeholders = ",".join("?" for _ in msg_ids)
-                cursor = await db.execute(
-                    "SELECT message_id, user_id FROM chat_mentions"
-                    " WHERE message_id IN (" + placeholders + ")",
-                    msg_ids,
-                )
-                mention_rows = await cursor.fetchall()
-                mentions_by_msg: dict[str, list[str]] = {}
-                for mr in mention_rows:
-                    mentions_by_msg.setdefault(mr["message_id"], []).append(
-                        mr["user_id"]
-                    )
-                for m in messages:
-                    m["mentions"] = mentions_by_msg.get(m["id"], [])
-            return messages
+        )
+        return await self._attach_mentions(messages)
 
     async def get_chat_messages(
         self, workspace_id: str, limit: int = 50
     ) -> list[dict]:
         """Get the most recent chat messages for a workspace."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT c.id, c.workspace_id, c.user_id, c.user_email,"
-                " c.message, c.message_type, c.created_at,"
-                " u.handle AS user_handle"
-                " FROM chat_messages c LEFT JOIN users u ON c.user_id = u.id"
-                " WHERE c.workspace_id = ?"
-                " ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?",
-                (workspace_id, limit),
+        rows = await self.app.state.db.fetchall(
+            "SELECT c.id, c.workspace_id, c.user_id, c.user_email,"
+            " c.message, c.message_type, c.created_at,"
+            " u.handle AS user_handle"
+            " FROM chat_messages c LEFT JOIN users u ON c.user_id = u.id"
+            " WHERE c.workspace_id = ?"
+            " ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?",
+            (workspace_id, limit),
+        )
+        messages = list(
+            reversed(
+                [
+                    {
+                        "id": row["id"],
+                        "workspace_id": row["workspace_id"],
+                        "user_id": row["user_id"],
+                        "user_email": row["user_email"],
+                        "user_handle": row["user_handle"],
+                        "message": row["message"],
+                        "message_type": row["message_type"],
+                        "created_at": row["created_at"],
+                    }
+                    for row in rows
+                ]
             )
-            rows = await cursor.fetchall()
-            messages = list(
-                reversed(
-                    [
-                        {
-                            "id": row["id"],
-                            "workspace_id": row["workspace_id"],
-                            "user_id": row["user_id"],
-                            "user_email": row["user_email"],
-                            "user_handle": row["user_handle"],
-                            "message": row["message"],
-                            "message_type": row["message_type"],
-                            "created_at": row["created_at"],
-                        }
-                        for row in rows
-                    ]
-                )
+        )
+        return await self._attach_mentions(messages)
+
+    async def _attach_mentions(self, messages: list[dict]) -> list[dict]:
+        """Attach mention lists to mapped message dicts (in place).
+
+        Mentions are inserted atomically with their message, so the
+        follow-up read for already-fetched IDs needs no shared snapshot.
+        """
+        if messages:
+            msg_ids = [m["id"] for m in messages]
+            placeholders = ",".join("?" for _ in msg_ids)
+            mention_rows = await self.app.state.db.fetchall(
+                "SELECT message_id, user_id FROM chat_mentions"
+                " WHERE message_id IN (" + placeholders + ")",
+                tuple(msg_ids),
             )
-            if messages:
-                msg_ids = [m["id"] for m in messages]
-                placeholders = ",".join("?" for _ in msg_ids)
-                cursor = await db.execute(
-                    "SELECT message_id, user_id FROM chat_mentions"
-                    " WHERE message_id IN (" + placeholders + ")",
-                    msg_ids,
+            mentions_by_msg: dict[str, list[str]] = {}
+            for mr in mention_rows:
+                mentions_by_msg.setdefault(mr["message_id"], []).append(
+                    mr["user_id"]
                 )
-                mention_rows = await cursor.fetchall()
-                mentions_by_msg: dict[str, list[str]] = {}
-                for mr in mention_rows:
-                    mentions_by_msg.setdefault(mr["message_id"], []).append(
-                        mr["user_id"]
-                    )
-                for m in messages:
-                    m["mentions"] = mentions_by_msg.get(m["id"], [])
-            return messages
+            for m in messages:
+                m["mentions"] = mentions_by_msg.get(m["id"], [])
+        return messages

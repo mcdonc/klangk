@@ -129,21 +129,19 @@ class SessionsModel:
         the workstation identity (``source_ip``/``user_agent``) for
         concurrent-logon auditing (#2586).
         """
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT jti, expires_at, source_ip, user_agent, created_at"
-                " FROM user_sessions WHERE user_id = ?"
-                " ORDER BY created_at, rowid",
-                (user_id,),
-            )
-            rows = await cursor.fetchall()
-            return [
-                {
-                    "jti": row[0],
-                    "expires_at": row[1],
-                    "source_ip": row[2],
-                    "user_agent": row[3],
-                    "created_at": row[4],
-                }
-                for row in rows
-            ]
+        rows = await self.app.state.db.fetchall(
+            "SELECT jti, expires_at, source_ip, user_agent, created_at"
+            " FROM user_sessions WHERE user_id = ?"
+            " ORDER BY created_at, rowid",
+            (user_id,),
+        )
+        return [
+            {
+                "jti": row[0],
+                "expires_at": row[1],
+                "source_ip": row[2],
+                "user_agent": row[3],
+                "created_at": row[4],
+            }
+            for row in rows
+        ]

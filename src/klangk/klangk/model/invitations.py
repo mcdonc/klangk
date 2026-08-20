@@ -111,6 +111,9 @@ class InvitationsModel:
         page_size = max(1, min(page_size, 200))
         offset = (page - 1) * page_size
 
+        # The two counts and the page are dependent pagination reads —
+        # keep them on one snapshot so total/pending_count can't drift
+        # from the page under concurrent writes (issue #2609 rule).
         async with self.app.state.db.transaction() as db:
             where_clause = ""
             params: list = []

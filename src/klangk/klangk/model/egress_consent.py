@@ -250,23 +250,21 @@ class EgressConsentModel:
         limit: int = 100,
     ) -> list[dict]:
         """List consent requests for a workspace, optionally filtered by decision."""
-        async with self.app.state.db.transaction() as db:
-            if decision is not None:
-                cursor = await db.execute(
-                    f"SELECT {_EC_COLUMNS} FROM egress_consent"
-                    " WHERE workspace_id = ? AND decision = ?"
-                    " ORDER BY requested_at DESC LIMIT ?",
-                    (workspace_id, decision, limit),
-                )
-            else:
-                cursor = await db.execute(
-                    f"SELECT {_EC_COLUMNS} FROM egress_consent"
-                    " WHERE workspace_id = ?"
-                    " ORDER BY requested_at DESC LIMIT ?",
-                    (workspace_id, limit),
-                )
-            rows = await cursor.fetchall()
-            return [_row_to_dict(row) for row in rows]
+        if decision is not None:
+            rows = await self.app.state.db.fetchall(
+                f"SELECT {_EC_COLUMNS} FROM egress_consent"
+                " WHERE workspace_id = ? AND decision = ?"
+                " ORDER BY requested_at DESC LIMIT ?",
+                (workspace_id, decision, limit),
+            )
+        else:
+            rows = await self.app.state.db.fetchall(
+                f"SELECT {_EC_COLUMNS} FROM egress_consent"
+                " WHERE workspace_id = ?"
+                " ORDER BY requested_at DESC LIMIT ?",
+                (workspace_id, limit),
+            )
+        return [_row_to_dict(row) for row in rows]
 
     # Duration string -> seconds, for the time-bounded in-effect window
     # (#2328). `once`/`tilrestart`/`forever` are not time-bounded (handled
@@ -329,9 +327,7 @@ class EgressConsentModel:
                 DECISION_DENIED,
             )
         now = time.time()
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(query, params)
-            rows = await cursor.fetchall()
+        rows = await self.app.state.db.fetchall(query, params)
         # Newest-first: return the first verdict still in effect. An elapsed
         # newer verdict (e.g. an expired timed allow) is skipped so it can't
         # hide an older in-effect deny -- the pause must keep blocking a host
@@ -369,15 +365,13 @@ class EgressConsentModel:
         never in effect.
         """
         now = time.time()
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                f"SELECT {_EC_COLUMNS} FROM egress_consent"
-                " WHERE workspace_id = ? AND decision IN (?, ?)"
-                " AND decided_by IS NOT NULL"
-                " ORDER BY decided_at DESC",
-                (workspace_id, DECISION_ALLOWED, DECISION_DENIED),
-            )
-            rows = await cursor.fetchall()
+        rows = await self.app.state.db.fetchall(
+            f"SELECT {_EC_COLUMNS} FROM egress_consent"
+            " WHERE workspace_id = ? AND decision IN (?, ?)"
+            " AND decided_by IS NOT NULL"
+            " ORDER BY decided_at DESC",
+            (workspace_id, DECISION_ALLOWED, DECISION_DENIED),
+        )
         out = []
         for row in rows:
             if self._duration_in_effect(
@@ -653,14 +647,12 @@ class EgressConsentModel:
 
         if retention_days > 0:
             cutoff = now - retention_days * 86400.0
-            async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    "SELECT id, decision, duration, decided_at, decided_by"
-                    " FROM egress_consent"
-                    " WHERE COALESCE(revoked_at, decided_at, requested_at) < ?",
-                    (cutoff,),
-                )
-                rows = await cursor.fetchall()
+            rows = await self.app.state.db.fetchall(
+                "SELECT id, decision, duration, decided_at, decided_by"
+                " FROM egress_consent"
+                " WHERE COALESCE(revoked_at, decided_at, requested_at) < ?",
+                (cutoff,),
+            )
             # TOCTOU guard: the snapshot and the deletes run in separate
             # transactions, so a row snapshotted as pending may have been
             # decided in between -- deleting it would silently drop a fresh
@@ -687,25 +679,21 @@ class EgressConsentModel:
             deleted += await self._delete_ids(other_ids)
 
         if row_cap > 0:
-            async with self.app.state.db.transaction() as db:
-                cursor = await db.execute(
-                    "SELECT workspace_id, COUNT(*) AS cnt"
-                    " FROM egress_consent GROUP BY workspace_id HAVING cnt > ?",
-                    (row_cap,),
-                )
-                over = await cursor.fetchall()
+            over = await self.app.state.db.fetchall(
+                "SELECT workspace_id, COUNT(*) AS cnt"
+                " FROM egress_consent GROUP BY workspace_id HAVING cnt > ?",
+                (row_cap,),
+            )
             for entry in over:
                 excess = entry["cnt"] - row_cap
-                async with self.app.state.db.transaction() as db:
-                    cursor = await db.execute(
-                        "SELECT id, decision, duration, decided_at, decided_by"
-                        " FROM egress_consent"
-                        " WHERE workspace_id = ? AND decision != ?"
-                        " ORDER BY COALESCE(revoked_at, decided_at,"
-                        " requested_at) ASC",
-                        (entry["workspace_id"], DECISION_PENDING),
-                    )
-                    rows = await cursor.fetchall()
+                rows = await self.app.state.db.fetchall(
+                    "SELECT id, decision, duration, decided_at, decided_by"
+                    " FROM egress_consent"
+                    " WHERE workspace_id = ? AND decision != ?"
+                    " ORDER BY COALESCE(revoked_at, decided_at,"
+                    " requested_at) ASC",
+                    (entry["workspace_id"], DECISION_PENDING),
+                )
                 ids = []
                 for r in rows:
                     if excess <= 0:

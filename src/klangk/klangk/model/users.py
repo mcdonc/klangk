@@ -339,12 +339,10 @@ class UsersModel:
 
     async def get_user_handle(self, user_id: str) -> str | None:
         """Return the handle for a user, or None if not found."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT handle FROM users WHERE id = ?", (user_id,)
-            )
-            row = await cursor.fetchone()
-            return row["handle"] if row else None
+        row = await self.app.state.db.fetchone(
+            "SELECT handle FROM users WHERE id = ?", (user_id,)
+        )
+        return row["handle"] if row else None
 
     async def set_user_handle(self, user_id: str, handle: str) -> None:
         """Update a user's handle. Raises ValueError on invalid or conflict."""
@@ -569,60 +567,56 @@ class UsersModel:
 
     async def get_group_members(self, group_id: str) -> list[dict]:
         """List users in a group."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT u.id, u.email, ug.source FROM users u"
-                " JOIN user_groups ug ON u.id = ug.user_id"
-                " WHERE ug.group_id = ?"
-                " ORDER BY u.email",
-                (group_id,),
-            )
-            return [
-                {
-                    "id": row["id"],
-                    "email": row["email"],
-                    "source": row["source"],
-                }
-                for row in await cursor.fetchall()
-            ]
+        rows = await self.app.state.db.fetchall(
+            "SELECT u.id, u.email, ug.source FROM users u"
+            " JOIN user_groups ug ON u.id = ug.user_id"
+            " WHERE ug.group_id = ?"
+            " ORDER BY u.email",
+            (group_id,),
+        )
+        return [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "source": row["source"],
+            }
+            for row in rows
+        ]
 
     async def get_user_group_ids(self, user_id: str) -> list[str]:
         """Get all group IDs for a user."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT group_id FROM user_groups WHERE user_id = ?",
-                (user_id,),
-            )
-            return [row["group_id"] for row in await cursor.fetchall()]
+        rows = await self.app.state.db.fetchall(
+            "SELECT group_id FROM user_groups WHERE user_id = ?",
+            (user_id,),
+        )
+        return [row["group_id"] for row in rows]
 
     async def get_user_oidc_sync_group_ids(self, user_id: str) -> list[str]:
         """Get group IDs where membership source is 'oidc_sync'."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT group_id FROM user_groups"
-                " WHERE user_id = ? AND source = 'oidc_sync'",
-                (user_id,),
-            )
-            return [row["group_id"] for row in await cursor.fetchall()]
+        rows = await self.app.state.db.fetchall(
+            "SELECT group_id FROM user_groups"
+            " WHERE user_id = ? AND source = 'oidc_sync'",
+            (user_id,),
+        )
+        return [row["group_id"] for row in rows]
 
     async def get_user_groups(self, user_id: str) -> list[dict]:
         """Get all groups a user belongs to."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT g.id, g.name, g.description FROM groups g"
-                " JOIN user_groups ug ON g.id = ug.group_id"
-                " WHERE ug.user_id = ?"
-                " ORDER BY g.name",
-                (user_id,),
-            )
-            return [
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "description": row["description"],
-                }
-                for row in await cursor.fetchall()
-            ]
+        rows = await self.app.state.db.fetchall(
+            "SELECT g.id, g.name, g.description FROM groups g"
+            " JOIN user_groups ug ON g.id = ug.group_id"
+            " WHERE ug.user_id = ?"
+            " ORDER BY g.name",
+            (user_id,),
+        )
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "description": row["description"],
+            }
+            for row in rows
+        ]
 
     async def get_user_by_email(self, email: str) -> dict | None:
         row = await self.app.state.db.fetchone(
@@ -933,18 +927,17 @@ class UsersModel:
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:
         """Search users by email or handle prefix (#616)."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT id, email, handle FROM users"
-                " WHERE email LIKE ? OR handle LIKE ?"
-                " ORDER BY email LIMIT ?",
-                (f"{query}%", f"{query}%", limit),
-            )
-            return [
-                {
-                    "id": row["id"],
-                    "email": row["email"],
-                    "handle": row["handle"],
-                }
-                for row in await cursor.fetchall()
-            ]
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, email, handle FROM users"
+            " WHERE email LIKE ? OR handle LIKE ?"
+            " ORDER BY email LIMIT ?",
+            (f"{query}%", f"{query}%", limit),
+        )
+        return [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "handle": row["handle"],
+            }
+            for row in rows
+        ]
