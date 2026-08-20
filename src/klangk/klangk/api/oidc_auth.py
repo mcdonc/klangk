@@ -83,22 +83,21 @@ async def oidc_login(
     verifier, challenge = oidc.generate_pkce()
     state = secrets.token_urlsafe(32)
 
-    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
-        request.headers, request.client.host if request.client else None
-    )
-    redirect_uri = f"{proto}://{hostname}{base_path}{API_PREFIX}/auth/oidc/{provider_id}/callback"
+    redirect_uri = _derive_redirect_uri(request, provider_id)
 
     auth_url = await oidc_inst.build_auth_url(
         provider, redirect_uri, state, challenge
     )
 
     response = RedirectResponse(url=auth_url, status_code=302)
-    # Store state + verifier + cli_redirect in a cookie
+    # Store state + verifier + cli_redirect in a cookie.  The
+    # redirect_uri is deliberately NOT stored: the cookie is unsigned
+    # and client-controlled, so the callback re-derives it from hosting
+    # info instead of trusting a round-tripped copy (#2573).
     cookie_value = json.dumps(
         {
             "state": state,
             "verifier": verifier,
-            "redirect_uri": redirect_uri,
             "cli_redirect": cli_redirect,
         }
     )
@@ -112,6 +111,26 @@ async def oidc_login(
         path="/",
     )
     return response
+
+
+def _derive_redirect_uri(request: Request, provider_id: str) -> str:
+    """Derive the OAuth2 ``redirect_uri`` from hosting info.
+
+    Derived identically at login and callback time (hosting env vars,
+    then trusted forwarded headers).  The unsigned state cookie must
+    never carry it: a client-controlled ``redirect_uri`` would be fed
+    verbatim to the IdP token endpoint (#2573).
+
+    Because the value is derived per request, a hosting-config reload
+    (SIGHUP) between login and callback — or a fleet with differing
+    proxy-trust settings — can make the two derivations disagree; the
+    IdP then rejects the exchange and the login fails loudly with a
+    502.  In-flight logins only; retrying after the reload succeeds.
+    """
+    hostname, proto, base_path = request.app.state.util.derive_hosting_info(
+        request.headers, request.client.host if request.client else None
+    )
+    return f"{proto}://{hostname}{base_path}{API_PREFIX}/auth/oidc/{provider_id}/callback"
 
 
 def _validate_state_cookie(
@@ -135,21 +154,32 @@ def _validate_state_cookie(
     if not isinstance(cookie_data, dict) or cookie_data.get("state") != state:
         raise HTTPException(status_code=400, detail="State mismatch")
 
+    # The PKCE verifier is required downstream; a cookie missing it
+    # must 400, not KeyError-500.
+    verifier = cookie_data.get("verifier")
+    if not isinstance(verifier, str) or not verifier:
+        raise HTTPException(
+            status_code=400, detail="Invalid OIDC state cookie"
+        )
+
     return cookie_data
 
 
-async def _exchange_and_validate_token(oidc_inst, provider, code, cookie_data):
+async def _exchange_and_validate_token(
+    oidc_inst, provider, code, redirect_uri, verifier
+):
     """Exchange the authorization code for tokens and validate the ID token.
 
     Returns ``(claims, tokens)`` where *claims* contains at least ``sub``
-    and ``email``.
+    and ``email``.  *redirect_uri* is the server-derived callback URL —
+    never a value read back from the unsigned state cookie (#2573).
     """
     try:
         tokens = await oidc_inst.exchange_code(
             provider,
             code,
-            cookie_data["redirect_uri"],
-            cookie_data["verifier"],
+            redirect_uri,
+            verifier,
         )
     except httpx.HTTPStatusError as exc:
         logger.error("OIDC token exchange failed: %s", exc.response.text)
@@ -267,7 +297,11 @@ async def oidc_callback(
 
     cookie_data = _validate_state_cookie(request, provider_id, state)
     claims, tokens = await _exchange_and_validate_token(
-        request.app.state.oidc, provider, code, cookie_data
+        request.app.state.oidc,
+        provider,
+        code,
+        _derive_redirect_uri(request, provider_id),
+        cookie_data["verifier"],
     )
 
     email = claims["email"]

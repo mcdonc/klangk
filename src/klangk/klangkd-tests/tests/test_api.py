@@ -9516,6 +9516,49 @@ class TestOIDCLogin:
         )
         assert "oidc_test" in resp.headers.get("set-cookie", "")
 
+    async def test_login_cookie_omits_redirect_uri(
+        self, client, app, monkeypatch
+    ):
+        """The state cookie carries only state, verifier, cli_redirect.
+
+        redirect_uri is never round-tripped through the unsigned cookie —
+        it is re-derived from hosting info at callback time (#2573).
+        """
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(
+            app.state.oidc, "oidc_login_allowed", lambda *args: True
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
+        build_auth_url = AsyncMock(
+            return_value="https://idp.example.com/auth?x=1"
+        )
+        monkeypatch.setattr(app.state.oidc, "build_auth_url", build_auth_url)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/login", follow_redirects=False
+        )
+        # End-to-end consistency: the URI login hands to the IdP must
+        # equal the URI the callback later sends to the token exchange
+        # (pinned in TestOIDCCallback.test_callback_redirect_uri_
+        # rederived_not_from_cookie) — both derive it from hosting info
+        # (#2573).
+        assert build_auth_url.call_args[0][1] == (
+            "http://test/api/v1/auth/oidc/test/callback"
+        )
+        from http.cookies import SimpleCookie
+
+        sc = SimpleCookie()
+        sc.load(resp.headers["set-cookie"])
+        data = json_mod.loads(sc["oidc_test"].value)
+        assert set(data) == {"state", "verifier", "cli_redirect"}
+
 
 class TestOIDCCallback:
     async def _setup_callback(self, client, app, monkeypatch, db, claims=None):
@@ -9557,7 +9600,6 @@ class TestOIDCCallback:
             {
                 "state": "test-state",
                 "verifier": "test-verifier",
-                "redirect_uri": "https://klangk.example.com/auth/oidc/test/callback",
                 "cli_redirect": None,
             }
         )
@@ -9730,7 +9772,6 @@ class TestOIDCCallback:
             {
                 "state": "s",
                 "verifier": "v",
-                "redirect_uri": "https://klangk.example.com/cb",
                 "cli_redirect": "http://localhost:12345/callback",
             }
         )
@@ -9784,7 +9825,6 @@ class TestOIDCCallback:
             {
                 "state": "s",
                 "verifier": "v",
-                "redirect_uri": "https://klangk.example.com/cb",
                 "cli_redirect": "https://evil.com/steal",
             }
         )
@@ -9849,7 +9889,6 @@ class TestOIDCCallback:
                 {
                     "state": "s",
                     "verifier": "v",
-                    "redirect_uri": "https://klangk.example.com/cb",
                     "cli_redirect": payload,
                 }
             )
@@ -9867,6 +9906,87 @@ class TestOIDCCallback:
             assert "oidc-complete" in location, payload
             assert "token=" in location, payload
             client.cookies.delete("oidc_test")
+
+    async def test_callback_redirect_uri_rederived_not_from_cookie(
+        self, client, app, monkeypatch, db
+    ):
+        """A tampered redirect_uri in the unsigned state cookie must be
+        ignored — the token exchange uses the hosting-derived URI.
+
+        Regression test for #2573: the cookie value used to be fed
+        verbatim to the IdP token endpoint.  The exchange must receive
+        the redirect_uri re-derived via derive_hosting_info (host
+        ``test`` from the test client's base_url), never the cookie's
+        attacker-influenced copy.
+        """
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
+        exchange = AsyncMock(
+            return_value={"id_token": "idt", "access_token": "at"}
+        )
+        monkeypatch.setattr(app.state.oidc, "exchange_code", exchange)
+        monkeypatch.setattr(
+            app.state.oidc,
+            "validate_id_token",
+            AsyncMock(
+                return_value={
+                    "sub": "rd-sub",
+                    "email": "rd@example.com",
+                    "email_verified": True,
+                }
+            ),
+        )
+        cookie_data = json_mod.dumps(
+            {
+                "state": "s",
+                "verifier": "v",
+                "redirect_uri": "https://attacker.example/steal",
+                "cli_redirect": None,
+            }
+        )
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        exchange.assert_awaited_once()
+        redirect_uri = exchange.call_args[0][2]
+        assert redirect_uri == ("http://test/api/v1/auth/oidc/test/callback")
+        assert "attacker.example" not in redirect_uri
+
+    async def test_callback_missing_verifier_cookie(
+        self, client, app, monkeypatch, db
+    ):
+        """A dict cookie with matching state but no verifier is 400,
+        not a KeyError-500."""
+        import json as json_mod
+
+        provider = api.oidc.OIDCProvider(
+            id="test",
+            display_name="Test",
+            issuer="https://idp.example.com",
+            client_id="klangk",
+            client_secret="s",
+        )
+        monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
+        cookie_data = json_mod.dumps({"state": "s", "cli_redirect": None})
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "code", "state": "s"},
+        )
+        assert resp.status_code == 400
+        assert "Invalid OIDC state cookie" in resp.json()["detail"]
 
     async def test_callback_token_exchange_failure(
         self, client, app, monkeypatch, db
@@ -9898,7 +10018,6 @@ class TestOIDCCallback:
             {
                 "state": "s",
                 "verifier": "v",
-                "redirect_uri": "https://cb",
                 "cli_redirect": None,
             }
         )
@@ -9929,7 +10048,6 @@ class TestOIDCCallback:
             {
                 "state": "s",
                 "verifier": "v",
-                "redirect_uri": "https://cb",
                 "cli_redirect": None,
             }
         )
@@ -9968,7 +10086,6 @@ class TestOIDCCallback:
             {
                 "state": "s",
                 "verifier": "v",
-                "redirect_uri": "https://cb",
                 "cli_redirect": None,
             }
         )
@@ -10005,7 +10122,6 @@ class TestOIDCCallback:
             {
                 "state": "s",
                 "verifier": "v",
-                "redirect_uri": "https://cb",
                 "cli_redirect": None,
             }
         )
@@ -10252,7 +10368,6 @@ class TestOIDCCallbackAgentGuard:
             {
                 "state": "test-state",
                 "verifier": "test-verifier",
-                "redirect_uri": "https://klangk.example.com/auth/oidc/test/callback",
                 "cli_redirect": None,
             }
         )
