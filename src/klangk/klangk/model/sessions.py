@@ -1,11 +1,15 @@
-"""Active-session registry for concurrent-session limiting (#2585).
+"""Active-session registry for concurrent-session limiting (#2585) and
+concurrent-logon auditing (#2586).
 
 Storage only; the limit *decision* (who to revoke, blocklisting the
 evicted JTIs) lives in :mod:`klangk.auth`. A row exists per issued
 access-token JTI; it is inserted at issuance, replaced on refresh (the
 old JTI is blocklisted), deleted on logout, and lazily purged once the
 token's ``exp`` has passed — so ``user_sessions`` never tracks a token
-that is already dead.
+that is already dead. Each row also records the workstation the
+session was established from (effective client IP + user agent), so
+concurrent sessions from different workstations can be detected at
+login and audited later.
 """
 
 from datetime import datetime, timezone
@@ -26,20 +30,28 @@ class SessionsModel:
         self.app = app
 
     async def record_session(
-        self, user_id: str, jti: str, expires_at: str
+        self,
+        user_id: str,
+        jti: str,
+        expires_at: str,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         """Insert a session row for a freshly issued token.
 
         ``expires_at`` is the token's ``exp`` as a UTC ISO string (the
         same form the token blocklist stores), used by
         :meth:`purge_expired` and handed back for blocklisting on
-        eviction.
+        eviction. ``source_ip``/``user_agent`` record the workstation
+        the session was established from (#2586); ``None`` means
+        unknown (never reported as a *different* workstation).
         """
         async with self.app.state.db.transaction() as db:
             await db.execute(
                 "INSERT OR REPLACE INTO user_sessions"
-                " (jti, user_id, expires_at) VALUES (?, ?, ?)",
-                (jti, user_id, expires_at),
+                " (jti, user_id, expires_at, source_ip, user_agent)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (jti, user_id, expires_at, source_ip, user_agent),
             )
 
     async def replace_session(
@@ -113,13 +125,25 @@ class SessionsModel:
 
         ``rowid`` breaks ``created_at`` ties (datetime('now') has
         second granularity; burst logins would otherwise tie) with the
-        later insert ordering as the newer session.
+        later insert ordering as the newer session. Each row carries
+        the workstation identity (``source_ip``/``user_agent``) for
+        concurrent-logon auditing (#2586).
         """
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
-                "SELECT jti, expires_at FROM user_sessions"
-                " WHERE user_id = ? ORDER BY created_at, rowid",
+                "SELECT jti, expires_at, source_ip, user_agent, created_at"
+                " FROM user_sessions WHERE user_id = ?"
+                " ORDER BY created_at, rowid",
                 (user_id,),
             )
             rows = await cursor.fetchall()
-            return [{"jti": row[0], "expires_at": row[1]} for row in rows]
+            return [
+                {
+                    "jti": row[0],
+                    "expires_at": row[1],
+                    "source_ip": row[2],
+                    "user_agent": row[3],
+                    "created_at": row[4],
+                }
+                for row in rows
+            ]

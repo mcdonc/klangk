@@ -60,11 +60,16 @@ trusted-proxy-cidrs: "127.0.0.1,::1,10.0.0.0/24"
 Use a comma-separated list. Each entry is an IP address or a CIDR range.
 Only the immediate TCP peer is checked against this list.
 
-If you do not set this correctly, three things break:
+If you do not set this correctly, four things break:
 
 1. **Hosted app URLs** use `localhost` instead of the public hostname.
 2. **OIDC callbacks** use `http` instead of `https`.
 3. **Login links** (password reset, verification) point to the wrong host.
+4. **Concurrent-logon audit records** never fire — every session records
+   the proxy's address as its workstation, so different workstations are
+   never detected. See
+   [Concurrent-logon auditing depends on the proxy chain](#concurrent-logon-auditing-depends-on-the-proxy-chain)
+   for how to verify the setup.
 
 ### Browser port
 
@@ -202,6 +207,79 @@ to start unless you set `KLANGKD_ALLOW_INSECURE_NO_AUTH=1`. Do not use
 `none` mode in production with network-reachable deployments. Use
 `password`, `oidc`, or `both` instead.
 
+## Concurrent-logon auditing depends on the proxy chain
+
+klangk records the workstation of every login session: the effective
+client IP plus the user agent. When one account holds concurrent
+sessions from different workstations, klangkd writes an audit record to
+the server log (see
+[Authentication](../features/authentication.md#concurrent-logon-auditing)).
+
+This works only when the proxy chain preserves the real client IP.
+The backend resolves the effective client IP from `X-Real-IP` (or the
+first hop of `X-Forwarded-For`) **and only when the immediate peer is
+trusted**. When the chain is misconfigured, every session records the
+proxy's address instead of the client's.
+
+### Consequences of a misconfigured proxy chain
+
+**Too little trust** (headers missing, `trusted-proxy-cidrs` wrong,
+or `reject-proxy-headers: true`):
+
+- **No audit records are ever written.** All logins appear to come
+  from one workstation (the proxy's address), so concurrent logons
+  from different workstations are never detected. This is exactly the
+  event the feature exists to catch — an attacker using stolen
+  credentials from a second machine leaves no trace.
+- **The admin session list is misleading.**
+  `GET /api/v1/admin/users/{id}/sessions` shows the proxy's address
+  for every session. An operator cannot tell workstations apart, and
+  account sharing looks the same as normal use.
+- **The failure is silent.** Nothing errors, no warning is logged, and
+  the deployment looks healthy. The only symptom is an audit trail
+  that stays empty — which is easy to miss until you need it, and by
+  then the missed events cannot be reconstructed (the workstation was
+  never recorded).
+
+Note that the **session limit is not affected**: it counts sessions,
+not IP addresses, so `KLANGKD_MAX_SESSIONS_PER_USER` still works.
+Only the audit signal is lost.
+
+**Too much trust** (a trust list wider than your actual proxies):
+
+- **The audit trail can be forged.** Any client whose forwarded
+  headers are honored can claim any `X-Real-IP` — a stolen-credential
+  login can be made to appear as the victim's own workstation, or a
+  fake "different workstation" record can be planted to distract an
+  investigation.
+
+### Checklist for a correct setup
+
+1. The outer proxy must send `X-Real-IP` (or `X-Forwarded-For`) set to
+   the real client address — see the nginx and Caddy examples above.
+2. `trusted-proxy-cidrs` must contain the outer proxy's IP or subnet.
+   With a wrong list, klangk's Caddy and the backend ignore the
+   forwarded headers.
+3. `reject-proxy-headers` must be off (the default). It disables all
+   forwarded-header trust, which also disables the workstation audit.
+4. The trust list must contain **only** your actual proxies (see the
+   too-much-trust consequence above).
+
+### Verify it works
+
+1. Log in as a test user from workstation A.
+2. Log in as the same user from a different network (workstation B —
+   for example, a phone hotspot).
+3. As admin, call `GET /api/v1/admin/users/{id}/sessions`. The two
+   sessions must show different `source_ip` values, and each must be
+   the real client address — not the proxy's.
+4. The klangkd log must contain
+   `audit: concurrent logon from different workstations`.
+
+If every session's `source_ip` is the proxy's address or `127.0.0.1`,
+forwarded headers are dropped or ignored. Fix the outer proxy headers
+or `trusted-proxy-cidrs`, then repeat the check.
+
 ## Reject all forwarded headers
 
 To ignore all forwarded headers unconditionally:
@@ -234,3 +312,5 @@ you add an outer proxy.
   reference.
 - [Auth Modes](../features/auth-modes.md) — `none`, `password`, `oidc`,
   `both`.
+- [Authentication](../features/authentication.md#concurrent-logon-auditing)
+  — what the workstation audit records and how to read them.

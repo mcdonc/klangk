@@ -21,6 +21,7 @@ from .. import (
     oidc,
 )
 from ..util import API_PREFIX
+from ._common import workstation
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +335,13 @@ async def oidc_callback(
     if hook_groups is not None:
         await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)
 
-    access_token = await request.app.state.auth.issue_token(user["id"], email)
+    source_ip, user_agent = workstation(request)
+    access_token = await request.app.state.auth.issue_token(
+        user["id"],
+        email,
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
     await request.app.state.model.users.record_login(user["id"])
     return _build_redirect_response(
         request, provider_id, access_token, cookie_data

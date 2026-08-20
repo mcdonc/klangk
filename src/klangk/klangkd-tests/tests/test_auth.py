@@ -1379,3 +1379,153 @@ class TestSessionLimit:
             result.user_id
         )
         assert len(rows) == 1
+
+
+class TestConcurrentLogonAudit:
+    """Audit records for concurrent logons from different workstations
+    (#2586). A workstation is the effective client IP a session was
+    established from; when a login is concurrent with an active session
+    from a different, known IP, an audit record is written to the
+    klangk.auth logger.
+    """
+
+    def _login_req(self):
+        return auth.LoginRequest(
+            identifier="testuser@example.com", password="testpass"
+        )
+
+    async def _login(self, source_ip=None, user_agent=None, env=None):
+        return await _auth(env).login(
+            self._login_req(),
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
+
+    async def test_session_row_records_workstation(self, user, app_state):
+        await self._login(source_ip="203.0.113.7", user_agent="klangk-cli/1.0")
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 1
+        assert rows[0]["source_ip"] == "203.0.113.7"
+        assert rows[0]["user_agent"] == "klangk-cli/1.0"
+
+    async def test_workstation_defaults_to_unknown(self, user, app_state):
+        """Issuance without request info (tests, internal paths) records
+        NULL workstation columns — unknown, never 'different'."""
+        await self._login()
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert rows[0]["source_ip"] is None
+        assert rows[0]["user_agent"] is None
+
+    async def test_different_workstation_audited(
+        self, user, app_state, caplog
+    ):
+        """A login concurrent with an active session from another IP
+        generates an audit record naming both workstations."""
+        import logging
+
+        await self._login(source_ip="203.0.113.7")
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            await self._login(source_ip="198.51.100.9")
+        assert any(
+            "concurrent logon from different workstations" in r.getMessage()
+            and "203.0.113.7" in r.getMessage()
+            and "198.51.100.9" in r.getMessage()
+            for r in caplog.records
+        )
+
+    async def test_same_workstation_not_audited(self, user, app_state, caplog):
+        """Two sessions from the same IP (two browsers on one machine)
+        are concurrent but not from different workstations: no record."""
+        import logging
+
+        await self._login(source_ip="203.0.113.7", user_agent="ua-one")
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            await self._login(source_ip="203.0.113.7", user_agent="ua-two")
+        assert not any(
+            "concurrent logon" in r.getMessage() for r in caplog.records
+        )
+
+    async def test_unknown_workstation_not_audited(
+        self, user, app_state, caplog
+    ):
+        """A session with an unknown IP never compares as 'different':
+        neither direction (known→unknown nor unknown→known) audits."""
+        import logging
+
+        await self._login()  # unknown workstation
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            await self._login(source_ip="203.0.113.7")
+        await self._login()  # unknown again, now concurrent with a known one
+        assert not any(
+            "concurrent logon" in r.getMessage() for r in caplog.records
+        )
+
+    async def test_expired_other_workstation_not_audited(
+        self, user, app_state, caplog
+    ):
+        """Dead sessions are purged before the audit check, so a login
+        after another workstation's session expired generates nothing."""
+        import logging
+
+        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        await app_state.state.model.sessions.record_session(
+            user["id"], "jti-dead", past, source_ip="203.0.113.7"
+        )
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            await self._login(source_ip="198.51.100.9")
+        assert not any(
+            "concurrent logon" in r.getMessage() for r in caplog.records
+        )
+
+    async def test_audit_runs_before_session_limit_eviction(
+        self, user, app_state, caplog
+    ):
+        """A cap-evicting login is still audited: the other-workstation
+        session it is about to revoke was concurrent at logon time."""
+        import logging
+
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        await self._login(source_ip="203.0.113.7", env=env)
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            await self._login(source_ip="198.51.100.9", env=env)
+        assert any(
+            "concurrent logon from different workstations" in r.getMessage()
+            for r in caplog.records
+        )
+
+    async def test_register_records_workstation_refresh_keeps_it(
+        self, user, app_state, caplog
+    ):
+        """The verified-register path records the workstation on its
+        session row, and a token refresh (the same session continuing)
+        neither audits nor rewrites the workstation columns."""
+        import logging
+
+        result = await _auth().register(
+            auth.RegisterRequest(
+                email="fresh@example.com", password="longenough1"
+            ),
+            verified=True,
+            source_ip="198.51.100.9",
+            user_agent="ua-register",
+        )
+        rows = await app_state.state.model.sessions.list_sessions(
+            result.user_id
+        )
+        assert rows[0]["source_ip"] == "198.51.100.9"
+        assert rows[0]["user_agent"] == "ua-register"
+
+        # Refresh continues a session; it is not a new logon (no audit
+        # record) and the row keeps the logon-time workstation identity.
+        with caplog.at_level(logging.INFO, logger="klangk.auth"):
+            refreshed = await _auth().refresh_token(result.access_token)
+        assert not any(
+            "concurrent logon" in r.getMessage() for r in caplog.records
+        )
+        rows = await app_state.state.model.sessions.list_sessions(
+            result.user_id
+        )
+        new_jti = _auth().decode_token(refreshed.access_token)["jti"]
+        assert [r["jti"] for r in rows] == [new_jti]
+        assert rows[0]["source_ip"] == "198.51.100.9"
+        assert rows[0]["user_agent"] == "ua-register"

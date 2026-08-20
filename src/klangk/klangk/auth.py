@@ -425,13 +425,24 @@ class Auth:
         }
         return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
-    async def issue_token(self, user_id: str, email: str) -> str:
+    async def issue_token(
+        self,
+        user_id: str,
+        email: str,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> str:
         """Mint an access token AND register it as a session (#2585).
 
         Every interactive issuance path (password login, registration,
         email verification, password-reset auto-login, invite acceptance,
         OIDC callback, ``none``-mode local login) goes through here so the
-        server-side session registry stays complete. Then
+        server-side session registry stays complete. The session row
+        records the workstation it was established from (*source_ip* /
+        *user_agent*, #2586) and :meth:`_audit_concurrent_logons`
+        generates an audit record when the logon is concurrent with
+        sessions from other workstations. Then
         :meth:`_enforce_session_limit` revokes the user's oldest sessions
         past ``KLANGKD_MAX_SESSIONS_PER_USER`` (0 = unlimited; the table
         is still purged of expired rows so it stays bounded).
@@ -442,10 +453,57 @@ class Auth:
             payload["exp"], tz=timezone.utc
         ).isoformat()
         await self.app.state.model.sessions.record_session(
-            user_id, payload["jti"], expires_at
+            user_id,
+            payload["jti"],
+            expires_at,
+            source_ip=source_ip,
+            user_agent=user_agent,
         )
+        await self._audit_concurrent_logons(user_id, email, source_ip)
         await self._enforce_session_limit(user_id)
         return token
+
+    async def _audit_concurrent_logons(
+        self, user_id: str, email: str, source_ip: str | None
+    ) -> None:
+        """Audit concurrent logons from different workstations (#2586).
+
+        A "workstation" is the effective client IP the session was
+        established from. When this logon (from *source_ip*) is
+        concurrent with an active session established from a different,
+        known IP, an audit record is written to the server log — the
+        signal an operator reviews to spot credentials shared with (or
+        stolen by) a second machine. Sessions with an unknown IP
+        (pre-#2586 rows, unresolvable clients) are never reported as
+        different; expired rows are purged first so dead sessions
+        don't generate records. Runs BEFORE the session limit so an
+        about-to-be-evicted other-workstation session is still
+        audited — that eviction is exactly the event of interest.
+        """
+        if source_ip is None:
+            return
+        sessions = self.app.state.model.sessions
+        await sessions.purge_expired()
+        rows = await sessions.list_sessions(user_id)
+        others = sorted(
+            {
+                row["source_ip"]
+                for row in rows
+                if row["source_ip"] is not None
+                and row["source_ip"] != source_ip
+            }
+        )
+        if not others:
+            return
+        logger.info(
+            "audit: concurrent logon from different workstations:"
+            " user=%s email=%s new session from %s; concurrent with"
+            " session(s) from %s",
+            user_id,
+            email,
+            source_ip,
+            ", ".join(others),
+        )
 
     async def _enforce_session_limit(self, user_id: str) -> None:
         """Revoke the user's oldest sessions past the configured cap.
@@ -599,7 +657,12 @@ class Auth:
     # --- registration / login flows ---
 
     async def register(
-        self, req: RegisterRequest, verified: bool = False
+        self,
+        req: RegisterRequest,
+        verified: bool = False,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
     ) -> RegisterResult:
         if not self.registration_enabled():
             raise HTTPException(
@@ -627,13 +690,24 @@ class Auth:
             raise HTTPException(status_code=400, detail="Registration failed")
         token = None
         if verified:
-            token = await self.issue_token(user["id"], user["email"])
+            token = await self.issue_token(
+                user["id"],
+                user["email"],
+                source_ip=source_ip,
+                user_agent=user_agent,
+            )
             await self.app.state.model.users.record_login(user["id"])
         return RegisterResult(
             user_id=user["id"], email=user["email"], access_token=token
         )
 
-    async def login(self, req: LoginRequest) -> TokenResponse:
+    async def login(
+        self,
+        req: LoginRequest,
+        *,
+        source_ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> TokenResponse:
         # Resolve the user by email or handle (#616).
         user = await self.app.state.model.users.get_user_by_identifier(
             req.identifier
@@ -699,7 +773,12 @@ class Auth:
             await self.app.state.model.login_attempts.clear_login_attempts(
                 lockout_key
             )
-        token = await self.issue_token(user["id"], user["email"])
+        token = await self.issue_token(
+            user["id"],
+            user["email"],
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
         # Stamp after minting, matching every other session-issuing site
         # (#2583): if minting fails, no login is recorded.
         await self.app.state.model.users.record_login(user["id"])

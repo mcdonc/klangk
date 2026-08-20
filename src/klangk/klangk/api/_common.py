@@ -35,6 +35,21 @@ async def workspace_resource(request: Request, user: dict) -> str:
     return f"/workspaces/{workspace_id}"
 
 
+def workstation(request: Request) -> tuple[str | None, str | None]:
+    """The ``(source_ip, user_agent)`` a session is established from (#2586).
+
+    The IP is the effective client address, resolved proxy-trust-aware
+    (``X-Real-IP``/``X-Forwarded-For`` honored only behind a trusted
+    proxy), so a workstation identity cannot be spoofed by a direct
+    caller. Both values may be ``None`` (unknown) — the audit layer
+    treats unknown as never-different, never same.
+    """
+    ip = request.app.state.util.effective_client_ip(
+        request.headers, request.client.host if request.client else None
+    )
+    return ip, request.headers.get("user-agent") or None
+
+
 async def admin_resource(request: Request, user: dict) -> str:  # noqa: ARG001
     """Resource function for admin operations (always checks /admin)."""
     return "/admin"

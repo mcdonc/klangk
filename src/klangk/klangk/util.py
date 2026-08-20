@@ -460,6 +460,34 @@ class Util:
             client_host is None and self.uds_mode
         )
 
+    def effective_client_ip(
+        self, headers=None, client_host: str | None = None
+    ) -> str | None:
+        """The effective client IP of a request, proxy-trust-aware.
+
+        Forwarded headers (``X-Real-IP``, then the first hop of
+        ``X-Forwarded-For``) are honored only when the immediate peer
+        is a trusted proxy and ``KLANGKD_REJECT_PROXY_HEADERS`` is off —
+        the same trust gate :meth:`client_is_loopback` and
+        :meth:`derive_hosting_info` use, so a direct caller cannot
+        spoof a workstation identity (#2586). Returns the peer address
+        otherwise, or ``None`` when there is no client at all.
+        """
+        candidate = client_host
+        trust = (
+            (not self.reject_proxy_headers())
+            and self.connection_peer_is_trusted(client_host)
+            and headers is not None
+        )
+        if trust:
+            real_ip = headers.get("x-real-ip") or ""
+            if not real_ip:
+                xff = headers.get("x-forwarded-for") or ""
+                real_ip = xff.split(",")[0].strip() if xff else ""
+            if real_ip:
+                candidate = real_ip
+        return candidate
+
     def client_is_loopback(
         self, headers=None, client_host: str | None = None
     ) -> bool:
@@ -479,19 +507,7 @@ class Util:
         an unparseable IP, rejects. Over a UDS a ``None`` client is treated
         as the trusted reverse proxy (same-uid socket access).
         """
-        candidate = client_host
-        trust = (
-            (not self.reject_proxy_headers())
-            and self.connection_peer_is_trusted(client_host)
-            and headers is not None
-        )
-        if trust:
-            real_ip = headers.get("x-real-ip") or ""
-            if not real_ip:
-                xff = headers.get("x-forwarded-for") or ""
-                real_ip = xff.split(",")[0].strip() if xff else ""
-            if real_ip:
-                candidate = real_ip
+        candidate = self.effective_client_ip(headers, client_host)
         if candidate is None and self.uds_mode:
             return True
         try:

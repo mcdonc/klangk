@@ -23,6 +23,7 @@ from .. import (
 from ._common import get_app_dep
 from ._common import (
     send_email,
+    workstation,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,7 +93,13 @@ async def register(
         )
     if request.app.state.settings.test_mode:
         # Test mode: auto-verify so E2E tests get immediate access
-        result = await request.app.state.auth.register(req, verified=True)
+        source_ip, user_agent = workstation(request)
+        result = await request.app.state.auth.register(
+            req,
+            verified=True,
+            source_ip=source_ip,
+            user_agent=user_agent,
+        )
         return result
 
     logger.info("Registering user: %s", req.email)
@@ -158,8 +165,12 @@ async def verify_email(token: str, request: Request):
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
     user = await request.app.state.model.users.get_user_by_id(user_id)
+    source_ip, user_agent = workstation(request)
     access_token = await request.app.state.auth.issue_token(
-        user_id, user["email"]
+        user_id,
+        user["email"],
+        source_ip=source_ip,
+        user_agent=user_agent,
     )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "verified", "access_token": access_token}
@@ -309,7 +320,13 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
     user = await request.app.state.model.users.get_user_by_id(user_id)
     if user is None:  # pragma: no cover
         raise HTTPException(status_code=404, detail="User not found")
-    token = await request.app.state.auth.issue_token(user_id, user["email"])
+    source_ip, user_agent = workstation(request)
+    token = await request.app.state.auth.issue_token(
+        user_id,
+        user["email"],
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "reset", "access_token": token}
 
@@ -323,7 +340,10 @@ async def login(
         raise HTTPException(
             status_code=403, detail="Password login is disabled"
         )
-    return await request.app.state.auth.login(req)
+    source_ip, user_agent = workstation(request)
+    return await request.app.state.auth.login(
+        req, source_ip=source_ip, user_agent=user_agent
+    )
 
 
 class LocalLoginResponse(BaseModel):
@@ -372,7 +392,13 @@ async def local_login(request: Request):
             status_code=500,
             detail="Default user is not seeded",
         )
-    token = await request.app.state.auth.issue_token(user["id"], user["email"])
+    source_ip, user_agent = workstation(request)
+    token = await request.app.state.auth.issue_token(
+        user["id"],
+        user["email"],
+        source_ip=source_ip,
+        user_agent=user_agent,
+    )
     await request.app.state.model.users.record_login(user["id"])
     return LocalLoginResponse(access_token=token, email=user["email"])
 
@@ -634,8 +660,12 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
         invitation_id
     )
 
+    source_ip, user_agent = workstation(request)
     access_token = await request.app.state.auth.issue_token(
-        user["id"], user["email"]
+        user["id"],
+        user["email"],
+        source_ip=source_ip,
+        user_agent=user_agent,
     )
     await request.app.state.model.users.record_login(user["id"])
     return {"status": "accepted", "access_token": access_token}
