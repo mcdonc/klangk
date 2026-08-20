@@ -412,51 +412,47 @@ class WorkspacesModel:
             where += " AND name LIKE '%' || ? || '%'"
             params.append(q)
         params.extend([limit + 1, offset])
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT id, name, container_id, image, service_command,"
-                " auto_start, setup_state, health_check, mounts, env,"
-                " allowed_domains, rejected_domains, settings, egress_mode, created_at"
-                " FROM workspaces"
-                f" {where} {order_by} LIMIT ? OFFSET ?",
-                tuple(params),
-            )
-            rows = await cursor.fetchall()
-            items = [
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "container_id": row["container_id"],
-                    "image": row["image"],
-                    "service_command": row["service_command"],
-                    "auto_start": bool(row["auto_start"]),
-                    "setup_state": row["setup_state"],
-                    "health_check": row["health_check"],
-                    "mounts": json.loads(row["mounts"])
-                    if row["mounts"]
-                    else None,
-                    "env": json.loads(row["env"]) if row["env"] else None,
-                    "allowed_domains": json.loads(row["allowed_domains"])
-                    if row["allowed_domains"]
-                    else None,
-                    "rejected_domains": json.loads(row["rejected_domains"])
-                    if row["rejected_domains"]
-                    else None,
-                    "settings": json.loads(row["settings"])
-                    if row["settings"]
-                    else None,
-                    "egress_mode": row["egress_mode"],
-                    "created_at": row["created_at"],
-                }
-                for row in rows
-            ]
-            has_more = len(items) > limit
-            items = items[:limit]
-            return {
-                "items": items,
-                "has_more": has_more,
-                "next_offset": offset + limit if has_more else None,
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, name, container_id, image, service_command,"
+            " auto_start, setup_state, health_check, mounts, env,"
+            " allowed_domains, rejected_domains, settings, egress_mode, created_at"
+            " FROM workspaces"
+            f" {where} {order_by} LIMIT ? OFFSET ?",
+            tuple(params),
+        )
+        items = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "container_id": row["container_id"],
+                "image": row["image"],
+                "service_command": row["service_command"],
+                "auto_start": bool(row["auto_start"]),
+                "setup_state": row["setup_state"],
+                "health_check": row["health_check"],
+                "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
+                "env": json.loads(row["env"]) if row["env"] else None,
+                "allowed_domains": json.loads(row["allowed_domains"])
+                if row["allowed_domains"]
+                else None,
+                "rejected_domains": json.loads(row["rejected_domains"])
+                if row["rejected_domains"]
+                else None,
+                "settings": json.loads(row["settings"])
+                if row["settings"]
+                else None,
+                "egress_mode": row["egress_mode"],
+                "created_at": row["created_at"],
             }
+            for row in rows
+        ]
+        has_more = len(items) > limit
+        items = items[:limit]
+        return {
+            "items": items,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        }
 
     async def list_shared_workspaces(
         self,
@@ -476,80 +472,79 @@ class WorkspacesModel:
         """
         order_by = sort_order_clause(sort, order, prefix="w")
         name_filter = " AND w.name LIKE '%' || ? || '%'" if q else ""
-        async with self.app.state.db.transaction() as db:
-            group_ids = await self.app.state.model.users.get_user_group_ids(
-                user_id
-            )
-            group_placeholders = ",".join("?" for _ in group_ids)
-            group_clause = (
-                f" OR (ae.principal_type = {PRINCIPAL_GROUP}"
-                f" AND ae.group_id IN ({group_placeholders}))"
-                if group_ids
-                else ""
-            )
-            cursor = await db.execute(
-                "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
-                " w.service_command, w.auto_start, w.setup_state,"
-                " w.health_check, w.mounts, w.env, w.allowed_domains, w.rejected_domains,"
-                " w.settings, w.egress_mode, w.created_at,"
-                " u.email AS owner_email"
-                " FROM workspaces w"
-                " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
-                " JOIN users u ON w.user_id = u.id"
-                " WHERE ae.action = ? AND w.user_id != ?"
-                "   AND ("
-                f"    (ae.principal_type = {PRINCIPAL_USER} AND ae.user_id = ?)"
-                f"    {group_clause}"
-                "   )"
-                f"{name_filter}"
-                f" {order_by} LIMIT ? OFFSET ?",
-                (
-                    ACTION_ALLOW,
-                    user_id,
-                    user_id,
-                    *group_ids,
-                    *([q] if q else []),
-                    limit + 1,
-                    offset,
-                ),
-            )
-            rows = await cursor.fetchall()
-            items = [
-                {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "container_id": row["container_id"],
-                    "image": row["image"],
-                    "service_command": row["service_command"],
-                    "auto_start": bool(row["auto_start"]),
-                    "setup_state": row["setup_state"],
-                    "health_check": row["health_check"],
-                    "mounts": json.loads(row["mounts"])
-                    if row["mounts"]
-                    else None,
-                    "env": json.loads(row["env"]) if row["env"] else None,
-                    "allowed_domains": json.loads(row["allowed_domains"])
-                    if row["allowed_domains"]
-                    else None,
-                    "rejected_domains": json.loads(row["rejected_domains"])
-                    if row["rejected_domains"]
-                    else None,
-                    "settings": json.loads(row["settings"])
-                    if row["settings"]
-                    else None,
-                    "egress_mode": row["egress_mode"],
-                    "created_at": row["created_at"],
-                    "owner_email": row["owner_email"],
-                }
-                for row in rows
-            ]
-            has_more = len(items) > limit
-            items = items[:limit]
-            return {
-                "items": items,
-                "has_more": has_more,
-                "next_offset": offset + limit if has_more else None,
+        # The group-ids read runs on its own connection (it did before
+        # the fetchall conversion too), so it never shared the page
+        # read's snapshot.
+        group_ids = await self.app.state.model.users.get_user_group_ids(
+            user_id
+        )
+        group_placeholders = ",".join("?" for _ in group_ids)
+        group_clause = (
+            f" OR (ae.principal_type = {PRINCIPAL_GROUP}"
+            f" AND ae.group_id IN ({group_placeholders}))"
+            if group_ids
+            else ""
+        )
+        rows = await self.app.state.db.fetchall(
+            "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
+            " w.service_command, w.auto_start, w.setup_state,"
+            " w.health_check, w.mounts, w.env, w.allowed_domains, w.rejected_domains,"
+            " w.settings, w.egress_mode, w.created_at,"
+            " u.email AS owner_email"
+            " FROM workspaces w"
+            " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
+            " JOIN users u ON w.user_id = u.id"
+            " WHERE ae.action = ? AND w.user_id != ?"
+            "   AND ("
+            f"    (ae.principal_type = {PRINCIPAL_USER} AND ae.user_id = ?)"
+            f"    {group_clause}"
+            "   )"
+            f"{name_filter}"
+            f" {order_by} LIMIT ? OFFSET ?",
+            (
+                ACTION_ALLOW,
+                user_id,
+                user_id,
+                *group_ids,
+                *([q] if q else []),
+                limit + 1,
+                offset,
+            ),
+        )
+        items = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "container_id": row["container_id"],
+                "image": row["image"],
+                "service_command": row["service_command"],
+                "auto_start": bool(row["auto_start"]),
+                "setup_state": row["setup_state"],
+                "health_check": row["health_check"],
+                "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
+                "env": json.loads(row["env"]) if row["env"] else None,
+                "allowed_domains": json.loads(row["allowed_domains"])
+                if row["allowed_domains"]
+                else None,
+                "rejected_domains": json.loads(row["rejected_domains"])
+                if row["rejected_domains"]
+                else None,
+                "settings": json.loads(row["settings"])
+                if row["settings"]
+                else None,
+                "egress_mode": row["egress_mode"],
+                "created_at": row["created_at"],
+                "owner_email": row["owner_email"],
             }
+            for row in rows
+        ]
+        has_more = len(items) > limit
+        items = items[:limit]
+        return {
+            "items": items,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        }
 
     async def get_workspace(
         self, workspace_id: str, user_id: str | None = None

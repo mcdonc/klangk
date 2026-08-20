@@ -1,9 +1,7 @@
 """Chat messages and @handle mention resolution.
 
 ``ChatModel`` is the ``app_state``-owned form, reached via
-``app_state.model.chat`` (#1563 / #1576). The module-level free functions
-are the pre-existing ``_current_db`` ContextVar delegates, kept as the
-backstop until #1578 dissolves the ContextVar. The message-type constants
+``app_state.model.chat`` (#1563 / #1576). The message-type constants
 (``MSG_USER`` / ``MSG_AGENT`` / ``MSG_SYSTEM``) and the ``MENTION_RE``
 pattern stay module-level — they are imported as literal values by the
 ``wshandler`` package and ``api/chat.py``.
@@ -27,8 +25,7 @@ class ChatModel:
     """Chat data access, through ``app_state.db``.
 
     Reached via ``app_state.model.chat``. Reaches the DB through
-    ``self.app.state.db`` (the single DB instance for the whole app). The
-    method bodies mirror the module-level free functions below (backstop);
+    ``self.app.state.db`` (the single DB instance for the whole app);
     the message-type constants and ``MENTION_RE`` stay module-level.
     """
 
@@ -239,7 +236,7 @@ class ChatModel:
             mention_rows = await self.app.state.db.fetchall(
                 "SELECT message_id, user_id FROM chat_mentions"
                 " WHERE message_id IN (" + placeholders + ")",
-                msg_ids,
+                tuple(msg_ids),
             )
             mentions_by_msg: dict[str, list[str]] = {}
             for mr in mention_rows:

@@ -111,54 +111,56 @@ class InvitationsModel:
         page_size = max(1, min(page_size, 200))
         offset = (page - 1) * page_size
 
-        where_clause = ""
-        params: list = []
-        if q:
-            where_clause = " WHERE i.email LIKE ?"
-            params.append(f"%{q}%")
+        # The two counts and the page are dependent pagination reads —
+        # keep them on one snapshot so total/pending_count can't drift
+        # from the page under concurrent writes (issue #2609 rule).
+        async with self.app.state.db.transaction() as db:
+            where_clause = ""
+            params: list = []
+            if q:
+                where_clause = " WHERE i.email LIKE ?"
+                params.append(f"%{q}%")
 
-        total = (
-            await self.app.state.db.fetchone(
+            count_cursor = await db.execute(
                 f"SELECT COUNT(*) AS c FROM invitations i{where_clause}",
                 params,
             )
-        )["c"]
+            total = (await count_cursor.fetchone())["c"]
 
-        pending_count = (
-            await self.app.state.db.fetchone(
+            pending_cursor = await db.execute(
                 "SELECT COUNT(*) AS c FROM invitations WHERE status = 'pending'"
             )
-        )["c"]
+            pending_count = (await pending_cursor.fetchone())["c"]
 
-        rows = await self.app.state.db.fetchall(
-            "SELECT i.id, i.email, i.invited_by, i.status,"
-            " i.created_at, i.accepted_at, u.email AS invited_by_email"
-            " FROM invitations i"
-            " JOIN users u ON i.invited_by = u.id"
-            f"{where_clause}"
-            f" ORDER BY {sort_col} {direction}, i.id"
-            " LIMIT ? OFFSET ?",
-            (*params, page_size, offset),
-        )
-        invitations = [
-            {
-                "id": row["id"],
-                "email": row["email"],
-                "invited_by": row["invited_by"],
-                "invited_by_email": row["invited_by_email"],
-                "status": row["status"],
-                "created_at": row["created_at"],
-                "accepted_at": row["accepted_at"],
+            cursor = await db.execute(
+                "SELECT i.id, i.email, i.invited_by, i.status,"
+                " i.created_at, i.accepted_at, u.email AS invited_by_email"
+                " FROM invitations i"
+                " JOIN users u ON i.invited_by = u.id"
+                f"{where_clause}"
+                f" ORDER BY {sort_col} {direction}, i.id"
+                " LIMIT ? OFFSET ?",
+                (*params, page_size, offset),
+            )
+            invitations = [
+                {
+                    "id": row["id"],
+                    "email": row["email"],
+                    "invited_by": row["invited_by"],
+                    "invited_by_email": row["invited_by_email"],
+                    "status": row["status"],
+                    "created_at": row["created_at"],
+                    "accepted_at": row["accepted_at"],
+                }
+                for row in await cursor.fetchall()
+            ]
+            return {
+                "invitations": invitations,
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "pending_count": pending_count,
             }
-            for row in rows
-        ]
-        return {
-            "invitations": invitations,
-            "page": page,
-            "page_size": page_size,
-            "total": total,
-            "pending_count": pending_count,
-        }
 
     async def mark_invitation_accepted(self, invitation_id: str) -> bool:
         """Mark an invitation as accepted. Returns True if updated."""
