@@ -5,9 +5,9 @@
  *     --project docs-screenshots -g "invitation" --no-deps
  */
 import { test } from "@playwright/test";
+import { ADMIN_PASSWORD } from "../e2e-env";
 import { join } from "path";
 import { mkdirSync } from "fs";
-import { ADMIN_PASSWORD } from "../e2e-env";
 
 const SCREENSHOT_DIR = join(
   __dirname,

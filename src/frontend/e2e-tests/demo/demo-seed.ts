@@ -34,7 +34,9 @@ const DEMO_URL = process.env.KLANGKBUILD_TEST_URL || "http://localhost:8996";
 // reset and user/group management. MUST differ from the hero (you can't delete
 // yourself) and holds the `admin` permission to manage users + groups.
 const BOOTSTRAP_EMAIL = process.env.KLANGKD_DEFAULT_USER || "admin@plope.com";
-const BOOTSTRAP_PASSWORD = process.env.KLANGKD_DEFAULT_PASSWORD || "admin";
+// Must satisfy the boot-time password-policy gate (#2581, #2604);
+// keep in sync with run-demo-backend.sh DEMO_BOOTSTRAP_PASSWORD.
+const BOOTSTRAP_PASSWORD = process.env.KLANGKD_DEFAULT_PASSWORD || "Admin123!";
 
 // Hero = the on-camera admin. Created + promoted to the "admin" group by this
 // seed, so --reset can fully repave (delete -> recreate) for a clean slate.
