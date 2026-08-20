@@ -663,6 +663,73 @@ class TestDeriveHostingInfo:
         assert b == ""
 
 
+# --- effective_client_ip (#2586: workstation identity for the ---
+# --- session registry) ---
+# Same proxy-trust gate as client_is_loopback: forwarded headers count
+# only behind a trusted peer, so a workstation identity cannot be spoofed
+# by a direct caller.
+
+
+class TestEffectiveClientIp:
+    def _hdr(self, **kw):
+        return kw
+
+    def test_direct_peer_is_the_client(self):
+        u = _util({})
+        assert u.effective_client_ip(self._hdr(), "10.89.0.5") == "10.89.0.5"
+
+    def test_real_ip_behind_trusted_proxy(self):
+        u = _util({})
+        h = self._hdr(**{"x-real-ip": "203.0.113.7"})
+        assert u.effective_client_ip(h, "127.0.0.1") == "203.0.113.7"
+
+    def test_forwarded_for_first_hop(self):
+        u = _util({})
+        h = self._hdr(**{"x-forwarded-for": "203.0.113.7, 10.0.0.1"})
+        assert u.effective_client_ip(h, "127.0.0.1") == "203.0.113.7"
+
+    def test_spoofed_header_from_untrusted_peer_ignored(self):
+        u = _util({})
+        h = self._hdr(**{"x-real-ip": "203.0.113.7"})
+        assert u.effective_client_ip(h, "10.89.0.5") == "10.89.0.5"
+
+    def test_garbage_forwarded_value_falls_back_to_peer(self):
+        """A trusted peer forwarding a non-IP value (garbage, or an
+        append-style XFF chain where the leftmost hop is client-
+        controlled text) must not become a workstation identity: the
+        resolver falls back to the peer (#2586 review)."""
+        u = _util({})
+        for garbage in ("not-an-ip", "1.2.3.4, 5.6.7.8, evil"):
+            h = self._hdr(**{"x-real-ip": garbage})
+            assert u.effective_client_ip(h, "127.0.0.1") == "127.0.0.1"
+        h = self._hdr(**{"x-forwarded-for": "definitely-not-an-ip"})
+        assert u.effective_client_ip(h, "127.0.0.1") == "127.0.0.1"
+
+    def test_result_is_canonicalized(self):
+        """The returned address is str()-normalized, so the same IPv6
+        host written two ways compares as one workstation."""
+        u = _util({})
+        h = self._hdr(**{"x-real-ip": "0:0:0:0:0:0:0:1"})
+        assert u.effective_client_ip(h, "127.0.0.1") == "::1"
+
+    def test_reject_proxy_headers_forces_peer_only(self):
+        u = _util({"KLANGKD_REJECT_PROXY_HEADERS": "1"})
+        h = self._hdr(**{"x-real-ip": "203.0.113.7"})
+        assert u.effective_client_ip(h, "127.0.0.1") == "127.0.0.1"
+
+    def test_no_client_is_none(self):
+        u = _util({})
+        assert u.effective_client_ip(self._hdr(), None) is None
+
+    def test_uds_mode_none_peer_still_resolves_via_headers(self):
+        """Over a UDS the None peer is the trusted proxy hop, so its
+        X-Real-IP resolves the real workstation."""
+        u = _util({})
+        u.set_uds_mode(True)
+        h = self._hdr(**{"x-real-ip": "203.0.113.7"})
+        assert u.effective_client_ip(h, None) == "203.0.113.7"
+
+
 # --- client_is_loopback (moved from test_wshandler.py, #1503) ---
 # Powers the none-mode /auth/local self-defense (#1374). Must admit a real
 # loopback browser, admit a request proxied by the proxy (peer loopback, real

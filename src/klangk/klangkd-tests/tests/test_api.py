@@ -6690,6 +6690,118 @@ class TestAdminEndpoints:
         assert resp.status_code == 403
 
 
+class TestUserSessionsAudit:
+    """Admin query for a user's active sessions with workstation identity
+    (#2586), plus the login path threading X-Real-IP into the registry."""
+
+    async def _admin_headers(self, client):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_login_threads_workstation_into_registry(
+        self, client, user, app_state
+    ):
+        """A login carrying X-Real-IP (behind the trusted loopback test
+        peer) records that IP on the session row."""
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+            headers={"X-Real-IP": "203.0.113.7"},
+        )
+        assert resp.status_code == 200
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 1
+        assert rows[0]["source_ip"] == "203.0.113.7"
+
+    async def test_admin_lists_sessions_with_workstations(
+        self, client, admin_user, user, app_state
+    ):
+        headers = await self._admin_headers(client)
+        for ip in ("203.0.113.7", "198.51.100.9"):
+            resp = await client.post(
+                "/api/v1/auth/login",
+                json={
+                    "identifier": "testuser@example.com",
+                    "password": "testpass",
+                },
+                headers={
+                    "X-Real-IP": ip,
+                    "User-Agent": f"ua-{ip}",
+                },
+            )
+            assert resp.status_code == 200
+        resp = await client.get(
+            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
+        )
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert {i["source_ip"] for i in items} == {
+            "203.0.113.7",
+            "198.51.100.9",
+        }
+        assert {i["user_agent"] for i in items} == {
+            "ua-203.0.113.7",
+            "ua-198.51.100.9",
+        }
+        # Oldest first: the workstation-A session was established first.
+        assert items[0]["source_ip"] == "203.0.113.7"
+
+    async def test_admin_sessions_peer_fallback_workstation(
+        self, client, admin_user, user, app_state
+    ):
+        """A login with no forwarded headers (direct loopback client)
+        records the peer as the workstation; an empty User-Agent is
+        stored as null (unknown), never as an empty string."""
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+            headers={"User-Agent": ""},
+        )
+        assert resp.status_code == 200
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
+        )
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["source_ip"] == "127.0.0.1"
+        assert items[0]["user_agent"] is None
+
+    async def test_admin_sessions_404_unknown_user(self, client, admin_user):
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            "/api/v1/admin/users/no-such-user/sessions", headers=headers
+        )
+        assert resp.status_code == 404
+
+    async def test_admin_sessions_requires_admin(self, client, user):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+        resp = await client.get(
+            f"/api/v1/admin/users/{user['id']}/sessions", headers=headers
+        )
+        assert resp.status_code == 403
+
+
 class TestGroupEndpoints:
     async def _admin_headers(self, client):
         resp = await client.post(

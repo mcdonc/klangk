@@ -460,6 +460,50 @@ class Util:
             client_host is None and self.uds_mode
         )
 
+    def effective_client_ip(
+        self, headers=None, client_host: str | None = None
+    ) -> str | None:
+        """The effective client IP of a request, proxy-trust-aware.
+
+        Forwarded headers (``X-Real-IP``, then the first hop of
+        ``X-Forwarded-For``) are honored only when the immediate peer
+        is a trusted proxy and ``KLANGKD_REJECT_PROXY_HEADERS`` is off —
+        the same trust gate :meth:`client_is_loopback` and
+        :meth:`derive_hosting_info` use, so a direct caller cannot
+        spoof a workstation identity (#2586). The header value must
+        parse as an IP address; a garbage or forged-unparseable value
+        falls back to the peer rather than being persisted, logged,
+        or served as a workstation identity. Returns the canonical
+        (``str()``-normalized) address, or ``None`` when there is no
+        client at all.
+        """
+        candidate = client_host
+        trust = (
+            (not self.reject_proxy_headers())
+            and self.connection_peer_is_trusted(client_host)
+            and headers is not None
+        )
+        if trust:
+            real_ip = headers.get("x-real-ip") or ""
+            if not real_ip:
+                xff = headers.get("x-forwarded-for") or ""
+                real_ip = xff.split(",")[0].strip() if xff else ""
+            if real_ip:
+                try:
+                    return str(ipaddress.ip_address(real_ip))
+                except ValueError:
+                    # A trusted peer forwarded a value that is not an
+                    # IP (garbage, or a proxy chain appending
+                    # client-controlled text). Fall back to the peer
+                    # instead of trusting an unvalidated string.
+                    pass
+        if candidate is None:
+            return None
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            return candidate
+
     def client_is_loopback(
         self, headers=None, client_host: str | None = None
     ) -> bool:
@@ -479,19 +523,7 @@ class Util:
         an unparseable IP, rejects. Over a UDS a ``None`` client is treated
         as the trusted reverse proxy (same-uid socket access).
         """
-        candidate = client_host
-        trust = (
-            (not self.reject_proxy_headers())
-            and self.connection_peer_is_trusted(client_host)
-            and headers is not None
-        )
-        if trust:
-            real_ip = headers.get("x-real-ip") or ""
-            if not real_ip:
-                xff = headers.get("x-forwarded-for") or ""
-                real_ip = xff.split(",")[0].strip() if xff else ""
-            if real_ip:
-                candidate = real_ip
+        candidate = self.effective_client_ip(headers, client_host)
         if candidate is None and self.uds_mode:
             return True
         try:

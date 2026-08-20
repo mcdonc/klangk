@@ -125,6 +125,38 @@ rejected with code `4001`, logging that client out. Sessions whose
 token has already
 expired are purged lazily and never count toward the cap.
 
+## Concurrent-logon auditing
+
+Every session records the workstation it was established from: the
+effective client IP (behind a trusted reverse proxy this is the real
+client from `X-Real-IP`/`X-Forwarded-For`; a direct caller cannot
+spoof it) and the `User-Agent` string. When a login is concurrent
+with an active session from a **different** workstation, klangkd
+writes an audit record to the server log:
+
+```text
+audit: concurrent logon from different workstations: user=<id> email=<email> new session from 198.51.100.9; concurrent with session(s) from 203.0.113.7
+```
+
+This is the signal to review when credentials may be shared with (or
+stolen by) a second machine — especially useful when no session cap
+is configured. Sessions with an unknown IP (created before the
+feature, or from clients whose address cannot be resolved) are never
+reported as different, and a user logging in twice from the same
+machine is not audited.
+
+Admins can query a user's active sessions at any time — see
+[`GET /api/v1/admin/users/{id}/sessions`](../reference/api-endpoints.md#get-apiv1adminusersidsessions)
+in the API reference. Each row shows when the session was established,
+when it expires, and the workstation it came from.
+
+Behind a reverse proxy, the workstation audit works only when the proxy
+chain forwards the real client IP (`X-Real-IP` / `X-Forwarded-For` plus
+`KLANGKD_TRUSTED_PROXY_CIDRS`). If that is misconfigured, every session
+records the proxy's address and no audit records are ever written — see
+[Behind a Reverse Proxy: concurrent-logon auditing](../deployment/behind-a-proxy.md#concurrent-logon-auditing-depends-on-the-proxy-chain)
+for how to verify the setup.
+
 ## Consent banner
 
 If `KLANGKD_LOGIN_BANNER` is set, users see a consent page before

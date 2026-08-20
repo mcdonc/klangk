@@ -2,8 +2,8 @@
 
 Covers the runner contract (fresh DB, replay no-op, failure semantics,
 validation), migration 0001's shape (password_history + cascade),
-0002's (users.last_login_at), and 0003's (user_sessions + cascade,
-#2585).
+0002's (users.last_login_at), 0003's (user_sessions + cascade,
+#2585), and 0004's (workstation columns on user_sessions, #2586).
 """
 
 import aiosqlite
@@ -46,6 +46,7 @@ class TestRunner:
             (1, "0001_password_history"),
             (2, "0002_last_login_at"),
             (3, "0003_user_sessions"),
+            (4, "0004_user_sessions_workstation"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -61,8 +62,12 @@ class TestRunner:
             info = await db.execute("PRAGMA table_info(users)")
             cols = {r[1] for r in await info.fetchall()}
             assert "last_login_at" in cols
+            # Migration 0004 added the workstation columns (#2586).
+            info = await db.execute("PRAGMA table_info(user_sessions)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert {"source_ip", "user_agent"} <= cols
 
-            # Re-run: nothing new applied, still exactly three records.
+            # Re-run: nothing new applied, still exactly four records.
             await app_state.state.model.init_db()
             assert await _recorded(db) == expected
 
@@ -96,6 +101,7 @@ class TestRunner:
                 (1, "0001_password_history"),
                 (2, "0002_last_login_at"),
                 (3, "0003_user_sessions"),
+                (4, "0004_user_sessions_workstation"),
             ]
 
     async def test_pending_only(self, tmp_path):
@@ -270,6 +276,41 @@ class TestValidation:
         migrations_mod._validate_migrations(
             [Migration(1, "a", None), Migration(2, "b", None)]  # noqa: ARG005
         )
+
+
+class TestUserSessionsWorkstation:
+    async def test_upgrade_from_0003_schema_adds_columns(
+        self, temp_data_dir, app_state
+    ):
+        """A database last booted on #2585's schema (user_sessions without
+        workstation columns) gets them added by migration 0004, and the
+        pre-existing rows read back with an unknown (NULL) workstation.
+        """
+        from _helpers import get_test_db
+
+        db_path = get_test_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        async with aiosqlite.connect(str(db_path)) as db:
+            await db.execute("""
+                CREATE TABLE user_sessions (
+                    jti TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    expires_at TEXT NOT NULL
+                )
+            """)
+            await db.execute(
+                "INSERT INTO user_sessions (jti, user_id, expires_at)"
+                " VALUES ('jti-old', ?, '2099-01-01T00:00:00+00:00')",
+                ("user-x",),
+            )
+            await db.commit()
+
+        await app_state.state.model.init_db()
+        rows = await app_state.state.db.fetchall(
+            "SELECT jti, source_ip, user_agent FROM user_sessions"
+        )
+        assert [(r[0], r[1], r[2]) for r in rows] == [("jti-old", None, None)]
 
 
 class TestPasswordHistory:

@@ -85,6 +85,34 @@ No request body.
 
 ---
 
+### GET `/api/v1/admin/users/{id}/sessions`
+
+List a user's active sessions with their workstation identity — the
+queryable half of concurrent-logon auditing. One item per unexpired
+session, oldest first; `source_ip` is the effective client IP the
+session was established from (null = unknown, e.g. sessions created
+before the audit feature), `user_agent` is the client's User-Agent
+string (null = none was sent). Expired sessions are excluded.
+
+**Auth:** JWT required. User must have `admin` permission on `/`.
+
+No request body.
+
+```json
+{
+  "items": [
+    {
+      "created_at": "2026-08-20 18:03:41",
+      "expires_at": "2026-08-21 18:03:41.862671+00:00",
+      "source_ip": "203.0.113.7",
+      "user_agent": "klangk-cli/1.0"
+    }
+  ]
+}
+```
+
+---
+
 ### GET `/api/v1/admin/acl/by-principal/group/{id}`
 
 List all ACL entries granted to a specific group across all resources.

@@ -71,6 +71,16 @@ operators or integrators to act when upgrading.
   and `klangk account show` prints it — so users can spot unexpected
   access to their account. Applied as schema migration 0002.
 
+- **Concurrent-logon audit records (#2586).** Each session now records
+  the workstation it was established from (effective client IP +
+  user agent; applied as schema migration 0004). When a login is
+  concurrent with an active session from a different workstation,
+  klangkd writes an audit record to the server log — the signal to
+  review for shared or stolen credentials. The new
+  `GET /api/v1/admin/users/{id}/sessions` endpoint lists a user's
+  active sessions with their workstations. See
+  [Authentication](docs/features/authentication.md).
+
 - **`KLANGKD_MAX_SESSIONS_PER_USER` (#2585).** New setting that caps
   how many concurrent login sessions a user may have (default `0` = no
   limit). When a new login pushes a user past the cap, the oldest session
