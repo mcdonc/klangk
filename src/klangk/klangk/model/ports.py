@@ -97,17 +97,15 @@ class PortsModel:
 
     async def get_workspace_ports(self, workspace_id: str) -> list[int]:
         """Return all allocated ports for a workspace, sorted."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT port FROM port_allocations WHERE workspace_id = ? ORDER BY port",
-                (workspace_id,),
-            )
-            rows = await cursor.fetchall()
-            return [row["port"] for row in rows]
+        rows = await self.app.state.db.fetchall(
+            "SELECT port FROM port_allocations WHERE workspace_id = ? ORDER BY port",
+            (workspace_id,),
+        )
+        return [row["port"] for row in rows]
 
     async def get_all_allocated_ports(self) -> set[int]:
         """Return all allocated port numbers across all workspaces."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute("SELECT port FROM port_allocations")
-            rows = await cursor.fetchall()
-            return {row["port"] for row in rows}
+        rows = await self.app.state.db.fetchall(
+            "SELECT port FROM port_allocations"
+        )
+        return {row["port"] for row in rows}

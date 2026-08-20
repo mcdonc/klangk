@@ -95,15 +95,14 @@ class ACLModel:
 
     async def get_acl_entries(self, resource: str) -> list[dict]:
         """Get ACL entries for a resource, ordered by position."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT id, resource, position, action, principal_type,"
-                " user_id, group_id, system_principal, permission"
-                " FROM acl_entries WHERE resource = ?"
-                " ORDER BY position",
-                (resource,),
-            )
-            return [row_to_acl_entry(row) for row in await cursor.fetchall()]
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE resource = ?"
+            " ORDER BY position",
+            (resource,),
+        )
+        return [row_to_acl_entry(row) for row in rows]
 
     async def get_acl_entries_map(
         self,
@@ -122,62 +121,58 @@ class ACLModel:
         if not resources:
             return result
         placeholders = ",".join("?" for _ in resources)
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT id, resource, position, action, principal_type,"
-                " user_id, group_id, system_principal, permission"
-                " FROM acl_entries WHERE resource IN"
-                f" ({placeholders}) ORDER BY position",
-                tuple(resources),
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE resource IN"
+            f" ({placeholders}) ORDER BY position",
+            tuple(resources),
+        )
+        for row in rows:
+            result.setdefault(row["resource"], []).append(
+                row_to_acl_entry(row)
             )
-            for row in await cursor.fetchall():
-                result.setdefault(row["resource"], []).append(
-                    row_to_acl_entry(row)
-                )
         return result
 
     async def get_acl_entries_resolved(self, resource: str) -> list[dict]:
         """Get ACL entries with resolved principal names."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT ae.id, ae.resource, ae.position, ae.action,"
-                " ae.principal_type, ae.user_id, ae.group_id,"
-                " ae.system_principal, ae.permission,"
-                " u.email AS user_email, g.name AS group_name"
-                " FROM acl_entries ae"
-                " LEFT JOIN users u ON ae.user_id = u.id"
-                " LEFT JOIN groups g ON ae.group_id = g.id"
-                " WHERE ae.resource = ?"
-                " ORDER BY ae.position",
-                (resource,),
-            )
-            results = []
-            for row in await cursor.fetchall():
-                entry = {
-                    "id": row["id"],
-                    "resource": row["resource"],
-                    "position": row["position"],
-                    "action": row["action"],
-                    "principal_type": row["principal_type"],
-                    "permission": row["permission"],
-                }
-                pt = row["principal_type"]
-                if pt == PRINCIPAL_SYSTEM:
-                    sp = row["system_principal"]
-                    entry["principal"] = (
-                        "Everyone"
-                        if sp == SYSTEM_EVERYONE
-                        else "Authenticated"
-                    )
-                    entry["system_principal"] = sp
-                elif pt == PRINCIPAL_USER:
-                    entry["principal"] = row["user_email"] or row["user_id"]
-                    entry["user_id"] = row["user_id"]
-                elif pt == PRINCIPAL_GROUP:
-                    entry["principal"] = row["group_name"] or row["group_id"]
-                    entry["group_id"] = row["group_id"]
-                results.append(entry)
-            return results
+        rows = await self.app.state.db.fetchall(
+            "SELECT ae.id, ae.resource, ae.position, ae.action,"
+            " ae.principal_type, ae.user_id, ae.group_id,"
+            " ae.system_principal, ae.permission,"
+            " u.email AS user_email, g.name AS group_name"
+            " FROM acl_entries ae"
+            " LEFT JOIN users u ON ae.user_id = u.id"
+            " LEFT JOIN groups g ON ae.group_id = g.id"
+            " WHERE ae.resource = ?"
+            " ORDER BY ae.position",
+            (resource,),
+        )
+        results = []
+        for row in rows:
+            entry = {
+                "id": row["id"],
+                "resource": row["resource"],
+                "position": row["position"],
+                "action": row["action"],
+                "principal_type": row["principal_type"],
+                "permission": row["permission"],
+            }
+            pt = row["principal_type"]
+            if pt == PRINCIPAL_SYSTEM:
+                sp = row["system_principal"]
+                entry["principal"] = (
+                    "Everyone" if sp == SYSTEM_EVERYONE else "Authenticated"
+                )
+                entry["system_principal"] = sp
+            elif pt == PRINCIPAL_USER:
+                entry["principal"] = row["user_email"] or row["user_id"]
+                entry["user_id"] = row["user_id"]
+            elif pt == PRINCIPAL_GROUP:
+                entry["principal"] = row["group_name"] or row["group_id"]
+                entry["group_id"] = row["group_id"]
+            results.append(entry)
+        return results
 
     async def replace_acl_entries(
         self, resource: str, entries: list[dict]
@@ -235,39 +230,36 @@ class ACLModel:
         self, user_id: str
     ) -> list[dict]:
         """Get all ACL entries referencing a specific user."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT id, resource, position, action, principal_type,"
-                " user_id, group_id, system_principal, permission"
-                " FROM acl_entries WHERE principal_type = ? AND user_id = ?"
-                " ORDER BY resource, position",
-                (PRINCIPAL_USER, user_id),
-            )
-            return [dict(row) for row in await cursor.fetchall()]
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE principal_type = ? AND user_id = ?"
+            " ORDER BY resource, position",
+            (PRINCIPAL_USER, user_id),
+        )
+        return [dict(row) for row in rows]
 
     async def get_acl_entries_by_principal_group(
         self, group_id: str
     ) -> list[dict]:
         """Get all ACL entries referencing a specific group."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT id, resource, position, action, principal_type,"
-                " user_id, group_id, system_principal, permission"
-                " FROM acl_entries WHERE principal_type = ? AND group_id = ?"
-                " ORDER BY resource, position",
-                (PRINCIPAL_GROUP, group_id),
-            )
-            return [dict(row) for row in await cursor.fetchall()]
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, resource, position, action, principal_type,"
+            " user_id, group_id, system_principal, permission"
+            " FROM acl_entries WHERE principal_type = ? AND group_id = ?"
+            " ORDER BY resource, position",
+            (PRINCIPAL_GROUP, group_id),
+        )
+        return [dict(row) for row in rows]
 
     async def get_acl_tree_summary(self) -> list[dict]:
         """Get all distinct resources with their ACE counts."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT resource, COUNT(*) as ace_count"
-                " FROM acl_entries GROUP BY resource"
-                " ORDER BY resource"
-            )
-            return [
-                {"resource": row["resource"], "ace_count": row["ace_count"]}
-                for row in await cursor.fetchall()
-            ]
+        rows = await self.app.state.db.fetchall(
+            "SELECT resource, COUNT(*) as ace_count"
+            " FROM acl_entries GROUP BY resource"
+            " ORDER BY resource"
+        )
+        return [
+            {"resource": row["resource"], "ace_count": row["ace_count"]}
+            for row in rows
+        ]

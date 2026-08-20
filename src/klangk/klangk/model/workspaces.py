@@ -593,9 +593,7 @@ class WorkspacesModel:
         _sweep_orphaned_sidecar_tokens`) to tell token files whose workspace
         still exists from orphans left by a deleted/crashed workspace (#2309).
         """
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute("SELECT id FROM workspaces")
-            rows = await cursor.fetchall()
+        rows = await self.app.state.db.fetchall("SELECT id FROM workspaces")
         return {row["id"] for row in rows}
 
     async def get_workspace_members(self, workspace_id: str) -> list[dict]:
@@ -604,29 +602,28 @@ class WorkspacesModel:
         Returns users with direct user-level ACEs on /workspaces/{id},
         excluding the workspace owner.
         """
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT DISTINCT u.id, u.email, u.handle FROM users u"
-                " JOIN acl_entries ae ON ae.user_id = u.id"
-                " JOIN workspaces w ON w.id = ?"
-                " WHERE ae.resource = ? AND ae.principal_type = ?"
-                "   AND ae.action = ? AND u.id != w.user_id"
-                " ORDER BY u.email",
-                (
-                    workspace_id,
-                    f"/workspaces/{workspace_id}",
-                    PRINCIPAL_USER,
-                    ACTION_ALLOW,
-                ),
-            )
-            return [
-                {
-                    "id": row["id"],
-                    "email": row["email"],
-                    "handle": row["handle"],
-                }
-                for row in await cursor.fetchall()
-            ]
+        rows = await self.app.state.db.fetchall(
+            "SELECT DISTINCT u.id, u.email, u.handle FROM users u"
+            " JOIN acl_entries ae ON ae.user_id = u.id"
+            " JOIN workspaces w ON w.id = ?"
+            " WHERE ae.resource = ? AND ae.principal_type = ?"
+            "   AND ae.action = ? AND u.id != w.user_id"
+            " ORDER BY u.email",
+            (
+                workspace_id,
+                f"/workspaces/{workspace_id}",
+                PRINCIPAL_USER,
+                ACTION_ALLOW,
+            ),
+        )
+        return [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "handle": row["handle"],
+            }
+            for row in rows
+        ]
 
     async def delete_workspace(self, workspace_id: str, user_id: str) -> bool:
         async with self.app.state.db.transaction() as db:
@@ -1062,28 +1059,21 @@ class WorkspacesModel:
     async def get_user_workspaces_with_containers(
         self, user_id: str
     ) -> list[dict]:
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "SELECT id, container_id FROM workspaces WHERE user_id = ? AND container_id IS NOT NULL",
-                (user_id,),
-            )
-            rows = await cursor.fetchall()
-            return [
-                {"id": row["id"], "container_id": row["container_id"]}
-                for row in rows
-            ]
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, container_id FROM workspaces WHERE user_id = ? AND container_id IS NOT NULL",
+            (user_id,),
+        )
+        return [
+            {"id": row["id"], "container_id": row["container_id"]}
+            for row in rows
+        ]
 
     async def list_auto_start_workspaces(self) -> list[dict]:
         """List all workspaces with auto_start enabled."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                _WORKSPACE_FULL_COLUMNS
-                + " FROM workspaces WHERE auto_start = 1",
-            )
-            rows = await cursor.fetchall()
-            # auto_start is pinned True by the WHERE clause; the mapper's
-            # bool() would also be True, but pass the explicit form so the
-            # query's intent stays readable at the call site.
-            return [
-                _workspace_row_to_dict(row, auto_start=True) for row in rows
-            ]
+        rows = await self.app.state.db.fetchall(
+            _WORKSPACE_FULL_COLUMNS + " FROM workspaces WHERE auto_start = 1",
+        )
+        # auto_start is pinned True by the WHERE clause; the mapper's
+        # bool() would also be True, but pass the explicit form so the
+        # query's intent stays readable at the call site.
+        return [_workspace_row_to_dict(row, auto_start=True) for row in rows]
