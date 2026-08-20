@@ -162,6 +162,36 @@ class Auth:
         return self.app.state.settings.min_password_length
 
     @property
+    def password_require_upper(self) -> int:
+        return int(self.app.state.settings.password_require_upper)
+
+    @property
+    def password_require_lower(self) -> int:
+        return int(self.app.state.settings.password_require_lower)
+
+    @property
+    def password_require_digit(self) -> int:
+        return int(self.app.state.settings.password_require_digit)
+
+    @property
+    def password_require_special(self) -> int:
+        return int(self.app.state.settings.password_require_special)
+
+    @property
+    def password_requirements(self) -> dict:
+        """Character-class counts a password must satisfy (#2581).
+
+        Surfaced verbatim by ``/api/v1/config`` so clients can validate
+        inline; ``0`` means "no requirement for this class".
+        """
+        return {
+            "upper": self.password_require_upper,
+            "lower": self.password_require_lower,
+            "digit": self.password_require_digit,
+            "special": self.password_require_special,
+        }
+
+    @property
     def login_lockout_failures(self) -> int:
         return self.app.state.settings.login_lockout_failures
 
@@ -230,6 +260,47 @@ class Auth:
                 status_code=400,
                 detail=f"Password must not exceed {MAX_PASSWORD_BYTES} bytes",
             )
+
+    def validate_password_complexity(self, password: str) -> None:
+        """Enforce the configured character-class counts (#2581).
+
+        Each class count (``KLANGKD_PASSWORD_REQUIRE_UPPER`` etc.) is the
+        minimum number of characters of that class; 0 disables that class.
+        Raises a single 400 listing every unmet requirement.
+        """
+        counts = {
+            "uppercase letter": (
+                sum(c.isupper() for c in password),
+                self.password_require_upper,
+            ),
+            "lowercase letter": (
+                sum(c.islower() for c in password),
+                self.password_require_lower,
+            ),
+            "digit": (
+                sum(c.isdigit() for c in password),
+                self.password_require_digit,
+            ),
+            "special character": (
+                sum(not c.isalnum() for c in password),
+                self.password_require_special,
+            ),
+        }
+        unmet = [
+            f"at least {need} {name}{'s' if need != 1 else ''}"
+            for name, (have, need) in counts.items()
+            if have < need
+        ]
+        if unmet:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Password must contain {', '.join(unmet)}",
+            )
+
+    def validate_password(self, password: str) -> None:
+        """Length + complexity — the one password gate every setter uses."""
+        self.validate_password_length(password)
+        self.validate_password_complexity(password)
 
     # --- lockout predicates (read lockout config) ---
 
@@ -406,7 +477,7 @@ class Auth:
         if existing is not None:
             raise HTTPException(status_code=400, detail="Registration failed")
         validate_email(req.email)
-        self.validate_password_length(req.password)
+        self.validate_password(req.password)
 
         password_hash = hash_password(req.password)
         # The duplicate-email pre-check above is not atomic with the

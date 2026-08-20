@@ -161,6 +161,12 @@ def account_passwd() -> None:
             f"[red]Password must be at least {min_len} characters[/red]"
         )
         raise typer.Exit(code=1)
+    complexity_error = account.password_complexity_error(
+        new, account.password_requirements(url)
+    )
+    if complexity_error:
+        context._err.print(f"[red]{complexity_error}[/red]")
+        raise typer.Exit(code=1)
     try:
         client.change_password(current, new)
     except httpx.HTTPStatusError as exc:

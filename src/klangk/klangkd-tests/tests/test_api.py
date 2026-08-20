@@ -609,11 +609,34 @@ class TestConfig:
 
     async def test_get_config_advertises_min_password_length(self, client):
         # Surfaced so the UI can validate password length inline; matches the
-        # rule enforced server-side by auth.validate_password_length.
+        # rule enforced server-side by auth.validate_password.
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["min_password_length"] == _auth().min_password_length
+
+    async def test_get_config_advertises_password_requirements(
+        self, client, app, monkeypatch
+    ):
+        # Character-class counts (#2581), same contract as
+        # min_password_length: what the client validates inline is what the
+        # server enforces on every password setter.
+        for key, val in {
+            "password_require_upper": "1",
+            "password_require_lower": "1",
+            "password_require_digit": "2",
+            "password_require_special": "0",
+        }.items():
+            monkeypatch.setattr(app.state.settings, key, val)
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["password_requirements"] == {
+            "upper": 1,
+            "lower": 1,
+            "digit": 2,
+            "special": 0,
+        }
 
     async def test_get_config_logo_url_defaults_empty(self, client, app):
         # No KLANGKD_LOGO_URL set -> empty string (UI renders default widget).

@@ -108,6 +108,86 @@ class TestValidatePasswordLength:
         _auth().validate_password_length("goodpass")
 
 
+class TestValidatePasswordComplexity:
+    """Character-class counts (#2581). Defaults are all 0 (off)."""
+
+    def test_defaults_accept_anything(self):
+        a = _auth()
+        assert a.password_requirements == {
+            "upper": 0,
+            "lower": 0,
+            "digit": 0,
+            "special": 0,
+        }
+        a.validate_password_complexity("alllowercase")
+
+    def test_requirements_read_from_settings(self):
+        a = _auth(
+            {
+                "KLANGKD_PASSWORD_REQUIRE_UPPER": "1",
+                "KLANGKD_PASSWORD_REQUIRE_LOWER": "2",
+                "KLANGKD_PASSWORD_REQUIRE_DIGIT": "3",
+                "KLANGKD_PASSWORD_REQUIRE_SPECIAL": "4",
+            }
+        )
+        assert a.password_requirements == {
+            "upper": 1,
+            "lower": 2,
+            "digit": 3,
+            "special": 4,
+        }
+
+    def test_each_class_enforced(self):
+        good = "Aa1!"
+        cases = {
+            "KLANGKD_PASSWORD_REQUIRE_UPPER": "zaa1!",
+            "KLANGKD_PASSWORD_REQUIRE_LOWER": "ZAA1!",
+            "KLANGKD_PASSWORD_REQUIRE_DIGIT": "Zaaa!",
+            "KLANGKD_PASSWORD_REQUIRE_SPECIAL": "Zaa11",
+        }
+        for env, bad in cases.items():
+            a = _auth({env: "1"})
+            a.validate_password_complexity(good)
+            with pytest.raises(HTTPException) as exc_info:
+                a.validate_password_complexity(bad)
+            assert exc_info.value.status_code == 400
+
+    def test_count_greater_than_one(self):
+        a = _auth({"KLANGKD_PASSWORD_REQUIRE_UPPER": "2"})
+        a.validate_password_complexity("ABcdefg1")
+        with pytest.raises(HTTPException) as exc_info:
+            a.validate_password_complexity("Abcdefg1")
+        # 2 uppercase letters -> plural form in the message
+        assert "at least 2 uppercase letters" in exc_info.value.detail
+
+    def test_lists_every_unmet_requirement(self):
+        a = _auth(
+            {
+                "KLANGKD_PASSWORD_REQUIRE_UPPER": "1",
+                "KLANGKD_PASSWORD_REQUIRE_DIGIT": "1",
+            }
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            a.validate_password_complexity("plain")
+        detail = exc_info.value.detail
+        assert "1 uppercase letter" in detail
+        assert "1 digit" in detail
+
+    def test_special_counts_non_alnum(self):
+        a = _auth({"KLANGKD_PASSWORD_REQUIRE_SPECIAL": "1"})
+        a.validate_password_complexity("Password1!")
+        with pytest.raises(HTTPException):
+            a.validate_password_complexity("Password1")
+
+    def test_validate_password_runs_both_checks(self):
+        a = _auth({"KLANGKD_PASSWORD_REQUIRE_DIGIT": "1"})
+        # Long enough but no digit -> complexity rejects via the wrapper.
+        with pytest.raises(HTTPException) as exc_info:
+            a.validate_password("nodigitshere")
+        assert "digit" in exc_info.value.detail
+        a.validate_password("has1digit")
+
+
 class TestJWT:
     def test_create_and_decode_token(self):
         token = _auth().create_token("user-123", "alice@example.com")

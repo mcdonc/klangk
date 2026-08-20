@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../branding.dart';
+import 'password_policy.dart';
 
 /// Override for testing — set to intercept all HTTP calls in AuthService.
 http.Client? testAuthHttpClientOverride;
@@ -23,6 +24,7 @@ class AuthService extends ChangeNotifier {
   bool _bannerAccepted = false;
   bool _loginBannerEveryVisit = false;
   int _minPasswordLength = 8;
+  PasswordPolicy _passwordPolicy = const PasswordPolicy();
   String _instanceId = 'default';
   bool _allowAutostart = false;
   // #1365: deploy-wide netfilter default allow-list + whether the feature
@@ -54,6 +56,11 @@ class AuthService extends ChangeNotifier {
   /// to 8 when the server omits the field so client-side validation still works
   /// against older backends.
   int get minPasswordLength => _minPasswordLength;
+
+  /// Full password policy (length + character-class counts, #2581) parsed
+  /// from /config. Pages that validate inline should use
+  /// [passwordPolicy.validate] rather than the bare length getter.
+  PasswordPolicy get passwordPolicy => _passwordPolicy;
   String get instanceId => _instanceId;
 
   /// Whether the server permits per-workspace auto-start
@@ -145,6 +152,7 @@ class AuthService extends ChangeNotifier {
         _netfilterEnabled = (data['netfilter_enabled'] as bool?) ?? false;
         _minPasswordLength =
             (data['min_password_length'] as num?)?.toInt() ?? 8;
+        _passwordPolicy = PasswordPolicy.fromConfig(data);
         // White-label values — mirrored into the Branding helper so widgets
         // that don't have an AuthService context (e.g. the app-bar logo,
         // page title) can read them synchronously. Covers the product name

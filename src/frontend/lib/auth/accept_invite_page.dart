@@ -146,8 +146,10 @@ class _AcceptInvitePageState extends State<AcceptInvitePage> {
                     obscureText: _obscurePassword,
                     validator: (v) {
                       if (v == null || v.isEmpty) return 'Required';
-                      if (v.length < 8) return 'Min 8 characters';
-                      return null;
+                      return context
+                          .read<AuthService>()
+                          .passwordPolicy
+                          .validate(v);
                     },
                   ),
                   const SizedBox(height: 16),

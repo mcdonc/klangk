@@ -88,6 +88,7 @@ void main() {
       bool allowAutostart = false,
       bool loginBannerEveryVisit = false,
       int? minPasswordLength,
+      Map<String, dynamic>? passwordRequirements,
       String? productName,
       List<String>? netfilterDefaultDomains,
       bool? netfilterEnabled,
@@ -103,6 +104,8 @@ void main() {
               'login_banner_every_visit': loginBannerEveryVisit,
               if (minPasswordLength != null)
                 'min_password_length': minPasswordLength,
+              if (passwordRequirements != null)
+                'password_requirements': passwordRequirements,
               if (productName != null) 'product_name': productName,
               if (netfilterDefaultDomains != null)
                 'netfilter_default_domains': netfilterDefaultDomains,
@@ -190,6 +193,38 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(service.minPasswordLength, 8);
+    });
+
+    test('loads password_requirements from /api/config', () async {
+      // #2581: advertised class counts are surfaced verbatim.
+      testAuthHttpClientOverride = _bannerClient(
+        passwordRequirements: {
+          'upper': 1,
+          'lower': 1,
+          'digit': 2,
+          'special': 0,
+        },
+      );
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(service.passwordPolicy.requireUpper, 1);
+      expect(service.passwordPolicy.requireLower, 1);
+      expect(service.passwordPolicy.requireDigit, 2);
+      expect(service.passwordPolicy.requireSpecial, 0);
+    });
+
+    test('password_requirements defaults to no requirements when absent',
+        () async {
+      testAuthHttpClientOverride = _bannerClient();
+
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      expect(service.passwordPolicy.requireUpper, 0);
+      expect(service.passwordPolicy.requireSpecial, 0);
+      expect(service.passwordPolicy.validate('aaaaaaaa'), isNull);
     });
 
     test('product_name is applied to Branding from /api/config', () async {

@@ -6,6 +6,7 @@ import '../theme/colors.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
+import '../auth/password_policy.dart';
 import '../widgets/acl_editor.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
@@ -131,7 +132,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => _AddUserDialog(
-        minPasswordLength: auth.minPasswordLength,
+        passwordPolicy: auth.passwordPolicy,
       ),
     );
     if (result == null) return;
@@ -311,7 +312,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
       builder: (ctx) => _EditUserDialog(
         currentEmail: user['email'] as String,
         currentHandle: user['handle'] as String? ?? '',
-        minPasswordLength: auth.minPasswordLength,
+        passwordPolicy: auth.passwordPolicy,
       ),
     );
     if (result == null) return;
@@ -1300,9 +1301,9 @@ class _InvitationsTabState extends State<_InvitationsTab> {
 // ---------------------------------------------------------------------------
 
 class _AddUserDialog extends StatefulWidget {
-  final int minPasswordLength;
+  final PasswordPolicy passwordPolicy;
 
-  const _AddUserDialog({this.minPasswordLength = 8});
+  const _AddUserDialog({this.passwordPolicy = const PasswordPolicy()});
 
   @override
   State<_AddUserDialog> createState() => _AddUserDialogState();
@@ -1330,14 +1331,15 @@ class _AddUserDialogState extends State<_AddUserDialog> {
       color: KColors.textPrimary,
       fontWeight: FontWeight.bold,
     );
-    final min = widget.minPasswordLength;
+    final policy = widget.passwordPolicy;
     final password = _passwordController.text;
     final confirm = _confirmController.text;
-    // Show length/mismatch errors only once the user has typed something, so
+    // Show policy/mismatch errors only once the user has typed something, so
     // an empty field isn't flagged before input begins.
-    final passwordTooShort = password.isNotEmpty && password.length < min;
+    final policyError = password.isEmpty ? null : policy.validate(password);
     final passwordsMismatch = confirm.isNotEmpty && confirm != password;
-    final passwordValid = password.length >= min && password == confirm;
+    final passwordValid =
+        password.isNotEmpty && policyError == null && password == confirm;
     final email = _emailController.text.trim();
     final canAdd =
         email.isNotEmpty && (_sendVerificationEmail || passwordValid);
@@ -1384,10 +1386,8 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                   border: const OutlineInputBorder(),
                   // Make the rule discoverable before the first keystroke,
                   // and surface a violation as soon as it's typed.
-                  helperText: 'At least $min characters',
-                  errorText: passwordTooShort
-                      ? 'Password must be at least $min characters'
-                      : null,
+                  helperText: policy.helperText,
+                  errorText: policyError,
                   suffixIcon: IconButton(
                     icon: Icon(_obscurePassword
                         ? Icons.visibility_off
@@ -1460,12 +1460,12 @@ class _AddUserDialogState extends State<_AddUserDialog> {
 class _EditUserDialog extends StatefulWidget {
   final String currentEmail;
   final String currentHandle;
-  final int minPasswordLength;
+  final PasswordPolicy passwordPolicy;
 
   const _EditUserDialog({
     required this.currentEmail,
     required this.currentHandle,
-    this.minPasswordLength = 8,
+    this.passwordPolicy = const PasswordPolicy(),
   });
 
   @override
@@ -1502,16 +1502,16 @@ class _EditUserDialogState extends State<_EditUserDialog> {
       color: KColors.textPrimary,
       fontWeight: FontWeight.bold,
     );
-    final min = widget.minPasswordLength;
+    final policy = widget.passwordPolicy;
     final password = _passwordController.text;
     final confirm = _confirmController.text;
     // The password field is optional ("leave blank to keep current"), so the
-    // length/mismatch checks only apply once the admin starts typing one.
+    // policy/mismatch checks only apply once the admin starts typing one.
     final settingPassword = password.isNotEmpty;
-    final passwordTooShort = settingPassword && password.length < min;
+    final policyError = password.isEmpty ? null : policy.validate(password);
     final passwordsMismatch = confirm.isNotEmpty && confirm != password;
     final passwordValid =
-        !settingPassword || (password.length >= min && password == confirm);
+        !settingPassword || (policyError == null && password == confirm);
     final email = _emailController.text.trim();
     final canSave = email.isNotEmpty && passwordValid;
     return AlertDialog(
@@ -1553,10 +1553,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 floatingLabelStyle: labelStyle,
                 floatingLabelBehavior: FloatingLabelBehavior.always,
                 hintText: 'Leave blank to keep current',
-                helperText: settingPassword ? 'At least $min characters' : null,
-                errorText: passwordTooShort
-                    ? 'Password must be at least $min characters'
-                    : null,
+                helperText: settingPassword ? policy.helperText : null,
+                errorText: policyError,
                 border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
                   icon: Icon(_obscurePassword

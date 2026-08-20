@@ -100,7 +100,7 @@ async def register(
     existing = await app.state.model.users.get_user_by_email(req.email)
     if existing is not None:
         raise HTTPException(status_code=400, detail="Registration failed")
-    request.app.state.auth.validate_password_length(req.password)
+    request.app.state.auth.validate_password(req.password)
 
     password_hash = auth.hash_password(req.password)
     user_id = str(uuid.uuid4())
@@ -291,7 +291,7 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
         raise HTTPException(
             status_code=400, detail="Invalid or expired reset token"
         )
-    request.app.state.auth.validate_password_length(req.password)
+    request.app.state.auth.validate_password(req.password)
     if user_id == model.AGENT_USER_ID:
         raise HTTPException(
             status_code=400,
@@ -413,7 +413,7 @@ async def change_password(
         raise HTTPException(
             status_code=401, detail="Current password is incorrect"
         )
-    request.app.state.auth.validate_password_length(req.new_password)
+    request.app.state.auth.validate_password(req.new_password)
     password_hash = auth.hash_password(req.new_password)
     await request.app.state.model.users.update_password(
         user["id"], password_hash
@@ -602,7 +602,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
             status_code=400, detail="Invitation is no longer valid"
         )
 
-    request.app.state.auth.validate_password_length(req.password)
+    request.app.state.auth.validate_password(req.password)
 
     existing = await request.app.state.model.users.get_user_by_email(email)
     if existing is not None:

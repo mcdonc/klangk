@@ -709,6 +709,13 @@ class KlangkSettings(BaseSettings):
     access_token_hours: float | None = 24.0
     workspace_token_hours: float | None = 24.0
     min_password_length: int | None = 8
+    # Character-class complexity counts (#2581). Each is the number of
+    # characters of that class a password must contain (0 = no requirement).
+    # KLANGKD_PASSWORD_REQUIRE_UPPER=2 demands two uppercase letters, etc.
+    password_require_upper: int | None = 0
+    password_require_lower: int | None = 0
+    password_require_digit: int | None = 0
+    password_require_special: int | None = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
     login_lockout_window: int | None = 300

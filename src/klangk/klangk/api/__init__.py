@@ -208,8 +208,11 @@ async def get_config(
         # this so users can't toggle a setting the server will reject (#1115).
         "allow_autostart": autostart_allowed(app),
         # Surfaced so the UI can validate password length inline (matches
-        # the rule enforced server-side by auth.validate_password_length).
+        # the rule enforced server-side by auth.validate_password).
         "min_password_length": app.state.auth.min_password_length,
+        # Character-class counts enforced by auth.validate_password_complexity
+        # (#2581); 0 = no requirement. Clients validate inline with these.
+        "password_requirements": app.state.auth.password_requirements,
         # Deployer logo override (KLANGKD_LOGO_URL). Empty when unset, in
         # which case the frontend renders the default KlangkLogo widget.
         # Supports file:/cmd: resolution like other secrets. See #1152.

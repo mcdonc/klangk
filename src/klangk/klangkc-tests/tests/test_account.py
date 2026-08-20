@@ -92,3 +92,86 @@ class TestPasswordMinLength:
             account, "fetch_config", lambda url: {"min_password_length": "abc"}
         )
         assert account.password_min_length("http://x") == 8
+
+
+class TestPasswordRequirements:
+    def test_reads_from_config(self, monkeypatch):
+        monkeypatch.setattr(
+            account,
+            "fetch_config",
+            lambda url: {
+                "password_requirements": {
+                    "upper": 1,
+                    "lower": 2,
+                    "digit": 3,
+                    "special": 4,
+                }
+            },
+        )
+        assert account.password_requirements("http://x") == {
+            "upper": 1,
+            "lower": 2,
+            "digit": 3,
+            "special": 4,
+        }
+
+    def test_defaults_when_missing(self, monkeypatch):
+        monkeypatch.setattr(account, "fetch_config", lambda url: {})
+        assert account.password_requirements("http://x") == {
+            "upper": 0,
+            "lower": 0,
+            "digit": 0,
+            "special": 0,
+        }
+
+    def test_defaults_when_unreachable(self, monkeypatch):
+        monkeypatch.setattr(account, "fetch_config", lambda url: "boom")
+        assert account.password_requirements("http://x") == {
+            "upper": 0,
+            "lower": 0,
+            "digit": 0,
+            "special": 0,
+        }
+
+    def test_defaults_when_not_a_dict(self, monkeypatch):
+        monkeypatch.setattr(
+            account,
+            "fetch_config",
+            lambda url: {"password_requirements": "nope"},
+        )
+        assert account.password_requirements("http://x")["upper"] == 0
+
+    def test_defaults_when_unparseable(self, monkeypatch):
+        monkeypatch.setattr(
+            account,
+            "fetch_config",
+            lambda url: {"password_requirements": {"upper": "x", "digit": 1}},
+        )
+        reqs = account.password_requirements("http://x")
+        assert reqs == {"upper": 0, "lower": 0, "digit": 1, "special": 0}
+
+
+class TestPasswordComplexityError:
+    _reqs = {"upper": 1, "lower": 1, "digit": 1, "special": 1}
+
+    def test_ok_password(self):
+        assert (
+            account.password_complexity_error("Aa1!aaaa", self._reqs) is None
+        )
+
+    def test_reports_every_unmet_class(self):
+        err = account.password_complexity_error("plain", self._reqs)
+        assert err is not None
+        assert "1 uppercase letter" in err
+        assert "1 digit" in err
+        assert "1 special character" in err
+
+    def test_pluralizes_counts(self):
+        err = account.password_complexity_error(
+            "Aa1!aaaa", {**self._reqs, "upper": 2}
+        )
+        assert "at least 2 uppercase letters" in err
+
+    def test_zero_requirements_never_fails(self):
+        zero = {"upper": 0, "lower": 0, "digit": 0, "special": 0}
+        assert account.password_complexity_error("", zero) is None

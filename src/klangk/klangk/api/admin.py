@@ -256,7 +256,7 @@ async def admin_create_user(
             status_code=400,
             detail="Password is required when not sending verification email",
         )
-    app.state.auth.validate_password_length(req.password)
+    app.state.auth.validate_password(req.password)
     password_hash = auth.hash_password(req.password)
     user = await app.state.model.users.create_user(
         req.email, password_hash, verified=True
@@ -326,7 +326,7 @@ async def update_user(
     if req.email is not None:
         await app.state.model.users.update_email(user_id, req.email)
     if req.password is not None:
-        app.state.auth.validate_password_length(req.password)
+        app.state.auth.validate_password(req.password)
         password_hash = auth.hash_password(req.password)
         await app.state.model.users.update_password(user_id, password_hash)
     if req.handle is not None:

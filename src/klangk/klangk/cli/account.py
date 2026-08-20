@@ -79,3 +79,65 @@ def password_min_length(server_url: str) -> int:
         except (TypeError, ValueError):
             return _DEFAULT_MIN_PASSWORD
     return _DEFAULT_MIN_PASSWORD
+
+
+def password_requirements(server_url: str) -> dict:
+    """Server-configured character-class counts (#2581).
+
+    Mirrors ``password_min_length``: reads ``/api/v1/config``'s
+    ``password_requirements`` (upper/lower/digit/special ints, 0 = no
+    requirement) and falls back to all-zero (no requirements) when the
+    server doesn't advertise them. The server enforces authoritatively.
+    """
+    config = fetch_config(server_url)
+    reqs = (
+        config.get("password_requirements")
+        if isinstance(config, dict)
+        else None
+    )
+    if not isinstance(reqs, dict):
+        return {"upper": 0, "lower": 0, "digit": 0, "special": 0}
+    out = {}
+    for key in ("upper", "lower", "digit", "special"):
+        try:
+            out[key] = int(reqs.get(key) or 0)
+        except (TypeError, ValueError):
+            out[key] = 0
+    return out
+
+
+def password_complexity_error(password: str, reqs: dict) -> str | None:
+    """Local mirror of the server's complexity rule (#2581).
+
+    Returns a human-readable error string when ``password`` fails the
+    character-class counts in ``reqs`` (as returned by
+    ``password_requirements``), else ``None``. Must stay in sync with
+    ``auth.validate_password_complexity`` on the server — duplication is
+    deliberate (CLI subpackage isolation; see AGENTS.md).
+    """
+    counts = {
+        "uppercase letter": (
+            sum(c.isupper() for c in password),
+            int(reqs.get("upper") or 0),
+        ),
+        "lowercase letter": (
+            sum(c.islower() for c in password),
+            int(reqs.get("lower") or 0),
+        ),
+        "digit": (
+            sum(c.isdigit() for c in password),
+            int(reqs.get("digit") or 0),
+        ),
+        "special character": (
+            sum(not c.isalnum() for c in password),
+            int(reqs.get("special") or 0),
+        ),
+    }
+    unmet = [
+        f"at least {need} {name}{'s' if need != 1 else ''}"
+        for name, (have, need) in counts.items()
+        if have < need
+    ]
+    if unmet:
+        return f"Password must contain {', '.join(unmet)}"
+    return None

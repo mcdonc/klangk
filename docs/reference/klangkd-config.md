@@ -109,6 +109,10 @@ default_user: admin@example.com
 default_password: "file:/run/secrets/admin-pw"
 access_token_hours: 24
 min_password_length: 12
+password_require_upper: 1
+password_require_lower: 1
+password_require_digit: 1
+password_require_special: 1
 
 # --- Server / network ---
 listen: "127.0.0.1"
@@ -238,6 +242,10 @@ port: "8997"
 | `access_token_hours`          | `24`                     | `KLANGKD_ACCESS_TOKEN_HOURS`          |
 | `workspace_token_hours`       | `24`                     | `KLANGKD_WORKSPACE_TOKEN_HOURS`       |
 | `min_password_length`         | `8`                      | `KLANGKD_MIN_PASSWORD_LENGTH`         |
+| `password_require_upper`      | `0`                      | `KLANGKD_PASSWORD_REQUIRE_UPPER`      |
+| `password_require_lower`      | `0`                      | `KLANGKD_PASSWORD_REQUIRE_LOWER`      |
+| `password_require_digit`      | `0`                      | `KLANGKD_PASSWORD_REQUIRE_DIGIT`      |
+| `password_require_special`    | `0`                      | `KLANGKD_PASSWORD_REQUIRE_SPECIAL`    |
 | `login_lockout_failures`      | `5`                      | `KLANGKD_LOGIN_LOCKOUT_FAILURES`      |
 | `login_lockout_duration`      | `900`                    | `KLANGKD_LOGIN_LOCKOUT_DURATION`      |
 | `login_lockout_window`        | `300`                    | `KLANGKD_LOGIN_LOCKOUT_WINDOW`        |
