@@ -8,7 +8,6 @@ import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import bcrypt
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -267,9 +266,9 @@ class Lifecycle:
                     + ". Fix the password or loosen the policy; refusing to "
                     "boot with a seeded admin that already violates it."
                 )
-            password_hash = bcrypt.hashpw(
-                password.encode(), bcrypt.gensalt()
-            ).decode()
+            password_hash = await asyncio.to_thread(
+                auth.hash_password, password
+            )
         else:
             # none / oidc: seed with null password. The row exists for
             # /auth/local token minting; no endpoint checks the hash.

@@ -182,14 +182,14 @@ def _coerce_positive_int(v, name: str) -> int | None:
     return value
 
 
-# Sanity ceiling for the KLANGKD_PASSWORD_REQUIRE_* counts: bcrypt only
-# hashes the first 72 bytes (auth.MAX_PASSWORD_BYTES), so requiring more
-# than 72 of one class would make every password unsettable. Duplicated
-# here to avoid an import cycle with klangk.auth.
+# Sanity ceiling for the KLANGKD_PASSWORD_REQUIRE_* counts: passwords are
+# capped at 72 bytes (auth.MAX_PASSWORD_BYTES), so requiring more than 72
+# of one class would make every password unsettable. Duplicated here to
+# avoid an import cycle with klangk.auth.
 _PASSWORD_REQUIRE_MAX = 72
 
 # Ceiling for KLANGKD_PASSWORD_HISTORY_COUNT (#2582): every remembered
-# hash costs one bcrypt verify per password set (in a worker thread, but
+# hash costs one PBKDF2 verify per password set (in a worker thread, but
 # still real CPU), so an unbounded count is a self-inflicted DoS knob.
 # 24 matches the ceiling of Windows' "Enforce password history"
 # policy, a common industry benchmark for this knob.
@@ -736,7 +736,7 @@ class KlangkSettings(BaseSettings):
     # counts separately. A new password is rejected (400) when it
     # matches the current or any retired hash. 0 (the default)
     # disables reuse checking and history recording entirely. Capped
-    # at 24 (each retired hash costs a bcrypt verify per set).
+    # at 24 (each retired hash costs a PBKDF2 verify per set).
     password_history_count: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
@@ -1341,13 +1341,13 @@ class KlangkSettings(BaseSettings):
     @classmethod
     def _cap_password_history(cls, v):
         """Reject counts above ``_PASSWORD_HISTORY_MAX`` (#2582): each
-        retired hash costs one bcrypt verify per password set, so an
+        retired hash costs one PBKDF2 verify per password set, so an
         unbounded count is a self-inflicted CPU knob."""
         if v > _PASSWORD_HISTORY_MAX:
             raise ValueError(
                 f"password_history_count={v} must be <= "
                 f"{_PASSWORD_HISTORY_MAX} — every remembered hash costs"
-                " a bcrypt verify on each password set."
+                " a PBKDF2 verify on each password set."
             )
         return v
 
@@ -1639,7 +1639,7 @@ class KlangkSettings(BaseSettings):
         ``password_require_upper: 2`` parses as an int, no quotes
         needed), or a ``file:``/``cmd:`` reference; ``None`` / empty ->
         ``0`` (class not required). Negative, non-integer, or a count
-        above 72 (bcrypt's byte limit) raises and aborts startup, same
+        above 72 (the password byte cap) raises and aborts startup, same
         posture as the other numeric settings (``_coerce_setting_int``
         with ``minimum=0``, #2603). Errors name the setting field
         (``password_require_*``), which is unambiguous whichever source
@@ -1649,7 +1649,7 @@ class KlangkSettings(BaseSettings):
         if value is not None and value > _PASSWORD_REQUIRE_MAX:
             raise ValueError(
                 f"{info.field_name}={v!r} must be <= "
-                f"{_PASSWORD_REQUIRE_MAX} — bcrypt hashes at most 72 "
+                f"{_PASSWORD_REQUIRE_MAX} — passwords are capped at 72 "
                 "bytes, so a higher count can never be satisfied."
             )
         return value

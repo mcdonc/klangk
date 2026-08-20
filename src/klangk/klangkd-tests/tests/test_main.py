@@ -259,9 +259,9 @@ class TestSeedDefaultUserAuthModeGating:
         ).seed_default_user()
         user = await app_state.state.model.users.get_user_by_email("u-pw")
         assert user["password_hash"] is not None
-        import bcrypt
+        from klangk import auth
 
-        assert bcrypt.checkpw(b"real-pass", user["password_hash"].encode())
+        assert auth.verify_password("real-pass", user["password_hash"])
 
     async def test_password_mode_fails_fast_without_default_password(
         self, db, app_state

@@ -682,6 +682,12 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **Password hashing (#2576).** Passwords are now hashed with
+  PBKDF2-HMAC-SHA512 via `hashlib` (600,000 iterations, stored as
+  `pbkdf2_sha512$…`) instead of bcrypt, and the `bcrypt` dependency is
+  gone. Hashing now routes through the container's OpenSSL, so it is
+  FIPS-approvable when the FIPS provider is active (#2570). No migration
+  is needed: there are no deployments with stored bcrypt hashes.
 - **Numeric config accepts bare numbers (#2603).** All numeric
   `KLANGKD_*` settings (`access_token_hours`, `min_password_length`,
   the `login_lockout_*` trio, `invite_expire_hours`, `port_range_start`,

@@ -1470,7 +1470,7 @@ class TestNumericSettingCoercion:
 
     def test_password_history_count_capped(self):
         """#2582: the reuse window is capped (each retired hash costs a
-        bcrypt verify per set); 24 is the documented maximum."""
+        PBKDF2 verify per set); 24 is the documented maximum."""
         with pytest.raises(Exception, match="password_history_count"):
             make_settings({"KLANGKD_PASSWORD_HISTORY_COUNT": "25"})
         s = make_settings({"KLANGKD_PASSWORD_HISTORY_COUNT": "24"})
@@ -1713,8 +1713,9 @@ class TestPasswordRequireCounts:
         with pytest.raises(Exception, match="password_require_upper"):
             make_settings({}, config_file=str(cfg))
 
-    def test_count_above_bcrypt_limit_rejected(self):
-        # 73 of one class can never be satisfied (bcrypt caps at 72 bytes);
-        # startup aborts instead of making every password unsettable.
+    def test_count_above_password_byte_cap_rejected(self):
+        # 73 of one class can never be satisfied (passwords are capped at
+        # 72 bytes); startup aborts instead of making every password
+        # unsettable.
         with pytest.raises(Exception, match="72"):
             make_settings({"KLANGKD_PASSWORD_REQUIRE_SPECIAL": "73"})

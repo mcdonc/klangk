@@ -79,7 +79,7 @@ async function submitChange(
   await fillSticking(page, newField, next, "new");
   await fillSticking(page, confirmField, next, "confirm");
   // Wait for the POST's response rather than sleeping: under parallel
-  // workers the server round-trip (up to count+1 bcrypt verifies plus
+  // workers the server round-trip (up to count+1 PBKDF2 verifies plus
   // SQLite contention) can exceed any fixed delay.
   const [resp] = await Promise.all([
     page.waitForResponse(

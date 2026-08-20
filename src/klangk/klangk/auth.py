@@ -9,12 +9,15 @@ dependency callables (``get_current_user`` etc.) stay module-level.
 """
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import logging
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import bcrypt
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import ExpiredSignatureError, JWTError, jwt
@@ -26,8 +29,26 @@ from .settings import INSECURE_DEFAULT_SECRET
 
 logger = logging.getLogger(__name__)
 
-# Maximum password length bcrypt will accept (its 72-byte limit).
+# Maximum password length in bytes. Originally bcrypt's 72-byte input
+# limit; retained as policy now that hashing is PBKDF2 (#2576) so the
+# password-requirement ceiling (settings._PASSWORD_REQUIRE_MAX) and the
+# client-side mirrors of the length rule stay valid.
 MAX_PASSWORD_BYTES = 72
+
+# PBKDF2-HMAC-SHA512 parameters (#2576). hashlib.pbkdf2_hmac delegates to
+# the OpenSSL the container provides, so under the FIPS provider (see
+# #2570) password hashing routes through the validated module — unlike
+# bcrypt, which bundles its own blowfish implementation and can never be
+# FIPS-approvable. 600k iterations is deliberately above OWASP's current
+# PBKDF2-HMAC-SHA512 recommendation (210k) for margin. Tests patch
+# ``PBKDF2_ITERATIONS`` down for suite speed; the stored format embeds the
+# iteration count, so hashes made under any value still verify.
+PBKDF2_ITERATIONS = 600_000
+_HASH_SCHEME = "pbkdf2_sha512"
+_SALT_BYTES = 16
+# Sanity ceiling on the iteration count read back from a stored hash, so
+# a corrupt or tampered row cannot stall a login indefinitely.
+_MAX_VERIFY_ITERATIONS = 10_000_000
 
 # Display names for the character classes, in requirement-message order.
 _PASSWORD_CLASSES = (
@@ -94,20 +115,55 @@ def is_locked_out(
 
 
 def hash_password(password: str) -> str:
+    """Hash a password with PBKDF2-HMAC-SHA512 (#2576).
+
+    Returns a self-describing ``pbkdf2_sha512$<iterations>$<b64-salt>$
+    <b64-hash>`` string, so ``verify_password`` needs no matching
+    configuration to check it.
+    """
     encoded = password.encode()
     if len(encoded) > MAX_PASSWORD_BYTES:
         raise ValueError(
             f"Password exceeds {MAX_PASSWORD_BYTES} bytes; "
             "call validate_password_length first"
         )
-    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode()
+    salt = secrets.token_bytes(_SALT_BYTES)
+    digest = hashlib.pbkdf2_hmac("sha512", encoded, salt, PBKDF2_ITERATIONS)
+    return "$".join(
+        (
+            _HASH_SCHEME,
+            str(PBKDF2_ITERATIONS),
+            base64.b64encode(salt).decode(),
+            base64.b64encode(digest).decode(),
+        )
+    )
 
 
 def verify_password(password: str, hashed: str) -> bool:
+    """Check a password against a ``pbkdf2_sha512$...`` hash (#2576).
+
+    Malformed input, an unknown scheme (a legacy bcrypt hash, say), or
+    an out-of-range iteration count returns ``False`` rather than
+    raising — callers treat garbage stored hashes as failed logins.
+    """
     encoded = password.encode()
     if len(encoded) > MAX_PASSWORD_BYTES:
         return False
-    return bcrypt.checkpw(encoded, hashed.encode())
+    try:
+        scheme, iterations_s, b64_salt, b64_digest = hashed.split("$")
+        if scheme != _HASH_SCHEME:
+            return False
+        iterations = int(iterations_s)
+        if not 1 <= iterations <= _MAX_VERIFY_ITERATIONS:
+            return False
+        salt = base64.b64decode(b64_salt, validate=True)
+        expected = base64.b64decode(b64_digest, validate=True)
+    except ValueError:
+        # Wrong field count, non-integer iterations, or invalid base64
+        # (binascii.Error subclasses ValueError).
+        return False
+    digest = hashlib.pbkdf2_hmac("sha512", encoded, salt, iterations)
+    return hmac.compare_digest(digest, expected)
 
 
 class RegisterRequest(BaseModel):
@@ -340,7 +396,7 @@ class Auth:
         hash (#2582).
 
         Checks the current hash first (it lives in ``users``), then the
-        retired hashes — up to ``password_history_count + 1`` bcrypt
+        retired hashes — up to ``password_history_count + 1`` PBKDF2
         verifies, run in a worker thread so the event loop is not
         blocked for the duration (#2611 review). No-op when
         ``password_history_count <= 0``.
@@ -676,7 +732,7 @@ class Auth:
         validate_email(req.email)
         self.validate_password(req.password)
 
-        password_hash = hash_password(req.password)
+        password_hash = await asyncio.to_thread(hash_password, req.password)
         # The duplicate-email pre-check above is not atomic with the
         # INSERT, so two concurrent registrations can both pass it and
         # one hits the UNIQUE constraint. Catch that and return the same
@@ -720,7 +776,8 @@ class Auth:
         lockout_key = user["email"] if user else req.identifier
 
         # Check if locked out before doing any expensive work (the only
-        # expensive step below is verify_password's bcrypt).
+        # expensive step below is verify_password's PBKDF2, run in a
+        # worker thread so the event loop is not blocked).
         if self.login_lockout_failures > 0:
             attempt_info = await self.app.state.model.login_attempts.get_login_attempt_info(
                 lockout_key
@@ -734,7 +791,9 @@ class Auth:
         if (
             user is None
             or not user.get("password_hash")
-            or not verify_password(req.password, user["password_hash"])
+            or not await asyncio.to_thread(
+                verify_password, req.password, user["password_hash"]
+            )
         ):
             if self.login_lockout_failures > 0:
                 # Reuse the attempt_info fetched up front for the lockout
