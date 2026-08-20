@@ -408,10 +408,7 @@ class EgressConsentModel:
     async def count_pending(self, workspace_id: str) -> int:
         """Count pending requests for a workspace.
 
-        No caller gates on this today (the interactive-mode consent flow
-        — NFLOG listener, API, daemon — is not yet wired, #2242/#2254); the
-        method is foundation for a future rate-limit on consent-request
-        creation.
+        Gates the coordinator's per-workspace pending cap (flood bound).
         """
         row = await self.app.state.db.fetchone(
             "SELECT COUNT(*) AS cnt FROM egress_consent"
