@@ -2736,6 +2736,8 @@ class TestWorkspaceRoutes:
             == app.state.container_registry.idle_timeout_seconds
         )
         assert isinstance(data["ports"], list)
+        # #2524: restart bookkeeping rides along (None when clean).
+        assert data["restart"] is None
 
         # Clean up registry state.
         registry.states.pop(ws_id, None)
@@ -2760,6 +2762,38 @@ class TestWorkspaceRoutes:
         assert data["container_id"] is None
         assert data["idle_seconds"] is None
         assert data["ports"] == []
+        assert data["restart"] is None
+
+    async def test_workspace_status_crash_loop(self, client, user, registry):
+        """A crash-looping workspace surfaces its terminal state (#2524)."""
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "crash-loop-ws"},
+        )
+        ws_id = create_resp.json()["id"]
+
+        from klangk.container.crash import RestartTracker
+
+        tracker = RestartTracker()
+        tracker.attempts = 3
+        tracker.last_cause = "OOM-killed at 8g memory limit (exit code 137)"
+        tracker.gave_up_at = 1_700_000_000.0
+        registry.crash.trackers[ws_id] = tracker
+        try:
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws_id}/status",
+                headers=headers,
+            )
+            assert resp.status_code == 200
+            restart = resp.json()["restart"]
+            assert restart["state"] == "crash-loop"
+            assert restart["attempts"] == 3
+            assert restart["last_cause"].startswith("OOM-killed")
+            assert restart["gave_up_at"] is not None
+        finally:
+            registry.crash.trackers.pop(ws_id, None)
 
     async def test_workspace_status_not_found(self, client, user, app_state):
         headers = await _auth_headers(client)

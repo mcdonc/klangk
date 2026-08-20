@@ -1035,6 +1035,19 @@ class KlangkSettings(BaseSettings):
     # Default ``2g`` preserves the pre-#2378 hardcoded mount size; a
     # workspace may override it via its settings bag (``settings.tmp_size``).
     container_tmp_size: str | None = "2g"
+    # Crash recovery (#2524): detect unexpectedly-dead workspace
+    # containers (OOM kill, non-zero exit, external removal), classify
+    # the cause into the death events/logs, and — opt-in — auto-restart
+    # the workspace after an exponential backoff
+    # (``base * 2^(n-1)``, capped at 60s) with a bounded retry count.
+    # Exhausting the retries leaves a visible ``crash-loop`` terminal
+    # state (surfaced on /workspaces/<id>/status) instead of spinning
+    # forever. Default off: recovery stays manual (the pre-#2524
+    # behavior). Expected deaths (user stop, idle stop, delete, logout)
+    # never enter the restart path. Read live (SIGHUP reload-safe).
+    container_restart_enabled: bool = False
+    container_restart_max_retries: int = 5
+    container_restart_backoff_seconds: float = 5.0
     test_mode: str | None = None
     version_file: str | None = None
 
@@ -1605,6 +1618,38 @@ class KlangkSettings(BaseSettings):
         startup, same posture as the other container limits (#34).
         """
         return _coerce_podman_size(v, "KLANGKD_CONTAINER_TMP_SIZE")
+
+    @field_validator("container_restart_max_retries", mode="before")
+    @classmethod
+    def _coerce_container_restart_max_retries(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_RESTART_MAX_RETRIES`` (#2524).
+
+        Integer string (env) or int (YAML); ``None`` / empty -> the default
+        (5). A non-integer, native float, or ``<= 0`` value raises and
+        aborts startup — a retry budget that silently parses as 0 would
+        make every unexpected death an immediate crash-loop, and one that
+        parses as unlimited would reintroduce the infinite restart loop
+        the bound exists to prevent.
+        """
+        if v is None or v == "":
+            return 5
+        return _coerce_positive_int(v, "KLANGKD_CONTAINER_RESTART_MAX_RETRIES")
+
+    @field_validator("container_restart_backoff_seconds", mode="before")
+    @classmethod
+    def _coerce_container_restart_backoff_seconds(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS`` (#2524).
+
+        Positive float (seconds); ``None`` / empty -> the default (5.0).
+        Non-numeric, non-finite, or ``<= 0`` raises and aborts startup —
+        same strict-on-malformed posture as the other container knobs
+        (#34).
+        """
+        if v is None or v == "":
+            return 5.0
+        return _coerce_positive_float(
+            v, "KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS"
+        )
 
     @field_validator("egress_consent_retention_days", mode="before")
     @classmethod

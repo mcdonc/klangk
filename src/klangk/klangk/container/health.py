@@ -253,7 +253,9 @@ class HealthMonitor:
             running=True,
         )
 
-    def broadcast_death(self, state: ContainerState) -> None:
+    def broadcast_death(
+        self, state: ContainerState, *, message: str | None = None
+    ) -> None:
         """Emit the terminal ``service_health`` frame for a dying container.
 
         When a container dies the server emits
@@ -266,11 +268,15 @@ class HealthMonitor:
         emitting one unambiguous terminal frame with ``running=False``
         and ``healthy=False`` *before* the state is dropped, so a single
         stream is a single source of truth.
+
+        *message* (#2524) carries the classified death cause (e.g.
+        "OOM-killed at 8g memory limit") when the death was detected by
+        the crash monitor; expected stops leave it None.
         """
         self._emit(
             state,
             healthy=False,
-            message=None,
+            message=message,
             running=False,
         )
 

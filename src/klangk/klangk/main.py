@@ -403,6 +403,7 @@ class Lifecycle:
         await registry.reap_dead_owner_containers()
         registry.start_cleanup_loop()
         registry.start_health_loop()
+        registry.start_crash_loop()
         n = await state.workspaces.auto_start_workspaces()
         if n:  # pragma: no cover
             logger.info("Auto-started %d workspace(s)", n)
