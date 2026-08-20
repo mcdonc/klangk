@@ -1419,6 +1419,7 @@ class TestNumericSettingCoercion:
         "login_lockout_failures",
         "login_lockout_duration",
         "login_lockout_window",
+        "max_sessions_per_user",
         "invite_expire_hours",
         "port_range_start",
         "websocket_msg_size_max",
@@ -1482,6 +1483,7 @@ class TestNumericSettingCoercion:
             "login_lockout_failures",
             "login_lockout_duration",
             "login_lockout_window",
+            "max_sessions_per_user",
             "hosted_ports_per_workspace",
             "password_history_count",
         ],
@@ -1578,6 +1580,7 @@ class TestNumericSettingCoercion:
         assert s.login_lockout_failures == 5
         assert s.login_lockout_duration == 900
         assert s.login_lockout_window == 300
+        assert s.max_sessions_per_user == 0
         assert s.invite_expire_hours == 72
         assert s.access_token_hours == 24.0
         assert s.workspace_token_hours == 24.0
@@ -1596,6 +1599,7 @@ class TestNumericSettingCoercion:
             ("login_lockout_failures", 5),
             ("login_lockout_duration", 900),
             ("login_lockout_window", 300),
+            ("max_sessions_per_user", 0),
             ("invite_expire_hours", 72),
             ("port_range_start", 9000),
             ("websocket_msg_size_max", 16777216),

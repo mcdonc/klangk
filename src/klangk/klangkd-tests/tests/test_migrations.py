@@ -1,8 +1,9 @@
 """Ordered schema-migration runner tests (#30).
 
 Covers the runner contract (fresh DB, replay no-op, failure semantics,
-validation) and migration 0001's shape (password_history + cascade) and
-0002's shape (users.last_login_at).
+validation), migration 0001's shape (password_history + cascade),
+0002's (users.last_login_at), and 0003's (user_sessions + cascade,
+#2585).
 """
 
 import aiosqlite
@@ -41,28 +42,29 @@ class TestRunner:
         """init_db on a fresh DB applies every migration exactly once and
         records it; a second init_db is a no-op."""
         await app_state.state.model.init_db()
+        expected = [
+            (1, "0001_password_history"),
+            (2, "0002_last_login_at"),
+            (3, "0003_user_sessions"),
+        ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
-            assert await _recorded(db) == [
-                (1, "0001_password_history"),
-                (2, "0002_last_login_at"),
-            ]
-            # Migration 0001 created its table (not the baseline pile).
-            cursor = await db.execute(
-                "SELECT name FROM sqlite_master"
-                " WHERE type='table' AND name='password_history'"
-            )
-            assert await cursor.fetchone() is not None
+            assert await _recorded(db) == expected
+            # Migration 0001 and 0003 created their tables (not the
+            # baseline pile).
+            for table in ("password_history", "user_sessions"):
+                cursor = await db.execute(
+                    "SELECT name FROM sqlite_master"
+                    f" WHERE type='table' AND name='{table}'"
+                )
+                assert await cursor.fetchone() is not None
             # Migration 0002 added its column to the baseline users table.
             info = await db.execute("PRAGMA table_info(users)")
             cols = {r[1] for r in await info.fetchall()}
             assert "last_login_at" in cols
 
-            # Re-run: nothing new applied, still exactly two records.
+            # Re-run: nothing new applied, still exactly three records.
             await app_state.state.model.init_db()
-            assert await _recorded(db) == [
-                (1, "0001_password_history"),
-                (2, "0002_last_login_at"),
-            ]
+            assert await _recorded(db) == expected
 
     async def test_old_db_without_migrations_table(
         self, temp_data_dir, app_state
@@ -93,6 +95,7 @@ class TestRunner:
             assert await _recorded(db) == [
                 (1, "0001_password_history"),
                 (2, "0002_last_login_at"),
+                (3, "0003_user_sessions"),
             ]
 
     async def test_pending_only(self, tmp_path):
@@ -286,6 +289,25 @@ class TestPasswordHistory:
         await users.delete_user(user["id"])
         row = await app_state.state.db.fetchone(
             "SELECT COUNT(*) FROM password_history WHERE user_id = ?",
+            (user["id"],),
+        )
+        assert row[0] == 0
+
+    async def test_user_sessions_cascade_on_user_delete(
+        self, temp_data_dir, app_state
+    ):
+        """user_sessions rows die with their user (ON DELETE CASCADE, #2585)."""
+        await app_state.state.model.init_db()
+        users = app_state.state.model.users
+        user = await users.create_user(
+            "sess@example.com", "hash", verified=True
+        )
+        await app_state.state.model.sessions.record_session(
+            user["id"], "jti-cascade", "2099-01-01T00:00:00+00:00"
+        )
+        await users.delete_user(user["id"])
+        row = await app_state.state.db.fetchone(
+            "SELECT COUNT(*) FROM user_sessions WHERE user_id = ?",
             (user["id"],),
         )
         assert row[0] == 0

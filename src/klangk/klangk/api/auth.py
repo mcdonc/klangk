@@ -158,7 +158,9 @@ async def verify_email(token: str, request: Request):
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
     user = await request.app.state.model.users.get_user_by_id(user_id)
-    access_token = request.app.state.auth.create_token(user_id, user["email"])
+    access_token = await request.app.state.auth.issue_token(
+        user_id, user["email"]
+    )
     await request.app.state.model.users.record_login(user_id)
     return {"status": "verified", "access_token": access_token}
 
@@ -307,7 +309,7 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
     user = await request.app.state.model.users.get_user_by_id(user_id)
     if user is None:  # pragma: no cover
         raise HTTPException(status_code=404, detail="User not found")
-    token = request.app.state.auth.create_token(user_id, user["email"])
+    token = await request.app.state.auth.issue_token(user_id, user["email"])
     await request.app.state.model.users.record_login(user_id)
     return {"status": "reset", "access_token": token}
 
@@ -370,7 +372,7 @@ async def local_login(request: Request):
             status_code=500,
             detail="Default user is not seeded",
         )
-    token = request.app.state.auth.create_token(user["id"], user["email"])
+    token = await request.app.state.auth.issue_token(user["id"], user["email"])
     await request.app.state.model.users.record_login(user["id"])
     return LocalLoginResponse(access_token=token, email=user["email"])
 
@@ -632,7 +634,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
         invitation_id
     )
 
-    access_token = request.app.state.auth.create_token(
+    access_token = await request.app.state.auth.issue_token(
         user["id"], user["email"]
     )
     await request.app.state.model.users.record_login(user["id"])

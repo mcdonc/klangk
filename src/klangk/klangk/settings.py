@@ -741,6 +741,12 @@ class KlangkSettings(BaseSettings):
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
     login_lockout_window: int | None = 300
+    # Concurrent-session cap per user (#2585). 0 (the default) = no limit.
+    # Each login/verification/reset/invite/OIDC/local issuance counts as
+    # one session; a refresh replaces the old session's row (same slot).
+    # When a new login pushes a user past the cap, the OLDEST session is
+    # revoked via the token blocklist (its WS closes 4001 → client logout).
+    max_sessions_per_user: int | None = 0
     disable_registration: str = ""
     disable_invites: str = ""
     invite_expire_hours: int | None = 72
@@ -1284,6 +1290,7 @@ class KlangkSettings(BaseSettings):
         "login_lockout_failures",
         "login_lockout_duration",
         "login_lockout_window",
+        "max_sessions_per_user",
         "invite_expire_hours",
         "password_history_count",
         "port_range_start",
@@ -1308,7 +1315,8 @@ class KlangkSettings(BaseSettings):
         # 0 keeps its pre-existing per-field meaning where the code has
         # explicit zero handling: disables the length floor
         # (min_password_length), disables lockout (the login_lockout_*
-        # trio, guarded by ``> 0`` in auth.py), disables hosted ports
+        # trio, guarded by ``> 0`` in auth.py), disables the session cap
+        # (max_sessions_per_user), disables hosted ports
         # (hosted_ports_per_workspace). Elsewhere 0 is nonsense (port 0,
         # zero-byte uploads, empty port range) and is rejected.
         _ZERO_MEANINGFUL = {
@@ -1316,6 +1324,7 @@ class KlangkSettings(BaseSettings):
             "login_lockout_failures",
             "login_lockout_duration",
             "login_lockout_window",
+            "max_sessions_per_user",
             "hosted_ports_per_workspace",
             "password_history_count",
         }

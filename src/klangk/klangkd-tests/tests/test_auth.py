@@ -1213,3 +1213,136 @@ class TestValidatePasswordNotReused:
         assert "recently" in exc_info.value.detail
         # `first` was pruned out of the 1-slot window -> allowed.
         await a.validate_password_not_reused(user["id"], "firstpass")
+
+
+class TestSessionLimit:
+    """Concurrent-session limiting via KLANGKD_MAX_SESSIONS_PER_USER (#2585).
+
+    Each login registers the issued JTI in user_sessions; past the cap the
+    oldest session is revoked through the token blocklist (same path as
+    logout: HTTP 401 "Token has been revoked", WS close 4001).
+    """
+
+    async def _login(self, env=None):
+        """Log the fixture user in; return the issued token."""
+        result = await _auth(env).login(
+            auth.LoginRequest(
+                identifier="testuser@example.com", password="testpass"
+            )
+        )
+        return result.access_token
+
+    async def test_issue_token_records_session(self, user, app_state):
+        token = await self._login()
+        payload = _auth().decode_token(token)
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert [r["jti"] for r in rows] == [payload["jti"]]
+
+    async def test_unlimited_by_default(self, user, app_state):
+        tokens = [await self._login() for _ in range(4)]
+        a = _auth()
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 4
+        for token in tokens:
+            assert await a.get_user_from_token(token) is not None
+
+    async def test_limit_revokes_oldest_session(self, user, app_state):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "2"}
+        first = await self._login(env)
+        second = await self._login(env)
+        third = await self._login(env)
+
+        a = _auth(env)
+        tokens_mod = app_state.state.model.tokens
+        # The oldest (first) session is revoked via the blocklist...
+        first_jti = a.decode_token(first)["jti"]
+        assert await tokens_mod.is_token_blocklisted(first_jti)
+        assert await a.get_user_from_token(first) is None
+        # ...while the two newest sessions survive.
+        assert await a.get_user_from_token(second) is not None
+        assert await a.get_user_from_token(third) is not None
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 2
+
+    async def test_limit_one_revokes_all_previous(self, user, app_state):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        first = await self._login(env)
+        second = await self._login(env)
+        a = _auth(env)
+        assert await a.get_user_from_token(first) is None
+        assert await a.get_user_from_token(second) is not None
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 1
+
+    async def test_limit_of_two_keeps_two(self, user, app_state):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "2"}
+        first = await self._login(env)
+        second = await self._login(env)
+        a = _auth(env)
+        assert await a.get_user_from_token(first) is not None
+        assert await a.get_user_from_token(second) is not None
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 2
+
+    async def test_refresh_does_not_grow_session_count(self, user, app_state):
+        """A refresh is the same session under a new token: it replaces the
+        old JTI's row instead of adding one."""
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "2"}
+        first = await self._login(env)
+        second = await self._login(env)
+        refreshed = await _auth(env).refresh_token(second)
+
+        a = _auth(env)
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 2
+        # The refreshed JTI now occupies the slot; the first login's
+        # session is untouched by the refresh.
+        assert await a.get_user_from_token(refreshed.access_token) is not None
+        assert await a.get_user_from_token(first) is not None
+
+    async def test_logout_frees_session_slot(self, user, app_state):
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        first = await self._login(env)
+        a = _auth(env)
+        await a.logout(first)
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert rows == []
+        # With the slot free, the next login evicts nothing.
+        second = await self._login(env)
+        assert await a.get_user_from_token(second) is not None
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 1
+
+    async def test_expired_sessions_do_not_count_toward_limit(
+        self, user, app_state
+    ):
+        """A row whose token already expired is purged before counting, so
+        it neither occupies a slot nor gets blocklisted on eviction."""
+        from datetime import datetime, timedelta, timezone
+
+        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        await app_state.state.model.sessions.record_session(
+            user["id"], "jti-dead", past
+        )
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        token = await self._login(env)
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert [r["jti"] for r in rows] == [_auth().decode_token(token)["jti"]]
+        # The dead row was purged, not blocklisted.
+        assert not (
+            await app_state.state.model.tokens.is_token_blocklisted("jti-dead")
+        )
+
+    async def test_register_records_session(self, db, app_state):
+        """The verified-registration path issues through issue_token too."""
+        result = await _auth().register(
+            auth.RegisterRequest(
+                email="fresh@example.com", password="longenough1"
+            ),
+            verified=True,
+        )
+        assert result.access_token
+        rows = await app_state.state.model.sessions.list_sessions(
+            result.user_id
+        )
+        assert len(rows) == 1
