@@ -59,7 +59,9 @@ const INSTALL_FSA_SHIM = `
 // Admin account provisioned by global-setup (KLANGKD_DEFAULT_USER / PASSWORD).
 // The export endpoint is admin-only (workspaces.py: has_permission("admin")).
 const ADMIN_EMAIL = "admin@example.com";
-const ADMIN_PASSWORD = "admin";
+// Re-exported from e2e-env: must stay in sync with global-setup's
+// KLANGKD_DEFAULT_PASSWORD (the policy-compliant seed, #2581).
+import { ADMIN_PASSWORD } from "../e2e-env";
 
 /** Poll the shim's window globals until the stream finishes (or errors).
  *  Returns only cheap status fields — the bytes themselves are retrieved

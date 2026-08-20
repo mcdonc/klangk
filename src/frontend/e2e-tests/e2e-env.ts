@@ -20,6 +20,18 @@ const STRIP_PREFIXES = ["KLANGK", "_KLANGK", "KLANGKC", "LOGFIRE"];
 // a klangkd.yaml setting), so each env-only launcher sets it explicitly
 // (global-setup.ts, run-demo-backend.sh). Forwarding a stray ambient value
 // risks pointing at a stale/wrong build.
+/**
+ * The seeded admin password for E2E servers (KLANGKD_DEFAULT_PASSWORD).
+ *
+ * Must satisfy the boot-time password-policy gate (#2581): the daemon
+ * refuses to start when the seeded admin's password violates
+ * KLANGKD_MIN_PASSWORD_LENGTH (default 8) or any character-class count
+ * (KLANGKD_PASSWORD_REQUIRE_*). "Admin123!" clears the length minimum and
+ * all four classes, so it survives a policy tightening without a silent
+ * 10-minute startup timeout in global-setup.
+ */
+export const ADMIN_PASSWORD = "Admin123!";
+
 const INFRA_VARS = ["KLANGKD_IMAGE_NAME", "KLANGKD_VERSION_FILE"];
 
 export function cleanEnv(

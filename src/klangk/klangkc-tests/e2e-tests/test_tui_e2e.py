@@ -110,7 +110,7 @@ def server():
         KLANGKD_JWT_SECRET="tui-e2e-secret",
         KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
         KLANGKD_DEFAULT_USER="tuiuser@example.com",
-        KLANGKD_DEFAULT_PASSWORD="tuipass",
+        KLANGKD_DEFAULT_PASSWORD="Tuipass1!",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         LOGFIRE_TOKEN="",
@@ -129,7 +129,7 @@ def base_url(server):
 def token(base_url):
     r = httpx.post(
         f"{base_url}/api/v1/auth/login",
-        json={"identifier": "tuiuser@example.com", "password": "tuipass"},
+        json={"identifier": "tuiuser@example.com", "password": "Tuipass1!"},
         timeout=30,
     )
     r.raise_for_status()
