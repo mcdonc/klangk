@@ -199,7 +199,7 @@ def start_server(
         Optional path to redirect the server's combined stdout/stderr to a
         file instead of a captured pipe. The CLI / frontend E2E suites pass
         explicit paths; the default (``None``) derives one at
-        ``<data_dir>/klangkd.log`` so every server's output survives on
+        ``<data_dir>/klangkd-test-output.log`` so every server's output survives on
         failure (``_e2e_logs`` attaches it to failing tests, #2623) instead
         of dying in a pipe that is only drained at process exit. Pass
         ``log_path=None`` is impossible after defaulting — pass an explicit
@@ -230,7 +230,7 @@ def start_server(
     # (the smoketest reads its log while the server runs). #364 still
     # applies: file streaming also avoids the 64 KB pipe-buffer deadlock.
     if log_path is None:
-        log_path = os.path.join(data_dir, "klangkd.log")
+        log_path = os.path.join(data_dir, "klangkd-test-output.log")
 
     overrides = dict(env_overrides)
     overrides.setdefault("KLANGKD_DATA_DIR", data_dir)
