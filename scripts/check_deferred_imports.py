@@ -22,6 +22,39 @@ def _is_top_level(node: ast.AST) -> bool:
     return isinstance(getattr(node, "_parent", None), ast.Module)
 
 
+def _is_type_checking(node: ast.AST) -> bool:
+    """Check if a node sits directly inside ``if TYPE_CHECKING:``.
+
+    That block is the canonical module-scope pattern for annotation-only
+    imports (erased at runtime), so its imports are exempt without a marker.
+    """
+    parent = getattr(node, "_parent", None)
+    if not isinstance(parent, ast.If):
+        return False
+    test = parent.test
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _is_guarded_optional(node: ast.AST) -> bool:
+    """Check if a node is a module-scope ``try: import`` over ``ImportError``.
+
+    The guarded-optional-dependency pattern (import at module scope inside
+    ``try/except ImportError``) is also module-scope in spirit — the import
+    executes once at load, with a fallback for absent extras.
+    """
+    parent = getattr(node, "_parent", None)
+    if not (isinstance(parent, ast.Try) and _is_top_level(parent)):
+        return False
+    return any(
+        isinstance(h, ast.ExceptHandler)
+        and isinstance(h.type, ast.Name)
+        and h.type.id in ("ImportError", "ModuleNotFoundError")
+        for h in parent.handlers
+    )
+
+
 def _parse_file(filepath: Path):
     """Parse a file and annotate parent nodes. Returns (tree, lines) or None."""
     try:
@@ -41,12 +74,19 @@ def _line_has_comment(lines: list[str], lineno: int, comment: str) -> bool:
 
 def _is_marked(lines: list[str], lineno: int, comment: str) -> bool:
     """Is the import at *lineno* suppressed? The marker may sit on the
-    import line itself or on a comment line directly above it."""
+    import line itself, on a comment line directly above it, or — when
+    the import sits inside a nested block (``if``/``try``/…) — on any
+    consecutive comment line above it."""
     if _line_has_comment(lines, lineno, comment):
         return True
-    if lineno >= 2:
-        above = lines[lineno - 2].strip()
-        return above.startswith("#") and comment in above
+    i = lineno - 2  # 0-based index of the line above
+    while i >= 0:
+        stripped = lines[i].strip()
+        if not stripped.startswith("#"):
+            return False
+        if comment in stripped:
+            return True
+        i -= 1
     return False
 
 
@@ -71,7 +111,11 @@ def check_deferred_imports(package_dir: str) -> list[str]:
         for node in ast.walk(tree):
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
-            if _is_top_level(node):
+            if (
+                _is_top_level(node)
+                or _is_type_checking(node)
+                or _is_guarded_optional(node)
+            ):
                 continue
             if _is_marked(source_lines, node.lineno, "allow-deferred-import"):
                 continue

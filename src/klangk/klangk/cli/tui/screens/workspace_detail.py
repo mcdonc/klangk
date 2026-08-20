@@ -37,6 +37,7 @@ from ._base import (
     SpatialListView,
     TransferScreen,
 )
+from .workspace_form import EditWorkspaceScreen
 
 logger = logging.getLogger(__name__)
 
@@ -445,9 +446,6 @@ class WorkspaceDetailScreen(Screen):
         self.run_worker(self._do_edit, exit_on_error=False)
 
     async def _do_edit(self) -> None:
-        # allow-deferred-import
-        from .workspace_form import EditWorkspaceScreen
-
         state = self.app.tui_state
         try:
             data = await asyncio.to_thread(state.list_images)
@@ -485,8 +483,12 @@ class WorkspaceDetailScreen(Screen):
             self.run_worker(self._reload_after_edit, exit_on_error=False)
 
     async def _reload_after_edit(self) -> None:
-        # allow-deferred-import
-        from .main import MainScreen
+        # Deferred: main.py imports this module (push_screen on row select),
+        # so a module-scope ``from .main import MainScreen`` would execute
+        # while main is partially initialized depending on entry order —
+        # a genuine import cycle. Only this method needs the name, at call
+        # time, when both modules are fully loaded.
+        from .main import MainScreen  # allow-deferred-import
 
         await self._load()
         try:

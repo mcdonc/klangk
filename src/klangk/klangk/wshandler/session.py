@@ -20,7 +20,7 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
-    from .connection import Connection  # allow-deferred-import
+    from .connection import Connection
 
 logger = logging.getLogger(__name__)
 
