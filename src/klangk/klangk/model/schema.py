@@ -490,8 +490,13 @@ async def init_db(db) -> None:
             await db.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
         # Ordered, once-only migrations (#30). The CREATE TABLE pile above
         # is the historical baseline; every schema change from here on is a
-        # numbered migration in klangk.model.migrations instead.
+        # numbered migration in klangk.model.migrations package instead.
         await run_migrations(db)
+        # Final commit — NOT owned by the runner: the baseline blocks above
+        # (users rebuild, egress_consent rebuild, backfill_handles) issue
+        # DML (INSERT ... SELECT / UPDATE) that opens an implicit sqlite3
+        # transaction; later DDL in the same block rides inside it. Without
+        # this commit, db.close() rolls the whole rebuild back (silently).
         await db.commit()
     finally:
         await db.close()

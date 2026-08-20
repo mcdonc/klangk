@@ -18,6 +18,21 @@ async def _recorded(db) -> list[tuple[int, str]]:
     return [(r[0], r[1]) for r in await cursor.fetchall()]
 
 
+async def run_migrations_with(db, ordered):
+    """Run *ordered* migrations against *db* using the real runner logic.
+
+    The production ``run_migrations`` reads the module-level MIGRATIONS;
+    this helper temporarily swaps it so failure/fixture tests exercise
+    the real code path against synthetic lists.
+    """
+    original = migrations_mod.MIGRATIONS
+    migrations_mod.MIGRATIONS = ordered
+    try:
+        return await run_migrations(db)
+    finally:
+        migrations_mod.MIGRATIONS = original
+
+
 class TestRunner:
     async def test_fresh_db_applies_and_records(
         self, temp_data_dir, app_state
@@ -78,11 +93,10 @@ class TestRunner:
             calls.append("m2")
 
         async with aiosqlite.connect(str(db_path)) as db:
-            await db.execute(
-                "CREATE TABLE schema_migrations"
-                " (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,"
-                " applied_at TEXT NOT NULL DEFAULT (datetime('now')))"
-            )
+            # Bootstrap bookkeeping + a recorded 0001 via the runner
+            # itself (empty list: table only), then hand-insert the
+            # pre-existing record.
+            await run_migrations_with(db, [])
             await db.execute(
                 "INSERT INTO schema_migrations (id, name)"
                 " VALUES (1, '0001_one')"
@@ -114,12 +128,7 @@ class TestFailureSemantics:
         db_path = tmp_path / "fail.db"
         # Bootstrap the bookkeeping table first (as run_migrations does).
         async with aiosqlite.connect(str(db_path)) as db:
-            await db.execute(
-                "CREATE TABLE schema_migrations"
-                " (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,"
-                " applied_at TEXT NOT NULL DEFAULT (datetime('now')))"
-            )
-            await db.commit()
+            await run_migrations_with(db, [])
 
         async def _ok(db):
             await db.execute(
@@ -163,20 +172,68 @@ class TestFailureSemantics:
                 (2, "0002_bad"),
             ]
 
+    async def test_crash_between_ddl_and_record_rolls_back(self, tmp_path):
+        """The central partial-failure claim: a migration whose DDL
+        succeeded but that failed before its record row (a CREATE
+        followed by a raise) must leave NO durable trace — the BEGIN
+        IMMEDIATE rollback undoes the DDL, so the retry can never hit
+        "duplicate column name" / "table already exists".
 
-async def run_migrations_with(db, ordered):
-    """Run *ordered* migrations against *db* using the real runner logic.
+        Without the explicit transaction this test fails on stock
+        sqlite3 legacy autocommit (the DDL would survive) — exactly the
+        boot-loop bug the adversarial review caught.
+        """
+        db_path = tmp_path / "crash.db"
 
-    The production ``run_migrations`` reads the module-level MIGRATIONS;
-    this helper temporarily swaps it so failure/fixture tests exercise
-    the real code path against synthetic lists.
-    """
-    original = migrations_mod.MIGRATIONS
-    migrations_mod.MIGRATIONS = ordered
-    try:
-        return await run_migrations(db)
-    finally:
-        migrations_mod.MIGRATIONS = original
+        async def _crasher(db):
+            await db.execute("CREATE TABLE crashed_marker (x INTEGER)")
+            raise RuntimeError("simulated crash after DDL")
+
+        async def _fixed(db):  # noqa: ARG001
+            pass
+
+        async with aiosqlite.connect(str(db_path)) as db:
+            with pytest.raises(RuntimeError, match="simulated crash"):
+                await run_migrations_with(
+                    db, [Migration(1, "0001_crash", _crasher)]
+                )
+            # Nothing durable: no record row AND no table.
+            assert await _recorded(db) == []
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name='crashed_marker'"
+            )
+            assert await cursor.fetchone() is None
+
+            # Retry with the fixed migration: applies cleanly, exactly
+            # once — no duplicate-object error.
+            applied = await run_migrations_with(
+                db, [Migration(1, "0001_crash", _fixed)]
+            )
+            assert applied == ["0001_crash"]
+            assert await _recorded(db) == [(1, "0001_crash")]
+
+
+class TestRenameDetection:
+    async def test_renamed_shipped_migration_raises(self, tmp_path):
+        """A recorded id whose name changed must fail loudly — a silent
+        rename forks history (the record says one thing, the code
+        another)."""
+        db_path = tmp_path / "rename.db"
+
+        async def _noop(db):  # noqa: ARG001
+            pass
+
+        async with aiosqlite.connect(str(db_path)) as db:
+            await run_migrations_with(
+                db, [Migration(1, "0001_original", _noop)]
+            )
+            with pytest.raises(RuntimeError, match="frozen once shipped"):
+                await run_migrations_with(
+                    db, [Migration(1, "0001_renamed", _noop)]
+                )
+            # Record is untouched by the failure.
+            assert await _recorded(db) == [(1, "0001_original")]
 
 
 class TestValidation:
