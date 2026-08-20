@@ -96,10 +96,25 @@ void main() {
       expect(two.validate('AB1!cdef'), isNull);
     });
 
-    test('non-ASCII runes count as special characters', () {
+    test('non-ASCII runes count as special characters, never letters or '
+        'digits', () {
       const spec = PasswordPolicy(minLength: 4, requireSpecial: 1);
       expect(spec.validate('abé!'), isNull);
       expect(spec.validate('ab1c'), contains('1 special character'));
+      // Parity with the server (ASCII classes): é is not a lowercase
+      // letter, ²/٣ are not digits.
+      const lower = PasswordPolicy(minLength: 4, requireLower: 1);
+      expect(lower.validate('éééé!'), contains('1 lowercase letter'));
+      const digit = PasswordPolicy(minLength: 4, requireDigit: 1);
+      expect(digit.validate('²٣!!'), contains('1 digit'));
+    });
+
+    test('length is counted in runes, not UTF-16 code units', () {
+      // 😀 is one code point but two UTF-16 units: runes.length == 2 here,
+      // String.length == 4. The floor is code points (server parity).
+      const p = PasswordPolicy(minLength: 3);
+      expect(p.validate('😀😀'), 'Min 3 characters');
+      expect(p.validate('😀😀😀'), isNull);
     });
 
     test('zero requirements never fail on classes', () {

@@ -28,6 +28,38 @@ logger = logging.getLogger(__name__)
 # Maximum password length bcrypt will accept (its 72-byte limit).
 MAX_PASSWORD_BYTES = 72
 
+# Display names for the character classes, in requirement-message order.
+_PASSWORD_CLASSES = (
+    ("upper", "uppercase letter"),
+    ("lower", "lowercase letter"),
+    ("digit", "digit"),
+    ("special", "special character"),
+)
+
+
+def password_class_counts(password: str) -> dict[str, int]:
+    """ASCII character-class counts for the complexity policy (#2581).
+
+    Classes are defined in ASCII terms — ``A-Z``, ``a-z``, ``0-9``, and
+    everything else is "special" — so every non-ASCII character (``é``)
+    counts as special, never as a letter or digit. This is deliberate:
+    the Flutter UI's mirror (``PasswordPolicy``) and the CLI's mirror
+    (``cli/account.password_complexity_error``) classify the same way,
+    and Unicode's ``isupper``/``isdigit`` would accept things no operator
+    means by "a digit" (``٣``) or "uppercase" (``Ⅰ``) while disagreeing
+    with the clients. Server, web UI, and CLI must stay in sync.
+    """
+    upper = sum(1 for c in password if "A" <= c <= "Z")
+    lower = sum(1 for c in password if "a" <= c <= "z")
+    digit = sum(1 for c in password if "0" <= c <= "9")
+    return {
+        "upper": upper,
+        "lower": lower,
+        "digit": digit,
+        "special": len(password) - upper - lower - digit,
+    }
+
+
 security = HTTPBearer(auto_error=False)
 
 
@@ -268,28 +300,17 @@ class Auth:
         minimum number of characters of that class; 0 disables that class.
         Raises a single 400 listing every unmet requirement.
         """
-        counts = {
-            "uppercase letter": (
-                sum(c.isupper() for c in password),
-                self.password_require_upper,
-            ),
-            "lowercase letter": (
-                sum(c.islower() for c in password),
-                self.password_require_lower,
-            ),
-            "digit": (
-                sum(c.isdigit() for c in password),
-                self.password_require_digit,
-            ),
-            "special character": (
-                sum(not c.isalnum() for c in password),
-                self.password_require_special,
-            ),
+        counts = password_class_counts(password)
+        configured = {
+            "upper": self.password_require_upper,
+            "lower": self.password_require_lower,
+            "digit": self.password_require_digit,
+            "special": self.password_require_special,
         }
         unmet = [
             f"at least {need} {name}{'s' if need != 1 else ''}"
-            for name, (have, need) in counts.items()
-            if have < need
+            for key, name in _PASSWORD_CLASSES
+            if (need := configured[key]) > 0 and counts[key] < need
         ]
         if unmet:
             raise HTTPException(

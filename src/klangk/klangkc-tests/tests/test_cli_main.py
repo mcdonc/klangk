@@ -5425,18 +5425,18 @@ class TestAccountCommands:
         assert "@me" in out
 
     def test_account_passwd_success(self, logged_in_cfg, monkeypatch):
-        from klangk.cli import main
+        from klangk.cli import account, main
         from typer.testing import CliRunner
 
         client = MagicMock()
         monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
-            authcmds_mod.account, "password_min_length", lambda url: 4
-        )
-        monkeypatch.setattr(
             authcmds_mod.account,
-            "password_requirements",
-            lambda url: {"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=4,
+                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            ),
         )
         answers = iter(["oldpw", "newpw12", "newpw12"])
         monkeypatch.setattr(
@@ -5461,18 +5461,18 @@ class TestAccountCommands:
         client.change_password.assert_not_called()
 
     def test_account_passwd_too_short(self, logged_in_cfg, monkeypatch):
-        from klangk.cli import main
+        from klangk.cli import account, main
         from typer.testing import CliRunner
 
         client = MagicMock()
         monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
-            authcmds_mod.account, "password_min_length", lambda url: 12
-        )
-        monkeypatch.setattr(
             authcmds_mod.account,
-            "password_requirements",
-            lambda url: {"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=12,
+                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            ),
         )
         answers = iter(["oldpw", "short", "short"])
         monkeypatch.setattr(
@@ -5485,18 +5485,18 @@ class TestAccountCommands:
     def test_account_passwd_complexity_rejected(
         self, logged_in_cfg, monkeypatch
     ):
-        from klangk.cli import main
+        from klangk.cli import account, main
         from typer.testing import CliRunner
 
         client = MagicMock()
         monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
-            authcmds_mod.account, "password_min_length", lambda url: 4
-        )
-        monkeypatch.setattr(
             authcmds_mod.account,
-            "password_requirements",
-            lambda url: {"upper": 1, "lower": 1, "digit": 1, "special": 1},
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=4,
+                requirements={"upper": 1, "lower": 1, "digit": 1, "special": 1},
+            ),
         )
         answers = iter(["oldpw", "newpw12", "newpw12"])
         monkeypatch.setattr(
@@ -5509,7 +5509,7 @@ class TestAccountCommands:
     def test_account_passwd_backend_error(self, logged_in_cfg, monkeypatch):
         import httpx
 
-        from klangk.cli import main
+        from klangk.cli import account, main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -5520,12 +5520,12 @@ class TestAccountCommands:
         )
         monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
-            authcmds_mod.account, "password_min_length", lambda url: 4
-        )
-        monkeypatch.setattr(
             authcmds_mod.account,
-            "password_requirements",
-            lambda url: {"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=4,
+                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            ),
         )
         answers = iter(["oldpw", "newpw12", "newpw12"])
         monkeypatch.setattr(

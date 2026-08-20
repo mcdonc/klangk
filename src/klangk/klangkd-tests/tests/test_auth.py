@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 import types as _types
 
 from _helpers import make_settings
-from klangk.auth import Auth
+from klangk.auth import Auth, password_class_counts
 
 
 def _auth(env=None):
@@ -178,6 +178,50 @@ class TestValidatePasswordComplexity:
         a.validate_password_complexity("Password1!")
         with pytest.raises(HTTPException):
             a.validate_password_complexity("Password1")
+
+    def test_classes_are_ascii(self):
+        """Unicode letters/digits are special, not letters/digits (#2581).
+
+        Parity with the Flutter ``PasswordPolicy`` and the CLI mirror:
+        ``é`` is not a lowercase letter, ``²``/``٣`` are not digits,
+        ``Ⅰ`` is not uppercase — they all count as special characters.
+        """
+        # é is special, satisfies REQUIRE_SPECIAL but not REQUIRE_LOWER.
+        a = _auth(
+            {
+                "KLANGKD_PASSWORD_REQUIRE_LOWER": "1",
+                "KLANGKD_PASSWORD_REQUIRE_SPECIAL": "1",
+            }
+        )
+        a.validate_password_complexity("Aé1!aaaa")
+        with pytest.raises(HTTPException) as exc_info:
+            a.validate_password_complexity("A1!éééé")
+        assert "1 lowercase letter" in exc_info.value.detail
+
+        # ² and ٣ are not digits.
+        a = _auth({"KLANGKD_PASSWORD_REQUIRE_DIGIT": "1"})
+        with pytest.raises(HTTPException):
+            a.validate_password_complexity("ab²٣cd!")
+
+        # Ⅰ (Roman numeral) is not uppercase.
+        a = _auth({"KLANGKD_PASSWORD_REQUIRE_UPPER": "1"})
+        with pytest.raises(HTTPException):
+            a.validate_password_complexity("aⅠb1!cde")
+
+    def test_password_class_counts_helper(self):
+        """The shared counter used by validation and startup seeding."""
+        assert password_class_counts("") == {
+            "upper": 0,
+            "lower": 0,
+            "digit": 0,
+            "special": 0,
+        }
+        assert password_class_counts("Aa1!é²Ⅰ😀") == {
+            "upper": 1,
+            "lower": 1,
+            "digit": 1,
+            "special": 5,
+        }
 
     def test_validate_password_runs_both_checks(self):
         a = _auth({"KLANGKD_PASSWORD_REQUIRE_DIGIT": "1"})

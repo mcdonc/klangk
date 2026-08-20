@@ -155,15 +155,13 @@ def account_passwd() -> None:
     if new != confirm:
         context._err.print("[red]Passwords do not match[/red]")
         raise typer.Exit(code=1)
-    min_len = account.password_min_length(url)
-    if len(new) < min_len:
+    policy = account.password_policy(url)
+    if len(new) < policy.min_length:
         context._err.print(
-            f"[red]Password must be at least {min_len} characters[/red]"
+            f"[red]Password must be at least {policy.min_length} characters[/red]"
         )
         raise typer.Exit(code=1)
-    complexity_error = account.password_complexity_error(
-        new, account.password_requirements(url)
-    )
+    complexity_error = policy.complexity_error(new)
     if complexity_error:
         context._err.print(f"[red]{complexity_error}[/red]")
         raise typer.Exit(code=1)

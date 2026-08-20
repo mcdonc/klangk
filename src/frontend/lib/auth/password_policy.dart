@@ -68,7 +68,12 @@ class PasswordPolicy {
   /// or null when it satisfies every rule.
   String? validate(String? password) {
     if (password == null || password.isEmpty) return 'Required';
-    if (password.length < minLength) return 'Min $minLength characters';
+    // Runes (code points), not UTF-16 code units — the server counts code
+    // points, and an emoji-heavy password would otherwise be judged longer
+    // here than there.
+    if (password.runes.length < minLength) {
+      return 'Min $minLength characters';
+    }
     final counts = <String, int>{
       'uppercase letter': password.runes.where((r) => _isUpper(r)).length,
       'lowercase letter': password.runes.where((r) => _isLower(r)).length,

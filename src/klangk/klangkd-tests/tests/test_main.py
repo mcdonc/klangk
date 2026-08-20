@@ -136,6 +136,58 @@ class TestSeedDefaultUser:
         user = await app_state.state.model.users.get_user_by_email("seed-test")
         assert user is not None
 
+    async def test_default_password_violating_policy_fails_fast(
+        self, db, app_state
+    ):
+        """#2581: the seeded admin must satisfy the configured policy."""
+        import pytest as _pytest
+
+        with _pytest.raises(RuntimeError, match="DEFAULT_PASSWORD"):
+            await _lifecycle(
+                make_settings(
+                    {
+                        "KLANGKD_AUTH_MODES": "password",
+                        "KLANGKD_DEFAULT_USER": "seed-test",
+                        "KLANGKD_DEFAULT_PASSWORD": "alllowercase1!",
+                        "KLANGKD_PASSWORD_REQUIRE_UPPER": "1",
+                    }
+                )
+            ).seed_default_user()
+        # Nothing was seeded.
+        user = await app_state.state.model.users.get_user_by_email("seed-test")
+        assert user is None
+
+    async def test_default_password_too_short_fails_fast(self, db, app_state):
+        import pytest as _pytest
+
+        with _pytest.raises(RuntimeError, match="MIN_PASSWORD_LENGTH"):
+            await _lifecycle(
+                make_settings(
+                    {
+                        "KLANGKD_AUTH_MODES": "password",
+                        "KLANGKD_DEFAULT_USER": "seed-test",
+                        "KLANGKD_DEFAULT_PASSWORD": "ab",
+                        "KLANGKD_MIN_PASSWORD_LENGTH": "8",
+                    }
+                )
+            ).seed_default_user()
+
+    async def test_compliant_default_password_seeds(self, db, app_state):
+        """A policy-compliant password passes the new gate untouched."""
+        await _lifecycle(
+            make_settings(
+                {
+                    "KLANGKD_AUTH_MODES": "password",
+                    "KLANGKD_DEFAULT_USER": "seed-test",
+                    "KLANGKD_DEFAULT_PASSWORD": "Seed-Pass1!",
+                    "KLANGKD_PASSWORD_REQUIRE_UPPER": "1",
+                    "KLANGKD_PASSWORD_REQUIRE_SPECIAL": "1",
+                }
+            )
+        ).seed_default_user()
+        user = await app_state.state.model.users.get_user_by_email("seed-test")
+        assert user is not None
+
     async def test_skips_existing_user(self, db, app_state):
         s = make_settings(
             {

@@ -30,7 +30,6 @@ operators or integrators to act when upgrading.
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Changed
 
 - **Numeric config accepts bare numbers (#2603).** All numeric
@@ -48,18 +47,6 @@ operators or integrators to act when upgrading.
   resolves to the field's default instead of crashing consumers with
   `int(None)`; `port_range_start` is range-checked against the last
   legal host port.
-=======
-### Added
-
-- **`KLANGKD_PASSWORD_REQUIRE_{UPPER,LOWER,DIGIT,SPECIAL}` (#2581).**
-  Character-class complexity requirements for passwords: each setting is
-  the number of characters of that class a password must contain
-  (e.g. `2` = at least two uppercase letters), `0` (the default) = no
-  requirement. Enforced on registration, password change/reset, invite
-  acceptance, and admin set-password; advertised to clients via
-  `password_requirements` in `/api/v1/config` for inline validation in
-  the web UI and CLI.
->>>>>>> 78452048 (feat(auth): enforce password character-class complexity (#2581))
 
 ### Security
 
@@ -80,6 +67,15 @@ operators or integrators to act when upgrading.
   the web flow.
 
 ### Added
+
+- **`KLANGKD_PASSWORD_REQUIRE_{UPPER,LOWER,DIGIT,SPECIAL}` (#2581).**
+  Character-class complexity requirements for passwords: each setting is
+  the number of characters of that class a password must contain
+  (e.g. `2` = at least two uppercase letters), `0` (the default) = no
+  requirement. Enforced on registration, password change/reset, invite
+  acceptance, and admin set-password; advertised to clients via
+  `password_requirements` in `/api/v1/config` for inline validation in
+  the web UI and CLI.
 
 - **FIPS 140-3 workspace image (#2570, #2577).** New
   `src/containers/workspace/Dockerfile.fips` variant builds on the

@@ -183,7 +183,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      expect(service.minPasswordLength, 12);
+      expect(service.passwordPolicy.minLength, 12);
     });
 
     test('min_password_length defaults to 8 when absent', () async {
@@ -192,7 +192,7 @@ void main() {
       final service = AuthService();
       await Future.delayed(Duration.zero);
 
-      expect(service.minPasswordLength, 8);
+      expect(service.passwordPolicy.minLength, 8);
     });
 
     test('loads password_requirements from /api/config', () async {

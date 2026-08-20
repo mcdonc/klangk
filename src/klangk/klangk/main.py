@@ -37,6 +37,7 @@ from . import (
     wshandler,
 )
 from .llm_router import LLMRouter
+from .auth import _PASSWORD_CLASSES, password_class_counts
 from .settings import KlangkSettings
 from .logger import configure as configure_logging
 from .api import root_router, router
@@ -233,6 +234,38 @@ class Lifecycle:
                     f"auth_modes={auth_modes} requires KLANGKD_DEFAULT_PASSWORD "
                     "(set it in klangkd.yaml or the env). Refusing to boot "
                     "without a known admin password."
+                )
+            # The default admin password must satisfy the same policy every
+            # other password setter enforces (#2581). Fail fast at startup —
+            # seeding a non-compliant password and letting it fail at first
+            # change would strand deployments whose policy was tightened
+            # after the seed ran.
+            _policy_errors = []
+            min_len = int(settings.min_password_length or "8")
+            if len(password) < min_len:
+                _policy_errors.append(
+                    f"is shorter than KLANGKD_MIN_PASSWORD_LENGTH={min_len}"
+                )
+            _counts = password_class_counts(password)
+            for _key, _name in _PASSWORD_CLASSES:
+                _need = getattr(settings, f"password_require_{_key}")
+                if _need > 0 and _counts[_key] < _need:
+                    _policy_errors.append(
+                        f"lacks the {_need} required {_name}"
+                        f"{'s' if _need != 1 else ''} "
+                        f"(KLANGKD_PASSWORD_REQUIRE_{_key.upper()}={_need})"
+                    )
+            if _policy_errors:
+                raise RuntimeError(
+                    "KLANGKD_DEFAULT_PASSWORD violates the configured "
+                    f"password policy: it {_policy_errors[0]}"
+                    + (
+                        f" (and {len(_policy_errors) - 1} more issue(s))"
+                        if len(_policy_errors) > 1
+                        else ""
+                    )
+                    + ". Fix the password or loosen the policy; refusing to "
+                    "boot with a seeded admin that already violates it."
                 )
             password_hash = bcrypt.hashpw(
                 password.encode(), bcrypt.gensalt()
