@@ -1,10 +1,10 @@
 """Migration 0001: password history for reuse prevention (#2582).
 
-One row per (user, password hash) at the time it was set. Nothing reads
-or writes this table yet — the reuse check and the
-``KLANGKD_PASSWORD_HISTORY_COUNT`` setting land with #2582, which stacks
-on this schema. ``ON DELETE CASCADE`` keeps history from outliving its
-user.
+One row per retired hash: ``update_password`` inserts the *old* hash
+here when the user changes away from it, in the same transaction as
+the swap. ``Auth.validate_password_not_reused`` checks the window
+before every set; ``KLANGKD_PASSWORD_HISTORY_COUNT`` bounds it.
+``ON DELETE CASCADE`` keeps history from outliving its user.
 """
 
 from klangk.model.migrations.base import Migration

@@ -1467,6 +1467,14 @@ class TestNumericSettingCoercion:
         with pytest.raises(Exception, match="port_range_start"):
             make_settings({"KLANGKD_PORT_RANGE_START": "70000"})
 
+    def test_password_history_count_capped(self):
+        """#2582: the reuse window is capped (each retired hash costs a
+        bcrypt verify per set); 24 is the documented maximum."""
+        with pytest.raises(Exception, match="password_history_count"):
+            make_settings({"KLANGKD_PASSWORD_HISTORY_COUNT": "25"})
+        s = make_settings({"KLANGKD_PASSWORD_HISTORY_COUNT": "24"})
+        assert s.password_history_count == 24
+
     @pytest.mark.parametrize(
         "field",
         [

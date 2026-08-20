@@ -188,6 +188,13 @@ def _coerce_positive_int(v, name: str) -> int | None:
 # here to avoid an import cycle with klangk.auth.
 _PASSWORD_REQUIRE_MAX = 72
 
+# Ceiling for KLANGKD_PASSWORD_HISTORY_COUNT (#2582): every remembered
+# hash costs one bcrypt verify per password set (in a worker thread, but
+# still real CPU), so an unbounded count is a self-inflicted DoS knob.
+# 24 matches the ceiling of Windows' "Enforce password history"
+# policy, a common industry benchmark for this knob.
+_PASSWORD_HISTORY_MAX = 24
+
 
 def _resolve_numeric_indirection(v, name: str):
     """Resolve ``file:``/``cmd:`` on a raw numeric-setting value (#2603).
@@ -724,12 +731,12 @@ class KlangkSettings(BaseSettings):
     password_require_lower: int = 0
     password_require_digit: int = 0
     password_require_special: int = 0
-    # Password reuse window (#2582): how many previous password hashes
-    # to remember per user. A new password is rejected (400) when it
-    # matches the current password or any remembered one. 0 (the
-    # default) disables reuse checking and history recording entirely.
-    # Each check runs one bcrypt verify per remembered hash, so very
-    # large values slow every password set.
+    # Password reuse window (#2582): how many **previous** password
+    # hashes to retire into history per user — the current hash always
+    # counts separately. A new password is rejected (400) when it
+    # matches the current or any retired hash. 0 (the default)
+    # disables reuse checking and history recording entirely. Capped
+    # at 24 (each retired hash costs a bcrypt verify per set).
     password_history_count: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
@@ -1319,6 +1326,20 @@ class KlangkSettings(BaseSettings):
             minimum=minimum,
             default=cls.model_fields[info.field_name].default,
         )
+
+    @field_validator("password_history_count", mode="after")
+    @classmethod
+    def _cap_password_history(cls, v):
+        """Reject counts above ``_PASSWORD_HISTORY_MAX`` (#2582): each
+        retired hash costs one bcrypt verify per password set, so an
+        unbounded count is a self-inflicted CPU knob."""
+        if v > _PASSWORD_HISTORY_MAX:
+            raise ValueError(
+                f"password_history_count={v} must be <= "
+                f"{_PASSWORD_HISTORY_MAX} — every remembered hash costs"
+                " a bcrypt verify on each password set."
+            )
+        return v
 
     @field_validator("port_range_start", mode="after")
     @classmethod

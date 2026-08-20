@@ -286,7 +286,6 @@ class UsersModel:
                     handle,
                 ),
             )
-            await self.record_password_history(user_id, password_hash, db=db)
             return {
                 "id": user_id,
                 "email": email,
@@ -309,7 +308,6 @@ class UsersModel:
             " VALUES (?, ?, ?, 0, ?)",
             (user_id, email, password_hash, handle),
         )
-        await self.record_password_history(user_id, password_hash, db=db)
         return handle
 
     async def get_user_handle(self, user_id: str) -> str | None:
@@ -711,56 +709,61 @@ class UsersModel:
             )
 
     async def update_password(self, user_id: str, password_hash: str) -> None:
-        """Update a user's password hash.
+        """Update a user's password hash and retire the old one (#2582).
 
-        Raises ``AgentPrincipalError`` if the target is the system agent
-        (the agent must never have a password).
+        The **old** hash moves into the password history inside the same
+        transaction (the current hash lives in ``users``; history holds
+        previous passwords only). Raises ``AgentPrincipalError`` if the
+        target is the system agent. A missing user is a silent no-op —
+        callers translate (reset/change 404 via their own lookups) — and
+        crucially records nothing, so a reset token for a since-deleted
+        user cannot trip the history FK (#2611 review).
         """
         if user_id == AGENT_USER_ID:
             raise AgentPrincipalError(
                 "Cannot set a password on the system agent user"
             )
+        count = self.app.state.settings.password_history_count
         async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+            )
+            row = await cursor.fetchone()
+            if row is None:  # deleted user: nothing to update or retire
+                return
             await db.execute(
                 "UPDATE users SET password_hash = ? WHERE id = ?",
                 (password_hash, user_id),
             )
-            await self.record_password_history(user_id, password_hash, db=db)
+            if count > 0 and row["password_hash"] is not None:
+                await self._retire_password(
+                    db, user_id, row["password_hash"], count
+                )
 
     # --- password history (#2582; table from migration 0001) ---
 
-    async def record_password_history(
-        self, user_id: str, password_hash: str | None, db=None
+    async def _retire_password(
+        self, db, user_id: str, old_hash: str, count: int
     ) -> None:
-        """Append *password_hash* to the user's history and prune (#2582).
+        """Append *old_hash* to the history and prune to the window.
 
-        No-op when reuse prevention is off
-        (``password_history_count <= 0``) or the hash is ``None`` (OIDC
-        users). Runs on *db* when given (the caller's transaction), else
-        opens its own — both forms are used by the password setters.
+        Runs on the caller's transaction. *count* is the caller's
+        snapshot of ``password_history_count`` (read once per
+        transaction so a mid-flight SIGHUP swap cannot make the insert
+        and the prune disagree — e.g. N→0 pruning the row just
+        written). Pruning keeps the *count* most-recent retired hashes.
         """
-        count = self.app.state.settings.password_history_count
-        if count <= 0 or password_hash is None:
-            return
-
-        async def _record(db) -> None:
-            await db.execute(
-                "INSERT INTO password_history (user_id, password_hash)"
-                " VALUES (?, ?)",
-                (user_id, password_hash),
-            )  # noqa: S608
-            await db.execute(
-                "DELETE FROM password_history WHERE user_id = ?"
-                " AND id NOT IN (SELECT id FROM password_history"
-                " WHERE user_id = ? ORDER BY id DESC LIMIT ?)",
-                (user_id, user_id, count),
-            )  # noqa: S608
-
-        if db is not None:
-            await _record(db)
-        else:
-            async with self.app.state.db.transaction() as tx:
-                await _record(tx)
+        await db.execute(
+            "INSERT INTO password_history (user_id, password_hash)"
+            " VALUES (?, ?)",
+            (user_id, old_hash),
+        )  # noqa: S608
+        await db.execute(
+            "DELETE FROM password_history WHERE user_id = ?"
+            " AND id NOT IN (SELECT id FROM password_history"
+            " WHERE user_id = ? ORDER BY id DESC LIMIT ?)",
+            (user_id, user_id, count),
+        )  # noqa: S608
 
     async def get_password_history(
         self, user_id: str, limit: int

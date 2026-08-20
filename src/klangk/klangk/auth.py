@@ -8,6 +8,7 @@ validation, the lockout predicate, the Pydantic models) and the FastAPI
 dependency callables (``get_current_user`` etc.) stay module-level.
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -330,33 +331,48 @@ class Auth:
     async def validate_password_not_reused(
         self, user_id: str, password: str
     ) -> None:
-        """Reject *password* if it matches the current or a remembered
+        """Reject *password* if it matches the current or a retired
         hash (#2582).
 
-        Checks the current hash first (it is not in the history table
-        until the next change), then every remembered hash — one bcrypt
-        verify each. No-op when ``password_history_count <= 0``.
+        Checks the current hash first (it lives in ``users``), then the
+        retired hashes — up to ``password_history_count + 1`` bcrypt
+        verifies, run in a worker thread so the event loop is not
+        blocked for the duration (#2611 review). No-op when
+        ``password_history_count <= 0``.
+
+        Known race, accepted: the check runs *before* the write, so two
+        concurrent password sets on the same account can both validate
+        against the pre-state (the loser's hash is then never retired).
+        Every caller holds the current password, an admin session, or a
+        reset token — the only exploiter is the account owner racing
+        themselves — so the residual risk is a self-inflicted one-slot
+        miss, not a bypass (#2611 review).
         """
         count = self.password_history_count
         if count <= 0:
             return
         users = self.app.state.model.users
+
+        def _matches_any(hashes: list[str]) -> bool:
+            return any(verify_password(password, h) for h in hashes)
+
         current = await users.get_password_hash(user_id)
-        if current is not None and verify_password(password, current):
+        if current is not None and await asyncio.to_thread(
+            _matches_any, [current]
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Password matches your current password; choose a new one"
+                    "Password matches the current password; choose a"
+                    " different one"
                 ),
             )
-        for hashed in await users.get_password_history(user_id, count):
-            if verify_password(password, hashed):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Password was used recently; choose a different one"
-                    ),
-                )
+        retired = await users.get_password_history(user_id, count)
+        if await asyncio.to_thread(_matches_any, retired):
+            raise HTTPException(
+                status_code=400,
+                detail=("Password was used recently; choose a different one"),
+            )
 
     # --- lockout predicates (read lockout config) ---
 

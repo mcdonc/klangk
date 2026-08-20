@@ -1427,8 +1427,8 @@ class TestResetPassword:
     async def _create_user_with(self, app, password):
         """Seed a verified user with an explicit (policy-valid) password.
 
-        Goes through *app*'s model so the initial hash is recorded when
-        that app's history count is patched (#2582).
+        Creation records nothing (#2582): the initial hash enters
+        history only once the user changes/resets *away* from it.
         """
         password_hash = auth_mod.hash_password(password)
         return await app.state.model.users.create_user(
@@ -1544,8 +1544,9 @@ class TestChangePassword:
             raising=False,
         )
         headers = await _auth_headers(client)
-        # The seed hash predates the feature (count was 0 at fixture
-        # time), so first change to a live password, which is recorded.
+        # Change away from the seed password once — this retires the
+        # seed hash into history; the new hash is never recorded until
+        # the user changes away from *it* (#2582).
         resp = await client.post(
             "/api/v1/auth/change-password",
             json={
