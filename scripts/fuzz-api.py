@@ -501,6 +501,7 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         {"limit": "int", "offset": "int"},
     ),
     ("POST", f"{P}/admin/users/{{user_id}}/unlockout", None, None),
+    ("GET", f"{P}/admin/users/{{user_id}}/sessions", None, None),
     ("GET", f"{P}/admin/groups", None, None),
     (
         "POST",
