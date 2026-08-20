@@ -326,11 +326,10 @@ class CaddyRenderer:
         The setting is bytes (default 500 MB); Caddy's ``max_size`` accepts a
         size with a unit (``500MB``). Minimum 1MB.
         """
+        # int-typed + validated at construction since #2603; None
+        # (explicitly emptied) means the default.
         raw = self.app.state.settings.file_upload_size_max
-        try:
-            bytes_ = int(str(raw))
-        except (TypeError, ValueError):
-            bytes_ = 524288000
+        bytes_ = raw if raw is not None else 524288000
         mb = max(1, bytes_ // 1048576)
         return f"{mb}MB"
 
@@ -581,8 +580,11 @@ class CaddyRenderer:
           ``127.0.0.1:<port>`` (WebSocket upgrade is automatic in
           ``reverse_proxy``).
         """
-        raw = self.app.state.settings.hosted_ports_per_workspace
-        if str(raw).strip() == "0":
+        # int-typed since #2603; None (explicitly emptied) means the
+        # default, 0 disables hosted ports. Compare against None so a
+        # legitimate 0 is not swallowed by an `or`.
+        _ports = self.app.state.settings.hosted_ports_per_workspace
+        if (_ports if _ports is not None else 5) == 0:
             return "	handle /hosted/* {\n		respond 404\n	}\n"
         return (
             "	@hostedSlashless path_regexp hostedsl ^/hosted/[^/]+/([0-9]+)$\n"

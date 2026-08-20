@@ -210,9 +210,11 @@ class TestMaxBodySize:
         s = make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "100"})
         assert _renderer(s)._max_body_size() == "1MB"
 
-    def test_garbage_falls_back(self):
-        s = make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
-        assert _renderer(s)._max_body_size() == "500MB"
+    def test_garbage_rejected_at_startup(self):
+        # #2603: a malformed upload cap aborts construction (naming the
+        # field) instead of silently falling back to 500MB at render time.
+        with pytest.raises(Exception, match="file_upload_size_max"):
+            make_settings({"KLANGKD_FILE_UPLOAD_SIZE_MAX": "not-a-number"})
 
 
 class TestContainerSourceLists:

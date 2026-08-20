@@ -30,6 +30,21 @@ operators or integrators to act when upgrading.
 
 ## [Unreleased]
 
+### Changed
+
+- **Numeric config accepts bare numbers (#2603).** All numeric
+  `KLANGKD_*` settings (`access_token_hours`, `min_password_length`,
+  the `login_lockout_*` trio, `invite_expire_hours`, `port_range_start`,
+  `websocket_msg_size_max`, `smtp_port`, `file_upload_size_max`, the
+  `health_check_*` floats, `hosted_ports_per_workspace`) now accept a
+  bare YAML int/float (`access_token_hours: 48`) as well as quoted
+  strings and env vars, and keep `file:`/`cmd:` indirection working.
+  Malformed values (bools, floats-for-ints, negatives, out-of-range
+  ports) fail at startup naming the field instead of at request time;
+  `smtp_use_tls: true` (native bool) is also accepted. Zero remains
+  legal only where it already meant "off" (length floor, lockout,
+  hosted ports).
+
 ### Security
 
 - **WebSocket error responses (#1718).** Terminal- and shared-terminal

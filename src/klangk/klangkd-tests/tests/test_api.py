@@ -5340,7 +5340,7 @@ class TestFileRoutes:
         ws_id = await self._create_workspace(client, headers)
         try:
             monkeypatch.setattr(
-                app.state.settings, "file_upload_size_max", "10"
+                app.state.settings, "file_upload_size_max", 10
             )
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/big.txt",
@@ -8462,7 +8462,7 @@ class TestWorkspaceExportImport:
 
     async def test_import_size_limit(self, client, user, app, monkeypatch):
         """Upload exceeding size limit is rejected."""
-        monkeypatch.setattr(app.state.settings, "file_upload_size_max", "100")
+        monkeypatch.setattr(app.state.settings, "file_upload_size_max", 100)
 
         headers = await self._user_headers(client)
         resp = await client.post(

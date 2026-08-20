@@ -107,8 +107,8 @@ jwt_secret: "file:/run/secrets/jwt"
 prevent_insecure_jwt_secret: "1"
 default_user: admin@example.com
 default_password: "file:/run/secrets/admin-pw"
-access_token_hours: "24"
-min_password_length: "12"
+access_token_hours: 24
+min_password_length: 12
 
 # --- Server / network ---
 listen: "127.0.0.1"
@@ -126,7 +126,7 @@ data_dir: /var/lib/klangk/data
 image_name: klangk-workspace
 image_pull_policy: missing
 data_dir: /var/lib/klangk/data
-port_range_start: "9000"
+port_range_start: 9000
 allow_sudo: "true"
 
 # --- OIDC (inline) ---
@@ -140,7 +140,7 @@ oidc_providers:
 
 # --- SMTP ---
 smtp_host: smtp.example.com
-smtp_port: "587"
+smtp_port: 587
 smtp_user: klangk@example.com
 smtp_password: "file:/run/secrets/smtp-pw"
 smtp_from: noreply@example.com
