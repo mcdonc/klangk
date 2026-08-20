@@ -1,5 +1,6 @@
 """Admin routes: user admin, invitation admin, group admin + the user-accessible /groups endpoints, and the admin ACL tree/resource endpoints."""
 
+import asyncio
 import logging
 import uuid
 
@@ -219,7 +220,9 @@ async def admin_create_user(
         user_id = str(uuid.uuid4())
         # Use a random password hash — the user will set their own
         # password via the verification link.
-        password_hash = auth.hash_password(uuid.uuid4().hex[:24])
+        password_hash = await asyncio.to_thread(
+            auth.hash_password, uuid.uuid4().hex[:24]
+        )
 
         hostname, proto, base_path = (
             request.app.state.util.derive_hosting_info(
@@ -257,7 +260,7 @@ async def admin_create_user(
             detail="Password is required when not sending verification email",
         )
     app.state.auth.validate_password(req.password)
-    password_hash = auth.hash_password(req.password)
+    password_hash = await asyncio.to_thread(auth.hash_password, req.password)
     user = await app.state.model.users.create_user(
         req.email, password_hash, verified=True
     )
@@ -330,7 +333,9 @@ async def update_user(
         await app.state.auth.validate_password_not_reused(
             user_id, req.password
         )
-        password_hash = auth.hash_password(req.password)
+        password_hash = await asyncio.to_thread(
+            auth.hash_password, req.password
+        )
         await app.state.model.users.update_password(user_id, password_hash)
     if req.handle is not None:
         try:

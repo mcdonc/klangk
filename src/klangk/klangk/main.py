@@ -266,7 +266,9 @@ class Lifecycle:
                     + ". Fix the password or loosen the policy; refusing to "
                     "boot with a seeded admin that already violates it."
                 )
-            password_hash = auth.hash_password(password)
+            password_hash = await asyncio.to_thread(
+                auth.hash_password, password
+            )
         else:
             # none / oidc: seed with null password. The row exists for
             # /auth/local token minting; no endpoint checks the hash.

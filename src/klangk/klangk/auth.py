@@ -39,10 +39,10 @@ MAX_PASSWORD_BYTES = 72
 # the OpenSSL the container provides, so under the FIPS provider (see
 # #2570) password hashing routes through the validated module — unlike
 # bcrypt, which bundles its own blowfish implementation and can never be
-# FIPS-approvable. 600k iterations is the OWASP-recommended strength for
-# PBKDF2. Tests patch ``PBKDF2_ITERATIONS`` down for suite speed; the
-# stored format embeds the iteration count, so hashes made under any
-# value still verify.
+# FIPS-approvable. 600k iterations is deliberately above OWASP's current
+# PBKDF2-HMAC-SHA512 recommendation (210k) for margin. Tests patch
+# ``PBKDF2_ITERATIONS`` down for suite speed; the stored format embeds the
+# iteration count, so hashes made under any value still verify.
 PBKDF2_ITERATIONS = 600_000
 _HASH_SCHEME = "pbkdf2_sha512"
 _SALT_BYTES = 16
@@ -669,7 +669,7 @@ class Auth:
         validate_email(req.email)
         self.validate_password(req.password)
 
-        password_hash = hash_password(req.password)
+        password_hash = await asyncio.to_thread(hash_password, req.password)
         # The duplicate-email pre-check above is not atomic with the
         # INSERT, so two concurrent registrations can both pass it and
         # one hits the UNIQUE constraint. Catch that and return the same
@@ -702,7 +702,8 @@ class Auth:
         lockout_key = user["email"] if user else req.identifier
 
         # Check if locked out before doing any expensive work (the only
-        # expensive step below is verify_password's PBKDF2).
+        # expensive step below is verify_password's PBKDF2, run in a
+        # worker thread so the event loop is not blocked).
         if self.login_lockout_failures > 0:
             attempt_info = await self.app.state.model.login_attempts.get_login_attempt_info(
                 lockout_key
@@ -716,7 +717,9 @@ class Auth:
         if (
             user is None
             or not user.get("password_hash")
-            or not verify_password(req.password, user["password_hash"])
+            or not await asyncio.to_thread(
+                verify_password, req.password, user["password_hash"]
+            )
         ):
             if self.login_lockout_failures > 0:
                 # Reuse the attempt_info fetched up front for the lockout

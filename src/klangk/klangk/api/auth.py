@@ -1,5 +1,6 @@
 """Authentication routes: register/verify/login/logout, password and email/handle changes, resend-verification, forgot/reset-password, refresh, accept-invite, and the proxy auth_request workspace-token validator."""
 
+import asyncio
 import logging
 import time
 import uuid
@@ -102,7 +103,7 @@ async def register(
         raise HTTPException(status_code=400, detail="Registration failed")
     request.app.state.auth.validate_password(req.password)
 
-    password_hash = auth.hash_password(req.password)
+    password_hash = await asyncio.to_thread(auth.hash_password, req.password)
     user_id = str(uuid.uuid4())
 
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
@@ -199,7 +200,9 @@ async def resend_verification(
     if (
         user is None
         or not user.get("password_hash")
-        or not auth.verify_password(req.password, user["password_hash"])
+        or not await asyncio.to_thread(
+            auth.verify_password, req.password, user["password_hash"]
+        )
     ):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if user.get("verified"):
@@ -303,7 +306,7 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
     await request.app.state.auth.validate_password_not_reused(
         user_id, req.password
     )
-    password_hash = auth.hash_password(req.password)
+    password_hash = await asyncio.to_thread(auth.hash_password, req.password)
     await request.app.state.model.users.update_password(user_id, password_hash)
     # Auto-login after reset
     user = await request.app.state.model.users.get_user_by_id(user_id)
@@ -415,8 +418,10 @@ async def change_password(
             status_code=403,
             detail="Account is managed by your identity provider",
         )
-    if stored is None or not auth.verify_password(
-        req.current_password, stored["password_hash"]
+    if stored is None or not await asyncio.to_thread(
+        auth.verify_password,
+        req.current_password,
+        stored["password_hash"],
     ):
         raise HTTPException(
             status_code=401, detail="Current password is incorrect"
@@ -425,7 +430,9 @@ async def change_password(
     await request.app.state.auth.validate_password_not_reused(
         user["id"], req.new_password
     )
-    password_hash = auth.hash_password(req.new_password)
+    password_hash = await asyncio.to_thread(
+        auth.hash_password, req.new_password
+    )
     await request.app.state.model.users.update_password(
         user["id"], password_hash
     )
@@ -453,8 +460,8 @@ async def change_email(
             status_code=403,
             detail="Account is managed by your identity provider",
         )
-    if stored is None or not auth.verify_password(
-        req.password, stored["password_hash"]
+    if stored is None or not await asyncio.to_thread(
+        auth.verify_password, req.password, stored["password_hash"]
     ):
         raise HTTPException(status_code=401, detail="Password is incorrect")
     auth.validate_email(req.email)
@@ -502,8 +509,8 @@ async def change_handle(
             status_code=403,
             detail="Account is managed by your identity provider",
         )
-    if stored is None or not auth.verify_password(
-        req.password, stored["password_hash"]
+    if stored is None or not await asyncio.to_thread(
+        auth.verify_password, req.password, stored["password_hash"]
     ):
         raise HTTPException(status_code=401, detail="Password is incorrect")
     try:
@@ -626,7 +633,7 @@ async def accept_invite(req: AcceptInviteRequest, request: Request):
             status_code=400, detail="An account with this email already exists"
         )
 
-    password_hash = auth.hash_password(req.password)
+    password_hash = await asyncio.to_thread(auth.hash_password, req.password)
     user = await request.app.state.model.users.create_user(
         email, password_hash, verified=True
     )
