@@ -45,7 +45,8 @@ export const DEMO_PASSWORD =
  *  cast of throwaway users.
  *
  *  NOTE: do NOT fall through to KLANGKD_DEFAULT_USER / KLANGKD_DEFAULT_PASSWORD
- *  — those are the BOOTSTRAP admin (admin@plope.com / "admin"), a DIFFERENT
+ *  — those are the BOOTSTRAP admin (admin@plope.com / "Admin123!",
+ *  the KLANGKD_DEFAULT_PASSWORD default), a DIFFERENT
  *  account used only by demo-seed.ts for destructive reset. The hero is its
  *  own account: admin@example.com / "adminpass". */
 export const DEMO_ADMIN_EMAIL =

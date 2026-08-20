@@ -83,7 +83,9 @@ DEMO_OIDC_CONFIG="$_SCRIPT_DIR/demo-oidc.yaml"
 # this account to manage users + run the destructive reset. Must match the
 # seed's BOOTSTRAP_EMAIL / BOOTSTRAP_PASSWORD defaults (see demo-seed.ts).
 DEMO_BOOTSTRAP_EMAIL="${KLANGKD_DEFAULT_USER:-admin@plope.com}"
-DEMO_BOOTSTRAP_PASSWORD="${KLANGKD_DEFAULT_PASSWORD:-admin}"
+# Must satisfy the boot-time password-policy gate (#2581, #2604);
+# keep in sync with demo-seed.ts BOOTSTRAP_PASSWORD.
+DEMO_BOOTSTRAP_PASSWORD="${KLANGKD_DEFAULT_PASSWORD:-Admin123!}"
 # LLM provider the live-agent scenes (pi -p in scene 2, clanker in 6/8) call
 # via the /llm-proxy. Override with KLANGKBUILD_DEMO_LLM_* if you want a different
 # provider for the demo. Defaults to z.ai (glm-5.2); the API key uses the
