@@ -13,7 +13,10 @@ as the seeded default user with no password — see
 
 With `KLANGKD_AUTH_MODES` set to `password` (or `both`), klangk uses
 email/password accounts. New users register with an email address, receive
-a verification link, and set a password. Passwords are hashed with bcrypt.
+a verification link, and set a password. Passwords are hashed with
+PBKDF2-HMAC-SHA512 (600,000 iterations) via Python's `hashlib`, so hashing
+routes through the OpenSSL the container provides — FIPS-approvable when
+the FIPS provider is active ([FIPS](../deployment/fips.md)).
 
 ### Registration
 

@@ -126,9 +126,9 @@ above before rolling out.
 
 FIPS posture also depends on the algorithms klangkd itself uses for
 password storage. bcrypt bundles its own crypto and is not
-FIPS-approvable; the switch to PBKDF2-HMAC-SHA512 via `hashlib`
-(which routes through the validated provider) is tracked in
-[#2576](https://github.com/mcdonc/klangk/issues/2576).
+FIPS-approvable; it has been replaced with PBKDF2-HMAC-SHA512 via
+`hashlib`, which routes through the validated provider
+([#2576](https://github.com/mcdonc/klangk/issues/2576)).
 
 ## Why the container meets FIPS requirements
 

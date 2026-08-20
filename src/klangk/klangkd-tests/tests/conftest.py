@@ -10,28 +10,21 @@ os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
 import types
 
-import bcrypt
-
 import pytest
 
 from klangk.settings import KlangkSettings
 
 from _helpers import make_settings
 
-# Use fast bcrypt rounds (4 instead of default 12) for all tests.
-_original_gensalt = bcrypt.gensalt
+# Speed every hash in the suite up by dropping PBKDF2 to 1k iterations
+# (production default is 600k). The stored format embeds the iteration
+# count, so hashes made here still verify wherever they're read back.
+from klangk import auth as _klangk_auth
 
-
-def _fast_gensalt(rounds=4, prefix=b"2b"):
-    return _original_gensalt(rounds=4, prefix=prefix)
-
-
-bcrypt.gensalt = _fast_gensalt
+_klangk_auth.PBKDF2_ITERATIONS = 1_000
 
 _TEST_PASSWORD = "testpass"
-_TEST_PASSWORD_HASH = bcrypt.hashpw(
-    _TEST_PASSWORD.encode(), bcrypt.gensalt()
-).decode()
+_TEST_PASSWORD_HASH = _klangk_auth.hash_password(_TEST_PASSWORD)
 
 
 @pytest.fixture(autouse=True)

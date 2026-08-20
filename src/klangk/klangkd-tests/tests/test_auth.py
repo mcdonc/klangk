@@ -51,7 +51,58 @@ class TestPasswordHashing:
     def test_different_hashes_for_same_password(self):
         h1 = auth.hash_password("same")
         h2 = auth.hash_password("same")
-        assert h1 != h2  # bcrypt uses random salt
+        assert h1 != h2  # PBKDF2 uses a random salt
+
+    def test_hash_format_is_self_describing(self):
+        # pbkdf2_sha512$<iterations>$<b64-salt>$<b64-digest> (#2576)
+        hashed = auth.hash_password("mypassword")
+        scheme, iterations, b64_salt, b64_digest = hashed.split("$")
+        assert scheme == "pbkdf2_sha512"
+        assert int(iterations) == auth.PBKDF2_ITERATIONS
+        # 16-byte salt, 64-byte SHA-512 digest, standard base64
+        import base64
+
+        assert len(base64.b64decode(b64_salt)) == 16
+        assert len(base64.b64decode(b64_digest)) == 64
+
+    def test_verify_uses_stored_iteration_count(self):
+        # conftest drops PBKDF2_ITERATIONS for suite speed; a hash made
+        # at a different count must still verify (self-describing format).
+        hashed = auth.hash_password("mypassword")
+        scheme, iterations, _, _ = hashed.split("$")
+        assert int(iterations) == 1_000  # the patched value, embedded
+        assert auth.verify_password("mypassword", hashed)
+
+    def test_production_strength_round_trip(self, monkeypatch):
+        monkeypatch.setattr(auth, "PBKDF2_ITERATIONS", 600_000)
+        hashed = auth.hash_password("mypassword")
+        assert hashed.split("$")[1] == "600000"
+        assert auth.verify_password("mypassword", hashed)
+        assert not auth.verify_password("wrongpassword", hashed)
+
+    def test_verify_rejects_malformed_hashes(self):
+        for bad in (
+            "",  # empty
+            "not-a-hash",  # too few fields
+            "pbkdf2_sha512$1000$short$extra$field",  # too many fields
+            "bcrypt$12$deadbeef$deadbeef",  # unknown scheme
+            "pbkdf2_sha512$abc$c2FsdA==$ZGF0YQ==",  # non-integer count
+            "pbkdf2_sha512$0$c2FsdA==$ZGF0YQ==",  # zero iterations
+            "pbkdf2_sha512$-1$c2FsdA==$ZGF0YQ==",  # negative count
+            "pbkdf2_sha512$99999999999$c2FsdA==$ZGF0YQ==",  # over ceiling
+            "pbkdf2_sha512$1000$!!!$ZGF0YQ==",  # invalid salt base64
+            "pbkdf2_sha512$1000$c2FsdA==$!!!",  # invalid digest base64
+            "$2b$12$KIXQeQwGjGIdLxL7ZoOeleTFjU3sKvzC"  # legacy bcrypt shape
+            "aJm2WQ0GWZ8qZah9v1O",
+        ):
+            assert not auth.verify_password("mypassword", bad), bad
+
+    def test_bcrypt_dependency_is_gone(self):
+        # #2576: bcrypt must not be importable anywhere in the package's
+        # environment (no direct use, no transitive dependency).
+        import importlib.util
+
+        assert importlib.util.find_spec("bcrypt") is None
 
     def test_hash_password_rejects_over_72_bytes(self):
         long_pw = "a" * 73
@@ -419,9 +470,7 @@ class TestLogin:
         assert exc_info.value.detail == "Invalid credentials"
 
     async def test_login_unverified(self, db, app_state):
-        import bcrypt
-
-        password_hash = bcrypt.hashpw(b"testpass", bcrypt.gensalt()).decode()
+        password_hash = auth.hash_password("testpass")
         await app_state.state.model.users.create_user(
             "unverified@example.com", password_hash, verified=False
         )
@@ -712,9 +761,7 @@ class TestVerification:
         assert _auth().decode_verification_token(token) is None
 
     async def test_verify_user(self, db, app_state):
-        import bcrypt
-
-        password_hash = bcrypt.hashpw(b"pass", bcrypt.gensalt()).decode()
+        password_hash = auth.hash_password("pass")
         user = await app_state.state.model.users.create_user(
             "toverify@example.com", password_hash, verified=False
         )

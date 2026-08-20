@@ -904,9 +904,9 @@ class TestAuthRoutes:
 
     async def test_verify_email(self, client, db, app_state):
         """Verify endpoint marks user as verified."""
-        import bcrypt
+        from klangk import auth as auth_mod
 
-        password_hash = bcrypt.hashpw(b"pass", bcrypt.gensalt()).decode()
+        password_hash = auth_mod.hash_password("pass")
         user = await app_state.state.model.users.create_user(
             "unverified@example.com", password_hash, verified=False
         )
