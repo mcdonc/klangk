@@ -319,6 +319,9 @@ class KlangkApp(App):
             return
         self._pop_above(main)
         main.refresh_lists()
+        # The reused screen still shows the previous server's last-login
+        # stamp; drop it and re-fetch for the new identity (#2583).
+        main.reload_last_login()
 
     def server_changed_needs_login(self) -> None:
         """Switch server then show LoginScreen (invalid/missing creds)."""

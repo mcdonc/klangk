@@ -64,6 +64,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Last successful login time (#2583).** Every login (password,
+  SSO, no-auth, and the auto-login after register/verify/reset/invite
+  acceptance) now stamps a `last_login_at` timestamp on the user.
+  `GET /auth/me` reports it, the TUI main-screen status bar shows it,
+  and `klangk account show` prints it — so users can spot unexpected
+  access to their account. Applied as schema migration 0002.
+
 - **Schema migrations (#30).** Schema changes are now applied as
   ordered, once-only migrations recorded in a new `schema_migrations`
   table at startup, instead of ad-hoc `CREATE TABLE IF NOT EXISTS`

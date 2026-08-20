@@ -3,6 +3,7 @@
 import hashlib
 import re
 import uuid
+from datetime import datetime, timezone
 
 
 # Agent identity
@@ -783,9 +784,24 @@ class UsersModel:
         )
         return None if row is None else row["password_hash"]
 
+    async def record_login(self, user_id: str) -> None:
+        """Stamp the user's most recent successful login (#2583).
+
+        Called from every session-minting auth path (password login, the
+        OIDC callback, no-auth local login, and the auto-login after
+        register/verify/reset/invite-accept). Token refreshes continue a
+        session rather than establish one and do not stamp. Stored as a
+        UTC ISO-8601 string; displayed to the user via ``GET /auth/me``.
+        """
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "UPDATE users SET last_login_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), user_id),
+            )
+
     async def get_user_by_id(self, user_id: str) -> dict | None:
         row = await self.app.state.db.fetchone(
-            "SELECT id, email, handle FROM users WHERE id = ?",
+            "SELECT id, email, handle, last_login_at FROM users WHERE id = ?",
             (user_id,),
         )
         if row is None:
@@ -794,6 +810,7 @@ class UsersModel:
             "id": row["id"],
             "email": row["email"],
             "handle": row["handle"],
+            "last_login_at": row["last_login_at"],
         }
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:

@@ -262,6 +262,14 @@ class MainScreen(Screen):
         # it would drop a pending entry for a workspace that hasn't appeared
         # in any fetch yet.)
         self._running_overlay: dict[str, bool] = {}
+        # The user's last successful login, rendered for the status bar
+        # (#2583). Fetched once on mount by ``_load_last_login`` (a
+        # blocking /auth/me hit, so it runs in a worker) and None until
+        # that returns. Re-fetched by ``reload_last_login`` after a
+        # server switch — the App reuses this screen there, so on_mount
+        # does not re-run and the old server's value would linger next
+        # to the new identity.
+        self._last_login: str | None = None
         self.query_one("#filter_bar").display = False
         self._refresh_action_hints()
         # One-time list load. There is no reachability heartbeat and no REST
@@ -272,6 +280,44 @@ class MainScreen(Screen):
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(self._status_loop, name="status-ws")
             self.app.run_worker(self._token_refresh_loop, name="token-refresh")
+            self.app.run_worker(
+                self._load_last_login,
+                name="last-login",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    def reload_last_login(self) -> None:
+        """Drop the shown last login and re-fetch it (#2583).
+
+        Called by ``App.server_changed``: that path reuses this screen,
+        so without this the status bar would keep showing the previous
+        server's (possibly another user's) login time beside the new
+        server/user identity. Exclusive, so a still-running on-mount
+        fetch for the old server is cancelled rather than racing this
+        one.
+        """
+        self._last_login = None
+        self._refresh_status()
+        if self.app.tui_state.is_authenticated():
+            self.app.run_worker(
+                self._load_last_login,
+                name="last-login",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    async def _load_last_login(self) -> None:
+        """Fetch the user's last successful login once for the status
+        bar (#2583).
+
+        ``TuiState.last_login_at`` does a blocking ``/auth/me`` round
+        trip, so it runs on a thread.
+        """
+        iso = await asyncio.to_thread(self.app.tui_state.last_login_at)
+        if iso:
+            self._last_login = self._fmt_login_ts(iso)
+            self._refresh_status()
 
     def on_tabbed_content_tab_activated(self, event) -> None:
         """Focus the first workspace row when switching tabs (#1792)."""
@@ -998,6 +1044,18 @@ class MainScreen(Screen):
             return []
 
     @staticmethod
+    def _fmt_login_ts(iso: str) -> str:
+        """Render a UTC ISO login timestamp in the local timezone."""
+        try:
+            return (
+                datetime.datetime.fromisoformat(iso)
+                .astimezone()
+                .strftime("%Y-%m-%d %H:%M")
+            )
+        except (ValueError, TypeError):
+            return ""
+
+    @staticmethod
     def _compact_date(raw: str) -> str:
         """Format a created_at timestamp as a compact date string."""
         try:
@@ -1061,6 +1119,7 @@ class MainScreen(Screen):
                 server=state.current_url(),
                 user=state.email() or "(unknown)",
                 extra=self.app.live_extra,
+                last_login=self._last_login,
             )
         except NoMatches:
             pass  # Widget not mounted yet; status will refresh on mount.

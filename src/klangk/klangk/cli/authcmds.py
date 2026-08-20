@@ -9,6 +9,7 @@ single-responsibility modules, all imported back into
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -138,9 +139,30 @@ def account_show() -> None:
     me = context._client().get_me()
     handle = me.get("handle") or "(none)"
     email = me.get("email") or "(unknown)"
-    Console().print(
-        f"Email:  [bold]{email}[/bold]\nHandle: [bold]@{handle}[/bold]"
-    )
+    last_login = _fmt_last_login(me.get("last_login_at"))
+    lines = [
+        f"Email:  [bold]{email}[/bold]",
+        f"Handle: [bold]@{handle}[/bold]",
+    ]
+    if last_login:
+        lines.append(f"Last login: [bold]{last_login}[/bold]")
+    Console().print("\n".join(lines))
+
+
+def _fmt_last_login(iso: str | None) -> str | None:
+    """Render a UTC ISO login timestamp in the local timezone (#2583).
+
+    Returns None for a missing or unparseable timestamp so callers can
+    omit the line entirely.
+    """
+    if not iso:
+        return None
+    try:
+        return (
+            datetime.fromisoformat(iso).astimezone().strftime("%Y-%m-%d %H:%M")
+        )
+    except (ValueError, TypeError):
+        return None
 
 
 @account_app.command("passwd")

@@ -566,6 +566,7 @@ class Auth:
         token = None
         if verified:
             token = self.create_token(user["id"], user["email"])
+            await self.app.state.model.users.record_login(user["id"])
         return RegisterResult(
             user_id=user["id"], email=user["email"], access_token=token
         )
@@ -637,6 +638,9 @@ class Auth:
                 lockout_key
             )
         token = self.create_token(user["id"], user["email"])
+        # Stamp after minting, matching every other session-issuing site
+        # (#2583): if minting fails, no login is recorded.
+        await self.app.state.model.users.record_login(user["id"])
         return TokenResponse(access_token=token)
 
     async def refresh_token(self, token: str) -> TokenResponse:

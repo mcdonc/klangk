@@ -264,24 +264,28 @@ async def _async_empty(*a, **k):
 _real_run_token_refresh_loop = scr_main.run_token_refresh_loop
 _real_status_loop = MainScreen._status_loop
 _real_token_refresh_loop = MainScreen._token_refresh_loop
+_real_load_last_login = MainScreen._load_last_login
 
 
 @pytest.fixture(autouse=True)
 def _stub_tui_bg_workers(monkeypatch):
-    """Stub MainScreen's on-mount bg workers (status-WS + token-refresh loops)
-    to no-ops for every TUI test.
+    """Stub MainScreen's on-mount bg workers (status-WS + token-refresh
+    loops + the one-shot last-login fetch) to no-ops for every TUI test.
 
-    on_mount spawns two workers — ``self._status_loop`` and
+    on_mount spawns workers — ``self._status_loop`` and
     ``self._token_refresh_loop``. Left real, the status loop reconnects up to
     4× (max_retries=3) with a 2s sleep whenever its ``listen_for_status``
     returns cleanly, costing ~8s per mounted MainScreen — which dominated TUI
     test runtime (#1989). The old fixture stubbed the *leaf*
     ``listen_for_status`` function, but that still ran the loop body and its
     real reconnect sleeps; stubbing the loop *methods* instead makes the
-    workers complete instantly. Tests exercising the real loop logic call the
-    saved ``_real_status_loop`` / ``_real_token_refresh_loop`` /
-    ``_real_run_token_refresh_loop`` directly (they stub the leaf functions
-    themselves as needed).
+    workers complete instantly. ``_load_last_login`` (#2583) is stubbed for
+    the same reason: on fakes it would call the real ``TuiState`` method,
+    consuming side-effecting ``token()`` stubs (and timing out on a real
+    HTTP hit to the fake server URL). Tests exercising the real loop logic
+    call the saved ``_real_status_loop`` / ``_real_token_refresh_loop`` /
+    ``_real_run_token_refresh_loop`` / ``_real_load_last_login`` directly
+    (they stub the leaf functions themselves as needed).
     """
 
     async def _noop(*a, **k):
@@ -289,6 +293,7 @@ def _stub_tui_bg_workers(monkeypatch):
 
     monkeypatch.setattr(MainScreen, "_status_loop", _noop)
     monkeypatch.setattr(MainScreen, "_token_refresh_loop", _noop)
+    monkeypatch.setattr(MainScreen, "_load_last_login", _noop)
 
 
 # ---------------------------------------------------------------------------
@@ -552,6 +557,64 @@ def test_current_user_id_refetch_on_server_switch(monkeypatch, redirect_xdg):
     # Different active server -> cache miss -> refetch.
     assert t.current_user_id() == "id-https://b.example"
     assert len(seen) == 2
+
+
+def test_last_login_at_from_profile(monkeypatch, redirect_xdg):
+    """last_login_at reads the cached /auth/me profile (#2583)."""
+    from unittest.mock import MagicMock
+
+    add_server_to_config("srv", "https://srv.example")
+    st = CLIState()
+    st.set_credentials("https://srv.example", "me@x", "tok123")
+    st.save()
+    t = TuiState()
+    calls = []
+
+    def fake_req(url, method, path, **k):
+        calls.append(url)
+        r = MagicMock()
+        r.status_code = 200
+        r.json.return_value = {
+            "id": "user-123",
+            "last_login_at": "2026-08-20T10:00:00+00:00",
+        }
+        return r
+
+    monkeypatch.setattr(tui_state_mod, "http_request", fake_req)
+    assert t.last_login_at() == "2026-08-20T10:00:00+00:00"
+    # Shares the profile cache — no second fetch.
+    assert t.last_login_at() == "2026-08-20T10:00:00+00:00"
+    assert len(calls) == 1
+
+
+def test_last_login_at_missing_or_non_string(monkeypatch, redirect_xdg):
+    """A profile without last_login_at (or with a non-string value)
+    degrades to None (#2583)."""
+    from unittest.mock import MagicMock
+
+    add_server_to_config("srv", "https://srv.example")
+    st = CLIState()
+    st.set_credentials("https://srv.example", "me@x", "tok123")
+    st.save()
+
+    def mk(body):
+        def fake_req(url, method, path, **k):
+            r = MagicMock()
+            r.status_code = 200
+            r.json.return_value = body
+            return r
+
+        return fake_req
+
+    t = TuiState()
+    monkeypatch.setattr(tui_state_mod, "http_request", mk({"id": "user-123"}))
+    assert t.last_login_at() is None
+    monkeypatch.setattr(
+        tui_state_mod,
+        "http_request",
+        mk({"id": "user-123", "last_login_at": 42}),
+    )
+    assert TuiState().last_login_at() is None
 
 
 def test_current_user_id_cleared_on_logout(monkeypatch, redirect_xdg):
@@ -6833,6 +6896,122 @@ async def test_status_bar_markup_safe(monkeypatch):
         assert "foo[/]bar" in str(app.screen.query_one("#status").render())
 
 
+async def test_status_bar_last_login_segment(monkeypatch):
+    """set_state renders the last-login segment when present and omits
+    it otherwise (#2583). Widgets need an active app to update, so this
+    drives a mounted StatusBar."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(last_login_at=lambda: None))
+    async with app.run_test() as pilot:
+        status = app.screen.query_one("#status", StatusBar)
+        status.set_state(
+            server="https://x", user="me@x", last_login="2026-08-20 10:00"
+        )
+        await pilot.pause()
+        assert "last login: 2026-08-20 10:00" in str(status.render())
+        # Without a last login the segment is absent.
+        status.set_state(server="https://x", user="me@x")
+        await pilot.pause()
+        assert "last login" not in str(status.render())
+
+
+def test_fmt_login_ts_invalid():
+    """Unparseable timestamps render empty (#2583)."""
+    assert MainScreen._fmt_login_ts("not-a-date") == ""
+    assert MainScreen._fmt_login_ts("") == ""
+
+
+def test_fmt_login_ts_localizes():
+    """A UTC ISO timestamp renders in the local timezone, not UTC —
+    computed via the local offset rather than the implementation's own
+    expression (#2583)."""
+    from datetime import datetime, timezone
+
+    utc_naive = datetime(2026, 8, 20, 10)
+    local = utc_naive.replace(tzinfo=timezone.utc).astimezone()
+    expected = (utc_naive + local.utcoffset()).strftime("%Y-%m-%d %H:%M")
+    assert MainScreen._fmt_login_ts("2026-08-20T10:00:00+00:00") == expected
+
+
+async def test_main_screen_shows_last_login(monkeypatch):
+    """The main screen fetches the last login once on mount and shows it
+    in the status bar (#2583)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    # The autouse fixture stubs _load_last_login; this test covers it.
+    monkeypatch.setattr(MainScreen, "_load_last_login", _real_load_last_login)
+    iso = "2026-08-20T10:00:00+00:00"
+    st = _ws(owned=[_wsobj("alpha")], last_login_at=lambda: iso)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert "last login:" in rendered
+        assert MainScreen._fmt_login_ts(iso) in rendered
+
+
+async def test_main_screen_last_login_none_omitted(monkeypatch):
+    """A server that reports no last login shows no segment (#2583)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    # The autouse fixture stubs _load_last_login; this test covers it.
+    monkeypatch.setattr(MainScreen, "_load_last_login", _real_load_last_login)
+    st = _ws(owned=[_wsobj("alpha")], last_login_at=lambda: None)
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "last login" not in str(
+            app.screen.query_one("#status", StatusBar).render()
+        )
+
+
+async def test_reload_last_login_refetches_after_server_switch(monkeypatch):
+    """reload_last_login re-fetches the stamp, so a server switch
+    doesn't keep the previous server's (possibly another user's) login
+    time beside the new identity (#2583)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setattr(scr_main, "run_token_refresh_loop", noop)
+    monkeypatch.setattr(MainScreen, "_load_last_login", _real_load_last_login)
+    iso_a = "2026-08-20T10:00:00+00:00"
+    iso_b = "2026-08-21T12:00:00+00:00"
+    current = {"iso": iso_a}
+    st = _ws(owned=[_wsobj("alpha")], last_login_at=lambda: current["iso"])
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert MainScreen._fmt_login_ts(iso_a) in rendered
+
+        # "Switch servers": the state now reports the new identity's
+        # (different) stamp; the reload replaces the shown one.
+        current["iso"] = iso_b
+        app.screen.reload_last_login()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert MainScreen._fmt_login_ts(iso_b) in rendered
+        assert MainScreen._fmt_login_ts(iso_a) not in rendered
+
+
 async def test_main_screen_auth_expired_shows_overlay(monkeypatch):
     """An expired session on the workspaces fetch shows the app-wide overlay,
     not a small inline label (#2025)."""
@@ -10887,6 +11066,10 @@ async def test_server_changed_pops_to_main_and_refreshes(monkeypatch):
     monkeypatch.setattr(
         MainScreen, "refresh_lists", lambda self: refreshed.append(True)
     )
+    reloaded = []
+    monkeypatch.setattr(
+        MainScreen, "reload_last_login", lambda self: reloaded.append(True)
+    )
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -10900,6 +11083,7 @@ async def test_server_changed_pops_to_main_and_refreshes(monkeypatch):
             isinstance(s, ServerSwitchScreen) for s in app.screen_stack
         )
         assert refreshed  # MainScreen refreshed after the switch
+        assert reloaded  # last-login stamp re-fetched for the new identity
 
 
 async def test_server_changed_clears_stack_when_main_absent(monkeypatch):

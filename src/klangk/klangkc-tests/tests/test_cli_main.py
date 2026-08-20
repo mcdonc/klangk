@@ -5416,6 +5416,7 @@ class TestAccountCommands:
             "id": "u1",
             "email": "me@x.example",
             "handle": "me",
+            "last_login_at": "2026-08-20T10:00:00+00:00",
         }
         monkeypatch.setattr(context_mod, "_client", lambda: client)
         result = CliRunner().invoke(main.app, ["account", "show"])
@@ -5423,6 +5424,39 @@ class TestAccountCommands:
         out = result.output
         assert "me@x.example" in out
         assert "@me" in out
+        # Last login renders in the local timezone (#2583).
+        assert "Last login: " in out
+        assert "2026-08-20" in out
+
+    def test_account_show_no_last_login(self, logged_in_cfg, monkeypatch):
+        """A user who never logged in since the column shipped omits the
+        line; so does an unparseable timestamp (#2583)."""
+        from klangk.cli import main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        client.get_me.return_value = {
+            "id": "u1",
+            "email": "me@x.example",
+            "handle": "me",
+            "last_login_at": None,
+        }
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+        result = CliRunner().invoke(main.app, ["account", "show"])
+        assert result.exit_code == 0
+        assert "Last login" not in result.output
+
+        client.get_me.return_value["last_login_at"] = "not-a-timestamp"
+        result = CliRunner().invoke(main.app, ["account", "show"])
+        assert result.exit_code == 0
+        assert "Last login" not in result.output
+
+        # A non-string value raises TypeError, not ValueError — the
+        # command must not crash on it (#2583 review).
+        client.get_me.return_value["last_login_at"] = 42
+        result = CliRunner().invoke(main.app, ["account", "show"])
+        assert result.exit_code == 0
+        assert "Last login" not in result.output
 
     def test_account_passwd_success(self, logged_in_cfg, monkeypatch):
         from klangk.cli import account, main
@@ -5435,7 +5469,12 @@ class TestAccountCommands:
             "password_policy",
             lambda url: account.PasswordPolicy(
                 min_length=4,
-                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+                requirements={
+                    "upper": 0,
+                    "lower": 0,
+                    "digit": 0,
+                    "special": 0,
+                },
             ),
         )
         answers = iter(["oldpw", "newpw12", "newpw12"])
@@ -5471,7 +5510,12 @@ class TestAccountCommands:
             "password_policy",
             lambda url: account.PasswordPolicy(
                 min_length=12,
-                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+                requirements={
+                    "upper": 0,
+                    "lower": 0,
+                    "digit": 0,
+                    "special": 0,
+                },
             ),
         )
         answers = iter(["oldpw", "short", "short"])
@@ -5495,7 +5539,12 @@ class TestAccountCommands:
             "password_policy",
             lambda url: account.PasswordPolicy(
                 min_length=4,
-                requirements={"upper": 1, "lower": 1, "digit": 1, "special": 1},
+                requirements={
+                    "upper": 1,
+                    "lower": 1,
+                    "digit": 1,
+                    "special": 1,
+                },
             ),
         )
         answers = iter(["oldpw", "newpw12", "newpw12"])
@@ -5524,7 +5573,12 @@ class TestAccountCommands:
             "password_policy",
             lambda url: account.PasswordPolicy(
                 min_length=4,
-                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+                requirements={
+                    "upper": 0,
+                    "lower": 0,
+                    "digit": 0,
+                    "special": 0,
+                },
             ),
         )
         answers = iter(["oldpw", "newpw12", "newpw12"])

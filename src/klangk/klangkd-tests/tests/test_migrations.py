@@ -1,7 +1,8 @@
 """Ordered schema-migration runner tests (#30).
 
 Covers the runner contract (fresh DB, replay no-op, failure semantics,
-validation) and migration 0001's shape (password_history + cascade).
+validation) and migration 0001's shape (password_history + cascade) and
+0002's shape (users.last_login_at).
 """
 
 import aiosqlite
@@ -41,17 +42,27 @@ class TestRunner:
         records it; a second init_db is a no-op."""
         await app_state.state.model.init_db()
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
-            assert await _recorded(db) == [(1, "0001_password_history")]
+            assert await _recorded(db) == [
+                (1, "0001_password_history"),
+                (2, "0002_last_login_at"),
+            ]
             # Migration 0001 created its table (not the baseline pile).
             cursor = await db.execute(
                 "SELECT name FROM sqlite_master"
                 " WHERE type='table' AND name='password_history'"
             )
             assert await cursor.fetchone() is not None
+            # Migration 0002 added its column to the baseline users table.
+            info = await db.execute("PRAGMA table_info(users)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert "last_login_at" in cols
 
-            # Re-run: nothing new applied, still exactly one record.
+            # Re-run: nothing new applied, still exactly two records.
             await app_state.state.model.init_db()
-            assert await _recorded(db) == [(1, "0001_password_history")]
+            assert await _recorded(db) == [
+                (1, "0001_password_history"),
+                (2, "0002_last_login_at"),
+            ]
 
     async def test_old_db_without_migrations_table(
         self, temp_data_dir, app_state
@@ -79,7 +90,10 @@ class TestRunner:
 
         await app_state.state.model.init_db()
         async with aiosqlite.connect(str(db_path)) as db:
-            assert await _recorded(db) == [(1, "0001_password_history")]
+            assert await _recorded(db) == [
+                (1, "0001_password_history"),
+                (2, "0002_last_login_at"),
+            ]
 
     async def test_pending_only(self, tmp_path):
         """Only unrecorded migrations run; recorded ones are skipped."""

@@ -335,6 +335,7 @@ async def oidc_callback(
         await request.app.state.oidc.sync_oidc_groups(user["id"], hook_groups)
 
     access_token = request.app.state.auth.create_token(user["id"], email)
+    await request.app.state.model.users.record_login(user["id"])
     return _build_redirect_response(
         request, provider_id, access_token, cookie_data
     )

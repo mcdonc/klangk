@@ -29,8 +29,25 @@ async def test_create_and_get_user(users):
     assert by_email["id"] == u["id"]
     by_id = await users.get_user_by_id(u["id"])
     assert by_id["handle"] == u["handle"]
+    # Never logged in: the column exists and reads NULL (#2583).
+    assert by_id["last_login_at"] is None
     assert await users.get_user_by_id("nope") is None
     assert await users.get_user_by_email("missing@x.com") is None
+
+
+async def test_record_login(users):
+    """record_login stamps a UTC ISO timestamp readable via
+    get_user_by_id (#2583)."""
+    from datetime import datetime
+
+    u = await users.create_user("login@x.com", "hash", verified=True)
+    await users.record_login(u["id"])
+    by_id = await users.get_user_by_id(u["id"])
+    stamped = by_id["last_login_at"]
+    assert stamped is not None
+    # Round-trips as a timezone-aware ISO-8601 timestamp.
+    dt = datetime.fromisoformat(stamped)
+    assert dt.tzinfo is not None
 
 
 async def test_get_user_by_handle_and_handle(users):
