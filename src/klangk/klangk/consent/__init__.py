@@ -19,12 +19,7 @@ submodule (e.g. ``klangk.consent.egress.<name>``); re-exports here are
 bindings, not live cells.
 """
 
-from .coordinator import (
-    ConsentCoordinator as ConsentCoordinator,
-    PAUSE_15M as PAUSE_15M,
-    PAUSE_1D as PAUSE_1D,
-    PAUSE_1H as PAUSE_1H,
-)
+from .coordinator import ConsentCoordinator as ConsentCoordinator
 from .deciders import ConsentDeciderRegistry as ConsentDeciderRegistry
 from .egress import (
     EgressConsentMonitor as EgressConsentMonitor,

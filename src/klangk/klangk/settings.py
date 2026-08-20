@@ -704,10 +704,6 @@ class KlangkSettings(BaseSettings):
     # render time. Renamed from ``nginx_bin``/``KLANGKD_NGINX_BIN`` (#1430);
     # the old ``KLANGKD_NGINX_BIN`` name is no longer recognized.
     proxy_bin: str | None = None
-    # trust_outer_proxy: opt-in to surviving an outer trusted proxy's
-    # X-Forwarded-* in the proxy's catch-all (see #1396 renderer). Mirrors the
-    # KLANGKD_TRUST_OUTER_PROXY env var the old nginx.sh read.
-    trust_outer_proxy: str = ""
     # frontend_dir: directory the built Flutter Web UI is served from
     # (#1456, #1600). Defaults to the in-package location (klangk/frontend,
     # computed above as _DEFAULT_FRONTEND_DIR) so a packaged/installed

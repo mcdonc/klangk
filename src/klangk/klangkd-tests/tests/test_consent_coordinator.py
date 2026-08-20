@@ -16,12 +16,7 @@ from unittest.mock import AsyncMock, Mock
 from fastapi import WebSocketDisconnect
 
 from klangk import auth
-from klangk.consent.coordinator import (
-    ConsentCoordinator,
-    PAUSE_15M,
-    PAUSE_1D,
-    PAUSE_1H,
-)
+from klangk.consent.coordinator import ConsentCoordinator
 
 FULL_WS = "aaaa1111bbbb-cccc-dddd-eeee-ffffffffffff"
 
@@ -694,7 +689,7 @@ class TestConsentCoordinatorPause:
         before = time.time()
         app = _app()
         coord = ConsentCoordinator(app)
-        result = await coord.pause(FULL_WS, PAUSE_15M)
+        result = await coord.pause(FULL_WS, "15m")
         after = time.time()
         assert result["ok"] is True
         assert before + 900 <= result["until"] <= after + 900
@@ -716,7 +711,7 @@ class TestConsentCoordinatorPause:
         before = time.time()
         app = _app()
         coord = ConsentCoordinator(app)
-        result = await coord.pause(FULL_WS, PAUSE_1D)
+        result = await coord.pause(FULL_WS, "1d")
         assert result["ok"] is True
         assert before + 86400 <= result["until"] <= before + 86400 + 5
 
@@ -736,7 +731,7 @@ class TestConsentCoordinatorPause:
             return_value=False
         )
         coord = ConsentCoordinator(app)
-        result = await coord.pause(FULL_WS, PAUSE_1H)
+        result = await coord.pause(FULL_WS, "1h")
         assert result == {"ok": False, "until": None}
         app.state.consent_deciders.broadcast.assert_not_called()
 
@@ -1590,7 +1585,7 @@ class TestConsentCoordinatorPauseIntegration:
             user["id"], "pause-int", egress_mode=EGRESS_MODE_INTERACTIVE
         )
         coord = ConsentCoordinator(app_state)
-        assert (await coord.pause(ws["id"], PAUSE_15M))["ok"] is True
+        assert (await coord.pause(ws["id"], "15m"))["ok"] is True
         fut = await coord.hold(ws["id"], "newhost.example.com", 443)
         verdict = fut.result()
         assert verdict["decision"] == "allow"
@@ -1617,7 +1612,7 @@ class TestConsentCoordinatorPauseIntegration:
         assert not fut.done()  # held for a decider
         held_id = next(iter(coord._holds))
         # 2. pause (sets the window)
-        assert (await coord.pause(ws["id"], PAUSE_1H))["ok"] is True
+        assert (await coord.pause(ws["id"], "1h"))["ok"] is True
         # 3. resolve the held request -> rebroadcasts egress_rules
         await coord.resolve(held_id, "allowed", user["id"], duration="1h")
         # 4. the pause is still set: rules_frame reports it
@@ -1645,7 +1640,7 @@ class TestConsentCoordinatorPauseIntegration:
         req = await ec.create_request(ws["id"], "evil.example.com", 443)
         await ec.decide(req["id"], "denied", user["id"], "tilrestart")
         # pause the workspace
-        assert (await coord.pause(ws["id"], PAUSE_15M))["ok"] is True
+        assert (await coord.pause(ws["id"], "15m"))["ok"] is True
         # hold the denied host -> deny (paused_deny), NOT auto-allowed
         fut = await coord.hold(ws["id"], "evil.example.com", 443)
         verdict = fut.result()
