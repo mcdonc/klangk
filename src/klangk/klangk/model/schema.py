@@ -2,6 +2,7 @@
 
 from .acl import PRINCIPAL_USER
 from .egress_consent import DECISIONS, DURATIONS
+from .migrations import run_migrations
 from .users import AGENT_USER_ID, backfill_handles
 
 # The duration + decision CHECK value lists are generated from the single
@@ -487,6 +488,10 @@ async def init_db(db) -> None:
         # Migration: drop legacy role and workspace_access tables
         for table in ("user_roles", "roles", "workspace_access"):
             await db.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
+        # Ordered, once-only migrations (#30). The CREATE TABLE pile above
+        # is the historical baseline; every schema change from here on is a
+        # numbered migration in klangk.model.migrations instead.
+        await run_migrations(db)
         await db.commit()
     finally:
         await db.close()
