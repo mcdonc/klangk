@@ -49,6 +49,7 @@ Rules for contributors
 import logging
 
 from klangk.model.migrations import m0001_password_history
+from klangk.model.migrations import m0002_last_login_at
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -58,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 MIGRATIONS: list[Migration] = [
     m0001_password_history.migration,
+    m0002_last_login_at.migration,
 ]
 
 

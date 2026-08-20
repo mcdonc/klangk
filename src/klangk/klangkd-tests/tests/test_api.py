@@ -1031,6 +1031,9 @@ class TestLocalLogin:
         )
         assert resp.status_code == 200
         assert resp.json()["email"] == "local@example.com"
+        # The no-auth login minted a session, so /auth/me reports it
+        # (#2583).
+        assert resp.json()["last_login_at"] is not None
 
     async def test_disabled_when_not_none_mode(
         self, client, app, db, monkeypatch
@@ -9787,6 +9790,9 @@ class TestOIDCCallback:
         assert user["provider"] == "test"
         assert user["external_id"] == "oidc-sub-123"
         assert user["password_hash"] is None
+        # The SSO login minted a session and stamps last_login_at (#2583).
+        by_id = await app_state.state.model.users.get_user_by_id(user["id"])
+        assert by_id["last_login_at"] is not None
 
     async def test_callback_syncs_groups_via_hook(
         self, client, app, monkeypatch, db, app_state

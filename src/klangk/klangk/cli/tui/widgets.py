@@ -26,11 +26,14 @@ class StatusBar(Static):
         server: str | None,
         user: str | None,
         extra: str = "",
+        last_login: str | None = None,
     ) -> None:
         text = (
             f"server: {server or '(none)'}"
             f"   |   user: {user or '(not logged in)'}"
         )
+        if last_login:
+            text += f"   |   last login: {last_login}"
         if extra:
             text += f"   |   {extra}"
         # Render literally — server URL / user / live `extra` may contain

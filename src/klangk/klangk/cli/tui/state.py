@@ -59,11 +59,12 @@ class TuiState:
     def __init__(self, server_url: str | None = None) -> None:
         # ``--server`` override; otherwise the active server from state.
         self._server_override = server_url
-        # Cached /auth/me user id for the active server, so the detail
+        # Cached /auth/me profile for the active server, so the detail
         # screen can filter a user's own shared windows out of the shared
-        # list without a /me hit on every render. Refetched on server switch.
-        self._user_id: str | None = None
-        self._user_id_url: str | None = None
+        # list and the main screen can show the last login (#2583)
+        # without a /me hit on every render. Refetched on server switch.
+        self._me: dict | None = None
+        self._me_url: str | None = None
 
     # --- fresh config / state each call ---
 
@@ -110,18 +111,20 @@ class TuiState:
             return None
         return self.state().get_email(url)
 
-    def current_user_id(self) -> str | None:
-        """The authenticated user's id for the active server (cached).
+    def _me_profile(self) -> dict | None:
+        """The active server's ``GET /auth/me`` profile (cached).
 
-        Fetched once via /auth/me; refetched if the active server changes.
-        Returns None if it can't be resolved (no token, unreachable) so
-        callers can degrade (e.g. skip filtering).
+        Fetched once per active server (cached like the old
+        ``current_user_id`` fetch, #2164: keyed by URL, cleared on logout
+        so a re-login as a different identity isn't served the previous
+        user's profile). Returns None if it can't be resolved (no token,
+        unreachable) so callers can degrade (e.g. skip filtering).
         """
         url = self.current_url()
         if url is None:
             return None
-        if self._user_id is not None and self._user_id_url == url:
-            return self._user_id
+        if self._me is not None and self._me_url == url:
+            return self._me
         token = self.token()
         if token is None:
             return None
@@ -138,12 +141,23 @@ class TuiState:
         if resp.status_code != 200:
             return None
         data = resp.json()
-        uid = data.get("id") if isinstance(data, dict) else None
-        if isinstance(uid, str):
-            self._user_id = uid
-            self._user_id_url = url
-            return uid
+        if isinstance(data, dict) and isinstance(data.get("id"), str):
+            self._me = data
+            self._me_url = url
+            return data
         return None
+
+    def current_user_id(self) -> str | None:
+        """The authenticated user's id for the active server (cached)."""
+        me = self._me_profile()
+        return me["id"] if me is not None else None
+
+    def last_login_at(self) -> str | None:
+        """The user's last successful login (UTC ISO) for the active
+        server, or None when unknown (#2583)."""
+        me = self._me_profile()
+        value = me.get("last_login_at") if me is not None else None
+        return value if isinstance(value, str) else None
 
     def is_authenticated(self) -> bool:
         url = self.current_url()
@@ -381,11 +395,11 @@ class TuiState:
         if url is not None:
             state.clear_credentials(url)
             state.save()
-        # Drop the cached /auth/me id so a re-login as a different identity
-        # on the same server isn't served the previous user's id (#2164
-        # review: the cache is keyed by URL, not identity).
-        self._user_id = None
-        self._user_id_url = None
+        # Drop the cached /auth/me profile so a re-login as a different
+        # identity on the same server isn't served the previous user's
+        # profile (#2164 review: the cache is keyed by URL, not identity).
+        self._me = None
+        self._me_url = None
 
     # --- server switching / adding ---
 

@@ -566,6 +566,7 @@ class Auth:
         token = None
         if verified:
             token = self.create_token(user["id"], user["email"])
+            await self.app.state.model.users.record_login(user["id"])
         return RegisterResult(
             user_id=user["id"], email=user["email"], access_token=token
         )
@@ -636,6 +637,7 @@ class Auth:
             await self.app.state.model.login_attempts.clear_login_attempts(
                 lockout_key
             )
+        await self.app.state.model.users.record_login(user["id"])
         token = self.create_token(user["id"], user["email"])
         return TokenResponse(access_token=token)
 

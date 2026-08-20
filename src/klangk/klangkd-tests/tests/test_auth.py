@@ -268,7 +268,8 @@ class TestRegister:
         assert result.access_token is None  # unverified, no token
 
     async def test_register_verified(self, db):
-        result = await _auth().register(
+        a = _auth()
+        result = await a.register(
             auth.RegisterRequest(
                 email="verified@example.com", password="pass1234"
             ),
@@ -276,6 +277,10 @@ class TestRegister:
         )
         assert result.access_token
         assert result.email == "verified@example.com"
+        # Auto-verify mints a session: that first session is a login
+        # and stamps last_login_at (#2583).
+        row = await a.app.state.model.users.get_user_by_id(result.user_id)
+        assert row["last_login_at"] is not None
 
     async def test_register_duplicate_email(self, db):
         await _auth().register(
@@ -350,13 +355,29 @@ class TestRegister:
 
 class TestLogin:
     async def test_login_success(self, user):
-        result = await _auth().login(
+        a = _auth()
+        result = await a.login(
             auth.LoginRequest(
                 identifier="testuser@example.com", password="testpass"
             )
         )
         assert result.access_token
         assert result.token_type == "bearer"
+        # A successful login stamps last_login_at (#2583).
+        row = await a.app.state.model.users.get_user_by_id(user["id"])
+        assert row["last_login_at"] is not None
+
+    async def test_login_failure_does_not_stamp(self, user):
+        """Only successful logins stamp last_login_at (#2583)."""
+        a = _auth()
+        with pytest.raises(HTTPException):
+            await a.login(
+                auth.LoginRequest(
+                    identifier="testuser@example.com", password="wrong"
+                )
+            )
+        row = await a.app.state.model.users.get_user_by_id(user["id"])
+        assert row["last_login_at"] is None
 
     async def test_login_success_by_handle(self, user):
         """Login accepts a handle as well as an email (#616)."""
