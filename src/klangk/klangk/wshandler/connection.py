@@ -391,12 +391,15 @@ class Connection:
                 # already stopped the sender, but ``cleanup()`` — which does
                 # podman I/O before removing it from the set — has not
                 # finished) raises on send. That must not abort the
-                # *connecting* client's handler: guard the send, drop the
-                # dead socket (#2623).
+                # *connecting* client's handler. Discard only stopped
+                # sockets: a queue-full error means a slow-but-live client
+                # whose own dispatch loop handles the drop — unsubscribing
+                # it here would silently zombie it (#2623).
                 try:
                     sock.send_json(join_msg)
                 except WS_ERRORS:
-                    session.subscribers.discard(sock)
+                    if sock.stopped:
+                        session.subscribers.discard(sock)
 
             sys_msg = await self.app.state.model.chat.add_chat_message(
                 workspace_id,

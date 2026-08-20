@@ -388,7 +388,9 @@ class TestSafeWebSocket:
         raw = AsyncMock()
         sw = SafeWebSocket(raw)
         sw.start_sender()
+        assert sw.stopped is False  # live socket, not mid-teardown (#2623)
         await sw.stop_sender()
+        assert sw.stopped is True
         with pytest.raises(SlowClientError):
             sw.send_json({"type": "late"})
 
@@ -9908,6 +9910,7 @@ class TestPresence:
         dead_sock.send_json.side_effect = SlowClientError(
             "sender stopped — cannot enqueue"
         )
+        dead_sock.stopped = True
         conn1 = _base_conn(user=user, ws=dead_sock, app_state=app_state)
         session = sockets.get_or_create_session(workspace["id"], app_state)
         session.subscribers.add(dead_sock)
@@ -9987,6 +9990,105 @@ class TestPresence:
             sockets.sessions.pop(workspace["id"], None)
             sockets.connections.pop(dead_sock, None)
             sockets.connections.pop(healthy_sock, None)
+            sockets.connections.pop(sock2, None)
+
+    async def test_presence_join_queue_full_subscriber_stays_subscribed(
+        self, user, app_state
+    ):
+        """A queue-full (slow but live) subscriber must not be discarded (#2623).
+
+        ``SlowClientError`` covers two modes: "sender stopped" (mid-teardown;
+        safe to discard from the session) and "outbound queue full" (a
+        slow-but-live client whose own dispatch loop owns the drop). The
+        join broadcast must leave the latter subscribed — unsubscribing it
+        would silently zombie a still-connected client.
+        """
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        from klangk import model
+
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "pres-join-slow-ws"
+        )
+
+        slow_sock = _mock_sock()
+
+        def raise_only_on_join(msg):
+            # Queue-full only for the presence_join itself; later sends
+            # (e.g. the chat_message broadcast that follows in
+            # ``_broadcast_join``) succeed — so if the socket is gone from
+            # the session at the end, the *join loop* discarded it (the bug
+            # this test pins), not ``broadcast_to_set``'s own discard.
+            if msg.get("type") == "presence_join":
+                raise SlowClientError(
+                    "outbound queue full — closing slow client"
+                )
+            return None
+
+        slow_sock.send_json.side_effect = raise_only_on_join
+        slow_sock.stopped = False
+        conn1 = _base_conn(user=user, ws=slow_sock, app_state=app_state)
+        session = sockets.get_or_create_session(workspace["id"], app_state)
+        session.subscribers.add(slow_sock)
+        sockets.connections[slow_sock] = conn1
+
+        other = await app_state.state.model.users.create_user(
+            "other3@test.com", "hash", verified=True
+        )
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{workspace['id']}",
+            100,
+            model.ACTION_ALLOW,
+            "*",
+            model.PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        sock2 = _mock_sock()
+        conn2 = _base_conn(
+            user={
+                "id": other["id"],
+                "email": "other3@test.com",
+                "handle": other.get("handle", ""),
+            },
+            ws=sock2,
+            app_state=app_state,
+        )
+        sockets.connections[sock2] = conn2
+
+        async def fake_start(wid, ws_obj):
+            conn2.container_id = "cid"
+            session = sockets.get_or_create_session(wid, app_state)
+            await session.add_subscriber(sock2, "cid")
+
+        try:
+            with (
+                patch.object(
+                    Connection,
+                    "start_workspace_container",
+                    side_effect=fake_start,
+                ),
+                patch.object(
+                    registry,
+                    "get_workspace_ports",
+                    return_value=[],
+                ),
+            ):
+                # Must not raise, and must not discard the slow client.
+                await conn2.handle_workspace_connect(
+                    {"workspaceId": workspace["id"]}
+                )
+
+            # The slow-but-live socket stays subscribed (no zombie).
+            assert slow_sock in session.subscribers
+            # The connector lived through the broadcast.
+            connector_calls = [c[0][0] for c in sock2.send_json.call_args_list]
+            assert any(
+                c.get("type") == "container_ready" for c in connector_calls
+            )
+        finally:
+            sockets.sessions.pop(workspace["id"], None)
+            sockets.connections.pop(slow_sock, None)
             sockets.connections.pop(sock2, None)
 
     async def test_presence_leave_broadcast(self, user, app_state):
