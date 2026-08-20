@@ -233,6 +233,11 @@ class Auth:
         return self.app.state.settings.login_lockout_failures
 
     @property
+    def max_sessions_per_user(self) -> int:
+        """Concurrent-session cap per user (#2585). 0 = no limit."""
+        return self.app.state.settings.max_sessions_per_user
+
+    @property
     def login_lockout_duration(self) -> int:
         return self.app.state.settings.login_lockout_duration
 
@@ -420,6 +425,63 @@ class Auth:
         }
         return jwt.encode(payload, self.secret, algorithm=self.algorithm)
 
+    async def issue_token(self, user_id: str, email: str) -> str:
+        """Mint an access token AND register it as a session (#2585).
+
+        Every interactive issuance path (password login, registration,
+        email verification, password-reset auto-login, invite acceptance,
+        OIDC callback, ``none``-mode local login) goes through here so the
+        server-side session registry stays complete. Then
+        :meth:`_enforce_session_limit` revokes the user's oldest sessions
+        past ``KLANGKD_MAX_SESSIONS_PER_USER`` (0 = unlimited; the table
+        is still purged of expired rows so it stays bounded).
+        """
+        token = self.create_token(user_id, email)
+        payload = self.decode_token(token)
+        expires_at = datetime.fromtimestamp(
+            payload["exp"], tz=timezone.utc
+        ).isoformat()
+        await self.app.state.model.sessions.record_session(
+            user_id, payload["jti"], expires_at
+        )
+        await self._enforce_session_limit(user_id)
+        return token
+
+    async def _enforce_session_limit(self, user_id: str) -> None:
+        """Revoke the user's oldest sessions past the configured cap.
+
+        Victims are removed oldest-first by blocklisting their JTIs (the
+        same revocation path as logout: the next HTTP request 401s with
+        "Token has been revoked"; the next WebSocket connect is rejected
+        with 4001 → client logout), then their session rows are deleted.
+        Blocklisting happens BEFORE the delete so a crash between the two
+        can only leave a dead token's row behind (purged on the next
+        issuance), never a live token without a row.
+        """
+        sessions = self.app.state.model.sessions
+        # Dead sessions (their JWT already failed exp verification) never
+        # count toward the cap; purge also bounds the table when the
+        # limit is off.
+        await sessions.purge_expired()
+        limit = self.max_sessions_per_user
+        if limit <= 0:
+            return
+        rows = await sessions.list_sessions(user_id)
+        excess = rows[:-limit] if len(rows) > limit else []
+        for row in excess:
+            logger.info(
+                "session limit: revoking oldest session jti=%s "
+                "(user %s over cap %d)",
+                row["jti"],
+                user_id,
+                limit,
+            )
+            await self.app.state.model.tokens.blocklist_token(
+                row["jti"], row["expires_at"]
+            )
+        if excess:
+            await sessions.remove_sessions([row["jti"] for row in excess])
+
     def decode_token(self, token: str, *, allow_expired: bool = False) -> dict:
         options = {"verify_exp": False} if allow_expired else {}
         return jwt.decode(
@@ -565,7 +627,7 @@ class Auth:
             raise HTTPException(status_code=400, detail="Registration failed")
         token = None
         if verified:
-            token = self.create_token(user["id"], user["email"])
+            token = await self.issue_token(user["id"], user["email"])
             await self.app.state.model.users.record_login(user["id"])
         return RegisterResult(
             user_id=user["id"], email=user["email"], access_token=token
@@ -637,7 +699,7 @@ class Auth:
             await self.app.state.model.login_attempts.clear_login_attempts(
                 lockout_key
             )
-        token = self.create_token(user["id"], user["email"])
+        token = await self.issue_token(user["id"], user["email"])
         # Stamp after minting, matching every other session-issuing site
         # (#2583): if minting fails, no login is recorded.
         await self.app.state.model.users.record_login(user["id"])
@@ -686,6 +748,20 @@ class Auth:
             await self.app.state.model.tokens.blocklist_token(
                 jti, expires_at, new_token=new_token
             )
+            # The refreshed JTI occupies the old session's slot (a refresh
+            # is the same session under a new token, #2585): the user's
+            # session count does not grow on refresh.
+            new_payload = self.decode_token(new_token)
+            new_expires_at = datetime.fromtimestamp(
+                new_payload["exp"], tz=timezone.utc
+            ).isoformat()
+            await self.app.state.model.sessions.replace_session(
+                jti, user_id, new_payload["jti"], new_expires_at
+            )
+            # Refreshing a pre-#2585 token (no row) INSERTS one; enforce
+            # so the cap holds on every path that adds a session row,
+            # not just logins (#2585 review).
+            await self._enforce_session_limit(user_id)
             return TokenResponse(access_token=new_token)
 
         except ExpiredSignatureError:
@@ -732,7 +808,7 @@ class Auth:
             return None
 
     async def logout(self, token: str) -> None:
-        """Blocklist the token's JTI."""
+        """Blocklist the token's JTI and drop its session row."""
         try:
             payload = self.decode_token(token)
             jti = payload.get("jti")
@@ -744,6 +820,7 @@ class Auth:
                 await self.app.state.model.tokens.blocklist_token(
                     jti, expires_at
                 )
+                await self.app.state.model.sessions.remove_session(jti)
         except JWTError:
             pass
 

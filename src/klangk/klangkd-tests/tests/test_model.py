@@ -1396,6 +1396,134 @@ class TestTokenBlocklist:
         )
 
 
+class TestUserSessions:
+    """SessionsModel storage for the concurrent-session cap (#2585)."""
+
+    async def _make_user(self, app_state, email: str) -> str:
+        user = await app_state.state.model.users.create_user(
+            email, "hash", verified=True
+        )
+        return user["id"]
+
+    async def test_record_and_list_oldest_first(self, db, app_state):
+        sessions = app_state.state.model.sessions
+        uid1 = await self._make_user(app_state, "one@example.com")
+        uid2 = await self._make_user(app_state, "two@example.com")
+        await sessions.record_session(
+            uid1, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.record_session(
+            uid1, "jti-b", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.record_session(
+            uid2, "jti-other", "2099-01-01T00:00:00+00:00"
+        )
+        rows = await sessions.list_sessions(uid1)
+        # Same-second inserts: rowid breaks the created_at tie, so the
+        # later insert lists as the newer session.
+        assert [r["jti"] for r in rows] == ["jti-a", "jti-b"]
+        assert rows[0]["expires_at"] == "2099-01-01T00:00:00+00:00"
+        assert await sessions.list_sessions("nobody") == []
+
+    async def test_record_replaces_same_jti(self, db, app_state):
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-a", "2098-01-01T00:00:00+00:00"
+        )
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        rows = await sessions.list_sessions(uid)
+        assert len(rows) == 1
+        assert rows[0]["expires_at"] == "2099-01-01T00:00:00+00:00"
+
+    async def test_replace_session_with_existing_row(self, db, app_state):
+        """A refresh swaps the old JTI's row for the new JTI (same slot)."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-old", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.replace_session(
+            "jti-old", uid, "jti-new", "2099-06-01T00:00:00+00:00"
+        )
+        rows = await sessions.list_sessions(uid)
+        assert [r["jti"] for r in rows] == ["jti-new"]
+        assert rows[0]["expires_at"] == "2099-06-01T00:00:00+00:00"
+
+    async def test_replace_session_without_existing_row(self, db, app_state):
+        """Refreshing a pre-#2585 token (no row) inserts the new JTI."""
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.replace_session(
+            "jti-untracked", uid, "jti-new", "2099-01-01T00:00:00+00:00"
+        )
+        rows = await sessions.list_sessions(uid)
+        assert [r["jti"] for r in rows] == ["jti-new"]
+
+    async def test_replace_session_preserves_position(self, db, app_state):
+        """UPDATE-in-place keeps the original row (created_at + rowid),
+        so a refreshed session stays in its eviction-order slot — the
+        oldest login remains the oldest session (#2585 review).
+        """
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.record_session(
+            uid, "jti-b", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.replace_session(
+            "jti-a", uid, "jti-a2", "2099-06-01T00:00:00+00:00"
+        )
+        assert [r["jti"] for r in await sessions.list_sessions(uid)] == [
+            "jti-a2",
+            "jti-b",
+        ]
+
+    async def test_remove_sessions(self, db, app_state):
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        for jti in ("jti-a", "jti-b", "jti-c"):
+            await sessions.record_session(
+                uid, jti, "2099-01-01T00:00:00+00:00"
+            )
+        await sessions.remove_sessions(["jti-a", "jti-c"])
+        assert [r["jti"] for r in await sessions.list_sessions(uid)] == [
+            "jti-b"
+        ]
+        # Removing an unknown JTI is a no-op; an empty list short-circuits.
+        await sessions.remove_sessions(["jti-unknown"])
+        await sessions.remove_sessions([])
+        assert len(await sessions.list_sessions(uid)) == 1
+
+    async def test_remove_session_single(self, db, app_state):
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.remove_session("jti-a")
+        assert await sessions.list_sessions(uid) == []
+
+    async def test_purge_expired_deletes_only_expired(self, db, app_state):
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        past = "2000-01-01T00:00:00+00:00"
+        future = "2099-01-01T00:00:00+00:00"
+        await sessions.record_session(uid, "jti-old", past)
+        await sessions.record_session(uid, "jti-live", future)
+        deleted = await sessions.purge_expired()
+        assert deleted == 1
+        assert [r["jti"] for r in await sessions.list_sessions(uid)] == [
+            "jti-live"
+        ]
+        # Nothing left to purge.
+        assert await sessions.purge_expired() == 0
+
+
 class TestLoginAttempts:
     async def test_record_and_get_attempts(self, db, app_state):
         await app_state.state.model.login_attempts.record_failed_login(

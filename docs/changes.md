@@ -71,6 +71,14 @@ operators or integrators to act when upgrading.
   and `klangk account show` prints it — so users can spot unexpected
   access to their account. Applied as schema migration 0002.
 
+- **`KLANGKD_MAX_SESSIONS_PER_USER` (#2585).** New setting that caps
+  how many concurrent login sessions a user may have (default `0` = no
+  limit). When a new login pushes a user past the cap, the oldest session
+  is revoked via the token blocklist (its next HTTP request gets 401;
+  its next WebSocket connect is rejected with 4001). Token refresh
+  keeps the same slot, and expired sessions never count. Reloadable on
+  SIGHUP. See [Authentication](docs/features/authentication.md).
+
 - **Schema migrations (#30).** Schema changes are now applied as
   ordered, once-only migrations recorded in a new `schema_migrations`
   table at startup, instead of ad-hoc `CREATE TABLE IF NOT EXISTS`

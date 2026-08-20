@@ -112,6 +112,19 @@ disable it, set:
 | `KLANGKD_LOGIN_LOCKOUT_WINDOW`   | `300`   | Time window in seconds for counting      |
 | `KLANGKD_LOGIN_LOCKOUT_DURATION` | `900`   | How long the lockout lasts (seconds)     |
 
+## Concurrent session limits
+
+Set `KLANGKD_MAX_SESSIONS_PER_USER` to cap how many concurrent
+login sessions a user may have (default `0` = no limit). Each login
+(password, OIDC, verification, password-reset auto-login, invite
+acceptance) counts as one session; refreshing a token keeps the same
+slot. When a new login pushes the user past the cap, the **oldest**
+session is revoked via the token blocklist — its next HTTP request
+gets `401 Token has been revoked` and its next WebSocket connect is
+rejected with code `4001`, logging that client out. Sessions whose
+token has already
+expired are purged lazily and never count toward the cap.
+
 ## Consent banner
 
 If `KLANGKD_LOGIN_BANNER` is set, users see a consent page before

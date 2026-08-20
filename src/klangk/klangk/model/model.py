@@ -22,6 +22,7 @@ from .acl import ACLModel
 from .chat import ChatModel
 from .egress_consent import EgressConsentModel
 from .ports import PortsModel
+from .sessions import SessionsModel
 from .tokens import TokensModel
 from .login_attempts import LoginAttemptsModel
 from .invitations import InvitationsModel
@@ -42,6 +43,7 @@ class Model:
     def __init__(self, app):
         self.app = app
         self.tokens = TokensModel(app)
+        self.sessions = SessionsModel(app)
         self.login_attempts = LoginAttemptsModel(app)
         self.invitations = InvitationsModel(app)
         self.ports = PortsModel(app)
@@ -55,6 +57,7 @@ class Model:
         self.app = app
         for sub in (
             self.tokens,
+            self.sessions,
             self.login_attempts,
             self.invitations,
             self.ports,
