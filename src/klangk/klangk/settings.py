@@ -724,6 +724,13 @@ class KlangkSettings(BaseSettings):
     password_require_lower: int = 0
     password_require_digit: int = 0
     password_require_special: int = 0
+    # Password reuse window (#2582): how many previous password hashes
+    # to remember per user. A new password is rejected (400) when it
+    # matches the current password or any remembered one. 0 (the
+    # default) disables reuse checking and history recording entirely.
+    # Each check runs one bcrypt verify per remembered hash, so very
+    # large values slow every password set.
+    password_history_count: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
     login_lockout_window: int | None = 300
@@ -1271,6 +1278,7 @@ class KlangkSettings(BaseSettings):
         "login_lockout_duration",
         "login_lockout_window",
         "invite_expire_hours",
+        "password_history_count",
         "port_range_start",
         "websocket_msg_size_max",
         "file_upload_size_max",
@@ -1302,6 +1310,7 @@ class KlangkSettings(BaseSettings):
             "login_lockout_duration",
             "login_lockout_window",
             "hosted_ports_per_workspace",
+            "password_history_count",
         }
         minimum = 0 if info.field_name in _ZERO_MEANINGFUL else 1
         return _coerce_setting_int(

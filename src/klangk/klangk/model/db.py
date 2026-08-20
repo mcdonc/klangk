@@ -213,3 +213,9 @@ class DB:
         async with self.transaction() as db:
             cursor = await db.execute(query, params)
             return await cursor.fetchone()
+
+    async def fetchall(self, query: str, params: tuple = ()) -> list[Row]:
+        """Run a multi-row SELECT and return every row (``[]`` if none)."""
+        async with self.transaction() as db:
+            cursor = await db.execute(query, params)
+            return list(await cursor.fetchall())

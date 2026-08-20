@@ -1116,3 +1116,68 @@ class TestRequireSecureJwtSecret:
         assert a.jwt_secret_is_secure() is False
         with pytest.raises(ConfigurationError):
             a.require_secure_jwt_secret()
+
+
+class TestValidatePasswordNotReused:
+    """Current + remembered-hash reuse checks (#2582)."""
+
+    def _auth_with_history(self, app_state, monkeypatch, count=3):
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_history_count",
+            count,
+            raising=False,
+        )
+        return Auth(app_state)
+
+    async def _user_with_passwords(self, app_state, *hashes):
+        """Create a user whose current hash is the last of *hashes*."""
+        user = await app_state.state.model.users.create_user(
+            "reuse@example.com", hashes[0], verified=True
+        )
+        for h in hashes[1:]:
+            await app_state.state.model.users.update_password(user["id"], h)
+        return user
+
+    async def test_disabled_when_count_zero(self, app_state, db):
+        a = Auth(app_state)  # default 0 -> no-op
+        assert a.password_history_count == 0
+        # Must not touch the DB / raise even for a matching password.
+        await a.validate_password_not_reused("u", "anything")
+
+    async def test_rejects_current_password(self, app_state, db, monkeypatch):
+        a = self._auth_with_history(app_state, monkeypatch)
+        real = auth.hash_password("currentpass")
+        user = await self._user_with_passwords(app_state, "stale", real)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.validate_password_not_reused(user["id"], "currentpass")
+        assert exc_info.value.status_code == 400
+        assert "current" in exc_info.value.detail
+
+    async def test_rejects_remembered_password(
+        self, app_state, db, monkeypatch
+    ):
+        a = self._auth_with_history(app_state, monkeypatch)
+        old = auth.hash_password("oldpass")
+        new = auth.hash_password("newpass")
+        user = await self._user_with_passwords(app_state, old, new)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.validate_password_not_reused(user["id"], "oldpass")
+        assert exc_info.value.status_code == 400
+        assert "recently" in exc_info.value.detail
+
+    async def test_accepts_novel_password(self, app_state, db, monkeypatch):
+        a = self._auth_with_history(app_state, monkeypatch)
+        old = auth.hash_password("oldpass")
+        user = await self._user_with_passwords(app_state, old)
+        await a.validate_password_not_reused(user["id"], "brand-new-pass")
+
+    async def test_history_window_only(self, app_state, db, monkeypatch):
+        """A hash pruned out of the window is no longer rejected."""
+        a = self._auth_with_history(app_state, monkeypatch, count=1)
+        first = auth.hash_password("firstpass")
+        second = auth.hash_password("secondpass")
+        user = await self._user_with_passwords(app_state, first, second)
+        # Window is 1: only `second` is remembered; `first` was pruned
+        # and may be reused.
+        await a.validate_password_not_reused(user["id"], "firstpass")

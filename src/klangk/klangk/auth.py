@@ -210,6 +210,10 @@ class Auth:
         return int(self.app.state.settings.password_require_special)
 
     @property
+    def password_history_count(self) -> int:
+        return self.app.state.settings.password_history_count
+
+    @property
     def password_requirements(self) -> dict:
         """Character-class counts a password must satisfy (#2581).
 
@@ -322,6 +326,37 @@ class Auth:
         """Length + complexity — the one password gate every setter uses."""
         self.validate_password_length(password)
         self.validate_password_complexity(password)
+
+    async def validate_password_not_reused(
+        self, user_id: str, password: str
+    ) -> None:
+        """Reject *password* if it matches the current or a remembered
+        hash (#2582).
+
+        Checks the current hash first (it is not in the history table
+        until the next change), then every remembered hash — one bcrypt
+        verify each. No-op when ``password_history_count <= 0``.
+        """
+        count = self.password_history_count
+        if count <= 0:
+            return
+        users = self.app.state.model.users
+        current = await users.get_password_hash(user_id)
+        if current is not None and verify_password(password, current):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Password matches your current password; choose a new one"
+                ),
+            )
+        for hashed in await users.get_password_history(user_id, count):
+            if verify_password(password, hashed):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Password was used recently; choose a different one"
+                    ),
+                )
 
     # --- lockout predicates (read lockout config) ---
 

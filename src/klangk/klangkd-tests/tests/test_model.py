@@ -2631,3 +2631,99 @@ class TestWorkspacesBackstopBranches:
             )
             is None
         )
+
+
+class TestFetchallHelper:
+    """DB.fetchall: the multi-row counterpart of fetchone (#2582)."""
+
+    async def test_returns_all_rows(self, db, app_state):
+        rows = await app_state.state.db.fetchall(
+            "SELECT id, email FROM users ORDER BY id"
+        )
+        assert rows == []  # fresh DB, no users yet
+
+    async def test_maps_multiple_rows(self, db, app_state, user):
+        other = await app_state.state.model.users.create_user(
+            "multi@example.com", None, verified=True
+        )
+        rows = await app_state.state.db.fetchall(
+            "SELECT email FROM users ORDER BY email"
+        )
+        assert [r["email"] for r in rows] == [
+            "multi@example.com",
+            "testuser@example.com",
+        ]
+        assert other["email"] == "multi@example.com"
+
+
+class TestPasswordHistory:
+    """Recording + pruning on every password-set path (#2582)."""
+
+    async def test_disabled_by_default(self, db, app_state):
+        user = await app_state.state.model.users.create_user(
+            "hist-off@example.com", "h1", verified=True
+        )
+        # password_history_count defaults to 0 -> nothing recorded.
+        rows = await app_state.state.db.fetchall(
+            "SELECT password_hash FROM password_history WHERE user_id = ?",
+            (user["id"],),
+        )
+        assert rows == []
+
+    async def test_update_password_records_and_prunes(
+        self, db, app_state, monkeypatch
+    ):
+        settings = app_state.state.settings
+        monkeypatch.setattr(
+            settings, "password_history_count", 2, raising=False
+        )
+        users = app_state.state.model.users
+        user = await users.create_user("hist@example.com", "h0", verified=True)
+        await users.update_password(user["id"], "h1")
+        await users.update_password(user["id"], "h2")
+        await users.update_password(user["id"], "h3")
+        # Window is 2: newest two survive (h3, h2), h1 and the seeded
+        # h0 are pruned.
+        hashes = await users.get_password_history(user["id"], 10)
+        assert hashes == ["h3", "h2"]
+
+    async def test_create_user_records(self, db, app_state, monkeypatch):
+        settings = app_state.state.settings
+        monkeypatch.setattr(
+            settings, "password_history_count", 3, raising=False
+        )
+        user = await app_state.state.model.users.create_user(
+            "seed@example.com", "seedhash", verified=True
+        )
+        assert await app_state.state.model.users.get_password_history(
+            user["id"], 3
+        ) == ["seedhash"]
+
+    async def test_record_opens_own_transaction(
+        self, db, app_state, monkeypatch
+    ):
+        """record_password_history without a caller tx opens its own."""
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_history_count",
+            3,
+            raising=False,
+        )
+        user = await app_state.state.model.users.create_user(
+            "own-tx@example.com", None, verified=True
+        )
+        await app_state.state.model.users.record_password_history(
+            user["id"], "own-tx-hash"
+        )
+        assert await app_state.state.model.users.get_password_history(
+            user["id"], 3
+        ) == ["own-tx-hash"]
+
+    async def test_get_password_hash(self, db, app_state):
+        users = app_state.state.model.users
+        user = await users.create_user(
+            "cur@example.com", "curhash", verified=True
+        )
+        assert await users.get_password_hash(user["id"]) == "curhash"
+        oidc = await users.create_user("oidc@example.com", None, verified=True)
+        assert await users.get_password_hash(oidc["id"]) is None

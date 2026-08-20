@@ -286,6 +286,7 @@ class UsersModel:
                     handle,
                 ),
             )
+            await self.record_password_history(user_id, password_hash, db=db)
             return {
                 "id": user_id,
                 "email": email,
@@ -308,6 +309,7 @@ class UsersModel:
             " VALUES (?, ?, ?, 0, ?)",
             (user_id, email, password_hash, handle),
         )
+        await self.record_password_history(user_id, password_hash, db=db)
         return handle
 
     async def get_user_handle(self, user_id: str) -> str | None:
@@ -723,6 +725,60 @@ class UsersModel:
                 "UPDATE users SET password_hash = ? WHERE id = ?",
                 (password_hash, user_id),
             )
+            await self.record_password_history(user_id, password_hash, db=db)
+
+    # --- password history (#2582; table from migration 0001) ---
+
+    async def record_password_history(
+        self, user_id: str, password_hash: str | None, db=None
+    ) -> None:
+        """Append *password_hash* to the user's history and prune (#2582).
+
+        No-op when reuse prevention is off
+        (``password_history_count <= 0``) or the hash is ``None`` (OIDC
+        users). Runs on *db* when given (the caller's transaction), else
+        opens its own — both forms are used by the password setters.
+        """
+        count = self.app.state.settings.password_history_count
+        if count <= 0 or password_hash is None:
+            return
+
+        async def _record(db) -> None:
+            await db.execute(
+                "INSERT INTO password_history (user_id, password_hash)"
+                " VALUES (?, ?)",
+                (user_id, password_hash),
+            )  # noqa: S608
+            await db.execute(
+                "DELETE FROM password_history WHERE user_id = ?"
+                " AND id NOT IN (SELECT id FROM password_history"
+                " WHERE user_id = ? ORDER BY id DESC LIMIT ?)",
+                (user_id, user_id, count),
+            )  # noqa: S608
+
+        if db is not None:
+            await _record(db)
+        else:
+            async with self.app.state.db.transaction() as tx:
+                await _record(tx)
+
+    async def get_password_history(
+        self, user_id: str, limit: int
+    ) -> list[str]:
+        """The *limit* most recent remembered hashes, newest first."""
+        rows = await self.app.state.db.fetchall(
+            "SELECT password_hash FROM password_history"
+            " WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        )
+        return [row["password_hash"] for row in rows]
+
+    async def get_password_hash(self, user_id: str) -> str | None:
+        """The user's current password hash (``None`` for OIDC users)."""
+        row = await self.app.state.db.fetchone(
+            "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+        )
+        return None if row is None else row["password_hash"]
 
     async def get_user_by_id(self, user_id: str) -> dict | None:
         row = await self.app.state.db.fetchone(

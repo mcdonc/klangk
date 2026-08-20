@@ -1425,6 +1425,7 @@ class TestNumericSettingCoercion:
         "file_upload_size_max",
         "hosted_ports_per_workspace",
         "smtp_port",
+        "password_history_count",
     ]
     # 0 is legal here (disable semantics), so only these get the 0-rejection
     INT_NO_ZERO_FIELDS = [
@@ -1474,6 +1475,7 @@ class TestNumericSettingCoercion:
             "login_lockout_duration",
             "login_lockout_window",
             "hosted_ports_per_workspace",
+            "password_history_count",
         ],
     )
     def test_zero_keeps_disable_semantics(self, field):

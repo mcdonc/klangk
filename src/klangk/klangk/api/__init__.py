@@ -213,6 +213,10 @@ async def get_config(
         # Character-class counts enforced by auth.validate_password_complexity
         # (#2581); 0 = no requirement. Clients validate inline with these.
         "password_requirements": app.state.auth.password_requirements,
+        # How many previous passwords are remembered and refused on
+        # change/reset (#2582); 0 = reuse checking disabled. Change-
+        # password UIs use it to explain the constraint inline.
+        "password_history_count": app.state.auth.password_history_count,
         # Deployer logo override (KLANGKD_LOGO_URL). Empty when unset, in
         # which case the frontend renders the default KlangkLogo widget.
         # Supports file:/cmd: resolution like other secrets. See #1152.
