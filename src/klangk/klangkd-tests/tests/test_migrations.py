@@ -1,0 +1,277 @@
+"""Ordered schema-migration runner tests (#30).
+
+Covers the runner contract (fresh DB, replay no-op, failure semantics,
+validation) and migration 0001's shape (password_history + cascade).
+"""
+
+import aiosqlite
+import pytest
+
+from klangk.model import migrations as migrations_mod
+from klangk.model.migrations import Migration, run_migrations
+
+
+async def _recorded(db) -> list[tuple[int, str]]:
+    cursor = await db.execute(
+        "SELECT id, name FROM schema_migrations ORDER BY id"
+    )
+    return [(r[0], r[1]) for r in await cursor.fetchall()]
+
+
+async def run_migrations_with(db, ordered):
+    """Run *ordered* migrations against *db* using the real runner logic.
+
+    The production ``run_migrations`` reads the module-level MIGRATIONS;
+    this helper temporarily swaps it so failure/fixture tests exercise
+    the real code path against synthetic lists.
+    """
+    original = migrations_mod.MIGRATIONS
+    migrations_mod.MIGRATIONS = ordered
+    try:
+        return await run_migrations(db)
+    finally:
+        migrations_mod.MIGRATIONS = original
+
+
+class TestRunner:
+    async def test_fresh_db_applies_and_records(
+        self, temp_data_dir, app_state
+    ):
+        """init_db on a fresh DB applies every migration exactly once and
+        records it; a second init_db is a no-op."""
+        await app_state.state.model.init_db()
+        async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
+            assert await _recorded(db) == [(1, "0001_password_history")]
+            # Migration 0001 created its table (not the baseline pile).
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name='password_history'"
+            )
+            assert await cursor.fetchone() is not None
+
+            # Re-run: nothing new applied, still exactly one record.
+            await app_state.state.model.init_db()
+            assert await _recorded(db) == [(1, "0001_password_history")]
+
+    async def test_old_db_without_migrations_table(
+        self, temp_data_dir, app_state
+    ):
+        """A pre-#30 database (users table only, no bookkeeping) gets the
+        migration applied on the next init_db."""
+        from _helpers import get_test_db
+
+        db_path = get_test_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        async with aiosqlite.connect(str(db_path)) as db:
+            await db.execute("""
+                CREATE TABLE users (
+                    id TEXT PRIMARY KEY,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    provider TEXT NOT NULL DEFAULT 'local',
+                    external_id TEXT,
+                    handle TEXT UNIQUE,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.commit()
+
+        await app_state.state.model.init_db()
+        async with aiosqlite.connect(str(db_path)) as db:
+            assert await _recorded(db) == [(1, "0001_password_history")]
+
+    async def test_pending_only(self, tmp_path):
+        """Only unrecorded migrations run; recorded ones are skipped."""
+        db_path = tmp_path / "runner.db"
+        calls: list[str] = []
+
+        async def _noop1(db):  # noqa: ARG001
+            calls.append("m1")
+
+        async def _noop2(db):  # noqa: ARG001
+            calls.append("m2")
+
+        async with aiosqlite.connect(str(db_path)) as db:
+            # Bootstrap bookkeeping + a recorded 0001 via the runner
+            # itself (empty list: table only), then hand-insert the
+            # pre-existing record.
+            await run_migrations_with(db, [])
+            await db.execute(
+                "INSERT INTO schema_migrations (id, name)"
+                " VALUES (1, '0001_one')"
+            )
+            await db.commit()
+
+            applied = await run_migrations_with(
+                db,
+                [
+                    Migration(1, "0001_one", _noop1),
+                    Migration(2, "0002_two", _noop2),
+                ],
+            )
+
+            assert applied == ["0002_two"]
+            assert calls == ["m2"]
+            assert await _recorded(db) == [
+                (1, "0001_one"),
+                (2, "0002_two"),
+            ]
+
+
+class TestFailureSemantics:
+    async def test_failed_migration_unrecorded_prior_committed(
+        self, tmp_path, monkeypatch
+    ):
+        """A raising migration is not recorded (retried next boot) while
+        prior migrations stay applied and recorded."""
+        db_path = tmp_path / "fail.db"
+        # Bootstrap the bookkeeping table first (as run_migrations does).
+        async with aiosqlite.connect(str(db_path)) as db:
+            await run_migrations_with(db, [])
+
+        async def _ok(db):
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS marker_ok (x INTEGER)"
+            )
+
+        async def _bad(db):  # noqa: ARG001
+            raise RuntimeError("boom")
+
+        ordered = [
+            Migration(1, "0001_ok", _ok),
+            Migration(2, "0002_bad", _bad),
+        ]
+
+        async with aiosqlite.connect(str(db_path)) as db:
+            # Suppress the runner's logging of the failure? No — the
+            # exception propagates; that IS the contract.
+            with pytest.raises(RuntimeError, match="boom"):
+                await run_migrations_with(db, ordered)
+            assert await _recorded(db) == [(1, "0001_ok")]
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name='marker_ok'"
+            )
+            assert await cursor.fetchone() is not None
+
+            # Next boot with the migration fixed (appended as a working
+            # one) converges without re-running 0001.
+            async def _fixed(db):  # noqa: ARG001
+                pass
+
+            await run_migrations_with(
+                db,
+                [
+                    Migration(1, "0001_ok", _ok),
+                    Migration(2, "0002_bad", _fixed),
+                ],
+            )
+            assert await _recorded(db) == [
+                (1, "0001_ok"),
+                (2, "0002_bad"),
+            ]
+
+    async def test_crash_between_ddl_and_record_rolls_back(self, tmp_path):
+        """The central partial-failure claim: a migration whose DDL
+        succeeded but that failed before its record row (a CREATE
+        followed by a raise) must leave NO durable trace — the BEGIN
+        IMMEDIATE rollback undoes the DDL, so the retry can never hit
+        "duplicate column name" / "table already exists".
+
+        Without the explicit transaction this test fails on stock
+        sqlite3 legacy autocommit (the DDL would survive) — exactly the
+        boot-loop bug the adversarial review caught.
+        """
+        db_path = tmp_path / "crash.db"
+
+        async def _crasher(db):
+            await db.execute("CREATE TABLE crashed_marker (x INTEGER)")
+            raise RuntimeError("simulated crash after DDL")
+
+        async def _fixed(db):  # noqa: ARG001
+            pass
+
+        async with aiosqlite.connect(str(db_path)) as db:
+            with pytest.raises(RuntimeError, match="simulated crash"):
+                await run_migrations_with(
+                    db, [Migration(1, "0001_crash", _crasher)]
+                )
+            # Nothing durable: no record row AND no table.
+            assert await _recorded(db) == []
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master"
+                " WHERE type='table' AND name='crashed_marker'"
+            )
+            assert await cursor.fetchone() is None
+
+            # Retry with the fixed migration: applies cleanly, exactly
+            # once — no duplicate-object error.
+            applied = await run_migrations_with(
+                db, [Migration(1, "0001_crash", _fixed)]
+            )
+            assert applied == ["0001_crash"]
+            assert await _recorded(db) == [(1, "0001_crash")]
+
+
+class TestRenameDetection:
+    async def test_renamed_shipped_migration_raises(self, tmp_path):
+        """A recorded id whose name changed must fail loudly — a silent
+        rename forks history (the record says one thing, the code
+        another)."""
+        db_path = tmp_path / "rename.db"
+
+        async def _noop(db):  # noqa: ARG001
+            pass
+
+        async with aiosqlite.connect(str(db_path)) as db:
+            await run_migrations_with(
+                db, [Migration(1, "0001_original", _noop)]
+            )
+            with pytest.raises(RuntimeError, match="frozen once shipped"):
+                await run_migrations_with(
+                    db, [Migration(1, "0001_renamed", _noop)]
+                )
+            # Record is untouched by the failure.
+            assert await _recorded(db) == [(1, "0001_original")]
+
+
+class TestValidation:
+    def test_rejects_gap(self):
+        with pytest.raises(RuntimeError, match="contiguous"):
+            migrations_mod._validate_migrations(
+                [Migration(1, "a", None), Migration(3, "c", None)]  # noqa: ARG005
+            )
+
+    def test_rejects_duplicate_names(self):
+        with pytest.raises(RuntimeError, match="Duplicate"):
+            migrations_mod._validate_migrations(
+                [Migration(1, "a", None), Migration(2, "a", None)]  # noqa: ARG005
+            )
+
+    def test_accepts_contiguous(self):
+        migrations_mod._validate_migrations(
+            [Migration(1, "a", None), Migration(2, "b", None)]  # noqa: ARG005
+        )
+
+
+class TestPasswordHistory:
+    async def test_cascade_on_user_delete(self, temp_data_dir, app_state):
+        """History rows die with their user (ON DELETE CASCADE)."""
+        await app_state.state.model.init_db()
+        users = app_state.state.model.users
+        user = await users.create_user(
+            "hist@example.com", "hash", verified=True
+        )
+        async with app_state.state.db.transaction() as db:
+            await db.execute(
+                "INSERT INTO password_history (user_id, password_hash)"
+                " VALUES (?, ?)",
+                (user["id"], "old-hash"),
+            )
+        await users.delete_user(user["id"])
+        row = await app_state.state.db.fetchone(
+            "SELECT COUNT(*) FROM password_history WHERE user_id = ?",
+            (user["id"],),
+        )
+        assert row[0] == 0

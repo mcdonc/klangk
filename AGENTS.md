@@ -155,6 +155,16 @@ runtime swap (the SIGHUP config reload, #1587) propagate without per-subsystem
 `reconfigure()` boilerplate. Cached subobject references silently keep the old
 value after a swap and are a recurring source of stale-config bugs (#1608).
 
+## Naming: avoid leading underscores
+
+Do not start module names, function/method names, class names, or
+globals with an underscore unless absolutely necessary, or unless it is
+important to signal that the object must not be imported (private API).
+Prefer plain names; modules that must sort by number can use a letter
+prefix (`m0001_password_history.py`, not `_0001_password_history.py` —
+leading-digit names cannot be imported with plain `import` syntax
+anyway).
+
 ## Environment variable naming
 
 Env vars use a **category prefix** formed by concatenating `KLANGK` with the

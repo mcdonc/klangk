@@ -65,6 +65,7 @@ nav = [
     { "Overview" = "development/index.md" },
     { "CI" = "development/ci.md" },
     { "Pre-commit Hooks" = "development/pre-commit.md" },
+    { "Database Schema Changes" = "development/schema-migrations.md" },
     { "Releasing" = "development/releasing.md" },
     { "Building Images" = "development/building-images.md" },
     { "Stable Branches" = "development/stable-branches.md" },

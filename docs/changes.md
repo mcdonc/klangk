@@ -30,24 +30,6 @@ operators or integrators to act when upgrading.
 
 ## [Unreleased]
 
-### Changed
-
-- **Numeric config accepts bare numbers (#2603).** All numeric
-  `KLANGKD_*` settings (`access_token_hours`, `min_password_length`,
-  the `login_lockout_*` trio, `invite_expire_hours`, `port_range_start`,
-  `websocket_msg_size_max`, `smtp_port`, `file_upload_size_max`, the
-  `health_check_*` floats, `hosted_ports_per_workspace`) now accept a
-  bare YAML int/float (`access_token_hours: 48`) as well as quoted
-  strings and env vars, and keep `file:`/`cmd:` indirection working.
-  Malformed values (bools, floats-for-ints, negatives, out-of-range
-  ports) fail at startup naming the field instead of at request time;
-  `smtp_use_tls: true` (native bool) is also accepted. Zero remains
-  legal only where it already meant "off" (length floor, lockout,
-  hosted ports). Explicitly emptying a value (`KLANGKD_X=""`) now
-  resolves to the field's default instead of crashing consumers with
-  `int(None)`; `port_range_start` is range-checked against the last
-  legal host port.
-
 ### Security
 
 - **WebSocket error responses (#1718).** Terminal- and shared-terminal
@@ -67,6 +49,12 @@ operators or integrators to act when upgrading.
   the web flow.
 
 ### Added
+
+- **Schema migrations (#30).** Schema changes are now applied as
+  ordered, once-only migrations recorded in a new `schema_migrations`
+  table at startup, instead of ad-hoc `CREATE TABLE IF NOT EXISTS`
+  blocks. Migration 0001 adds a `password_history` table (rows cascade
+  with their user) ahead of password-reuse prevention (#2582).
 
 - **`KLANGKD_PASSWORD_REQUIRE_{UPPER,LOWER,DIGIT,SPECIAL}` (#2581).**
   Character-class complexity requirements for passwords: each setting is
@@ -654,6 +642,22 @@ operators or integrators to act when upgrading.
   `KLANGKD_ALLOW_INSECURE_NO_AUTH`.
 
 ### Changed
+
+- **Numeric config accepts bare numbers (#2603).** All numeric
+  `KLANGKD_*` settings (`access_token_hours`, `min_password_length`,
+  the `login_lockout_*` trio, `invite_expire_hours`, `port_range_start`,
+  `websocket_msg_size_max`, `smtp_port`, `file_upload_size_max`, the
+  `health_check_*` floats, `hosted_ports_per_workspace`) now accept a
+  bare YAML int/float (`access_token_hours: 48`) as well as quoted
+  strings and env vars, and keep `file:`/`cmd:` indirection working.
+  Malformed values (bools, floats-for-ints, negatives, out-of-range
+  ports) fail at startup naming the field instead of at request time;
+  `smtp_use_tls: true` (native bool) is also accepted. Zero remains
+  legal only where it already meant "off" (length floor, lockout,
+  hosted ports). Explicitly emptying a value (`KLANGKD_X=""`) now
+  resolves to the field's default instead of crashing consumers with
+  `int(None)`; `port_range_start` is range-checked against the last
+  legal host port.
 
 - **Egress rules tab renamed to Network (#2510).** The workspace tab
   previously titled **Net Rules** (originally "Rules", #2457) is now
