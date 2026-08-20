@@ -283,3 +283,181 @@ async def test_unique_handle_falls_back_to_hash(users):
     # hash_fallback_handle: "<base>-<sha256[:8]>"
     assert "-" in result
     assert len(result.rsplit("-", 1)[1]) == 8
+
+
+# --- inactivity tracking + dormant-account sweep (#2588) ---
+
+
+async def _set_ts(users, user_id, column, dt):
+    """Overwrite a users-table timestamp column for a test."""
+    async with users.app.state.db.transaction() as db:
+        await db.execute(
+            f"UPDATE users SET {column} = ? WHERE id = ?",  # noqa: S608
+            (dt, user_id),
+        )
+
+
+async def test_new_users_are_enabled(users):
+    """The migration default keeps accounts enabled until the sweep or an
+    admin says otherwise (#2588)."""
+    u = await users.create_user("fresh@x.com", "hash", verified=True)
+    by_id = await users.get_user_by_id(u["id"])
+    by_email = await users.get_user_by_email(u["email"])
+    assert by_id["disabled"] is False
+    assert by_email["disabled"] is False
+    assert by_id["last_activity_at"] is None
+
+
+async def test_record_activity(users):
+    """record_activity stamps a UTC ISO timestamp readable via
+    get_user_by_id (#2588)."""
+    from datetime import datetime
+
+    u = await users.create_user("active@x.com", "hash", verified=True)
+    await users.record_activity(u["id"])
+    by_id = await users.get_user_by_id(u["id"])
+    dt = datetime.fromisoformat(by_id["last_activity_at"])
+    assert dt.tzinfo is not None
+
+
+async def test_set_user_disabled_roundtrip(users):
+    u = await users.create_user("togglable@x.com", "hash", verified=True)
+    assert await users.set_user_disabled(u["id"], True) is True
+    assert (await users.get_user_by_id(u["id"]))["disabled"] is True
+    assert await users.set_user_disabled(u["id"], False) is True
+    assert (await users.get_user_by_id(u["id"]))["disabled"] is False
+    assert await users.set_user_disabled("nope", True) is False
+
+
+async def test_set_user_disabled_rejects_agent(users):
+    with pytest.raises(AgentPrincipalError, match="system agent"):
+        await users.set_user_disabled(AGENT_USER_ID, True)
+
+
+async def test_disable_inactive_users_by_window(users):
+    """Accounts older than the window are disabled; fresh ones are not."""
+    from datetime import datetime, timedelta, timezone
+
+    old = await users.create_user("old@x.com", "hash", verified=True)
+    fresh = await users.create_user("fresh2@x.com", "hash", verified=True)
+    stale = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+    await _set_ts(users, old["id"], "last_activity_at", stale)
+    await _set_ts(users, old["id"], "created_at", stale)
+
+    disabled = await users.disable_inactive_users(days=35)
+    assert [d["email"] for d in disabled] == ["old@x.com"]
+    assert (await users.get_user_by_id(old["id"]))["disabled"] is True
+    assert (await users.get_user_by_id(fresh["id"]))["disabled"] is False
+
+
+async def test_disable_inactive_users_newest_signal_wins(users):
+    """A fresh login rescues an account whose last_activity_at is stale —
+    the sweep judges on the newest of activity/login/creation (#2588)."""
+    from datetime import datetime, timedelta, timezone
+
+    u = await users.create_user("mixed@x.com", "hash", verified=True)
+    stale = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    recent = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    await _set_ts(users, u["id"], "last_activity_at", stale)
+    await _set_ts(users, u["id"], "last_login_at", recent)
+
+    disabled = await users.disable_inactive_users(days=35)
+    assert u["email"] not in [d["email"] for d in disabled]
+    assert (await users.get_user_by_id(u["id"]))["disabled"] is False
+
+
+async def test_disable_inactive_users_exempts_admins_and_agent(users):
+    """Admin-group members and the system agent are never auto-disabled —
+    an idle deploy must not lock out every operator (#2588)."""
+    from datetime import datetime, timedelta, timezone
+
+    group = await users.create_group("admin")
+    admin = await users.create_user("admin@x.com", "hash", verified=True)
+    await users.add_user_to_group(admin["id"], group["id"])
+    stale = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    await _set_ts(users, admin["id"], "last_activity_at", stale)
+    await _set_ts(users, admin["id"], "created_at", stale)
+    await _set_ts(users, AGENT_USER_ID, "last_activity_at", stale)
+    await _set_ts(users, AGENT_USER_ID, "created_at", stale)
+
+    disabled = await users.disable_inactive_users(days=35)
+    emails = [d["email"] for d in disabled]
+    assert "admin@x.com" not in emails
+    assert AGENT_USER_ID not in [d["id"] for d in disabled]
+
+
+async def test_disable_inactive_users_skips_already_disabled(users):
+    """A second sweep does not re-report accounts it disabled."""
+    from datetime import datetime, timedelta, timezone
+
+    u = await users.create_user("twice@x.com", "hash", verified=True)
+    stale = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    await _set_ts(users, u["id"], "last_activity_at", stale)
+    await _set_ts(users, u["id"], "created_at", stale)
+    first = await users.disable_inactive_users(days=35)
+    second = await users.disable_inactive_users(days=35)
+    assert [d["email"] for d in first] == ["twice@x.com"]
+    assert second == []
+
+
+async def test_disable_inactive_users_boundary_is_inclusive(users):
+    """Activity just inside the window keeps the account; just past it
+    (35 days + 1 hour) disables it. The exact boundary is not asserted —
+    it is inclusive, but the sweep's clock runs microseconds after the
+    test's."""
+    from datetime import datetime, timedelta, timezone
+
+    edge = await users.create_user("edge@x.com", "hash", verified=True)
+    over = await users.create_user("over@x.com", "hash", verified=True)
+    now = datetime.now(timezone.utc)
+    inside = (now - timedelta(days=35) + timedelta(minutes=5)).isoformat()
+    past = (now - timedelta(days=35, hours=1)).isoformat()
+    for column in ("last_activity_at", "created_at"):
+        await _set_ts(users, edge["id"], column, inside)
+        await _set_ts(users, over["id"], column, past)
+    disabled = await users.disable_inactive_users(days=35)
+    emails = [d["email"] for d in disabled]
+    assert "edge@x.com" not in emails
+    assert "over@x.com" in emails
+
+
+async def test_disable_inactive_users_zero_is_noop(users):
+    """days=0 (the sweep disabled) disables nothing."""
+    from datetime import datetime, timedelta, timezone
+
+    u = await users.create_user("zero@x.com", "hash", verified=True)
+    stale = (datetime.now(timezone.utc) - timedelta(days=400)).isoformat()
+    await _set_ts(users, u["id"], "last_activity_at", stale)
+    await _set_ts(users, u["id"], "created_at", stale)
+    assert await users.disable_inactive_users(days=0) == []
+    assert (await users.get_user_by_id(u["id"]))["disabled"] is False
+
+
+async def test_disable_inactive_users_handles_legacy_naive_timestamps(users):
+    """SQLite-format ('YYYY-MM-DD HH:MM:SS', naive UTC) timestamps parse
+    and are judged — old rows use that format."""
+    from datetime import datetime, timedelta, timezone
+
+    u = await users.create_user("legacy@x.com", "hash", verified=True)
+    naive = (datetime.now(timezone.utc) - timedelta(days=40)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    await _set_ts(users, u["id"], "last_login_at", naive)
+    await _set_ts(users, u["id"], "created_at", naive)
+    disabled = await users.disable_inactive_users(days=35)
+    assert "legacy@x.com" in [d["email"] for d in disabled]
+
+
+def test_parse_user_ts_variants():
+    """parse_user_ts handles NULL, naive, aware, and garbage values."""
+    from datetime import timezone
+
+    from klangk.model.users import parse_user_ts
+
+    assert parse_user_ts(None) is None
+    assert parse_user_ts("") is None
+    naive = parse_user_ts("2026-01-15 10:00:00")
+    assert naive is not None and naive.tzinfo is timezone.utc
+    aware = parse_user_ts("2026-01-15T10:00:00+02:00")
+    assert aware is not None and aware.utcoffset().total_seconds() == 7200
+    assert parse_user_ts("garbage") is None

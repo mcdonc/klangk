@@ -252,6 +252,7 @@ port: "8997"
 | `login_lockout_duration`      | `900`                    | `KLANGKD_LOGIN_LOCKOUT_DURATION`      |
 | `login_lockout_window`        | `300`                    | `KLANGKD_LOGIN_LOCKOUT_WINDOW`        |
 | `max_sessions_per_user`       | `0`                      | `KLANGKD_MAX_SESSIONS_PER_USER`       |
+| `inactivity_disable_days`     | `35`                     | `KLANGKD_INACTIVITY_DISABLE_DAYS`     |
 | `disable_registration`        |                          | `KLANGKD_DISABLE_REGISTRATION`        |
 | `disable_invites`             |                          | `KLANGKD_DISABLE_INVITES`             |
 | `invite_expire_hours`         | `72`                     | `KLANGKD_INVITE_EXPIRE_HOURS`         |

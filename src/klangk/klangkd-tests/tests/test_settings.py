@@ -1581,6 +1581,7 @@ class TestNumericSettingCoercion:
         assert s.login_lockout_duration == 900
         assert s.login_lockout_window == 300
         assert s.max_sessions_per_user == 0
+        assert s.inactivity_disable_days == 35
         assert s.invite_expire_hours == 72
         assert s.access_token_hours == 24.0
         assert s.workspace_token_hours == 24.0
@@ -1600,6 +1601,7 @@ class TestNumericSettingCoercion:
             ("login_lockout_duration", 900),
             ("login_lockout_window", 300),
             ("max_sessions_per_user", 0),
+            ("inactivity_disable_days", 35),
             ("invite_expire_hours", 72),
             ("port_range_start", 9000),
             ("websocket_msg_size_max", 16777216),

@@ -16,6 +16,7 @@ import hmac
 import logging
 import re
 import secrets
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -54,6 +55,12 @@ MAX_PASSWORD_BYTES = 72
 PBKDF2_ITERATIONS = 600_000
 _HASH_SCHEME = "pbkdf2_sha512"
 _SALT_BYTES = 16
+
+# How often ``users.last_activity_at`` is re-stamped per user (#2588):
+# authenticated API requests are frequent, but the inactivity window is
+# measured in days — one UPDATE per user per minute is ample precision
+# and keeps idle-poling clients off the write path.
+ACTIVITY_STAMP_INTERVAL = 60.0
 # Sanity ceiling on the iteration count read back from a stored hash, so
 # a corrupt or tampered row cannot stall a login indefinitely.
 _MAX_VERIFY_ITERATIONS = 10_000_000
@@ -120,6 +127,20 @@ def is_locked_out(
             f"Too many failed attempts. Try again in {remaining // 60} minutes.",
         )
     return False, None
+
+
+def ensure_not_disabled(user: dict) -> None:
+    """Raise 403 when the account is disabled (#2588).
+
+    Called at every session-minting and token-continuing choke point
+    (login, OIDC callback, local login, verify/reset auto-login, token
+    refresh, the HTTP ``get_current_user`` dependencies, and the
+    WebSocket auth path). 403 — not 401 — so clients surface "Account
+    disabled" instead of retrying a refresh/relogin loop that can never
+    succeed.
+    """
+    if user.get("disabled"):
+        raise HTTPException(status_code=403, detail="Account disabled")
 
 
 def hash_password(password: str) -> str:
@@ -259,6 +280,10 @@ class Auth:
         # Fixed-policy token lifetimes (not env-driven).
         self.verify_token_expire_hours = 72
         self.reset_token_expire_hours = 1
+        # Per-user monotonic clock of the last last_activity_at write
+        # (#2588) — transient runtime state (not settings-derived), so
+        # it survives reconfigure and is deliberately not reset there.
+        self.activity_stamps: dict[str, float] = {}
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -684,6 +709,23 @@ class Auth:
         if excess:
             await sessions.remove_sessions([row["jti"] for row in excess])
 
+    async def record_activity(self, user_id: str) -> None:
+        """Stamp ``users.last_activity_at`` (throttled) on API access (#2588).
+
+        Called from the token-auth choke points (the HTTP
+        ``get_current_user`` dependencies and the WebSocket token path).
+        At most one DB write per user per :data:`ACTIVITY_STAMP_INTERVAL`
+        — the inactivity window is measured in days, so per-minute
+        precision is ample and idle-polling clients stay off the write
+        path.
+        """
+        now = time.monotonic()
+        last = self.activity_stamps.get(user_id)
+        if last is not None and now - last < ACTIVITY_STAMP_INTERVAL:
+            return
+        self.activity_stamps[user_id] = now
+        await self.app.state.model.users.record_activity(user_id)
+
     def decode_token(self, token: str, *, allow_expired: bool = False) -> dict:
         options = {"verify_exp": False} if allow_expired else {}
         return jwt.decode(
@@ -890,6 +932,9 @@ class Auth:
                 status_code=403,
                 detail="Account not verified. Check your email.",
             )
+        # A disabled account has valid credentials but must not mint a
+        # session (#2588) — admin re-enable is the only way back.
+        ensure_not_disabled(user)
 
         await self.clear_login_failures(lockout_key)
         token = await self.issue_token(
@@ -934,6 +979,8 @@ class Auth:
             user = await self.app.state.model.users.get_user_by_id(user_id)
             if user is None:
                 raise HTTPException(status_code=401, detail="User not found")
+            # A disabled account cannot rotate its way back in (#2588).
+            ensure_not_disabled(user)
 
             new_token = self.create_token(user_id, email)
             expires_at = datetime.fromtimestamp(
@@ -996,7 +1043,19 @@ class Auth:
                     "logout -> WS will close 4001 -> client logout)"
                 )
                 return None
-            return await self.app.state.model.users.get_user_by_id(user_id)
+            user = await self.app.state.model.users.get_user_by_id(user_id)
+            if user is None:
+                return None
+            # Disabled accounts keep their WS connections shut (#2588):
+            # returning None rejects the connect like any dead token.
+            if user.get("disabled"):
+                logger.info(
+                    "token reject: ACCOUNT DISABLED -> WS will close 4001"
+                    " -> client logout"
+                )
+                return None
+            await self.record_activity(user_id)
+            return user
         except ExpiredSignatureError:
             logger.info(
                 "token reject: EXPIRED -> WS will close 4002 -> client logout"
@@ -1051,6 +1110,10 @@ async def get_current_user(
         user = await request.app.state.model.users.get_user_by_id(user_id)
         if user is None:
             raise HTTPException(status_code=401, detail="User not found")
+        # A disabled account fails every authenticated request (#2588);
+        # 403 (not 401) so clients don't loop on refresh/relogin.
+        ensure_not_disabled(user)
+        await auth.record_activity(user_id)
         return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -1072,6 +1135,14 @@ async def get_current_user_optional(
             return None
         if await request.app.state.model.tokens.is_token_blocklisted(jti):
             return None
-        return await request.app.state.model.users.get_user_by_id(user_id)
+        user = await request.app.state.model.users.get_user_by_id(user_id)
+        if user is None:
+            return None
+        # Valid credentials on a disabled account still 403 (#2588) —
+        # returning None here would silently degrade /config to the
+        # anonymous view and hide the reason from the client.
+        ensure_not_disabled(user)
+        await auth.record_activity(user_id)
+        return user
     except JWTError:
         return None

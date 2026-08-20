@@ -20,6 +20,7 @@ from klangk import (
     auth as auth_mod,
     caddy as caddy_mod,
     consent,
+    inactivity,
     sidecar_connections,
     emailsvc as emailsvc_mod,
     files as files_mod,
@@ -860,6 +861,7 @@ class TestLifespan:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
+        app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
@@ -919,6 +921,7 @@ class TestLifespan:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
+        app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
@@ -1463,6 +1466,7 @@ class TestStartupShutdownRestart:
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
+        app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(

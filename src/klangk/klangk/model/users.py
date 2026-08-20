@@ -3,7 +3,7 @@
 import hashlib
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 # Agent identity
@@ -162,7 +162,8 @@ ADMIN_USER_SORT_COLUMNS = {
 # selects the same columns and builds the same dict; one definition keeps
 # new columns from drifting between lookups.
 _USER_COLUMNS = (
-    "SELECT id, email, password_hash, verified, provider, external_id, handle"
+    "SELECT id, email, password_hash, verified, provider, external_id,"
+    " handle, disabled, last_activity_at"
 )
 
 
@@ -175,7 +176,28 @@ def _user_row_to_dict(row) -> dict:
         "provider": row["provider"],
         "external_id": row["external_id"],
         "handle": row["handle"],
+        "disabled": bool(row["disabled"]),
+        "last_activity_at": row["last_activity_at"],
     }
+
+
+def parse_user_ts(value: str | None) -> datetime | None:
+    """Parse a users-table timestamp into an aware UTC datetime (#2588).
+
+    The table mixes formats: ``created_at`` is SQLite's ``datetime('now')``
+    (``2026-01-15 10:00:00``, naive), while ``last_login_at`` and
+    ``last_activity_at`` are ``datetime.now(timezone.utc).isoformat()``
+    (aware). Naive values are assumed UTC (that is how they are written).
+    Unparseable values parse as None (the sweep skips a user whose
+    timestamps cannot be judged).
+    """
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 class UsersModel:
@@ -658,7 +680,8 @@ class UsersModel:
             total = (await count_cursor.fetchone())["c"]
 
             cursor = await db.execute(
-                "SELECT id, email, handle, verified, provider, created_at"
+                "SELECT id, email, handle, verified, provider, created_at,"
+                " disabled, last_login_at, last_activity_at"
                 f" FROM users{where_clause}"
                 f" ORDER BY {sort_col} {direction}, id"
                 " LIMIT ? OFFSET ?",
@@ -672,6 +695,9 @@ class UsersModel:
                     "verified": bool(row["verified"]),
                     "provider": row["provider"],
                     "created_at": row["created_at"],
+                    "disabled": bool(row["disabled"]),
+                    "last_login_at": row["last_login_at"],
+                    "last_activity_at": row["last_activity_at"],
                 }
                 for row in await cursor.fetchall()
             ]
@@ -799,9 +825,95 @@ class UsersModel:
                 (datetime.now(timezone.utc).isoformat(), user_id),
             )
 
+    async def record_activity(self, user_id: str) -> None:
+        """Stamp the user's most recent authenticated API access (#2588).
+
+        Called (throttled — see ``Auth.record_activity``) from the token
+        auth choke points: the HTTP ``get_current_user`` dependencies and
+        the WebSocket ``get_user_from_token`` path. A login also counts
+        as activity, but ``record_login`` already stamps a fresher
+        signal, so login paths do not call this. Stored as a UTC
+        ISO-8601 string; read by :meth:`disable_inactive_users`.
+        """
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "UPDATE users SET last_activity_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), user_id),
+            )
+
+    async def set_user_disabled(self, user_id: str, disabled: bool) -> bool:
+        """Enable/disable a user account (#2588). Returns True if updated.
+
+        Raises ``AgentPrincipalError`` if the target is the system agent
+        (it realizes its capabilities through in-container physical
+        access, never a login — there is nothing to disable).
+        """
+        if user_id == AGENT_USER_ID:
+            raise AgentPrincipalError(
+                "Cannot disable the system agent user"
+                " (it does not authenticate; disabling is meaningless)"
+            )
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "UPDATE users SET disabled = ? WHERE id = ?",
+                (int(disabled), user_id),
+            )
+            return cursor.rowcount > 0
+
+    async def disable_inactive_users(self, days: int) -> list[dict]:
+        """Disable accounts inactive for more than *days* days (#2588).
+
+        Inactivity is judged by the newest of ``last_activity_at`` (API
+        access), ``last_login_at``, and ``created_at`` (a never-used
+        account ages from creation). Exempt: the system agent and
+        members of the ``admin`` group — auto-disabling every operator
+        on an idle deploy would lock the deployment out with no admin
+        left to re-enable accounts. Returns the newly disabled users
+        as ``[{"id", "email"}]``. ``days <= 0`` is a no-op (the
+        sweep is disabled; callers guard, this stays honest).
+        """
+        if days <= 0:
+            return []
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        admin_ids: set[str] = set()
+        admin_group = await self.get_group_by_name("admin")
+        async with self.app.state.db.transaction() as db:
+            if admin_group is not None:
+                cursor = await db.execute(
+                    "SELECT user_id FROM user_groups WHERE group_id = ?",
+                    (admin_group["id"],),
+                )
+                admin_ids = {row[0] for row in await cursor.fetchall()}
+            cursor = await db.execute(
+                "SELECT id, email, created_at, last_login_at,"
+                " last_activity_at FROM users WHERE disabled = 0"
+            )
+            disabled: list[dict] = []
+            for row in await cursor.fetchall():
+                if row["id"] == AGENT_USER_ID or row["id"] in admin_ids:
+                    continue
+                stamps = [
+                    ts
+                    for ts in (
+                        parse_user_ts(row["last_activity_at"]),
+                        parse_user_ts(row["last_login_at"]),
+                        parse_user_ts(row["created_at"]),
+                    )
+                    if ts is not None
+                ]
+                if not stamps or max(stamps) >= cutoff:
+                    continue
+                await db.execute(
+                    "UPDATE users SET disabled = 1 WHERE id = ?",
+                    (row["id"],),
+                )
+                disabled.append({"id": row["id"], "email": row["email"]})
+            return disabled
+
     async def get_user_by_id(self, user_id: str) -> dict | None:
         row = await self.app.state.db.fetchone(
-            "SELECT id, email, handle, last_login_at FROM users WHERE id = ?",
+            "SELECT id, email, handle, last_login_at, disabled,"
+            " last_activity_at FROM users WHERE id = ?",
             (user_id,),
         )
         if row is None:
@@ -811,6 +923,8 @@ class UsersModel:
             "email": row["email"],
             "handle": row["handle"],
             "last_login_at": row["last_login_at"],
+            "disabled": bool(row["disabled"]),
+            "last_activity_at": row["last_activity_at"],
         }
 
     async def search_users(self, query: str, limit: int = 10) -> list[dict]:

@@ -10714,6 +10714,30 @@ class TestOIDCCallback:
         )
         assert resp.status_code == 400
 
+    async def test_callback_rejects_disabled_user(
+        self, client, app, monkeypatch, db, app_state
+    ):
+        """#2588: a disabled account cannot mint a session via SSO."""
+        _, cookie_data = await self._setup_callback(
+            client, app, monkeypatch, db
+        )
+        # Pre-provision the user the callback will resolve, then disable.
+        u = await app_state.state.model.users.create_user(
+            "oidcuser@example.com", None, verified=True
+        )
+        await app_state.state.model.users.link_oidc_identity(
+            u["id"], "test", "oidc-sub-123"
+        )
+        await app_state.state.model.users.set_user_disabled(u["id"], True)
+        client.cookies.set("oidc_test", cookie_data)
+        resp = await client.get(
+            "/api/v1/auth/oidc/test/callback",
+            params={"code": "auth-code", "state": "test-state"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 403
+        assert "disabled" in resp.json()["detail"]
+
 
 class TestOIDCCallbackAgentGuard:
     """OIDC callback must never mint a session as the system agent (#1225)."""
@@ -11193,3 +11217,124 @@ class TestPasswordPolicyRouteEnforcement:
         )
         assert resp.status_code == 400
         assert "uppercase letter" in resp.json()["detail"]
+
+
+class TestInactivityDisable:
+    """#2588: auto-disable of dormant accounts — API surface."""
+
+    async def test_disabled_user_login_403(self, client, app, user):
+        await app.state.model.users.set_user_disabled(user["id"], True)
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        assert resp.status_code == 403
+        assert "disabled" in resp.json()["detail"]
+
+    async def test_disabled_user_token_403(self, client, app, user):
+        """A pre-disable token fails authenticated requests with 403
+        (not 401 — clients must not loop on refresh/relogin)."""
+        token = _auth().create_token(user["id"], user["email"])
+        await app.state.model.users.set_user_disabled(user["id"], True)
+        resp = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+        assert "disabled" in resp.json()["detail"]
+
+    async def test_admin_disable_and_reenable(
+        self, client, app, admin_user, user
+    ):
+        headers = await _admin_login(client)
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"disabled": True},
+        )
+        assert resp.status_code == 200
+        assert (await app.state.model.users.get_user_by_id(user["id"]))[
+            "disabled"
+        ] is True
+        # Login is refused while disabled...
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        assert resp.status_code == 403
+        # ...and accepted again after re-enable.
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"disabled": False},
+        )
+        assert resp.status_code == 200
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testuser@example.com",
+                "password": "testpass",
+            },
+        )
+        assert resp.status_code == 200
+
+    async def test_admin_cannot_disable_self(self, client, admin_user):
+        headers = await _admin_login(client)
+        resp = await client.patch(
+            f"/api/v1/admin/users/{admin_user['id']}",
+            headers=headers,
+            json={"disabled": True},
+        )
+        assert resp.status_code == 400
+        assert "your own account" in resp.json()["detail"]
+
+    async def test_admin_cannot_disable_agent(
+        self, client, admin_user, db, temp_data_dir
+    ):
+        from klangk.main import Lifecycle
+
+        from _helpers import wire_db_and_model
+
+        _seed_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=make_settings({}))
+        )
+        wire_db_and_model(_seed_state)
+        await Lifecycle(_seed_state).seed_agent_user()
+        headers = await _admin_login(client)
+        resp = await client.patch(
+            f"/api/v1/admin/users/{model.AGENT_USER_ID}",
+            headers=headers,
+            json={"disabled": True},
+        )
+        assert resp.status_code == 400
+        assert "system agent" in resp.json()["detail"]
+
+    async def test_list_users_reports_disabled(
+        self, client, app, admin_user, user
+    ):
+        await app.state.model.users.set_user_disabled(user["id"], True)
+        headers = await _admin_login(client)
+        resp = await client.get(
+            "/api/v1/admin/users?page_size=200", headers=headers
+        )
+        by_id = {u["id"]: u for u in resp.json()["users"]}
+        assert by_id[user["id"]]["disabled"] is True
+        assert by_id[admin_user["id"]]["disabled"] is False
+
+    async def test_authenticated_request_stamps_activity(
+        self, client, app, user
+    ):
+        """The get_current_user choke point stamps last_activity_at
+        (#2588) — login alone does not (it stamps last_login_at)."""
+        headers = await _auth_headers(client)
+        # Any authenticated request beyond the login itself.
+        resp = await client.get("/api/v1/auth/me", headers=headers)
+        assert resp.status_code == 200
+        row = await app.state.model.users.get_user_by_id(user["id"])
+        assert row["last_activity_at"] is not None

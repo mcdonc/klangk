@@ -3,7 +3,8 @@
 Covers the runner contract (fresh DB, replay no-op, failure semantics,
 validation), migration 0001's shape (password_history + cascade),
 0002's (users.last_login_at), 0003's (user_sessions + cascade,
-#2585), and 0004's (workstation columns on user_sessions, #2586).
+#2585), 0004's (workstation columns on user_sessions, #2586), and
+0005's (users.disabled + users.last_activity_at, #2588).
 """
 
 import aiosqlite
@@ -47,6 +48,7 @@ class TestRunner:
             (2, "0002_last_login_at"),
             (3, "0003_user_sessions"),
             (4, "0004_user_sessions_workstation"),
+            (5, "0005_user_inactivity"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -66,6 +68,10 @@ class TestRunner:
             info = await db.execute("PRAGMA table_info(user_sessions)")
             cols = {r[1] for r in await info.fetchall()}
             assert {"source_ip", "user_agent"} <= cols
+            # Migration 0005 added the inactivity columns (#2588).
+            info = await db.execute("PRAGMA table_info(users)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert {"disabled", "last_activity_at"} <= cols
 
             # Re-run: nothing new applied, still exactly four records.
             await app_state.state.model.init_db()
@@ -102,6 +108,7 @@ class TestRunner:
                 (2, "0002_last_login_at"),
                 (3, "0003_user_sessions"),
                 (4, "0004_user_sessions_workstation"),
+                (5, "0005_user_inactivity"),
             ]
 
     async def test_pending_only(self, tmp_path):

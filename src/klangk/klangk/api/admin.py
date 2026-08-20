@@ -21,6 +21,7 @@ from .. import (
 from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
+    AgentPrincipalError,
     PRINCIPAL_GROUP,
     PRINCIPAL_SYSTEM,
     PRINCIPAL_USER,
@@ -314,6 +315,7 @@ class UpdateUserRequest(auth.BaseModel):
     email: str | None = None
     password: str | None = None
     handle: str | None = None
+    disabled: bool | None = None
 
 
 @router.patch("/admin/users/{user_id}")
@@ -345,6 +347,22 @@ async def update_user(
         await wshandler.refresh_user_handle(
             app.state.sockets, user_id, req.handle
         )
+    if req.disabled is not None:
+        # An admin must not disable their own account (#2588) — the
+        # only accounts that can re-enable are the admin group's.
+        if req.disabled and user_id == admin["id"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot disable your own account",
+            )
+        try:
+            updated = await app.state.model.users.set_user_disabled(
+                user_id, req.disabled
+            )
+        except AgentPrincipalError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not updated:  # pragma: no cover — race between get and update
+            raise HTTPException(status_code=404, detail="User not found")
     return {"status": "updated"}
 
 
