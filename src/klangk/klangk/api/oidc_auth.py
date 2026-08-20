@@ -120,6 +120,12 @@ def _derive_redirect_uri(request: Request, provider_id: str) -> str:
     then trusted forwarded headers).  The unsigned state cookie must
     never carry it: a client-controlled ``redirect_uri`` would be fed
     verbatim to the IdP token endpoint (#2573).
+
+    Because the value is derived per request, a hosting-config reload
+    (SIGHUP) between login and callback — or a fleet with differing
+    proxy-trust settings — can make the two derivations disagree; the
+    IdP then rejects the exchange and the login fails loudly with a
+    502.  In-flight logins only; retrying after the reload succeeds.
     """
     hostname, proto, base_path = request.app.state.util.derive_hosting_info(
         request.headers, request.client.host if request.client else None

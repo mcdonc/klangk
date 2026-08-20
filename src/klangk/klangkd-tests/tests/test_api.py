@@ -9537,13 +9537,20 @@ class TestOIDCLogin:
             app.state.oidc, "oidc_login_allowed", lambda *args: True
         )
         monkeypatch.setattr(app.state.oidc, "get_provider", lambda _: provider)
-        monkeypatch.setattr(
-            app.state.oidc,
-            "build_auth_url",
-            AsyncMock(return_value="https://idp.example.com/auth?x=1"),
+        build_auth_url = AsyncMock(
+            return_value="https://idp.example.com/auth?x=1"
         )
+        monkeypatch.setattr(app.state.oidc, "build_auth_url", build_auth_url)
         resp = await client.get(
             "/api/v1/auth/oidc/test/login", follow_redirects=False
+        )
+        # End-to-end consistency: the URI login hands to the IdP must
+        # equal the URI the callback later sends to the token exchange
+        # (pinned in TestOIDCCallback.test_callback_redirect_uri_
+        # rederived_not_from_cookie) — both derive it from hosting info
+        # (#2573).
+        assert build_auth_url.call_args[0][1] == (
+            "http://test/api/v1/auth/oidc/test/callback"
         )
         from http.cookies import SimpleCookie
 
