@@ -579,6 +579,30 @@ class WebSocketState:
             except Exception:  # noqa: BLE001
                 logger.debug("Error closing socket during restart")
 
+    async def disconnect_user(
+        self, user_id: str, *, code: int = 4001, reason: str = ""
+    ) -> int:
+        """Close every live connection for *user_id* (#2588).
+
+        Used when an account is disabled (admin action or the inactivity
+        sweep): close code 4001 makes the client log out rather than
+        reconnect-loop. Only the sockets are closed — each handler's own
+        ``finally`` block then runs the normal disconnect cleanup
+        (presence leave, session bookkeeping), the same as a natural
+        client disconnect. Returns how many connections were closed.
+        """
+        socks = [
+            sock
+            for sock, conn in self.connections.items()
+            if conn.user.get("id") == user_id
+        ]
+        for sock in socks:
+            try:
+                await sock.close(code=code, reason=reason)
+            except Exception:  # noqa: BLE001
+                logger.debug("Error closing socket for user %s", user_id)
+        return len(socks)
+
     def cancel_pending_leave(self, workspace_id: str, user_id: str) -> bool:
         """Cancel a pending presence_leave for *user_id* in *workspace_id*.
 

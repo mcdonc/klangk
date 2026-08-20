@@ -284,6 +284,14 @@ async def forgot_password(
         # Don't reveal whether the email exists
         return {"status": "sent"}
 
+    # Disabled accounts get no reset email (#2588): the reset itself is
+    # refused (403 below), so a link would only confuse — and letting a
+    # disabled account drive outbound mail is its own nuisance. Still
+    # answer ``"sent"`` so the endpoint never reveals the disabled
+    # state to an anonymous caller.
+    if user.get("disabled"):
+        return {"status": "sent"}
+
     # Rate limit: one reset email per address per minute
     now = time.time()
     prune_timestamps(reset_timestamps, RESET_COOLDOWN_SECONDS, now)

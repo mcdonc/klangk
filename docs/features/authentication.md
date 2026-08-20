@@ -180,8 +180,12 @@ the sweep judges on the **newest** of the three.
 The sweep runs at startup and hourly. When it disables an account,
 login (password, OIDC, and no-auth local), token refresh, and every
 authenticated API request fail with `403 Account disabled`; the
-WebSocket rejects new connects for that user. Already-established
-WebSocket connections run until they reconnect.
+WebSocket rejects new connects for that user. Disabling an account
+also **closes its live WebSocket connections** (close code `4001`,
+which logs the client out) — admin disable and the inactivity sweep
+both do this. A disabled account is also sent no password-reset
+email (the reset endpoint refuses it anyway; the forgot-password
+response stays `"sent"` so the disabled state is not revealed).
 
 Two classes of account are never auto-disabled:
 

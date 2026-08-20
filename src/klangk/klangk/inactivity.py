@@ -18,6 +18,8 @@ import asyncio
 import logging
 import time
 
+from klangk import wshandler
+
 logger = logging.getLogger(__name__)
 
 SWEEP_INTERVAL = 3600.0
@@ -86,6 +88,16 @@ class InactivitySweeper:
             days
         )
         if disabled:
+            # Cut live connections for each disabled account (#2588
+            # review): the WS is the terminal/control data plane, and a
+            # dormant-turned-disabled account must not keep it. 4001 ->
+            # the client logs out rather than reconnect-looping.
+            for u in disabled:
+                await wshandler.disconnect_user(
+                    self.app.state.sockets,
+                    u["id"],
+                    reason="Account disabled",
+                )
             logger.info(
                 "inactivity: disabled %d account(s) inactive for more than"
                 " %d day(s): %s",

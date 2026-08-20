@@ -314,6 +314,10 @@ class UsersModel:
                 "email": email,
                 "handle": handle,
                 "verified": verified,
+                # Explicit so the dict never silently lacks the key the
+                # ``ensure_not_disabled`` gate reads (#2588 review) — a
+                # fresh user is enabled by definition.
+                "disabled": False,
             }
 
     async def insert_unverified_user(

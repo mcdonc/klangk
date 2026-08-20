@@ -26,6 +26,7 @@ def _app(*, days=35, disable_inactive=None):
             )
         )
     )
+    app.state.sockets = types.SimpleNamespace(disconnect_user=AsyncMock())
     return app
 
 
@@ -138,8 +139,9 @@ class TestInactivitySweeper:
         await inactivity.InactivitySweeper(app)._sweep()
         assert mock.await_args_list[-1] == ((3,), {})
 
-    async def test_disabled_users_are_logged(self, caplog):
-        """A non-empty result logs the disabled emails."""
+    async def test_disabled_users_are_logged_and_kicked(self, caplog):
+        """A non-empty result logs the disabled emails and closes their
+        live connections (#2588 review)."""
         app = _app(
             disable_inactive=AsyncMock(
                 return_value=[{"id": "u1", "email": "gone@example.com"}]
@@ -148,6 +150,9 @@ class TestInactivitySweeper:
         with caplog.at_level("INFO", logger="klangk.inactivity"):
             await inactivity.InactivitySweeper(app)._sweep()
         assert "gone@example.com" in caplog.text
+        app.state.sockets.disconnect_user.assert_awaited_once_with(
+            "u1", code=4001, reason="Account disabled"
+        )
 
 
 def await_count(mock) -> int:

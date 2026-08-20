@@ -981,6 +981,10 @@ class Auth:
                 raise HTTPException(status_code=401, detail="User not found")
             # A disabled account cannot rotate its way back in (#2588).
             ensure_not_disabled(user)
+            # A refresh is authenticated API use (#2588 review): stamp so
+            # a headless client that only refreshes (no other API calls)
+            # still counts as active.
+            await self.record_activity(user_id)
 
             new_token = self.create_token(user_id, email)
             expires_at = datetime.fromtimestamp(
@@ -1123,7 +1127,12 @@ async def get_current_user_optional(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict | None:
-    """Like get_current_user but returns None instead of raising 401."""
+    """Like get_current_user but returns None instead of raising 401.
+
+    Exception: a disabled account raises 403 (#2588) — returning None
+    would silently degrade the endpoint to its anonymous view and hide
+    the reason from the client.
+    """
     if credentials is None:
         return None
     auth = request.app.state.auth

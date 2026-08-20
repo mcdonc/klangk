@@ -1436,6 +1436,28 @@ class TestForgotPassword:
         assert resp.status_code == 200
         assert resp.json()["status"] == "sent"
 
+    async def test_forgot_disabled_user_no_email_still_sent(
+        self, client, app, db, app_state
+    ):
+        """#2588 review: a disabled account gets no reset email (the
+        reset itself 403s), but the response never reveals the
+        disabled state to an anonymous caller."""
+        u = await self._create_user(app_state)
+        await app.state.model.users.set_user_disabled(u["id"], True)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_password_reset_email",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            resp = await client.post(
+                "/api/v1/auth/forgot-password",
+                json={"email": "forgot@example.com"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "sent"
+        mock_send.assert_not_awaited()
+        api.reset_timestamps.pop("forgot@example.com", None)
+
     async def test_forgot_rate_limited(self, client, db, app_state):
         await self._create_user(app_state)
         with patch.object(
@@ -11338,3 +11360,65 @@ class TestInactivityDisable:
         assert resp.status_code == 200
         row = await app.state.model.users.get_user_by_id(user["id"])
         assert row["last_activity_at"] is not None
+
+    async def test_admin_disable_kicks_live_sockets(
+        self, client, app, admin_user, user
+    ):
+        """#2588 review: disabling an account closes its live WS
+        connections (4001 -> client logout), not just future connects."""
+        from klangk.wshandler.session import WebSocketState
+        from klangk import wshandler
+
+        assert isinstance(app.state.sockets, WebSocketState)
+        closed: list[tuple[int, str]] = []
+
+        class FakeSock:
+            async def close(self, code=1000, reason=""):
+                closed.append((code, reason))
+
+        # Register two connections: the victim's and another user's.
+        victim_conn = types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]}
+        )
+        other_conn = types.SimpleNamespace(
+            user={"id": "someone-else", "email": "other@example.com"}
+        )
+        app.state.sockets.connections[FakeSock()] = other_conn
+        app.state.sockets.connections[FakeSock()] = victim_conn
+
+        headers = await _admin_login(client)
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"disabled": True},
+        )
+        assert resp.status_code == 200
+        # Exactly the victim's socket was closed, with the logout code.
+        assert closed == [(4001, "Account disabled")]
+        # Re-enable does not touch sockets.
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"disabled": False},
+        )
+        assert resp.status_code == 200
+        assert len(closed) == 1
+
+        # A socket whose close() raises must not break the kick: the
+        # remaining sockets are still closed and the count is right.
+        class BadSock:
+            async def close(self, code=1000, reason=""):
+                raise RuntimeError("already closed")
+
+        victim2 = types.SimpleNamespace(
+            user={"id": user["id"], "email": user["email"]}
+        )
+        app.state.sockets.connections.clear()
+        app.state.sockets.connections[BadSock()] = victim2
+        app.state.sockets.connections[FakeSock()] = victim2
+        kicked = await wshandler.disconnect_user(
+            app.state.sockets, user["id"], reason="Account disabled"
+        )
+        assert kicked == 2
+        assert closed[-1] == (4001, "Account disabled")
+        app.state.sockets.connections.clear()

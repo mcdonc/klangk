@@ -461,3 +461,11 @@ def test_parse_user_ts_variants():
     aware = parse_user_ts("2026-01-15T10:00:00+02:00")
     assert aware is not None and aware.utcoffset().total_seconds() == 7200
     assert parse_user_ts("garbage") is None
+
+
+async def test_create_user_returns_disabled_false(users):
+    """create_user's dict carries the disabled key explicitly — the
+    ensure_not_disabled gate must never silently pass on a missing
+    key (#2588 review)."""
+    u = await users.create_user("shape@x.com", "hash", verified=True)
+    assert u["disabled"] is False

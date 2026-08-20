@@ -1677,3 +1677,12 @@ class TestRecordActivity:
         assert await a.get_user_from_token(token) is not None
         row = await a.app.state.model.users.get_user_by_id(user["id"])
         assert row["last_activity_at"] is not None
+
+    async def test_refresh_stamps_activity(self, user, db):
+        """#2588 review: a token refresh is authenticated API use — a
+        headless client that only refreshes still counts as active."""
+        a = _auth()
+        token = a.create_token(user["id"], user["email"])
+        await a.refresh_token(token)
+        row = await a.app.state.model.users.get_user_by_id(user["id"])
+        assert row["last_activity_at"] is not None

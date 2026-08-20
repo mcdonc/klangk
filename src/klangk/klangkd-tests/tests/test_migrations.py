@@ -73,7 +73,7 @@ class TestRunner:
             cols = {r[1] for r in await info.fetchall()}
             assert {"disabled", "last_activity_at"} <= cols
 
-            # Re-run: nothing new applied, still exactly four records.
+            # Re-run: nothing new applied, still exactly five records.
             await app_state.state.model.init_db()
             assert await _recorded(db) == expected
 

@@ -278,7 +278,7 @@ No request body.
     "disabled": false,
     "last_login_at": "2026-01-15T10:00:00+00:00",
     "last_activity_at": "2026-01-15T10:05:00+00:00",
-    "groups": [{ "id": "uuid", "name": "admins" }]
+    "groups": [{ "id": "uuid", "name": "admin" }]
   }
 ]
 ```
@@ -765,7 +765,8 @@ Update a user's email, password, handle, or enabled state (admin). All
 fields optional. `disabled` (see
 [Dormant-account auto-disable](../features/authentication.md#dormant-account-auto-disable))
 disables or re-enables the account — a disabled account's logins, token
-refreshes, and authenticated requests fail with `403 Account disabled`.
+refreshes, and authenticated requests fail with `403 Account disabled`,
+and its live WebSocket connections are closed (4001 → client logout).
 Admins cannot disable their own account, and the system agent cannot be
 disabled.
 

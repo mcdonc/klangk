@@ -116,6 +116,22 @@ async def disconnect_all_websockets(sockets: WebSocketState) -> None:
     await sockets.disconnect_all()
 
 
+async def disconnect_user(
+    sockets: WebSocketState,
+    user_id: str,
+    *,
+    code: int = 4001,
+    reason: str = "",
+) -> int:
+    """Close every live connection for *user_id* (#2588).
+
+    Used when an account is disabled: 4001 makes the client log out
+    rather than reconnect-loop. Thin delegation to
+    ``WebSocketState.disconnect_user``.
+    """
+    return await sockets.disconnect_user(user_id, code=code, reason=reason)
+
+
 async def refresh_user_handle(
     sockets: WebSocketState, user_id: str, new_handle: str
 ) -> None:
