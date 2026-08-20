@@ -693,6 +693,25 @@ class TestEffectiveClientIp:
         h = self._hdr(**{"x-real-ip": "203.0.113.7"})
         assert u.effective_client_ip(h, "10.89.0.5") == "10.89.0.5"
 
+    def test_garbage_forwarded_value_falls_back_to_peer(self):
+        """A trusted peer forwarding a non-IP value (garbage, or an
+        append-style XFF chain where the leftmost hop is client-
+        controlled text) must not become a workstation identity: the
+        resolver falls back to the peer (#2586 review)."""
+        u = _util({})
+        for garbage in ("not-an-ip", "1.2.3.4, 5.6.7.8, evil"):
+            h = self._hdr(**{"x-real-ip": garbage})
+            assert u.effective_client_ip(h, "127.0.0.1") == "127.0.0.1"
+        h = self._hdr(**{"x-forwarded-for": "definitely-not-an-ip"})
+        assert u.effective_client_ip(h, "127.0.0.1") == "127.0.0.1"
+
+    def test_result_is_canonicalized(self):
+        """The returned address is str()-normalized, so the same IPv6
+        host written two ways compares as one workstation."""
+        u = _util({})
+        h = self._hdr(**{"x-real-ip": "0:0:0:0:0:0:0:1"})
+        assert u.effective_client_ip(h, "127.0.0.1") == "::1"
+
     def test_reject_proxy_headers_forces_peer_only(self):
         u = _util({"KLANGKD_REJECT_PROXY_HEADERS": "1"})
         h = self._hdr(**{"x-real-ip": "203.0.113.7"})

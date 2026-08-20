@@ -1455,7 +1455,10 @@ class TestConcurrentLogonAudit:
         await self._login()  # unknown workstation
         with caplog.at_level(logging.INFO, logger="klangk.auth"):
             await self._login(source_ip="203.0.113.7")
-        await self._login()  # unknown again, now concurrent with a known one
+            # Unknown again, now concurrent with a known one — inside the
+            # capture context so the no-record assertion actually observes
+            # this login too (review nit).
+            await self._login()
         assert not any(
             "concurrent logon" in r.getMessage() for r in caplog.records
         )

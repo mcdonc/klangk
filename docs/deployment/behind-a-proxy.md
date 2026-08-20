@@ -255,8 +255,17 @@ Only the audit signal is lost.
 
 ### Checklist for a correct setup
 
-1. The outer proxy must send `X-Real-IP` (or `X-Forwarded-For`) set to
-   the real client address — see the nginx and Caddy examples above.
+1. The outer proxy must **overwrite** a client-IP header with the
+   address it actually saw: `X-Real-IP $remote_addr;` (nginx) or
+   Caddy's automatic `X-Forwarded-For` semantics. Do **not** rely on
+   an outer proxy that only _appends_ to `X-Forwarded-For` — the
+   leftmost entry is then client-controlled, and a client can forge
+   its workstation identity (mask a stolen-credential login as the
+   victim's machine, or plant fake "different workstation" records).
+   klangk validates that the forwarded value parses as an IP and
+   ignores garbage, but a syntactically valid forged IP from an
+   append-style chain is still honored. See the nginx and Caddy
+   examples above for the safe forms.
 2. `trusted-proxy-cidrs` must contain the outer proxy's IP or subnet.
    With a wrong list, klangk's Caddy and the backend ignore the
    forwarded headers.

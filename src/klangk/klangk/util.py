@@ -470,8 +470,12 @@ class Util:
         is a trusted proxy and ``KLANGKD_REJECT_PROXY_HEADERS`` is off —
         the same trust gate :meth:`client_is_loopback` and
         :meth:`derive_hosting_info` use, so a direct caller cannot
-        spoof a workstation identity (#2586). Returns the peer address
-        otherwise, or ``None`` when there is no client at all.
+        spoof a workstation identity (#2586). The header value must
+        parse as an IP address; a garbage or forged-unparseable value
+        falls back to the peer rather than being persisted, logged,
+        or served as a workstation identity. Returns the canonical
+        (``str()``-normalized) address, or ``None`` when there is no
+        client at all.
         """
         candidate = client_host
         trust = (
@@ -485,8 +489,20 @@ class Util:
                 xff = headers.get("x-forwarded-for") or ""
                 real_ip = xff.split(",")[0].strip() if xff else ""
             if real_ip:
-                candidate = real_ip
-        return candidate
+                try:
+                    return str(ipaddress.ip_address(real_ip))
+                except ValueError:
+                    # A trusted peer forwarded a value that is not an
+                    # IP (garbage, or a proxy chain appending
+                    # client-controlled text). Fall back to the peer
+                    # instead of trusting an unvalidated string.
+                    pass
+        if candidate is None:
+            return None
+        try:
+            return str(ipaddress.ip_address(candidate))
+        except ValueError:
+            return candidate
 
     def client_is_loopback(
         self, headers=None, client_host: str | None = None
