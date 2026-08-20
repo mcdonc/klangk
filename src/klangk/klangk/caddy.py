@@ -54,6 +54,8 @@ from pathlib import Path
 
 import httpx
 
+from .container.ports import DEFAULT_PORTS_PER_WORKSPACE
+
 # Pure host-IP / loopback probes + fallback subnets, folded into caddy (the
 # sole engine) from the former proxy_common.py (#2088). Both auto-detect the
 # pasta-NAT container source set the same way.
@@ -584,7 +586,7 @@ class CaddyRenderer:
         # default, 0 disables hosted ports. Compare against None so a
         # legitimate 0 is not swallowed by an `or`.
         _ports = self.app.state.settings.hosted_ports_per_workspace
-        if (_ports if _ports is not None else 5) == 0:
+        if (_ports if _ports is not None else DEFAULT_PORTS_PER_WORKSPACE) == 0:
             return "	handle /hosted/* {\n		respond 404\n	}\n"
         return (
             "	@hostedSlashless path_regexp hostedsl ^/hosted/[^/]+/([0-9]+)$\n"

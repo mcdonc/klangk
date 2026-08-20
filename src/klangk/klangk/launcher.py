@@ -301,7 +301,7 @@ def main(  # pragma: no cover
     uds_path = settings.socket
 
     # Read ws_max_size through the typed config (default 16 MiB, #1394/#1395).
-    ws_max_size = int(settings.websocket_msg_size_max)
+    ws_max_size = settings.websocket_msg_size_max
 
     # Pre-flight PID check: abort *before* touching the UDS so a second
     # klangkd doesn't destroy the first instance's socket (#1837).

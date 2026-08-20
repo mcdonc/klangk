@@ -43,7 +43,10 @@ operators or integrators to act when upgrading.
   ports) fail at startup naming the field instead of at request time;
   `smtp_use_tls: true` (native bool) is also accepted. Zero remains
   legal only where it already meant "off" (length floor, lockout,
-  hosted ports).
+  hosted ports). Explicitly emptying a value (`KLANGKD_X=""`) now
+  resolves to the field's default instead of crashing consumers with
+  `int(None)`; `port_range_start` is range-checked against the last
+  legal host port.
 
 ### Security
 

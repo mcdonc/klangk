@@ -197,20 +197,26 @@ def _resolve_numeric_indirection(v, name: str):
         resolved = _resolve_indirection(v, name)
         if resolved is None:
             raise ValueError(
-                f"{name} could not be resolved: the file:/cmd: reference "
-                "failed. See logs for detail."
+                f"KLANGKD_{name.upper()} could not be resolved: the "
+                "file:/cmd: reference failed. See logs for detail."
             )
         return resolved
     return v
 
 
-def _coerce_setting_int(v, name: str, *, minimum: int = 1) -> int | None:
-    """Coerce a numeric setting to int or None; raise with *name* (#2603).
+def _coerce_setting_int(
+    v, name: str, *, minimum: int = 1, default: int | None = None
+) -> int | None:
+    """Coerce a numeric setting to int; raise with *name* (#2603).
 
     Accepts every input form the sources produce: a native ``int`` (bare
     YAML ``login-lockout-failures: 5``), an integer string (env var,
     quoted YAML), or a ``file:``/``cmd:`` reference that resolves to one.
-    ``None``/empty → ``None`` (unset; callers apply their own defaults).
+    ``None``/empty → *default* — the field's declared default, so an
+    explicitly-emptied value can never surface as ``None`` on a field
+    whose consumers assume a number (the request-time ``int(None)``
+    crashes of #2603's review). Fields whose default **is** None (the
+    ``health_check_*`` trio) pass ``default=None`` and stay optional.
     Bools, native floats (``1.5`` — silently truncating would hide a
     typo), non-integers, and values below *minimum* raise so the server
     refuses to boot on a malformed config instead of failing at request
@@ -218,7 +224,7 @@ def _coerce_setting_int(v, name: str, *, minimum: int = 1) -> int | None:
     """
     v = _resolve_numeric_indirection(v, name)
     if v is None or v == "":
-        return None
+        return default
     if isinstance(v, bool):
         raise ValueError(
             f"{name}={v!r} must be an integer >= {minimum}, not a boolean."
@@ -239,18 +245,22 @@ def _coerce_setting_int(v, name: str, *, minimum: int = 1) -> int | None:
     return value
 
 
-def _coerce_setting_float(v, name: str) -> float | None:
-    """Coerce a numeric setting to a positive float or None (#2603).
+def _coerce_setting_float(
+    v, name: str, *, default: float | None = None
+) -> float | None:
+    """Coerce a numeric setting to a positive float (#2603).
 
-    Same contract as :func:`_coerce_setting_int` for float fields: native
-    float (bare YAML), numeric string (env / quoted YAML), ``file:``/
-    ``cmd:`` reference, ``None``/empty → ``None``. Bools, non-finite or
-    non-numeric values, and values <= 0 raise (a token lifetime or
-    health-check interval of 0 or less is always a typo).
+    Same contract as :func:`_coerce_setting_int` for float fields:
+    native float (bare YAML), numeric string (env / quoted YAML),
+    ``file:``/``cmd:`` reference, ``None``/empty → *default* (the
+    declared field default; None only for genuinely-optional fields).
+    Bools, non-finite or non-numeric values, and values <= 0 raise (a
+    token lifetime or health-check interval of 0 or less is always a
+    typo).
     """
     v = _resolve_numeric_indirection(v, name)
     if v is None or v == "":
-        return None
+        return default
     if isinstance(v, bool):
         raise ValueError(
             f"{name}={v!r} must be a positive number, not a boolean."
@@ -1279,13 +1289,34 @@ class KlangkSettings(BaseSettings):
             "hosted_ports_per_workspace",
         }
         minimum = 0 if info.field_name in _ZERO_MEANINGFUL else 1
-        return _coerce_setting_int(v, info.field_name, minimum=minimum)
+        return _coerce_setting_int(
+            v,
+            info.field_name,
+            minimum=minimum,
+            default=cls.model_fields[info.field_name].default,
+        )
+
+    @field_validator("port_range_start", mode="after")
+    @classmethod
+    def _check_port_range_start(cls, v):
+        """Reject a start above the last legal host port (#2603).
+
+        The allocator hands out ``start..start+MAX_HOST_PORT``, so a start
+        beyond 65535 (or near enough to run past it) can never allocate a
+        valid port. Checked after coercion, on the int.
+        """
+        if v is not None and v > 65535:
+            raise ValueError(
+                f"port_range_start={v!r} must be <= 65535 (the last legal "
+                "host port)."
+            )
+        return v
 
     @field_validator("smtp_port", mode="before")
     @classmethod
     def _coerce_smtp_port(cls, v):
         """SMTP port accepts int/string/indirection and must be 1-65535."""
-        coerced = _coerce_setting_int(v, "smtp_port", minimum=1)
+        coerced = _coerce_setting_int(v, "smtp_port", minimum=1, default=587)
         if coerced is not None and coerced > 65535:
             raise ValueError(
                 f"smtp_port={coerced!r} must be between 1 and 65535."
@@ -1304,7 +1335,9 @@ class KlangkSettings(BaseSettings):
     def _coerce_numeric_float_fields(cls, v, info):
         """Float settings accept float, numeric string, or file:/cmd:
         (#2603) — same contract as the int fields above."""
-        return _coerce_setting_float(v, info.field_name)
+        return _coerce_setting_float(
+            v, info.field_name, default=cls.model_fields[info.field_name].default
+        )
 
     @field_validator("smtp_use_tls", mode="before")
     @classmethod

@@ -1423,10 +1423,23 @@ class TestNumericSettingCoercion:
         "port_range_start",
         "websocket_msg_size_max",
         "file_upload_size_max",
+        "hosted_ports_per_workspace",
+        "smtp_port",
+    ]
+    # 0 is legal here (disable semantics), so only these get the 0-rejection
+    INT_NO_ZERO_FIELDS = [
+        "invite_expire_hours",
+        "port_range_start",
+        "websocket_msg_size_max",
+        "file_upload_size_max",
+        "smtp_port",
     ]
     FLOAT_FIELDS = [
         "access_token_hours",
         "workspace_token_hours",
+        "health_check_interval",
+        "health_check_timeout",
+        "health_check_startup_grace",
     ]
 
     @pytest.mark.parametrize(
@@ -1441,21 +1454,17 @@ class TestNumericSettingCoercion:
             # range, 0-byte uploads, instantly-expiring invites). The
             # documented-disable fields (length floor, lockout trio,
             # hosted ports) are asserted separately below.
-            (f, 0)
-            for f in INT_FIELDS
-            if f
-            not in {
-                "min_password_length",
-                "login_lockout_failures",
-                "login_lockout_duration",
-                "login_lockout_window",
-            }
+            (f, 0) for f in INT_NO_ZERO_FIELDS
         ]
         + [("smtp_port", 70000)],
     )
     def test_int_field_rejections(self, field, bad):
         with pytest.raises(Exception, match=field):
             make_settings({f"KLANGKD_{field.upper()}": str(bad)})
+
+    def test_port_range_start_above_last_port_rejected(self):
+        with pytest.raises(Exception, match="port_range_start"):
+            make_settings({"KLANGKD_PORT_RANGE_START": "70000"})
 
     @pytest.mark.parametrize(
         "field",
@@ -1464,6 +1473,7 @@ class TestNumericSettingCoercion:
             "login_lockout_failures",
             "login_lockout_duration",
             "login_lockout_window",
+            "hosted_ports_per_workspace",
         ],
     )
     def test_zero_keeps_disable_semantics(self, field):
@@ -1568,11 +1578,44 @@ class TestNumericSettingCoercion:
         assert s.health_check_timeout is None
         assert s.hosted_ports_per_workspace == 5
 
-    def test_empty_env_means_unset_not_zero(self):
-        # "" -> None (unset), never a silent 0 that would e.g. disable
-        # lockout or allow empty passwords.
-        s = make_settings({"KLANGKD_MIN_PASSWORD_LENGTH": ""})
-        assert s.min_password_length is None
+    @pytest.mark.parametrize(
+        "field,default",
+        [
+            ("min_password_length", 8),
+            ("login_lockout_failures", 5),
+            ("login_lockout_duration", 900),
+            ("login_lockout_window", 300),
+            ("invite_expire_hours", 72),
+            ("port_range_start", 9000),
+            ("websocket_msg_size_max", 16777216),
+            ("smtp_port", 587),
+            ("file_upload_size_max", 524288000),
+            ("hosted_ports_per_workspace", 5),
+            ("access_token_hours", 24.0),
+            ("workspace_token_hours", 24.0),
+        ],
+    )
+    def test_empty_env_falls_back_to_field_default(self, field, default):
+        """Empty/None -> the declared default, never None (#2605 review).
+
+        Consumers assume a number on these fields (``len(pw) < None`` would
+        500 /api/config pre-auth; ``int(None)`` crashes emailsvc, the
+        upload check, and the launcher). Empty-as-disable is expressed by
+        the explicit 0, not by unsetting the field.
+        """
+        s = make_settings({f"KLANGKD_{field.upper()}": ""})
+        assert getattr(s, field) == default
+
+    @pytest.mark.parametrize(
+        "field",
+        ["health_check_interval", "health_check_timeout",
+         "health_check_startup_grace"],
+    )
+    def test_empty_env_stays_none_for_optional_floats(self, field):
+        # The health_check_* trio is genuinely optional (None = the
+        # consumer-side 30/10/30 defaults); empty keeps that meaning.
+        s = make_settings({f"KLANGKD_{field.upper()}": ""})
+        assert getattr(s, field) is None
 
     @pytest.mark.parametrize(
         "value", ["true", "false", True, False]

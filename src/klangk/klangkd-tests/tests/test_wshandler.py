@@ -10484,7 +10484,7 @@ class TestTokenRenewal:
 
             with (
                 patch.object(
-                    app_state.state.settings, "workspace_token_hours", "1.0"
+                    app_state.state.settings, "workspace_token_hours", 1.0
                 ),
                 patch.object(
                     _mock_term,
@@ -10537,7 +10537,7 @@ class TestTokenRenewal:
 
             with (
                 patch.object(
-                    app_state.state.settings, "workspace_token_hours", "0.0001"
+                    app_state.state.settings, "workspace_token_hours", 0.0001
                 ),
                 patch.object(
                     _mock_term,
@@ -10578,7 +10578,7 @@ class TestTokenRenewal:
         try:
             with (
                 patch.object(
-                    app_state.state.settings, "workspace_token_hours", "0.0001"
+                    app_state.state.settings, "workspace_token_hours", 0.0001
                 ),
                 patch.object(
                     _mock_term,
@@ -11163,7 +11163,7 @@ class TestTokenRenewalFailureLogged:
         ) + timedelta(seconds=0.05)
         with (
             patch.object(
-                app_state.state.settings, "workspace_token_hours", "0.0001"
+                app_state.state.settings, "workspace_token_hours", 0.0001
             ),
             patch.object(
                 _mock_term,

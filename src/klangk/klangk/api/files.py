@@ -177,7 +177,7 @@ async def upload_file(
     if not filename:  # pragma: no cover
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    max_upload = int(app.state.settings.file_upload_size_max)
+    max_upload = app.state.settings.file_upload_size_max
     buf = io.BytesIO()
     total = 0
     while chunk := await file.read(1024 * 1024):

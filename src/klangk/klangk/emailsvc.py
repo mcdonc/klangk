@@ -72,7 +72,7 @@ class EmailService:
         """Read SMTP configuration from settings at call time."""
         return {
             "host": self.app.state.settings.smtp_host,
-            "port": int(self.app.state.settings.smtp_port),
+            "port": self.app.state.settings.smtp_port,
             "user": self.app.state.settings.smtp_user,
             "password": self.resolve_password(),
             "from_addr": self.app.state.settings.smtp_from,
