@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, openSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-import { cleanEnv } from "./e2e-env";
+import { ADMIN_PASSWORD, cleanEnv } from "./e2e-env";
 
 async function globalSetup() {
   // When KLANGKBUILD_TEST_URL is set, skip server startup — tests run against
@@ -92,7 +92,7 @@ async function globalSetup() {
         KLANGKD_LOGIN_LOCKOUT_FAILURES: "5",
         KLANGKD_JWT_SECRET: "e2e-test-secret",
         KLANGKD_DEFAULT_USER: "admin@example.com",
-        KLANGKD_DEFAULT_PASSWORD: "admin",
+        KLANGKD_DEFAULT_PASSWORD: ADMIN_PASSWORD,
         // These tests exercise the password auth flow (login, register,
         // lockout); pin password mode explicitly — the production default
         // is `none` when unset (#1374), which disables all of that.

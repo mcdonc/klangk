@@ -13,6 +13,7 @@ from the server package.
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 from .auth import fetch_config
 
@@ -63,19 +64,65 @@ def validate_email(email: str) -> str | None:
     return None
 
 
-def password_min_length(server_url: str) -> int:
-    """Server-configured minimum password length, from ``/api/v1/config``.
+class PasswordPolicy(NamedTuple):
+    """Server-advertised password policy (#2581): length + class counts."""
 
-    Falls back to ``_DEFAULT_MIN_PASSWORD`` (8) when the server doesn't
-    advertise one — an unreachable/old server, or an unparseable value.
-    The server still enforces its own floor authoritatively.
+    min_length: int
+    requirements: dict
+
+    def complexity_error(self, password: str) -> str | None:
+        """Local mirror of the server's complexity rule.
+
+        Returns a human-readable error string when ``password`` fails the
+        character-class counts, else ``None``. Must stay in sync with
+        ``auth.validate_password_complexity`` on the server — duplication
+        is deliberate (CLI subpackage isolation; see AGENTS.md). Classes
+        are ASCII (A-Z, a-z, 0-9, everything else special), matching the
+        server and the web UI.
+        """
+        upper = sum(1 for c in password if "A" <= c <= "Z")
+        lower = sum(1 for c in password if "a" <= c <= "z")
+        digit = sum(1 for c in password if "0" <= c <= "9")
+        special = len(password) - upper - lower - digit
+        counts = {
+            "uppercase letter": (upper, self.requirements.get("upper", 0)),
+            "lowercase letter": (lower, self.requirements.get("lower", 0)),
+            "digit": (digit, self.requirements.get("digit", 0)),
+            "special character": (special, self.requirements.get("special", 0)),
+        }
+        unmet = [
+            f"at least {need} {name}{'s' if need != 1 else ''}"
+            for name, (have, need) in counts.items()
+            if need > 0 and have < need
+        ]
+        if unmet:
+            return f"Password must contain {', '.join(unmet)}"
+        return None
+
+
+def password_policy(server_url: str) -> PasswordPolicy:
+    """Fetch the server's password policy from ``/api/v1/config``.
+
+    One fetch covers length + character-class counts. Falls back to
+    permissive defaults (length 8, no class requirements) when the
+    server is unreachable, old, or advertises unparseable values — the
+    server enforces its own policy authoritatively either way.
     """
     config = fetch_config(server_url)
+    min_length = _DEFAULT_MIN_PASSWORD
+    requirements = {"upper": 0, "lower": 0, "digit": 0, "special": 0}
     if isinstance(config, dict):
         try:
-            return int(
+            min_length = int(
                 config.get("min_password_length") or _DEFAULT_MIN_PASSWORD
             )
         except (TypeError, ValueError):
-            return _DEFAULT_MIN_PASSWORD
-    return _DEFAULT_MIN_PASSWORD
+            pass
+        reqs = config.get("password_requirements")
+        if isinstance(reqs, dict):
+            for key in requirements:
+                try:
+                    requirements[key] = int(reqs.get(key) or 0)
+                except (TypeError, ValueError):
+                    pass
+    return PasswordPolicy(min_length, requirements)

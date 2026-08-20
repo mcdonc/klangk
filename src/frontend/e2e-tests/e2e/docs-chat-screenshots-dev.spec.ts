@@ -7,6 +7,7 @@
 import { test } from "@playwright/test";
 import { join } from "path";
 import { mkdirSync } from "fs";
+import { ADMIN_PASSWORD } from "../e2e-env";
 
 const SCREENSHOT_DIR = join(
   __dirname,
@@ -116,13 +117,13 @@ test.describe("chat dev server screenshots", () => {
     await page.keyboard.type("admin@plope.com");
     await f.click({ position: { x: cx, y: height * 0.56 }, force: true });
     await page.waitForTimeout(200);
-    await page.keyboard.type("admin");
+    await page.keyboard.type(ADMIN_PASSWORD);
     await f.click({ position: { x: cx, y: height * 0.64 }, force: true });
     await page.waitForTimeout(5000);
 
     // Find or create workspace via API
     const loginResp = await request.post(`${BASE_URL}/auth/login`, {
-      data: { identifier: "admin@plope.com", password: "admin" },
+      data: { identifier: "admin@plope.com", password: ADMIN_PASSWORD },
     });
     const { access_token: token } = await loginResp.json();
     const wsResp = await request.get(`${BASE_URL}/workspaces`, {

@@ -131,6 +131,18 @@ async def _auth_headers(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _admin_login(client):
+    """Auth headers for the seeded admin (admin_user fixture)."""
+    resp = await client.post(
+        "/api/v1/auth/login",
+        json={
+            "identifier": "testadmin@example.com",
+            "password": "testpass",
+        },
+    )
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
 async def _oidc_user_headers(app_state, email="oidc@example.com"):
     """Auth headers for an OIDC-only user (password_hash is NULL).
 
@@ -609,11 +621,34 @@ class TestConfig:
 
     async def test_get_config_advertises_min_password_length(self, client):
         # Surfaced so the UI can validate password length inline; matches the
-        # rule enforced server-side by auth.validate_password_length.
+        # rule enforced server-side by auth.validate_password.
         resp = await client.get("/api/v1/config")
         assert resp.status_code == 200
         data = resp.json()
         assert data["min_password_length"] == _auth().min_password_length
+
+    async def test_get_config_advertises_password_requirements(
+        self, client, app, monkeypatch
+    ):
+        # Character-class counts (#2581), same contract as
+        # min_password_length: what the client validates inline is what the
+        # server enforces on every password setter.
+        for key, val in {
+            "password_require_upper": "1",
+            "password_require_lower": "1",
+            "password_require_digit": "2",
+            "password_require_special": "0",
+        }.items():
+            monkeypatch.setattr(app.state.settings, key, val)
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["password_requirements"] == {
+            "upper": 1,
+            "lower": 1,
+            "digit": 2,
+            "special": 0,
+        }
 
     async def test_get_config_logo_url_defaults_empty(self, client, app):
         # No KLANGKD_LOGO_URL set -> empty string (UI renders default widget).
@@ -5339,9 +5374,7 @@ class TestFileRoutes:
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
-            monkeypatch.setattr(
-                app.state.settings, "file_upload_size_max", 10
-            )
+            monkeypatch.setattr(app.state.settings, "file_upload_size_max", 10)
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/big.txt",
                 headers=headers,
@@ -10534,3 +10567,127 @@ class TestHandleEndpoints:
         assert data["id"] == user["id"]
         assert data["email"] == "testuser@example.com"
         assert "handle" in data
+
+
+class TestPasswordPolicyRouteEnforcement:
+    """Every password-setting route must enforce complexity (#2581).
+
+    Route-level wiring tests — not unit tests of
+    ``Auth.validate_password_complexity``. Each test drives the real
+    endpoint with a policy-violating password and asserts the 400, so a
+    refactor that reverts any call site back to
+    ``validate_password_length`` fails here instead of passing CI
+    silently.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_upper(self, app, monkeypatch):
+        """Arm REQUIRE_UPPER=1 for every test in this class."""
+        monkeypatch.setattr(app.state.settings, "password_require_upper", 1)
+
+    async def test_register_rejects_violating_password(
+        self, client, db, app_state
+    ):
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_verification_email",
+            new_callable=AsyncMock,
+        ):
+            resp = await client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": "policy@example.com",
+                    "password": "alllowercase1!",
+                },
+            )
+        assert resp.status_code == 400
+        assert "uppercase letter" in resp.json()["detail"]
+        # Nothing was created.
+        assert (
+            await app_state.state.model.users.get_user_by_email(
+                "policy@example.com"
+            )
+            is None
+        )
+
+    async def test_change_password_rejects_violating_password(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "alllowercase1!",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "uppercase letter" in resp.json()["detail"]
+
+    async def test_reset_password_rejects_violating_password(
+        self, client, db, app_state
+    ):
+        password_hash = auth_mod.hash_password("oldpass")
+        created = await app_state.state.model.users.create_user(
+            "policyreset@example.com", password_hash, verified=True
+        )
+        token = _auth().create_password_reset_token(created["id"])
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "alllowercase1!"},
+        )
+        assert resp.status_code == 400
+        assert "uppercase letter" in resp.json()["detail"]
+
+    async def test_accept_invite_rejects_violating_password(
+        self, client, db, admin_user
+    ):
+        headers = await _admin_login(client)
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_invitation_email",
+            new_callable=AsyncMock,
+        ):
+            create_resp = await client.post(
+                "/api/v1/admin/invitations",
+                headers=headers,
+                json={"email": "policyinvite@example.com"},
+            )
+        inv_id = create_resp.json()["id"]
+        token = _auth().create_invitation_token(
+            inv_id, "policyinvite@example.com"
+        )
+        resp = await client.post(
+            "/api/v1/auth/accept-invite",
+            json={"token": token, "password": "alllowercase1!"},
+        )
+        assert resp.status_code == 400
+        assert "uppercase letter" in resp.json()["detail"]
+
+    async def test_admin_create_user_rejects_violating_password(
+        self, client, admin_user
+    ):
+        headers = await _admin_login(client)
+        resp = await client.post(
+            "/api/v1/admin/users",
+            headers=headers,
+            json={
+                "email": "policyadmin@example.com",
+                "password": "alllower1!",
+            },
+        )
+        assert resp.status_code == 400
+        assert "uppercase letter" in resp.json()["detail"]
+
+    async def test_admin_set_password_rejects_violating_password(
+        self, client, admin_user, user
+    ):
+        headers = await _admin_login(client)
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"password": "alllowercase1!"},
+        )
+        assert resp.status_code == 400
+        assert "uppercase letter" in resp.json()["detail"]

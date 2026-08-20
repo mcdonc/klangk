@@ -182,6 +182,13 @@ def _coerce_positive_int(v, name: str) -> int | None:
     return value
 
 
+# Sanity ceiling for the KLANGKD_PASSWORD_REQUIRE_* counts: bcrypt only
+# hashes the first 72 bytes (auth.MAX_PASSWORD_BYTES), so requiring more
+# than 72 of one class would make every password unsettable. Duplicated
+# here to avoid an import cycle with klangk.auth.
+_PASSWORD_REQUIRE_MAX = 72
+
+
 def _resolve_numeric_indirection(v, name: str):
     """Resolve ``file:``/``cmd:`` on a raw numeric-setting value (#2603).
 
@@ -231,8 +238,7 @@ def _coerce_setting_int(
         )
     if isinstance(v, float):
         raise ValueError(
-            f"{name}={v!r} must be an integer, not a float "
-            "(use 5, not 5.0)."
+            f"{name}={v!r} must be an integer, not a float (use 5, not 5.0)."
         )
     try:
         value = int(v)
@@ -709,6 +715,15 @@ class KlangkSettings(BaseSettings):
     access_token_hours: float | None = 24.0
     workspace_token_hours: float | None = 24.0
     min_password_length: int | None = 8
+    # Character-class complexity counts (#2581). Each is the number of
+    # characters of that class a password must contain; 0 (the default)
+    # disables that class. Ints (YAML) or integer strings (env) both work
+    # (``_coerce_setting_int``, minimum=0), e.g.
+    # KLANGKD_PASSWORD_REQUIRE_UPPER=2 demands two uppercase letters.
+    password_require_upper: int = 0
+    password_require_lower: int = 0
+    password_require_digit: int = 0
+    password_require_special: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
     login_lockout_window: int | None = 300
@@ -1336,7 +1351,9 @@ class KlangkSettings(BaseSettings):
         """Float settings accept float, numeric string, or file:/cmd:
         (#2603) — same contract as the int fields above."""
         return _coerce_setting_float(
-            v, info.field_name, default=cls.model_fields[info.field_name].default
+            v,
+            info.field_name,
+            default=cls.model_fields[info.field_name].default,
         )
 
     @field_validator("smtp_use_tls", mode="before")
@@ -1565,6 +1582,37 @@ class KlangkSettings(BaseSettings):
             "KLANGKD_EGRESS_CONSENT_ROW_CAP",
             default=2000,
         )
+
+    @field_validator(
+        "password_require_upper",
+        "password_require_lower",
+        "password_require_digit",
+        "password_require_special",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_password_require_counts(cls, v, info):
+        """Coerce + validate the ``KLANGKD_PASSWORD_REQUIRE_*`` counts
+        (#2581).
+
+        Integer string (env var), native int (YAML config file —
+        ``password_require_upper: 2`` parses as an int, no quotes
+        needed), or a ``file:``/``cmd:`` reference; ``None`` / empty ->
+        ``0`` (class not required). Negative, non-integer, or a count
+        above 72 (bcrypt's byte limit) raises and aborts startup, same
+        posture as the other numeric settings (``_coerce_setting_int``
+        with ``minimum=0``, #2603). Errors name the setting field
+        (``password_require_*``), which is unambiguous whichever source
+        (env or YAML) supplied it.
+        """
+        value = _coerce_setting_int(v, info.field_name, minimum=0, default=0)
+        if value is not None and value > _PASSWORD_REQUIRE_MAX:
+            raise ValueError(
+                f"{info.field_name}={v!r} must be <= "
+                f"{_PASSWORD_REQUIRE_MAX} — bcrypt hashes at most 72 "
+                "bytes, so a higher count can never be satisfied."
+            )
+        return value
 
     @field_validator("llm_models", mode="before")
     @classmethod

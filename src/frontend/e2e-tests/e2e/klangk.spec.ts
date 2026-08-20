@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { cleanEnv } from "../e2e-env";
+import { ADMIN_PASSWORD, cleanEnv } from "../e2e-env";
 import {
   API_BASE,
   TEST_PASSWORD,
@@ -608,7 +608,7 @@ test.describe("Klangk E2E", () => {
               ),
               KLANGKD_JWT_SECRET: "e2e-test-secret",
               KLANGKD_DEFAULT_USER: "admin@example.com",
-              KLANGKD_DEFAULT_PASSWORD: "admin",
+              KLANGKD_DEFAULT_PASSWORD: ADMIN_PASSWORD,
               KLANGKD_TEST_MODE: "1",
               KLANGKD_PORT_RANGE_START: "19200",
               LOGFIRE_TOKEN: "",

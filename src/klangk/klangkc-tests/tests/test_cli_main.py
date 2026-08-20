@@ -1329,12 +1329,16 @@ class TestMainCLI:
 
         with patch.object(context_mod, "_client", return_value=client):
             with patch.object(
-                klangk.cli.shellcmd, "_consent_popup_enabled", return_value=True
+                klangk.cli.shellcmd,
+                "_consent_popup_enabled",
+                return_value=True,
             ):
                 with patch.object(
                     klangk.cli.shellcmd, "_run_consent_popup", return_value=0
                 ) as fake_popup:
-                    with patch.object(klangk.cli.shellcmd, "ws_shell") as fake_shell:
+                    with patch.object(
+                        klangk.cli.shellcmd, "ws_shell"
+                    ) as fake_shell:
                         with pytest.raises(typer.Exit) as exc:
                             main.shell("ws", "@1")
         assert exc.value.exit_code == 0
@@ -4254,7 +4258,9 @@ class TestSandboxCommand:
 
         with (
             patch.object(context_mod, "_client", return_value=client),
-            patch.object(klangk.cli.sandboxcmd, "sandbox_setup_only", fake_setup),
+            patch.object(
+                klangk.cli.sandboxcmd, "sandbox_setup_only", fake_setup
+            ),
         ):
             from typer.testing import CliRunner
 
@@ -4335,7 +4341,9 @@ class TestSandboxCommand:
 
         with (
             patch.object(context_mod, "_client", return_value=client),
-            patch.object(klangk.cli.sandboxcmd, "sandbox_setup_only", fake_setup),
+            patch.object(
+                klangk.cli.sandboxcmd, "sandbox_setup_only", fake_setup
+            ),
         ):
             from typer.testing import CliRunner
 
@@ -4376,7 +4384,9 @@ class TestSandboxCommand:
 
         with (
             patch.object(context_mod, "_client", return_value=client),
-            patch.object(klangk.cli.sandboxcmd, "sandbox_setup_only", failing_setup),
+            patch.object(
+                klangk.cli.sandboxcmd, "sandbox_setup_only", failing_setup
+            ),
         ):
             from typer.testing import CliRunner
 
@@ -4821,7 +4831,9 @@ class TestSandboxSetupOnly:
 
         ws = AsyncMock()
 
-        with patch("klangk.cli.sandboxcmd.exec_on_ws", AsyncMock(return_value=0)):
+        with patch(
+            "klangk.cli.sandboxcmd.exec_on_ws", AsyncMock(return_value=0)
+        ):
             await sandbox_setup(ws, config, tmp_path, "admin")
 
         # exec_on_ws should not have been called (file doesn't exist)
@@ -5413,12 +5425,19 @@ class TestAccountCommands:
         assert "@me" in out
 
     def test_account_passwd_success(self, logged_in_cfg, monkeypatch):
-        from klangk.cli import main
+        from klangk.cli import account, main
         from typer.testing import CliRunner
 
         client = MagicMock()
         monkeypatch.setattr(context_mod, "_client", lambda: client)
-        monkeypatch.setattr(authcmds_mod.account, "password_min_length", lambda url: 4)
+        monkeypatch.setattr(
+            authcmds_mod.account,
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=4,
+                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            ),
+        )
         answers = iter(["oldpw", "newpw12", "newpw12"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
@@ -5442,15 +5461,44 @@ class TestAccountCommands:
         client.change_password.assert_not_called()
 
     def test_account_passwd_too_short(self, logged_in_cfg, monkeypatch):
-        from klangk.cli import main
+        from klangk.cli import account, main
         from typer.testing import CliRunner
 
         client = MagicMock()
         monkeypatch.setattr(context_mod, "_client", lambda: client)
         monkeypatch.setattr(
-            authcmds_mod.account, "password_min_length", lambda url: 12
+            authcmds_mod.account,
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=12,
+                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            ),
         )
         answers = iter(["oldpw", "short", "short"])
+        monkeypatch.setattr(
+            "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
+        )
+        result = CliRunner().invoke(main.app, ["account", "passwd"])
+        assert result.exit_code == 1
+        client.change_password.assert_not_called()
+
+    def test_account_passwd_complexity_rejected(
+        self, logged_in_cfg, monkeypatch
+    ):
+        from klangk.cli import account, main
+        from typer.testing import CliRunner
+
+        client = MagicMock()
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+        monkeypatch.setattr(
+            authcmds_mod.account,
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=4,
+                requirements={"upper": 1, "lower": 1, "digit": 1, "special": 1},
+            ),
+        )
+        answers = iter(["oldpw", "newpw12", "newpw12"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)
         )
@@ -5461,7 +5509,7 @@ class TestAccountCommands:
     def test_account_passwd_backend_error(self, logged_in_cfg, monkeypatch):
         import httpx
 
-        from klangk.cli import main
+        from klangk.cli import account, main
         from typer.testing import CliRunner
 
         client = MagicMock()
@@ -5471,7 +5519,14 @@ class TestAccountCommands:
             "401: Current password is incorrect", request=req, response=bad
         )
         monkeypatch.setattr(context_mod, "_client", lambda: client)
-        monkeypatch.setattr(authcmds_mod.account, "password_min_length", lambda url: 4)
+        monkeypatch.setattr(
+            authcmds_mod.account,
+            "password_policy",
+            lambda url: account.PasswordPolicy(
+                min_length=4,
+                requirements={"upper": 0, "lower": 0, "digit": 0, "special": 0},
+            ),
+        )
         answers = iter(["oldpw", "newpw12", "newpw12"])
         monkeypatch.setattr(
             "klangk.cli.main.Prompt.ask", lambda *a, **k: next(answers)

@@ -653,7 +653,7 @@ void main() {
             .widget<TextField>(fieldLabeled('Password'))
             .decoration
             ?.errorText,
-        'Password must be at least 8 characters',
+        'Min 8 characters',
       );
       expect(isPrimaryEnabled(tester, 'Add'), isFalse);
       expect(writes, isEmpty);
@@ -843,7 +843,7 @@ void main() {
             .widget<TextField>(fieldLabeled('New Password'))
             .decoration
             ?.errorText,
-        'Password must be at least 8 characters',
+        'Min 8 characters',
       );
       expect(fieldLabeled('Confirm New Password'), findsOneWidget);
       expect(isPrimaryEnabled(tester, 'Save'), isFalse);

@@ -68,27 +68,123 @@ class TestValidateEmail:
         assert account.validate_email(email) is not None
 
 
-class TestPasswordMinLength:
-    def test_reads_from_config(self, monkeypatch):
-        monkeypatch.setattr(
-            account, "fetch_config", lambda url: {"min_password_length": 12}
-        )
-        assert account.password_min_length("http://x") == 12
+class TestPasswordPolicy:
+    """The single-fetch /config policy parser (#2581)."""
+
+    def test_reads_both_fields_from_one_fetch(self, monkeypatch):
+        fetched = []
+
+        def fake_fetch(url):
+            fetched.append(url)
+            return {
+                "min_password_length": 12,
+                "password_requirements": {
+                    "upper": 1,
+                    "lower": 2,
+                    "digit": 3,
+                    "special": 4,
+                },
+            }
+
+        monkeypatch.setattr(account, "fetch_config", fake_fetch)
+        policy = account.password_policy("http://x")
+        assert policy.min_length == 12
+        assert policy.requirements == {
+            "upper": 1,
+            "lower": 2,
+            "digit": 3,
+            "special": 4,
+        }
+        assert len(fetched) == 1  # one fetch for length + counts
 
     def test_defaults_when_unreachable(self, monkeypatch):
         monkeypatch.setattr(account, "fetch_config", lambda url: "unreachable")
-        assert account.password_min_length("http://x") == 8
+        policy = account.password_policy("http://x")
+        assert policy.min_length == 8
+        assert policy.requirements == {
+            "upper": 0,
+            "lower": 0,
+            "digit": 0,
+            "special": 0,
+        }
 
     def test_defaults_when_none(self, monkeypatch):
         monkeypatch.setattr(account, "fetch_config", lambda url: None)
-        assert account.password_min_length("http://x") == 8
+        policy = account.password_policy("http://x")
+        assert policy.min_length == 8
+        assert policy.requirements["upper"] == 0
 
-    def test_defaults_when_missing_field(self, monkeypatch):
+    def test_defaults_when_missing_fields(self, monkeypatch):
         monkeypatch.setattr(account, "fetch_config", lambda url: {})
-        assert account.password_min_length("http://x") == 8
+        policy = account.password_policy("http://x")
+        assert policy.min_length == 8
+        assert policy.requirements["special"] == 0
 
     def test_defaults_when_unparseable(self, monkeypatch):
         monkeypatch.setattr(
-            account, "fetch_config", lambda url: {"min_password_length": "abc"}
+            account,
+            "fetch_config",
+            lambda url: {
+                "min_password_length": "abc",
+                "password_requirements": {"upper": "x", "digit": 1},
+            },
         )
-        assert account.password_min_length("http://x") == 8
+        policy = account.password_policy("http://x")
+        assert policy.min_length == 8
+        assert policy.requirements == {
+            "upper": 0,
+            "lower": 0,
+            "digit": 1,
+            "special": 0,
+        }
+
+    def test_defaults_when_requirements_not_a_dict(self, monkeypatch):
+        monkeypatch.setattr(
+            account,
+            "fetch_config",
+            lambda url: {"password_requirements": "nope"},
+        )
+        policy = account.password_policy("http://x")
+        assert policy.requirements["upper"] == 0
+
+
+class TestPasswordComplexityError:
+    """The ASCII mirror of the server rule (stays in sync with the server
+    and the Flutter PasswordPolicy — non-ASCII is special, never a letter
+    or digit)."""
+
+    _reqs = {"upper": 1, "lower": 1, "digit": 1, "special": 1}
+
+    def _policy(self, reqs):
+        return account.PasswordPolicy(min_length=4, requirements=reqs)
+
+    def test_ok_password(self):
+        err = self._policy(self._reqs).complexity_error("Aa1!aaaa")
+        assert err is None
+
+    def test_reports_every_unmet_class(self):
+        err = self._policy(self._reqs).complexity_error("plain")
+        assert err is not None
+        assert "1 uppercase letter" in err
+        assert "1 digit" in err
+        assert "1 special character" in err
+
+    def test_pluralizes_counts(self):
+        reqs = {**self._reqs, "upper": 2}
+        err = self._policy(reqs).complexity_error("Aa1!aaaa")
+        assert "at least 2 uppercase letters" in err
+
+    def test_zero_requirements_never_fails(self):
+        zero = {"upper": 0, "lower": 0, "digit": 0, "special": 0}
+        assert self._policy(zero).complexity_error("") is None
+
+    def test_non_ascii_is_special_not_a_letter_or_digit(self):
+        # Parity with the server: é is special, not lowercase; ² and ٣
+        # are not digits.
+        assert self._policy(self._reqs).complexity_error("Aé1!a") is None
+        lower_only = {"upper": 0, "lower": 1, "digit": 0, "special": 0}
+        err = self._policy(lower_only).complexity_error("éééé")
+        assert "1 lowercase letter" in err
+        digit_only = {"upper": 0, "lower": 0, "digit": 1, "special": 0}
+        err = self._policy(digit_only).complexity_error("²٣")
+        assert "1 digit" in err

@@ -68,6 +68,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGKD_PASSWORD_REQUIRE_{UPPER,LOWER,DIGIT,SPECIAL}` (#2581).**
+  Character-class complexity requirements for passwords: each setting is
+  the number of characters of that class a password must contain
+  (e.g. `2` = at least two uppercase letters), `0` (the default) = no
+  requirement. Enforced on registration, password change/reset, invite
+  acceptance, and admin set-password; advertised to clients via
+  `password_requirements` in `/api/v1/config` for inline validation in
+  the web UI and CLI.
+
 - **FIPS 140-3 workspace image (#2570, #2577).** New
   `src/containers/workspace/Dockerfile.fips` variant builds on the
   workspace image with the CMVP-validated OpenSSL 3.1.2 FIPS provider
