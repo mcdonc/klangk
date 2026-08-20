@@ -1631,3 +1631,69 @@ class TestNumericSettingCoercion:
                 {"KLANGKD_SMTP_USE_TLS": value}
             )
             assert s.smtp_use_tls == value
+
+class TestPasswordRequireCounts:
+    """KLANGKD_PASSWORD_REQUIRE_* coercion (#2581).
+
+    Ints (YAML), integer strings (env), None/empty (-> 0) are accepted;
+    floats, bools, negatives, and non-integers abort startup.
+    """
+
+    def test_env_integer_strings(self):
+        s = make_settings(
+            {
+                "KLANGKD_PASSWORD_REQUIRE_UPPER": "2",
+                "KLANGKD_PASSWORD_REQUIRE_DIGIT": "1",
+            }
+        )
+        assert s.password_require_upper == 2
+        assert s.password_require_digit == 1
+        assert s.password_require_lower == 0
+
+    def test_env_empty_string_is_zero(self):
+        s = make_settings({"KLANGKD_PASSWORD_REQUIRE_UPPER": ""})
+        assert s.password_require_upper == 0
+
+    def test_defaults_are_zero(self):
+        s = make_settings({})
+        assert s.password_require_upper == 0
+        assert s.password_require_lower == 0
+        assert s.password_require_digit == 0
+        assert s.password_require_special == 0
+
+    def test_yaml_native_ints(self, tmp_path):
+        # The reported bug (#2602 review): ``password_require_upper: 2``
+        # parses as an int from YAML and must not hit the str-typed
+        # ValidationError.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "password-require-upper: 2\n"
+            "password-require-lower: 1\n"
+            "password-require-digit: 1\n"
+            "password-require-special: 0\n"
+        )
+        s = make_settings({}, config_file=str(cfg))
+        assert s.password_require_upper == 2
+        assert s.password_require_lower == 1
+        assert s.password_require_digit == 1
+        assert s.password_require_special == 0
+
+    def test_yaml_quoted_string_also_accepted(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text('password-require-upper: "3"\n')
+        s = make_settings({}, config_file=str(cfg))
+        assert s.password_require_upper == 3
+
+    @pytest.mark.parametrize("value", ["-1", "abc", "1.5"])
+    def test_malformed_env_rejected(self, value):
+        with pytest.raises(Exception, match="REQUIRE_UPPER"):
+            make_settings({"KLANGKD_PASSWORD_REQUIRE_UPPER": value})
+
+    @pytest.mark.parametrize("value", [-1, 0.5, True])
+    def test_malformed_yaml_rejected(self, value, tmp_path):
+        # Negative, native float, and bool (true -> 1 is a typo, not a
+        # window) all abort startup.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(f"password-require-upper: {value!s}\n")
+        with pytest.raises(Exception, match="REQUIRE_UPPER"):
+            make_settings({}, config_file=str(cfg))

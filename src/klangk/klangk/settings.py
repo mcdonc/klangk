@@ -710,12 +710,14 @@ class KlangkSettings(BaseSettings):
     workspace_token_hours: float | None = 24.0
     min_password_length: int | None = 8
     # Character-class complexity counts (#2581). Each is the number of
-    # characters of that class a password must contain (0 = no requirement).
-    # KLANGKD_PASSWORD_REQUIRE_UPPER=2 demands two uppercase letters, etc.
-    password_require_upper: int | None = 0
-    password_require_lower: int | None = 0
-    password_require_digit: int | None = 0
-    password_require_special: int | None = 0
+    # characters of that class a password must contain; 0 (the default)
+    # disables that class. Ints (YAML) or integer strings (env) both work
+    # (``_coerce_setting_int``, minimum=0), e.g.
+    # KLANGKD_PASSWORD_REQUIRE_UPPER=2 demands two uppercase letters.
+    password_require_upper: int = 0
+    password_require_lower: int = 0
+    password_require_digit: int = 0
+    password_require_special: int = 0
     login_lockout_failures: int | None = 5
     login_lockout_duration: int | None = 900
     login_lockout_window: int | None = 300
@@ -1571,6 +1573,32 @@ class KlangkSettings(BaseSettings):
             v,
             "KLANGKD_EGRESS_CONSENT_ROW_CAP",
             default=2000,
+        )
+
+    @field_validator(
+        "password_require_upper",
+        "password_require_lower",
+        "password_require_digit",
+        "password_require_special",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_password_require_counts(cls, v, info):
+        """Coerce + validate the ``KLANGKD_PASSWORD_REQUIRE_*`` counts
+        (#2581).
+
+        Integer string (env var), native int (YAML config file —
+        ``password_require_upper: 2`` parses as an int, no quotes
+        needed), or a ``file:``/``cmd:`` reference; ``None`` / empty ->
+        ``0`` (class not required). Negative or non-integer raises and
+        aborts startup, same posture as the other numeric settings
+        (``_coerce_setting_int`` with ``minimum=0``, #2603).
+        """
+        return _coerce_setting_int(
+            v,
+            f"KLANGKD_{info.field_name.upper()}",
+            minimum=0,
+            default=0,
         )
 
     @field_validator("llm_models", mode="before")
