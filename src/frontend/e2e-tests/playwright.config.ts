@@ -72,6 +72,7 @@ export default defineConfig({
         "api.spec.ts",
         "branding.spec.ts",
         "features.spec.ts",
+        "password-history.spec.ts",
         "token-expiry.spec.ts",
       ],
       use: chromiumUse,

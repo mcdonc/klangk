@@ -38,6 +38,13 @@ operators or integrators to act when upgrading.
   value from hosting configuration the same way the login endpoint does.
   The cookie now carries only `state`, `verifier`, and `cli_redirect`.
   Defense-in-depth — not exploitable against a conforming IdP.
+- **`KLANGKD_PASSWORD_HISTORY_COUNT` (#2582).** How many **previous**
+  passwords to remember per user (default 0 = disabled, max 24). When
+  set, password changes, resets, and admin password sets are rejected
+  with 400 if the new password matches the current or any remembered
+  one; the old hash is retired into history (stored hashed, pruned to
+  the window) on every set. `/api/v1/config` advertises the count as
+  `password_history_count`.
 
 - **WebSocket error responses (#1718).** Terminal- and shared-terminal
   failure frames sent over the workspace WebSocket no longer include raw

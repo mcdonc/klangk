@@ -1116,3 +1116,79 @@ class TestRequireSecureJwtSecret:
         assert a.jwt_secret_is_secure() is False
         with pytest.raises(ConfigurationError):
             a.require_secure_jwt_secret()
+
+
+class TestValidatePasswordNotReused:
+    """Current + retired-hash reuse checks (#2582).
+
+    Semantics: history holds hashes the user changed *away* from; the
+    current hash is checked separately from ``users``.
+    """
+
+    def _auth_with_history(self, app_state, monkeypatch, count=3):
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_history_count",
+            count,
+            raising=False,
+        )
+        return Auth(app_state)
+
+    async def _user_at_password(self, app_state, *hashes):
+        """Create a user whose current hash is the last of *hashes*.
+
+        Each extra hash is one change away (retiring the previous one).
+        """
+        user = await app_state.state.model.users.create_user(
+            "reuse@example.com", hashes[0], verified=True
+        )
+        for h in hashes[1:]:
+            await app_state.state.model.users.update_password(user["id"], h)
+        return user
+
+    async def test_disabled_when_count_zero(self, app_state, db):
+        a = Auth(app_state)  # default 0 -> no-op
+        assert a.password_history_count == 0
+        # Must not touch the DB / raise even for a matching password.
+        await a.validate_password_not_reused("u", "anything")
+
+    async def test_rejects_current_password(self, app_state, db, monkeypatch):
+        a = self._auth_with_history(app_state, monkeypatch)
+        real = auth.hash_password("currentpass")
+        user = await self._user_at_password(app_state, "stale", real)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.validate_password_not_reused(user["id"], "currentpass")
+        assert exc_info.value.status_code == 400
+        assert "current" in exc_info.value.detail
+
+    async def test_rejects_retired_password(self, app_state, db, monkeypatch):
+        a = self._auth_with_history(app_state, monkeypatch)
+        old = auth.hash_password("oldpass")
+        new = auth.hash_password("newpass")
+        # The seed change retires `old` into history.
+        user = await self._user_at_password(app_state, old, new)
+        with pytest.raises(HTTPException) as exc_info:
+            await a.validate_password_not_reused(user["id"], "oldpass")
+        assert exc_info.value.status_code == 400
+        assert "recently" in exc_info.value.detail
+
+    async def test_accepts_novel_password(self, app_state, db, monkeypatch):
+        a = self._auth_with_history(app_state, monkeypatch)
+        old = auth.hash_password("oldpass")
+        user = await self._user_at_password(app_state, old)
+        await a.validate_password_not_reused(user["id"], "brand-new-pass")
+
+    async def test_history_window_only(self, app_state, db, monkeypatch):
+        """count=1 remembers exactly one previous password: the last one
+        is rejected, the one before it is reusable again."""
+        a = self._auth_with_history(app_state, monkeypatch, count=1)
+        first = auth.hash_password("firstpass")
+        second = auth.hash_password("secondpass")
+        third = auth.hash_password("thirdpass")
+        user = await self._user_at_password(app_state, first, second, third)
+        # `second` was the most recent retirement -> rejected.
+        with pytest.raises(HTTPException) as exc_info:
+            await a.validate_password_not_reused(user["id"], "secondpass")
+        assert "recently" in exc_info.value.detail
+        # `first` was pruned out of the 1-slot window -> allowed.
+        await a.validate_password_not_reused(user["id"], "firstpass")

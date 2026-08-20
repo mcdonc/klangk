@@ -650,6 +650,21 @@ class TestConfig:
             "special": 0,
         }
 
+    async def test_get_config_advertises_password_history_count(
+        self, client, app, monkeypatch
+    ):
+        # #2582: the reuse window is public config so change-password
+        # UIs can explain the constraint inline.
+        monkeypatch.setattr(
+            app.state.settings,
+            "password_history_count",
+            5,
+            raising=False,
+        )
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert resp.json()["password_history_count"] == 5
+
     async def test_get_config_logo_url_defaults_empty(self, client, app):
         # No KLANGKD_LOGO_URL set -> empty string (UI renders default widget).
         resp = await client.get("/api/v1/config")
@@ -1409,6 +1424,67 @@ class TestResetPassword:
         assert resp.status_code == 400
         assert "system agent" in resp.json()["detail"]
 
+    async def _create_user_with(self, app, password):
+        """Seed a verified user with an explicit (policy-valid) password.
+
+        Creation records nothing (#2582): the initial hash enters
+        history only once the user changes/resets *away* from it.
+        """
+        password_hash = auth_mod.hash_password(password)
+        return await app.state.model.users.create_user(
+            "reset@example.com", password_hash, verified=True
+        )
+
+    async def test_reset_rejected_when_reused(
+        self, client, db, app, monkeypatch
+    ):
+        """#2582: reset to the current or a remembered password → 400."""
+        monkeypatch.setattr(
+            app.state.settings,
+            "password_history_count",
+            3,
+            raising=False,
+        )
+        user = await self._create_user_with(app, "oldpass12")
+        token = _auth().create_password_reset_token(user["id"])
+        # Reusing the current password.
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "oldpass12"},
+        )
+        assert resp.status_code == 400
+        assert "current" in resp.json()["detail"]
+        # Reuse via history: reset to newpass1, then try to reset back.
+        token = _auth().create_password_reset_token(user["id"])
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "newpass1"},
+        )
+        assert resp.status_code == 200
+        token = _auth().create_password_reset_token(user["id"])
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "oldpass12"},
+        )
+        assert resp.status_code == 400
+        assert "recently" in resp.json()["detail"]
+
+    async def test_reset_allowed_when_disabled(self, client, db, app):
+        """count=0 (default): the same reset-to-old flow succeeds."""
+        user = await self._create_user_with(app, "oldpass12")
+        token = _auth().create_password_reset_token(user["id"])
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "newpass1"},
+        )
+        assert resp.status_code == 200
+        token = _auth().create_password_reset_token(user["id"])
+        resp = await client.post(
+            "/api/v1/auth/reset-password",
+            json={"token": token, "password": "oldpass12"},
+        )
+        assert resp.status_code == 200
+
 
 class TestChangePassword:
     async def test_change_password_success(self, client, user):
@@ -1456,6 +1532,61 @@ class TestChangePassword:
             headers=headers,
         )
         assert resp.status_code == 400
+
+    async def test_change_password_reuse_rejected(
+        self, client, user, app, monkeypatch
+    ):
+        """#2582: changing to the current or a previous password → 400."""
+        monkeypatch.setattr(
+            app.state.settings,
+            "password_history_count",
+            3,
+            raising=False,
+        )
+        headers = await _auth_headers(client)
+        # Change away from the seed password once — this retires the
+        # seed hash into history; the new hash is never recorded until
+        # the user changes away from *it* (#2582).
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "testpass",
+                "new_password": "midpass1",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        # To the current password.
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "midpass1",
+                "new_password": "midpass1",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "current" in resp.json()["detail"]
+        # Change away, then try to change back (remembered).
+        resp = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "midpass1",
+                "new_password": "newpass1",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp2 = await client.post(
+            "/api/v1/auth/change-password",
+            json={
+                "current_password": "newpass1",
+                "new_password": "midpass1",
+            },
+            headers=headers,
+        )
+        assert resp2.status_code == 400
+        assert "recently" in resp2.json()["detail"]
 
     async def test_change_password_no_auth(self, client, db):
         resp = await client.post(
@@ -6312,6 +6443,32 @@ class TestAdminEndpoints:
             f"/api/v1/admin/users/{admin_user['id']}", headers=headers
         )
         assert resp.status_code == 400
+
+    async def test_update_user_password_reuse_rejected(
+        self, client, app, admin_user, user, monkeypatch
+    ):
+        """#2582: admin set to the user's current password → 400."""
+        monkeypatch.setattr(
+            app.state.settings,
+            "password_history_count",
+            3,
+            raising=False,
+        )
+        headers = await self._admin_headers(client)
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"password": "testpass"},
+        )
+        assert resp.status_code == 400
+        assert "current" in resp.json()["detail"]
+        # A novel password still succeeds.
+        resp = await client.patch(
+            f"/api/v1/admin/users/{user['id']}",
+            headers=headers,
+            json={"password": "novel-pass-1"},
+        )
+        assert resp.status_code == 200
 
     async def test_delete_nonexistent_user(self, client, admin_user):
         headers = await self._admin_headers(client)

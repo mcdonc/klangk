@@ -297,6 +297,9 @@ async def reset_password(req: ResetPasswordRequest, request: Request):
             status_code=400,
             detail="Cannot set a password on the system agent user",
         )
+    await request.app.state.auth.validate_password_not_reused(
+        user_id, req.password
+    )
     password_hash = auth.hash_password(req.password)
     await request.app.state.model.users.update_password(user_id, password_hash)
     # Auto-login after reset
@@ -414,6 +417,9 @@ async def change_password(
             status_code=401, detail="Current password is incorrect"
         )
     request.app.state.auth.validate_password(req.new_password)
+    await request.app.state.auth.validate_password_not_reused(
+        user["id"], req.new_password
+    )
     password_hash = auth.hash_password(req.new_password)
     await request.app.state.model.users.update_password(
         user["id"], password_hash

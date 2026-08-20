@@ -709,20 +709,79 @@ class UsersModel:
             )
 
     async def update_password(self, user_id: str, password_hash: str) -> None:
-        """Update a user's password hash.
+        """Update a user's password hash and retire the old one (#2582).
 
-        Raises ``AgentPrincipalError`` if the target is the system agent
-        (the agent must never have a password).
+        The **old** hash moves into the password history inside the same
+        transaction (the current hash lives in ``users``; history holds
+        previous passwords only). Raises ``AgentPrincipalError`` if the
+        target is the system agent. A missing user is a silent no-op —
+        callers translate (reset/change 404 via their own lookups) — and
+        crucially records nothing, so a reset token for a since-deleted
+        user cannot trip the history FK (#2611 review).
         """
         if user_id == AGENT_USER_ID:
             raise AgentPrincipalError(
                 "Cannot set a password on the system agent user"
             )
+        count = self.app.state.settings.password_history_count
         async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+            )
+            row = await cursor.fetchone()
+            if row is None:  # deleted user: nothing to update or retire
+                return
             await db.execute(
                 "UPDATE users SET password_hash = ? WHERE id = ?",
                 (password_hash, user_id),
             )
+            if count > 0 and row["password_hash"] is not None:
+                await self._retire_password(
+                    db, user_id, row["password_hash"], count
+                )
+
+    # --- password history (#2582; table from migration 0001) ---
+
+    async def _retire_password(
+        self, db, user_id: str, old_hash: str, count: int
+    ) -> None:
+        """Append *old_hash* to the history and prune to the window.
+
+        Runs on the caller's transaction. *count* is the caller's
+        snapshot of ``password_history_count`` (read once per
+        transaction so a mid-flight SIGHUP swap cannot make the insert
+        and the prune disagree — e.g. N→0 pruning the row just
+        written). Pruning keeps the *count* most-recent retired hashes.
+        """
+        await db.execute(
+            "INSERT INTO password_history (user_id, password_hash)"
+            " VALUES (?, ?)",
+            (user_id, old_hash),
+        )  # noqa: S608
+        await db.execute(
+            "DELETE FROM password_history WHERE user_id = ?"
+            " AND id NOT IN (SELECT id FROM password_history"
+            " WHERE user_id = ? ORDER BY id DESC LIMIT ?)",
+            (user_id, user_id, count),
+        )  # noqa: S608
+
+    async def get_password_history(
+        self, user_id: str, limit: int
+    ) -> list[str]:
+        """The *limit* most recent remembered hashes, newest first."""
+        rows = await self.app.state.db.fetchall(
+            "SELECT password_hash FROM password_history"
+            " WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        )
+        return [row["password_hash"] for row in rows]
+
+    async def get_password_hash(self, user_id: str) -> str | None:
+        """The user's current password hash (``None`` for OIDC users)."""
+        row = await self.app.state.db.fetchone(
+            "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+        )
+        return None if row is None else row["password_hash"]
 
     async def get_user_by_id(self, user_id: str) -> dict | None:
         row = await self.app.state.db.fetchone(

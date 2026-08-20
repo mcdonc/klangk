@@ -2631,3 +2631,128 @@ class TestWorkspacesBackstopBranches:
             )
             is None
         )
+
+
+class TestFetchallHelper:
+    """DB.fetchall: the multi-row counterpart of fetchone (#2582)."""
+
+    async def test_returns_all_rows(self, db, app_state):
+        rows = await app_state.state.db.fetchall(
+            "SELECT id, email FROM users ORDER BY id"
+        )
+        assert rows == []  # fresh DB, no users yet
+
+    async def test_maps_multiple_rows(self, db, app_state, user):
+        other = await app_state.state.model.users.create_user(
+            "multi@example.com", None, verified=True
+        )
+        rows = await app_state.state.db.fetchall(
+            "SELECT email FROM users ORDER BY email"
+        )
+        assert [r["email"] for r in rows] == [
+            "multi@example.com",
+            "testuser@example.com",
+        ]
+        assert other["email"] == "multi@example.com"
+
+
+class TestPasswordHistory:
+    """Retiring old hashes into history on every set path (#2582).
+
+    Semantics: the *current* hash lives in ``users``; a change retires
+    the old hash into ``password_history`` (pruned to
+    ``password_history_count``) in the same transaction.
+    """
+
+    async def test_disabled_by_default(self, db, app_state):
+        user = await app_state.state.model.users.create_user(
+            "hist-off@example.com", "h0", verified=True
+        )
+        await app_state.state.model.users.update_password(user["id"], "h1")
+        # password_history_count defaults to 0 -> nothing retired.
+        rows = await app_state.state.db.fetchall(
+            "SELECT password_hash FROM password_history WHERE user_id = ?",
+            (user["id"],),
+        )
+        assert rows == []
+
+    async def test_change_retires_old_and_prunes(
+        self, db, app_state, monkeypatch
+    ):
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_history_count",
+            2,
+            raising=False,
+        )
+        users = app_state.state.model.users
+        user = await users.create_user("hist@example.com", "h0", verified=True)
+        await users.update_password(user["id"], "h1")  # retires h0
+        await users.update_password(user["id"], "h2")  # retires h1
+        await users.update_password(user["id"], "h3")  # retires h2
+        # Window is 2: the two most recent *old* hashes survive (h2,
+        # h1); h0 and h3 (the new current) are not in history.
+        hashes = await users.get_password_history(user["id"], 10)
+        assert hashes == ["h2", "h1"]
+        assert await users.get_password_hash(user["id"]) == "h3"
+
+    async def test_creation_records_nothing(self, db, app_state, monkeypatch):
+        """The initial password is only retired once changed away from."""
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_history_count",
+            3,
+            raising=False,
+        )
+        user = await app_state.state.model.users.create_user(
+            "seed@example.com", "seedhash", verified=True
+        )
+        assert (
+            await app_state.state.model.users.get_password_history(
+                user["id"], 3
+            )
+            == []
+        )
+
+    async def test_missing_user_is_silent_noop(
+        self, db, app_state, monkeypatch
+    ):
+        """A reset token for a since-deleted user must not trip the
+        history FK — update_password returns without writing (#2611
+        review blocking finding)."""
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_history_count",
+            3,
+            raising=False,
+        )
+        await app_state.state.model.users.update_password("no-such-user", "h1")
+        rows = await app_state.state.db.fetchall(
+            "SELECT * FROM password_history"
+        )
+        assert rows == []
+
+    async def test_first_password_on_oidc_user_retires_nothing(
+        self, db, app_state, monkeypatch
+    ):
+        """old hash None (OIDC user getting a first password) -> no
+        history row."""
+        monkeypatch.setattr(
+            app_state.state.settings,
+            "password_history_count",
+            3,
+            raising=False,
+        )
+        users = app_state.state.model.users
+        user = await users.create_user("oidc@example.com", None, verified=True)
+        await users.update_password(user["id"], "first-hash")
+        assert await users.get_password_history(user["id"], 3) == []
+
+    async def test_get_password_hash(self, db, app_state):
+        users = app_state.state.model.users
+        user = await users.create_user(
+            "cur@example.com", "curhash", verified=True
+        )
+        assert await users.get_password_hash(user["id"]) == "curhash"
+        oidc = await users.create_user("oidc@example.com", None, verified=True)
+        assert await users.get_password_hash(oidc["id"]) is None

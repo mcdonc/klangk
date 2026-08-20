@@ -90,6 +90,9 @@ async function globalSetup() {
         ),
         KLANGKD_CUSTOMIZE_DIR: join(dataDir, "customize"),
         KLANGKD_LOGIN_LOCKOUT_FAILURES: "5",
+        // Password-reuse gate (#2582): exercised by password-history.spec.ts.
+        // Inert for every other spec — nothing else changes passwords.
+        KLANGKD_PASSWORD_HISTORY_COUNT: "3",
         KLANGKD_JWT_SECRET: "e2e-test-secret",
         KLANGKD_DEFAULT_USER: "admin@example.com",
         KLANGKD_DEFAULT_PASSWORD: ADMIN_PASSWORD,

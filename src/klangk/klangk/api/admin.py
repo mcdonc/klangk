@@ -327,6 +327,9 @@ async def update_user(
         await app.state.model.users.update_email(user_id, req.email)
     if req.password is not None:
         app.state.auth.validate_password(req.password)
+        await app.state.auth.validate_password_not_reused(
+            user_id, req.password
+        )
         password_hash = auth.hash_password(req.password)
         await app.state.model.users.update_password(user_id, password_hash)
     if req.handle is not None:
