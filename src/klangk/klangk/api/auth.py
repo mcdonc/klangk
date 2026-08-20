@@ -218,10 +218,12 @@ async def resend_verification(
     # account. Both verify against the dummy hash so the failure path
     # costs one full password verify either way — response timing
     # cannot enumerate accounts (#2618). Authorization still requires
-    # a real hash to have matched.
-    password_hash = (
-        user.get("password_hash") if user else None
-    ) or auth.dummy_verify_hash()
+    # a real hash to have matched. The dummy hash is minted off the
+    # event loop too — the one-time PBKDF2 cost must never block
+    # request handling (functools.cache makes later calls free).
+    password_hash = (user.get("password_hash") if user else None) or (
+        await asyncio.to_thread(auth.dummy_verify_hash)
+    )
     password_ok = await asyncio.to_thread(
         auth.verify_password, req.password, password_hash
     )

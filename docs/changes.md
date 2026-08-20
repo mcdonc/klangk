@@ -72,8 +72,9 @@ operators or integrators to act when upgrading.
 - **Resend-verification lockout (#2618).** Failed password checks on
   `POST /auth/resend-verification` now count toward the login lockout
   (`KLANGKD_LOGIN_LOCKOUT_*`), keyed like login on the account's email.
-  A locked-out account gets `429` there too; a correct check clears the
-  counter. The 60s per-email resend cooldown is unchanged.
+  A locked-out account gets `429` there too; a correct check on an
+  unverified account clears the counter, matching login semantics.
+  The 60s per-email resend cooldown is unchanged.
 
 - **Last successful login time (#2583).** Every login (password,
   SSO, no-auth, and the auto-login after register/verify/reset/invite

@@ -44,6 +44,13 @@ MAX_PASSWORD_BYTES = 72
 # PBKDF2-HMAC-SHA512 recommendation (210k) for margin. Tests patch
 # ``PBKDF2_ITERATIONS`` down for suite speed; the stored format embeds the
 # iteration count, so hashes made under any value still verify.
+#
+# Timing-equalization coupling (#2618): ``dummy_verify_hash`` embeds the
+# *current* value while stored hashes keep their creation-time count.
+# Raising this constant therefore re-opens a small per-login timing gap
+# for accounts hashed under the old count (their verifies stay cheaper
+# than the dummy's until their password next changes). Re-baseline the
+# dummy when bumping, or accept the gap for pre-bump accounts.
 PBKDF2_ITERATIONS = 600_000
 _HASH_SCHEME = "pbkdf2_sha512"
 _SALT_BYTES = 16
@@ -174,6 +181,13 @@ def verify_password(password: str, hashed: str) -> bool:
 # preimage is random per process, so no submitted password can ever match
 # it — a match is still treated as invalid credentials by the callers.
 # Computed lazily (and once) so importing the module costs no PBKDF2 work.
+#
+# Residual gap, accepted: a stored hash that is malformed or not the
+# current scheme makes ``verify_password`` return False *before* any
+# PBKDF2 work, so such an account fails faster than an unknown one. All
+# deployments store current-scheme hashes (there are no legacy bcrypt
+# rows), so the gap is unreachable today; see the note at
+# ``PBKDF2_ITERATIONS`` for the bump-time coupling.
 @functools.cache
 def dummy_verify_hash() -> str:
     return hash_password(secrets.token_urlsafe(32))
@@ -858,10 +872,13 @@ class Auth:
         # account. Both verify against the dummy hash so the failure
         # path costs one full password verify either way — response
         # timing cannot enumerate accounts (#2618). Authorization
-        # still requires a real hash to have matched.
-        password_hash = (
-            user.get("password_hash") if user else None
-        ) or dummy_verify_hash()
+        # still requires a real hash to have matched. The dummy hash is
+        # minted off the event loop too — the one-time PBKDF2 cost must
+        # never block request handling (functools.cache makes later
+        # calls free).
+        password_hash = (user.get("password_hash") if user else None) or (
+            await asyncio.to_thread(dummy_verify_hash)
+        )
         password_ok = await asyncio.to_thread(
             verify_password, req.password, password_hash
         )

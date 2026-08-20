@@ -1342,10 +1342,12 @@ class TestResendVerificationLockout:
         )
         assert resp.status_code == 429
 
-    async def test_unknown_email_also_rate_limited(self, client, db):
+    async def test_unknown_email_also_rate_limited(
+        self, client, db, app_state
+    ):
         """Guesses against a made-up address are counted under the raw
         input, so unknown accounts get the same lockout protection."""
-        failures = 5  # settings default (the client app has no app_state)
+        failures = app_state.state.settings.login_lockout_failures
         for i in range(failures):
             resp = await self._post(client, "ghost@example.com", "guess")
             assert resp.status_code == (401 if i < failures - 1 else 429)
