@@ -253,10 +253,7 @@ def test_resolve_does_not_merge_override_and_default():
 
 
 def test_typed_resolvers_bind_keys():
-    ws_dict = {"settings": {"idle_timeout": 120, "cpu_limit": 2.0}}
-    assert ws.resolve_idle_timeout(ws_dict, 60) == 120
-    assert ws.resolve_idle_timeout({"settings": None}, 60) == 60
-    assert ws.resolve_idle_timeout({"settings": {}}, None) is None
+    ws_dict = {"settings": {"cpu_limit": 2.0}}
     assert ws.resolve_bridge_timeout(ws_dict, 30.0) == 30.0
     assert ws.resolve_cpu_limit(ws_dict, 1.0) == 2.0
     assert ws.resolve_memory_limit(ws_dict, "1g") == "1g"

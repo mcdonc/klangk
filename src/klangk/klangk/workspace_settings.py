@@ -23,10 +23,14 @@ Two responsibilities:
 - :func:`resolve` — precedence lookup. ``resolve(workspace, key,
   deploy_default)`` returns the workspace's override for *key* when set,
   else *deploy_default*, else ``None``. Typed resolvers
-  (:func:`resolve_idle_timeout`, :func:`resolve_bridge_timeout`,
-  :func:`resolve_cpu_limit`, :func:`resolve_memory_limit`,
-  :func:`resolve_pids_limit`) bind a settings key to its deploy default
-  for the common call sites.
+  (:func:`resolve_bridge_timeout`, :func:`resolve_cpu_limit`,
+  :func:`resolve_memory_limit`, :func:`resolve_pids_limit`) bind a
+  settings key to its deploy default for the common call sites. There is
+  deliberately no ``resolve_idle_timeout`` sibling: per-workspace
+  ``idle_timeout`` is runtime state, not spec — the registry captures the
+  bag's override at container start and leaves ``state.idle_timeout`` at
+  None when unset so ``get_idle_timeout()`` follows the live deploy
+  default across SIGHUP reloads (#2514).
 
 This module is deliberately pure (no ``app`` / ``app_state``): the deploy
 defaults are passed *in* by the caller, read live off
@@ -343,13 +347,6 @@ def resolve(
     if key in bag:
         return bag[key]
     return deploy_default
-
-
-def resolve_idle_timeout(
-    workspace: dict | None, deploy_default: int | None
-) -> int | None:
-    """Resolve the per-workspace idle-timeout setting (seconds)."""
-    return resolve(workspace, "idle_timeout", deploy_default)
 
 
 def resolve_bridge_timeout(
