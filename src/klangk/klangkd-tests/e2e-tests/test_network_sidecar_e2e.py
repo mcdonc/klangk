@@ -217,6 +217,63 @@ def _podman(*args, check=True, timeout=120):
     )
 
 
+def _podman_exists(kind, name):
+    """Exit-code probe: is the podman object still there?"""
+    try:
+        return (
+            _podman(kind, "exists", name, check=False, timeout=10).returncode
+            == 0
+        )
+    except subprocess.TimeoutExpired:
+        # Probe itself wedged: assume present so the caller keeps trying.
+        return True
+
+
+def _podman_cleanup(kind, *targets, attempts=3, timeout=10):
+    """Best-effort teardown: state-checked, sleep-free (#2616).
+
+    Fixed sleeps are this suite's main source of flakes, so none remain
+    here, including podman's own:
+
+    - ``rm -f -t 0``: podman's default stop sequence SIGTERMs the container
+      and waits up to 10 s before SIGKILL. ``-t 0`` goes straight to
+      SIGKILL, removing that hidden fixed wait from every teardown.
+    - A wedged invocation is killed by the subprocess timeout and retried
+      immediately — a fresh podman start carries its own latency, which is
+      all the spacing a retry needs.
+    - Progress is measured against actual state, not the clock: after each
+      attempt ``podman <kind> exists`` decides whether to try again.
+
+    A target that survives every attempt only warns: all teardown names
+    here are uuid-suffixed, so leftovers cannot collide with later runs,
+    and the CI VM is ephemeral. Worst case is attempts x timeout per
+    target, so even a multi-container teardown stays well under the 300 s
+    per-test timeout stamp.
+    """
+    verb = {
+        "container": ("rm", "-f", "-t", "0"),
+        "network": ("network", "rm"),
+        "image": ("rmi", "-f"),
+    }[kind]
+    for target in targets:
+        for attempt in range(1, attempts + 1):
+            try:
+                _podman(*verb, target, check=False, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                print(
+                    f"podman {' '.join(verb)} {target} timed out after "
+                    f"{timeout}s (attempt {attempt}/{attempts})"
+                )
+            if not _podman_exists(kind, target):
+                break
+        else:
+            print(
+                f"WARNING: podman {' '.join(verb)} {target} still present "
+                f"after {attempts} attempts; leaving it (uuid-suffixed "
+                "leftover, ephemeral CI VM)"
+            )
+
+
 def _require_platform():
     if shutil.which("podman") is None:
         pytest.skip("podman not on PATH")
@@ -279,7 +336,7 @@ def env():
         "ws_query": wq,
         "somark_probe": sm,
     }
-    _podman("rmi", "-f", tag, check=False, timeout=60)
+    _podman_cleanup("image", tag, timeout=30)
     shutil.rmtree(tmp, ignore_errors=True)
     shutil.rmtree(wheel_dir, ignore_errors=True)
 
@@ -388,9 +445,8 @@ def stack(env):
         _wait_ready(nc)
         yield upstream_ip, nc
     finally:
-        for c in (nc, fu):
-            _podman("rm", "-f", c, check=False, timeout=60)
-        _podman("network", "rm", net, check=False, timeout=60)
+        _podman_cleanup("container", nc, fu)
+        _podman_cleanup("network", net)
 
 
 def _query(env, stack, name, server=None):
@@ -592,8 +648,8 @@ class TestNetworkSidecarE2E:
                 f"{_podman('logs', nc, check=False).stdout}"
             )
         finally:
-            _podman("rm", "-f", nc, check=False, timeout=60)
-            _podman("network", "rm", net, check=False, timeout=60)
+            _podman_cleanup("container", nc)
+            _podman_cleanup("network", net)
 
     def test_somark_bypass_blocked_under_production_userns(self, env, stack):
         # Review #1 of the egress stack: a filtered workspace launches in its
@@ -721,8 +777,8 @@ class TestNetworkSidecarE2E:
                 f"workspace's host ports (#2267)."
             )
         finally:
-            _podman("rm", "-f", ws, nc, check=False, timeout=60)
-            _podman("network", "rm", net, check=False, timeout=60)
+            _podman_cleanup("container", ws, nc)
+            _podman_cleanup("network", net)
 
 
 # ---------------------------------------------------------------------------
@@ -919,9 +975,8 @@ def consent_stack(env):
             "image": env["image"],
         }
     finally:
-        for c in (nc, ver_c, fu_c):
-            _podman("rm", "-f", c, check=False, timeout=60)
-        _podman("network", "rm", net, check=False, timeout=60)
+        _podman_cleanup("container", nc, ver_c, fu_c)
+        _podman_cleanup("network", net)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -959,4 +1014,4 @@ class TestConsentConcurrentFlows:
             _wait_log(stub, "EGRESS repoze.test", timeout=30)
             _wait_log(stub, "EGRESS ford.test", timeout=30)
         finally:
-            _podman("rm", "-f", trig_c, check=False, timeout=60)
+            _podman_cleanup("container", trig_c)

@@ -993,7 +993,12 @@ class TestAutoStartWithServiceCommand:
 
     @pytest.fixture()
     def api(self):
-        with httpx_client(self._server, timeout=10.0) as client:
+        # POST /workspaces with auto_start=true synchronously awaits the
+        # eager container start (api/workspaces.py eager-start block, #1244),
+        # so the response time includes full container bring-up. 10 s was too
+        # tight on loaded CI runners (#2616); this class only keeps the strict
+        # 10 s default everywhere else.
+        with httpx_client(self._server, timeout=120.0) as client:
             yield client
 
     @pytest.fixture()
