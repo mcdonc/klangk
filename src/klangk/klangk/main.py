@@ -477,7 +477,7 @@ class Lifecycle:
             "podman",
             "sockets",
             "container_registry",
-            "consent_monitor",
+            "consent_sweeper",
             "consent_coordinator",
             "consent_deciders",
             "sidecar_connections",
@@ -710,7 +710,7 @@ async def lifespan(app: FastAPI):
         "expired %d orphaned pending egress-consent request(s) on startup",
         reaped,
     )
-    app.state.consent_monitor.start()
+    app.state.consent_sweeper.start()
     app.state.consent_coordinator.start()
     app.state.consent_deciders.start()
     app.state.sidecar_connections.start()
@@ -732,7 +732,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
-        await app.state.consent_monitor.stop()
+        await app.state.consent_sweeper.stop()
         await app.state.consent_coordinator.stop()
         await app.state.consent_deciders.stop()
         await app.state.sidecar_connections.stop()
@@ -912,10 +912,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # Slice 2 (#1449): the container registry is an owned instance, not a
     # module global. The lifespan reads app.state.container_registry.
     app.state.container_registry = container.ContainerRegistry(app)
-    # #2242: interactive egress-consent monitor — tails /dev/kmsg for the
-    # sidecar's interactive-mode LOG lines and persists pending consent
-    # requests (started/stopped in the lifespan; WS notify lands with #2244).
-    app.state.consent_monitor = consent.EgressConsentMonitor(app)
+    # #2242/#2311: egress-consent retention sweeper — prunes the
+    # egress_consent table past the retention window / cap (#2303).
+    # Consent events themselves arrive over the sidecar WS
+    # (/ws/egress-sidecar) and are handled by the coordinator.
+    app.state.consent_sweeper = consent.EgressConsentSweeper(app)
     app.state.consent_coordinator = consent.ConsentCoordinator(app)
     app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
     # #2339: live network-sidecar sockets by workspace, so a revoke can push a

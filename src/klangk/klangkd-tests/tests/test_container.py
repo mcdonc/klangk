@@ -1137,7 +1137,7 @@ class TestStartContainer:
         self, monkeypatch
     ):
         # #2242: consent recording is gated on the monitor being wired, not on
-        # egress_mode. Without a consent_monitor, no CONSENT_URL/NFQUEUE env.
+        # egress_mode. Without a consent_sweeper, no CONSENT_URL/NFQUEUE env.
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
@@ -1176,7 +1176,7 @@ class TestStartContainer:
         )
         monkeypatch.setattr(
             self.registry.app.state,
-            "consent_monitor",
+            "consent_sweeper",
             _types.SimpleNamespace(),
             raising=False,
         )
