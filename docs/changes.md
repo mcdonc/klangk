@@ -32,6 +32,13 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **OIDC state cookie hardening (#2573).** The OIDC callback no longer
+  trusts the `redirect_uri` stored in the unsigned state cookie when
+  exchanging the authorization code with the IdP; it now re-derives the
+  value from hosting configuration the same way the login endpoint does.
+  The cookie now carries only `state`, `verifier`, and `cli_redirect`.
+  Defense-in-depth — not exploitable against a conforming IdP.
+
 - **WebSocket error responses (#1718).** Terminal- and shared-terminal
   failure frames sent over the workspace WebSocket no longer include raw
   exception text (which could leak backend paths, image names, or
