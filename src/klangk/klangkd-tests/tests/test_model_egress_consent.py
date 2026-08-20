@@ -434,15 +434,6 @@ async def test_expire_already_decided(ec, ws, user):
     assert not await ec.expire_pending(req["id"])
 
 
-async def test_delete_for_workspace(ec, ws, user):
-    w = await ws.create_workspace(user["id"], "del-ws")
-    await ec.create_request(w["id"], "a.com", 443)
-    await ec.create_request(w["id"], "b.com", 80)
-    count = await ec.delete_for_workspace(w["id"])
-    assert count == 2
-    assert await ec.list_requests(w["id"]) == []
-
-
 async def test_cascade_delete_on_workspace_delete(ec, ws, user):
     w = await ws.create_workspace(user["id"], "cascade-ws")
     await ec.create_request(w["id"], "a.com", 443)

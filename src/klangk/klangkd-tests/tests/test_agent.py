@@ -1134,28 +1134,6 @@ class TestIsRunning:
         assert not agents.is_running("ws-id")
 
 
-class TestAnyRunning:
-    def test_empty(self):
-        agents = _make_agents()
-        assert not agents.any_running()
-
-    def test_one_alive(self):
-        agents = _make_agents()
-        s = _make_session()
-        s._proc = MagicMock()
-        s._proc.returncode = None
-        agents._agents["ws-id"] = s
-        assert agents.any_running()
-
-    def test_all_dead(self):
-        agents = _make_agents()
-        s = _make_session()
-        s._proc = MagicMock()
-        s._proc.returncode = 0
-        agents._agents["ws-id"] = s
-        assert not agents.any_running()
-
-
 class TestSpawnSerialization:
     """``ensure_started``'s check-then-spawn must be atomic (#1189).
 

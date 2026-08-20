@@ -569,15 +569,6 @@ class EgressConsentModel:
             )
             return cursor.rowcount
 
-    async def delete_for_workspace(self, workspace_id: str) -> int:
-        """Delete all consent records for a workspace. Returns count."""
-        async with self.app.state.db.transaction() as db:
-            cursor = await db.execute(
-                "DELETE FROM egress_consent WHERE workspace_id = ?",
-                (workspace_id,),
-            )
-            return cursor.rowcount
-
     async def clear_tilrestart_duration(self, workspace_id: str) -> int:
         """Delete decided ``tilrestart``-duration verdicts for a workspace (#2346).
 

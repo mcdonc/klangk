@@ -5254,23 +5254,6 @@ class TestBrowserRegistry:
         assert self.registry.resolve_browser("bid-2") == ("ws-1", sock2)
 
 
-class TestWorkspaceIdFor:
-    def setup_method(self):
-        app_state = _make_app_state()
-        self.registry = app_state.state.container_registry
-
-    def test_returns_workspace_id(self):
-        self.registry.track_activity("cid-lookup", "ws-lookup")
-        try:
-            assert self.registry.workspace_id_for("cid-lookup") == "ws-lookup"
-        finally:
-            self.registry.states.pop("ws-lookup", None)
-            self.registry._cid_to_wsid.pop("cid-lookup", None)
-
-    def test_returns_none_for_unknown(self):
-        assert self.registry.workspace_id_for("nonexistent") is None
-
-
 class TestTrackActivityContainerChanged:
     def setup_method(self):
         app_state = _make_app_state()
