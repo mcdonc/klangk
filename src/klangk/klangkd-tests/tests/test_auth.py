@@ -1333,6 +1333,39 @@ class TestSessionLimit:
             await app_state.state.model.tokens.is_token_blocklisted("jti-dead")
         )
 
+    async def test_refresh_keeps_oldest_position(self, user, app_state):
+        """Refreshing the oldest session does not make it the newest:
+        eviction order is login time, so a later login still evicts the
+        refreshed (oldest) session, not the younger idle one.
+        """
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "2"}
+        first = await self._login(env)
+        second = await self._login(env)
+        refreshed = await _auth(env).refresh_token(first)
+        third = await self._login(env)
+        a = _auth(env)
+        assert await a.get_user_from_token(refreshed.access_token) is None
+        assert await a.get_user_from_token(second) is not None
+        assert await a.get_user_from_token(third) is not None
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 2
+
+    async def test_refresh_of_untracked_token_enforces_limit(
+        self, user, app_state
+    ):
+        """Refreshing a pre-#2585 token (no session row) inserts one; the
+        cap is enforced on that path too, evicting the oldest session.
+        """
+        env = {"KLANGKD_MAX_SESSIONS_PER_USER": "1"}
+        a = _auth(env)
+        tracked = await self._login(env)
+        untracked = a.create_token(user["id"], user["email"])
+        refreshed = await a.refresh_token(untracked)
+        assert await a.get_user_from_token(tracked) is None
+        assert await a.get_user_from_token(refreshed.access_token) is not None
+        rows = await app_state.state.model.sessions.list_sessions(user["id"])
+        assert len(rows) == 1
+
     async def test_register_records_session(self, db, app_state):
         """The verified-registration path issues through issue_token too."""
         result = await _auth().register(

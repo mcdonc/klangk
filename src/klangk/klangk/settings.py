@@ -745,7 +745,8 @@ class KlangkSettings(BaseSettings):
     # Each login/verification/reset/invite/OIDC/local issuance counts as
     # one session; a refresh replaces the old session's row (same slot).
     # When a new login pushes a user past the cap, the OLDEST session is
-    # revoked via the token blocklist (its WS closes 4001 → client logout).
+    # revoked via the token blocklist (its next HTTP request 401s and
+    # its next WS connect is rejected with 4001 -> client logout).
     max_sessions_per_user: int | None = 0
     disable_registration: str = ""
     disable_invites: str = ""

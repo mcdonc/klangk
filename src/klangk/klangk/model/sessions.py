@@ -52,20 +52,25 @@ class SessionsModel:
         """Swap a refreshed token's JTI for its replacement, atomically.
 
         A refresh is the *same* session continuing under a new token, so
-        the new JTI inherits the row (slot) the old one occupied — the
-        user's session count does not grow on refresh. When *old_jti* has
-        no row (a token issued before #2585 landed), the new JTI is
-        simply inserted.
+        the row is UPDATEd in place — the new JTI inherits the row (slot,
+        and its original ``created_at``, so a session that keeps
+        refreshing stays the "oldest" for eviction) and the user's
+        session count does not grow on refresh. When *old_jti* has no
+        row (a token issued before #2585 landed), the new JTI is simply
+        inserted.
         """
         async with self.app.state.db.transaction() as db:
-            await db.execute(
-                "DELETE FROM user_sessions WHERE jti = ?", (old_jti,)
+            cursor = await db.execute(
+                "UPDATE user_sessions SET jti = ?, expires_at = ?"
+                " WHERE jti = ?",
+                (new_jti, expires_at, old_jti),
             )
-            await db.execute(
-                "INSERT OR REPLACE INTO user_sessions"
-                " (jti, user_id, expires_at) VALUES (?, ?, ?)",
-                (new_jti, user_id, expires_at),
-            )
+            if cursor.rowcount == 0:
+                await db.execute(
+                    "INSERT OR REPLACE INTO user_sessions"
+                    " (jti, user_id, expires_at) VALUES (?, ?, ?)",
+                    (new_jti, user_id, expires_at),
+                )
 
     async def remove_session(self, jti: str) -> None:
         """Delete the session row for a logged-out (blocklisted) JTI."""

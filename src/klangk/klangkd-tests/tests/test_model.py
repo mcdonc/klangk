@@ -1462,6 +1462,27 @@ class TestUserSessions:
         rows = await sessions.list_sessions(uid)
         assert [r["jti"] for r in rows] == ["jti-new"]
 
+    async def test_replace_session_preserves_position(self, db, app_state):
+        """UPDATE-in-place keeps the original row (created_at + rowid),
+        so a refreshed session stays in its eviction-order slot — the
+        oldest login remains the oldest session (#2585 review).
+        """
+        sessions = app_state.state.model.sessions
+        uid = await self._make_user(app_state, "one@example.com")
+        await sessions.record_session(
+            uid, "jti-a", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.record_session(
+            uid, "jti-b", "2099-01-01T00:00:00+00:00"
+        )
+        await sessions.replace_session(
+            "jti-a", uid, "jti-a2", "2099-06-01T00:00:00+00:00"
+        )
+        assert [r["jti"] for r in await sessions.list_sessions(uid)] == [
+            "jti-a2",
+            "jti-b",
+        ]
+
     async def test_remove_sessions(self, db, app_state):
         sessions = app_state.state.model.sessions
         uid = await self._make_user(app_state, "one@example.com")

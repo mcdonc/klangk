@@ -109,6 +109,29 @@ class TestSessionLimit:
         assert _me(api, second).status_code == 401
         assert _me(api, first).status_code == 200
 
+    def test_refresh_does_not_reset_eviction_order(self, api):
+        """Eviction order is login time, not refresh time: refreshing the
+        oldest session does not make it the newest, so a later login past
+        the cap evicts the refreshed (oldest) session, not the younger
+        idle one.
+        """
+        email, first = _register_with_email(api)
+        second = _login(api, email)  # at the cap
+
+        resp = api.post("/api/v1/auth/refresh", headers=_headers(first))
+        assert resp.status_code == 200, resp.text
+        refreshed = resp.json()["access_token"]
+        assert _me(api, refreshed).status_code == 200
+
+        # Third login exceeds the cap → the refreshed token (session #1
+        # by login time) is evicted; the younger idle session survives.
+        third = _login(api, email)
+        resp = _me(api, refreshed)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Token has been revoked"
+        assert _me(api, second).status_code == 200
+        assert _me(api, third).status_code == 200
+
     def test_logout_frees_session_slot(self, api):
         """Logging out one session frees its slot: the next login does
         not evict the remaining session."""

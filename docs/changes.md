@@ -74,7 +74,8 @@ operators or integrators to act when upgrading.
 - **`KLANGKD_MAX_SESSIONS_PER_USER` (#2585).** New setting that caps
   how many concurrent login sessions a user may have (default `0` = no
   limit). When a new login pushes a user past the cap, the oldest session
-  is revoked via the token blocklist (401 / WS close 4001). Token refresh
+  is revoked via the token blocklist (its next HTTP request gets 401;
+  its next WebSocket connect is rejected with 4001). Token refresh
   keeps the same slot, and expired sessions never count. Reloadable on
   SIGHUP. See [Authentication](docs/features/authentication.md).
 
