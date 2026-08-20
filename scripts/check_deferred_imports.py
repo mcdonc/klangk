@@ -2,7 +2,9 @@
 """Detect non-module-scope (deferred) imports in Python packages.
 
 Imports inside functions, methods, or branches are flagged. Add
-``# noqa: allow-deferred-import`` on the import line to suppress.
+``# allow-deferred-import`` to suppress — either on the import line or on
+a comment line directly above it (needed when the import is long enough
+that a trailing comment would exceed the line-length limit).
 
 Usage:
     check_imports.py src/klangk/klangk src/klangk/klangk/cli
@@ -37,10 +39,22 @@ def _line_has_comment(lines: list[str], lineno: int, comment: str) -> bool:
     return comment in lines[lineno - 1] if lineno <= len(lines) else False
 
 
+def _is_marked(lines: list[str], lineno: int, comment: str) -> bool:
+    """Is the import at *lineno* suppressed? The marker may sit on the
+    import line itself or on a comment line directly above it."""
+    if _line_has_comment(lines, lineno, comment):
+        return True
+    if lineno >= 2:
+        above = lines[lineno - 2].strip()
+        return above.startswith("#") and comment in above
+    return False
+
+
 def check_deferred_imports(package_dir: str) -> list[str]:
     """Flag imports that are not at module scope.
 
-    Lines with ``# noqa: allow-deferred-import`` are exempted.
+    Lines with ``# allow-deferred-import`` (on the import line or the
+    comment line directly above) are exempted.
     Returns error lines.
     """
     root = Path(package_dir).resolve()
@@ -59,9 +73,7 @@ def check_deferred_imports(package_dir: str) -> list[str]:
                 continue
             if _is_top_level(node):
                 continue
-            if _line_has_comment(
-                source_lines, node.lineno, "noqa: allow-deferred-import"
-            ):
+            if _is_marked(source_lines, node.lineno, "allow-deferred-import"):
                 continue
 
             rel = pyfile.relative_to(root.parent)

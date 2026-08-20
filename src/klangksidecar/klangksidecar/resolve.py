@@ -22,7 +22,7 @@ from .config import DEBUG, MARK, UPSTREAM
 from .rules import _fmt_ports, _learn_all
 
 if TYPE_CHECKING:
-    from .consent import SidecarConsentClient  # noqa: allow-deferred-import (annotation-only)
+    from .consent import SidecarConsentClient  # allow-deferred-import (annotation-only)
 
 
 def query_name(wire: bytes) -> str:

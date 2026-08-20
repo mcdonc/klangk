@@ -25,7 +25,7 @@ from .rules import _host_for
 from .state import _BG_TASKS, _INFLIGHT, _VERDICT_CACHE
 
 if TYPE_CHECKING:
-    from .consent import SidecarConsentClient  # noqa: allow-deferred-import (annotation-only)
+    from .consent import SidecarConsentClient  # allow-deferred-import (annotation-only)
 
 
 def _setup_nfq_consumer(client: SidecarConsentClient | None):
@@ -49,12 +49,13 @@ def _setup_nfq_consumer(client: SidecarConsentClient | None):
     unbind it on SIGTERM, #2400) or ``None`` on failure.
     """
     try:
-        from netfilterqueue import NetfilterQueue  # noqa: allow-deferred-import (sidecar-only; lazy so the module loads without it)
+        # allow-deferred-import (sidecar-only; lazy so the module loads without it)
+        from netfilterqueue import NetfilterQueue as _NFQ
     except Exception as exc:
         print(f"nfqueue: netfilterqueue unavailable ({exc})", flush=True)
         return None
     try:
-        nfq = NetfilterQueue()
+        nfq = _NFQ()
         nfq.bind(QUEUE_NUM, lambda pkt: _cb(pkt, client))
         loop = asyncio.get_running_loop()
         # When the netlink socket is readable, process all pending packets on

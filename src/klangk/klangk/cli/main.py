@@ -208,7 +208,7 @@ def _maybe_launch_tui(ctx: typer.Context) -> None:
     if not _is_interactive():
         typer.echo(ctx.get_help())
         raise typer.Exit(code=0)
-    from .tui import run_tui  # noqa: allow-deferred-import
+    from .tui import run_tui  # allow-deferred-import
 
     try:
         run_tui(server_url=context._server_override)

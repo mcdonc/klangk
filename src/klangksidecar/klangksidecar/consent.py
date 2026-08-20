@@ -104,7 +104,7 @@ class SidecarConsentClient:
         self._fail_close_pending()
 
     async def _run(self) -> None:
-        import websockets  # noqa: allow-deferred-import (sidecar-only dep; lazy so the module loads without it)
+        import websockets  # allow-deferred-import (sidecar-only dep; lazy so the module loads without it)
 
         backoff = 1.0
         while not self._stop:
