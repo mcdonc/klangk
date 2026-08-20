@@ -127,8 +127,13 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
         # Starlette raises RuntimeError("WebSocket is not connected...")
         # when the client disconnects before or during receive_text().
         logger.info("WebSocket disconnected for user %s: %s", user["email"], e)
-    except SlowClientError:
-        logger.warning("Slow client dropped for user %s", user["email"])
+    except SlowClientError as e:
+        # Carry the reason: "outbound queue full" is a genuinely slow
+        # client, "sender stopped" is this connection already tearing down
+        # (#2623 — the distinction was invisible in CI logs before).
+        logger.warning(
+            "Slow client dropped for user %s (%s)", user["email"], e
+        )
     except Exception as e:
         logger.exception("WebSocket error: %s", e)
     finally:

@@ -67,6 +67,20 @@ _UDS_WS_HOST = "ws://klangkd"
 # and concurrent VM resource contention on the JIT CI pool.
 _READINESS_TIMEOUT = 120
 
+# File-streamed server logs from live ``start_server`` handles (#2623).
+# Servers launched with ``log_path`` write their combined output to that
+# file, which dies with the data dir at ``stop_server`` — so a failure whose
+# cause lives server-side (e.g. an abrupt WS drop) left no evidence in the
+# CI log. The e2e conftests read this registry (via ``_e2e_logs``) to attach
+# each failing test's slice of the log to its pytest report. Pipe-captured
+# servers (``log_path=None``) are not attachable while alive and stay out.
+_active_log_paths: list[str] = []
+
+
+def active_log_paths() -> tuple[str, ...]:
+    """Paths of file-streamed klangkd logs owned by live server handles."""
+    return tuple(_active_log_paths)
+
 
 def _drain_stdout(proc: Popen, log_path: str | None = None) -> str:
     """Read the child's captured combined output (for failure diagnostics).
@@ -265,6 +279,8 @@ def start_server(
     _wait_ready(proc, uds_path=uds_path, url=url, log_path=log_path)
 
     client = httpx_client({"uds_path": uds_path, "url": url})
+    if log_path is not None:
+        _active_log_paths.append(log_path)
     return {
         "proc": proc,
         "data_dir": data_dir,
@@ -272,6 +288,7 @@ def start_server(
         "uds_path": uds_path,
         "url": url,
         "client": client,
+        "log_path": log_path,
     }
 
 
@@ -350,6 +367,13 @@ def stop_server(server: dict[str, Any]) -> None:
         server["client"].close()
     except Exception:
         pass
+    # Unregister before the rmtree below deletes the log file (#2623).
+    log_path = server.get("log_path")
+    if log_path is not None:
+        try:
+            _active_log_paths.remove(log_path)
+        except ValueError:
+            pass
     data_dir = server["data_dir"]
     _cleanup_containers(data_dir)
     shutil.rmtree(data_dir, ignore_errors=True)

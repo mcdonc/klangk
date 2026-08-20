@@ -385,8 +385,18 @@ class Connection:
                 "user_handle": self.user["handle"],
             }
             for sock in list(session.subscribers):
-                if sock is not self.sock:
+                if sock is self.sock:
+                    continue
+                # A subscriber mid-teardown (its dispatch ``finally`` has
+                # already stopped the sender, but ``cleanup()`` — which does
+                # podman I/O before removing it from the set — has not
+                # finished) raises on send. That must not abort the
+                # *connecting* client's handler: guard the send, drop the
+                # dead socket (#2623).
+                try:
                     sock.send_json(join_msg)
+                except WS_ERRORS:
+                    session.subscribers.discard(sock)
 
             sys_msg = await self.app.state.model.chat.add_chat_message(
                 workspace_id,

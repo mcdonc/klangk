@@ -1039,6 +1039,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Spurious "Slow client dropped" disconnects (#2623).** A client
+  connecting to a workspace could be abruptly disconnected (WebSocket
+  closed with no close frame) when another user's session was tearing
+  down at the same moment. The presence broadcast now skips sockets that
+  are already closing instead of failing the new connection.
 - **SSH agent forwarding readiness (#2535).** The `ssh_agent_started`
   event now fires only after the in-container relay socket is actually
   bound, instead of when the relay process was merely spawned. Commands

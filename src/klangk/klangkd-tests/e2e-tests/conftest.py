@@ -28,6 +28,15 @@ resolves the closest marker first).
 
 import pytest
 
+# Failure-diagnosability (#2623): attach what the file-streamed klangkd
+# logs recorded during a test to that test's failure report. The hooks live
+# in ``_e2e_logs`` (same dir — importable from this conftest); re-exporting
+# them here registers them on the conftest's namespace for pytest to find.
+from _e2e_logs import (  # noqa: F401,E402
+    pytest_runtest_makereport,
+    pytest_runtest_setup,
+)
+
 # Real containers need real time: bringup + exec + teardown (stop+rm the
 # podman container via the workspace DELETE) can run well past the unit
 # suite's 60s cap on a loaded GitHub-hosted runner. 300s leaves ample
