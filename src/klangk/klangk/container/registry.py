@@ -365,10 +365,6 @@ class ContainerRegistry(NetworkSidecarMixin):
             del self._service_session_locks[cid]
         return len(stale)
 
-    def workspace_id_for(self, container_id: str) -> str | None:
-        """Return the workspace_id for a container, or None."""
-        return self._cid_to_wsid.get(container_id)
-
     def _get_workspace_lock(self, workspace_id: str) -> asyncio.Lock:
         """Get or create a per-workspace lock for container operations."""
         if workspace_id not in self._workspace_locks:

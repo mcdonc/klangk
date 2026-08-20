@@ -10196,13 +10196,13 @@ class TestChatDelete:
 
 class TestBridgeIdleTimeout:
     def test_default(self):
-        assert _util().bridge_idle_timeout() == 30.0
+        assert _util().bridge_idle_timeout_for(None) == 30.0
 
     def test_env_override(self):
         assert (
             _util(
                 {"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "45"}
-            ).bridge_idle_timeout()
+            ).bridge_idle_timeout_for(None)
             == 45.0
         )
 
@@ -10210,7 +10210,7 @@ class TestBridgeIdleTimeout:
         assert (
             _util(
                 {"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "nope"}
-            ).bridge_idle_timeout()
+            ).bridge_idle_timeout_for(None)
             == 30.0
         )
 

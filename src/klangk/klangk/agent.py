@@ -222,13 +222,6 @@ class Agents:
             return False
         return session._proc is not None and session._proc.returncode is None
 
-    def any_running(self) -> bool:
-        """Return True if any agent subprocess is alive."""
-        return any(
-            s._proc is not None and s._proc.returncode is None
-            for s in self._agents.values()
-        )
-
     async def stop_session(self, workspace_id: str) -> None:
         """Stop and remove the agent session for a workspace.
 

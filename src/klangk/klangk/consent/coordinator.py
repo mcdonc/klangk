@@ -61,11 +61,7 @@ _REVOKE_ACK_TIMEOUT = 5.0
 # workspace-wide. While paused, a destination with no allow-list rule and no
 # in-effect recorded verdict is auto-allowed (no hold, no prompt); a recorded
 # deny still blocks. A focused set for the TUI control; ``unpause`` clears it.
-PAUSE_15M = "15m"
-PAUSE_1H = "1h"
-PAUSE_1D = "1d"
-PAUSE_DURATIONS = frozenset({PAUSE_15M, PAUSE_1H, PAUSE_1D})
-_PAUSE_SECONDS = {PAUSE_15M: 900, PAUSE_1H: 3600, PAUSE_1D: 86400}
+_PAUSE_SECONDS = {"15m": 900, "1h": 3600, "1d": 86400}
 
 
 class ConsentCoordinator:

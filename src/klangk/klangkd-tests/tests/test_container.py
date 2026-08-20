@@ -1137,7 +1137,7 @@ class TestStartContainer:
         self, monkeypatch
     ):
         # #2242: consent recording is gated on the monitor being wired, not on
-        # egress_mode. Without a consent_monitor, no CONSENT_URL/NFQUEUE env.
+        # egress_mode. Without a consent_sweeper, no CONSENT_URL/NFQUEUE env.
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
@@ -1176,7 +1176,7 @@ class TestStartContainer:
         )
         monkeypatch.setattr(
             self.registry.app.state,
-            "consent_monitor",
+            "consent_sweeper",
             _types.SimpleNamespace(),
             raising=False,
         )
@@ -5252,23 +5252,6 @@ class TestBrowserRegistry:
         self.registry.register_browser("bid-2", "ws-1", sock2)
         assert self.registry.resolve_browser("bid-1") == ("ws-1", sock1)
         assert self.registry.resolve_browser("bid-2") == ("ws-1", sock2)
-
-
-class TestWorkspaceIdFor:
-    def setup_method(self):
-        app_state = _make_app_state()
-        self.registry = app_state.state.container_registry
-
-    def test_returns_workspace_id(self):
-        self.registry.track_activity("cid-lookup", "ws-lookup")
-        try:
-            assert self.registry.workspace_id_for("cid-lookup") == "ws-lookup"
-        finally:
-            self.registry.states.pop("ws-lookup", None)
-            self.registry._cid_to_wsid.pop("cid-lookup", None)
-
-    def test_returns_none_for_unknown(self):
-        assert self.registry.workspace_id_for("nonexistent") is None
 
 
 class TestTrackActivityContainerChanged:

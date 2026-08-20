@@ -231,13 +231,14 @@ class NetworkSidecarMixin:
             if _v:
                 env.append(f"{_opt}={_v}")
         binds = []
-        # #2242: consent recording (deny + record) runs for every filtered
-        # workspace when the monitor is wired, regardless of egress_mode -- the
+        # #2242/#2311: consent recording runs for every filtered workspace
+        # when the consent stack is wired, regardless of egress_mode -- the
         # mode only affects the recorded decision (static=denied+no-human,
-        # interactive=pending), applied by the monitor. The workspace JWT is
-        # bind-mounted in and refreshed on rotation (write_sidecar_token), not
-        # baked in env (it rotates).
-        if getattr(self.app.state, "consent_monitor", None) is not None:
+        # interactive=pending), applied by the coordinator over the sidecar
+        # WS. The workspace JWT is bind-mounted in and refreshed on rotation
+        # (write_sidecar_token), not baked in env (it rotates). The sweeper
+        # attribute gates the stack being present at all.
+        if getattr(self.app.state, "consent_sweeper", None) is not None:
             port = self.app.state.settings.egress_port
             env.append(
                 "KLANGKNETWORK_EGRESS_CONSENT_URL="

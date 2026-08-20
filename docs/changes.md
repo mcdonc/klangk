@@ -39,6 +39,15 @@ operators or integrators to act when upgrading.
   message (e.g. `Failed to create window`); the full exception detail is
   logged server-side instead.
 
+- **OIDC `cli_redirect` userinfo bypass (#2571).** The localhost-only
+  guard on the CLI login redirect used prefix matching, so a crafted
+  `cli_redirect` like `http://localhost:1@attacker.example/` passed the
+  check while actually routing to the attacker's host — a victim
+  completing a normal IdP login had their session token redirected to
+  it. The target is now parsed and must be plain `http` to `localhost`
+  or `127.0.0.1` with a port and no userinfo; anything else falls back to
+  the web flow.
+
 ### Added
 
 - **FIPS 140-3 workspace image (#2570, #2577).** New
@@ -837,6 +846,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Removed
 
+- **`KLANGKD_TRUST_OUTER_PROXY` (#2596).** Dead setting removed: it was
+  never read by any code (a leftover from the old nginx renderer). No
+  operator action needed — the env var was already ignored. For trusted
+  outer-proxy setups use `KLANGKD_TRUSTED_PROXY_CIDRS`, which is the
+  setting the proxy renderer actually consumes; the host docker-compose
+  sample now points there.
+
 - **`scope` removed from egress-consent verdicts (#2356).** The `scope`
   field is gone from the decider WebSocket protocol, the `consent-decide` TUI,
   and the `egress_consent` DB column + CHECK constraint. `duration` is now the
@@ -1342,17 +1358,6 @@ users(id)`, so the decider handler passing the decider's email violated the
   the Flutter tab-bar "+" keeps focus on the currently-selected tab instead
   of switching to the new one. The active-window follow now ignores a
   brand-new window becoming active (only switches to an existing window).
-
-### Security
-
-- **OIDC `cli_redirect` userinfo bypass (#2571).** The localhost-only
-  guard on the CLI login redirect used prefix matching, so a crafted
-  `cli_redirect` like `http://localhost:1@attacker.example/` passed the
-  check while actually routing to the attacker's host — a victim
-  completing a normal IdP login had their session token redirected to
-  it. The target is now parsed and must be plain `http` to `localhost`
-  or `127.0.0.1` with a port and no userinfo; anything else falls back to
-  the web flow.
 
 - **Network sidecar: filtered workspaces with `allow_sudo` drop `net_raw` as
   defense-in-depth (#2276).** The primary `SO_MARK`-bypass guard is

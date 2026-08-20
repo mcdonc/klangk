@@ -826,15 +826,15 @@ class TestBridgeIdleTimeout:
 
     def test_default_is_30s(self):
         u = _util()
-        assert u.bridge_idle_timeout() == 30.0
+        assert u.bridge_idle_timeout_for(None) == 30.0
 
     def test_deploy_default_from_env(self):
         u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "60"})
-        assert u.bridge_idle_timeout() == 60.0
+        assert u.bridge_idle_timeout_for(None) == 60.0
 
     def test_garbage_deploy_value_falls_back_to_30s(self):
         u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "soon"})
-        assert u.bridge_idle_timeout() == 30.0
+        assert u.bridge_idle_timeout_for(None) == 30.0
 
     def test_workspace_override_wins(self):
         u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "60"})

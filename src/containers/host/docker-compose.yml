@@ -24,7 +24,7 @@
 #      shared bridge by service name. Do not publish ports here — the proxy
 #      publishes, not klangkd.
 #
-#   2. KLANGKD_TRUST_OUTER_PROXY: "<proxy subnet or CIDR>"
+#   2. KLANGKD_TRUSTED_PROXY_CIDRS: "<proxy subnet or CIDR>"
 #      The proxy's address on the shared network. caddy honors X-Forwarded-For
 #      only from a trusted peer; without this, the proxy's requests 403.
 #
@@ -45,7 +45,7 @@ services:
     # network_mode: host puts klangkd on the host loopback, so the browser
     # UI/API on :8997 is reachable and caddy treats the client as trusted.
     # For an isolated bridge network instead, switch to `networks:` + `ports:`
-    # and put a trusted reverse proxy in front (set KLANGKD_TRUST_OUTER_PROXY
+    # and put a trusted reverse proxy in front (set KLANGKD_TRUSTED_PROXY_CIDRS
     # to the proxy's subnet): caddy rejects non-loopback clients it does not
     # trust.
     network_mode: host

@@ -456,11 +456,6 @@ class CaddyRenderer:
           IP-trust checks see the browser, not the outer proxy.
         - ``Host {host}`` — explicit (Caddy also defaults to this, but nginx
           sets it explicitly so we keep parity for eyeball-diffing).
-
-        The ``trust_outer_proxy`` X-Forwarded-Host/Prefix client-passthrough
-        (nginx's ``$http_x_forwarded_host`` branch) is deferred to Phase 2:
-        Caddy's derived defaults already match nginx's *non-trust* path (the
-        common case); the trust-on passthrough is a Phase 2 refinement.
         """
         return (
             "\t\t\theader_up Host {host}\n"
@@ -670,14 +665,15 @@ class CaddyRenderer:
         + egress listeners). All other values come from the merged settings
         plus the host-IP auto-detection probe.
         """
-        acl_entries, deny_entries = self._container_source_entries()
         global_block = self._global_block(
             admin_socket, full_global=full_global
         )
-        egress = self._egress_site(upstream, " ".join(acl_entries))
+        egress = self._egress_site(upstream, self._egress_remote_ip_list())
         if self.app.state.settings.port is None:
             return global_block + egress
-        browser = self._browser_site(upstream, " ".join(deny_entries))
+        browser = self._browser_site(
+            upstream, self._browser_deny_remote_ip_list()
+        )
         return global_block + egress + browser
 
     # -- binary location ---------------------------------------------------

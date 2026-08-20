@@ -807,7 +807,7 @@ class TestLifespan:
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
-        app.state.consent_monitor = consent.EgressConsentMonitor(app)
+        app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
@@ -866,7 +866,7 @@ class TestLifespan:
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
-        app.state.consent_monitor = consent.EgressConsentMonitor(app)
+        app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
@@ -1410,7 +1410,7 @@ class TestStartupShutdownRestart:
         app.state.db = app_state.state.db
         app.state.model = app_state.state.model
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
-        app.state.consent_monitor = consent.EgressConsentMonitor(app)
+        app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
