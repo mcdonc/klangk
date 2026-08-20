@@ -698,7 +698,7 @@ class TestLoginRateLimit:
         assert auth.is_locked_out(no_lock) == (False, None)
         assert auth.is_locked_out(None) == (False, None)
 
-    async def test_login_lockout_disabled_when_zero(self, db):
+    async def test_login_lockout_disabled_when_zero(self, db, user):
         """With login_lockout_failures=0, no rate limiting occurs."""
         a = _auth({"KLANGKD_LOGIN_LOCKOUT_FAILURES": "0"})
         for _ in range(20):
@@ -709,6 +709,14 @@ class TestLoginRateLimit:
                     )
                 )
             assert exc_info.value.status_code == 401
+        # The success path's counter clear is a guarded no-op, not a
+        # crash, when lockout is disabled.
+        result = await a.login(
+            auth.LoginRequest(
+                identifier="testuser@example.com", password="testpass"
+            )
+        )
+        assert result.access_token
 
     async def test_login_nonexistent_user_also_rate_limited(self, db):
         """Nonexistent users are also rate-limited to prevent enumeration."""
@@ -723,6 +731,27 @@ class TestLoginRateLimit:
                 assert exc_info.value.status_code == 401
             else:
                 assert exc_info.value.status_code == 429
+
+    async def test_unknown_user_still_burns_a_verify(self, db, monkeypatch):
+        """The unknown-identifier path runs one full verify against the
+        dummy hash, so its response timing matches the wrong-password
+        path and accounts can't be enumerated by timing (#2618)."""
+        calls: list[str] = []
+        real = auth.verify_password
+
+        def counting(password, hashed):
+            calls.append(hashed)
+            return real(password, hashed)
+
+        monkeypatch.setattr(auth, "verify_password", counting)
+        with pytest.raises(HTTPException) as exc_info:
+            await _auth().login(
+                auth.LoginRequest(
+                    identifier="noone@example.com", password="guess"
+                )
+            )
+        assert exc_info.value.status_code == 401
+        assert calls == [auth.dummy_verify_hash()]
 
     async def test_login_clears_attempts(self, db, user, app_state):
         """Successful login clears failed attempt counts."""

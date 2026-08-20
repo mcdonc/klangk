@@ -206,18 +206,31 @@ async def resend_verification(
 ):
     """Resend verification email. Requires email+password to prevent abuse."""
     user = await app.state.model.users.get_user_by_email(req.email)
-    # OIDC-only users have no password hash; treat that as invalid
-    # credentials rather than letting verify_password crash on None.
-    if (
-        user is None
-        or not user.get("password_hash")
-        or not await asyncio.to_thread(
-            auth.verify_password, req.password, user["password_hash"]
-        )
-    ):
+    # Same lockout accounting as login (#2618): key on the resolved
+    # user's canonical email (raw input for unknown addresses), check
+    # before the expensive verify, and record failures on a bad
+    # password. Without this the endpoint accepted unlimited password
+    # guesses — the 60s cooldown below only bounds email sending and
+    # only applies after the check succeeds.
+    lockout_key = user["email"] if user else req.email
+    attempt_info = await app.state.auth.check_login_lockout(lockout_key)
+    # OIDC-only users have no password hash; unknown users have no
+    # account. Both verify against the dummy hash so the failure path
+    # costs one full password verify either way — response timing
+    # cannot enumerate accounts (#2618). Authorization still requires
+    # a real hash to have matched.
+    password_hash = (
+        user.get("password_hash") if user else None
+    ) or auth.dummy_verify_hash()
+    password_ok = await asyncio.to_thread(
+        auth.verify_password, req.password, password_hash
+    )
+    if user is None or not user.get("password_hash") or not password_ok:
+        await app.state.auth.record_login_failure(lockout_key, attempt_info)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if user.get("verified"):
         raise HTTPException(status_code=400, detail="Account already verified")
+    await app.state.auth.clear_login_failures(lockout_key)
 
     # Rate limit: one resend per email per minute
     now = time.time()

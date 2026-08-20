@@ -10,6 +10,7 @@ dependency callables (``get_current_user`` etc.) stay module-level.
 
 import asyncio
 import base64
+import functools
 import hashlib
 import hmac
 import logging
@@ -164,6 +165,18 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
     digest = hashlib.pbkdf2_hmac("sha512", encoded, salt, iterations)
     return hmac.compare_digest(digest, expected)
+
+
+# Equalizes the cost of failing on an unknown (or OIDC-only) account with
+# failing on a wrong password: login and resend-verification verify against
+# this hash when there is no real one, so both paths burn one full password
+# verify and response timing cannot enumerate accounts (#2618). The
+# preimage is random per process, so no submitted password can ever match
+# it — a match is still treated as invalid credentials by the callers.
+# Computed lazily (and once) so importing the module costs no PBKDF2 work.
+@functools.cache
+def dummy_verify_hash() -> str:
+    return hash_password(secrets.token_urlsafe(32))
 
 
 class RegisterRequest(BaseModel):
@@ -465,6 +478,67 @@ class Auth:
         return (
             datetime.now(timezone.utc) - first_dt
         ).total_seconds() > self.login_lockout_window
+
+    # --- lockout accounting (shared by login and resend-verification) ---
+
+    async def check_login_lockout(self, lockout_key: str) -> dict | None:
+        """Raise 429 if *lockout_key* is currently locked out.
+
+        Returns the pre-verify ``attempt_info`` (``None`` when lockout
+        is disabled) for the caller to hand to
+        :meth:`record_login_failure`, which needs it to apply the
+        sliding-window reset.
+        """
+        if self.login_lockout_failures <= 0:
+            return None
+        attempt_info = (
+            await self.app.state.model.login_attempts.get_login_attempt_info(
+                lockout_key
+            )
+        )
+        is_locked, msg = is_locked_out(attempt_info)
+        if is_locked:
+            raise HTTPException(status_code=429, detail=msg)
+        return attempt_info
+
+    async def record_login_failure(
+        self, lockout_key: str, attempt_info: dict | None
+    ) -> None:
+        """Record a failed credential check against *lockout_key*.
+
+        Applies the sliding-window reset (old failures stop counting
+        toward the threshold) and raises 429 when this failure is the
+        one that triggers the lockout.
+        """
+        if self.login_lockout_failures <= 0:
+            return
+        reset = self.window_elapsed(attempt_info)
+        await self.app.state.model.login_attempts.record_failed_login(
+            lockout_key, reset=reset
+        )
+        updated_info = (
+            await self.app.state.model.login_attempts.get_login_attempt_info(
+                lockout_key
+            )
+        )
+        if self.should_lockout(updated_info):
+            locked_until = datetime.now(timezone.utc) + timedelta(
+                seconds=self.login_lockout_duration
+            )
+            await self.app.state.model.login_attempts.set_login_lockout(
+                lockout_key, locked_until.isoformat()
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed attempts. Locked out for {self.login_lockout_duration // 60} minutes.",
+            )
+
+    async def clear_login_failures(self, lockout_key: str) -> None:
+        """Clear failure counters after a successful credential check."""
+        if self.login_lockout_failures > 0:
+            await self.app.state.model.login_attempts.clear_login_attempts(
+                lockout_key
+            )
 
     # --- access tokens ---
 
@@ -778,49 +852,21 @@ class Auth:
         # Check if locked out before doing any expensive work (the only
         # expensive step below is verify_password's PBKDF2, run in a
         # worker thread so the event loop is not blocked).
-        if self.login_lockout_failures > 0:
-            attempt_info = await self.app.state.model.login_attempts.get_login_attempt_info(
-                lockout_key
-            )
-            is_locked, msg = is_locked_out(attempt_info)
-            if is_locked:
-                raise HTTPException(status_code=429, detail=msg)
+        attempt_info = await self.check_login_lockout(lockout_key)
 
-        # OIDC-only users have no password hash; treat that as invalid
-        # credentials rather than letting verify_password crash on None.
-        if (
-            user is None
-            or not user.get("password_hash")
-            or not await asyncio.to_thread(
-                verify_password, req.password, user["password_hash"]
-            )
-        ):
-            if self.login_lockout_failures > 0:
-                # Reuse the attempt_info fetched up front for the lockout
-                # check to decide whether the sliding window has elapsed —
-                # if so, reset the count instead of incrementing, so old
-                # failures stop counting toward the threshold.
-                reset = self.window_elapsed(attempt_info)
-                await self.app.state.model.login_attempts.record_failed_login(
-                    lockout_key, reset=reset
-                )
-                # Check if this attempt triggered a lockout
-                updated_info = await self.app.state.model.login_attempts.get_login_attempt_info(
-                    lockout_key
-                )
-                if self.should_lockout(updated_info):
-                    locked_until = datetime.now(timezone.utc) + timedelta(
-                        seconds=self.login_lockout_duration
-                    )
-                    await (
-                        self.app.state.model.login_attempts.set_login_lockout(
-                            lockout_key, locked_until.isoformat()
-                        )
-                    )
-                    raise HTTPException(
-                        status_code=429,
-                        detail=f"Too many failed attempts. Locked out for {self.login_lockout_duration // 60} minutes.",
-                    )
+        # OIDC-only users have no password hash; unknown users have no
+        # account. Both verify against the dummy hash so the failure
+        # path costs one full password verify either way — response
+        # timing cannot enumerate accounts (#2618). Authorization
+        # still requires a real hash to have matched.
+        password_hash = (
+            user.get("password_hash") if user else None
+        ) or dummy_verify_hash()
+        password_ok = await asyncio.to_thread(
+            verify_password, req.password, password_hash
+        )
+        if user is None or not user.get("password_hash") or not password_ok:
+            await self.record_login_failure(lockout_key, attempt_info)
             raise HTTPException(status_code=401, detail="Invalid credentials")
         if not user.get("verified"):
             raise HTTPException(
@@ -828,10 +874,7 @@ class Auth:
                 detail="Account not verified. Check your email.",
             )
 
-        if self.login_lockout_failures > 0:
-            await self.app.state.model.login_attempts.clear_login_attempts(
-                lockout_key
-            )
+        await self.clear_login_failures(lockout_key)
         token = await self.issue_token(
             user["id"],
             user["email"],

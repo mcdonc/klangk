@@ -106,8 +106,13 @@ returned to your original URL after logging in.
 ## Brute-force protection
 
 By default, Klangk locks accounts after repeated failed login
-attempts (5 failures within the counting window). To tune or
-disable it, set:
+attempts (5 failures within the counting window). The same lockout
+covers the credential check on `POST /auth/resend-verification` —
+failed password guesses there count against the account's login
+counter, and a locked-out account cannot use it either. Failed
+credential checks cost the same whether or not the account exists,
+so response timing cannot be used to enumerate accounts. To tune or
+disable the lockout, set:
 
 | Variable                         | Default | Description                              |
 | -------------------------------- | ------- | ---------------------------------------- |
