@@ -89,8 +89,23 @@ def test_drop_root_clears_state():
     led.note_input(WS, "alice")
     led.drop_root(WS)
     assert WS not in led._roots
+    assert 100 not in led._roots_by_pid
     assert not led._anchors
     assert WS not in led._last_input
+
+
+def test_roots_by_pid_cache_consistency():
+    app, _ = _app("/tmp")
+    led = pl.ProcessLedger(app)
+    led.set_root(WS, 100)
+    assert led._roots_by_pid[100] == WS
+    # update root pid: old pid removed, new pid added
+    led.set_root(WS, 200)
+    assert 100 not in led._roots_by_pid
+    assert led._roots_by_pid[200] == WS
+    # drop: reverse map cleaned
+    led.drop_root(WS)
+    assert not led._roots_by_pid
 
 
 def test_workspace_for_pid_walk():
