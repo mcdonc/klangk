@@ -38,6 +38,11 @@ SwapTotal:        8388608 kB
 """
 
 
+async def _boom(evictor) -> None:
+    """Pretend to be a dead _run task: raise immediately."""
+    raise OSError(11, "fork failed")
+
+
 def _make_app_state(env=None):
     """Minimal app_state for eviction tests (settings + sockets + registry)."""
     settings = make_settings(env)
@@ -228,16 +233,21 @@ class TestMacOsMeasurement:
     def test_vm_stat_page_size_from_header(self):
         assert vm_stat_page_size(self._VM_STAT) == 16384
 
-    def test_vm_stat_page_size_defaults_without_header(self):
-        assert vm_stat_page_size("") == 4096
-        assert vm_stat_page_size("no header at all\n") == 4096
+    def test_vm_stat_page_size_raises_without_header(self):
+        # Unmeasurable is the safe failure: a 4096 guess on a 16 KiB-page
+        # host would mis-state availability 4× in the unsafe direction.
+        with pytest.raises(ValueError):
+            vm_stat_page_size("")
+        with pytest.raises(ValueError):
+            vm_stat_page_size("no header at all\n")
 
-    def test_vm_stat_page_size_malformed_header_falls_back(self):
+    def test_vm_stat_page_size_malformed_header_raises(self):
         out = (
             "Mach Virtual Memory Statistics: (page size of zzz bytes)\n"
             "Pages free: 1.\n"
         )
-        assert vm_stat_page_size(out) == 4096
+        with pytest.raises(ValueError):
+            vm_stat_page_size(out)
 
     async def test_macos_fraction_with_injected_runner(self):
         total = 16384 * 10000
@@ -416,6 +426,71 @@ class TestEvictOne:
 
         assert await evictor.evict_one(0.03) is False
 
+    async def test_never_stop_pin_skipped(self):
+        """idle_timeout=0 means "never stop" (auto-start boot services,
+        #1244) — eviction must respect the pin too (#2627 review B2):
+        pinned services have zero subscribers and stale last_activity,
+        so without this they would be evicted first.
+        """
+        app, evictor = self._evictor()
+        registry = app.state.container_registry
+        self._tracked(registry, "ws-pinned", "cid-p", 5000)
+        registry.states["ws-pinned"].idle_timeout = 0
+
+        assert await evictor.evict_one(0.03) is False
+        assert "ws-pinned" in registry.states
+
+    async def test_deploy_wide_zero_idle_timeout_disables_eviction(self):
+        """KLANGKD_IDLE_TIMEOUT_SECONDS=0 = idle stopping disabled — the
+        conservative reading also disables eviction."""
+        app, evictor = self._evictor({"KLANGKD_IDLE_TIMEOUT_SECONDS": "0"})
+        registry = app.state.container_registry
+        self._tracked(registry, "ws-any", "cid-a", 500)
+        registry.notify_workspace_killed = AsyncMock()
+        registry.stop_and_remove_container = AsyncMock()
+
+        assert await evictor.evict_one(0.03) is False
+        registry.stop_and_remove_container.assert_not_awaited()
+
+    async def test_no_candidate_warning_once_then_debug(self, caplog):
+        app, evictor = self._evictor()
+        with caplog.at_level(
+            logging.DEBUG, logger="klangk.container.eviction"
+        ):
+            assert await evictor.evict_one(0.03) is False
+            assert await evictor.evict_one(0.03) is False
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING
+            and "no idle workspace" in r.message
+        ]
+        debugs = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.DEBUG and "still no evictable" in r.message
+        ]
+        assert len(warnings) == 1
+        assert len(debugs) == 1
+
+    async def test_warning_rearms_after_successful_eviction(self, caplog):
+        app, evictor = self._evictor()
+        registry = app.state.container_registry
+        registry.notify_workspace_killed = AsyncMock()
+        registry.stop_and_remove_container = AsyncMock()
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.container.eviction"
+        ):
+            assert await evictor.evict_one(0.03) is False  # arms the flag
+            self._tracked(registry, "ws-1", "cid-1", 10)
+            assert await evictor.evict_one(0.03) is True  # resets it
+            registry.states.pop("ws-1", None)
+            assert await evictor.evict_one(0.03) is False  # warns again
+        warnings = [
+            r for r in caplog.records if "no idle workspace" in r.message
+        ]
+        assert len(warnings) == 2
+
     async def test_empty_registry_returns_false(self):
         app, evictor = self._evictor()
         assert await evictor.evict_one(0.03) is False
@@ -560,6 +635,86 @@ class TestRunLoop:
         await self._run_briefly(evictor, seconds=0.1)
         evictor.evict_one.assert_not_awaited()
 
+    async def test_loop_survives_evict_one_raise(self, monkeypatch, caplog):
+        """A failing eviction cycle must not kill the loop (#2627 review B1).
+
+        The realistic raise: under <10% availability, fork fails — podman
+        raises raw OSError out of create_subprocess_exec. The loop skips
+        the cycle and keeps running; eviction is not silently disabled.
+        """
+        app, evictor = self._evictor(
+            {
+                "KLANGKD_MEMORY_EVICTION_POLL_INTERVAL": "0.001",
+                "KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS": "1",
+            }
+        )
+        monkeypatch.setattr(
+            "klangk.container.eviction.MIN_POLL_INTERVAL_SECONDS", 0.001
+        )
+        measure = AsyncMock(return_value=0.01)
+        monkeypatch.setattr(
+            "klangk.container.eviction.measure_available_fraction", measure
+        )
+        evictor.evict_one = AsyncMock(side_effect=OSError(11, "fork failed"))
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.container.eviction"
+        ):
+            await self._run_briefly(evictor, seconds=0.1)
+        # Many cycles ran; the loop is still alive and each failure was
+        # logged, not fatal.
+        assert evictor.evict_one.await_count > 1
+        assert any(
+            "eviction cycle failed" in r.message for r in caplog.records
+        )
+
+    async def test_stop_suppresses_dead_task_exception(self, monkeypatch):
+        """stop() must not break the shutdown cascade if the loop already
+        died with an exception (#2627 review B1)."""
+        app, evictor = self._evictor()
+        evictor._task = asyncio.get_running_loop().create_task(_boom(evictor))
+        await asyncio.sleep(0.01)  # let it die
+        await evictor.stop()  # must not raise
+
+    async def test_cancel_during_eviction_still_stops(self, monkeypatch):
+        """Cancellation landing mid-eviction propagates (not swallowed by
+        the cycle guard) and stop() stays clean (#2627 review B1)."""
+        app, evictor = self._evictor(
+            {
+                "KLANGKD_MEMORY_EVICTION_POLL_INTERVAL": "0.001",
+                "KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS": "1",
+            }
+        )
+        monkeypatch.setattr(
+            "klangk.container.eviction.MIN_POLL_INTERVAL_SECONDS", 0.001
+        )
+        measure = AsyncMock(return_value=0.01)
+        monkeypatch.setattr(
+            "klangk.container.eviction.measure_available_fraction", measure
+        )
+        entered = asyncio.Event()
+
+        async def slow_evict(fraction):
+            entered.set()
+            await asyncio.sleep(60)  # cancellation lands here
+
+        evictor.evict_one = slow_evict
+        evictor.start()
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        await evictor.stop()  # cancels inside _handle_measurement
+        assert evictor._task is None
+
+    async def test_start_logs_armed_configuration(self, caplog):
+        """Operators can see from the log that eviction is armed (I2)."""
+        app, evictor = self._evictor()
+        with caplog.at_level(logging.INFO, logger="klangk.container.eviction"):
+            evictor.start()
+            await evictor.stop()
+        armed = [r for r in caplog.records if "armed" in r.message]
+        assert armed, "expected an 'armed' log line at start"
+        assert "threshold 10.0%" in armed[0].getMessage()
+        assert "recovery 15.0%" in armed[0].getMessage()
+        assert "enabled=True" in armed[0].getMessage()
+
     async def test_loop_survives_unreadable_meminfo(self, monkeypatch, caplog):
         app, evictor = self._evictor(
             {"KLANGKD_MEMORY_EVICTION_POLL_INTERVAL": "0.001"}
@@ -581,6 +736,48 @@ class TestRunLoop:
             "cannot measure memory availability" in r.message
             for r in caplog.records
         )
+
+    async def test_unreadable_warning_rearms_after_recovery(
+        self, monkeypatch, caplog
+    ):
+        """fail → warn; recover → re-arm; fail again → warn again (#2627
+        review nit: the once-only flag must not mask a later permanent
+        break)."""
+        app, evictor = self._evictor(
+            {"KLANGKD_MEMORY_EVICTION_POLL_INTERVAL": "0.001"}
+        )
+        monkeypatch.setattr(
+            "klangk.container.eviction.MIN_POLL_INTERVAL_SECONDS", 0.001
+        )
+        evictor.evict_one = AsyncMock()
+        seq = iter(
+            [
+                OSError("no procfs"),  # transient failure
+                0.50,  # recovery — re-arms the warning
+                OSError("still broken"),  # later permanent failure
+            ]
+        )
+
+        async def flaky_measure():
+            nxt = next(seq)
+            if isinstance(nxt, Exception):
+                raise nxt
+            return nxt
+
+        monkeypatch.setattr(
+            "klangk.container.eviction.measure_available_fraction",
+            flaky_measure,
+        )
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.container.eviction"
+        ):
+            await self._run_briefly(evictor, seconds=0.1)
+        warnings = [
+            r
+            for r in caplog.records
+            if "cannot measure memory availability" in r.message
+        ]
+        assert len(warnings) == 2
 
     async def test_loop_survives_empty_meminfo(self, monkeypatch):
         """A readable but empty measurement (ValueError) is skipped."""

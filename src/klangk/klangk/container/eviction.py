@@ -21,7 +21,11 @@ Availability measurement is platform-aware (#2526):
   container can sit at its cgroup ceiling while meminfo reads healthy.
   The cgroup's own headroom (``memory.max - working set`` over the
   limit) is measured too, and the **more pressured** of the two
-  fractions wins — either dimension can evict.
+  fractions wins — either dimension can evict. Caveat: when klangkd
+  runs under its own systemd slice with ``MemoryMax`` (and rootless
+  podman's workspaces sit outside that slice), the cgroup dimension
+  measures klangkd itself — pressure there may not be relievable by
+  evicting workspaces.
 - **macOS**: ``vm_stat`` pages (free + inactive + speculative) over
   ``sysctl -n hw.memsize`` — there is no meminfo.
 
@@ -188,17 +192,27 @@ def parse_vm_stat(
 
 
 def vm_stat_page_size(vm_stat_output: str) -> int:
-    """Extract the page size from ``vm_stat``'s header line, or 4096."""
+    """Extract the page size from ``vm_stat``'s header line.
+
+    Raises ``ValueError`` when the header is missing or unparseable:
+    guessing 4096 on a 16 KiB-page Apple-Silicon host would mis-state
+    availability 4×, and a wrong guess in the "more pressured"
+    direction would evict on healthy memory. Unmeasurable (skip the
+    cycle) is the safe failure.
+    """
     # "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
     header = vm_stat_output.splitlines()[0] if vm_stat_output else ""
+    page_size = 0
     if "page size of" in header and "bytes" in header:
         try:
-            return int(
+            page_size = int(
                 header.split("page size of")[1].split("bytes")[0].strip()
             )
         except ValueError:
-            pass
-    return 4096
+            page_size = 0
+    if page_size <= 0:
+        raise ValueError("vm_stat header lacks a parseable page size")
+    return page_size
 
 
 async def _run_command(*cmd: str) -> str:
@@ -262,6 +276,7 @@ class MemoryPressureEvictor:
     def __init__(self, app) -> None:
         self.app = app
         self._task: asyncio.Task | None = None
+        self._warned_no_evictable = False
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -284,16 +299,39 @@ class MemoryPressureEvictor:
     def start(self) -> None:
         """Start the eviction loop (idempotent). Runs until :meth:`stop`."""
         if self._task is None:
+            settings = self.app.state.settings
+            logger.info(
+                "Memory-pressure eviction armed: threshold %.1f%%, "
+                "recovery %.1f%%, sustain %d polls, interval %.1fs "
+                "(effective floor %.1fs), enabled=%s",
+                settings.memory_eviction_threshold_percent,
+                settings.memory_eviction_recovery_percent,
+                settings.memory_eviction_sustain_polls,
+                settings.memory_eviction_poll_interval,
+                MIN_POLL_INTERVAL_SECONDS,
+                settings.memory_eviction_enabled,
+            )
             self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
-        """Cancel the eviction loop."""
+        """Cancel the eviction loop.
+
+        Tolerates a loop that already died: a dead task's exception must
+        never re-raise here and break the lifespan shutdown cascade
+        that runs after this (main.py finally).
+        """
         if self._task is not None:
             self._task.cancel()
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                logger.warning(
+                    "Memory-eviction loop had died earlier; suppressing "
+                    "its exception on shutdown",
+                    exc_info=True,
+                )
             self._task = None
 
     def _evictable_workspaces(self) -> list:
@@ -306,12 +344,23 @@ class MemoryPressureEvictor:
         are never candidates while an idle one exists, and workspaces
         already in a stop path (``registry.stopping``) are skipped so a
         concurrent stop/idle-stop is not double-processed.
+        Workspaces pinned "never stop" — per-workspace ``idle_timeout``
+        of 0, the pin auto-started boot services use so the idle monitor
+        leaves them alone (#1244) — are also skipped: a pin must mean
+        something, and a pinned service typically has zero WS
+        subscribers and a stale ``last_activity`` (hosted-app traffic
+        bypasses klangkd entirely), so without this it would sort to
+        the LRU head and die first. A deploy-wide idle timeout of 0
+        (idle stopping disabled entirely) likewise disables eviction —
+        the conservative reading of "never stop idle workspaces".
         """
         registry = self.app.state.container_registry
         sockets = self.app.state.sockets
         candidates = []
         for ws_id, state in registry.states.items():
             if ws_id in registry.stopping:
+                continue
+            if state.get_idle_timeout() == 0:
                 continue
             session = sockets.sessions.get(ws_id)
             if session and (
@@ -332,13 +381,23 @@ class MemoryPressureEvictor:
         """
         candidates = self._evictable_workspaces()
         if not candidates:
-            logger.warning(
-                "Host memory pressure (%.1f%% available) but no idle "
-                "workspace to evict — every tracked workspace has "
-                "connected clients",
-                fraction * 100,
-            )
+            # Once per episode (reset on success and on recovery) — a
+            # WARNING per poll under sustained all-busy pressure would
+            # be ~8.6k lines/day at defaults.
+            if not self._warned_no_evictable:
+                self._warned_no_evictable = True
+                logger.warning(
+                    "Host memory pressure (%.1f%% available) but no idle "
+                    "workspace to evict — every tracked workspace has "
+                    "connected clients or a never-stop pin",
+                    fraction * 100,
+                )
+            else:
+                logger.debug(
+                    "Memory pressure persists; still no evictable workspace"
+                )
             return False
+        self._warned_no_evictable = False
         victim = candidates[0]
         logger.warning(
             "Evicting workspace %s (container %s): host memory pressure "
@@ -384,6 +443,7 @@ class MemoryPressureEvictor:
                     percent,
                     self._recovery,
                 )
+                self._warned_no_evictable = False
                 return 0, False
             if percent < self._threshold:
                 await self.evict_one(fraction)
@@ -437,13 +497,28 @@ class MemoryPressureEvictor:
                 if not warned_unreadable:
                     warned_unreadable = True
                     logger.warning(
-                        "Memory-pressure eviction disabled: cannot measure "
+                        "Memory-pressure eviction degraded: cannot measure "
                         "memory availability on this platform (%s); "
-                        "workspaces will not be evicted under memory "
-                        "pressure",
+                        "skipping cycles until measurable",
                         e,
                     )
                 continue
-            below, pressured = await self._handle_measurement(
-                fraction, below, pressured
-            )
+            # A measurement that works again re-arms the warning, so a
+            # path that breaks *later* (transient today, permanent next
+            # week) still says so.
+            warned_unreadable = False
+            try:
+                below, pressured = await self._handle_measurement(
+                    fraction, below, pressured
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # The eviction action must never kill the loop: a host at
+                # <10% available is exactly where fork (podman exec)
+                # fails with OSError — skipping one cycle is fine, dying
+                # silently for the process lifetime is not (#2627 review).
+                logger.warning(
+                    "Memory-pressure eviction cycle failed (skipped)",
+                    exc_info=True,
+                )

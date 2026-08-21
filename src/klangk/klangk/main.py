@@ -514,6 +514,7 @@ class Lifecycle:
             "container_registry",
             "consent_sweeper",
             "inactivity_sweeper",
+            "memory_evictor",
             "consent_coordinator",
             "consent_deciders",
             "sidecar_connections",
