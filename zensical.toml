@@ -53,6 +53,7 @@ nav = [
     { "Customizing" = "deployment/customizing.md" },
     { "FIPS 140-3 Mode" = "deployment/fips.md" },
     { "Process Signals" = "deployment/signals.md" },
+    { "Decommissioning" = "deployment/decommissioning.md" },
     { "Podman" = "reference/podman.md" },
     { "OIDC" = "reference/oidc.md" },
   ]},

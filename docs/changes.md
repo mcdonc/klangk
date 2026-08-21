@@ -69,6 +69,11 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Decommissioning guide (#2593).** New [deployment chapter](../deployment/decommissioning.md)
+  documenting the decommissioning notification chain (users, admins, integrators,
+  infrastructure owners) and the shutdown sequence: workspace export, graceful
+  stop, data disposal, and secret revocation.
+
 - **Crash recovery for workspace containers (#2524).** Unexpectedly-dead
   workspace containers (OOM kill, non-zero exit, external removal) are now
   detected by a liveness sweep, and the death events carry the classified
