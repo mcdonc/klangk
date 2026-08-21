@@ -30,8 +30,10 @@ The cause rides every surface a consumer can watch:
 
 - the terminal `service_health` death frame (its `message` field, for
   workspaces with a [health check](health-check.md)),
-- a `container_died` custom event to connected workspace viewers
-  (mirroring the `container_stopped` event a user stop sends),
+- a `container_died` custom event on the workspace's WebSocket session
+  (mirroring the `container_stopped` event a user stop sends; it shows
+  up in the [debug panel](debug-panel.md), which surfaces all custom
+  events, even though the workspace UI does not yet render it),
 - `GET /api/v1/workspaces/{id}/status` → `restart.last_cause`, and
 - the server log.
 

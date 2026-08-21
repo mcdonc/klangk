@@ -71,16 +71,28 @@ INSPECT_RUNNING = {"State": {"Running": True, "OOMKilled": False}}
 
 
 @contextmanager
-def patch_podman_methods(app_state, inspect_value):
-    """Patch the podman surface stop_and_remove/handle_death touch.
+def patch_podman_methods(
+    app_state,
+    inspect_value,
+    *,
+    listed=None,
+    list_containers=None,
+    inspect_container=None,
+):
+    """Patch the podman surface the sweep/stop paths touch.
 
     Yields a namespace of the AsyncMocks so tests can assert on them
     (unlike patch.multiple, whose mocks are torn down with the block).
+    *listed* builds the batched liveness ``ps`` result (default: the
+    container is gone); *list_containers* / *inspect_container* override
+    the mocks outright for error-injection tests.
     """
     mocks = {
-        "inspect_container": AsyncMock(return_value=inspect_value),
+        "inspect_container": inspect_container
+        or AsyncMock(return_value=inspect_value),
         "remove_container": AsyncMock(),
-        "list_containers": AsyncMock(return_value=[]),
+        "list_containers": list_containers
+        or AsyncMock(return_value=list(listed or [])),
     }
     with ExitStack() as stack:
         for name, mock in mocks.items():
@@ -115,6 +127,13 @@ class TestClassifyDeath:
     def test_signal_death(self):
         cause, msg = classify_death(inspect_dead(exit_code=139))
         assert (cause, msg) == ("exited", "killed by SIGSEGV (exit code 139)")
+
+    def test_missing_exit_code(self):
+        cause, msg = classify_death({"State": {"OOMKilled": False}})
+        assert (cause, msg) == (
+            "exited",
+            "main process exited (no exit code recorded)",
+        )
 
     def test_external_removal(self):
         cause, msg = classify_death(None)
@@ -176,6 +195,35 @@ class TestSettings:
         assert s.container_restart_max_retries == 5
         assert s.container_restart_backoff_seconds == 5.0
 
+    def test_enabled_empty_string_is_false(self):
+        """Env ``""`` means an explicit False — same convention as the
+        sibling ``KLANGKD_CONTAINER_*`` unset-vars, not a boot-aborting
+        bool parse error."""
+        s = make_settings({"KLANGKD_CONTAINER_RESTART_ENABLED": ""})
+        assert s.container_restart_enabled is False
+
+    def test_enabled_spellings(self):
+        for raw, want in [
+            ("true", True),
+            ("1", True),
+            ("YES", True),
+            ("on", True),
+            ("false", False),
+            ("0", False),
+            ("no", False),
+            ("off", False),
+        ]:
+            s = make_settings({"KLANGKD_CONTAINER_RESTART_ENABLED": raw})
+            assert s.container_restart_enabled is want, raw
+
+    def test_native_bool_from_config_file(self, tmp_path):
+        """A YAML ``true`` (native bool) validates too — the env path is
+        the string branch, this covers the native branch."""
+        cfg = tmp_path / "klangkd.yaml"
+        cfg.write_text("container_restart_enabled: true\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.container_restart_enabled is True
+
     @pytest.mark.parametrize(
         "value",
         ["0", "-1", "two", "1.5"],
@@ -190,6 +238,11 @@ class TestSettings:
             make_settings({"KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS": value})
 
 
+def pod_entry(cid: str, state: str) -> dict:
+    """A ``podman ps --format json`` entry."""
+    return {"Id": cid, "State": state}
+
+
 class TestSweep:
     def _monitor(self, env=None):
         app_state = make_app_state(env)
@@ -199,44 +252,68 @@ class TestSweep:
         app_state, monitor = self._monitor()
         reg = app_state.state.container_registry
         dead_state(reg)
-        with patch_podman_methods(app_state, INSPECT_RUNNING):
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "running")],
+        ):
             await monitor.sweep_once()
         assert "ws-crash" in reg.states  # untouched
         assert monitor.trackers == {}
+
+    async def test_alive_container_never_inspected(self):
+        """Liveness is the batched ps; inspect is classification-only."""
+        app_state, monitor = self._monitor()
+        reg = app_state.state.container_registry
+        dead_state(reg)
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "created")],
+        ) as pm:
+            await monitor.sweep_once()
+        # "created" (between create and start) is alive, and no
+        # per-container inspect subprocess was spawned for it.
+        pm.inspect_container.assert_not_awaited()
+        assert "ws-crash" in reg.states
 
     async def test_stopping_workspace_skipped(self):
         app_state, monitor = self._monitor()
         reg = app_state.state.container_registry
         dead_state(reg)
         reg.stopping.add("ws-crash")
-        inspect_mock = AsyncMock(return_value=inspect_dead())
-        with patch.object(
-            app_state.state.podman, "inspect_container", inspect_mock
-        ):
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "exited")],
+        ) as pm:
             await monitor.sweep_once()
-        inspect_mock.assert_not_called()
+        pm.list_containers.assert_not_awaited()  # excluded from the snapshot
 
     async def test_pending_restart_skipped(self):
         app_state, monitor = self._monitor()
         reg = app_state.state.container_registry
         dead_state(reg)
         monitor.pending["ws-crash"] = asyncio.create_task(asyncio.sleep(0))
-        inspect_mock = AsyncMock(return_value=inspect_dead())
-        with patch.object(
-            app_state.state.podman, "inspect_container", inspect_mock
-        ):
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "exited")],
+        ) as pm:
             await monitor.sweep_once()
-        inspect_mock.assert_not_called()
+        pm.list_containers.assert_not_awaited()
         await asyncio.sleep(0)
 
-    async def test_inspect_error_skipped(self):
+    async def test_liveness_list_error_skipped(self):
         app_state, monitor = self._monitor()
         reg = app_state.state.container_registry
         dead_state(reg)
-        with patch.object(
-            app_state.state.podman,
-            "inspect_container",
-            AsyncMock(side_effect=podman.PodmanError(500, "boom")),
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            list_containers=AsyncMock(
+                side_effect=podman.PodmanError(500, "boom")
+            ),
         ):
             await monitor.sweep_once()
         assert "ws-crash" in reg.states  # left alone
@@ -248,17 +325,101 @@ class TestSweep:
         dead_state(reg, "ws-b", "cid-b")
         handled = []
 
-        async def fake_handle(ws_id, cid, info):
+        async def fake_handle(ws_id, cid, info, *, epoch=None):
             handled.append(ws_id)
             if ws_id == "ws-a":
                 raise RuntimeError("boom")
 
         with (
-            patch_podman_methods(app_state, inspect_dead()),
+            patch_podman_methods(
+                app_state,
+                inspect_dead(),
+                listed=[
+                    pod_entry("cid-a", "exited"),
+                    pod_entry("cid-b", "dead"),
+                ],
+            ),
             patch.object(monitor, "handle_death", fake_handle),
         ):
             await monitor.sweep_once()
         assert handled == ["ws-a", "ws-b"]
+
+    async def test_classify_inspect_error_skipped(self, crash_env):
+        """A classification inspect failure leaves the workspace alone."""
+        app_state, monitor = self._monitor(crash_env)
+        reg = app_state.state.container_registry
+        dead_state(reg)
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "exited")],
+            inspect_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "boom")
+            ),
+        ):
+            await monitor.sweep_once()
+        assert "ws-crash" in reg.states  # left alone
+
+    async def test_sweep_skips_stop_in_flight_during_listing(self, crash_env):
+        """A stop that BEGAN (marker set) but hasn't completed when the
+        listing returns: the sweep skips the workspace."""
+        app_state, monitor = self._monitor(crash_env)
+        reg = app_state.state.container_registry
+        dead_state(reg)
+        parked = asyncio.Event()
+        list_calls = 0
+
+        async def slow_list(label):
+            nonlocal list_calls
+            list_calls += 1
+            if list_calls == 1:
+                await parked.wait()
+            return [pod_entry("cid-crash", "exited")]
+
+        with patch_podman_methods(
+            app_state, inspect_dead(), list_containers=slow_list
+        ) as pm:
+            sweep = asyncio.create_task(monitor.sweep_once())
+            await asyncio.sleep(0)
+            reg.stopping.add("ws-crash")  # a stop is now in flight
+            parked.set()
+            await sweep
+            pm.inspect_container.assert_not_awaited()
+        assert "ws-crash" in reg.states
+
+    async def test_sweep_skips_stop_completed_during_listing(self, crash_env):
+        """A stop that began AND completed during the listing — with the
+        registry state surviving because the stop targeted a stale
+        container id — is caught by the epoch guard."""
+        app_state, monitor = self._monitor(crash_env)
+        reg = app_state.state.container_registry
+        dead_state(reg)
+        parked = asyncio.Event()
+        list_calls = 0
+
+        async def slow_list(label):
+            nonlocal list_calls
+            list_calls += 1
+            if list_calls == 1:
+                await parked.wait()
+            return [pod_entry("cid-crash", "exited")]
+
+        with patch_podman_methods(
+            app_state, inspect_dead(), list_containers=slow_list
+        ) as pm:
+            sweep = asyncio.create_task(monitor.sweep_once())
+            await asyncio.sleep(0)
+            # A /stop racing a stale DB container id: bumps the epoch and
+            # cancels crash state, but the rebind check leaves the live
+            # state (bound to cid-crash) untouched.
+            await reg.stop_and_remove_container(
+                "stale-cid", workspace_id="ws-crash"
+            )
+            parked.set()
+            await sweep
+            pm.inspect_container.assert_not_awaited()
+        assert "ws-crash" in reg.states  # untouched by both parties
+        assert monitor.pending == {}
 
     async def test_stable_container_resets_tracker(self):
         app_state, monitor = self._monitor()
@@ -268,7 +429,11 @@ class TestSweep:
         tracker.attempts = 2
         tracker.last_started_at = time.time() - (RESTART_RESET_WINDOW + 60)
         monitor.trackers["ws-crash"] = tracker
-        with patch_podman_methods(app_state, INSPECT_RUNNING):
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "running")],
+        ):
             await monitor.sweep_once()
         assert "ws-crash" not in monitor.trackers
 
@@ -280,9 +445,62 @@ class TestSweep:
         tracker.attempts = 2
         tracker.last_started_at = time.time() - 5
         monitor.trackers["ws-crash"] = tracker
-        with patch_podman_methods(app_state, INSPECT_RUNNING):
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            listed=[pod_entry("cid-crash", "running")],
+        ):
             await monitor.sweep_once()
         assert monitor.trackers["ws-crash"] is tracker
+
+
+class TestHandleDeathEntryGuards:
+    """A death whose world moved before handling starts is not handled."""
+
+    async def test_state_gone_returns(self, crash_env):
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg)
+        reg.states.pop("ws-crash")  # a user action already cleaned it
+        with patch_podman_methods(app_state, inspect_dead()) as pm:
+            await monitor.handle_death("ws-crash", "cid-crash", inspect_dead())
+        pm.remove_container.assert_not_awaited()
+        assert monitor.pending == {}
+
+    async def test_rebound_container_returns(self, crash_env):
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg)
+        reg.track_activity("cid-new", "ws-crash")  # user start rebound
+        with patch_podman_methods(app_state, inspect_dead()) as pm:
+            await monitor.handle_death("ws-crash", "cid-crash", inspect_dead())
+        pm.remove_container.assert_not_awaited()
+        assert reg.states["ws-crash"].container_id == "cid-new"
+
+    async def test_stop_in_flight_returns(self, crash_env):
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg)
+        reg.stopping.add("ws-crash")
+        with patch_podman_methods(app_state, inspect_dead()) as pm:
+            await monitor.handle_death("ws-crash", "cid-crash", inspect_dead())
+        pm.remove_container.assert_not_awaited()
+
+    async def test_epoch_mismatch_returns(self, crash_env):
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg)
+        stale_epoch = reg.stop_epoch.get("ws-crash", 0) - 1
+        with patch_podman_methods(app_state, inspect_dead()) as pm:
+            await monitor.handle_death(
+                "ws-crash", "cid-crash", inspect_dead(), epoch=stale_epoch
+            )
+        pm.remove_container.assert_not_awaited()
+        assert monitor.pending == {}
 
 
 class TestHandleDeathDisabled:
@@ -556,40 +774,34 @@ class TestExpectedStopsNeverRestart:
         inspect_mock.assert_not_called()
         assert reg.stopping == set()
 
-    async def test_race_user_stop_during_death_handling(self):
+    async def test_race_user_stop_during_death_handling(self, crash_env):
         """A user stop interleaved with death handling still wins (#2524).
 
-        Choreography: the user /stop begins first and parks mid-remove;
-        the monitor then detects the death, tears down, and schedules a
-        restart; the user stop resumes and completes. The restart must be
-        cancelled — an expected death never restarts, regardless of
-        interleaving.
+        Choreography: death handling passes its entry guards and parks
+        mid-teardown (slow podman remove); a user /stop then begins and
+        COMPLETES (bumping the stop epoch); death handling resumes. The
+        pre-schedule epoch guard must refuse to schedule a restart — an
+        expected death never restarts, regardless of interleaving.
         """
-        env = {
-            "KLANGKD_CONTAINER_RESTART_ENABLED": "true",
-            # Long enough that the cancel lands before the attempt fires.
-            "KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS": "5",
-        }
-        app_state = make_app_state(env)
+        app_state = make_app_state(crash_env)
         reg = app_state.state.container_registry
         monitor = reg.crash
         dead_state(reg)
-        user_stop_resumed = asyncio.Event()
+        epoch0 = reg.stop_epoch.get("ws-crash", 0)
+        teardown_parked = asyncio.Event()
         remove_calls = []
         plain_remove = AsyncMock()
 
         async def slow_remove(cid):
             remove_calls.append(cid)
             if len(remove_calls) == 1:
-                # The first remover is the user stop: park it until the
-                # monitor has finished scheduling its restart.
-                await user_stop_resumed.wait()
+                # The first remover is death handling's teardown: park it
+                # so a user stop can fully complete underneath it.
+                await teardown_parked.wait()
             return await plain_remove(cid)
 
         start_mock = AsyncMock(return_value=("new-cid", "created"))
         with patch_podman_methods(app_state, inspect_dead()):
-            # Engage the choreography on the real instance attribute (the
-            # namespace handle above is not the patched attribute).
             app_state.state.podman.remove_container = slow_remove
             with patch.object(
                 app_state.state.model.workspaces,
@@ -599,25 +811,109 @@ class TestExpectedStopsNeverRestart:
                 with patch.object(
                     app_state.state.workspaces, "start_workspace", start_mock
                 ):
-                    user_stop = asyncio.create_task(
-                        reg.stop_and_remove_container(
-                            "cid-crash", workspace_id="ws-crash"
+                    death = asyncio.create_task(
+                        monitor.handle_death(
+                            "ws-crash",
+                            "cid-crash",
+                            inspect_dead(),
+                            epoch=epoch0,
                         )
                     )
-                    await asyncio.sleep(0)  # let the user stop park in remove
-                    await monitor.handle_death(
-                        "ws-crash", "cid-crash", inspect_dead()
+                    await asyncio.sleep(0)  # let the teardown park
+                    # The user /stop runs to completion while death
+                    # handling is parked (bumps the stop epoch).
+                    await reg.stop_and_remove_container(
+                        "cid-crash", workspace_id="ws-crash"
                     )
-                    # The monitor scheduled a restart while the user stop
-                    # was still in flight...
-                    assert "ws-crash" in monitor.pending
-                    user_stop_resumed.set()
-                    await user_stop
-        await asyncio.sleep(0)  # let the cancellation propagate
-        # ...but the completing user stop cancelled it.
+                    teardown_parked.set()
+                    await death
+        # No restart was scheduled, so nothing to cancel — but verify the
+        # outcome directly: no restart attempt, no tracker.
         start_mock.assert_not_awaited()
         assert monitor.pending == {}
         assert monitor.status("ws-crash") is None
+
+    async def test_race_stop_completing_during_liveness_listing(
+        self, crash_env
+    ):
+        """Review #2625 race 1: a user /stop that fully completes while the
+        sweep's batched liveness call is in flight must not produce a
+        death-handling pass at all (no restart, no second teardown)."""
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg)
+        parked = asyncio.Event()
+        list_calls = 0
+
+        async def slow_list(label):
+            # Park only the sweep's liveness call; later calls (the user
+            # stop's network-sidecar teardown lists containers too) must
+            # proceed or the test deadlocks.
+            nonlocal list_calls
+            list_calls += 1
+            if list_calls == 1:
+                await parked.wait()
+            return [pod_entry("cid-crash", "exited")]
+
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            list_containers=slow_list,
+        ) as pm:
+            sweep = asyncio.create_task(monitor.sweep_once())
+            await asyncio.sleep(0)  # sweep parks in the liveness listing
+            # The user /stop completes fully underneath the listing.
+            await reg.stop_and_remove_container(
+                "cid-crash", workspace_id="ws-crash"
+            )
+            parked.set()
+            await sweep
+            # Post-await revalidation: the workspace's registry state is
+            # gone and its stop epoch moved — the sweep skips it entirely.
+            pm.inspect_container.assert_not_awaited()  # no classification
+        assert monitor.pending == {}
+        assert monitor.status("ws-crash") is None
+
+    async def test_race_rebind_during_liveness_listing(self, crash_env):
+        """Review #2625 race 2: a user start rebinding the workspace to a
+        NEW container while the liveness listing is in flight must not kill
+        the new container."""
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg, "ws-crash", "cid-old")
+        parked = asyncio.Event()
+        list_calls = 0
+
+        async def slow_list(label):
+            nonlocal list_calls
+            list_calls += 1
+            if list_calls == 1:
+                await parked.wait()
+            return [
+                pod_entry("cid-old", "exited"),
+                pod_entry("cid-new", "running"),
+            ]
+
+        with patch_podman_methods(
+            app_state,
+            inspect_dead(),
+            list_containers=slow_list,
+        ) as pm:
+            sweep = asyncio.create_task(monitor.sweep_once())
+            await asyncio.sleep(0)  # sweep parks in the liveness listing
+            # A user start rebinds the workspace: track_activity mutates
+            # the SAME ContainerState in place, in the real start path.
+            reg.track_activity("cid-new", "ws-crash")
+            parked.set()
+            await sweep
+            # The captured cid (cid-old) no longer matches the state's
+            # rebound cid — the sweep must not act on either container.
+            pm.inspect_container.assert_not_awaited()
+            pm.remove_container.assert_not_awaited()
+        assert reg.states["ws-crash"].container_id == "cid-new"
+        assert monitor.pending == {}
 
     async def test_user_start_resets_tracker(self, crash_env):
         app_state = make_app_state(crash_env)
@@ -672,6 +968,26 @@ class TestRunLoop:
         await asyncio.sleep(0.05)
         await monitor.stop()
         assert len(calls) >= 2  # survived the first sweep's error
+
+    async def test_stop_clears_stale_backing_off(self, crash_env):
+        """Cancelling pending restarts must not leave a stale
+        ``backing-off`` status behind (#2524 review). After a SIGHUP
+        runtime restart, /status must not promise a restart that is
+        never coming."""
+        app_state = make_app_state(crash_env)
+        monitor = app_state.state.container_registry.crash
+        tracker = RestartTracker()
+        tracker.attempts = 1
+        tracker.next_attempt_at = time.time() + 10  # mid-backoff
+        monitor.trackers["ws-crash"] = tracker
+        task = asyncio.create_task(asyncio.sleep(3600))
+        monitor.pending["ws-crash"] = task
+        await monitor.stop()
+        await asyncio.sleep(0)  # let the cancellation propagate
+        assert task.cancelled()
+        status = monitor.status("ws-crash")
+        assert status["state"] == "dead"  # not "backing-off"
+        assert "next_attempt_at" not in status
 
     async def test_stop_cancels_pending_restarts(self, crash_env):
         app_state = make_app_state(crash_env)

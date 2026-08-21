@@ -34,6 +34,7 @@ import time
 from datetime import datetime, timezone
 
 from .. import podman
+from .sidecar import container_ident
 from .spec import resolve_memory_limit
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,13 @@ _SIGNAL_NAMES = {
     15: "SIGTERM",
 }
 
+# ``podman ps --format json`` reports these states for a container that
+# is no longer running. Anything else (``running``, ``created`` — a
+# container between create and start, ``paused``, ``restarting``) counts
+# as alive: the sweep only acts on a container that has actually stopped.
+# A container absent from the listing entirely was removed externally.
+_DEAD_STATES = frozenset({"exited", "stopped", "dead"})
+
 
 def classify_death(
     info: dict | None, memory_limit: str | None = None
@@ -92,6 +100,8 @@ def classify_death(
                 f"(exit code {exit_code})",
             )
         return "oom", f"OOM-killed (exit code {exit_code})"
+    if exit_code is None:
+        return "exited", "main process exited (no exit code recorded)"
     if exit_code == 0:
         return "exited", "main process exited cleanly (code 0)"
     if isinstance(exit_code, int) and exit_code > 128:
@@ -242,8 +252,18 @@ class CrashRecoveryMonitor:
             except asyncio.CancelledError:
                 pass
             self.crash_task = None
-        for task in list(self.pending.values()):
+        # Cancelling a pending restart must not leave a stale
+        # ``backing-off`` status behind: the task's ``next_attempt_at``
+        # was set before its sleep and will never fire again, so
+        # /status would report a restart that is never coming
+        # (#2524 review). The tracker (cause, attempts) survives for
+        # diagnosis; only the pending attempt is cleared.
+        for ws_id, task in list(self.pending.items()):
             task.cancel()
+            tracker = self.trackers.get(ws_id)
+            if tracker is not None:
+                tracker.next_attempt_at = None
+        self.pending.clear()
 
     async def run_loop(self) -> None:
         while True:
@@ -254,22 +274,63 @@ class CrashRecoveryMonitor:
                 logger.error("Crash-recovery sweep failed: %s", e)
 
     async def sweep_once(self) -> None:
-        """Inspect every tracked container and handle unexpected deaths.
+        """Check every tracked container for liveness and handle deaths.
 
-        Skips workspaces with an in-flight stop (``registry.stopping`` —
-        the expected paths hold this marker across their slow podman
-        remove, closing the race where a sweep would see the container
-        mid-removal and misread it as a crash) and workspaces with a
-        pending restart task.
+        Liveness is ONE batched ``podman ps`` for the whole instance (a
+        per-workspace ``inspect`` every 15s would be ~7 subprocess
+        spawns/sec at 100 workspaces, #2524 review); the per-container
+        ``inspect`` runs only to *classify* an actual death. The label
+        filter is complete because the instance id is persisted in the
+        data dir, so every tracked workspace container — including one
+        adopted across a klangkd restart — carries this instance's label.
+
+        Everything the guards depend on is captured BEFORE the await and
+        revalidated after it (review #2625): a user stop can begin and
+        complete, or a user start can rebind ``state.container_id``, while
+        the listing is in flight. Acting on post-await registry state
+        would (a) restart a workspace the user just stopped, or (b) tear
+        down the freshly-started container — both demonstrated in review.
         """
         registry = self.app.state.container_registry
-        for ws_id, state in list(registry.states.items()):
-            if ws_id in registry.stopping or ws_id in self.pending:
+        snapshot = [
+            (
+                ws_id,
+                state,
+                state.container_id,
+                registry.stop_epoch.get(ws_id, 0),
+            )
+            for ws_id, state in registry.states.items()
+            if ws_id not in registry.stopping and ws_id not in self.pending
+        ]
+        if not snapshot:
+            return
+        try:
+            listed = await self.app.state.podman.list_containers(
+                f"klangk.instance={self.app.state.util.instance_id()}"
+            )
+        except (podman.PodmanError, OSError) as e:
+            logger.debug("Crash-recovery liveness listing failed: %s", e)
+            return
+        liveness = {container_ident(c): (c.get("State") or "") for c in listed}
+        for ws_id, state, cid, epoch in snapshot:
+            # Post-await revalidation: skip anything the world moved under.
+            if registry.states.get(ws_id) is not state:
+                continue  # state replaced/removed (rebind, user start/stop)
+            if state.container_id != cid:
+                continue  # rebound to a fresh container — not our death
+            if ws_id in registry.stopping:
+                continue  # an expected stop is now in flight
+            if registry.stop_epoch.get(ws_id, 0) != epoch:
+                continue  # a stop began AND completed during the listing
+            observed = liveness.get(cid)
+            if observed is not None and observed not in _DEAD_STATES:
+                # Alive (running / created / paused / ...): nothing to do.
+                self.maybe_reset_tracker(ws_id)
                 continue
+            # Absent from the listing (removed externally) or listed in
+            # a dead state — classify via one per-container inspect.
             try:
-                info = await self.app.state.podman.inspect_container(
-                    state.container_id
-                )
+                info = await self.app.state.podman.inspect_container(cid)
             except (podman.PodmanError, OSError) as e:
                 logger.debug(
                     "Crash-recovery inspect failed for workspace %s: %s",
@@ -277,11 +338,8 @@ class CrashRecoveryMonitor:
                     e,
                 )
                 continue
-            if info is not None and (info.get("State") or {}).get("Running"):
-                self.maybe_reset_tracker(ws_id)
-                continue
             try:
-                await self.handle_death(ws_id, state.container_id, info)
+                await self.handle_death(ws_id, cid, info, epoch=epoch)
             except Exception as e:  # pragma: no cover - defensive
                 logger.error(
                     "Crash-recovery death handling failed for workspace "
@@ -307,7 +365,12 @@ class CrashRecoveryMonitor:
     # --- death handling ---
 
     async def handle_death(
-        self, ws_id: str, container_id: str, info: dict | None
+        self,
+        ws_id: str,
+        container_id: str,
+        info: dict | None,
+        *,
+        epoch: int | None = None,
     ) -> None:
         """Classify an unexpected death, emit events, maybe restart.
 
@@ -315,8 +378,30 @@ class CrashRecoveryMonitor:
         still exists (:meth:`notify_workspace_killed` reads it), then the
         teardown removes the (dead) container and its state, then the
         restart is scheduled against the fresh DB workspace row.
+
+        Race closure (review #2625): *epoch* is the workspace's stop
+        counter as captured by the sweep before its liveness await. The
+        entry guards re-verify the death is still ours to handle (state
+        present and bound to this container, no stop in flight, no stop
+        having begun-and-completed since), and the post-teardown guard —
+        run synchronously, with NO await between it and the
+        ``create_task`` inside :meth:`schedule_restart` — catches a stop
+        that began while the teardown awaits ran. Any stop beginning
+        after ``create_task`` cancels the pending task at its entry
+        (:meth:`ContainerRegistry.stop_and_remove_container` calls
+        ``on_expected_stop` before its first await). Together these make
+        "expected deaths never restart" hold for every interleaving.
         """
         registry = self.app.state.container_registry
+        # Entry guards: if the world moved between the sweep's detection
+        # and now, this death is not ours to handle.
+        state = registry.states.get(ws_id)
+        if state is None or state.container_id != container_id:
+            return  # workspace state gone or rebound (user action raced)
+        if ws_id in registry.stopping:
+            return  # an expected stop is in flight
+        if epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch:
+            return  # a stop began and completed during detection
         memory_limit = await self._effective_memory_limit(ws_id)
         cause, message = classify_death(info, memory_limit)
         tracker = self.trackers.get(ws_id) or RestartTracker()
@@ -337,6 +422,26 @@ class CrashRecoveryMonitor:
         await registry.stop_and_remove_container(
             container_id, workspace_id=ws_id
         )
+        # Post-teardown sync guards (#2524 review): NO await between these
+        # checks and either the tracker insert or the create_task inside
+        # schedule_restart, so the single-threaded loop cannot interleave
+        # here. A stop that began during the awaits above bumped the
+        # epoch (its entry is synchronous); a user start that raced us
+        # left a fresh container running (registry state present). In
+        # both cases the user action owns the workspace now — record the
+        # death event for viewers, but drop the tracker and never
+        # restart.
+        if (
+            epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch
+        ) or registry.states.get(ws_id) is not None:
+            logger.info(
+                "Workspace %s: user action interleaved with death "
+                "handling; not recording crash state or restarting",
+                ws_id,
+            )
+            self.trackers.pop(ws_id, None)  # fresh slate; the stop owns it
+            self.broadcast_death_event(ws_id, cause, message, None)
+            return
         if not self.enabled:
             # Recovery stays manual (the pre-#2524 behavior); keep the
             # tracker so /status still shows why the workspace died.

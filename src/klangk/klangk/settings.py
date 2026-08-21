@@ -1619,6 +1619,24 @@ class KlangkSettings(BaseSettings):
         """
         return _coerce_podman_size(v, "KLANGKD_CONTAINER_TMP_SIZE")
 
+    @field_validator("container_restart_enabled", mode="before")
+    @classmethod
+    def _coerce_container_restart_enabled(cls, v):
+        """Treat unset/empty as an explicit False (#2524).
+
+        The sibling ``KLANGKD_CONTAINER_*`` knobs treat env ``""`` as
+        "unset/default"; a plain bool field would instead raise a
+        ``bool_parsing`` ValidationError and abort boot. Parse the string
+        here (accepting the usual true/1/yes/on spellings) so both the
+        empty and non-empty paths stay plain-Python and validate the
+        same way regardless of source.
+        """
+        if v is None or v == "":
+            v = False
+        if not isinstance(v, str):
+            v = "true" if v else "false"
+        return v.strip().lower() in {"1", "true", "yes", "on"}
+
     @field_validator("container_restart_max_retries", mode="before")
     @classmethod
     def _coerce_container_restart_max_retries(cls, v):

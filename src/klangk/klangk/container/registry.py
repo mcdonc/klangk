@@ -162,8 +162,15 @@ class ContainerRegistry(NetworkSidecarMixin):
         # Workspaces with an expected stop in flight (#2524): the crash
         # monitor skips these so a user/idle/logout stop — which holds
         # this marker across its slow podman remove — is never misread
-        # as an unexpected death.
+        # as an unexpected death. Discarded when the stop completes (the
+        # marker alone cannot distinguish "a stop completed while the
+        # monitor's liveness call was in flight" from "no stop ever
+        # happened"), so each stop also bumps ``stop_epoch`` — a
+        # monotonic per-workspace counter the crash monitor snapshots
+        # around its awaits and re-checks before scheduling a restart,
+        # closing the completed-during-detection race (review #2625).
         self.stopping: set[str] = set()
+        self.stop_epoch: dict[str, int] = {}
         self._workspace_locks: dict[str, asyncio.Lock] = {}
         self._service_session_locks: dict[str, asyncio.Lock] = {}
         self.on_workspace_killed = None
@@ -1326,6 +1333,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         ws_id = workspace_id or self._cid_to_wsid.get(container_id)
         if ws_id:
             self.stopping.add(ws_id)
+            # Bumped synchronously at stop ENTRY, before any await: the
+            # crash monitor snapshots the epoch around its awaits and
+            # re-checks it before scheduling a restart, so a stop that
+            # begins at any point during death detection/handling
+            # invalidates the restart — even if the stop fully completes
+            # before the scheduler re-checks (#2524 review).
+            self.stop_epoch[ws_id] = self.stop_epoch.get(ws_id, 0) + 1
             self.crash.on_expected_stop(ws_id)
         try:
             try:
