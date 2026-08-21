@@ -36,7 +36,7 @@ def server():
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_HEALTH_CHECK_INTERVAL="2",
-        KLANGKD_HEALTH_CHECK_STARTUP_GRACE="0",
+        KLANGKD_HEALTH_CHECK_STARTUP_GRACE="0.1",
         LOGFIRE_TOKEN="",
     )
     yield server
