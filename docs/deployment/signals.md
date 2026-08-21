@@ -20,7 +20,10 @@ What happens, in order:
 5. Dispose the database engine and remove the PID file.
 
 Net effect: a _full_ stop. Workspaces go away; on the next start,
-`auto_start` brings back any that are configured for it.
+`auto_start` brings back any that are configured for it. To control
+_when_ that happens (and give clients clean stop frames first), see
+[Cordon & Drain](cordon-drain.md) — drain before the stop, and cordon
+keeps a restarting/crash-looping klangkd from re-starting workspaces.
 
 ## SIGHUP — reload configuration + graceful runtime restart (#1212, #1587)
 
