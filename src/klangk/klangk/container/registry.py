@@ -669,6 +669,16 @@ class ContainerRegistry(NetworkSidecarMixin):
             )
             return None
         if info["State"]["Running"]:
+            # FIPS gate on adoption (#2626 review): a container started
+            # before the mode was enabled (or left adoptable by a
+            # best-effort-failed startup reap) must not serve unprobed.
+            # Runs only with the mode on, and only on this adopt path
+            # (fresh creates are gated in _create_and_start). Raises on
+            # failure after removing the container + state — the caller
+            # (start_container) surfaces it; the workspace is not left
+            # half-tracked.
+            if self.app.state.settings.fips_mode:
+                await self._fips_gate(workspace_id, existing_container_id)
             self.track_activity(
                 existing_container_id,
                 workspace_id,
@@ -836,17 +846,32 @@ class ContainerRegistry(NetworkSidecarMixin):
             return
         ok, detail = await fips_mod.probe_container(self.app.state.podman, cid)
         if not ok:
-            await safe_remove(
-                self.app.state.podman,
-                cid,
-                what="non-FIPS workspace container",
+            # Expected-stop protocol (#2524/#2625): this removal is on
+            # purpose. Marking stopping + bumping the stop epoch keeps
+            # the crash monitor's sweep from misreading the in-flight
+            # removal as an unexpected death (which would broadcast a
+            # false death event and, with auto-restart on, schedule
+            # create→probe→remove cycles ending in a bogus crash-loop —
+            # #2626 review).
+            self.stopping.add(workspace_id)
+            self.stop_epoch[workspace_id] = (
+                self.stop_epoch.get(workspace_id, 0) + 1
             )
-            state = self.states.get(workspace_id)
-            if state is not None and state.container_id == cid:
-                self.states.pop(workspace_id, None)
-                self._cid_to_wsid.pop(cid, None)
-            self.clear_service_session_lock(cid)
-            self._notify_status_changed(workspace_id, False)
+            self.crash.on_expected_stop(workspace_id)
+            try:
+                await safe_remove(
+                    self.app.state.podman,
+                    cid,
+                    what="non-FIPS workspace container",
+                )
+                state = self.states.get(workspace_id)
+                if state is not None and state.container_id == cid:
+                    self.states.pop(workspace_id, None)
+                    self._cid_to_wsid.pop(cid, None)
+                self.clear_service_session_lock(cid)
+                self._notify_status_changed(workspace_id, False)
+            finally:
+                self.stopping.discard(workspace_id)
             raise podman.PodmanError(
                 500,
                 "KLANGKD_FIPS_MODE is enabled but the workspace "

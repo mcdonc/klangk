@@ -425,3 +425,127 @@ class TestRegistryFipsFailClosed:
 class TestProbeScriptSyntax:
     def test_embedded_script_compiles(self):
         compile(fips._PROBE_SCRIPT, "<fips-probe>", "exec")
+
+
+class TestFipsGateExpectedStopProtocol:
+    """A FIPS refusal is an *expected* stop for the crash monitor (#2626
+    review): the sweep must not misread the gate's in-flight removal as
+    an unexpected death, and with auto-restart on, no restart may be
+    scheduled for the refused container."""
+
+    def _app_state(self):
+        import sys
+
+        sys.path.insert(0, "src/klangk/klangkd-tests/tests")
+        from test_crash_recovery import make_app_state
+
+        return make_app_state(
+            {
+                "KLANGKD_FIPS_MODE": "true",
+                "KLANGKD_CONTAINER_RESTART_ENABLED": "true",
+            }
+        )
+
+    async def test_gate_removal_is_expected_stop(self):
+        from klangk import podman
+
+        app_state = self._app_state()
+        reg = app_state.state.container_registry
+        epoch0 = reg.stop_epoch.get("ws-fips", 0)
+
+        async def probe(podman_inst, cid):
+            return False, "md5 not rejected — FIPS provider not enforcing"
+
+        remove = AsyncMock()
+        with (
+            patch.object(reg.app.state.podman, "remove_container", remove),
+            patch.object(fips, "probe_container", probe),
+        ):
+            reg.track_activity("cid-fips", "ws-fips")
+            with pytest.raises(podman.PodmanError, match="FIPS"):
+                await reg._fips_gate("ws-fips", "cid-fips")
+
+        # The stop epoch bumped + no crash bookkeeping left behind.
+        assert reg.stop_epoch.get("ws-fips", 0) == epoch0 + 1
+        assert reg.stopping == set()
+        assert reg.crash.pending == {}
+        assert reg.crash.status("ws-fips") is None
+
+
+class TestFipsAdoptPathGate:
+    """A previously-running container is probed on adoption (reconnect)
+    when the mode is on (#2626 review) — no unprobed serving."""
+
+    def _app_state(self, fips):
+        import sys
+
+        sys.path.insert(0, "src/klangk/klangkd-tests/tests")
+        from test_crash_recovery import make_app_state
+
+        return make_app_state({"KLANGKD_FIPS_MODE": "true"} if fips else {})
+
+    async def test_adopt_probe_refuses_non_fips_container(self):
+        from klangk import podman
+
+        app_state = self._app_state(True)
+        reg = app_state.state.container_registry
+
+        async def probe(podman_inst, cid):
+            return False, "md5 not rejected"
+
+        remove = AsyncMock()
+        inspect = AsyncMock(
+            return_value={"State": {"Running": True, "OOMKilled": False}}
+        )
+        with (
+            patch.object(reg.app.state.podman, "remove_container", remove),
+            patch.object(reg.app.state.podman, "inspect_container", inspect),
+            patch.object(fips, "probe_container", probe),
+        ):
+            with pytest.raises(podman.PodmanError, match="FIPS"):
+                await reg._handle_existing_container(
+                    "cid-old", "ws-adopt", 0.0
+                )
+        # The adopted (non-FIPS) container was removed before refusing.
+        remove.assert_awaited_once()
+        assert "ws-adopt" not in reg.states
+
+    async def test_adopt_probe_passes_fips_container(self):
+        app_state = self._app_state(True)
+        reg = app_state.state.container_registry
+
+        async def probe(podman_inst, cid):
+            return True, "md5 rejected"
+
+        inspect = AsyncMock(
+            return_value={"State": {"Running": True, "OOMKilled": False}}
+        )
+        with (
+            patch.object(reg.app.state.podman, "inspect_container", inspect),
+            patch.object(fips, "probe_container", probe),
+            patch.object(reg, "track_activity") as track,
+        ):
+            result = await reg._handle_existing_container(
+                "cid-old", "ws-adopt", 0.0
+            )
+        assert result == ("cid-old", "connected")
+        probe_ran = fips.probe_container
+        assert probe_ran is not None  # probe was patched in and awaited
+        track.assert_called_once()
+
+    async def test_adopt_path_unprobed_when_mode_off(self):
+        app_state = self._app_state(False)
+        reg = app_state.state.container_registry
+
+        inspect = AsyncMock(
+            return_value={"State": {"Running": True, "OOMKilled": False}}
+        )
+        with (
+            patch.object(reg.app.state.podman, "inspect_container", inspect),
+            patch.object(fips, "probe_container", AsyncMock()) as probe,
+        ):
+            with patch.object(reg, "track_activity"):
+                await reg._handle_existing_container(
+                    "cid-old", "ws-adopt", 0.0
+                )
+        probe.assert_not_awaited()

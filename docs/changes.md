@@ -76,12 +76,13 @@ operators or integrators to act when upgrading.
 
 - **`KLANGKD_FIPS_MODE` (#2570, #2591).** Opt-in FIPS enforcement:
   every workspace container must prove an actively-enforcing OpenSSL
-  FIPS provider at start (distro-agnostic probes — provider-aware
-  digest rejection, or an SHA-2-only `fips=yes` approved set via the
-  openssl CLI); a container that cannot prove it is removed and its
-  start refused. The klangkd process's own OpenSSL is probed once at
-  startup and logged for audit. A new `klangk:build-fips-image` devenv
-  task builds the FIPS workspace image variant. See
+  FIPS provider when klangkd starts or adopts it (distro-agnostic
+  probes — provider-aware digest rejection, or an SHA-2-only
+  `fips=yes` approved set via the openssl CLI); a container that
+  cannot prove it is removed and its start refused. The klangkd
+  process's own OpenSSL is probed once at startup and logged for
+  audit. A new `klangk:build-fips-image` devenv task builds the FIPS
+  workspace image variant. See
   [FIPS 140-3 Mode](deployment/fips.md).
 
 - **Crash recovery for workspace containers (#2524).** Unexpectedly-dead
