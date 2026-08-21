@@ -516,6 +516,36 @@ class TestDrain:
         assert n == 0
         mock_stop.assert_not_awaited()
 
+    async def test_drain_fires_kill_callback_per_workspace(
+        self, app_state, db
+    ):
+        """Drain's session/agent reset rides the on_workspace_killed
+        callback (wired in main.py) — assert it fires per workspace, so
+        a wiring change cannot silently leave stale sessions (#2527
+        review: the /stop endpoint calls reset_workspace_state itself,
+        drain relies on this callback)."""
+        registry = app_state.state.container_registry
+        from klangk.wshandler.session import WebSocketState
+
+        app_state.state.sockets = WebSocketState(app_state)
+        self._track(app_state, registry, 2)
+        killed = []
+
+        async def on_killed(ws_id):
+            killed.append(ws_id)
+
+        registry.on_workspace_killed = on_killed
+
+        async def fake_stop(cid, workspace_id=None):
+            pass
+
+        # No patch on notify_workspace_killed — the real wrapper is the
+        # code under test (it invokes the callback above).
+        with patch.object(registry, "stop_and_remove_container", fake_stop):
+            n = await registry.drain_all_containers()
+        assert n == 2
+        assert sorted(killed) == ["ws-0", "ws-1"]
+
     async def test_drain_idempotent(self, app_state):
         registry = app_state.state.container_registry
         self._stub_sweep(app_state)
