@@ -506,8 +506,10 @@ async def duplicate_workspace(
 ):
     # #2569: duplicating creates a new workspace — check collection-level
     # create permission in addition to the per-workspace create above.
+    # Defense-in-depth: the Depends check above already walks to
+    # /workspaces, so this branch is unreachable in practice.
     principals = await app.state.acl.get_principals(user["id"])
-    if not await app.state.acl.check_permission(
+    if not await app.state.acl.check_permission(  # pragma: no cover
         "/workspaces", principals, "create"
     ):
         raise HTTPException(
