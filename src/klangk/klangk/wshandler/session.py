@@ -725,6 +725,36 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
+    def notify_workspace_evicted(
+        self, workspace_id: str, *, reason: str = "host memory pressure"
+    ) -> None:
+        """Broadcast a workspace-evicted event to all connections (#2526).
+
+        Fanned out to every connection (like
+        :meth:`notify_container_status`) so workspace list pages and any
+        client watching the workspace learn *why* it stopped — the
+        eviction path's own analogue of the idle monitor's
+        ``container_stopped``/idle-timeout event, kept distinct from it
+        so clients can tell a memory eviction from an idle timeout.
+        Recipients get the normal ``container_status`` running=False
+        frame separately via ``notify_workspace_killed``.
+        """
+        message: dict = {
+            "type": "workspace_evicted",
+            "workspace_id": workspace_id,
+            "reason": reason,
+        }
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append((sock, conn))
+        for sock, _ in dead:
+            self.connections.pop(sock, None)
+
     def notify_service_health(
         self,
         workspace_id: str,

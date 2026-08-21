@@ -308,6 +308,11 @@ port: "8997"
 | `egress_consent_row_cap`            | `2000`                          | `KLANGKD_EGRESS_CONSENT_ROW_CAP`            |
 | `container_cpu_limit`               | `2.0`                           | `KLANGKD_CONTAINER_CPU_LIMIT`               |
 | `container_memory_limit`            | `8g`                            | `KLANGKD_CONTAINER_MEMORY_LIMIT`            |
+| `memory_eviction_enabled`           | `true`                          | `KLANGKD_MEMORY_EVICTION_ENABLED`           |
+| `memory_eviction_threshold_percent` | `10`                            | `KLANGKD_MEMORY_EVICTION_THRESHOLD_PERCENT` |
+| `memory_eviction_recovery_percent`  | `15`                            | `KLANGKD_MEMORY_EVICTION_RECOVERY_PERCENT`  |
+| `memory_eviction_sustain_polls`     | `3`                             | `KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS`     |
+| `memory_eviction_poll_interval`     | `10`                            | `KLANGKD_MEMORY_EVICTION_POLL_INTERVAL`     |
 | `container_pids_limit`              | `16384`                         | `KLANGKD_CONTAINER_PIDS_LIMIT`              |
 | `container_restart_enabled`         | `false`                         | `KLANGKD_CONTAINER_RESTART_ENABLED`         |
 | `container_restart_max_retries`     | `5`                             | `KLANGKD_CONTAINER_RESTART_MAX_RETRIES`     |

@@ -10,6 +10,8 @@ patch/import) so callers keep working unchanged:
 - :mod:`.ports`    - ``PortAllocator`` + port constants
 - :mod:`.browsers` - ``BrowserRouter``
 - :mod:`.idle`     - ``IdleMonitor``
+- :mod:`.eviction` - ``MemoryPressureEvictor`` (host memory-pressure
+  eviction, #2526) + ``read_meminfo``/``available_fraction``
 - :mod:`.health`   - ``HealthMonitor`` + ``unhealthy_message``
 - :mod:`.sidecar`  - network sidecar lifecycle (mixin + constants)
 - :mod:`.spec`    - container spec assembly (``ContainerStartSpec``, env/
@@ -24,6 +26,16 @@ here are bindings, not live cells.
 
 from ..ssl_trust import ssl_env_vars as ssl_env_vars
 from .browsers import BrowserRouter as BrowserRouter
+from .eviction import (
+    MemoryPressureEvictor as MemoryPressureEvictor,
+    available_fraction as available_fraction,
+    cgroup_memory_headroom as cgroup_memory_headroom,
+    macos_available_fraction as macos_available_fraction,
+    measure_available_fraction as measure_available_fraction,
+    parse_vm_stat as parse_vm_stat,
+    read_meminfo as read_meminfo,
+    vm_stat_page_size as vm_stat_page_size,
+)
 from .health import (
     HEALTH_MESSAGE_MAX_BYTES as HEALTH_MESSAGE_MAX_BYTES,
     HealthMonitor as HealthMonitor,

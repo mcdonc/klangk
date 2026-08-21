@@ -85,6 +85,21 @@ operators or integrators to act when upgrading.
   workspace image variant. See
   [FIPS 140-3 Mode](deployment/fips.md).
 
+- **Host memory-pressure eviction (#2526).** When memory availability
+  stays below `KLANGKD_MEMORY_EVICTION_THRESHOLD_PERCENT` (default 10%)
+  for `KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS` polls (default 3 × 10s),
+  klangkd gracefully stops the least-recently-active workspace with no
+  connected clients — one per poll — until availability recovers to
+  `KLANGKD_MEMORY_EVICTION_RECOVERY_PERCENT` (default 15%, hysteresis);
+  the stop uses the idle-stop path (state preserved, next connect
+  restarts) and emits a `workspace_evicted` WS event. Availability is
+  measured platform-aware: `/proc/meminfo` on Linux (plus the cgroup
+  limit inside memory-limited containers, e.g. Docker `-m`), and
+  `vm_stat`/`sysctl` on macOS. Workspaces with live clients are never
+  chosen while an idle one exists; on by default — disable with
+  `KLANGKD_MEMORY_EVICTION_ENABLED=false`. All settings reload on
+  SIGHUP.
+
 - **Crash recovery for workspace containers (#2524).** Unexpectedly-dead
   workspace containers (OOM kill, non-zero exit, external removal) are now
   detected by a liveness sweep, and the death events carry the classified
