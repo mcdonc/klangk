@@ -11,7 +11,13 @@ name: FIPS Workspace Image Check
 # falls back to the default provider — so a green build here IS the
 # compliance check (#2570, #2577).
 #
-# Does not publish anything; the image is throwaway per run.
+# Publishes to GHCR (#2631): the self-hosted e2e runners pull this image
+# instead of compiling OpenSSL per-PR on the shared host (which starved
+# sibling suites' podman execs). Tags: :<calver>-<commit> plus a floating
+# :latest (the same convention pull-base-image.sh relies on). ONE-TIME
+# setup: flip the new ghcr package's visibility to public so anonymous
+# pulls work (as klangk-workspace-base already is); until then the e2e
+# pull falls back to a local, parallelism-capped build.
 
 on:
   workflow_dispatch:
@@ -28,6 +34,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -93,3 +100,18 @@ jobs:
           fi
           echo FIPS-RUNTIME-OK
           EOS
+
+      # Publish for the e2e pull path (#2631). GITHUB_TOKEN is tied to this
+      # run; the tag links the package to the repo.
+      - name: Push FIPS image to GHCR
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          echo "${{ secrets.GITHUB_TOKEN }}" | devenv shell -- podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          COMMIT=$(git rev-parse --short HEAD)
+          CALVER="$(date -u +%Y.%m.%d)"
+          VERSION="${CALVER}-${COMMIT}"
+          REPO="ghcr.io/${{ github.repository }}/klangk-workspace-fips"
+          devenv shell -- podman tag klangk-workspace-fips:ci "$REPO:$VERSION"
+          devenv shell -- podman tag klangk-workspace-fips:ci "$REPO:latest"
+          devenv shell -- podman push "$REPO:$VERSION"
+          devenv shell -- podman push "$REPO:latest"
