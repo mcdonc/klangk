@@ -491,6 +491,37 @@ class TestEvictOne:
         ]
         assert len(warnings) == 2
 
+    async def test_exhausted_after_evictions_warns_with_count(self, caplog):
+        """Evicted-N-without-recovery names the cgroup misattribution
+        possibility (#2627 review: systemd slice MemoryMax on klangkd
+        itself — evictions cannot relieve it)."""
+        app, evictor = self._evictor()
+        registry = app.state.container_registry
+        self._tracked(registry, "ws-1", "cid-1", 10)
+        registry.notify_workspace_killed = AsyncMock()
+        registry.stop_and_remove_container = AsyncMock()
+        # True paths only count real evictions.
+        assert await evictor.evict_one(0.03) is True
+        assert evictor._evicted_this_episode == 1
+        # The mocked stop doesn't tear registry state down; drop it so
+        # the next poll finds the registry exhausted.
+        registry.states.pop("ws-1", None)
+        with caplog.at_level(
+            logging.WARNING, logger="klangk.container.eviction"
+        ):
+            assert await evictor.evict_one(0.03) is False
+        assert any(
+            "evicted 1 workspace(s) this episode without recovery" in r.message
+            for r in caplog.records
+        )
+
+    async def test_eviction_counter_resets_on_recovery(self):
+        app, evictor = self._evictor()
+        evictor.evict_one = AsyncMock()
+        evictor._evicted_this_episode = 3
+        await evictor._handle_measurement(0.20, 0, True)  # recovery
+        assert evictor._evicted_this_episode == 0
+
     async def test_empty_registry_returns_false(self):
         app, evictor = self._evictor()
         assert await evictor.evict_one(0.03) is False

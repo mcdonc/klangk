@@ -277,6 +277,11 @@ class MemoryPressureEvictor:
         self.app = app
         self._task: asyncio.Task | None = None
         self._warned_no_evictable = False
+        # Successful evictions since the episode opened (reset on
+        # recovery) — rides the exhausted-candidates warning so an
+        # operator can tell "nothing to evict" from "evicted N and it
+        # didn't help" (#2627 review).
+        self._evicted_this_episode = 0
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -343,7 +348,11 @@ class MemoryPressureEvictor:
         as an LRU). Workspaces with any live terminal/browser subscriber
         are never candidates while an idle one exists, and workspaces
         already in a stop path (``registry.stopping``) are skipped so a
-        concurrent stop/idle-stop is not double-processed.
+        concurrent stop/idle-stop is not double-processed. Chat needs
+        no separate check: a chat participant holds the same workspace
+        WebSocket as a terminal user (``session.subscribers``) — the
+        subscriber set covers terminal, browser, and chat clients
+        alike (#2627 review).
         Workspaces pinned "never stop" — per-workspace ``idle_timeout``
         of 0, the pin auto-started boot services use so the idle monitor
         leaves them alone (#1244) — are also skipped: a pin must mean
@@ -378,6 +387,18 @@ class MemoryPressureEvictor:
         evictable (every tracked workspace has connected clients, or the
         registry is empty). The fraction (0..1 available) rides the log
         line and the broadcast so consumers can see *why*.
+
+        Race posture (#2627 review): everything from candidate build to
+        the eviction log/broadcast is synchronous — no other task can
+        stop the victim inside that prefix — and a workspace already in
+        a stop path is excluded by the ``registry.stopping`` check
+        (``stop_and_remove_container`` sets it synchronously at entry,
+        before its first await). The remaining window is DURING this
+        method's two awaits: a concurrent idle-stop of the same victim
+        double-notifies and double-removes — benign (both stops are
+        state-tolerant, the remove 404-tolerant, and the death frame
+        deduplicates by state) — so no guard is needed and none would
+        be reachable.
         """
         candidates = self._evictable_workspaces()
         if not candidates:
@@ -386,12 +407,26 @@ class MemoryPressureEvictor:
             # be ~8.6k lines/day at defaults.
             if not self._warned_no_evictable:
                 self._warned_no_evictable = True
-                logger.warning(
-                    "Host memory pressure (%.1f%% available) but no idle "
-                    "workspace to evict — every tracked workspace has "
-                    "connected clients or a never-stop pin",
-                    fraction * 100,
-                )
+                if self._evicted_this_episode:
+                    logger.warning(
+                        "Host memory pressure (%.1f%% available) and no "
+                        "idle workspace left — evicted %d workspace(s) "
+                        "this episode without recovery. If this host's "
+                        "cgroup limit applies to klangkd itself rather "
+                        "than the workspaces (e.g. a systemd slice "
+                        "MemoryMax), evicting workspaces cannot relieve "
+                        "it; check what the limit actually caps.",
+                        fraction * 100,
+                        self._evicted_this_episode,
+                    )
+                else:
+                    logger.warning(
+                        "Host memory pressure (%.1f%% available) but no "
+                        "idle workspace to evict — every tracked "
+                        "workspace has connected clients or a never-stop "
+                        "pin",
+                        fraction * 100,
+                    )
             else:
                 logger.debug(
                     "Memory pressure persists; still no evictable workspace"
@@ -399,6 +434,7 @@ class MemoryPressureEvictor:
             return False
         self._warned_no_evictable = False
         victim = candidates[0]
+        self._evicted_this_episode += 1
         logger.warning(
             "Evicting workspace %s (container %s): host memory pressure "
             "(%.1f%% available < %.1f%% threshold)",
@@ -444,6 +480,7 @@ class MemoryPressureEvictor:
                     self._recovery,
                 )
                 self._warned_no_evictable = False
+                self._evicted_this_episode = 0
                 return 0, False
             if percent < self._threshold:
                 await self.evict_one(fraction)
