@@ -203,6 +203,21 @@ in
         "src/klangksidecar/pyproject.toml"
       ];
     };
+    # FIPS workspace image variant (#2570): validated-3.1.2-module wrapper
+    # over the stock workspace image. Not in the backend's ``after`` — it's
+    # an opt-in variant (KLANGKD_IMAGE_NAME=klangk-workspace-fips); building
+    # it on every dev startup would add minutes for nobody. Rebuild keying
+    # is the script + Dockerfile.fips only (the base image is an ARG, and
+    # its own task already rebuilds when IT changes).
+    "klangk:build-fips-image" = {
+      after = [ "klangk:build-workspace-image" ];
+      exec = ''exec bash "$DEVENV_ROOT/scripts/build-fips-image.sh"'';
+      showOutput = true;
+      execIfModified = [
+        "scripts/build-fips-image.sh"
+        "src/containers/workspace/Dockerfile.fips"
+      ];
+    };
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
@@ -291,6 +306,7 @@ in
 
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
   scripts.build-workspace-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh" "$@"'';
+  scripts.build-fips-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-fips-image.sh" "$@"'';
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
   scripts.build-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-base-image.sh" "$@"'';
@@ -326,7 +342,11 @@ in
   # dirs share rootdir = src/klangk (the pyproject there carries addopts).
   scripts.test-backend.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+    # scripts/tests (the build-pipeline contract tests) rides along so a
+    # local run catches guard-test breakage the way CI's separate
+    # "build-pipeline tests" step does (#2629) — the two klangk suites
+    # alone missed it.
+    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests scripts/tests \
       -v -n auto "$@"
   '';
 

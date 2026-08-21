@@ -24,6 +24,11 @@ are:
 # Python (single klangk package, server + CLI)
 devenv --quiet -O dotenv.enable:bool false shell -- python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests -v -n auto
 
+# Build-pipeline contract tests (scripts/tests — a separate CI step; not
+# part of the suite above, so run them too when touching scripts/, the
+# image Dockerfiles, or anything in the build path — #2629)
+devenv --quiet -O dotenv.enable:bool false shell -- python -m pytest scripts/tests -v
+
 # Frontend
 devenv --quiet -O dotenv.enable:bool false shell -- flutter test --coverage
 ```

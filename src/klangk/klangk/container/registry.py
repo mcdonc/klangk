@@ -16,6 +16,7 @@ import os
 import time
 
 from .. import podman
+from .. import fips as fips_mod
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
@@ -668,6 +669,16 @@ class ContainerRegistry(NetworkSidecarMixin):
             )
             return None
         if info["State"]["Running"]:
+            # FIPS gate on adoption (#2626 review): a container started
+            # before the mode was enabled (or left adoptable by a
+            # best-effort-failed startup reap) must not serve unprobed.
+            # Runs only with the mode on, and only on this adopt path
+            # (fresh creates are gated in _create_and_start). Raises on
+            # failure after removing the container + state — the caller
+            # (start_container) surfaces it; the workspace is not left
+            # half-tracked.
+            if self.app.state.settings.fips_mode:
+                await self._fips_gate(workspace_id, existing_container_id)
             self.track_activity(
                 existing_container_id,
                 workspace_id,
@@ -810,7 +821,77 @@ class ContainerRegistry(NetworkSidecarMixin):
         # only the in-bashrc gate covered (and only for bash).
         await self.app.state.podman.wait_for_container_ready(cid)
 
+        # FIPS enforcement (#2570, #2591): the gate runs at this single
+        # create choke point (fail closed — see _fips_gate).
+        await self._fips_gate(workspace_id, cid)
+
         return cid
+
+    async def _fips_gate(self, workspace_id: str, cid: str) -> None:
+        """Refuse a workspace container that cannot prove FIPS (#2570).
+
+        With ``KLANGKD_FIPS_MODE`` on, a freshly-created container must
+        pass the distro-agnostic probe (klangk.fips) before it is handed
+        to any user; failure or non-verifiability fails CLOSED — the
+        container is removed and the start raises, so a misbuilt image
+        can never serve. No-op when the mode is off.
+
+        Ordering (#2626 review): the gate runs after
+        ``wait_for_container_ready`` (the probe needs ``podman exec``,
+        which needs a started container) and BEFORE every user handoff
+        — it is the last step of ``_create_and_start``, so the create-
+        time service-command fire (``_bringup`` →
+        ``ensure_service_session``, #1244) and any WS connect/
+        terminal/exec that could fire one happen strictly after the
+        gate. Residual exposure in the pre-gate window: published host
+        ports are already bound, but the entrypoint's one-time setup
+        binds nothing user-facing, and the only execs klangkd itself
+        makes (sudo config, workspace token) are container-internal —
+        a refused container briefly exists but never serves.
+
+        Cleanup is inline (not stop_and_remove_container / remove_state,
+        which take the workspace lock this path already holds —
+        asyncio.Lock is not reentrant); the DB container_id going stale
+        is fine: the next start's _handle_existing_container treats an
+        uninspectable container as recreate-me.
+        """
+        if not self.app.state.settings.fips_mode:
+            return
+        ok, detail = await fips_mod.probe_container(self.app.state.podman, cid)
+        if not ok:
+            # Expected-stop protocol (#2524/#2625): this removal is on
+            # purpose. Marking stopping + bumping the stop epoch keeps
+            # the crash monitor's sweep from misreading the in-flight
+            # removal as an unexpected death (which would broadcast a
+            # false death event and, with auto-restart on, schedule
+            # create→probe→remove cycles ending in a bogus crash-loop —
+            # #2626 review).
+            self.stopping.add(workspace_id)
+            self.stop_epoch[workspace_id] = (
+                self.stop_epoch.get(workspace_id, 0) + 1
+            )
+            self.crash.on_expected_stop(workspace_id)
+            try:
+                await safe_remove(
+                    self.app.state.podman,
+                    cid,
+                    what="non-FIPS workspace container",
+                )
+                state = self.states.get(workspace_id)
+                if state is not None and state.container_id == cid:
+                    self.states.pop(workspace_id, None)
+                    self._cid_to_wsid.pop(cid, None)
+                self.clear_service_session_lock(cid)
+                self._notify_status_changed(workspace_id, False)
+            finally:
+                self.stopping.discard(workspace_id)
+            raise podman.PodmanError(
+                500,
+                "KLANGKD_FIPS_MODE is enabled but the workspace "
+                f"container {cid[:12]} failed its FIPS verification: "
+                f"{detail}. The image must run an OpenSSL with the "
+                "FIPS provider active (see docs/deployment/fips.md).",
+            )
 
     @staticmethod
     def _is_port_conflict(exc: podman.PodmanError) -> bool:

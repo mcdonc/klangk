@@ -40,3 +40,10 @@ jobs:
           suite: test-backend-e2e
           suite-name: backend
           verbose-podman: "true"
+          # The FIPS variant feeds test_fips_e2e.py's positive-path class
+          # (~2 min of OpenSSL compile on the ephemeral VM; the stamp
+          # logic in the build script can't help across VMs).
+          build-tasks: >-
+            klangk:build-workspace-image
+            klangk:build-network-sidecar
+            klangk:build-fips-image

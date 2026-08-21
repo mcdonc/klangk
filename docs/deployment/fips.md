@@ -108,10 +108,30 @@ node -e "require('crypto').createHash('md5').update('x').digest('hex')"
 # -> error:0308010C ... unsupported
 ```
 
-A planned `KLANGKD_FIPS_MODE` startup check (see [#2570]) will automate
-this: verify the provider is active at workspace start and fail loudly
-if not. Until it ships, the probes above are the manual equivalent
-(and the image build runs them automatically on every build).
+`KLANGKD_FIPS_MODE=1` automates this at runtime (see [#2570]): with
+the mode on, **every workspace container is probed when klangkd starts
+or adopts it** — fresh creates at the create choke point, and
+previously-running containers on the first reconnect after a klangkd
+restart — by the same distro-agnostic checks (a non-approved digest
+must be rejected on the OpenSSL fetch path, or `openssl
+list -digest-algorithms -propquery 'fips=yes'` shows a SHA-2-only
+approved set). A container that cannot prove enforcement is removed
+and its start refused. Neither a SIGHUP reload nor a klangkd restart
+leaves an unprobed container serving: SIGHUP's runtime restart stops
+all containers, and the startup reap removes any leftover before
+recreation. (The one residual window — a container whose startup reap
+_failed_ on a best-effort error — is closed by the adoption probe at
+the next connect.) The klangkd process's own OpenSSL is probed once at
+startup and the result logged (audit); see the
+[environment reference](../reference/environment.md) for the setting.
+The manual probes above remain the diagnostic equivalent.
+
+Caveat on the probe's meaning: it is a canary for _provider
+enforcement_, not a certificate validator. An OpenSSL built without
+MD5 at all (no FIPS provider involved) would also pass layer 1; the
+audit trail for "which validated module" comes from the image build
+(`Dockerfile.fips` pins the CMVP-certified tarball), not from the
+runtime probe.
 
 ## Upgrading the module
 

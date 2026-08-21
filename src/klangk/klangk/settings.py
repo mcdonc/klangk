@@ -1048,6 +1048,13 @@ class KlangkSettings(BaseSettings):
     container_restart_enabled: bool = False
     container_restart_max_retries: int = 5
     container_restart_backoff_seconds: float = 5.0
+    # FIPS mode (#2570, #2591): when enabled, every workspace container
+    # must prove an actively-enforcing OpenSSL FIPS provider at start
+    # (fail closed — the container is removed and the start raises), and
+    # the klangkd process's own OpenSSL is probed once at startup for
+    # the audit log. The probes are distro-agnostic (see klangk/fips.py).
+    # Default off. Reloadable on SIGHUP.
+    fips_mode: bool = False
     test_mode: str | None = None
     version_file: str | None = None
 
@@ -1631,6 +1638,18 @@ class KlangkSettings(BaseSettings):
         empty and non-empty paths stay plain-Python and validate the
         same way regardless of source.
         """
+        if v is None or v == "":
+            v = False
+        if not isinstance(v, str):
+            v = "true" if v else "false"
+        return v.strip().lower() in {"1", "true", "yes", "on"}
+
+    @field_validator("fips_mode", mode="before")
+    @classmethod
+    def _coerce_fips_mode(cls, v):
+        """Treat unset/empty as False (#2570); parse the usual bool
+        spellings in plain Python (same convention as
+        ``container_restart_enabled``)."""
         if v is None or v == "":
             v = False
         if not isinstance(v, str):
