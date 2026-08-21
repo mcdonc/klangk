@@ -2290,6 +2290,26 @@ class TestBuildApp:
         }
         assert "/ws" in ws_paths
 
+    def test_build_app_has_ws_fallback(self, tmp_path):
+        """#2322: a catch-all ws fallback is registered before the StaticFiles
+        mount so unmatched WS upgrades get a clear close instead of the
+        StaticFiles ``assert scope["type"] == "http"`` crash."""
+        (tmp_path / "index.html").write_text("<html></html>")
+        settings = make_settings({"KLANGKD_FRONTEND_DIR": str(tmp_path)})
+        app = main.build_app(settings)
+        fallback_idx = None
+        static_idx = None
+        for i, r in enumerate(app.routes):
+            if getattr(r, "path", None) == "/{path:path}":
+                fallback_idx = i
+            if getattr(r, "name", None) == "frontend":
+                static_idx = i
+        assert fallback_idx is not None, "ws fallback route missing"
+        assert static_idx is not None, "static mount missing"
+        assert fallback_idx < static_idx, (
+            "ws fallback must be registered before the StaticFiles mount"
+        )
+
     def test_build_app_registers_exception_handlers(self):
         app = main.build_app(make_settings({}))
         assert model.AgentPrincipalError in app.exception_handlers
