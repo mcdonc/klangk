@@ -108,10 +108,16 @@ node -e "require('crypto').createHash('md5').update('x').digest('hex')"
 # -> error:0308010C ... unsupported
 ```
 
-A planned `KLANGKD_FIPS_MODE` startup check (see [#2570]) will automate
-this: verify the provider is active at workspace start and fail loudly
-if not. Until it ships, the probes above are the manual equivalent
-(and the image build runs them automatically on every build).
+`KLANGKD_FIPS_MODE=1` automates this at runtime (see [#2570]): with
+the mode on, **every workspace container is probed at start** by the
+same distro-agnostic checks (a non-approved digest must be rejected on
+the OpenSSL fetch path, or `openssl list -digest-algorithms -propquery
+'fips=yes'` shows a SHA-2-only approved set) and a container that
+cannot prove enforcement is removed and its start refused — a misbuilt
+image can never serve. The klangkd process's own OpenSSL is probed
+once at startup and the result logged (audit); see the
+[environment reference](../reference/environment.md) for the setting.
+The manual probes above remain the diagnostic equivalent.
 
 ## Upgrading the module
 
