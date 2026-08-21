@@ -121,3 +121,53 @@ async def test_reset_cancels_pending_sync_and_stops_watcher():
         await sess.reset()
         assert sess._window_watcher is None
         assert sess._window_sync_handle is None
+
+
+# --- #2633 CI race: the watcher's sync must update the in-memory map ---
+
+
+async def test_sync_updates_terminal_windows_map():
+    """A watcher frame must not advertise windows the map lacks.
+
+    ``klangk terminal share`` resolves a window from the
+    ``terminal_windows`` frame and immediately sends ``share_window``;
+    the handler reads ``terminal_windows`` from the session map. When
+    the watcher's frame beat ``_start_terminal``'s sync (the #2633 CI
+    flake), the map was still empty and the share failed with a
+    "Window not found" the CLI blindly timed out on. The map and the
+    broadcast must move together.
+    """
+    sess, sock, terminal = _session_with_user()
+    windows = [{"id": "@0", "index": 0, "name": "bash", "active": True}]
+    terminal.list_windows = AsyncMock(return_value=windows)
+
+    await sess._sync_windows_once()
+
+    assert sess.terminal_windows["u1"] == [
+        {"id": "@0", "index": 0, "name": "bash", "shared": False}
+    ]
+    sock.send_json.assert_called_once()
+
+
+async def test_sync_map_preserves_shared_flags_and_forces_service_cmd():
+    """The map update uses the shared merge: flags carry over by id and
+    service-cmd is shared by definition (#1114)."""
+    sess, _sock, terminal = _session_with_user()
+    sess.terminal_windows["u1"] = [
+        {"id": "@1", "index": 1, "name": "build", "shared": True},
+        {"id": "@0", "index": 0, "name": "bash", "shared": False},
+    ]
+    terminal.list_windows = AsyncMock(
+        return_value=[
+            {"id": "@0", "index": 0, "name": "bash", "active": True},
+            {"id": "@1", "index": 1, "name": "build", "active": False},
+            {"id": "@2", "index": 2, "name": "service-cmd", "active": False},
+        ]
+    )
+
+    await sess._sync_windows_once()
+
+    by_id = {w["id"]: w for w in sess.terminal_windows["u1"]}
+    assert by_id["@1"]["shared"] is True  # carried over
+    assert by_id["@2"]["shared"] is True  # service-cmd by definition
+    assert by_id["@0"]["shared"] is False
