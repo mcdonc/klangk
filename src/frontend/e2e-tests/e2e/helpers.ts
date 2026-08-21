@@ -70,12 +70,15 @@ async function makeUserAdmin(
   userId: string,
 ): Promise<void> {
   const aHeaders = await adminHeaders(request);
-  // Find the admin group.
+  // /api/v1/admin/groups returns a paged envelope {groups: [...], ...}.
   const groupsResp = await request.get(`${API_BASE}/api/v1/admin/groups`, {
     headers: aHeaders,
   });
-  const groups = await groupsResp.json();
-  const adminGroup = groups.find((g: any) => g.name === "admin");
+  const body = await groupsResp.json();
+  const groups = body.groups || body;
+  const adminGroup = Array.isArray(groups)
+    ? groups.find((g: any) => g.name === "admin")
+    : undefined;
   if (!adminGroup) return;
   // Add the user (ignore 409 if already a member).
   await request.post(

@@ -94,11 +94,38 @@ def _register(api, email, password="testpass"):
         "/api/v1/auth/register", json={"email": email, "password": password}
     )
     assert resp.status_code == 200, f"Register failed for {email}: {resp.text}"
-    token = resp.json().get("access_token")
+    data = resp.json()
+    token = data.get("access_token")
     if token:
         return {"Authorization": f"Bearer {token}"}
     # If registration requires verification, login instead
     return _login(api, email, password)
+
+
+def _make_user_admin(api, user_email, admin_headers):
+    """Add a registered user to the admin group (#2569)."""
+    # Look up user ID.
+    resp = api.get("/api/v1/admin/users", headers=admin_headers)
+    if resp.status_code != 200:
+        return
+    users = resp.json().get("items", resp.json())
+    user = next((u for u in users if u["email"] == user_email), None)
+    if not user:
+        return
+    # Find the admin group.
+    resp = api.get("/api/v1/admin/groups", headers=admin_headers)
+    if resp.status_code != 200:
+        return
+    body = resp.json()
+    groups = body.get("groups", body)
+    admin_group = next((g for g in groups if g["name"] == "admin"), None)
+    if not admin_group:
+        return
+    api.post(
+        f"/api/v1/admin/groups/{admin_group['id']}/members",
+        json={"user_id": user["id"]},
+        headers=admin_headers,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -108,18 +135,20 @@ def admin_headers(api):
 
 
 @pytest.fixture(scope="module")
-def user_a(api):
-    """Create user A and return (headers, email)."""
+def user_a(api, admin_headers):
+    """Create user A (admin) and return (headers, email)."""
     email = "alice@example.com"
     headers = _register(api, email)
+    _make_user_admin(api, email, admin_headers)
     return {"headers": headers, "email": email}
 
 
 @pytest.fixture(scope="module")
-def user_b(api):
-    """Create user B and return (headers, email)."""
+def user_b(api, admin_headers):
+    """Create user B (admin) and return (headers, email)."""
     email = "bob@example.com"
     headers = _register(api, email)
+    _make_user_admin(api, email, admin_headers)
     return {"headers": headers, "email": email}
 
 
