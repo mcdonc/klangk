@@ -14,6 +14,16 @@ on:
   push:
     branches: [release/**]
   pull_request:
+    paths:
+      - "src/klangk/**"
+      - "src/frontend/**"
+      - "src/containers/workspace/**"
+      - "src/containers/network/**"
+      - "features/**"
+      - "devenv.nix"
+      - "devenv.yaml"
+      - ".github/workflows/frontend-e2e-tests.yml"
+      - ".github/actions/e2e-suite/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
