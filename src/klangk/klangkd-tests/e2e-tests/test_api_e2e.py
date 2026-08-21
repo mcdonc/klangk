@@ -97,20 +97,14 @@ def _register(api, email, password="testpass"):
     data = resp.json()
     token = data.get("access_token")
     if token:
-        return {"Authorization": f"Bearer {token}"}
+        return {"Authorization": f"Bearer {token}"}, data.get("user_id")
     # If registration requires verification, login instead
-    return _login(api, email, password)
+    return _login(api, email, password), None
 
 
-def _make_user_admin(api, user_email, admin_headers):
-    """Add a registered user to the admin group (#2569)."""
-    # Look up user ID.
-    resp = api.get("/api/v1/admin/users", headers=admin_headers)
-    if resp.status_code != 200:
-        return
-    users = resp.json().get("items", resp.json())
-    user = next((u for u in users if u["email"] == user_email), None)
-    if not user:
+def _make_user_admin(api, user_id, admin_headers):
+    """Add a user to the admin group (#2569)."""
+    if not user_id:
         return
     # Find the admin group.
     resp = api.get("/api/v1/admin/groups", headers=admin_headers)
@@ -118,12 +112,14 @@ def _make_user_admin(api, user_email, admin_headers):
         return
     body = resp.json()
     groups = body.get("groups", body)
-    admin_group = next((g for g in groups if g["name"] == "admin"), None)
+    if isinstance(groups, dict):
+        groups = list(groups.values()) if groups else []
+    admin_group = next((g for g in groups if g.get("name") == "admin"), None)
     if not admin_group:
         return
     api.post(
         f"/api/v1/admin/groups/{admin_group['id']}/members",
-        json={"user_id": user["id"]},
+        json={"user_id": user_id},
         headers=admin_headers,
     )
 
@@ -138,8 +134,8 @@ def admin_headers(api):
 def user_a(api, admin_headers):
     """Create user A (admin) and return (headers, email)."""
     email = "alice@example.com"
-    headers = _register(api, email)
-    _make_user_admin(api, email, admin_headers)
+    headers, user_id = _register(api, email)
+    _make_user_admin(api, user_id, admin_headers)
     return {"headers": headers, "email": email}
 
 
@@ -147,8 +143,8 @@ def user_a(api, admin_headers):
 def user_b(api, admin_headers):
     """Create user B (admin) and return (headers, email)."""
     email = "bob@example.com"
-    headers = _register(api, email)
-    _make_user_admin(api, email, admin_headers)
+    headers, user_id = _register(api, email)
+    _make_user_admin(api, user_id, admin_headers)
     return {"headers": headers, "email": email}
 
 
@@ -726,9 +722,10 @@ class TestACLCascades:
     def test_user_delete_cascades_aces(self, api, admin_headers):
         """Deleting a user removes their ACEs from all resources."""
         # Create a dedicated user for this test (not the shared user_a)
-        cascade_headers = _register(
+        cascade_headers, cascade_uid = _register(
             api, f"cascade-{uuid.uuid4().hex[:8]}@example.com"
         )
+        _make_user_admin(api, cascade_uid, admin_headers)
 
         # User creates a workspace (gets owner ACE)
         api.post(
@@ -928,7 +925,9 @@ class TestAdminResourceACL:
         assert resp.status_code == 200
         entries = resp.json()
         assert any(e["permission"] == "create" for e in entries)
-        assert any(e["principal"] == "Authenticated" for e in entries)
+        # #2569: create on /workspaces is granted to the admin group,
+        # not Authenticated.
+        assert any(e["principal"] == "group:admin" for e in entries)
 
     def test_modify_workspaces_acl(self, api, admin_headers):
         """Admin can add and remove ACEs on /workspaces."""
