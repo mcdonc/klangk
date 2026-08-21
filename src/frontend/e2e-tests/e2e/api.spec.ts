@@ -1035,19 +1035,26 @@ test.describe("API", () => {
   });
 
   test("workspace export requires admin", async ({ request }) => {
+    // Create workspace as admin (workspace creation requires admin).
+    const loginResp = await request.post(`${API_BASE}/api/v1/auth/login`, {
+      data: { identifier: "admin@example.com", password: ADMIN_PASSWORD },
+    });
+    const aHeaders = {
+      Authorization: `Bearer ${(await loginResp.json()).access_token}`,
+    };
+    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
+      headers: aHeaders,
+      data: { name: `e2e-export-noadmin-${Date.now()}` },
+    });
+    expect(wsResp.ok()).toBeTruthy();
+    const workspace = await wsResp.json();
+
+    // Register a non-admin user (#2643).
     const { headers: userHeaders } = await registerUser(
       request,
       `export-nonadmin-${Date.now()}@test.example.com`,
       { admin: false },
     );
-
-    // Create workspace as regular user
-    const wsResp = await request.post(`${API_BASE}/api/v1/workspaces`, {
-      headers: userHeaders,
-      data: { name: `e2e-export-noadmin-${Date.now()}` },
-    });
-    expect(wsResp.ok()).toBeTruthy();
-    const workspace = await wsResp.json();
 
     // Export should fail for non-admin
     const exportResp = await request.get(
@@ -1058,7 +1065,7 @@ test.describe("API", () => {
 
     // Clean up
     await request.delete(`${API_BASE}/api/v1/workspaces/${workspace.id}`, {
-      headers: userHeaders,
+      headers: aHeaders,
     });
   });
 
