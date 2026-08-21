@@ -836,6 +836,19 @@ class ContainerRegistry(NetworkSidecarMixin):
         container is removed and the start raises, so a misbuilt image
         can never serve. No-op when the mode is off.
 
+        Ordering (#2626 review): the gate runs after
+        ``wait_for_container_ready`` (the probe needs ``podman exec``,
+        which needs a started container) and BEFORE every user handoff
+        — it is the last step of ``_create_and_start``, so the create-
+        time service-command fire (``_bringup`` →
+        ``ensure_service_session``, #1244) and any WS connect/
+        terminal/exec that could fire one happen strictly after the
+        gate. Residual exposure in the pre-gate window: published host
+        ports are already bound, but the entrypoint's one-time setup
+        binds nothing user-facing, and the only execs klangkd itself
+        makes (sudo config, workspace token) are container-internal —
+        a refused container briefly exists but never serves.
+
         Cleanup is inline (not stop_and_remove_container / remove_state,
         which take the workspace lock this path already holds —
         asyncio.Lock is not reentrant); the DB container_id going stale

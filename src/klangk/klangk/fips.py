@@ -31,6 +31,16 @@ If neither layer can run (no ``_hashlib`` and no ``openssl`` binary),
 the result is ``ok=False`` with a ``no-probe-available`` detail — a
 FIPS posture that cannot be verified is treated as absent (fail
 closed), and the detail tells the image builder what to provide.
+
+**Dual-maintenance note** (#2626 review): :data:`_PROBE_SCRIPT` (the
+self-contained snippet run inside containers via ``python3 -c``)
+deliberately re-implements layer 1 (``_probe_hashlib``) and layer 2
+(``_parse_openssl_list`` + the CLI argv) because a ``python3 -c``
+script cannot import this module from the klangkd host. A fix to the
+probe *logic* must be applied in **both** places — and to
+``test_fips.py``'s mirror of the script. The single source of truth
+for the *policy* (what counts as enforcing, fail-closed on
+non-verifiable) is this module's docstring.
 """
 
 import logging
@@ -239,7 +249,15 @@ def _cli_probe_cmd() -> list[str]:
 
 
 def _missing_binary(stderr: str) -> bool:
-    """True when an exec failed because the binary is not in the image."""
+    """Best-effort "the exec failed because the binary is absent" test.
+
+    Matches the C-locale / English shells' "not found" family. A
+    non-English container (LANG=de_DE → "nicht gefunden") misses, so
+    the python3→CLI fallback doesn't trigger — but the miss is safe:
+    the caller then fails closed with ``probe-exec-failed`` (a refusal
+    with a slightly less precise detail, never an acceptance) (#2626
+    review).
+    """
     low = stderr.lower()
     return (
         "not found" in low or "no such file" in low or "not a directory" in low
