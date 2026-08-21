@@ -108,6 +108,12 @@ what klangkd's runtime boot gate checks: the provider activates,
 CLI/python MD5 are rejected, and the real auth KDF
 (`hashlib.pbkdf2_hmac("sha512", …)`) still works.
 
+CI builds and publishes this image on every change to its inputs
+(`image-host-fips.yml`): `ghcr.io/mcdonc/klangk/klangk-host-fips`,
+tagged `:<calver>-<commit>` plus a floating `:latest`. The workflow's
+runtime spot-check runs klangkd's actual boot gate both ways — it must
+pass inside the FIPS image and refuse to boot inside the stock one.
+
 **Enforcement posture inside a container (#2628):** with
 `KLANGKD_FIPS_MODE` on, klangkd detects it is containerized (the
 `/.dockerenv` / `/run/.containerenv` markers) and a failed process

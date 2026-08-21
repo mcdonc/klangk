@@ -37,7 +37,8 @@ operators or integrators to act when upgrading.
   FIPS provider onto the docker host image (klangkd's own PBKDF2
   password hashing, JWT HMAC-SHA256, and outbound TLS then run inside
   the validated boundary) and embeds the FIPS workspace image in place
-  of the stock one; build with `klangk:build-fips-host-image`. With
+  of the stock one; build with `klangk:build-fips-host-image`, or pull
+  the CI-built image from GHCR (`klangk-host-fips`). With
   `KLANGKD_FIPS_MODE` on, a containerized klangkd whose own OpenSSL is
   not FIPS-enforcing now refuses to boot instead of logging a warning
   (a control-host deployment still only warns). Docs:
