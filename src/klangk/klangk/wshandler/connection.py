@@ -521,8 +521,8 @@ class Connection:
         if not self.workspace_id:
             send_error(self.sock, "Not connected to a workspace")
             return
-        # Restarting affects everyone in the workspace; require admin.
-        if not await self._has_perm("admin"):
+        # Restarting affects everyone in the workspace; require terminal.
+        if not await self._has_perm("terminal"):
             send_error(self.sock, "Permission denied")
             return
 

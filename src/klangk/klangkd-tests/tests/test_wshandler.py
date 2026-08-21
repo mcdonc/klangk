@@ -5244,8 +5244,8 @@ class TestHandleRestartContainer:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Not connected" in str(c) for c in calls)
 
-    async def test_restart_no_admin_perm(self):
-        """A spectator (no admin perm) must not restart the container,
+    async def test_restart_no_terminal_perm(self):
+        """A spectator (no terminal perm) must not restart the container,
         and must not trigger cleanup or container (re)start side effects."""
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
@@ -5274,8 +5274,8 @@ class TestHandleRestartContainer:
     async def test_restart_deny_leaves_other_connections_untouched(
         self, user, app_state
     ):
-        """A spectator's denied restart must not change other users'
-        container_id or otherwise disrupt their session (issue #873)."""
+        """A spectator's denied restart (no terminal perm) must not
+        change other users' container_id or disrupt their session (#873)."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock1 = _mock_sock(headers={"host": "localhost:8997"})
@@ -5292,7 +5292,7 @@ class TestHandleRestartContainer:
         sockets.connections[sock1] = conn1
         sockets.connections[sock2] = conn2
         try:
-            # conn1 is a spectator: admin denied.
+            # conn1 is a spectator: terminal denied.
             with (
                 patch.object(
                     conn1, "_has_perm", new=AsyncMock(return_value=False)
