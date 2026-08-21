@@ -121,6 +121,12 @@ class TestFipsFailClosed:
         assert "FIPS provider not enforcing" in log, (
             "the probe verdict (md5 not rejected) should name the cause"
         )
+        # And the container was actually reaped — safe_remove swallows
+        # podman errors, so a "Failed to reap" warning would mean the
+        # container survived the gate (#2626 review).
+        assert "Failed to reap non-FIPS workspace container" not in log, (
+            "the refused container was not removed"
+        )
 
         # No container left running and the registry does not report it.
         status = server["client"].get(

@@ -14,12 +14,15 @@ STAMP="$DEVENV_STATE/klangk/.backend-image-hash"
 # rather than the ephemeral materialized dir. Use -print0 / -0 so feature
 # names with spaces don't corrupt the hash (silently landing on a malformed
 # value that never matches the stamp → needless rebuilds).
+# Dockerfile.fips is excluded: it layers the FIPS *variant* and has no
+# effect on the stock image (hashing it would needlessly invalidate this
+# stamp on FIPS-only edits).
 CURRENT_HASH=$(find \
   scripts/build-workspace-image.sh \
   src/containers/workspace/ \
   features.yaml \
   features/ \
-  -type f -print0 2>/dev/null |
+  -type f ! -name Dockerfile.fips -print0 2>/dev/null |
   sort -z |
   xargs -0 sha256sum 2>/dev/null |
   sha256sum | cut -d' ' -f1)

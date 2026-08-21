@@ -44,9 +44,12 @@ if ! "$PODMAN" image exists "${BASE_IMAGE}" 2>/dev/null; then
   echo "Base workspace image ${BASE_IMAGE} not found — building it first." >&2
   bash "$SCRIPT_DIR/build-workspace-image.sh"
 fi
-
-klangk::stage_features
-trap 'rm -rf "$FEATURES_PAYLOAD_DIR"' EXIT
+if [ "${FIPS_IMAGE}" = "${BASE_IMAGE}" ]; then
+  echo "FIPS image and base image are both '${FIPS_IMAGE}' — set" >&2
+  echo "KLANGKBUILD_FIPS_IMAGE_NAME (or KLANGKD_IMAGE_NAME) so the variant" >&2
+  echo "layers onto the stock image instead of onto itself." >&2
+  exit 2
+fi
 
 klangk::prune_old_tags "${FIPS_IMAGE}"
 echo "Building FIPS workspace image ${FIPS_IMAGE} (base ${BASE_IMAGE}) ..."
@@ -55,7 +58,6 @@ echo "Building FIPS workspace image ${FIPS_IMAGE} (base ${BASE_IMAGE}) ..."
   "${BUILD_SECURITY_ARGS[@]}" \
   --pull=newer \
   --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
-  --build-context features="$FEATURES_STAGING/features" \
   --build-arg WORKSPACE_IMAGE="${BASE_IMAGE}:latest" \
   -t "${FIPS_IMAGE}:latest" \
   -t "${FIPS_IMAGE}:${KLANGK_IMAGE_VERSION}" \

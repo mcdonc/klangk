@@ -721,9 +721,10 @@ async def lifespan(app: FastAPI):
     setup_logfire(app)
 
     app.state.auth.require_secure_jwt_secret()
-    # #2570: with KLANGKD_FIPS_MODE on, klangkd's own OpenSSL must be
-    # verifiably FIPS-enforcing (password hashing + JWT signing run in
-    # this process). Fails the boot loudly when not.
+    # #2570: with KLANGKD_FIPS_MODE on, audit klangkd's own OpenSSL (its
+    # password hashing + JWT signing) once at startup — verified, or a
+    # prominent warning (klangkd may legitimately run on a non-FIPS
+    # control host; workspace containers are the fail-closed gate).
     fips_mod.verify_process_fips(app.state.settings)
     # Features reads the build-emitted features.json at construction
     # (Features(app) in build_app); no separate load() step (#1655).
