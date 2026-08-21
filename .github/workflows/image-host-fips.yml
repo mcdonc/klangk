@@ -1,0 +1,164 @@
+name: FIPS Host Image Check
+
+# Build the FIPS variant of the docker host container image
+# (src/containers/host/Dockerfile.fips, #2628) and run its build-time
+# proof, plus a weekly schedule to catch rot when the base images
+# (python:3.13-slim, debian:trixie-slim), the trixie openssl CLI, or
+# the Caddy repo changes behavior under us.
+#
+# The Dockerfile's final layers fail the build if the validated FIPS
+# provider does not activate, if CLI/python md5 is fetchable, if the
+# real auth KDF (pbkdf2-sha512) breaks, or if an environment-stripped
+# shell falls back to the default provider — so a green build here IS
+# the compliance check (same posture as image-workspace-fips.yml).
+#
+# The runtime spot-check additionally exercises klangkd's own boot gate
+# (#2628) inside real containers: klangk.fips.verify_process_fips with
+# the mode ON must SUCCEED inside klangk-host-fips (audit line
+# "verified") and must REFUSE TO BOOT (SystemExit) inside the stock
+# klangk-host image.
+#
+# Publishes to GHCR (same convention as the workspace FIPS image):
+# :<calver>-<commit> plus a floating :latest. ONE-TIME setup: flip the
+# new ghcr package's visibility to public so anonymous pulls work.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/containers/host/Dockerfile.fips"
+      - "src/containers/host/Dockerfile"
+      - "src/containers/host/entrypoint.sh"
+      - "src/containers/workspace/Dockerfile.fips"
+      - "src/containers/workspace/Dockerfile"
+      - "scripts/build-fips-host-image.sh"
+      - "scripts/build-host-image.sh"
+      - ".github/workflows/image-host-fips.yml"
+  schedule:
+    # Mondays 08:07 UTC — staggered an hour past the workspace FIPS slot
+    - cron: "7 8 * * 1"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      # klangk:build-fips-image runs the stock workspace image task first
+      # (after chain), so this yields both klangk-workspace and
+      # klangk-workspace-fips. The host image chain (flutter web, wheel,
+      # sidecar, docker host image) is handled by build-host-image itself
+      # in the next step, exactly like cdk-host-pentest.yml.
+      - name: Bootstrap devenv + build FIPS workspace image
+        uses: ./.github/actions/devenv-setup
+        with:
+          build-tasks: klangk:build-fips-image
+
+      - name: Build stock host image
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- build-host-image
+
+      - name: Build FIPS host image (proof runs as final layers)
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          devenv shell -- build-fips-host-image
+
+      - name: Runtime spot-check (boot gate, both directions)
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          set -euxo pipefail
+
+          # 1. Provider posture inside the FIPS host image.
+          devenv shell -- docker run -i --rm --entrypoint /bin/bash \
+            klangk-host-fips:latest -s <<'EOS'
+          set -euxo pipefail
+          # Providers: fips + base active, default absent.
+          openssl list -providers | tee /dev/stderr \
+            | grep -q "OpenSSL FIPS Provider"
+          if openssl list -providers | grep -q "OpenSSL Default Provider"; then
+            echo "FAIL: default provider active" >&2
+            exit 1
+          fi
+          # Python provider-path probes (same caveat as the workspace
+          # image: _hashlib is the provider-gated path, not hashlib.md5).
+          python3 - <<'PY'
+          import _hashlib
+          import hashlib
+          try:
+              _hashlib.openssl_md5(b"x")
+              raise SystemExit("FAIL: openssl_md5 not blocked")
+          except ValueError:
+              pass
+          hashlib.pbkdf2_hmac("sha512", b"pw", b"s" * 4, 1000)
+          print("python probes ok")
+          PY
+          # Env-stripped probe (sudo env_reset simulation): the stock
+          # /etc/ssl/openssl.cnf must keep FIPS active with no env at all.
+          if env -i /usr/bin/sh -c "echo x | openssl md5" >/dev/null 2>&1; then
+            echo "FAIL: env-stripped md5 succeeded" >&2
+            exit 1
+          fi
+          echo FIPS-RUNTIME-OK
+          EOS
+
+          # 2. klangkd's own boot gate (#2628) with the mode ON:
+          #    inside the FIPS host image it must pass (audit "verified");
+          #    inside the STOCK host image it must refuse (SystemExit).
+          devenv shell -- docker run -i --rm --entrypoint /bin/bash \
+            klangk-host-fips:latest -s <<'EOS' > /tmp/gate-pass.out 2>&1
+          set -euxo pipefail
+          python3 - <<'PY'
+          import logging, types
+
+          logging.basicConfig(level=logging.INFO)
+          from klangk import fips
+
+          fips.verify_process_fips(types.SimpleNamespace(fips_mode=True))
+          print("GATE-PASS-OK")
+          PY
+          EOS
+          cat /tmp/gate-pass.out
+          grep -q "FIPS mode enabled" /tmp/gate-pass.out
+          grep -q "GATE-PASS-OK" /tmp/gate-pass.out
+
+          if devenv shell -- docker run -i --rm --entrypoint /bin/bash \
+            klangk-host:latest -s <<'EOS'
+          python3 - <<'PY'
+          import types
+
+          from klangk import fips
+
+          fips.verify_process_fips(types.SimpleNamespace(fips_mode=True))
+          PY
+          EOS
+          then
+            echo "FAIL: stock host image booted under FIPS mode" >&2
+            exit 1
+          fi
+          echo STOCK-REFUSAL-OK
+
+      # Publish (same tag convention as klangk-workspace-fips). GITHUB_TOKEN
+      # is tied to this run; the tag links the package to the repo.
+      - name: Push FIPS host image to GHCR
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          COMMIT=$(git rev-parse --short HEAD)
+          CALVER="$(date -u +%Y.%m.%d)"
+          VERSION="${CALVER}-${COMMIT}"
+          REPO="ghcr.io/${{ github.repository }}/klangk-host-fips"
+          docker tag klangk-host-fips:latest "$REPO:$VERSION"
+          docker tag klangk-host-fips:latest "$REPO:latest"
+          docker push "$REPO:$VERSION"
+          docker push "$REPO:latest"

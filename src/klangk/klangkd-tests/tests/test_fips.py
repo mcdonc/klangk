@@ -343,18 +343,72 @@ class TestVerifyProcessFips:
         assert not caplog.records
 
     def test_on_verified(self, caplog):
-        with patch.object(fips, "probe_process", return_value=(True, "x")):
+        with (
+            patch.object(fips, "probe_process", return_value=(True, "x")),
+            patch.object(fips, "running_in_container", return_value=False),
+        ):
             with caplog.at_level(logging.INFO):
                 fips.verify_process_fips(self._settings(True))
         assert any("FIPS mode enabled" in r.message for r in caplog.records)
 
-    def test_on_not_verified_warns(self, caplog):
-        with patch.object(
-            fips, "probe_process", return_value=(False, "md5 not rejected")
+    def test_on_verified_in_container(self, caplog):
+        """A passing probe boots fine inside a container too (#2628)."""
+        with (
+            patch.object(fips, "probe_process", return_value=(True, "x")),
+            patch.object(fips, "running_in_container", return_value=True),
+        ):
+            with caplog.at_level(logging.INFO):
+                fips.verify_process_fips(self._settings(True))
+        assert any("FIPS mode enabled" in r.message for r in caplog.records)
+
+    def test_on_not_verified_warns_on_control_host(self, caplog):
+        """Not containerized → warn-only posture (the operator's host)."""
+        with (
+            patch.object(
+                fips, "probe_process", return_value=(False, "md5 not rejected")
+            ),
+            patch.object(fips, "running_in_container", return_value=False),
         ):
             with caplog.at_level(logging.WARNING):
                 fips.verify_process_fips(self._settings(True))
         assert any("NOT FIPS-enforcing" in r.message for r in caplog.records)
+
+    def test_on_not_verified_in_container_refuses_boot(self, caplog):
+        """Containerized backend + failed probe → SystemExit (#2628).
+
+        Inside a container the process OpenSSL is the crypto boundary of
+        an image we ship — the boot must abort, not warn.
+        """
+        with (
+            patch.object(
+                fips, "probe_process", return_value=(False, "md5 not rejected")
+            ),
+            patch.object(fips, "running_in_container", return_value=True),
+        ):
+            with caplog.at_level(logging.ERROR):
+                with pytest.raises(SystemExit, match="FIPS-enforcing"):
+                    fips.verify_process_fips(self._settings(True))
+        assert any("refusing to start" in r.message for r in caplog.records)
+
+
+class TestRunningInContainer:
+    def test_dockerenv_marker(self):
+        with patch.object(
+            fips.os.path, "exists", side_effect=lambda p: p == "/.dockerenv"
+        ):
+            assert fips.running_in_container() is True
+
+    def test_containerenv_marker(self):
+        with patch.object(
+            fips.os.path,
+            "exists",
+            side_effect=lambda p: p == "/run/.containerenv",
+        ):
+            assert fips.running_in_container() is True
+
+    def test_control_host(self):
+        with patch.object(fips.os.path, "exists", return_value=False):
+            assert fips.running_in_container() is False
 
 
 class TestSettingsParsing:
