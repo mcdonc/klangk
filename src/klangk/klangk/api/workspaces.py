@@ -172,6 +172,10 @@ def _annotate_running(items: list[dict], container_registry) -> list[dict]:
             ws["service_started_at"] = state.service_started_at
         else:
             ws["service_started_at"] = None
+        # Crash-recovery state (#2524): None when the workspace has no
+        # restart bookkeeping (the common case), else the backing-off /
+        # crash-loop info so a dead workspace shows *why* it is down.
+        ws["restart"] = container_registry.crash.status(ws["id"])
     return items
 
 
@@ -718,6 +722,12 @@ async def workspace_status(
             "idle_seconds": None,
             "idle_timeout": None,
             "ports": [],
+            # Crash-recovery bookkeeping (#2524): None when the workspace
+            # died (or was stopped) with no restart history, else the
+            # classified last death cause and the backoff / crash-loop
+            # state — the visible terminal state for a crash-looping
+            # workspace.
+            "restart": app.state.container_registry.crash.status(workspace_id),
         }
 
     idle_secs = time.time() - live_state.last_activity
@@ -750,6 +760,9 @@ async def workspace_status(
         "idle_seconds": round(idle_secs, 1),
         "idle_timeout": idle_timeout,
         "ports": ports,
+        # #2524: present while a restarted container is still inside its
+        # stability window ("recovering"), None once stable.
+        "restart": app.state.container_registry.crash.status(workspace_id),
     }
 
 

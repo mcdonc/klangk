@@ -1480,7 +1480,12 @@ No request body.
   "health_message": null,
   "idle_seconds": 42.5,
   "idle_timeout": 3600,
-  "ports": [9000, 9001]
+  "ports": [9000, 9001],
+  "restart": {
+    "state": "recovering",
+    "attempts": 1,
+    "last_cause": "OOM-killed at 8g memory limit (exit code 137)"
+  }
 }
 ```
 
@@ -1494,9 +1499,23 @@ No request body.
   "health_message": null,
   "idle_seconds": null,
   "idle_timeout": null,
-  "ports": []
+  "ports": [],
+  "restart": {
+    "state": "crash-loop",
+    "attempts": 5,
+    "last_cause": "main process exited with code 1",
+    "gave_up_at": "2026-02-08T12:00:00+00:00"
+  }
 }
 ```
+
+The `restart` field is `null` when the workspace has no crash-recovery
+history (the common case); otherwise `state` is one of `dead` (died,
+restart disabled or not yet scheduled), `backing-off` (a restart is
+scheduled — `next_attempt_at` tells when), `recovering` (a restarted
+container is still inside its 10-minute stability window), or
+`crash-loop` (the bounded retry budget was exhausted — `gave_up_at`
+tells when). See [Crash recovery](../features/crash-recovery.md).
 
 The `health` field is the check status (`"healthy"`, `"unhealthy"`, or
 `null` when no check is configured or no container is running). When

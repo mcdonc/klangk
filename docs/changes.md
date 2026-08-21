@@ -69,6 +69,20 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Crash recovery for workspace containers (#2524).** Unexpectedly-dead
+  workspace containers (OOM kill, non-zero exit, external removal) are now
+  detected by a liveness sweep, and the death events carry the classified
+  cause — an OOM kill names the workspace's effective memory limit (e.g.
+  "OOM-killed at 8g memory limit") instead of surfacing as a generic
+  death. Set `KLANGKD_CONTAINER_RESTART_ENABLED=true` to also auto-restart
+  such workspaces after an exponential backoff (default 5s → 10s → 20s,
+  capped at 60s; `KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS`), with at
+  most `KLANGKD_CONTAINER_RESTART_MAX_RETRIES` (default `5`) attempts —
+  exhaustion leaves a visible `crash-loop` state on
+  `GET /workspaces/<id>/status` instead of an infinite restart loop.
+  Expected stops (user stop, idle stop, delete, logout) never restart.
+  Default off: recovery stays manual.
+
 - **Resend-verification lockout (#2618).** Failed password checks on
   `POST /auth/resend-verification` now count toward the login lockout
   (`KLANGKD_LOGIN_LOCKOUT_*`), keyed like login on the account's email.

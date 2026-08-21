@@ -1,12 +1,13 @@
 """Container lifecycle management: start, stop, bringup, reaps (#2542 split).
 
 ``ContainerRegistry`` composes :class:`PortAllocator`,
-:class:`BrowserRouter`, :class:`IdleMonitor`, and :class:`HealthMonitor`
-as collaborators, and mixes in :class:`NetworkSidecarMixin` for the FQDN
-egress sidecar.  Spec assembly (env/mounts/volumes/limits/create
-kwargs, plus the :class:`ContainerStartSpec` start-parameter object)
-lives in :mod:`.spec` (#2566).  Constructed once in :func:`build_app`
-and stored on ``app.state.container_registry`` (#1426).
+:class:`BrowserRouter`, :class:`IdleMonitor`, :class:`HealthMonitor`,
+and :class:`CrashRecoveryMonitor` as collaborators, and mixes in
+:class:`NetworkSidecarMixin` for the FQDN egress sidecar.  Spec
+assembly (env/mounts/volumes/limits/create kwargs, plus the
+:class:`ContainerStartSpec` start-parameter object) lives in
+:mod:`.spec` (#2566).  Constructed once in :func:`build_app` and stored
+on ``app.state.container_registry`` (#1426).
 """
 
 import asyncio
@@ -19,6 +20,7 @@ from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
 from .browsers import BrowserRouter
+from .crash import CrashRecoveryMonitor
 from .health import HealthMonitor
 from .idle import IdleMonitor
 from .naming import _workspace_container_name, _workspace_name_slug
@@ -157,6 +159,18 @@ class ContainerRegistry(NetworkSidecarMixin):
         # best-effort network sidecar teardown on stop, so a non-filtered workspace
         # stop doesn't fire a speculative remove.
         self._ws_with_network_sidecar: set[str] = set()
+        # Workspaces with an expected stop in flight (#2524): the crash
+        # monitor skips these so a user/idle/logout stop — which holds
+        # this marker across its slow podman remove — is never misread
+        # as an unexpected death. Discarded when the stop completes (the
+        # marker alone cannot distinguish "a stop completed while the
+        # monitor's liveness call was in flight" from "no stop ever
+        # happened"), so each stop also bumps ``stop_epoch`` — a
+        # monotonic per-workspace counter the crash monitor snapshots
+        # around its awaits and re-checks before scheduling a restart,
+        # closing the completed-during-detection race (review #2625).
+        self.stopping: set[str] = set()
+        self.stop_epoch: dict[str, int] = {}
         self._workspace_locks: dict[str, asyncio.Lock] = {}
         self._service_session_locks: dict[str, asyncio.Lock] = {}
         self.on_workspace_killed = None
@@ -167,6 +181,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.browsers = BrowserRouter()
         self.idle = IdleMonitor(app)
         self.health = HealthMonitor(app)
+        self.crash = CrashRecoveryMonitor(app)
 
         # The Podman instance is reached via self.app.state.podman (owned
         # instance, #1426) — no post-construction wiring needed.
@@ -176,6 +191,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.ports.reconfigure(app)
         self.idle.reconfigure(app)
         self.health.reconfigure(app)
+        self.crash.reconfigure(app)
 
     # --- settings-derived config (read live off app_state, #1608) ---
 
@@ -211,6 +227,11 @@ class ContainerRegistry(NetworkSidecarMixin):
     @property
     def health_check_startup_grace(self) -> float:
         return self.app.state.settings.health_check_startup_grace or 30.0
+
+    # --- Proxy: CrashRecoveryMonitor (#2524) ---
+
+    def start_crash_loop(self) -> None:
+        self.crash.start()
 
     # --- settings-derived methods (were module functions, #1487) ---
 
@@ -602,6 +623,11 @@ class ContainerRegistry(NetworkSidecarMixin):
         regardless of its bag (#1244).
         """
         async with self._get_workspace_lock(spec.workspace_id):
+            # Crash bookkeeping reset (#2524): a user-driven start gives
+            # the workspace a fresh retry slate. The monitor's own restart
+            # runs inside a pending task and is exempt (task identity —
+            # resetting there would erase the counter it is counting on).
+            self.crash.on_start(spec.workspace_id)
             result = await self._start_container_inner(spec)
             bag = spec.workspace_settings or {}
             if "idle_timeout" in bag:
@@ -1296,54 +1322,91 @@ class ContainerRegistry(NetworkSidecarMixin):
         in-flight one -- reopening the very race this method exists to
         prevent. The retained entry is a single small object per workspace
         ever seen and is cleared on process restart.
+
+        Every caller of this method is an *expected* stop (user stop, idle
+        stop, delete, logout, shutdown — plus the crash monitor's own
+        teardown of an already-dead container): the workspace is marked in
+        ``self.stopping`` for the duration so the crash monitor's sweep
+        cannot misread the in-flight removal as an unexpected death, and
+        any pending crash-restart for it is cancelled (#2524).
         """
-        try:
-            await self.app.state.podman.remove_container(container_id)
-            logger.info("Stopped container %s", container_id)
-        except podman.PodmanError as e:
-            logger.warning(
-                "Failed to stop container %s: %s",
-                container_id,
-                e,
-            )
-        # The caller (/stop, /delete) knows the workspace_id even when this
-        # container isn't tracked in the in-memory registry (started by autostart
-        # or a prior klangkd session, stopped without a connect in this process).
         ws_id = workspace_id or self._cid_to_wsid.get(container_id)
         if ws_id:
-            async with self._get_workspace_lock(ws_id):
-                # Re-verify under the lock: a racing start_container may have
-                # re-bound this workspace to a new container while we waited.
-                # Only tear down state we still own. The check uses the live
-                # registry state (not the reverse cid map) so it can tell a
-                # re-bound workspace (state's container_id differs -- leave the
-                # fresh sidecar generation alone, #2265) from an untracked one
-                # (no state -- no racing start possible, so its sidecar is safe
-                # to remove by label even though it isn't in the in-memory set).
-                current = self.states.get(ws_id)
-                if current is None or current.container_id == container_id:
-                    # Remove the network sidecar (label-based, idempotent -- a
-                    # no-op for non-filtered workspaces or when egress is
-                    # disabled). Done for every non-rebound stop so a sidecar
-                    # started by autostart / a prior session is cleaned up even
-                    # if it isn't tracked in _ws_with_network_sidecar (#2286).
-                    self._ws_with_network_sidecar.discard(ws_id)
-                    await self._stop_network_sidecar(ws_id)
-                    self._cid_to_wsid.pop(container_id, None)
-                    self.revoke_workspace_browsers(ws_id)
-                    self.states.pop(ws_id, None)
-        # Drop the per-container service-firing lock (#1188), then sweep any
-        # other entries orphaned by container churn (e.g. a racing re-bind
-        # that popped this container's mapping before teardown) (#1351).
-        self.clear_service_session_lock(container_id)
-        self.prune_service_session_locks(set(self._cid_to_wsid))
+            self.stopping.add(ws_id)
+            # Bumped synchronously at stop ENTRY, before any await: the
+            # crash monitor snapshots the epoch around its awaits and
+            # re-checks it before scheduling a restart, so a stop that
+            # begins at any point during death detection/handling
+            # invalidates the restart — even if the stop fully completes
+            # before the scheduler re-checks (#2524 review).
+            self.stop_epoch[ws_id] = self.stop_epoch.get(ws_id, 0) + 1
+            self.crash.on_expected_stop(ws_id)
+        try:
+            try:
+                await self.app.state.podman.remove_container(container_id)
+                logger.info("Stopped container %s", container_id)
+            except podman.PodmanError as e:
+                logger.warning(
+                    "Failed to stop container %s: %s",
+                    container_id,
+                    e,
+                )
+            # The caller (/stop, /delete) knows the workspace_id even when
+            # this container isn't tracked in the in-memory registry
+            # (started by autostart or a prior klangkd session, stopped
+            # without a connect in this process).
+            if ws_id:
+                async with self._get_workspace_lock(ws_id):
+                    # Re-verify under the lock: a racing start_container
+                    # may have re-bound this workspace to a new container
+                    # while we waited. Only tear down state we still own.
+                    # The check uses the live registry state (not the
+                    # reverse cid map) so it can tell a re-bound workspace
+                    # (state's container_id differs -- leave the fresh
+                    # sidecar generation alone, #2265) from an untracked
+                    # one (no state -- no racing start possible, so its
+                    # sidecar is safe to remove by label even though it
+                    # isn't in the in-memory set).
+                    current = self.states.get(ws_id)
+                    if current is None or current.container_id == container_id:
+                        # Remove the network sidecar (label-based, idempotent
+                        # -- a no-op for non-filtered workspaces or when
+                        # egress is disabled). Done for every non-rebound
+                        # stop so a sidecar started by autostart / a prior
+                        # session is cleaned up even if it isn't tracked in
+                        # _ws_with_network_sidecar (#2286).
+                        self._ws_with_network_sidecar.discard(ws_id)
+                        await self._stop_network_sidecar(ws_id)
+                        self._cid_to_wsid.pop(container_id, None)
+                        self.revoke_workspace_browsers(ws_id)
+                        self.states.pop(ws_id, None)
+            # Drop the per-container service-firing lock (#1188), then sweep
+            # any other entries orphaned by container churn (e.g. a racing
+            # re-bind that popped this container's mapping before teardown)
+            # (#1351).
+            self.clear_service_session_lock(container_id)
+            self.prune_service_session_locks(set(self._cid_to_wsid))
+        finally:
+            if ws_id:
+                self.stopping.discard(ws_id)
+                # Clear again (#2524): a stop that began BEFORE the crash
+                # monitor scheduled a restart (but completes after — podman
+                # removes are slow and interleave) must still cancel it.
+                # Expected deaths never restart, no matter the ordering.
+                self.crash.on_expected_stop(ws_id)
 
-    async def notify_workspace_killed(self, workspace_id: str) -> None:
+    async def notify_workspace_killed(
+        self, workspace_id: str, *, cause: str | None = None
+    ) -> None:
         """Call the on_workspace_killed callback, logging any errors.
 
         Must be called **before** ``stop_and_remove_container`` so that
         ``self.states`` still contains the workspace state needed to emit
-        the terminal ``service_health`` death frame.
+        the terminal ``service_health`` death frame. *cause* (#2524) is
+        the classified death reason (e.g. "OOM-killed at 8g memory
+        limit"); it rides the death frame's ``message`` field so
+        consumers can tell an OOM kill from a crash from external
+        removal.
         """
         self._notify_status_changed(workspace_id, False)
         # Close the container-death hole (#1175 item 2): emit a terminal
@@ -1352,7 +1415,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # appeared on the stream, so only those get a terminal frame.
         state = self.states.get(workspace_id)
         if state is not None and state.health_check is not None:
-            self.health.broadcast_death(state)
+            self.health.broadcast_death(state, message=cause)
         if self.on_workspace_killed:
             try:
                 await self.on_workspace_killed(workspace_id)
@@ -1537,6 +1600,10 @@ class ContainerRegistry(NetworkSidecarMixin):
             except asyncio.CancelledError:
                 pass
             self.health.health_task = None
+        # Crash monitor (#2524): stop the sweep and cancel any pending
+        # delayed restarts — a shutdown-time restart would race the
+        # container teardown below.
+        await self.crash.stop()
         tracked_ids = set(self._cid_to_wsid.keys())
         tasks = [self.stop_and_remove_container(cid) for cid in tracked_ids]
         try:
