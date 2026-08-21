@@ -67,6 +67,13 @@ def _parse_openssl_list(stdout: str) -> tuple[bool, str] | None:
 def _run_openssl_list() -> tuple[bool, str]:
     """Layer-2 probe via the ``openssl`` CLI (same process or a container).
 
+    Why the host's openssl matters: it dynamically links the *same*
+    libcrypto.so that klangkd's python uses (auth PBKDF2, JWT HMAC,
+    outbound TLS), so its provider state answers for the process's
+    crypto even on interpreters where layer 1 cannot run. It is the
+    fallback for the process probe AND the embedded script's fallback
+    inside containers — one parse helper serves both.
+
     Returns ``(ok, detail)``; ok is False when the CLI is missing,
     fails, or reports a non-FIPS posture.
     """
@@ -99,6 +106,14 @@ def _run_openssl_list() -> tuple[bool, str]:
 
 def _probe_hashlib() -> tuple[bool, str] | None:
     """Layer-1 probe via CPython's ``_hashlib`` (provider-aware).
+
+    Why the host's hashlib matters at all: klangkd's own crypto runs
+    through it — ``hashlib.pbkdf2_hmac("sha512", ...)`` is the password
+    KDF on every login (auth.py), and JWT HS256 signing verifies through
+    the same OpenSSL. Probing ``openssl_md5`` tests the exact
+    provider-gated EVP fetch path those real operations will use;
+    ``hashlib.md5()`` cannot (CPython's builtin fallback bypasses the
+    provider entirely — see the module docstring).
 
     Returns ``(ok, detail)`` when conclusive, ``None`` when this layer
     cannot run on the current interpreter (no ``_hashlib``, or the named
@@ -135,6 +150,10 @@ def _probe_hashlib() -> tuple[bool, str] | None:
 
 def probe_process() -> tuple[bool, str]:
     """Probe the current process's OpenSSL for active FIPS enforcement.
+
+    "The current process" is klangkd itself, whose OpenSSL serves the
+    password KDF (hashlib.pbkdf2_hmac, auth.py) and JWT HMAC-SHA256 —
+    see verify_process_fips for why that is audited rather than gated.
 
     Layer 1 (``_hashlib``) then layer 2 (``openssl`` CLI). Returns
     ``(ok, detail)``; ``detail`` names the layer that decided and why —
@@ -276,13 +295,21 @@ async def probe_container(podman, container_id: str) -> tuple[bool, str]:
 def verify_process_fips(settings) -> None:
     """Startup audit check for ``KLANGKD_FIPS_MODE`` (#2570 Part 2).
 
+    Why probe the host process at all (vs only the workspace
+    containers): klangkd itself performs crypto on this machine —
+    PBKDF2-HMAC-SHA512 on every login (``hashlib.pbkdf2_hmac``),
+    HMAC-SHA256 on every JWT sign/verify, and outbound TLS via the
+    ``ssl`` module — all routed through the host process's OpenSSL,
+    outside any workspace container. The audit line tells an assessor
+    whether that crypto sits inside the validated boundary (info:
+    verified) or outside it (warning) — the deployment doc's posture
+    (workspaces are the FIPS boundary; the control host is the
+    operator's) is why this is a logged audit, not a boot abort.
+
     The *enforcement* point is the workspace containers (probed at every
-    start in the registry, fail closed). This process-level check is the
-    audit half: klangkd's own OpenSSL (password hashing, JWT signing)
-    is probed and the result logged with the OpenSSL version —
-    verified-and-active, or a prominent warning when not, since klangkd
-    may legitimately run on a control host whose OpenSSL is not the
-    FIPS variant while every workspace it launches is.
+    start in the registry, fail closed). This process-level check is
+    the audit half: klangkd's own OpenSSL (password hashing, JWT
+    signing) is probed and the result logged with the OpenSSL version.
     """
     if not getattr(settings, "fips_mode", False):
         return
