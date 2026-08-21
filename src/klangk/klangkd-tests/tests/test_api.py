@@ -11625,6 +11625,54 @@ class TestCordonDrainApi:
         assert resp.status_code == 503
         assert "cordoned" in resp.json()["detail"].lower()
 
+    async def test_restart_refusal_leaves_running_workspace_alone(
+        self, client, app, user, registry, ws_admin
+    ):
+        """#2527 review: the cordon check fires BEFORE the stop, so a
+        running workspace survives a restart attempt on a cordoned node
+        (cordon's documented posture — drain is the stopping half)."""
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "cw3"}
+        )
+        ws_id = create_resp.json()["id"]
+        # Simulate a running container.
+        registry.track_activity("cid-cw3", ws_id)
+        await app.state.model.server_state.set_cordoned(True)
+        with patch.object(
+            registry, "stop_and_remove_container", AsyncMock()
+        ) as mock_stop:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+        assert resp.status_code == 503
+        mock_stop.assert_not_awaited()
+
+    async def test_restart_cordon_race_between_check_and_start(
+        self, client, app, user, ws_admin
+    ):
+        """Cordon lands between restart's up-front check and the start:
+        the inner NodeCordonedError handler still maps to 503 (the
+        workspace is left stopped — the stop already happened)."""
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "cw4"}
+        )
+        ws_id = create_resp.json()["id"]
+        answers = iter([False, True])
+
+        async def flapping():
+            return next(answers, True)
+
+        with patch.object(
+            app.state.model.server_state, "is_cordoned", flapping
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+        assert resp.status_code == 503
+        assert "cordoned" in resp.json()["detail"].lower()
+
     async def test_drain_reports_count(self, client, app, admin_user):
         from klangk.container.state import ContainerState
 

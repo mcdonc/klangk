@@ -43,8 +43,10 @@ The HTTP surface behind them (if you script against the API directly):
 | PUT    | `/api/v1/admin/cordon` | Set/clear (`{"cordoned": true}`)              |
 | POST   | `/api/v1/admin/drain`  | Stop all running workspaces, `{"stopped": n}` |
 
-Authenticated clients also see `cordoned` in `GET /api/v1/config` (the
-web UI can badge the state); the pre-auth payload does not include it.
+Authenticated clients also see `cordoned` in `GET /api/v1/config`, and
+every connected WebSocket receives a `node_cordon` event on change —
+forward API surface for a future UI badge (no client consumes it yet);
+the pre-auth payload does not include it.
 
 ## systemd deployment (system Python)
 
@@ -78,7 +80,14 @@ ExecStop=/usr/bin/klangk admin drain --uncordon
 ```
 
 `ExecStop` runs on `systemctl stop`/reboot, giving a graceful drain
-before the process goes away. The `--uncordon` there is a policy
+before the process goes away. Raise the unit's stop deadline to match
+the drain's worst case — the default `TimeoutStopSec=90` can SIGKILL a
+drain on a host with many workspaces, leaving `--uncordon` unrun and
+the node cordoned after the upgrade:
+
+````ini
+TimeoutStopSec=600
+``` The `--uncordon` there is a policy
 choice: it assumes the _next_ start (after upgrade or reboot) should
 serve traffic again. Omit it to stay cordoned across the restart and
 uncordon by hand once you've verified the upgrade — the safer default
@@ -107,7 +116,7 @@ docker run ... ghcr.io/mcdonc/klangk/klangk-host:<version>
 
 # 3. Resume.
 klangk admin uncordon
-```
+````
 
 Docker has no `ExecStop` equivalent; run the drain explicitly before
 `docker stop` as shown. A crash-looping container restarted by a docker
