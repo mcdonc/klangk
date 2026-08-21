@@ -950,6 +950,31 @@ class KlangkSettings(BaseSettings):
     health_check_interval: float | None = None
     health_check_startup_grace: float | None = None
     health_check_timeout: float | None = None
+    # --- Host memory-pressure eviction (#2526) ---
+    # memory_eviction_*: the k8s node-pressure-eviction analogue. When
+    # memory availability (platform-aware: MemAvailable/MemTotal from
+    # /proc/meminfo on Linux — plus the cgroup limit when running in a
+    # memory-limited container such as Docker -m, since meminfo inside a
+    # container shows the host; vm_stat/sysctl on macOS) stays below
+    # memory_eviction_threshold_percent for
+    # memory_eviction_sustain_polls consecutive polls (each
+    # memory_eviction_poll_interval seconds), klangkd gracefully stops
+    # the least-recently-active workspace with no connected clients —
+    # one per poll — until availability recovers to
+    # memory_eviction_recovery_percent (hysteresis, so availability
+    # hovering at the threshold cannot flap-evict). Workspaces with
+    # live terminal/browser/chat clients are never chosen while an idle
+    # one exists; evictions use the normal idle-stop path (state
+    # preserved, next connect restarts) and emit a distinct
+    # ``workspace_evicted`` WS event. Protects the host — and klangkd
+    # itself — from the kernel OOM killer picking a random victim. All
+    # fields read live off settings every poll: reloadable on SIGHUP
+    # (#1587).
+    memory_eviction_enabled: bool = True
+    memory_eviction_threshold_percent: float = 10.0
+    memory_eviction_recovery_percent: float = 15.0
+    memory_eviction_sustain_polls: int = 3
+    memory_eviction_poll_interval: float = 10.0
     hosted_ports_per_workspace: int | None = 5
     # netfilter_enabled: master on/off switch for per-workspace egress
     # filtering (#1774). Defaults to True — together with the defaulted
@@ -1327,6 +1352,7 @@ class KlangkSettings(BaseSettings):
         "websocket_msg_size_max",
         "file_upload_size_max",
         "hosted_ports_per_workspace",
+        "memory_eviction_sustain_polls",
         mode="before",
     )
     @classmethod
@@ -1368,6 +1394,31 @@ class KlangkSettings(BaseSettings):
             minimum=minimum,
             default=cls.model_fields[info.field_name].default,
         )
+
+    @model_validator(mode="after")
+    def _validate_memory_eviction_hysteresis(self) -> "KlangkSettings":
+        """Recovery threshold must be >= the pressure threshold (#2526).
+
+        The gap between the two is the hysteresis that prevents
+        flap-eviction when availability hovers at the pressure threshold;
+        an inverted (or equal — zero-gap, i.e. no hysteresis) pair would
+        re-trigger an eviction episode the moment availability dips back
+        to the boundary. Equal values are tolerated (operator explicitly
+        chooses no hysteresis gap); strictly-inverted pairs abort startup
+        with both fields named.
+        """
+        if (
+            self.memory_eviction_recovery_percent
+            < self.memory_eviction_threshold_percent
+        ):
+            raise ValueError(
+                "memory_eviction_recovery_percent ("
+                f"{self.memory_eviction_recovery_percent!r}) must be >= "
+                "memory_eviction_threshold_percent ("
+                f"{self.memory_eviction_threshold_percent!r}) — recovery "
+                "below pressure would re-arm eviction the moment it ends."
+            )
+        return self
 
     @field_validator("password_history_count", mode="after")
     @classmethod
@@ -1416,6 +1467,9 @@ class KlangkSettings(BaseSettings):
         "health_check_interval",
         "health_check_startup_grace",
         "health_check_timeout",
+        "memory_eviction_threshold_percent",
+        "memory_eviction_recovery_percent",
+        "memory_eviction_poll_interval",
         mode="before",
     )
     @classmethod

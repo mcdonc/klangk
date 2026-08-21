@@ -514,6 +514,7 @@ class Lifecycle:
             "container_registry",
             "consent_sweeper",
             "inactivity_sweeper",
+            "memory_evictor",
             "consent_coordinator",
             "consent_deciders",
             "sidecar_connections",
@@ -756,6 +757,10 @@ async def lifespan(app: FastAPI):
     app.state.consent_coordinator.start()
     app.state.consent_deciders.start()
     app.state.sidecar_connections.start()
+    # #2526: host memory-pressure eviction loop (k8s node-pressure-eviction
+    # analogue) — stops idle workspaces before the kernel OOM killer picks a
+    # random victim (possibly klangkd itself).
+    app.state.memory_evictor.start()
     # Start the proxy (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.proxy_watchdog.start()
@@ -776,6 +781,7 @@ async def lifespan(app: FastAPI):
         loop.remove_signal_handler(signal.SIGHUP)
         await app.state.consent_sweeper.stop()
         await app.state.inactivity_sweeper.stop()
+        await app.state.memory_evictor.stop()
         await app.state.consent_coordinator.stop()
         await app.state.consent_deciders.stop()
         await app.state.sidecar_connections.stop()
@@ -964,6 +970,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # agent and admin-group members) whose last activity is older than
     # KLANGKD_INACTIVITY_DISABLE_DAYS.
     app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+    # #2526: MemoryPressureEvictor — host memory-pressure eviction of idle
+    # workspaces (sibling loop to the registry's IdleMonitor). Reads its
+    # thresholds live off settings (SIGHUP-reloadable) via self.app.
+    app.state.memory_evictor = container.eviction.MemoryPressureEvictor(app)
     app.state.consent_coordinator = consent.ConsentCoordinator(app)
     app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
     # #2339: live network-sidecar sockets by workspace, so a revoke can push a

@@ -19,6 +19,7 @@ from klangk import (
     agent as agent_mod,
     auth as auth_mod,
     caddy as caddy_mod,
+    container,
     consent,
     inactivity,
     sidecar_connections,
@@ -862,6 +863,9 @@ class TestLifespan:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+        app.state.memory_evictor = container.eviction.MemoryPressureEvictor(
+            app
+        )
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
@@ -922,6 +926,9 @@ class TestLifespan:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+        app.state.memory_evictor = container.eviction.MemoryPressureEvictor(
+            app
+        )
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
@@ -1467,6 +1474,9 @@ class TestStartupShutdownRestart:
         app.state.proxy_watchdog = caddy_mod.CaddyWatchdog(app)
         app.state.consent_sweeper = consent.EgressConsentSweeper(app)
         app.state.inactivity_sweeper = inactivity.InactivitySweeper(app)
+        app.state.memory_evictor = container.eviction.MemoryPressureEvictor(
+            app
+        )
         app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
         app.state.consent_coordinator = consent.ConsentCoordinator(app)
         app.state.sidecar_connections = sidecar_connections.SidecarConnections(
