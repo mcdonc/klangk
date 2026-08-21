@@ -29,11 +29,30 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | ------------- | ------ | ------------- | ---------- |
 | `/`           | Allow  | Authenticated | `view`     |
 | `/`           | Deny   | Everyone      | `*`        |
-| `/workspaces` | Allow  | Authenticated | `create`   |
+| `/workspaces` | Allow  | group:admin   | `create`   |
 | `/admin`      | Allow  | group:admin   | `*`        |
 | `/admin`      | Deny   | Everyone      | `*`        |
 
-These defaults mean: any logged-in user can view pages and create workspaces; only members of the `admin` group can access admin functions; unauthenticated users are denied everything.
+These defaults mean: any logged-in user can view pages; only members of the `admin` group can create workspaces or access admin functions; unauthenticated users are denied everything.
+
+### Granting workspace creation to non-admin users
+
+By default only administrators can create workspaces (#2569). To allow
+other users or groups to create workspaces, add an ACL entry on the
+`/workspaces` collection resource via the web UI:
+
+1. Navigate to **Admin → ACL** (or the Advanced ACL editor).
+2. Select the `/workspaces` resource.
+3. Add an **Allow** entry for the `create` permission, targeting either:
+   - A specific **group** (e.g., a "developers" group you've created) — all
+     members of that group can then create workspaces.
+   - The **Authenticated** system principal — restores the pre-#2569
+     behavior where any logged-in user can create workspaces.
+4. Ensure the new entry's position is lower than any Deny entry on the
+   same resource (lower position = checked first).
+
+The create button in the web UI automatically appears/disappears based
+on the user's effective `create` permission on `/workspaces`.
 
 ## Groups
 

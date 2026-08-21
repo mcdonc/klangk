@@ -32,6 +32,14 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Workspace creation restricted to administrators (#2569).** `POST
+/workspaces`, `POST /workspaces/import`, and workspace duplication
+  now require the `create` permission on the `/workspaces` collection
+  resource, which defaults to the `admin` group only. Non-admin users
+  see the create button hidden and receive 403 if they call the API
+  directly. To grant creation to other users or groups, add an Allow
+  ACE on `/workspaces` for the `create` permission via the ACL editor.
+
 - **FIPS host container image + containerized boot gate (#2628).** New
   `src/containers/host/Dockerfile.fips` layers the validated OpenSSL
   FIPS provider onto the docker host image (klangkd's own PBKDF2

@@ -135,14 +135,14 @@ class Lifecycle:
             PRINCIPAL_SYSTEM,
             system_principal=SYSTEM_EVERYONE,
         )
-        # /workspaces: Authenticated users can create
+        # /workspaces: only admins can create (#2569)
         await self.app.state.model.acl.add_acl_entry(
             "/workspaces",
             0,
             ACTION_ALLOW,
             "create",
-            PRINCIPAL_SYSTEM,
-            system_principal=SYSTEM_AUTHENTICATED,
+            PRINCIPAL_GROUP,
+            group_id=admin_group_id,
         )
         # /groups: Authenticated users can create groups
         await self.app.state.model.acl.add_acl_entry(
