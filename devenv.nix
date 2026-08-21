@@ -342,7 +342,11 @@ in
   # dirs share rootdir = src/klangk (the pyproject there carries addopts).
   scripts.test-backend.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+    # scripts/tests (the build-pipeline contract tests) rides along so a
+    # local run catches guard-test breakage the way CI's separate
+    # "build-pipeline tests" step does (#2629) — the two klangk suites
+    # alone missed it.
+    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests scripts/tests \
       -v -n auto "$@"
   '';
 
