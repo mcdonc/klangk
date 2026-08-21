@@ -276,6 +276,39 @@ def test_default_watcher_path():
     assert p.endswith("procleddy")
 
 
+def test_log_task_exception_logs_error(caplog):
+    """_log_task_exception logs when a fire-and-forget task fails."""
+    loop = asyncio.new_event_loop()
+
+    async def _boom():
+        raise RuntimeError("boom")
+
+    task = loop.create_task(_boom())
+    loop.run_until_complete(asyncio.sleep(0.01))
+    with caplog.at_level("ERROR"):
+        pl._log_task_exception(task)
+    assert "boom" in caplog.text
+    loop.close()
+
+
+def test_log_task_exception_silent_on_cancel():
+    """_log_task_exception is silent for cancelled tasks."""
+    loop = asyncio.new_event_loop()
+
+    async def _sleep():
+        await asyncio.sleep(60)
+
+    task = loop.create_task(_sleep())
+    task.cancel()
+    try:
+        loop.run_until_complete(task)
+    except asyncio.CancelledError:
+        pass
+    # must not raise
+    pl._log_task_exception(task)
+    loop.close()
+
+
 @pytest.mark.asyncio
 async def test_read_watcher_stdout_stops_on_drain(tmp_path):
     """Reader exits when stdout EOFs while the ledger is stopping."""

@@ -802,17 +802,19 @@ class Terminal:
         )
         if rc != 0 or not output.strip():
             return
+        ws_id = self._workspace_id_for_container(container_id)
+        if not ws_id:
+            return
         for line in output.strip().splitlines():
             line = line.strip()
             if not line.isdigit():
                 continue
             # container-internal pid; the ledger maps it through the
-            # workspace's root subtree. Stored with a "cpid:" prefix so
-            # the ledger knows it needs translation.
+            # workspace's root subtree.
             self._app.state.process_ledger.set_anchor(
                 int(line),
                 "agent",
-                self._workspace_id_for_container(container_id) or "",
+                ws_id,
             )
 
     def _workspace_id_for_container(self, container_id: str) -> str | None:

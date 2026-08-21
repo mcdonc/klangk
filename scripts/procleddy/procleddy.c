@@ -76,6 +76,7 @@
 #define STATUS_BUF 8192
 #define CMDLINE_BUF 4096
 #define DIRENT_BUF (512 * 1024)
+#define MAX_ROOTS 4096       /* sane cap on workspace root count */
 
 struct linux_dirent64 {
     uint64_t d_ino;
@@ -91,7 +92,7 @@ struct pinfo {
     uint32_t euid;
     uint32_t sid;
     uint32_t seen_poll;  /* poll index that last parsed this pid */
-    uint32_t seen_walk;  /* ancestry-walk cycle stamp */
+    uint64_t seen_walk;  /* ancestry-walk cycle stamp */
     uint16_t unseen;     /* consecutive polls not seen in a listing */
     uint8_t alive;       /* parsed at least once, not yet exited */
     uint8_t watched;     /* in a workspace subtree (full-rate parsing) */
@@ -104,11 +105,23 @@ static uint32_t *watched_list;
 static size_t nwatched, watched_cap;
 
 static void watched_add(uint32_t pid) {
+    if (nwatched >= MAX_PIDS) {
+        /* More watched pids than the pid table can hold; this is a fork
+         * bomb or a bug. Degrade: the pid stays un-watched (no change
+         * detection), which is the safe direction. */
+        return;
+    }
     if (nwatched == watched_cap) {
-        watched_cap = watched_cap ? watched_cap * 2 : 256;
-        uint32_t *nw = realloc(watched_list, watched_cap * sizeof *nw);
-        if (!nw) { perror("realloc watched"); exit(1); }
+        size_t want = watched_cap ? watched_cap * 2 : 256;
+        if (want > MAX_PIDS) want = MAX_PIDS;
+        uint32_t *nw = realloc(watched_list, want * sizeof *nw);
+        if (!nw) {
+            fprintf(stderr, "procleddy: realloc watched failed"
+                    " — pid %" PRIu32 " will not be watched\n", pid);
+            return;
+        }
         watched_list = nw;
+        watched_cap = want;
     }
     watched_list[nwatched++] = pid;
 }
@@ -139,6 +152,8 @@ static double realtime_s(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
+static int oom_logged = 0;
+
 static void ensure_pid_table(uint32_t pid) {
     if (pid < pid_cap) return;
     uint32_t want = pid + 1024;
@@ -146,7 +161,13 @@ static void ensure_pid_table(uint32_t pid) {
     struct pinfo *nt = calloc(want, sizeof *nt);
     if (!nt) {
         /* Out of memory: refuse to die — keep the old table and let the
-         * caller skip the pid (logged once). */
+         * caller skip the pid. Log once so the condition is diagnosable. */
+        if (!oom_logged) {
+            fprintf(stderr, "procleddy: calloc failed for pid %" PRIu32
+                    " (want %" PRIu32 " slots) — pid will be invisible\n",
+                    pid, want);
+            oom_logged = 1;
+        }
         return;
     }
     if (tab) {
@@ -179,11 +200,22 @@ static void read_scope_line(const char *line) {
                 if (v > 4u * 1024 * 1024) v = 4u * 1024 * 1024;
                 p++;
             }
+            if (nroots >= MAX_ROOTS) {
+                /* More roots than workspaces can plausibly exist;
+                 * stop parsing — bounded memory beats unbounded. */
+                break;
+            }
             if (nroots == roots_cap) {
-                roots_cap = roots_cap ? roots_cap * 2 : 64;
-                uint32_t *nr = realloc(roots, roots_cap * sizeof *nr);
-                if (!nr) { perror("realloc roots"); exit(1); }
+                size_t want = roots_cap ? roots_cap * 2 : 64;
+                if (want > MAX_ROOTS) want = MAX_ROOTS;
+                uint32_t *nr = realloc(roots, want * sizeof *nr);
+                if (!nr) {
+                    fprintf(stderr, "procleddy: realloc roots failed"
+                            " — keeping %zu roots\n", nroots);
+                    break;
+                }
                 roots = nr;
+                roots_cap = want;
             }
             roots[nroots++] = (uint32_t)v;
         } else {
@@ -218,7 +250,11 @@ static void pump_stdin(void) {
             memmove(buf, buf + consumed, fill - consumed);
             fill -= consumed;
         }
-        if (fill == sizeof buf) fill = 0; /* pathological line: drop */
+        if (fill == sizeof buf) {
+            fprintf(stderr, "procleddy: stdin line exceeded %zu bytes"
+                    " — dropping buffer\n", sizeof buf);
+            fill = 0;
+        }
     }
 }
 
@@ -257,6 +293,10 @@ static ssize_t list_proc(uint32_t *out, size_t cap) {
              * corrupted/attacker-influenced dirent data — the kernel
              * produces sane values, but we do not trust them). */
             if (rl < 8 || off + rl > (size_t)r) return (ssize_t)n;
+            if (rl <= offsetof(struct linux_dirent64, d_name)) {
+                off += rl;
+                continue;
+            }
             const char *nm = d->d_name;
             size_t nm_len = rl - offsetof(struct linux_dirent64, d_name) - 1;
             int ok = nm_len > 0;
@@ -302,7 +342,14 @@ static int parse_status(uint32_t pid, struct pinfo *pi) {
             }
             name[i] = '\0';
         } else if (line[0] == 'P' && !strncmp(line, "PPid:", 5)) {
-            ppid = (uint32_t)strtoul(line + 5, NULL, 10);
+            char *s = line + 5;
+            while (*s == ' ' || *s == '\t') s++;
+            unsigned long pv = 0;
+            while (isdigit((unsigned char)*s) && pv <= MAX_PIDS) {
+                pv = pv * 10 + (unsigned long)(*s - '0');
+                s++;
+            }
+            ppid = (uint32_t)(pv <= MAX_PIDS ? pv : 0);
         } else if (line[0] == 'U' && !strncmp(line, "Uid:", 4)) {
             unsigned a = 0, b = 0;
             if (sscanf(line + 4, " %u %u", &a, &b) >= 1) {
@@ -311,7 +358,14 @@ static int parse_status(uint32_t pid, struct pinfo *pi) {
                 have_uid = 1;
             }
         } else if (line[0] == 'N' && !strncmp(line, "NSsid:", 6)) {
-            sid = (uint32_t)strtoul(line + 6, NULL, 10);
+            char *s = line + 6;
+            while (*s == ' ' || *s == '\t') s++;
+            unsigned long sv = 0;
+            while (isdigit((unsigned char)*s) && sv <= MAX_PIDS) {
+                sv = sv * 10 + (unsigned long)(*s - '0');
+                s++;
+            }
+            sid = (uint32_t)(sv <= MAX_PIDS ? sv : 0);
         }
     }
     if (!have_uid) return 0;
@@ -364,11 +418,11 @@ static void json_escape(const char *in, char *out, size_t cap) {
  * nearest-ancestor-first, root-exclusive. Returns 1 if a root is an
  * ancestor (or pid IS a root, alen=0). Depth- and cycle-capped: uses the
  * per-poll seen stamp so a corrupted ppid cycle terminates. */
-static uint32_t walk_epoch = 0;
+static uint64_t walk_epoch = 0;
 
 static int descends_from_root(uint32_t pid, uint32_t *ancestry,
                               size_t *alen) {
-    uint32_t stamp = ++walk_epoch;
+    uint64_t stamp = ++walk_epoch;
     *alen = 0;
     uint32_t cur = pid;
     if (is_root(cur)) return 1;

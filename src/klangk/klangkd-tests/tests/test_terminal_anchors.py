@@ -91,6 +91,12 @@ class TestRegisterServiceAnchor:
         await term._register_service_anchor(CID)
         ledger.set_anchor.assert_not_called()
 
+    async def test_unknown_container_no_anchor(self):
+        term, pod, ledger = _terminal()
+        pod.exec_container = AsyncMock(return_value=(0, "303\n", ""))
+        await term._register_service_anchor("unknown-cid")
+        ledger.set_anchor.assert_not_called()
+
 
 def test_workspace_id_for_container():
     term, _, _ = _terminal()

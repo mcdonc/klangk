@@ -449,7 +449,9 @@ class ExecController:
                     self._conn.user.get("handle") or self._conn.user["email"],
                 )
         except Exception:  # pragma: no cover - defensive
-            pass
+            logger.debug(
+                "process-ledger: exec input hint failed", exc_info=True
+            )
         await session.write(raw)
 
     async def close_stdin(self) -> None:
@@ -898,7 +900,9 @@ class TerminalController:
                     self._conn.user.get("handle") or self._conn.user["email"],
                 )
         except Exception:  # pragma: no cover - defensive
-            pass
+            logger.debug(
+                "process-ledger: terminal input hint failed", exc_info=True
+            )
         await session.write(data)
         elapsed = time.monotonic() - t0
         if elapsed > 0.1:  # pragma: no cover
@@ -1041,7 +1045,10 @@ class TerminalController:
                     self._conn.user.get("handle") or self._conn.user["email"],
                 )
             except Exception:  # pragma: no cover - defensive
-                pass
+                logger.debug(
+                    "process-ledger: window anchor registration failed",
+                    exc_info=True,
+                )
         except Exception as e:
             logger.exception("Failed to create window: %s", e)
             send_error(self._conn.sock, "Failed to create window")

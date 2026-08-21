@@ -152,6 +152,7 @@ class ProcessLedger:
         self.app = app
         # workspace_id -> root pid (container init's host pid)
         self._roots: dict[str, int] = {}
+        self._roots_by_pid: dict[int, str] = {}
         self._roots_at: dict[str, float] = {}
         # Anchor pids: pane shells whose launches get attributed.
         # pid -> ("agent", workspace_id) | ("user:<handle>", workspace_id)
@@ -203,11 +204,17 @@ class ProcessLedger:
     # ------------------------------------------------------- anchors
     def set_root(self, workspace_id: str, pid: int) -> None:
         """Record/refresh a workspace's container-init host pid."""
+        old = self._roots.get(workspace_id)
+        if old is not None and old != pid:
+            self._roots_by_pid.pop(old, None)
         self._roots[workspace_id] = pid
+        self._roots_by_pid[pid] = workspace_id
         self._roots_at[workspace_id] = time.time()
 
     def drop_root(self, workspace_id: str) -> None:
-        self._roots.pop(workspace_id, None)
+        old = self._roots.pop(workspace_id, None)
+        if old is not None:
+            self._roots_by_pid.pop(old, None)
         self._roots_at.pop(workspace_id, None)
         self._anchors = {
             p: a for p, a in self._anchors.items() if a[1] != workspace_id
@@ -234,9 +241,10 @@ class ProcessLedger:
     def resolve_anchors(self) -> None:
         """Translate container-pid anchors to host pids (NSpid walk).
 
-        For each workspace with pending anchors, scan the workspace's
-        host-pid subtree once: a process whose ``status`` NSpid tail equals
-        a stored container pid gets a host-pid anchor. Runs from the
+        For each workspace with pending anchors, BFS from the workspace's
+        root pid to find subtree members (O(subtree) instead of
+        O(all-pids × walk-depth)). A process whose ``status`` NSpid tail
+        equals a stored container pid gets a host-pid anchor. Runs from the
         refresh loop (5 s) — anchor registration is eventual, which the
         80 ms watcher's ancestry chain absorbs (the anchor's own shell is
         typically long-lived).
@@ -244,21 +252,22 @@ class ProcessLedger:
         if not self._canchors_dirty:
             return
         snap = _ProcSnapshot().scan()
+        # Build parent -> children index once for all dirty workspaces.
+        children: dict[int, list[int]] = {}
+        for pid, (ppid, _uid) in snap.entries.items():
+            children.setdefault(ppid, []).append(pid)
         for ws_id in list(self._canchors_dirty):
             root = self._roots.get(ws_id)
             if root is None:
                 self._canchors_dirty.discard(ws_id)
                 continue
-            # membership: ppid-walk to root
-            members = set()
-            for pid, (ppid, _uid) in snap.entries.items():
-                cur, guard = pid, 0
-                while cur and cur > 1 and guard < 1000:
-                    if cur == root:
-                        members.add(pid)
-                        break
-                    cur = snap.entries.get(cur, (None,))[0]
-                    guard += 1
+            # BFS from root to collect subtree members.
+            members: list[int] = []
+            queue = [root]
+            while queue:
+                cur = queue.pop()
+                members.append(cur)
+                queue.extend(children.get(cur, ()))
             # nspid tail -> host pid for members
             for hpid in members:
                 tail = _read_nspid_tail(hpid, snap.root)
@@ -338,10 +347,9 @@ class ProcessLedger:
         chain: list[int] = []
         cur: int | None = pid
         seen: set[int] = set()
-        roots_by_pid = {p: w for w, p in self._roots.items()}
         while cur is not None and cur not in seen and cur > 1:
             seen.add(cur)
-            ws = roots_by_pid.get(cur)
+            ws = self._roots_by_pid.get(cur)
             if ws is not None:
                 # chain includes the root: anchors often ARE the root or
                 # its pane-shell children (matching the watcher).
@@ -379,7 +387,8 @@ class ProcessLedger:
         # Enable/disable transitions are picked up by _run()'s settings
         # check each cycle; a disable stops the loop on its next tick.
         if not self.enabled and self._task is not None:
-            asyncio.ensure_future(self.stop())
+            t = asyncio.create_task(self.stop(), name="process-ledger-stop")
+            t.add_done_callback(_log_task_exception)
 
     # -------------------------------------------------- C watcher
     async def _start_watcher(self) -> bool:
@@ -534,21 +543,7 @@ class ProcessLedger:
             return
         ts = float(event.get("ts_realtime", time.time()))
         principal, method = self.attribute_with_ancestry(ancestry + chain, ws)
-        if etype == EVT_BIRTH:
-            await self.app.state.model.process_launch.record_launch(
-                workspace_id=ws,
-                pid=pid,
-                ppid=event.get("ppid"),
-                uid=event.get("uid"),
-                comm=event.get("comm"),
-                argv=event.get("argv"),
-                started_at=ts,
-                principal=principal or "unknown",
-                attribution_method=method or ATTR_FALLBACK,
-                pane_hint=self.input_hint(ws, ts),
-                event_kind=etype,
-            )
-        elif etype == EVT_EXEC:
+        if etype in (EVT_BIRTH, EVT_EXEC):
             await self.app.state.model.process_launch.record_launch(
                 workspace_id=ws,
                 pid=pid,
@@ -566,12 +561,11 @@ class ProcessLedger:
     def _workspace_for_ancestry(
         self, pid: int, ancestry: list[int]
     ) -> tuple[str | None, list[int]]:
-        roots_by_pid = {p: w for w, p in self._roots.items()}
         for a in ancestry:
-            ws = roots_by_pid.get(a)
+            ws = self._roots_by_pid.get(a)
             if ws is not None:
                 return ws, []
-        ws = roots_by_pid.get(pid)
+        ws = self._roots_by_pid.get(pid)
         if ws is not None:
             return ws, []
         return None, []
@@ -663,6 +657,15 @@ class ProcessLedger:
             "anchors": len(self._anchors),
             "gaps": len(self.gaps),
         }
+
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Done-callback: log exceptions from fire-and-forget tasks."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("process-ledger: background task failed: %s", exc)
 
 
 def _read_nspid_tail(hpid: int, root: str = "/proc") -> int | None:
