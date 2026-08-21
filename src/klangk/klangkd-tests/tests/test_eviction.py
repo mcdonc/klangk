@@ -282,7 +282,19 @@ class TestMacOsMeasurement:
 
 
 class TestMeasureAvailableFraction:
-    """The platform dispatcher combining meminfo + cgroup headroom."""
+    """The platform dispatcher combining meminfo + cgroup headroom.
+
+    Every test here pins ``platform.system`` to "Linux": the dispatcher
+    routes Darwin hosts to vm_stat/sysctl regardless of the patched
+    meminfo/cgroup functions, so unpinned tests would measure the real
+    host on macOS runners (#2627 CI).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _pin_linux(self, monkeypatch):
+        monkeypatch.setattr(
+            "klangk.container.eviction.platform.system", lambda: "Linux"
+        )
 
     async def test_no_cgroup_uses_meminfo(self, tmp_path, monkeypatch):
         meminfo = tmp_path / "meminfo"
