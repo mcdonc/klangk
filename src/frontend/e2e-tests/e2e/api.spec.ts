@@ -357,10 +357,11 @@ test.describe("API", () => {
     const adminToken = (await loginResp.json()).access_token;
     const adminHeaders = { Authorization: `Bearer ${adminToken}` };
 
-    // Create a test user via test mode
+    // Create a non-admin test user via test mode (#2643).
     const { token: userToken, headers: userHeaders } = await registerUser(
       request,
       "admin-test@test.example.com",
+      { admin: false },
     );
 
     // Admin can list users
@@ -1037,6 +1038,7 @@ test.describe("API", () => {
     const { headers: userHeaders } = await registerUser(
       request,
       `export-nonadmin-${Date.now()}@test.example.com`,
+      { admin: false },
     );
 
     // Create workspace as regular user
@@ -1115,6 +1117,7 @@ test.describe("API", () => {
     const { headers: userHeaders } = await registerUser(
       request,
       `acl-denied-${Date.now()}@test.example.com`,
+      { admin: false },
     );
 
     const resp = await request.get(

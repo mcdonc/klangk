@@ -88,11 +88,14 @@ async function makeUserAdmin(
 }
 
 /** Register a new user via API (test mode allows unauthenticated registration).
- *  The user is added to the admin group so they can create workspaces (#2569).
+ *  By default the user is added to the admin group so they can create
+ *  workspaces (#2569).  Pass `admin: false` for tests that need a genuine
+ *  non-admin user (#2643).
  *  Returns { token, headers }. */
 export async function registerUser(
   request: APIRequestContext,
   email: string,
+  { admin = true }: { admin?: boolean } = {},
 ): Promise<{ token: string; headers: Record<string, string> }> {
   const data = await postJsonWithRetry(
     request,
@@ -103,7 +106,7 @@ export async function registerUser(
   const token = data.access_token;
   const headers = { Authorization: `Bearer ${token}` };
   // #2569: workspace creation requires admin group membership.
-  if (data.user_id) {
+  if (admin && data.user_id) {
     await makeUserAdmin(request, data.user_id);
   }
   return { token, headers };
