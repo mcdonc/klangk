@@ -42,10 +42,18 @@ the full permission breakdown.
 
 ## Groups
 
-Groups are named collections of users. The built-in `admin` group is
-created automatically on first startup. You can create additional
-groups (e.g., "engineering", "design") and share workspaces with an
-entire group instead of individual users.
+Groups are named collections of users. Two built-in groups are created
+automatically on first startup:
+
+- **admin** — the seeded admin user is added to it. Members can create
+  workspaces and access admin functions.
+- **members** — every new user is added automatically (registration,
+  invitation acceptance, OIDC first login, admin-created). Has no
+  permissions by default, but deployers can grant permissions to this
+  group to apply them to all regular users.
+
+You can create additional groups (e.g., "engineering", "design") and
+share workspaces with an entire group instead of individual users.
 
 Manage groups from the Admin panel under the Groups tab.
 
@@ -53,9 +61,24 @@ Manage groups from the Admin panel under the Groups tab.
 
 On first startup, Klangk seeds these defaults:
 
-- Any logged-in user can view pages and create workspaces
-- Only members of the `admin` group can access admin functions
+- Any logged-in user can view pages
+- Only members of the `admin` group can create workspaces or access
+  admin functions
 - Unauthenticated users are denied everything
+
+## Granting workspace creation to non-admin users
+
+To let members (or another group) create workspaces:
+
+1. Open the **Admin** panel and navigate to the **ACL** editor.
+2. Select the `/workspaces` resource.
+3. Add an **Allow** entry for the `create` permission, targeting the
+   `members` group (or any other group).
+4. Ensure the new entry's position is lower (checked first) than any
+   Deny entry on the same resource.
+
+The create and import buttons in the web UI will automatically appear
+for users who gain the `create` permission.
 
 ## Learn more
 
