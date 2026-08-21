@@ -1087,6 +1087,15 @@ def build_app(settings: KlangkSettings) -> FastAPI:
         # fanout lands with #2244, the sidecar kernel hold in a follow-up.
         await handle_egress_sidecar(ws, app)
 
+    # #2322: catch-all websocket fallback — must be registered after specific
+    # ws routes but before the StaticFiles mount, which otherwise swallows ws
+    # scopes and crashes with ``assert scope["type"] == "http"``.
+    @app.websocket("/{path:path}")
+    async def ws_fallback(ws: WebSocket, path: str):  # pragma: no cover
+        await ws.accept()
+        logger.warning("unhandled ws path: /%s", path)
+        await ws.close(code=4044, reason=f"no websocket route at /{path}")
+
     # Frontend UI dir, resolved from settings (#1456, #1600). Mounted only
     # when it exists; a packaged/installed klangkd ships the UI inside the
     # wheel (klangk/frontend) so this is the common case. When the dir is
