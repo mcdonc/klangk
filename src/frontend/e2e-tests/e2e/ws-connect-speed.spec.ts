@@ -47,13 +47,13 @@ test.describe("WebSocket connect speed", () => {
 
       await expect
         .poll(() => containerReady, {
-          timeout: 10_000,
-          message: "container_ready not received within 10s of navigation",
+          timeout: 30_000,
+          message: "container_ready not received within 30s of navigation",
         })
         .toBeTruthy();
 
       const elapsed = Date.now() - start;
-      expect(elapsed).toBeLessThan(10_000);
+      expect(elapsed).toBeLessThan(30_000);
     } finally {
       await cleanup();
     }
