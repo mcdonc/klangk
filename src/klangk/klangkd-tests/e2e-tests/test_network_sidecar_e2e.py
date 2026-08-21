@@ -462,12 +462,21 @@ def _query(env, stack, name, server=None):
     SO_MARK bypass attempt — which DOES depend on user-namespace isolation —
     lives in test_somark_bypass_blocked_under_production_userns (a faithful
     keep-id repro).
+
+    The ``podman run`` itself can wedge under xdist load on the CI runner
+    (the #2616 class — the query's own DNS lifetime is 6s, so a 60s
+    timeout can only mean podman never came back). The query is one-shot
+    and read-only, so a wedged invocation is killed by the timeout and
+    retried immediately — a fresh podman start carries its own latency,
+    which is all the spacing a retry needs (the #2619 teardown rationale,
+    applied to the run path). A genuinely blocked answer still fails the
+    assertion on the retried attempt; only the harness wedges.
     """
     _, network_sidecar = stack
     args = ["/wq.py", name]
     if server:
         args.append(server)
-    out = _podman(
+    run_args = (
         "run",
         "--rm",
         "--network",
@@ -480,9 +489,19 @@ def _query(env, stack, name, server=None):
         "python3",
         env["image"],
         *args,
-        timeout=60,
     )
-    return out.stdout.strip()
+    last_exc = None
+    for _attempt in range(2):
+        try:
+            out = _podman(*run_args, timeout=60)
+            return out.stdout.strip()
+        except subprocess.TimeoutExpired as exc:
+            last_exc = exc
+            print(
+                f"podman run {name!r} timed out after 60s "
+                "(wedged under load); retrying"
+            )
+    raise last_exc
 
 
 def _probe_somark(

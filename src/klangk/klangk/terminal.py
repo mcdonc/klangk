@@ -611,15 +611,39 @@ class Terminal:
 
     # --- tmux command primitives ---
 
+    # Cold-start failures tmux_command retries: the socket path missing
+    # (server still starting in a fresh container) and the target session
+    # missing. The latter covers the terminal-start race (#2623): the
+    # controller stores its TerminalSession before ``start()`` completes,
+    # and ``start()`` only spawns the attach exec — the grouped tmux
+    # session (``<user_id>-<uuid>``) is created asynchronously by that
+    # exec's ``tmux new-session`` client. A window command addressed to
+    # the unique session name (e.g. the client's select-window fired
+    # right after terminal_start) can run before the session exists;
+    # under load (a 3s podman exec on a busy CI runner) the gap is
+    # seconds. tmux's wording is "can't find session: <name>" on modern
+    # versions; "no such session" appears on older ones.
+    _COLD_START_STDERR = (
+        "no such file or directory",
+        "can't find session",
+        "no such session",
+    )
+
     async def tmux_command(
         self, container_id: str, session_name: str, args: list[str]
     ) -> str:
         """Run a tmux command in the container and return stdout.
 
-        Retries up to 3 times on socket-not-found errors, which can occur
-        when the tmux server is still starting in a fresh container.
+        Retries cold-start failures (see ``_COLD_START_STDERR``): the
+        tmux socket missing while the server boots in a fresh container,
+        or the target session missing while a just-spawned attach is
+        still creating it (#2623). Up to 6 attempts, 0.5s apart — the
+        observed CI gap was ~1-2s, so 2.5s of retry budget covers it;
+        the pre-retry behavior (immediate TerminalError) is unchanged
+        once the budget is spent.
         """
-        for attempt in range(3):
+        attempts = 6
+        for attempt in range(attempts):
             rc, stdout, stderr = await self.podman.exec_container(
                 container_id,
                 ["tmux", *args],
@@ -628,7 +652,11 @@ class Terminal:
             )
             if rc == 0:
                 return stdout
-            if "No such file or directory" in stderr and attempt < 2:
+            low = stderr.lower()
+            if (
+                any(s in low for s in self._COLD_START_STDERR)
+                and attempt < attempts - 1
+            ):
                 await asyncio.sleep(0.5)
                 continue
             # "container gone" is a recoverable condition (the container
