@@ -243,6 +243,10 @@ async def get_config(
             app.state.netfilter.default_domains()
         )
         config["netfilter_enabled"] = app.state.netfilter.enabled()
+        # Cordon state (#2527): authenticated clients learn the node is
+        # cordoned (starts will be refused) so the UI can badge it. Like
+        # the netfilter block: not on the pre-auth payload.
+        config["cordoned"] = await app.state.model.server_state.is_cordoned()
     config.update(app.state.features.frontend_config())
     # Whether the clanker agent is on for this deploy (#1977): the chat
     # feature active AND KLANGKWS_FEATURE_CHAT_AGENT_ENABLED set. A bool so

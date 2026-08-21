@@ -556,6 +556,17 @@ class Workspaces:
         if not self.app.state.settings.allow_autostart:
             return 0
 
+        # Cordon check (#2527): a cordoned node suppresses boot auto-start
+        # entirely. The start choke point would refuse each workspace anyway
+        # (NodeCordonedError), but checking up front gives one clear log line
+        # instead of N per-workspace failure warnings.
+        if await self.app.state.model.server_state.is_cordoned():
+            logger.info(
+                "Node is cordoned: suppressing boot auto-start "
+                "(uncordon and restart, or run drain --uncordon, to resume)"
+            )
+            return 0
+
         ws_list = (
             await self.app.state.model.workspaces.list_auto_start_workspaces()
         )

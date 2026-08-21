@@ -520,6 +520,15 @@ class CrashRecoveryMonitor:
             if not self.enabled:
                 tracker.next_attempt_at = None
                 return
+            # Cordoned node (#2527): a drain's stopped state must stick —
+            # crash recovery would otherwise undo the operator's quiesce.
+            if await self.app.state.model.server_state.is_cordoned():
+                tracker.next_attempt_at = None
+                logger.info(
+                    "Workspace %s: restart suppressed (node cordoned)",
+                    ws_id,
+                )
+                return
             ws = None
             try:
                 ws = await self.app.state.model.workspaces.get_workspace_by_id(

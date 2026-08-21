@@ -789,6 +789,71 @@ async def replace_resource_acl(
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
+# --- Node maintenance: cordon / drain (#2527) -------------------------------
+
+
+class CordonRequest(BaseModel):
+    cordoned: bool
+
+
+@router.get("/admin/cordon")
+async def get_cordon(
+    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    app=Depends(get_app_dep),
+):
+    """Report the node's cordon state (admin only).
+
+    The flag is persisted in the DB (``server_state``), so it survives
+    klangkd restarts — a crash-looping service stays cordoned and keeps
+    suppressing boot auto-start until an operator uncordons.
+    """
+    return {"cordoned": await app.state.model.server_state.is_cordoned()}
+
+
+@router.put("/admin/cordon")
+async def set_cordon(
+    body: CordonRequest,
+    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    app=Depends(get_app_dep),
+):
+    """Set or clear the cordon flag (admin only).
+
+    Cordon refuses *new* workspace starts (API/WS/eager-create/boot
+    auto-start/crash restart) while existing workspaces keep running —
+    the k8s pre-upgrade posture. Broadcast to every connected client so
+    the UI can badge the state.
+    """
+    await app.state.model.server_state.set_cordoned(body.cordoned)
+    word = "Cordoned" if body.cordoned else "Uncordoned"
+    logger.info("%s by %s", word, admin.get("email") or admin.get("id"))
+    app.state.sockets.notify_node_cordoned(body.cordoned)
+    return {"cordoned": body.cordoned}
+
+
+@router.post("/admin/drain")
+async def drain_node(
+    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    app=Depends(get_app_dep),
+):
+    """Gracefully stop every running workspace (admin only).
+
+    Same path as logout/idle stop — terminal status frames reach
+    connected clients (clean "stopped", not a dropped WebSocket), and
+    each container stops with the deploy's podman stop grace. Idempotent
+    on an already-drained node (0 stopped). Typically preceded by
+    cordon; the CLI ``drain`` command does cordon-then-drain by default.
+    """
+    stopped = await app.state.container_registry.drain_all_containers(
+        reason="node drain (operator)"
+    )
+    logger.info(
+        "Node drained by %s: %d workspace(s) stopped",
+        admin.get("email") or admin.get("id"),
+        stopped,
+    )
+    return {"stopped": stopped}
+
+
 STATIC_RESOURCES = [
     "/",
     "/workspaces",

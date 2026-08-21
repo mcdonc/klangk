@@ -31,6 +31,7 @@ from .. import (
     netfilter as netfilter_mod,
     wshandler,
 )
+from ..exceptions import NodeCordonedError
 from ..workspace_settings import (
     validate_settings,
     validate_settings_patch,
@@ -340,6 +341,15 @@ async def create_workspace(
     if body.auto_start:
         try:
             await app.state.workspaces.start_workspace(ws)
+        except NodeCordonedError:
+            # Cordon raced the create (#2527): the workspace row exists
+            # but no container may start. Not worth failing the create —
+            # it simply won't run until uncordon (a start then succeeds).
+            logger.warning(
+                "Node cordoned mid-create: workspace %s created but not "
+                "started",
+                ws["id"],
+            )
         except Exception:
             logger.warning(
                 "Eager start failed for workspace %s",
@@ -626,6 +636,10 @@ async def restart_workspace(
     # create choke point in start_container.
     try:
         await app.state.workspaces.start_workspace(workspace)
+    except NodeCordonedError as exc:
+        # Cordoned nodes refuse fresh starts (#2527); the stop above
+        # already happened, so the workspace is simply left stopped.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         # User-config error (e.g. a bind-mount source path that doesn't
         # exist) — surface as a 400, not an unhandled 500 (#2157).
@@ -703,6 +717,10 @@ async def start_workspace(
         return {"status": "already_running"}
     try:
         await app.state.workspaces.start_workspace(workspace)
+    except NodeCordonedError as exc:
+        # Cordoned node (#2527): clear 503 so clients/CLI can distinguish
+        # "temporarily disabled by an operator" from a config error.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         # User-config error (e.g. a bind-mount source path that doesn't
         # exist) — surface as a 400, not an unhandled 500 (#2157). The WS
