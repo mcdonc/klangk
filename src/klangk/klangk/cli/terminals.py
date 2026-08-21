@@ -48,6 +48,26 @@ async def recv_until_event(conn, timeout: float, on_message=None):
             return msg
 
 
+def frame_is(frame_type: str):
+    """Predicate for recv_until that surfaces server errors immediately.
+
+    A bare ``lambda m: m.get("type") == t`` waits out the whole timeout
+    when the server answers with an ``error`` frame instead — a 10s hang
+    and a cryptic traceback instead of the server's reason (the #1966
+    lesson, applied to the terminal command paths after the #2633 CI
+    flake: ``terminal share`` blind-timed-out over an ignored
+    "Window not found"). Raises ConnectionError carrying the server's
+    message so the caller exits fast and loudly.
+    """
+
+    def predicate(msg) -> bool:
+        if msg.get("type") == "error":
+            raise ConnectionError(msg.get("message", "terminal error"))
+        return msg.get("type") == frame_type
+
+    return predicate
+
+
 terminal_app = typer.Typer(
     name="terminal",
     help="Manage workspace terminals.",
@@ -91,9 +111,7 @@ def terminals(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
                 )
             )
-            msg = await recv_until(
-                conn, lambda m: m.get("type") == "terminal_windows", 30
-            )
+            msg = await recv_until(conn, frame_is("terminal_windows"), 30)
             own_windows: list[dict] = msg.get("windows", [])
 
             # Print results
@@ -226,9 +244,7 @@ def share_terminal(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
                 )
             )
-            msg = await recv_until(
-                conn, lambda m: m.get("type") == "terminal_windows", 30
-            )
+            msg = await recv_until(conn, frame_is("terminal_windows"), 30)
             own_windows: list[dict] = msg.get("windows", [])
             match, err = _resolve_own_window(own_windows, terminal)
             if err is not None:
@@ -239,9 +255,7 @@ def share_terminal(
                 json.dumps({"cmd": "share_window", "window_id": match["id"]})
             )
             # Wait for shared_terminals confirmation
-            await recv_until(
-                conn, lambda m: m.get("type") == "shared_terminals", 10
-            )
+            await recv_until(conn, frame_is("shared_terminals"), 10)
             context._err.print(
                 f"[green]Terminal '{terminal}' is now shared[/green]"
             )
@@ -280,9 +294,7 @@ def unshare_terminal(
                     {"cmd": "terminal_start", "cols": cols, "rows": rows}
                 )
             )
-            msg = await recv_until(
-                conn, lambda m: m.get("type") == "terminal_windows", 30
-            )
+            msg = await recv_until(conn, frame_is("terminal_windows"), 30)
             own_windows: list[dict] = msg.get("windows", [])
 
             match, err = _resolve_own_window(own_windows, terminal)
@@ -294,9 +306,7 @@ def unshare_terminal(
                 json.dumps({"cmd": "unshare_window", "window_id": match["id"]})
             )
             # Wait for shared_terminals confirmation
-            await recv_until(
-                conn, lambda m: m.get("type") == "shared_terminals", 10
-            )
+            await recv_until(conn, frame_is("shared_terminals"), 10)
             context._err.print(
                 f"[green]Terminal '{terminal}' is no longer shared[/green]"
             )

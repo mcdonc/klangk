@@ -1085,6 +1085,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`klangk terminal share`/`unshare` blind 10s timeout (#2633 CI
+  flake).** The tmux window-watcher's re-sync broadcast the window list
+  to clients without updating the in-memory map the share handlers
+  read, so a share issued right after a watcher frame (racing the
+  terminal-start sync under load) was answered "Window not found" —
+  which the CLI's receive loop ignored, timing out after 10 seconds
+  with a traceback. The watcher sync now updates the map through the
+  same merge as every other sync path, and the terminal commands'
+  receive loops surface server `error` frames immediately (#1966
+  pattern) instead of waiting out the timeout.
+
 - **Terminal window commands racing a fresh session (#2623).** A
   select/close issued immediately after opening a terminal could fail
   with `can't find session` under load: the session is created

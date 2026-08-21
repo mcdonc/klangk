@@ -22,6 +22,7 @@ from ..terminal import (
 from .safe_websocket import SlowClientError, WS_ERRORS
 from .constants import MAX_INPUT_SIZE
 from .helpers import send_error, send_event, get_shared_terminals
+from .session import merge_window_entries
 
 if TYPE_CHECKING:
     from .connection import Connection
@@ -912,31 +913,19 @@ class TerminalController:
             return
         user_id = self._conn.user["id"]
         old = ws_session.terminal_windows.get(user_id, [])
-        # Match old entries to new tmux entries by window_id (@N) —
-        # a tmux-assigned unique identifier that is never reused within
-        # a server's lifetime.  This is stable across renames and
-        # index reuse. Window names are display-only and may duplicate,
-        # so they are never used to match identity (#2192); after a
-        # container restart the in-container tmux server is gone and all
-        # custom tabs are lost anyway, so there is nothing to match by.
-        old_by_id = {w["id"]: w for w in old if "id" in w}
-        old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
-        new_entries = []
-        for w in windows:
-            prev = old_by_id.get(w["id"])
-            prev_shared = prev.get("shared", False) if prev else False
-            new_entries.append(
-                {
-                    "id": w["id"],
-                    "name": w["name"],
-                    "index": w["index"],
-                    "shared": self._window_shared(w["name"], prev_shared),
-                }
-            )
+        # Shared merge lives in one place (session.merge_window_entries,
+        # #2633 CI race): id-matched (tmux window ids are unique and never
+        # reused within a server's lifetime — stable across renames and
+        # index reuse, #2192), shared flags carry over, service-cmd stays
+        # shared. After a container restart the in-container tmux server
+        # is gone and all custom tabs are lost anyway, so there is
+        # nothing to match by.
+        new_entries = merge_window_entries(old, windows)
         ws_session.terminal_windows[user_id] = new_entries
         new_shared = {w["id"] for w in new_entries if w.get("shared")}
         # Broadcast if shared set changed (e.g. shared window was closed)
         # or if any shared window was renamed.
+        old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
         old_shared_names = {
             (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
         }

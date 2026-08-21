@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from .. import model
+from ..terminal import SERVICE_CMD_WINDOW
 from ..window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
 from .constants import (
@@ -23,6 +24,39 @@ if TYPE_CHECKING:
     from .connection import Connection
 
 logger = logging.getLogger(__name__)
+
+
+def merge_window_entries(old: list[dict], windows: list[dict]) -> list[dict]:
+    """Fold a fresh tmux ``list_windows`` result into the session map.
+
+    Single merge for every ``terminal_windows`` producer (#2633 CI race):
+    entries are matched by window id (``@N`` — tmux-assigned, never reused
+    within a server's lifetime, stable across renames/index reuse, #2192),
+    ``shared`` flags carry over from the old entry, and the agent's
+    ``service-cmd`` window is shared by definition (#1114).
+
+    Both the controller's sync (:meth:`sync_terminal_windows` in
+    controllers.py) and the window-watcher's debounced re-sync
+    (:meth:`_sync_windows_once`) MUST update the in-memory map through
+    this helper before broadcasting — the share/unshare handlers read
+    the map, and a frame sent without the matching map update let a
+    client act on a window the server would then not find (the
+    ``klangk terminal share`` 10s-blind-timeout flake).
+    """
+    old_by_id = {w["id"]: w for w in old if "id" in w}
+    entries = []
+    for w in windows:
+        prev = old_by_id.get(w["id"])
+        prev_shared = prev.get("shared", False) if prev else False
+        entries.append(
+            {
+                "id": w["id"],
+                "name": w["name"],
+                "index": w["index"],
+                "shared": (w["name"] == SERVICE_CMD_WINDOW or prev_shared),
+            }
+        )
+    return entries
 
 
 def _iso_utc(ts: float | None) -> str | None:
@@ -235,6 +269,16 @@ class WorkspaceSession:
             if self._last_windows.get(uid) == windows:
                 continue
             self._last_windows[uid] = windows
+            # Update the in-memory map BEFORE broadcasting (#2633 CI
+            # race): share/unshare read terminal_windows, and a client
+            # acting on this frame must find every listed window in the
+            # map. Without this, a watcher frame that beat
+            # _start_terminal's sync left the map empty/stale and
+            # ``klangk terminal share`` blind-timed-out on the missing
+            # window.
+            self.terminal_windows[uid] = merge_window_entries(
+                self.terminal_windows.get(uid, []), windows
+            )
             msg = {"type": "terminal_windows", "windows": windows}
             for sock in list(self.subscribers):
                 conn = sockets.connections.get(sock)

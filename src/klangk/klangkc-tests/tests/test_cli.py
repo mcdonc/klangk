@@ -2248,7 +2248,9 @@ class TestRequireAuthNoneMode:
             "klangk.cli.context.fetch_config",
             lambda _: {"auth_modes": "none", "oidc_providers": []},
         )
-        with patch("klangk.cli.monitor.local_login", side_effect=SystemExit(1)):
+        with patch(
+            "klangk.cli.monitor.local_login", side_effect=SystemExit(1)
+        ):
             with pytest.raises(typer.Exit):
                 main.require_auth()
 
@@ -4252,7 +4254,9 @@ class TestMonitor:
         with (
             patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.01),
+            patch.object(
+                klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.01
+            ),
         ):
             with pytest.raises(typer.Exit) as exc_info:
                 await main_mod.monitor_run(
@@ -4284,7 +4288,9 @@ class TestMonitor:
         with (
             patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0),
+            patch.object(
+                klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0
+            ),
         ):
             with pytest.raises(typer.Exit) as exc_info:
                 await main_mod.monitor_run(
@@ -4349,9 +4355,13 @@ class TestMonitor:
 
         with (
             patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
-            patch.object(klangk.cli.monitor, "refresh_token_threaded", fake_refresh),
+            patch.object(
+                klangk.cli.monitor, "refresh_token_threaded", fake_refresh
+            ),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0),
+            patch.object(
+                klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0
+            ),
         ):
             # Stop the loop after the second connect via max_reconnects.
             with pytest.raises(typer.Exit):
@@ -4386,9 +4396,13 @@ class TestMonitor:
 
         with (
             patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
-            patch.object(klangk.cli.monitor, "refresh_token_threaded", fake_refresh),
+            patch.object(
+                klangk.cli.monitor, "refresh_token_threaded", fake_refresh
+            ),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0),
+            patch.object(
+                klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0
+            ),
         ):
             with pytest.raises(typer.Exit):
                 await main_mod.monitor_run(
@@ -4475,9 +4489,13 @@ class TestMonitor:
 
         with (
             patch.object(klangk.cli.monitor, "monitor_connection", fake_conn),
-            patch.object(klangk.cli.monitor, "refresh_token_threaded", fake_refresh),
+            patch.object(
+                klangk.cli.monitor, "refresh_token_threaded", fake_refresh
+            ),
             patch.object(main_mod.asyncio, "sleep", fake_sleep),
-            patch.object(klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0),
+            patch.object(
+                klangk.cli.monitor, "monitor_backoff", lambda a, m: 0.0
+            ),
         ):
             with pytest.raises(typer.Exit):
                 await main_mod.monitor_run(
@@ -4492,3 +4510,54 @@ class TestMonitor:
                 )
         assert seen_tokens[0] == "OLD_TOKEN"
         assert seen_tokens[1] == "NEW_TOKEN"
+
+
+class TestFrameIsPredicate:
+    """terminals.frame_is: surface server error frames immediately (#2633).
+
+    A bare type-equality predicate waits out the full recv timeout when
+    the server answers with an error — the CLI hung 10s on
+    "Window not found" during share instead of failing fast.
+    """
+
+    def _frames(self, *msgs):
+        class FakeRecv:
+            def __init__(self, frames):
+                self._frames = list(frames)
+
+            async def recv(self):
+                return self._frames.pop(0)
+
+        import json as _json
+
+        return FakeRecv([_json.dumps(m) for m in msgs])
+
+    def test_matches_target_frame(self):
+        from klangk.cli.terminals import frame_is
+        from klangk.cli.client import recv_until
+
+        conn = self._frames(
+            {"type": "presence_list"},
+            {"type": "terminal_windows", "windows": []},
+        )
+        msg = asyncio.run(recv_until(conn, frame_is("terminal_windows"), 5))
+        assert msg["type"] == "terminal_windows"
+
+    def test_error_frame_raises_immediately(self):
+        from klangk.cli.terminals import frame_is
+        from klangk.cli.client import recv_until
+
+        conn = self._frames(
+            {"type": "presence_list"},
+            {"type": "error", "message": "Window not found"},
+            {"type": "terminal_windows", "windows": []},
+        )
+        with pytest.raises(ConnectionError, match="Window not found"):
+            asyncio.run(recv_until(conn, frame_is("terminal_windows"), 5))
+
+    def test_error_frame_default_message(self):
+        from klangk.cli.terminals import frame_is
+
+        pred = frame_is("shared_terminals")
+        with pytest.raises(ConnectionError, match="terminal error"):
+            pred({"type": "error"})
