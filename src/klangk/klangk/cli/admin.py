@@ -282,7 +282,12 @@ def admin_drain(
         if resp.status_code != 200:
             _admin_error(resp)
         console.print("[yellow]Cordoned.[/yellow]")
-    resp = client.post("/api/v1/admin/drain")
+    # A drain is sequential server-side (podman stop per workspace, ~6-8s
+    # each); the client default 60s timeout would abort and blindly retry
+    # mid-drain on busy hosts (#2527 review). One long request, no retry
+    # storm: the server is idempotent, but a concurrent second drain's
+    # count would misreport.
+    resp = client.post("/api/v1/admin/drain", timeout=600.0)
     client.check_auth(resp)
     if resp.status_code != 200:
         _admin_error(resp)

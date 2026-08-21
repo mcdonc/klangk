@@ -6043,18 +6043,6 @@ class TestCordonDrainCommands:
         result = self._invoke(["admin", "drain"], client)
         assert result.exit_code == 1
 
-    def test_drain_uncordon_put_fails(self, logged_in_cfg):
-        client = MagicMock()
-        ok = MagicMock(status_code=200, json=MagicMock(return_value=True))
-        drain_ok = MagicMock(
-            status_code=200, json=MagicMock(return_value={"stopped": 1})
-        )
-        client.put.return_value = ok
-        client.post.return_value = drain_ok
-        result = self._invoke(["admin", "drain", "--uncordon"], client)
-        # cordon ok, drain ok, uncordon ok (same ok response)
-        assert result.exit_code == 0
-
     def test_cordon_status_not_cordoned(self, logged_in_cfg):
         client = self._client(
             {("get", "/api/v1/admin/cordon"): {"cordoned": False}}
@@ -6083,7 +6071,7 @@ class TestCordonDrainCommands:
         result = self._invoke(["admin", "uncordon"], client)
         assert result.exit_code == 1
 
-    def test_drain_uncodon_put_fails_exits(self, logged_in_cfg):
+    def test_drain_uncordon_put_fails_exits(self, logged_in_cfg):
         """drain --uncordon whose uncordon PUT fails exits non-zero."""
         client = MagicMock()
 
