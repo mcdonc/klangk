@@ -182,11 +182,15 @@ async def test_containers_stopped_then_autostarted(server, auth):
     headers = auth["headers"]
 
     # Create a workspace with auto_start enabled.
+    # 120s, not the #2619-era 30s: this create synchronously awaits the
+    # eager container start (the #2616 class — #2619 raised it to 120s in
+    # test_api_e2e.py's autostart class but missed this file; the same
+    # ReadTimeout resurfaced here under triple-e2e-suite load, #2633 CI).
     resp = client.post(
         "/api/v1/workspaces",
         headers=headers,
         json={"name": "sighup-autostart", "auto_start": True},
-        timeout=30,
+        timeout=120,
     )
     assert resp.status_code == 200
     workspace_id = resp.json()["id"]
