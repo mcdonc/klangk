@@ -1073,12 +1073,13 @@ class KlangkSettings(BaseSettings):
     container_restart_enabled: bool = False
     container_restart_max_retries: int = 5
     container_restart_backoff_seconds: float = 5.0
-    # FIPS mode (#2570, #2591): when enabled, every workspace container
-    # must prove an actively-enforcing OpenSSL FIPS provider at start
-    # (fail closed — the container is removed and the start raises), and
-    # the klangkd process's own OpenSSL is probed once at startup for
-    # the audit log. The probes are distro-agnostic (see klangk/fips.py).
-    # Default off. Reloadable on SIGHUP.
+    # FIPS mode (#2570, #2591, #2628): when enabled, every workspace
+    # container must prove an actively-enforcing OpenSSL FIPS provider
+    # at start (fail closed — the container is removed and the start
+    # raises), and the klangkd process's own OpenSSL is probed once at
+    # startup: warn-only on a control host, boot-refusal when klangkd
+    # itself runs in a container (see klangk/fips.py). The probes are
+    # distro-agnostic. Default off. Reloadable on SIGHUP.
     fips_mode: bool = False
     test_mode: str | None = None
     version_file: str | None = None

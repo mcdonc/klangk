@@ -13,6 +13,13 @@ an actively-enforcing OpenSSL FIPS provider:
   legitimately run on a control host whose OpenSSL is not the FIPS
   variant while every workspace it launches is.
 
+  **Containerized backend exception (#2628):** when klangkd itself runs
+  inside a container (the docker host-container deployment — we ship
+  that image, so there is no "the control host is the operator's
+  problem" excuse), a failed process probe **aborts the boot** instead
+  of warning. Containerization is detected via the standard marker
+  files (``/.dockerenv``, ``/run/.containerenv``).
+
 The probes are deliberately **generic across distributions and
 OpenSSL/CPython builds** — no file paths, no version checks, no
 distro-specific commands. Two layers, first conclusive answer wins:
@@ -44,6 +51,7 @@ non-verifiable) is this module's docstring.
 """
 
 import logging
+import os
 import ssl
 import subprocess
 
@@ -310,24 +318,47 @@ async def probe_container(podman, container_id: str) -> tuple[bool, str]:
     return parsed
 
 
+def running_in_container() -> bool:
+    """True when klangkd itself runs inside a container (#2628).
+
+    The standard OCI marker files — ``/.dockerenv`` (docker, podman,
+    most runtimes) and ``/run/.containerenv`` (podman's systemd-era
+    addition). On a control host neither exists; inside the docker
+    host-container image one always does.
+
+    Decides the ``KLANGKD_FIPS_MODE`` process-probe posture: a failed
+    probe warns on a control host (the operator's OpenSSL) but aborts
+    the boot in a containerized deployment (an image we ship — a
+    non-FIPS klangkd container in FIPS mode is a misconfiguration, not
+    an environment difference).
+    """
+    return os.path.exists("/.dockerenv") or os.path.exists(
+        "/run/.containerenv"
+    )
+
+
 def verify_process_fips(settings) -> None:
-    """Startup audit check for ``KLANGKD_FIPS_MODE`` (#2570 Part 2).
+    """Startup check for ``KLANGKD_FIPS_MODE`` (#2570 Part 2, #2628).
 
     Why probe the host process at all (vs only the workspace
     containers): klangkd itself performs crypto on this machine —
     PBKDF2-HMAC-SHA512 on every login (``hashlib.pbkdf2_hmac``),
     HMAC-SHA256 on every JWT sign/verify, and outbound TLS via the
     ``ssl`` module — all routed through the host process's OpenSSL,
-    outside any workspace container. The audit line tells an assessor
-    whether that crypto sits inside the validated boundary (info:
-    verified) or outside it (warning) — the deployment doc's posture
-    (workspaces are the FIPS boundary; the control host is the
-    operator's) is why this is a logged audit, not a boot abort.
+    outside any workspace container.
 
-    The *enforcement* point is the workspace containers (probed at every
-    start in the registry, fail closed). This process-level check is
-    the audit half: klangkd's own OpenSSL (password hashing, JWT
-    signing) is probed and the result logged with the OpenSSL version.
+    Posture (#2628):
+
+    - **Containerized backend** (``running_in_container()``): the
+      process OpenSSL is the crypto boundary of an image *we* ship — a
+      failed probe raises :class:`SystemExit` and the boot aborts.
+    - **Control host**: a failed probe logs a prominent warning and
+      the boot continues — klangkd may legitimately run on a host
+      whose OpenSSL is not the FIPS variant while every workspace it
+      launches is (workspaces stay fail-closed at their start gate).
+
+    Either way a *passing* probe is logged at info with the OpenSSL
+    version — the audit line an assessor looks for.
     """
     if not getattr(settings, "fips_mode", False):
         return
@@ -341,6 +372,22 @@ def verify_process_fips(settings) -> None:
             detail,
         )
         return
+    if running_in_container():
+        logger.error(
+            "KLANGKD_FIPS_MODE is enabled but the klangkd process's "
+            "OpenSSL (%s) is NOT FIPS-enforcing (%s). klangkd is running "
+            "inside a container, where its own OpenSSL is the crypto "
+            "boundary (password hashing, JWT signing, outbound TLS) — "
+            "refusing to start. Use the FIPS host image "
+            "(klangk:build-fips-host-image / Dockerfile.fips) or turn "
+            "off KLANGKD_FIPS_MODE.",
+            version,
+            detail,
+        )
+        raise SystemExit(
+            "KLANGKD_FIPS_MODE: containerized backend's OpenSSL is not "
+            f"FIPS-enforcing ({detail})"
+        )
     logger.warning(
         "KLANGKD_FIPS_MODE is enabled but the klangkd process's OpenSSL "
         "(%s) is NOT FIPS-enforcing (%s). Workspace containers will still "

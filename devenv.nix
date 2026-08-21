@@ -218,6 +218,24 @@ in
         "src/containers/workspace/Dockerfile.fips"
       ];
     };
+    # FIPS host container variant (#2628): validated module + FIPS
+    # workspace tar layered onto the stock host image. Opt-in like the
+    # workspace variant; rebuilding on dev startup would rebuild the
+    # whole host image chain for nobody. Rebuild keying is the script +
+    # host Dockerfile.fips only.
+    "klangk:build-fips-host-image" = {
+      # No klangk:build-host-image task exists (the host image builds via
+      # the `build-host-image` script — it needs docker + the flutter web
+      # bundle, not part of task startup); the script checks for it and
+      # fails with build instructions when absent.
+      after = [ "klangk:build-fips-image" ];
+      exec = ''exec bash "$DEVENV_ROOT/scripts/build-fips-host-image.sh"'';
+      showOutput = true;
+      execIfModified = [
+        "scripts/build-fips-host-image.sh"
+        "src/containers/host/Dockerfile.fips"
+      ];
+    };
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
@@ -307,6 +325,7 @@ in
   scripts.flutterbuildweb.exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh" "$@"'';
   scripts.build-workspace-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-workspace-image.sh" "$@"'';
   scripts.build-fips-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-fips-image.sh" "$@"'';
+  scripts.build-fips-host-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-fips-host-image.sh" "$@"'';
   scripts.pull-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/pull-base-image.sh" "$@"'';
   scripts.push-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/push-base-image.sh" "$@"'';
   scripts.build-base-image.exec = ''exec bash "$DEVENV_ROOT/scripts/build-base-image.sh" "$@"'';

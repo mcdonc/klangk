@@ -4,12 +4,14 @@ Klangk can run its workspace containers with a **FIPS 140-3 validated
 cryptographic module** for deployments that must demonstrate use of
 validated cryptography (federal, defense, regulated industry). This
 chapter explains what is covered, what the validation boundary is, and
-how to build and use the FIPS workspace image.
+how to build and use the FIPS workspace image — and, for the
+containerized-backend deployment, the FIPS host image.
 
 The work is tracked in [#2570](https://github.com/mcdonc/klangk/issues/2570)
 (image + module), [#2576](https://github.com/mcdonc/klangk/issues/2576)
 (password hashing algorithm), and
-[#2577](https://github.com/mcdonc/klangk/issues/2577) (Node.js coverage).
+[#2577](https://github.com/mcdonc/klangk/issues/2577) (Node.js coverage);
+the containerized backend is [#2628](https://github.com/mcdonc/klangk/issues/2628).
 
 ## Background: what "FIPS mode" means here
 
@@ -75,6 +77,52 @@ podman build \
 
 Point klangkd at the image with `KLANGKD_IMAGE_NAME=klangk-workspace-fips`.
 
+## The containerized backend (FIPS host image)
+
+When klangkd runs inside a container (the docker host-container
+deployment, `src/containers/host/Dockerfile`), its **own** OpenSSL is
+the crypto boundary for operations that no workspace gate covers:
+password hashing (`hashlib.pbkdf2_hmac`, auth.py), JWT HMAC-SHA256
+signing (python-jose), and outbound TLS (`ssl`/httpx to the LLM proxy,
+OIDC discovery, SMTP). A stock host image ships Debian OpenSSL with no
+provider activated — outside the validated boundary.
+
+`src/containers/host/Dockerfile.fips` (#2628) fixes that by layering
+the same validated module onto the host image, and swaps the embedded
+workspace tarball for the FIPS workspace image's — a FIPS host must
+ship a FIPS workspace, or every workspace start would fail the
+`KLANGKD_FIPS_MODE` gate:
+
+```bash
+# prerequisites: the stock host image and the FIPS workspace image
+devenv shell -- bash scripts/build-host-image.sh
+devenv shell -- bash scripts/build-fips-image.sh
+
+# then the FIPS host layer
+devenv shell -- bash scripts/build-fips-host-image.sh
+# → klangk-host-fips:latest (+ :<version>)
+```
+
+Build-time proof mirrors the workspace variant and additionally proves
+what klangkd's runtime boot gate checks: the provider activates,
+CLI/python MD5 are rejected, and the real auth KDF
+(`hashlib.pbkdf2_hmac("sha512", …)`) still works.
+
+**Enforcement posture inside a container (#2628):** with
+`KLANGKD_FIPS_MODE` on, klangkd detects it is containerized (the
+`/.dockerenv` / `/run/.containerenv` markers) and a failed process
+probe **aborts the boot** — inside an image we ship there is no "the
+control host is the operator's problem" excuse. On a control host
+(not containerized) the failed probe remains a logged warning and only
+workspace containers are gated. Boundary notes for this deployment:
+
+| Component in the host container                     | Covered? | Why                                                                                                                                   |
+| --------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| klangkd's python crypto (PBKDF2, JWT, outbound TLS) | **Yes**  | python:3.13-slim's `_hashlib`/`_ssl` link the distro libcrypto, which loads the validated provider via `OPENSSL_CONF`.                |
+| Embedded workspace + sidecar images                 | **Yes**  | The workspace tar embedded by this variant IS the FIPS workspace image; the sidecar makes no crypto choices of its own.               |
+| Caddy (reverse proxy)                               | **No**   | Go binary with statically linked crypto — never routes through libcrypto. TLS termination at the proxy is already out of scope below. |
+| Podman / passt inside the container                 | **No**   | Go/Rust static crypto (registry pulls over TLS). Pull integrity is governed by the signature policy, not the FIPS module.             |
+
 ## The validation boundary
 
 Inside the workspace container:
@@ -122,8 +170,11 @@ all containers, and the startup reap removes any leftover before
 recreation. (The one residual window — a container whose startup reap
 _failed_ on a best-effort error — is closed by the adoption probe at
 the next connect.) The klangkd process's own OpenSSL is probed once at
-startup and the result logged (audit); see the
-[environment reference](../reference/environment.md) for the setting.
+startup: on a control host the result is logged for audit (warning on
+failure), while a **containerized backend refuses to boot** on a failed
+probe (see [the containerized backend](#the-containerized-backend-fips-host-image)
+above); see the [environment
+reference](../reference/environment.md) for the setting.
 The manual probes above remain the diagnostic equivalent.
 
 Caveat on the probe's meaning: it is a canary for _provider
@@ -137,8 +188,9 @@ runtime probe.
 
 When a newer validated module becomes available (e.g. the OpenSSL
 3.5.4 module currently in CMVP review), the change is confined to the
-`Dockerfile.fips` builder stage: bump `OPENSSL_FIPS_VERSION` and
-`OPENSSL_FIPS_SHA256` to the new tarball. The activation steps are
+builder stages: bump `OPENSSL_FIPS_VERSION` and `OPENSSL_FIPS_SHA256`
+to the new tarball in **both** `src/containers/workspace/Dockerfile.fips`
+and `src/containers/host/Dockerfile.fips`. The activation steps are
 unchanged. Always re-run the build-time proof and the runtime probes
 above before rolling out.
 

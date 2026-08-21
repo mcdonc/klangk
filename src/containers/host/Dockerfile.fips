@@ -1,0 +1,139 @@
+# FIPS 140-3 variant of the docker host container image (#2628).
+#
+# Mirrors src/containers/workspace/Dockerfile.fips (#2570) for the
+# containerized-backend deployment: inside the host container, klangkd's
+# own OpenSSL is the crypto boundary for
+#   - password hashing  — hashlib.pbkdf2_hmac("sha512", ...) (auth.py)
+#   - JWT sign/verify   — HMAC-SHA256 via python-jose → libcrypto
+#   - outbound TLS      — ssl/httpx (LLM proxy, OIDC discovery, SMTP)
+#
+#   stage 1  — compile OpenSSL 3.1.2 with `enable-fips` and extract
+#               ONLY fips.so (the CMVP-validated module, certificate
+#               #4985, active until 2030-03-10). Identical to the
+#               workspace builder stage.
+#   stage 2  — host image + fips.so in the multiarch modules dir,
+#               fipsinstall run by the system CLI, an activation config
+#               (fips + base, no default) written to the STOCK
+#               /etc/ssl/openssl.cnf path, and the FIPS workspace image
+#               tar swapped in over the stock one embedded by the base
+#               host image (KLANGKD_FIPS_MODE fails closed on a stock
+#               workspace, so a FIPS host must ship a FIPS workspace).
+#
+# The validated 3.1.2 module is forward-compatible with newer libcrypto
+# (the validation covers "3.0 ... future 3.5"), so python:3.13-slim's
+# distro libcrypto and the CPython built against it stay in place.
+# There is no node in the host image, so no nodejs_conf alias is needed
+# (unlike the workspace variant).
+#
+# Runtime enforcement (#2626, #2628): with KLANGKD_FIPS_MODE on, klangkd
+# detects it is containerized (/.dockerenv exists) and REFUSES TO BOOT
+# unless its own OpenSSL probes FIPS-enforcing — which this image
+# satisfies; a stock host container in FIPS mode aborts at startup.
+
+# Base: the regular host image (python:3.13-slim + podman + caddy +
+# supervisord + the klangk wheel + embedded workspace/sidecar tars),
+# built by scripts/build-host-image.sh. Override for a published base
+# if ever needed.
+ARG HOST_IMAGE=klangk-host:latest
+
+# --- Stage 1: build the validated FIPS module -------------------------------
+FROM debian:trixie-slim AS fips-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential perl wget ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+ARG OPENSSL_FIPS_VERSION=3.1.2
+ARG OPENSSL_FIPS_SHA256=a0ce69b8b97ea6a35b96875235aa453b966ba3cba8af2de23657d8b6767d6539
+# Cap the compile's parallelism on shared/oversubscribed hosts (#2631):
+# empty (default) uses every core; constrained environments pass e.g. 2.
+ARG FIPS_BUILD_JOBS=""
+WORKDIR /src
+RUN wget -q "https://www.openssl.org/source/openssl-${OPENSSL_FIPS_VERSION}.tar.gz" && \
+    echo "${OPENSSL_FIPS_SHA256}  openssl-${OPENSSL_FIPS_VERSION}.tar.gz" | sha256sum -c - && \
+    tar xzf "openssl-${OPENSSL_FIPS_VERSION}.tar.gz"
+WORKDIR "/src/openssl-${OPENSSL_FIPS_VERSION}"
+# Only the module is needed downstream; libcrypto/libssl from this build
+# are deliberately NOT installed into the final image.
+RUN ./Configure enable-fips --prefix=/opt/ossl-fips --libdir=lib && \
+    make -j"${FIPS_BUILD_JOBS:-$(nproc)}" && \
+    make install_fips
+
+# --- Stage 2: host image + FIPS activation ----------------------------------
+FROM $HOST_IMAGE
+
+# amd64-only today: the module path and OPENSSL_MODULES below hardcode
+# the x86_64 multiarch dir. On other architectures OPENSSL_MODULES would
+# shadow the distro base.so in the arch dir — fail the build loudly
+# instead of half-working.
+RUN test "$(dpkg --print-architecture)" = "amd64"
+
+# The `openssl` CLI (fipsinstall at build time, the runtime probe's
+# CLI fallback layer) is not in python:3.13-slim.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Multiarch dir: the default provider search path — anywhere else needs
+# OPENSSL_MODULES set for explicit loads.
+COPY --from=fips-builder /opt/ossl-fips/lib/ossl-modules/fips.so \
+     /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so
+
+# Module MAC + install status, computed by the system CLI. -self_test_onload
+# (the modern default): the KAT/PCT suite re-runs on every module load and
+# the config carries no machine-specific data.
+RUN openssl fipsinstall -module /usr/lib/x86_64-linux-gnu/ossl-modules/fips.so \
+      -out /etc/ssl/fipsmodule.cnf
+
+# Activation config: fips + base, no default provider, written directly
+# to the STOCK path (/etc/ssl/openssl.cnf, replacing the distro file) so
+# environment-less lookups still activate FIPS (supervisord does not
+# strip the environment, but be robust to env_reset-style launchers).
+# No nodejs_conf alias: the host image has no node (see the workspace
+# variant for why that one needs it).
+RUN printf '%s\n' \
+      'openssl_conf = openssl_init' \
+      '' \
+      '.include /etc/ssl/fipsmodule.cnf' \
+      '' \
+      '[openssl_init]' \
+      'providers = provider_sect' \
+      '' \
+      '[provider_sect]' \
+      'fips = fips_sect' \
+      'base = base_sect' \
+      '' \
+      '[base_sect]' \
+      'activate = 1' \
+      > /etc/ssl/openssl.cnf
+
+# Image-wide activation. Reaches klangkd (supervisord child), podman
+# execs, and every shell. OPENSSL_MODULES is harmless for system
+# OpenSSL (same directory) and pins the search path explicitly.
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf \
+    OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules
+
+# Swap the embedded workspace tarball for the FIPS workspace image
+# (#2628): the base host image embeds the stock workspace; a FIPS host
+# must ship the FIPS workspace, or every workspace start would fail the
+# KLANGKD_FIPS_MODE gate. Same destination path → entrypoint's
+# `podman load` picks this one up identically.
+COPY --from=fips-workspace-image --chown=klangk:klangk workspace-fips.tar \
+     /home/klangk/workspace.tar
+
+# Build-time proof that the provider actually activates — the same
+# probes klangkd runs at runtime (klangk/fips.py), so a green build
+# means the containerized-backend boot gate passes:
+#   1. provider list shows the FIPS provider;
+#   2. the CLI rejects md5;
+#   3. python's provider-aware path rejects openssl_md5 (probe layer 1 —
+#      plain hashlib.md5() can NEVER be the probe, CPython's builtin
+#      _md5 fallback bypasses the provider);
+#   4. the real auth KDF still works: hashlib.pbkdf2_hmac("sha512", ...);
+#   5. env-stripped activation (stock config path, no environment).
+RUN openssl list -providers | grep -q 'OpenSSL FIPS Provider' && \
+    ! echo hello | openssl md5 > /dev/null 2>&1 && \
+    ! python3 -c "import _hashlib; _hashlib.openssl_md5(b'x')" \
+      > /dev/null 2>&1 && \
+    python3 -c \
+      "import hashlib; hashlib.pbkdf2_hmac('sha512', b'x', b'y', 10)" && \
+    env -i /usr/bin/openssl list -providers \
+      | grep -q 'OpenSSL FIPS Provider' && \
+    ! env -i /bin/sh -c 'echo hello | openssl md5' > /dev/null 2>&1
