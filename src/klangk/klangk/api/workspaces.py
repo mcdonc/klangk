@@ -50,6 +50,7 @@ from ._common import (
     WorkspaceAclEntry,
     admin_resource,
     autostart_allowed,
+    workspace_collection_resource,
     workspace_resource,
 )
 
@@ -276,7 +277,9 @@ class CreateWorkspaceRequest(BaseModel):
 @router.post("/workspaces")
 async def create_workspace(
     body: CreateWorkspaceRequest,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(
+        acl.has_permission("create", workspace_collection_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     if body.auto_start and not autostart_allowed(app):
@@ -501,6 +504,18 @@ async def duplicate_workspace(
     user: dict = Depends(acl.has_permission("create", workspace_resource)),
     app=Depends(get_app_dep),
 ):
+    # #2569: duplicating creates a new workspace — check collection-level
+    # create permission in addition to the per-workspace create above.
+    # Defense-in-depth: the Depends check above already walks to
+    # /workspaces, so this branch is unreachable in practice.
+    principals = await app.state.acl.get_principals(user["id"])
+    if not await app.state.acl.check_permission(  # pragma: no cover
+        "/workspaces", principals, "create"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Not permitted to create workspaces",
+        )
     source = await app.state.model.workspaces.get_workspace(workspace_id)
     if source is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
@@ -1024,7 +1039,9 @@ async def _extract_home_directory(
 async def import_workspace(
     file: UploadFile,
     name: str | None = None,
-    user: dict = Depends(auth.get_current_user),
+    user: dict = Depends(
+        acl.has_permission("create", workspace_collection_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Import a workspace from a .tar.gz archive.

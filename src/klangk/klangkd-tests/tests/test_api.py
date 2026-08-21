@@ -1856,6 +1856,11 @@ class TestChangeEmail:
 
 
 class TestWorkspaceRoutes:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin; make the standard
+        test user an admin so existing tests keep working."""
+
     async def test_list_empty(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get("/api/v1/workspaces", headers=headers)
@@ -2049,6 +2054,30 @@ class TestWorkspaceRoutes:
         data = resp.json()
         assert data["name"] == "test-ws"
         assert "id" in data
+
+    async def test_create_workspace_non_admin_denied(
+        self, client, user, app_state
+    ):
+        """#2569: non-admin users cannot create workspaces."""
+        from klangk.auth import hash_password
+
+        pw_hash = hash_password("testpass")
+        await app_state.state.model.users.create_user(
+            "nonadmin@example.com", pw_hash, verified=True
+        )
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "nonadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        token = resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "denied-ws"}
+        )
+        assert resp.status_code == 403
 
     async def test_create_with_allow_egress_mode(self, client, user):
         # #2409: 'allow' is a valid egress_mode at create time and is
@@ -3516,8 +3545,24 @@ class TestWorkspaceRoutes:
         assert data["env"] == {"FOO": "bar"}
         assert data["id"] != ws_id
 
-    async def test_duplicate_workspace_no_permission(self, client, user):
-        headers = await _auth_headers(client)
+    async def test_duplicate_workspace_no_permission(
+        self, client, user, app_state
+    ):
+        """A non-admin user cannot duplicate (no collection create)."""
+        from klangk.auth import hash_password
+
+        pw_hash = hash_password("testpass")
+        await app_state.state.model.users.create_user(
+            "nonadmin-dup@example.com", pw_hash, verified=True
+        )
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "nonadmin-dup@example.com",
+                "password": "testpass",
+            },
+        )
+        headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
         resp = await client.post(
             "/api/v1/workspaces/nonexistent/duplicate",
             json={"name": "dup"},
@@ -3604,6 +3649,10 @@ class TestWorkspaceRoutes:
 
 
 class TestWorkspaceSharingRoutes:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
+
     async def _create_other_user(self, app_state):
         password_hash = auth_mod.hash_password("otherpass")
         return await app_state.state.model.users.create_user(
@@ -4072,6 +4121,10 @@ class TestWorkspaceSharingRoutes:
 
 
 class TestWorkspaceACL:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
+
     async def test_get_workspace_acl(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -4168,6 +4221,10 @@ class TestWorkspaceACL:
 
 
 class TestWorkspaceRoles:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
+
     async def test_role_groups_created_on_workspace_create(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -4381,6 +4438,10 @@ class TestWorkspaceRoles:
 
 
 class TestChangeWorkspaceRole:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
+
     async def test_change_role(self, client, user, app_state):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -4556,6 +4617,10 @@ class TestChangeWorkspaceRole:
 
 
 class TestTransferOwnership:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
+
     async def test_transfer_ownership(self, client, user, app_state):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -4731,6 +4796,10 @@ class TestTransferOwnership:
 
 
 class TestWorkspaceGroupSharing:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
+
     async def test_share_with_group(self, client, admin_user, user, app_state):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -5545,6 +5614,10 @@ class TestFileRoutes:
     """File endpoints now require a running container (podman exec)."""
 
     CID = "cid-file-test"
+
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
 
     @pytest.fixture(autouse=True)
     def _bind_registry(self, registry):
@@ -6666,9 +6739,10 @@ class TestAdminEndpoints:
         assert "system agent" in resp.json()["detail"]
 
     async def test_delete_user_cascades_workspaces(
-        self, client, app, admin_user, user, registry, app_state
+        self, client, app, admin_user, ws_admin, registry, app_state
     ):
         """Deleting a user cascades to their ws_mod."""
+        user = ws_admin  # ws_admin returns the user dict
         headers = await self._admin_headers(client)
         # Create a workspace for the user
         user_login = await client.post(
@@ -6703,9 +6777,12 @@ class TestAdminEndpoints:
         )
         assert len(ws_list) == 0
 
-    async def test_list_user_workspaces_admin(self, client, admin_user, user):
+    async def test_list_user_workspaces_admin(
+        self, client, admin_user, ws_admin
+    ):
         """Admin can list another user's workspaces (#1224)."""
         headers = await self._admin_headers(client)
+        user = ws_admin  # ws_admin returns the user dict
         # The `user` fixture owns no workspaces yet.
         resp = await client.get(
             f"/api/v1/admin/users/{user['id']}/workspaces", headers=headers
@@ -6971,6 +7048,10 @@ class TestUserSessionsAudit:
 
 
 class TestGroupEndpoints:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
+
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
@@ -7320,7 +7401,7 @@ class TestACLEndpoints:
         data = resp.json()
         assert "/admin" not in data["permissions"]
 
-    async def test_my_permissions_for_resource(self, client, user):
+    async def test_my_permissions_for_resource(self, client, ws_admin):
         """Check permissions for a specific resource."""
         headers = await _auth_headers(client)
         # Create a workspace (owner gets * ACE)
@@ -7916,6 +7997,10 @@ class TestArchiveUserData:
 
 
 class TestWorkspaceExportImport:
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation/import requires admin."""
+
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
@@ -7994,16 +8079,33 @@ class TestWorkspaceExportImport:
             assert metadata["name"] == "export-test"
             assert "instance_id" in metadata
 
-    async def test_export_requires_admin(self, client, user):
+    async def test_export_requires_admin(self, client, user, app_state):
+        # Create workspace as admin (user is admin via ws_admin autouse)
         headers = await self._user_headers(client)
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "no-export"}
         )
         ws = resp.json()
 
-        # Non-admin cannot export
+        # Create a non-admin user and try to export — must be denied
+        from klangk.auth import hash_password
+
+        pw_hash = hash_password("testpass")
+        await app_state.state.model.users.create_user(
+            "nonadmin-export@example.com", pw_hash, verified=True
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "nonadmin-export@example.com",
+                "password": "testpass",
+            },
+        )
+        nonadmin_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=nonadmin_headers
         )
         assert resp.status_code == 403
 

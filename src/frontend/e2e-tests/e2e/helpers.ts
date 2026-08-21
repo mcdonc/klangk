@@ -1,5 +1,6 @@
 import { expect, Page, APIRequestContext } from "@playwright/test";
 import { execSync } from "child_process";
+import { ADMIN_PASSWORD } from "../e2e-env";
 
 // Each test registers its own user and creates its own workspace. This ensures
 // tests are fully isolated — logout in one test can't kill another test's
@@ -52,7 +53,42 @@ async function postJsonWithRetry(
   throw new Error(`${label} failed: retries exhausted`);
 }
 
+/** Login as the seeded admin and return auth headers. */
+async function adminHeaders(
+  request: APIRequestContext,
+): Promise<Record<string, string>> {
+  const resp = await request.post(`${API_BASE}/api/v1/auth/login`, {
+    data: { identifier: "admin@example.com", password: ADMIN_PASSWORD },
+  });
+  const body = await resp.json();
+  return { Authorization: `Bearer ${body.access_token}` };
+}
+
+/** Add a user to the admin group so they can create workspaces (#2569). */
+async function makeUserAdmin(
+  request: APIRequestContext,
+  userId: string,
+): Promise<void> {
+  const aHeaders = await adminHeaders(request);
+  // /api/v1/admin/groups returns a paged envelope {groups: [...], ...}.
+  const groupsResp = await request.get(`${API_BASE}/api/v1/admin/groups`, {
+    headers: aHeaders,
+  });
+  const body = await groupsResp.json();
+  const groups = body.groups || body;
+  const adminGroup = Array.isArray(groups)
+    ? groups.find((g: any) => g.name === "admin")
+    : undefined;
+  if (!adminGroup) return;
+  // Add the user (ignore 409 if already a member).
+  await request.post(
+    `${API_BASE}/api/v1/admin/groups/${adminGroup.id}/members`,
+    { headers: aHeaders, data: { user_id: userId } },
+  );
+}
+
 /** Register a new user via API (test mode allows unauthenticated registration).
+ *  The user is added to the admin group so they can create workspaces (#2569).
  *  Returns { token, headers }. */
 export async function registerUser(
   request: APIRequestContext,
@@ -65,7 +101,12 @@ export async function registerUser(
     "Register",
   );
   const token = data.access_token;
-  return { token, headers: { Authorization: `Bearer ${token}` } };
+  const headers = { Authorization: `Bearer ${token}` };
+  // #2569: workspace creation requires admin group membership.
+  if (data.user_id) {
+    await makeUserAdmin(request, data.user_id);
+  }
+  return { token, headers };
 }
 
 /** Type email + password into the Flutter login form and click Login.

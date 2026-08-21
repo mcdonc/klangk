@@ -94,11 +94,34 @@ def _register(api, email, password="testpass"):
         "/api/v1/auth/register", json={"email": email, "password": password}
     )
     assert resp.status_code == 200, f"Register failed for {email}: {resp.text}"
-    token = resp.json().get("access_token")
+    data = resp.json()
+    token = data.get("access_token")
     if token:
-        return {"Authorization": f"Bearer {token}"}
+        return {"Authorization": f"Bearer {token}"}, data.get("user_id")
     # If registration requires verification, login instead
-    return _login(api, email, password)
+    return _login(api, email, password), None
+
+
+def _make_user_admin(api, user_id, admin_headers):
+    """Add a user to the admin group (#2569)."""
+    if not user_id:
+        return
+    # Find the admin group.
+    resp = api.get("/api/v1/admin/groups", headers=admin_headers)
+    if resp.status_code != 200:
+        return
+    body = resp.json()
+    groups = body.get("groups", body)
+    if isinstance(groups, dict):
+        groups = list(groups.values()) if groups else []
+    admin_group = next((g for g in groups if g.get("name") == "admin"), None)
+    if not admin_group:
+        return
+    api.post(
+        f"/api/v1/admin/groups/{admin_group['id']}/members",
+        json={"user_id": user_id},
+        headers=admin_headers,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -108,18 +131,28 @@ def admin_headers(api):
 
 
 @pytest.fixture(scope="module")
-def user_a(api):
-    """Create user A and return (headers, email)."""
+def nonadmin_user(api):
+    """Create a non-admin user for permission-denial tests (#2569)."""
+    email = "nonadmin@example.com"
+    headers, user_id = _register(api, email)
+    return {"headers": headers, "email": email, "user_id": user_id}
+
+
+@pytest.fixture(scope="module")
+def user_a(api, admin_headers):
+    """Create user A (admin) and return (headers, email)."""
     email = "alice@example.com"
-    headers = _register(api, email)
+    headers, user_id = _register(api, email)
+    _make_user_admin(api, user_id, admin_headers)
     return {"headers": headers, "email": email}
 
 
 @pytest.fixture(scope="module")
-def user_b(api):
-    """Create user B and return (headers, email)."""
+def user_b(api, admin_headers):
+    """Create user B (admin) and return (headers, email)."""
     email = "bob@example.com"
-    headers = _register(api, email)
+    headers, user_id = _register(api, email)
+    _make_user_admin(api, user_id, admin_headers)
     return {"headers": headers, "email": email}
 
 
@@ -266,32 +299,36 @@ class TestGroupManagement:
 
 
 class TestPermissionDenials:
-    def test_non_admin_cannot_list_groups(self, api, user_a):
-        resp = api.get("/api/v1/admin/groups", headers=user_a["headers"])
+    def test_non_admin_cannot_list_groups(self, api, nonadmin_user):
+        resp = api.get(
+            "/api/v1/admin/groups", headers=nonadmin_user["headers"]
+        )
         assert resp.status_code == 403
 
-    def test_non_admin_cannot_create_group(self, api, user_a):
+    def test_non_admin_cannot_create_group(self, api, nonadmin_user):
         resp = api.post(
             "/api/v1/admin/groups",
-            headers=user_a["headers"],
+            headers=nonadmin_user["headers"],
             json={"name": "hacker-group"},
         )
         assert resp.status_code == 403
 
-    def test_non_admin_cannot_list_users(self, api, user_a):
-        resp = api.get("/api/v1/admin/users", headers=user_a["headers"])
+    def test_non_admin_cannot_list_users(self, api, nonadmin_user):
+        resp = api.get("/api/v1/admin/users", headers=nonadmin_user["headers"])
         assert resp.status_code == 403
 
-    def test_non_admin_cannot_create_user(self, api, user_a):
+    def test_non_admin_cannot_create_user(self, api, nonadmin_user):
         resp = api.post(
             "/api/v1/admin/users",
-            headers=user_a["headers"],
+            headers=nonadmin_user["headers"],
             json={"email": "evil@example.com", "password": "testpass"},
         )
         assert resp.status_code == 403
 
-    def test_non_admin_cannot_view_acl_tree(self, api, user_a):
-        resp = api.get("/api/v1/admin/acl/tree", headers=user_a["headers"])
+    def test_non_admin_cannot_view_acl_tree(self, api, nonadmin_user):
+        resp = api.get(
+            "/api/v1/admin/acl/tree", headers=nonadmin_user["headers"]
+        )
         assert resp.status_code == 403
 
     def test_non_admin_cannot_delete_other_workspace(
@@ -404,11 +441,13 @@ class TestACLIntrospection:
         assert len(data["groups"]) > 0
         assert any(g["name"] == "admin" for g in data["groups"])
 
-    def test_my_permissions_regular_user(self, api, user_a):
-        resp = api.get("/api/v1/my-permissions", headers=user_a["headers"])
+    def test_my_permissions_regular_user(self, api, nonadmin_user):
+        resp = api.get(
+            "/api/v1/my-permissions", headers=nonadmin_user["headers"]
+        )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["email"] == user_a["email"]
+        assert data["email"] == nonadmin_user["email"]
         # Regular user should NOT have admin permissions
         assert "/admin" not in data["permissions"]
         # But should have view on /
@@ -641,52 +680,46 @@ class TestWorkspaceSharingACL:
 
 class TestGrantAdminViaGroup:
     def test_add_user_to_admin_group_grants_access(
-        self, api, admin_headers, user_a
+        self, api, admin_headers, nonadmin_user
     ):
         """Adding a user to the admin group gives them admin permissions."""
-        # Verify user A cannot access admin endpoints
-        resp = api.get("/api/v1/admin/users", headers=user_a["headers"])
+        # Verify non-admin cannot access admin endpoints
+        resp = api.get("/api/v1/admin/users", headers=nonadmin_user["headers"])
         assert resp.status_code == 403
 
-        # Get admin group and user A's ID
+        # Get admin group
         resp = api.get("/api/v1/admin/groups", headers=admin_headers)
         admin_group = next(
             g for g in resp.json()["groups"] if g["name"] == "admin"
         )
 
-        resp = api.get(
-            "/api/v1/admin/users?page_size=200", headers=admin_headers
-        )
-        alice = next(
-            u for u in resp.json()["users"] if u["email"] == user_a["email"]
-        )
+        user_id = nonadmin_user["user_id"]
 
-        # Add user A to admin group
+        # Add user to admin group
         resp = api.post(
             f"/api/v1/admin/groups/{admin_group['id']}/members",
             headers=admin_headers,
-            json={"user_id": alice["id"]},
+            json={"user_id": user_id},
         )
         assert resp.status_code == 200
 
-        # Now user A needs a fresh token (re-login) — group membership
-        # is checked on every request, not cached in JWT
+        # Group membership is checked on every request, not cached in JWT
         resp = api.get(
             "/api/v1/admin/users?page_size=200",
-            headers=user_a["headers"],
+            headers=nonadmin_user["headers"],
         )
         assert resp.status_code == 200
         assert len(resp.json()["users"]) > 0
 
-        # Clean up — remove user A from admin group
+        # Clean up — remove user from admin group
         resp = api.delete(
-            f"/api/v1/admin/groups/{admin_group['id']}/members/{alice['id']}",
+            f"/api/v1/admin/groups/{admin_group['id']}/members/{user_id}",
             headers=admin_headers,
         )
         assert resp.status_code == 200
 
         # Verify access revoked immediately (no re-login needed)
-        resp = api.get("/api/v1/admin/users", headers=user_a["headers"])
+        resp = api.get("/api/v1/admin/users", headers=nonadmin_user["headers"])
         assert resp.status_code == 403
 
 
@@ -697,9 +730,10 @@ class TestACLCascades:
     def test_user_delete_cascades_aces(self, api, admin_headers):
         """Deleting a user removes their ACEs from all resources."""
         # Create a dedicated user for this test (not the shared user_a)
-        cascade_headers = _register(
+        cascade_headers, cascade_uid = _register(
             api, f"cascade-{uuid.uuid4().hex[:8]}@example.com"
         )
+        _make_user_admin(api, cascade_uid, admin_headers)
 
         # User creates a workspace (gets owner ACE)
         api.post(
@@ -899,7 +933,9 @@ class TestAdminResourceACL:
         assert resp.status_code == 200
         entries = resp.json()
         assert any(e["permission"] == "create" for e in entries)
-        assert any(e["principal"] == "Authenticated" for e in entries)
+        # #2569: create on /workspaces is granted to the admin group,
+        # not Authenticated.
+        assert any(e["principal"] == "admin" for e in entries)
 
     def test_modify_workspaces_acl(self, api, admin_headers):
         """Admin can add and remove ACEs on /workspaces."""
@@ -959,11 +995,11 @@ class TestAdminResourceACL:
         assert resp.status_code == 200
         assert len(resp.json()) == len(original)
 
-    def test_non_admin_denied(self, api, user_a):
+    def test_non_admin_denied(self, api, nonadmin_user):
         """Non-admin cannot access the resource ACL endpoint."""
         resp = api.get(
             "/api/v1/admin/acl/resource?resource=/workspaces",
-            headers=user_a["headers"],
+            headers=nonadmin_user["headers"],
         )
         assert resp.status_code == 403
 

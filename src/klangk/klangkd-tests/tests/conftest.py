@@ -118,6 +118,19 @@ async def user(app_state):
 
 
 @pytest.fixture
+async def ws_admin(user, admin_group, app_state):
+    """Make the standard test user an admin so it can create workspaces.
+
+    Use this fixture (instead of plain ``user``) in test classes where
+    the test user needs workspace-creation permission (#2569).
+    """
+    await app_state.state.model.users.add_user_to_group(
+        user["id"], admin_group["id"]
+    )
+    return user
+
+
+@pytest.fixture
 async def admin_group(app_state):
     """Create the admin group and seed default ACLs."""
     from klangk.model import (
@@ -156,8 +169,8 @@ async def admin_group(app_state):
         0,
         ACTION_ALLOW,
         "create",
-        PRINCIPAL_SYSTEM,
-        system_principal=SYSTEM_AUTHENTICATED,
+        PRINCIPAL_GROUP,
+        group_id=group["id"],
     )
     await acl.add_acl_entry(
         "/admin",
@@ -175,6 +188,11 @@ async def admin_group(app_state):
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_EVERYONE,
     )
+    # #2569: seed the members group (mirrors main.py ensure_members_group).
+    members = await app_state.state.model.users.create_group(
+        "members", description="All regular users"
+    )
+    app_state.state.members_group_id = members["id"]
     return group
 
 

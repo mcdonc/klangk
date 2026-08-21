@@ -29,6 +29,14 @@ async def send_email(coro, recipient: str, kind: str = "email") -> None:
         ) from None
 
 
+async def workspace_collection_resource(
+    request: Request,
+    user: dict,  # noqa: ARG001
+) -> str:
+    """Resource function for collection-level workspace checks (#2569)."""
+    return "/workspaces"
+
+
 async def workspace_resource(request: Request, user: dict) -> str:
     """Resource function for workspace-level permission checks."""
     workspace_id = request.path_params["workspace_id"]
