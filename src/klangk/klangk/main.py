@@ -30,6 +30,7 @@ from . import (
     nix,
     podman,
     netfilter,
+    process_ledger,
     sidecar_connections,
     ssl_trust,
     terminal,
@@ -405,6 +406,10 @@ class Lifecycle:
         registry.start_cleanup_loop()
         registry.start_health_loop()
         registry.start_crash_loop()
+        # Process-launch ledger (#2520): no-op unless
+        # process_ledger_enabled. Started after the registry so its
+        # root-pid refresh sees settled container state.
+        await state.process_ledger.start()
         n = await state.workspaces.auto_start_workspaces()
         if n:  # pragma: no cover
             logger.info("Auto-started %d workspace(s)", n)
@@ -422,6 +427,7 @@ class Lifecycle:
         await wshandler.disconnect_all_websockets(state.sockets)
         await state.agents.stop_all_sessions()
         wshandler.clear_agent_mention_state()
+        await state.process_ledger.stop()
         await state.container_registry.shutdown()
 
     async def process_shutdown(self) -> None:
@@ -527,6 +533,7 @@ class Lifecycle:
             "files",
             "db",
             "model",
+            "process_ledger",
             "agents",
             "acl",
             "email",
@@ -1022,6 +1029,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # structurally impossible for these domains). The not-yet-converted
     # domains still go through the _current_db ContextVar backstop.
     app.state.model = model.Model(app)
+    app.state.process_ledger = process_ledger.ProcessLedger(app)
     app.state.agents = agent.Agents(app)
     # #1577: ACL(app_state) owns the FastAPI permission layer — the
     # resource-tree walk / principal resolution that the ``has_permission``
