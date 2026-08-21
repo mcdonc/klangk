@@ -188,6 +188,11 @@ async def admin_group(app_state):
         PRINCIPAL_SYSTEM,
         system_principal=SYSTEM_EVERYONE,
     )
+    # #2569: seed the members group (mirrors main.py ensure_members_group).
+    members = await app_state.state.model.users.create_group(
+        "members", description="All regular users"
+    )
+    app_state.state.members_group_id = members["id"]
     return group
 
 

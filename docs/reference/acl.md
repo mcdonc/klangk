@@ -56,7 +56,10 @@ on the user's effective `create` permission on `/workspaces`.
 
 ## Groups
 
-Groups replace the old role system. A group is a named collection of users. The built-in `admin` group is created automatically on first startup and the default admin user is added to it.
+Groups replace the old role system. A group is a named collection of users. Two built-in groups are created automatically on first startup:
+
+- **`admin`** — the default admin user is added to it; members can create workspaces and access admin functions.
+- **`members`** — every new user (registration, invitation, OIDC first login, admin-created) is added automatically. Has no permissions by default, but deployers can grant `create` on `/workspaces` to this group to let all members create workspaces.
 
 **Admin UI**: Admin > Groups tab — create/delete groups, add/remove members.
 

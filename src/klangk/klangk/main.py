@@ -182,6 +182,22 @@ class Lifecycle:
             logger.info("Created admin group: %s", group["id"])
         return group["id"]
 
+    async def ensure_members_group(self) -> str:
+        """Ensure the 'members' group exists (#2569). Returns the group ID.
+
+        New users (registration, invitation, OIDC first login, admin
+        create) are added to this group automatically. The default ACL
+        seed grants ``create`` on ``/workspaces`` to this group, so
+        members can create workspaces without being full admins.
+        """
+        group = await self.app.state.model.users.get_group_by_name("members")
+        if group is None:
+            group = await self.app.state.model.users.create_group(
+                "members", description="All regular users"
+            )
+            logger.info("Created members group: %s", group["id"])
+        return group["id"]
+
     async def seed_default_user(self) -> None:
         """Seed the default admin user exactly once, gated on admin-group
         emptiness (#1622) and the deploy's auth mode (#1645).
@@ -202,6 +218,8 @@ class Lifecycle:
         """
         settings = self.app.state.settings
         admin_group_id = await self.ensure_admin_group()
+        members_group_id = await self.ensure_members_group()
+        self.app.state.members_group_id = members_group_id
         await self.seed_default_acls(admin_group_id)
 
         # Once an admin exists, startup must not touch users (#1622). The

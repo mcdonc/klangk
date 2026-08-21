@@ -37,8 +37,11 @@ operators or integrators to act when upgrading.
   now require the `create` permission on the `/workspaces` collection
   resource, which defaults to the `admin` group only. Non-admin users
   see the create button hidden and receive 403 if they call the API
-  directly. To grant creation to other users or groups, add an Allow
-  ACE on `/workspaces` for the `create` permission via the ACL editor.
+  directly. A new built-in `members` group is seeded at startup and
+  every new user (registration, invitation, OIDC, admin-created) is
+  added to it automatically. To let all members create workspaces, add
+  an Allow ACE for `create` on `/workspaces` targeting the `members`
+  group via the ACL editor.
 
 - **FIPS host container image + containerized boot gate (#2628).** New
   `src/containers/host/Dockerfile.fips` layers the validated OpenSSL

@@ -309,16 +309,20 @@ class UsersModel:
                     handle,
                 ),
             )
-            return {
-                "id": user_id,
-                "email": email,
-                "handle": handle,
-                "verified": verified,
-                # Explicit so the dict never silently lacks the key the
-                # ``ensure_not_disabled`` gate reads (#2588 review) — a
-                # fresh user is enabled by definition.
-                "disabled": False,
-            }
+        # #2569: auto-add to the members group if it exists.
+        members_gid = getattr(self.app.state, "members_group_id", None)
+        if members_gid:
+            await self.add_user_to_group(user_id, members_gid)
+        return {
+            "id": user_id,
+            "email": email,
+            "handle": handle,
+            "verified": verified,
+            # Explicit so the dict never silently lacks the key the
+            # ``ensure_not_disabled`` gate reads (#2588 review) — a
+            # fresh user is enabled by definition.
+            "disabled": False,
+        }
 
     async def insert_unverified_user(
         self, db, user_id: str, email: str, password_hash: str
