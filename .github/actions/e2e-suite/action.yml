@@ -15,6 +15,14 @@ inputs:
   build-tasks:
     description: "Space-separated devenv tasks for the build step"
     default: "klangk:build-workspace-image klangk:build-network-sidecar"
+  fips-image:
+    description: >-
+      Pull this published FIPS image (retagged klangk-workspace-fips:latest)
+      instead of compiling it per-run (#2631). On pull failure, falls back
+      to a local build with the compile parallelism capped
+      (KLANGKBUILD_FIPS_BUILD_JOBS=2) so a shared host is not starved.
+      Empty = no FIPS image handling.
+    default: ""
   verbose-podman:
     description: "Set KLANGK_E2E_VERBOSE_PODMAN=1 (pytest plugin surfacing podman stderr of failed calls)"
     default: "false"
@@ -33,6 +41,24 @@ runs:
       if: inputs.run == 'true'
       shell: bash
       run: devenv tasks run ${{ inputs.build-tasks }}
+
+    - name: Obtain FIPS image (pull, capped-build fallback)
+      # #2631: the FIPS workspace image is published by image-workspace-
+      # fips.yml on GitHub-hosted runners; pulling it here replaces a
+      # per-run `make -j$(nproc)` OpenSSL compile on the shared self-hosted
+      # host, which starved sibling e2e suites' podman execs. If the pull
+      # fails (package not yet published/flipped public, network), fall
+      # back to building locally with the compile capped to 2 jobs —
+      # slower, but bounded blast radius.
+      if: inputs.run == 'true' && inputs.fips-image != ''
+      shell: bash
+      run: |
+        if devenv shell -- bash scripts/pull-fips-image.sh "${{ inputs.fips-image }}"; then
+          echo "FIPS image pulled from ${{ inputs.fips-image }}"
+        else
+          echo "Pull failed — building FIPS image locally (compile capped to 2 jobs, #2631)"
+          KLANGKBUILD_FIPS_BUILD_JOBS=2 devenv shell -- devenv tasks run klangk:build-fips-image
+        fi
 
     - name: Clean leftover CI podman state
       if: inputs.run == 'true'

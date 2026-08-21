@@ -45,6 +45,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 ARG OPENSSL_FIPS_VERSION=3.1.2
 ARG OPENSSL_FIPS_SHA256=a0ce69b8b97ea6a35b96875235aa453b966ba3cba8af2de23657d8b6767d6539
+# Cap the compile's parallelism when building on shared/oversubscribed
+# hosts: the default (empty) uses every core, which starves sibling CI
+# VMs during e2e runs (#2631). Pass --build-arg FIPS_BUILD_JOBS=2 from
+# constrained environments; dedicated build runners leave it unset.
+ARG FIPS_BUILD_JOBS=""
 WORKDIR /src
 RUN wget -q "https://www.openssl.org/source/openssl-${OPENSSL_FIPS_VERSION}.tar.gz" && \
     echo "${OPENSSL_FIPS_SHA256}  openssl-${OPENSSL_FIPS_VERSION}.tar.gz" | sha256sum -c - && \
@@ -53,7 +58,7 @@ WORKDIR "/src/openssl-${OPENSSL_FIPS_VERSION}"
 # Only the module is needed downstream; libcrypto/libssl from this build
 # are deliberately NOT installed into the final image.
 RUN ./Configure enable-fips --prefix=/opt/ossl-fips --libdir=lib && \
-    make -j"$(nproc)" && \
+    make -j"${FIPS_BUILD_JOBS:-$(nproc)}" && \
     make install_fips
 
 # --- Stage 2: workspace image + FIPS activation ------------------------------

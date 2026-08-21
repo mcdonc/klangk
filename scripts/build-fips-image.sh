@@ -21,6 +21,10 @@ source "$SCRIPT_DIR/_podman_common.sh"
 STAMP="$DEVENV_STATE/klangk/.fips-image-hash"
 FIPS_IMAGE="${KLANGKBUILD_FIPS_IMAGE_NAME:-klangk-workspace-fips}"
 BASE_IMAGE="${KLANGKD_IMAGE_NAME:-klangk-workspace}"
+# Optional compile-parallelism cap (#2631): empty (default) = all cores;
+# constrained environments (e2e on the shared CI host) pass e.g. 2 so the
+# OpenSSL compile cannot starve sibling suites.
+FIPS_BUILD_JOBS="${KLANGKBUILD_FIPS_BUILD_JOBS:-}"
 
 # Only this script and Dockerfile.fips affect the FIPS layer (the base
 # image is an ARG; its own task rebuilds when IT changes).
@@ -59,6 +63,7 @@ echo "Building FIPS workspace image ${FIPS_IMAGE} (base ${BASE_IMAGE}) ..."
   --pull=newer \
   --platform "${KLANGKBUILD_PLATFORM:-linux/amd64}" \
   --build-arg WORKSPACE_IMAGE="${BASE_IMAGE}:latest" \
+  --build-arg FIPS_BUILD_JOBS="${FIPS_BUILD_JOBS}" \
   -t "${FIPS_IMAGE}:latest" \
   -t "${FIPS_IMAGE}:${KLANGK_IMAGE_VERSION}" \
   "${PASSTHROUGH_ARGS[@]}" \
