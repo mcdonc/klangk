@@ -17,6 +17,7 @@ import time
 
 from .. import podman
 from .. import fips as fips_mod
+from ..exceptions import NodeCordonedError
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
@@ -1083,6 +1084,20 @@ class ContainerRegistry(NetworkSidecarMixin):
                     self._ws_with_network_sidecar.add(workspace_id)
                 return result
 
+        # Cordon gate (#2527): a cordoned node refuses every *new* container
+        # creation. Placed after the existing-container reuse above so a
+        # client connecting to a still-running workspace keeps working
+        # between cordon and drain (existing workspaces keep running — only
+        # fresh starts are blocked). The flag is read from the DB at start
+        # time, so it survives restarts and applies immediately across all
+        # start paths (API start/restart, WS connect, create eager start,
+        # boot auto-start, crash-recovery restart).
+        if await self.app.state.model.server_state.is_cordoned():
+            raise NodeCordonedError(
+                "node is cordoned: new workspace starts are disabled "
+                "(an operator is preparing this host; uncordon to resume)"
+            )
+
         # A fresh container (re)start means no `restart`-duration consent
         # verdict can still be in effect -- the sidecar's in-memory rules
         # (learned ACCEPT for an allow, REJECT for a deny) died with the
@@ -1518,6 +1533,46 @@ class ContainerRegistry(NetworkSidecarMixin):
                 await self.stop_and_remove_container(
                     ws["container_id"], workspace_id=ws["id"]
                 )
+
+    async def drain_all_containers(self, *, reason: str = "node drain") -> int:
+        """Gracefully stop every running workspace (#2527 drain).
+
+        The k8s ``drain`` half: same path as logout's
+        :meth:`stop_user_containers` and the idle-timeout cleanup —
+        :meth:`notify_workspace_killed` emits the terminal
+        status/service-death frames so connected clients see a clean
+        "stopped" instead of a dropped WebSocket, then
+        :meth:`stop_and_remove_container` runs the graceful podman stop
+        with the deploy's stop grace. The container_stopped broadcast
+        carries the drain reason so the UI shows it.
+
+        Iterates a snapshot (list(...) of states) so a container exiting
+        mid-loop cannot mutate the dict under us. Returns the number of
+        workspaces stopped.
+        """
+        stopped = 0
+        for ws_id, state in list(self.states.items()):
+            cid = state.container_id
+            if not cid:
+                continue
+            await self.notify_workspace_killed(ws_id)
+            await self.stop_and_remove_container(cid, workspace_id=ws_id)
+            # Same "stopped on purpose" broadcast as the /stop endpoint:
+            # clients re-render as stopped, not disconnected.
+            session = self.app.state.sockets.get_session(ws_id)
+            if session:
+                session.broadcast(
+                    {
+                        "type": "event",
+                        "event": {
+                            "type": "CUSTOM",
+                            "name": "container_stopped",
+                            "value": {"reason": reason},
+                        },
+                    }
+                )
+            stopped += 1
+        return stopped
 
     # --- Pre-warm ---
 

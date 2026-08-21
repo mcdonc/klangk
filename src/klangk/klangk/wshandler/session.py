@@ -799,6 +799,28 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
+    def notify_node_cordoned(self, cordoned: bool) -> None:
+        """Broadcast a node-cordon event to all connections (#2527).
+
+        Fanned out to every authenticated connection like
+        :meth:`notify_workspace_evicted` so clients can badge the state
+        (new starts will be refused while cordoned).
+        """
+        message: dict = {
+            "type": "node_cordon",
+            "cordoned": cordoned,
+        }
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append((sock, conn))
+        for sock, _ in dead:
+            self.connections.pop(sock, None)
+
     def notify_service_health(
         self,
         workspace_id: str,

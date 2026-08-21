@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 
 from .. import container, model
+from ..exceptions import NodeCordonedError
 from ..terminal import TerminalSession
 from ..podman import ExecSession
 from .constants import (
@@ -443,6 +444,11 @@ class Connection:
         except ValueError as exc:
             send_error(self.sock, str(exc))
             return
+        except NodeCordonedError as exc:
+            # Cordoned node (#2527): an operator has disabled new starts;
+            # existing workspaces keep running. Error frame, not a drop.
+            send_error(self.sock, str(exc))
+            return
         logger.info(
             "workspace-open: start or reuse container "
             "(see breakdown above): %.3fs",
@@ -546,7 +552,13 @@ class Connection:
             send_error(self.sock, "Workspace not found")
             return
 
-        await self.start_workspace_container(workspace_id, workspace)
+        try:
+            await self.start_workspace_container(workspace_id, workspace)
+        except NodeCordonedError as exc:
+            # Cordoned node (#2527) — same clear refusal on the WS restart
+            # path as the API's 503.
+            send_error(self.sock, str(exc))
+            return
         self.app.state.container_registry.record_activity(self.container_id)
 
         # Update container_id on ALL connections to this workspace

@@ -11558,3 +11558,122 @@ class TestInactivityDisable:
         assert kicked == 2
         assert closed[-1] == (4001, "Account disabled")
         app.state.sockets.connections.clear()
+
+
+# --- Cordon / drain (#2527) ---
+
+
+class TestCordonDrainApi:
+    async def _admin_headers(self, client):
+        return await _admin_login(client)
+
+    async def _user_headers(self, client):
+        return await _auth_headers(client)
+
+    async def test_cordon_get_put_roundtrip(
+        self, client, admin_user, app_state
+    ):
+        headers = await self._admin_headers(client)
+        resp = await client.get("/api/v1/admin/cordon", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json() == {"cordoned": False}
+
+        resp = await client.put(
+            "/api/v1/admin/cordon", headers=headers, json={"cordoned": True}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"cordoned": True}
+        # Persisted (DB-backed), not just echoed.
+        assert await app_state.state.model.server_state.is_cordoned() is True
+
+    async def test_cordon_requires_admin(self, client, user):
+        headers = await self._user_headers(client)
+        resp = await client.put(
+            "/api/v1/admin/cordon", headers=headers, json={"cordoned": True}
+        )
+        assert resp.status_code == 403
+
+    async def test_start_refused_503_while_cordoned(
+        self, client, app, user, registry, ws_admin
+    ):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "cw"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        await app.state.model.server_state.set_cordoned(True)
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/start", headers=headers
+        )
+        assert resp.status_code == 503
+        assert "cordoned" in resp.json()["detail"].lower()
+
+    async def test_restart_refused_503_while_cordoned(
+        self, client, app, user, registry, ws_admin
+    ):
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "cw2"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        await app.state.model.server_state.set_cordoned(True)
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+        )
+        assert resp.status_code == 503
+        assert "cordoned" in resp.json()["detail"].lower()
+
+    async def test_drain_reports_count(self, client, app, admin_user):
+        from klangk.container.state import ContainerState
+
+        registry = app.state.container_registry
+        for i in range(2):
+            registry.states[f"ws-{i}"] = ContainerState(
+                f"ws-{i}", f"cid-{i}", app
+            )
+        headers = await self._admin_headers(client)
+        with (
+            patch.object(registry, "stop_and_remove_container", AsyncMock()),
+            patch.object(registry, "notify_workspace_killed", AsyncMock()),
+        ):
+            resp = await client.post("/api/v1/admin/drain", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json() == {"stopped": 2}
+
+    async def test_drain_requires_admin(self, client, user):
+        headers = await self._user_headers(client)
+        resp = await client.post("/api/v1/admin/drain", headers=headers)
+        assert resp.status_code == 403
+
+    async def test_config_carries_cordon_for_authed_only(
+        self, client, app, admin_user
+    ):
+        headers = await self._admin_headers(client)
+        await app.state.model.server_state.set_cordoned(True)
+        resp = await client.get("/api/v1/config", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["cordoned"] is True
+
+        # Anonymous (pre-auth) config must not leak the flag.
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 200
+        assert "cordoned" not in resp.json()
+
+    async def test_create_with_autostart_cordoned_mid_create(
+        self, client, app, user, ws_admin, registry
+    ):
+        """#2527: cordon racing a create leaves the workspace row intact
+        and does not fail the create — an eager start refusal is a
+        warning, not an error."""
+        headers = await _auth_headers(client)
+        app.state.settings.allow_autostart = "1"
+        await app.state.model.server_state.set_cordoned(True)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "cordoned-create", "auto_start": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["id"]
