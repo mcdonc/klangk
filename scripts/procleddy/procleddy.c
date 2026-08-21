@@ -91,7 +91,7 @@ struct pinfo {
     uint32_t uid;
     uint32_t euid;
     uint32_t sid;
-    uint32_t seen_poll;  /* poll index that last parsed this pid */
+    uint64_t seen_poll;  /* poll index that last parsed this pid */
     uint64_t seen_walk;  /* ancestry-walk cycle stamp */
     uint16_t unseen;     /* consecutive polls not seen in a listing */
     uint8_t alive;       /* parsed at least once, not yet exited */
@@ -132,7 +132,7 @@ static const char *proc_root = DEFAULT_ROOT;
 static int rootfd = -1;
 static int verbose = 0;
 static volatile sig_atomic_t stopped = 0;
-static uint32_t poll_index = 0;
+static uint64_t poll_index = 0;  /* wide: no wraparound at 80ms polls */
 
 static uint32_t *roots;
 static size_t nroots, roots_cap;
@@ -268,7 +268,7 @@ static int is_root(uint32_t pid) {
 /* /proc helpers — every parse bounded, every failure a clean skip     */
 
 static int open_root(const char *path) {
-    rootfd = open(path, O_RDONLY | O_DIRECTORY);
+    rootfd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     return rootfd;
 }
 
@@ -351,12 +351,24 @@ static int parse_status(uint32_t pid, struct pinfo *pi) {
             }
             ppid = (uint32_t)(pv <= MAX_PIDS ? pv : 0);
         } else if (line[0] == 'U' && !strncmp(line, "Uid:", 4)) {
-            unsigned a = 0, b = 0;
-            if (sscanf(line + 4, " %u %u", &a, &b) >= 1) {
-                uid = a;
-                euid = b;
-                have_uid = 1;
+            /* Bounded manual parse: "Uid:\treal eff saved fs" — we need
+             * real (a) and effective (b). Consistent with PPid/NSsid. */
+            char *s = line + 4;
+            while (*s == ' ' || *s == '\t') s++;
+            unsigned long a = 0;
+            while (isdigit((unsigned char)*s) && a <= 0xFFFFFFFFUL) {
+                a = a * 10 + (unsigned long)(*s - '0');
+                s++;
             }
+            while (*s == ' ' || *s == '\t') s++;
+            unsigned long b = 0;
+            while (isdigit((unsigned char)*s) && b <= 0xFFFFFFFFUL) {
+                b = b * 10 + (unsigned long)(*s - '0');
+                s++;
+            }
+            uid = (uint32_t)(a <= 0xFFFFFFFFUL ? a : 0);
+            euid = (uint32_t)(b <= 0xFFFFFFFFUL ? b : 0);
+            have_uid = 1;
         } else if (line[0] == 'N' && !strncmp(line, "NSsid:", 6)) {
             char *s = line + 6;
             while (*s == ' ' || *s == '\t') s++;
@@ -465,7 +477,13 @@ int main(int argc, char **argv) {
     long interval_ms = 80;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--interval-ms") && i + 1 < argc) {
-            interval_ms = atol(argv[++i]);
+            const char *s = argv[++i];
+            long v = 0;
+            while (*s >= '0' && *s <= '9' && v <= 100000) {
+                v = v * 10 + (*s - '0');
+                s++;
+            }
+            interval_ms = v;
         } else if (!strcmp(argv[i], "--root") && i + 1 < argc) {
             proc_root = argv[++i];
         } else if (!strcmp(argv[i], "-v")) {
@@ -487,7 +505,7 @@ int main(int argc, char **argv) {
 
     /* Staggered-refresh modulus: non-watched pids are re-parsed once per
      * ~20 s (keeps ancestry fresh for new-pid walks at bounded cost). */
-    uint32_t refresh_mod = (uint32_t)(20000 / interval_ms);
+    uint64_t refresh_mod = (uint64_t)(20000 / interval_ms);
     if (refresh_mod < 1) refresh_mod = 1;
 
     uint32_t *listed = malloc(MAX_PIDS * sizeof *listed);
@@ -667,11 +685,14 @@ int main(int argc, char **argv) {
                    polls_since_beat, n, nroots, work * 1000.0,
                    since_beat * 1000.0 / (double)(polls_since_beat
                    ? polls_since_beat : 1));
-            fflush(stdout);
             last_beat = now_s();
             polls_since_beat = 0;
         }
-        fflush(stdout);
+        if (fflush(stdout) == EOF) {
+            /* Broken stdout pipe (consumer died): stop cleanly instead
+             * of spinning and burning CPU generating output nobody reads. */
+            break;
+        }
 
         double sleep_s = budget - work;
         if (sleep_s < 0.001) sleep_s = 0.001;
