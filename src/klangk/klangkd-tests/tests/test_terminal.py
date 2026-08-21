@@ -831,7 +831,67 @@ class TestTmuxCommand:
         assert result == "ok\n"
         assert mock_exec.await_count == 2
         mock_sleep.assert_awaited_once_with(0.5)
-        mock_sleep.assert_awaited_once_with(0.5)
+
+    async def test_retries_on_missing_session(self):
+        # #2623: terminal_start stores the TerminalSession before the
+        # attach exec has created its grouped tmux session, so a window
+        # command addressed to the unique session name can run first
+        # ("can't find session"). The command retries until the attach
+        # lands instead of failing the client's select.
+        with (
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (1, "", "can't find session: uid-abc12345"),
+                    (1, "", "can't find session: uid-abc12345"),
+                    (0, "ok\n", ""),
+                ],
+            ) as mock_exec,
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            result = await _terminal.tmux_command(
+                "cid", "sess", ["select-window", "-t", "uid-abc12345:@3"]
+            )
+        assert result == "ok\n"
+        assert mock_exec.await_count == 3
+        assert mock_sleep.await_count == 2
+
+    async def test_retries_on_missing_session_old_wording(self):
+        # Older tmux wording for the same cold-start condition.
+        with (
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (1, "", "no such session: uid-abc12345"),
+                    (0, "ok\n", ""),
+                ],
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await _terminal.tmux_command("cid", "sess", ["has"])
+        assert result == "ok\n"
+
+    async def test_missing_session_retry_budget_is_bounded(self):
+        # A session that never appears (the attach truly failed) exhausts
+        # the cold-start budget and then raises the ordinary TerminalError
+        # — 6 attempts, 5 sleeps, no infinite loop.
+        with (
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", "can't find session: uid-abc12345"),
+            ) as mock_exec,
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            with pytest.raises(TerminalError, match="can't find session"):
+                await _terminal.tmux_command("cid", "sess", ["select-window"])
+        assert mock_exec.await_count == 6
+        assert mock_sleep.await_count == 5
 
 
 class TestListWindows:

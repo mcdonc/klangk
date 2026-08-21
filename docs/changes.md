@@ -1039,6 +1039,19 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Terminal window commands racing a fresh session (#2623).** A
+  select/close issued immediately after opening a terminal could fail
+  with `can't find session` under load: the session is created
+  asynchronously by the attaching process, and the command could run
+  first. Window commands now retry that cold-start condition briefly
+  (up to ~3s) instead of failing, matching the existing tmux-socket
+  startup retry.
+- **Spurious "Slow client dropped" disconnects (#2623).** A client
+  connecting to a workspace could be abruptly disconnected (WebSocket
+  closed with no close frame) when another user's connection was tearing
+  down at the same moment. The presence broadcast now discards
+  connections that are already closing instead of failing the new
+  connection's setup.
 - **SSH agent forwarding readiness (#2535).** The `ssh_agent_started`
   event now fires only after the in-container relay socket is actually
   bound, instead of when the relay process was merely spawned. Commands

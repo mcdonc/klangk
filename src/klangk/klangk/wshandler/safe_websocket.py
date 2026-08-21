@@ -105,6 +105,18 @@ class SafeWebSocket:
         await self._sock.close(code=code)
 
     @property
+    def stopped(self) -> bool:
+        """True once ``stop_sender`` ran — the socket is tearing down.
+
+        Distinguishes the two ``SlowClientError`` modes: ``stopped`` means
+        mid-teardown (safe to unsubscribe the socket from a session), while
+        a queue-full error on a live socket means slow-but-alive (its own
+        dispatch loop will drop it; callers should not silently
+        unsubscribe it) (#2623).
+        """
+        return self._closed
+
+    @property
     def headers(self):
         """Proxy header access to the underlying WebSocket."""
         return self._sock.headers

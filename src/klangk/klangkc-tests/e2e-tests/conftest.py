@@ -17,7 +17,30 @@ containers (bringup + teardown can exceed 60s on a loaded runner, #1591).
 every E2E test that doesn't set its own.
 """
 
+import os
+import sys
+
 import pytest
+
+# Failure-diagnosability (#2623): attach what the file-streamed klangkd
+# logs recorded during a test to that test's failure report. The hooks live
+# in ``_e2e_logs`` inside the backend E2E suite's dir (the same shared
+# harness this suite's test files already import ``_e2e_server`` from), so
+# put that dir on sys.path and re-export the hooks here for pytest to find.
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "klangkd-tests", "e2e-tests"
+    ),
+)
+from _e2e_logs import (  # noqa: F401,E402
+    pytest_runtest_makereport,
+    pytest_runtest_setup,
+)
+
+# NOTE: the hooks only attach logs for servers launched with a file
+# ``log_path`` — which is ``start_server``'s default since #2623, so every
+# server this suite (and the backend e2e suite) launches is covered.
 
 _E2E_TIMEOUT_SECONDS = 300
 
