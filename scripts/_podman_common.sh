@@ -41,3 +41,89 @@ if [ -n "${CONTAINERS_SIGNATURE_POLICY:-}" ]; then
   fi
   SIG_POLICY_ARGS=(--signature-policy "$CONTAINERS_SIGNATURE_POLICY")
 fi
+
+# --- Shared image-build helpers (build-workspace-image.sh,
+# build-fips-image.sh) --------------------------------------------------
+#
+# Each helper communicates via documented globals (bash arrays and
+# multiple outputs don't compose cleanly as return values):
+
+# klangk::parse_build_flags "$@" — consume --force / --no-cache.
+# Sets FORCE_BUILD=true when a rebuild must happen (--force is consumed;
+# --no-cache also forces and is kept for the podman passthrough) and
+# PASSTHROUGH_ARGS to the remaining flags for `podman build`.
+FORCE_BUILD=false
+PASSTHROUGH_ARGS=()
+klangk::parse_build_flags() {
+  FORCE_BUILD=false
+  PASSTHROUGH_ARGS=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+    --force) FORCE_BUILD=true ;;
+    --no-cache)
+      FORCE_BUILD=true
+      PASSTHROUGH_ARGS+=("$arg")
+      ;;
+    *) PASSTHROUGH_ARGS+=("$arg") ;;
+    esac
+  done
+}
+
+# klangk::stamp_matches <stamp_file> <current_hash> — 0 when the image
+# build can be skipped: the stamp file exists and holds current_hash.
+# (The caller separately checks `podman image exists`.)
+klangk::stamp_matches() {
+  local stamp_file="$1" current_hash="$2"
+  [ -f "$stamp_file" ] && [ "$(cat "$stamp_file" 2>/dev/null || true)" = "$current_hash" ]
+}
+
+# klangk::write_stamp <stamp_file> <current_hash>
+klangk::write_stamp() {
+  mkdir -p "$(dirname "$1")"
+  echo "$2" >"$1"
+}
+
+# klangk::stage_features — materialize the feature payload for a build
+# context. Sets FEATURES_STAGING to the dir containing features/<name>/
+# trees (pass it as the features build-context) and FEATURES_PAYLOAD_DIR
+# to its parent tempdir. The caller owns cleanup:
+#   trap 'rm -rf "$FEATURES_PAYLOAD_DIR"' EXIT
+# Respects KLANGKBUILD_BUILD_INCLUDE_REMOTE (default: local-only,
+# keeping CI off the network — the #1691 policy).
+FEATURES_STAGING=""
+FEATURES_PAYLOAD_DIR=""
+klangk::stage_features() {
+  local payload_dir staging d name
+  payload_dir="$(mktemp -d "${TMPDIR:-/tmp}/klangk-features-XXXXXX")"
+  local flags=(--payload-dir "$payload_dir")
+  if [ "${KLANGKBUILD_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
+    flags+=(--local-only)
+  fi
+  python3 scripts/update_features.py "${flags[@]}"
+  staging="$payload_dir/.docker"
+  rm -rf "$staging"
+  mkdir -p "$staging/features"
+  for d in "$payload_dir"/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    cp -r "$d" "$staging/features/$name"
+  done
+  FEATURES_STAGING="$staging"
+  FEATURES_PAYLOAD_DIR="$payload_dir"
+}
+
+# klangk::prune_old_tags <image> — drop version tags other than latest
+# and the current one, so repeated builds don't accumulate. Sets
+# KLANGK_IMAGE_VERSION to the deterministic "<calver>-<commit>" tag.
+KLANGK_IMAGE_VERSION=""
+klangk::prune_old_tags() {
+  local image="$1" podman_bin="${KLANGKD_PODMAN_BIN:-podman}" old_tag
+  KLANGK_IMAGE_VERSION="$(date -u +%Y.%m.%d)-$(git rev-parse --short HEAD)"
+  for old_tag in $("$podman_bin" images --format '{{.Tag}}' --filter "reference=${image}" 2>/dev/null || true); do
+    case "$old_tag" in
+    latest | "$KLANGK_IMAGE_VERSION" | "<none>") ;;
+    *) "$podman_bin" untag "${image}:${old_tag}" 2>/dev/null || true ;;
+    esac
+  done
+}

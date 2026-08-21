@@ -16,6 +16,7 @@ import os
 import time
 
 from .. import podman
+from .. import fips as fips_mod
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
@@ -810,7 +811,49 @@ class ContainerRegistry(NetworkSidecarMixin):
         # only the in-bashrc gate covered (and only for bash).
         await self.app.state.podman.wait_for_container_ready(cid)
 
+        # FIPS enforcement (#2570, #2591): the gate runs at this single
+        # create choke point (fail closed — see _fips_gate).
+        await self._fips_gate(workspace_id, cid)
+
         return cid
+
+    async def _fips_gate(self, workspace_id: str, cid: str) -> None:
+        """Refuse a workspace container that cannot prove FIPS (#2570).
+
+        With ``KLANGKD_FIPS_MODE`` on, a freshly-created container must
+        pass the distro-agnostic probe (klangk.fips) before it is handed
+        to any user; failure or non-verifiability fails CLOSED — the
+        container is removed and the start raises, so a misbuilt image
+        can never serve. No-op when the mode is off.
+
+        Cleanup is inline (not stop_and_remove_container / remove_state,
+        which take the workspace lock this path already holds —
+        asyncio.Lock is not reentrant); the DB container_id going stale
+        is fine: the next start's _handle_existing_container treats an
+        uninspectable container as recreate-me.
+        """
+        if not self.app.state.settings.fips_mode:
+            return
+        ok, detail = await fips_mod.probe_container(self.app.state.podman, cid)
+        if not ok:
+            await safe_remove(
+                self.app.state.podman,
+                cid,
+                what="non-FIPS workspace container",
+            )
+            state = self.states.get(workspace_id)
+            if state is not None and state.container_id == cid:
+                self.states.pop(workspace_id, None)
+                self._cid_to_wsid.pop(cid, None)
+            self.clear_service_session_lock(cid)
+            self._notify_status_changed(workspace_id, False)
+            raise podman.PodmanError(
+                500,
+                "KLANGKD_FIPS_MODE is enabled but the workspace "
+                f"container {cid[:12]} failed its FIPS verification: "
+                f"{detail}. The image must run an OpenSSL with the "
+                "FIPS provider active (see docs/deployment/fips.md).",
+            )
 
     @staticmethod
     def _is_port_conflict(exc: podman.PodmanError) -> bool:
