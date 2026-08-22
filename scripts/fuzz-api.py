@@ -538,6 +538,10 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     ("GET", f"{P}/admin/acl/by-principal/group/{{group_id}}", None, None),
     ("GET", f"{P}/admin/acl/resource", None, {"resource": "string"}),
     ("PUT", f"{P}/admin/acl/resource", {"entries": "value"}, None),
+    # Cordon / drain (#2527)
+    ("GET", f"{P}/admin/cordon", None, None),
+    ("PUT", f"{P}/admin/cordon", {"cordoned": "bool"}, None),
+    ("POST", f"{P}/admin/drain", None, None),
     # Browser delegate
     ("POST", f"{P}/browser-delegate", {"action": "string", "data": "value"}, None),
     (
@@ -905,7 +909,9 @@ async def run_fuzz(
     ) as client:
         while time.monotonic() < deadline:
             # Pick a random endpoint
-            method, path_template, body_schema, query_schema = rng.choice(ENDPOINTS)
+            method, path_template, body_schema, query_schema = rng.choice(
+                _fuzzable_endpoints()
+            )
 
             # Fill in path parameters
             path = path_template
@@ -1011,6 +1017,24 @@ async def run_fuzz(
 # ---------------------------------------------------------------------------
 # Endpoint drift check (--check mode)
 # ---------------------------------------------------------------------------
+
+
+# State-mutating operator routes (#2527). They stay in ENDPOINTS so the
+# --check parity gate covers them, but the randomized loop skips them:
+# a fuzzed {"cordoned": true} (the wrong-type generator can yield a real
+# bool) would cordon the fuzzed server and turn every later start's
+# legitimate 503 into a flagged "5xx anomaly"; a fuzzed drain adds nothing
+# the endpoints' input validation hasn't already seen. GET cordon is safe
+# and IS fuzzed.
+NO_FUZZ: set[tuple[str, str]] = {
+    ("PUT", f"{P}/admin/cordon"),
+    ("POST", f"{P}/admin/drain"),
+}
+
+
+def _fuzzable_endpoints() -> list[tuple]:
+    """ENDPOINTS minus NO_FUZZ — what the randomized loop draws from."""
+    return [(m, p, b, q) for m, p, b, q in ENDPOINTS if (m, p) not in NO_FUZZ]
 
 
 def _fuzzed_routes() -> set[tuple[str, str]]:
