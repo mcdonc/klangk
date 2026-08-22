@@ -85,6 +85,7 @@ class _KlangkAppState extends State<KlangkApp> {
           currentUri: state.uri.toString(),
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: auth.isAdmin,
         );
       },
       routes: [

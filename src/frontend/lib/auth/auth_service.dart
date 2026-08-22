@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import '../branding.dart';
 import 'password_policy.dart';
+import 'pending_redirect.dart';
 
 /// Override for testing — set to intercept all HTTP calls in AuthService.
 http.Client? testAuthHttpClientOverride;
@@ -259,6 +260,12 @@ class AuthService extends ChangeNotifier {
     _token = null;
     _permissions = {};
     _groups = [];
+    // The pending redirect belongs to the session being cleared; drop it
+    // so the next login can never inherit the old session's destination
+    // (#2670). If the user was on a protected page, guardAuth re-stashes
+    // the current URI on the redirect that follows, preserving the
+    // same-user "resume where you were" behavior after a token expiry.
+    pendingRedirect = null;
     _stopPermissionRefresh();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);

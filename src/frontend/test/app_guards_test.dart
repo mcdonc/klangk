@@ -123,6 +123,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/workspace/abc',
       );
@@ -135,6 +136,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/workspaces',
       );
@@ -147,6 +149,7 @@ void main() {
           loc: '/celebrate',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -159,6 +162,7 @@ void main() {
           loc: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -171,8 +175,96 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
+      );
+    });
+
+    test('consumes the pending redirect (consume-once, #2670)', () {
+      pendingRedirect = '/workspace/abc';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspace/abc',
+      );
+      // A later login (or a logged-in visit to /login) must not inherit
+      // the consumed target.
+      expect(pendingRedirect, isNull);
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspaces',
+      );
+    });
+
+    test('does not leave a stale redirect when consuming with a fallback', () {
+      // Even when the guard falls back to /workspaces (no stash or
+      // permission-rejected target), the stash must not survive.
+      pendingRedirect = '/admin/users';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspaces',
+      );
+      expect(pendingRedirect, isNull);
+    });
+
+    test('rejects an admin target for a non-admin session (#2670)', () {
+      // Stashed by a previous (admin) session's logout or expiry.
+      pendingRedirect = '/admin/users';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspaces',
+      );
+    });
+
+    test('allows an admin target for an admin session', () {
+      pendingRedirect = '/admin/users';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: true,
+        ),
+        '/admin/users',
+      );
+    });
+
+    test('allows non-admin targets for a non-admin session', () {
+      pendingRedirect = '/workspace/abc?file=main.dart';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspace/abc?file=main.dart',
       );
     });
   });
@@ -206,6 +298,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/consent',
       );
@@ -225,6 +318,7 @@ void main() {
           currentUri: '/consent',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -239,6 +333,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/consent',
       );
@@ -253,6 +348,7 @@ void main() {
           currentUri: '/workspace/abc?x=1',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/login',
       );
@@ -269,9 +365,49 @@ void main() {
           currentUri: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/workspace/zzz',
       );
+    });
+
+    test(
+        'logged-in non-admin on /login with stale admin target -> '
+        '/workspaces (#2670)', () {
+      // The repro from #2670: an admin session stashed /admin/users (via
+      // logout or expiry), and a non-admin logs in on the same browser.
+      pendingRedirect = '/admin/users';
+      expect(
+        evaluateGuards(
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/login',
+          currentUri: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspaces',
+      );
+      // And the stale target is consumed, not left for the next bounce.
+      expect(pendingRedirect, isNull);
+    });
+
+    test('logged-in admin on /login with admin target -> target', () {
+      pendingRedirect = '/admin/users';
+      expect(
+        evaluateGuards(
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/login',
+          currentUri: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: true,
+        ),
+        '/admin/users',
+      );
+      expect(pendingRedirect, isNull);
     });
 
     test('logged-in on / -> /workspaces (root, not public-route guard)', () {
@@ -285,6 +421,7 @@ void main() {
           currentUri: '/',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/workspaces',
       );
@@ -299,6 +436,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -313,6 +451,7 @@ void main() {
           currentUri: '/celebrate',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -327,6 +466,7 @@ void main() {
           currentUri: '/consent',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/login',
       );

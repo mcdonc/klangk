@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
+import 'package:klangk_frontend/auth/pending_redirect.dart';
 import 'package:klangk_frontend/branding.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
@@ -610,6 +611,39 @@ void main() {
 
       await service.logout();
       expect(service.isLoggedIn, isFalse);
+    });
+
+    test('clears pendingRedirect on logout (#2670)', () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response('', 200);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      pendingRedirect = '/admin/users';
+      await service.logout();
+      expect(pendingRedirect, isNull);
+    });
+
+    test('clears pendingRedirect when a 401 clears the token (#2670)',
+        () async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/logout')) {
+          return http.Response('', 200);
+        }
+        return http.Response('Unauthorized', 401);
+      });
+
+      SharedPreferences.setMockInitialValues({'klangk_jwt': 'my-token'});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+
+      pendingRedirect = '/admin/users';
+      await service.authGet('/api/v1/workspaces');
+      expect(service.isLoggedIn, isFalse);
+      expect(pendingRedirect, isNull);
     });
   });
 
