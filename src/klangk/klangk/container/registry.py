@@ -173,6 +173,12 @@ class ContainerRegistry(NetworkSidecarMixin):
         # closing the completed-during-detection race (review #2625).
         self.stopping: set[str] = set()
         self.stop_epoch: dict[str, int] = {}
+        # In-memory drain flag (#2527): while a SIGHUP graceful restart
+        # quiesces the node, every container-start path refuses new
+        # starts. Deliberately NOT persisted (unlike the cordon flag) —
+        # it must self-clear when the restart completes, and a crashed
+        # restart must not leave the node refusing starts.
+        self.draining: bool = False
         self._workspace_locks: dict[str, asyncio.Lock] = {}
         self._service_session_locks: dict[str, asyncio.Lock] = {}
         self.on_workspace_killed = None
@@ -1084,19 +1090,19 @@ class ContainerRegistry(NetworkSidecarMixin):
                     self._ws_with_network_sidecar.add(workspace_id)
                 return result
 
-        # Cordon gate (#2527): a cordoned node refuses every *new* container
-        # creation. Placed after the existing-container reuse above so a
-        # client connecting to a still-running workspace keeps working
-        # between cordon and drain (existing workspaces keep running — only
-        # fresh starts are blocked). The flag is read from the DB at start
-        # time, so it survives restarts and applies immediately across all
-        # start paths (API start/restart, WS connect, create eager start,
-        # boot auto-start, crash-recovery restart).
-        if await self.app.state.model.server_state.is_cordoned():
-            raise NodeCordonedError(
-                "node is cordoned: new workspace starts are disabled "
-                "(an operator is preparing this host; uncordon to resume)"
-            )
+        # Start-refusal gate (#2527): cordon (operator maintenance) and
+        # drain (SIGHUP graceful restart) both refuse every *new* container
+        # creation through this single choke point. Placed after the
+        # existing-container reuse above so a client connecting to a
+        # still-running workspace keeps working between cordon and drain
+        # (existing workspaces keep running — only fresh starts are
+        # blocked). The cordon flag is read from the DB at start time, so
+        # it survives restarts and applies immediately across all start
+        # paths (API start/restart, WS connect, create eager start, boot
+        # auto-start, crash-recovery restart).
+        blocked_reason = await self.new_starts_blocked_reason()
+        if blocked_reason:
+            raise NodeCordonedError(blocked_reason)
 
         # A fresh container (re)start means no `restart`-duration consent
         # verdict can still be in effect -- the sidecar's in-memory rules
@@ -1533,6 +1539,26 @@ class ContainerRegistry(NetworkSidecarMixin):
                 await self.stop_and_remove_container(
                     ws["container_id"], workspace_id=ws["id"]
                 )
+
+    async def new_starts_blocked_reason(self) -> str | None:
+        """Why new container starts are refused, or None if allowed (#2527).
+
+        Two refusers share the single start choke point: the persisted
+        cordon flag (operator maintenance; survives restarts) and the
+        in-memory drain flag (SIGHUP graceful restart; self-clears).
+        Callers that only need a boolean can truth-test the return.
+        """
+        if self.draining:
+            return (
+                "node is draining: new workspace starts are disabled "
+                "(a restart is in progress)"
+            )
+        if await self.app.state.model.server_state.is_cordoned():
+            return (
+                "node is cordoned: new workspace starts are disabled "
+                "(an operator is preparing this host; uncordon to resume)"
+            )
+        return None
 
     async def drain_all_containers(self, *, reason: str = "node drain") -> int:
         """Gracefully stop every running workspace (#2527 drain).

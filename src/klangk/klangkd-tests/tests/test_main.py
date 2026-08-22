@@ -55,6 +55,8 @@ def _make_app_state(settings=None):
     app_state.state.sockets = sockets
     registry = ContainerRegistry(app_state)
     app_state.state.container_registry = registry
+    # #2527: the SIGHUP quiesce phase waits on this counter.
+    app_state.state.inflight_requests = main.InFlightRequests()
     # #1468: container.py / agent.py reach the CLI wrappers via self.podman.
     from klangk.podman import Podman
 
@@ -1059,6 +1061,74 @@ class TestLifespan:
 # --- SIGHUP runtime restart (#1212) ---
 
 
+class TestInFlightRequests:
+    """Counter + ASGI middleware backing the SIGHUP quiesce phase
+    (#2527)."""
+
+    def test_counts_http_and_decrements(self):
+        counter = main.InFlightRequests()
+        assert counter.count == 0
+        assert asyncio.run(counter.wait_for_idle(0.01)) is True
+
+        ran = asyncio.Event()
+
+        async def slow(scope, receive, send):
+            assert counter.count == 1
+            ran.set()
+
+        mw2 = main.InFlightMiddleware(slow, counter)
+        asyncio.run(mw2({"type": "http"}, None, None))
+        assert ran.is_set()
+        assert counter.count == 0
+
+    def test_non_http_scopes_pass_uncounted(self):
+        counter = main.InFlightRequests()
+        seen = []
+
+        async def inner(scope, receive, send):
+            seen.append(scope["type"])
+
+        mw = main.InFlightMiddleware(inner, counter)
+        asyncio.run(mw({"type": "websocket"}, None, None))
+        asyncio.run(mw({"type": "lifespan"}, None, None))
+        assert seen == ["websocket", "lifespan"]
+        assert counter.count == 0
+
+    def test_exception_still_decrements(self):
+        counter = main.InFlightRequests()
+
+        async def boom(scope, receive, send):
+            raise RuntimeError("boom")
+
+        mw = main.InFlightMiddleware(boom, counter)
+        with pytest.raises(RuntimeError, match="boom"):
+            asyncio.run(mw({"type": "http"}, None, None))
+        assert counter.count == 0
+
+    def test_wait_for_idle_waits_then_returns(self):
+        counter = main.InFlightRequests()
+        counter.increment()
+
+        async def scenario():
+            task = asyncio.ensure_future(counter.wait_for_idle(5))
+            await asyncio.sleep(0.01)
+            assert not task.done()
+            counter.decrement()
+            return await task
+
+        assert asyncio.run(scenario()) is True
+
+    def test_wait_for_idle_times_out(self):
+        counter = main.InFlightRequests()
+        counter.increment()
+        assert asyncio.run(counter.wait_for_idle(0.01)) is False
+
+    def test_decrement_floors_at_zero(self):
+        counter = main.InFlightRequests()
+        counter.decrement()
+        assert counter.count == 0
+
+
 class TestStartupShutdownRestart:
     async def test_startup_calls_container_sequence(self, app_state):
         app_state = _make_app_state()
@@ -1252,6 +1322,165 @@ class TestStartupShutdownRestart:
         ):
             await lc.restart_runtime()
         assert order == ["apply", "shutdown", "startup"]
+
+    async def test_restart_graceful_sequence(self, app_state):
+        """The full graceful-restart sequence, in order (#2527):
+        broadcast draining → refuse starts → quiesce → drain containers
+        → apply config → broadcast restarting → recycle → clear the
+        drain flag before startup → broadcast host_started."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._restart_lock = None
+        registry = app_state.state.container_registry
+        new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
+        order = []
+        with (
+            patch.object(
+                lc, "_reload_settings", return_value=(new_settings, None)
+            ),
+            patch.object(
+                app_state.state.sockets,
+                "notify_host_restart",
+                side_effect=lambda phase: order.append(f"notify:{phase}"),
+            ),
+            patch.object(
+                app_state.state.sockets,
+                "notify_host_started",
+                side_effect=lambda: order.append("notify:started"),
+            ),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                side_effect=lambda **kw: (
+                    order.append("drain:" + kw.get("reason", "")) or 2
+                ),
+            ) as mock_drain,
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_wait,
+            patch.object(
+                lc,
+                "_apply_reloaded_settings",
+                new_callable=AsyncMock,
+                side_effect=lambda s: order.append("apply"),
+            ),
+            patch.object(
+                lc,
+                "runtime_shutdown",
+                new_callable=AsyncMock,
+                side_effect=lambda: order.append(
+                    f"shutdown(draining={registry.draining})"
+                ),
+            ),
+            patch.object(
+                lc,
+                "startup",
+                new_callable=AsyncMock,
+                side_effect=lambda: order.append("startup"),
+            ),
+        ):
+            await lc.restart_runtime()
+        assert order == [
+            "notify:draining",
+            "drain:host restart",
+            "apply",
+            "notify:restarting",
+            "shutdown(draining=True)",
+            "startup",
+            "notify:started",
+        ]
+        mock_drain.assert_awaited_once_with(reason="host restart")
+        mock_wait.assert_awaited_once()
+        # The flag never survives the restart.
+        assert registry.draining is False
+
+    async def test_restart_inflight_timeout_proceeds(self, app_state, caplog):
+        """Straggler requests at timeout expiry are logged; the restart
+        proceeds anyway."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._restart_lock = None
+        app_state.state.inflight_requests.increment()
+        with (
+            patch.object(
+                lc,
+                "_reload_settings",
+                return_value=(
+                    make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
+                    None,
+                ),
+            ),
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                app_state.state.container_registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch.object(
+                lc, "_apply_reloaded_settings", new_callable=AsyncMock
+            ),
+            patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
+            patch.object(lc, "startup", new_callable=AsyncMock),
+        ):
+            with caplog.at_level("WARNING"):
+                await lc.restart_runtime()
+        assert any("still in flight" in r.message for r in caplog.records)
+        assert app_state.state.container_registry.draining is False
+
+    async def test_restart_failure_clears_draining(self, app_state):
+        """A mid-restart exception must not leave the node refusing new
+        starts (the in-memory flag has no DB persistence to clear)."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._restart_lock = None
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                lc,
+                "_reload_settings",
+                return_value=(
+                    make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
+                    None,
+                ),
+            ),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("podman exploded"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="podman exploded"):
+                await lc.restart_runtime()
+        assert registry.draining is False
+
+    async def test_restart_denied_leaves_drain_untouched(self, app_state):
+        """The deny path never broadcasts, never sets the drain flag."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._restart_lock = None
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                lc, "_reload_settings", return_value=(None, "bad config")
+            ),
+            patch.object(
+                app_state.state.sockets, "notify_host_restart"
+            ) as mock_notify,
+        ):
+            await lc.restart_runtime()
+        mock_notify.assert_not_called()
+        assert registry.draining is False
 
     def test_reload_settings_returns_new_when_valid(self, app_state):
         app_state = _make_app_state()
