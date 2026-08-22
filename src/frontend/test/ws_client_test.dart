@@ -123,28 +123,30 @@ void main() {
       client.dispose();
     });
 
-    test('does not reconnect on every auth rebuild when already logged in',
-        () async {
-      SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
-      final channel = _FakeWebSocketChannel();
-      WsClient.testChannelFactory = (_) => channel;
+    test(
+      'does not reconnect on every auth rebuild when already logged in',
+      () async {
+        SharedPreferences.setMockInitialValues({'klangk_jwt': 'test-token'});
+        final channel = _FakeWebSocketChannel();
+        WsClient.testChannelFactory = (_) => channel;
 
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
+        final auth = AuthService();
+        await Future.delayed(Duration.zero);
 
-      final client = WsClient();
-      client.updateAuth(auth); // logged-out -> logged-in: connects
-      await Future.delayed(Duration.zero);
-      expect(client.connected, isTrue);
+        final client = WsClient();
+        client.updateAuth(auth); // logged-out -> logged-in: connects
+        await Future.delayed(Duration.zero);
+        expect(client.connected, isTrue);
 
-      // A second updateAuth with the same logged-in state must not drop /
-      // re-open the connection.
-      client.updateAuth(auth);
-      await Future.delayed(Duration.zero);
-      expect(client.connected, isTrue);
-      WsClient.testChannelFactory = null;
-      client.dispose();
-    });
+        // A second updateAuth with the same logged-in state must not drop /
+        // re-open the connection.
+        client.updateAuth(auth);
+        await Future.delayed(Duration.zero);
+        expect(client.connected, isTrue);
+        WsClient.testChannelFactory = null;
+        client.dispose();
+      },
+    );
   });
 
   group('WsClient.workspacesChanged', () {
@@ -503,46 +505,49 @@ void main() {
       WsClient.testBackoffOverride = null;
     });
 
-    test('server close triggers auto-reconnect when workspace was connected',
-        () async {
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
+    test(
+      'server close triggers auto-reconnect when workspace was connected',
+      () async {
+        final auth = AuthService();
+        await Future.delayed(Duration.zero);
 
-      final client = WsClient();
-      client.updateAuth(auth);
-      await client.connect();
-      expect(client.connected, isTrue);
+        final client = WsClient();
+        client.updateAuth(auth);
+        await client.connect();
+        expect(client.connected, isTrue);
 
-      // Simulate workspace connection
-      client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
-      await Future.delayed(Duration.zero);
-      expect(client.currentWorkspaceId, 'ws-1');
+        // Simulate workspace connection
+        client.connectWorkspace('ws-1');
+        channels[0].serverSend({
+          'type': 'container_ready',
+          'workspaceId': 'ws-1',
+        });
+        await Future.delayed(Duration.zero);
+        expect(client.currentWorkspaceId, 'ws-1');
 
-      // Server closes connection
-      channels[0].serverClose();
-      await Future.delayed(Duration.zero);
-      expect(client.connected, isFalse);
-      expect(client.reconnecting, isTrue);
-      expect(client.reconnectAttempt, 1);
+        // Server closes connection
+        channels[0].serverClose();
+        await Future.delayed(Duration.zero);
+        expect(client.connected, isFalse);
+        expect(client.reconnecting, isTrue);
+        expect(client.reconnectAttempt, 1);
 
-      // Let the reconnect timer fire (Duration.zero)
-      await Future.delayed(Duration.zero);
-      await Future.delayed(Duration.zero);
-      expect(channels.length, 2);
-      expect(client.connected, isTrue);
+        // Let the reconnect timer fire (Duration.zero)
+        await Future.delayed(Duration.zero);
+        await Future.delayed(Duration.zero);
+        expect(channels.length, 2);
+        expect(client.connected, isTrue);
 
-      // workspace_connect should have been re-sent
-      final msgs = channels[1]
-          .sentMessages
-          .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
-          .toList();
-      expect(msgs.any((m) => m['cmd'] == 'workspace_connect'), isTrue);
+        // workspace_connect should have been re-sent
+        final msgs = channels[1].sentMessages
+            .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
+            .toList();
+        expect(msgs.any((m) => m['cmd'] == 'workspace_connect'), isTrue);
 
-      client.disconnect();
-      client.dispose();
-    });
+        client.disconnect();
+        client.dispose();
+      },
+    );
 
     test('server error triggers auto-reconnect', () async {
       final auth = AuthService();
@@ -552,8 +557,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       // Consume error stream to prevent unhandled errors
@@ -578,8 +585,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       final errors = <String>[];
@@ -606,8 +615,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       // Disconnect
@@ -621,8 +632,10 @@ void main() {
       expect(channels.length, 2);
 
       // Backend responds with container_ready
-      channels[1]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[1].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       expect(client.reconnecting, isFalse);
@@ -642,8 +655,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       client.disconnect();
@@ -664,8 +679,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       client.disconnectWorkspace();
@@ -686,8 +703,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       // First disconnect
@@ -727,8 +746,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       // First disconnect triggers reconnect cycle
@@ -763,8 +784,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       // Simulate both onDone and onError firing (race condition)
@@ -778,79 +801,89 @@ void main() {
       client.dispose();
     });
 
-    test('auto-reconnects after server close even without a workspace',
-        () async {
-      // After hoisting the WS to login, _autoReconnect is true on login, so
-      // the connection reopens after a server close even when no workspace
-      // was joined (so the list page keeps receiving workspaces_changed).
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
-
-      final client = WsClient();
-      client.updateAuth(auth);
-      await client.connect();
-      // Don't call connectWorkspace — _autoReconnect is already true from
-      // the login transition.
-
-      channels[0].serverClose();
-
-      // Backoff is Duration.zero; pump the event loop until the reconnect
-      // completes (opens a fresh channel).
-      for (var i = 0; i < 10 && channels.length < 2; i++) {
+    test(
+      'auto-reconnects after server close even without a workspace',
+      () async {
+        // After hoisting the WS to login, _autoReconnect is true on login, so
+        // the connection reopens after a server close even when no workspace
+        // was joined (so the list page keeps receiving workspaces_changed).
+        final auth = AuthService();
         await Future.delayed(Duration.zero);
-      }
-      expect(channels.length, 2); // a fresh channel was opened
-      expect(client.connected, isTrue);
 
-      client.disconnect();
-      client.dispose();
-    });
+        final client = WsClient();
+        client.updateAuth(auth);
+        await client.connect();
+        // Don't call connectWorkspace — _autoReconnect is already true from
+        // the login transition.
 
-    test('reconnect after no-workspace success keeps reconnecting on next drop',
-        () async {
-      // Regression: a successful reconnect with no pending workspace used
-      // to leave _reconnecting = true, so the *next* drop never reconnected.
-      final auth = AuthService();
-      await Future.delayed(Duration.zero);
+        channels[0].serverClose();
 
-      final client = WsClient();
-      client.updateAuth(auth);
-      await client.connect();
-      // No workspace joined — _pendingWorkspaceId stays null.
+        // Backoff is Duration.zero; pump the event loop until the reconnect
+        // completes (opens a fresh channel).
+        for (var i = 0; i < 10 && channels.length < 2; i++) {
+          await Future.delayed(Duration.zero);
+        }
+        expect(channels.length, 2); // a fresh channel was opened
+        expect(client.connected, isTrue);
 
-      // First drop + successful reconnect.
-      channels[0].serverClose();
-      for (var i = 0; i < 10 && channels.length < 2; i++) {
+        client.disconnect();
+        client.dispose();
+      },
+    );
+
+    test(
+      'reconnect after no-workspace success keeps reconnecting on next drop',
+      () async {
+        // Regression: a successful reconnect with no pending workspace used
+        // to leave _reconnecting = true, so the *next* drop never reconnected.
+        final auth = AuthService();
         await Future.delayed(Duration.zero);
-      }
-      expect(channels.length, 2);
-      expect(client.connected, isTrue);
-      // The bug: _reconnecting was left true here.
-      expect(client.reconnecting, isFalse,
-          reason: 'successful reconnect with no workspace must clear '
-              '_reconnecting');
 
-      // Second drop must schedule a fresh reconnect.
-      channels[1].serverClose();
-      await Future.delayed(Duration.zero);
-      expect(client.reconnecting, isTrue,
-          reason: 'client must reconnect again after a second drop');
-      expect(client.reconnectAttempt, greaterThanOrEqualTo(1));
+        final client = WsClient();
+        client.updateAuth(auth);
+        await client.connect();
+        // No workspace joined — _pendingWorkspaceId stays null.
 
-      // ...and it actually reconnects.
-      for (var i = 0; i < 10 && channels.length < 3; i++) {
+        // First drop + successful reconnect.
+        channels[0].serverClose();
+        for (var i = 0; i < 10 && channels.length < 2; i++) {
+          await Future.delayed(Duration.zero);
+        }
+        expect(channels.length, 2);
+        expect(client.connected, isTrue);
+        // The bug: _reconnecting was left true here.
+        expect(
+          client.reconnecting,
+          isFalse,
+          reason:
+              'successful reconnect with no workspace must clear '
+              '_reconnecting',
+        );
+
+        // Second drop must schedule a fresh reconnect.
+        channels[1].serverClose();
         await Future.delayed(Duration.zero);
-      }
-      expect(channels.length, 3);
-      expect(client.connected, isTrue);
-      expect(client.reconnecting, isFalse);
+        expect(
+          client.reconnecting,
+          isTrue,
+          reason: 'client must reconnect again after a second drop',
+        );
+        expect(client.reconnectAttempt, greaterThanOrEqualTo(1));
 
-      client.disconnect();
-      client.dispose();
-    });
+        // ...and it actually reconnects.
+        for (var i = 0; i < 10 && channels.length < 3; i++) {
+          await Future.delayed(Duration.zero);
+        }
+        expect(channels.length, 3);
+        expect(client.connected, isTrue);
+        expect(client.reconnecting, isFalse);
 
-    test('drop during reconnect connectWorkspace allows re-reconnect',
-        () async {
+        client.disconnect();
+        client.dispose();
+      },
+    );
+
+    test('drop during reconnect connectWorkspace allows re-reconnect', () async {
       // Regression: if the WebSocket dropped during the connectWorkspace phase
       // of _attemptReconnect, _reconnecting stayed true and _scheduleReconnect
       // short-circuited permanently.
@@ -863,8 +896,10 @@ void main() {
 
       // Join a workspace so _pendingWorkspaceId is set on drop.
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       // First drop — triggers reconnect.
@@ -882,14 +917,20 @@ void main() {
 
       // The bug: _reconnecting was still true, so _scheduleReconnect
       // returned immediately and no further reconnect happened.
-      expect(client.reconnecting, isTrue,
-          reason: 'must schedule reconnect after drop during connectWorkspace');
+      expect(
+        client.reconnecting,
+        isTrue,
+        reason: 'must schedule reconnect after drop during connectWorkspace',
+      );
 
       for (var i = 0; i < 10 && channels.length < 3; i++) {
         await Future.delayed(Duration.zero);
       }
-      expect(channels.length, 3,
-          reason: 'a third connection attempt must be made');
+      expect(
+        channels.length,
+        3,
+        reason: 'a third connection attempt must be made',
+      );
       expect(client.connected, isTrue);
 
       client.disconnect();
@@ -907,8 +948,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       // Server closes
@@ -935,8 +978,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       channels[0].serverClose();
@@ -963,8 +1008,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       channels[0].serverClose();
@@ -984,8 +1031,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       final errors = <String>[];
@@ -1012,8 +1061,10 @@ void main() {
       client.updateAuth(auth);
       await client.connect();
       client.connectWorkspace('ws-1');
-      channels[0]
-          .serverSend({'type': 'container_ready', 'workspaceId': 'ws-1'});
+      channels[0].serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
       await Future.delayed(Duration.zero);
 
       final errors = <String>[];
@@ -1054,6 +1105,37 @@ void main() {
       expect(client.connected, isTrue);
     });
 
+    test('host lifecycle notices set/clear hostNotice (#2527)', () async {
+      // host_shutdown -> notice; host_restart phases -> notice;
+      // host_started -> cleared. Reconnect state is untouched.
+      channel.serverSend({'type': 'host_shutdown'});
+      await Future.delayed(Duration.zero);
+      expect(client.hostNotice, 'Server shutting down');
+      expect(client.reconnecting, isFalse); // no reconnect impedance
+
+      channel.serverSend({'type': 'host_restart', 'phase': 'draining'});
+      await Future.delayed(Duration.zero);
+      expect(client.hostNotice, 'Server preparing to restart…');
+
+      channel.serverSend({'type': 'host_restart', 'phase': 'restarting'});
+      await Future.delayed(Duration.zero);
+      expect(client.hostNotice, 'Server restarting…');
+
+      channel.serverSend({'type': 'host_started'});
+      await Future.delayed(Duration.zero);
+      expect(client.hostNotice, isNull);
+      expect(client.reconnecting, isFalse);
+    });
+
+    test('host notices stream on hostNotices (#2527)', () async {
+      final notices = <String>[];
+      final sub = client.hostNotices.listen(notices.add);
+      channel.serverSend({'type': 'host_shutdown'});
+      await Future.delayed(Duration.zero);
+      expect(notices, ['Server shutting down']);
+      await sub.cancel();
+    });
+
     test('send methods produce correct JSON', () {
       client.sendRestartContainer();
       client.sendTerminalStart(cols: 100, rows: 30);
@@ -1085,8 +1167,11 @@ void main() {
       expect(msgs[4], {'cmd': 'terminal_new_window', 'name': 'build'});
       expect(msgs[5], {'cmd': 'terminal_select_window', 'window_id': '@2'});
       expect(msgs[6], {'cmd': 'terminal_close_window', 'index': 1});
-      expect(msgs[7],
-          {'cmd': 'terminal_rename_window', 'index': 0, 'name': 'main'});
+      expect(msgs[7], {
+        'cmd': 'terminal_rename_window',
+        'index': 0,
+        'name': 'main',
+      });
       expect(msgs[8], {'cmd': 'terminal_list_windows'});
       expect(msgs[9], {'cmd': 'share_window', 'window_id': '@0'});
       expect(msgs[10], {'cmd': 'unshare_window', 'window_id': '@0'});
@@ -1138,8 +1223,11 @@ void main() {
       await Future.delayed(Duration.zero);
       // List.from produces a growable List, not a CastList lazy wrapper
       expect(client.terminalWindows, isA<List<Map<String, dynamic>>>());
-      client.terminalWindows
-          .add({'index': 1, 'name': 'added', 'active': false});
+      client.terminalWindows.add({
+        'index': 1,
+        'name': 'added',
+        'active': false,
+      });
       expect(client.terminalWindows.length, 2);
     });
 
@@ -1149,7 +1237,7 @@ void main() {
         'terminals': [
           {
             'name': 'dev',
-            'sessions': ['alice']
+            'sessions': ['alice'],
           },
         ],
       });
@@ -1164,7 +1252,7 @@ void main() {
         'terminals': [
           {
             'name': 'dev',
-            'sessions': ['alice']
+            'sessions': ['alice'],
           },
         ],
       });
@@ -1216,10 +1304,7 @@ void main() {
     });
 
     test('container_ready starts heartbeat timer', () async {
-      channel.serverSend({
-        'type': 'container_ready',
-        'workspaceId': 'ws-hb',
-      });
+      channel.serverSend({'type': 'container_ready', 'workspaceId': 'ws-hb'});
       await Future.delayed(Duration.zero);
 
       // sendHeartbeat should work without error
@@ -1229,10 +1314,7 @@ void main() {
     });
 
     test('disconnect stops heartbeat timer', () async {
-      channel.serverSend({
-        'type': 'container_ready',
-        'workspaceId': 'ws-hb2',
-      });
+      channel.serverSend({'type': 'container_ready', 'workspaceId': 'ws-hb2'});
       await Future.delayed(Duration.zero);
 
       final msgCountBefore = channel.sentMessages.length;
@@ -1246,10 +1328,7 @@ void main() {
     });
 
     test('disconnectWorkspace stops heartbeat timer', () async {
-      channel.serverSend({
-        'type': 'container_ready',
-        'workspaceId': 'ws-hb3',
-      });
+      channel.serverSend({'type': 'container_ready', 'workspaceId': 'ws-hb3'});
       await Future.delayed(Duration.zero);
 
       client.disconnectWorkspace();
@@ -1324,13 +1403,13 @@ void main() {
       channel.serverSend({
         'type': 'presence_list',
         'users': [
-          {'user_id': 'u1', 'email': 'a@test.com'}
+          {'user_id': 'u1', 'email': 'a@test.com'},
         ],
       });
       channel.serverSend({
         'type': 'terminal_windows',
         'windows': [
-          {'index': 0, 'name': 'bash', 'active': true}
+          {'index': 0, 'name': 'bash', 'active': true},
         ],
       });
       channel.serverSend({
@@ -1338,8 +1417,8 @@ void main() {
         'terminals': [
           {
             'name': 'dev',
-            'sessions': ['alice']
-          }
+            'sessions': ['alice'],
+          },
         ],
       });
       await Future.delayed(Duration.zero);
@@ -1361,13 +1440,13 @@ void main() {
       channel.serverSend({
         'type': 'presence_list',
         'users': [
-          {'user_id': 'u1', 'email': 'a@test.com'}
+          {'user_id': 'u1', 'email': 'a@test.com'},
         ],
       });
       channel.serverSend({
         'type': 'terminal_windows',
         'windows': [
-          {'index': 0, 'name': 'bash', 'active': true}
+          {'index': 0, 'name': 'bash', 'active': true},
         ],
       });
       channel.serverSend({
@@ -1375,8 +1454,8 @@ void main() {
         'terminals': [
           {
             'name': 'dev',
-            'sessions': ['alice']
-          }
+            'sessions': ['alice'],
+          },
         ],
       });
       await Future.delayed(Duration.zero);
@@ -1475,8 +1554,11 @@ void main() {
         ],
       });
       await Future.delayed(Duration.zero);
-      expect(client.chatHistory.length, 2,
-          reason: 'chat_history must clear before appending');
+      expect(
+        client.chatHistory.length,
+        2,
+        reason: 'chat_history must clear before appending',
+      );
       expect(client.chatHistory[0]['id'], 'msg-1');
       expect(client.chatHistory[1]['id'], 'msg-2');
     });
@@ -1595,10 +1677,7 @@ void main() {
       });
       await Future.delayed(Duration.zero);
 
-      channel.serverSend({
-        'type': 'presence_leave',
-        'user_id': 'u1',
-      });
+      channel.serverSend({'type': 'presence_leave', 'user_id': 'u1'});
       await Future.delayed(Duration.zero);
 
       expect(client.presenceUsers.length, 1);
@@ -1626,7 +1705,7 @@ void main() {
           {
             'user_id': 'u1',
             'user_email': 'alice@test.com',
-            'user_handle': 'alice'
+            'user_handle': 'alice',
           },
         ],
       });
@@ -1647,7 +1726,7 @@ void main() {
           {
             'user_id': 'u1',
             'user_email': 'alice@test.com',
-            'user_handle': 'alice'
+            'user_handle': 'alice',
           },
         ],
       });
@@ -1680,7 +1759,7 @@ void main() {
           {
             'user_id': 'u1',
             'user_email': 'alice@test.com',
-            'user_handle': 'alice'
+            'user_handle': 'alice',
           },
         ],
       });
@@ -1698,10 +1777,7 @@ void main() {
       );
 
       // Agent subprocess dies -> presence_leave.
-      channel.serverSend({
-        'type': 'presence_leave',
-        'user_id': 'agent-uid',
-      });
+      channel.serverSend({'type': 'presence_leave', 'user_id': 'agent-uid'});
       await Future.delayed(Duration.zero);
       expect(
         client.mentionCandidates.any((m) => m['id'] == 'agent-uid'),

@@ -5,24 +5,44 @@ signals. Knowing which is which matters when you operate a deployment by
 hand — the difference between a _reload_ and a _full stop_ is whether
 running containers survive.
 
-## SIGINT / SIGTERM — stop the server
+## SIGINT / SIGTERM — graceful stop (#2527)
 
 The normal shutdown path (Ctrl-C, `systemctl stop`, container-runtime
-graceful exit). uvicorn handles these natively.
+graceful exit). Each phase is logged.
 
 What happens, in order:
 
-1. Accept no new requests.
-2. Close every WebSocket client.
-3. Tear down chat-agent subprocesses and cancel in-flight agent runs.
-4. **Stop and remove all workspace containers** (the idle-timeout cleanup
-   runs to completion).
-5. Dispose the database engine and remove the PID file.
+1. **Notify** — broadcast a `host_shutdown` WebSocket event to every
+   authenticated client, so the UI can render "server went away"
+   instead of silently reconnect-looping. (This runs at signal-receipt
+   time, before uvicorn closes the sockets — a lifespan-time broadcast
+   would reach nobody.)
+2. **Refuse new starts** — new workspace starts (API, WS, eager,
+   auto-start, crash-restart) return a clear 503/error frame for the
+   rest of the process's life; a start racing the shutdown is refused
+   rather than killed mid-create.
+3. **Drain** — stop every running workspace through the same graceful
+   path as SIGHUP's drain (concurrently per workspace, 5s podman stop
+   grace): clients get terminal stop frames and a `container_stopped`
+   event with reason `host shutdown`, not a bare socket drop. A SIGHUP
+   arriving after the signal is ignored (the runtime is being torn
+   down; a restart would race the exit).
+4. Accept no new requests, close every WebSocket client (uvicorn's own
+   exit sequence — a second Ctrl-C hard-exits through uvicorn, as
+   always).
+5. Tear down chat-agent subprocesses and cancel in-flight agent runs.
+6. Dispose the database engine and remove the PID file.
 
-Net effect: a _full_ stop. Workspaces go away; on the next start,
-`auto_start` brings back any that are configured for it. For a config
-reload with the same graceful stop/start treatment while keeping the
-listener up, use SIGHUP (below).
+Net effect: a _full_ stop with clean client-visible shutdown frames.
+Workspaces go away; on the next start, `auto_start` brings back any
+that are configured for it. For a config reload with the same drain
+treatment while keeping the listener up, use SIGHUP (below).
+
+A drain failure is logged and never blocks the exit — the process always
+terminates. Budget the drain inside your service manager's stop
+deadline (`TimeoutStopSec` under systemd; the drain is bounded by the
+per-workspace stop grace, but a host with many workspaces takes
+proportionally longer).
 
 ## SIGHUP — graceful restart (#1212, #1587, #2527)
 

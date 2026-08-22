@@ -92,6 +92,18 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Graceful stop on SIGTERM/SIGINT (#2527).** TERM/INT shutdown now
+  broadcasts a `host_shutdown` WebSocket event (so clients render
+  "server went away" instead of reconnect-looping), refuses new
+  workspace starts, and drains every running workspace through the
+  same graceful path as SIGHUP (terminal stop frames +
+  `container_stopped` with reason `host shutdown`) before uvicorn's
+  exit sequence runs. A drain failure is logged and never blocks the
+  exit; a SIGHUP arriving during shutdown is ignored. Clients surface
+  `host_shutdown` / `host_restart` / `host_started` as transient,
+  non-blocking notices (web UI snackbar, TUI status line + toast) —
+  auto-reconnect is never visually impeded. Docs:
+  [Signals](deployment/signals.md).
 - **Graceful SIGHUP restart + `KLANGKD_RESTART_INFLIGHT_TIMEOUT` (#2527).**
   SIGHUP is now a full graceful restart: new workspace starts are
   refused, in-flight HTTP requests get

@@ -11589,6 +11589,37 @@ class TestDrainingStartPaths:
         )
 
 
+class TestNotifyHostShutdown:
+    """host_shutdown broadcast for the TERM/INT graceful shutdown (#2527)."""
+
+    def _sockets_with(self, sockets, entries):
+        sockets.connections.clear()
+        for sock, conn in entries:
+            sockets.connections[sock] = conn
+        return sockets
+
+    def test_broadcast_reaches_authed_and_drops_dead(self):
+        sockets = _make_app_state().state.sockets
+        live = _mock_sock()
+        anon = _mock_sock()
+        dead = _mock_sock()
+        dead.send_json.side_effect = RuntimeError("closed")
+        self._sockets_with(
+            sockets,
+            [
+                (live, types.SimpleNamespace(user={"id": "u1"})),
+                (anon, types.SimpleNamespace(user={})),
+                (dead, types.SimpleNamespace(user={"id": "u2"})),
+            ],
+        )
+        sockets.notify_host_shutdown()
+        sent = [c[0][0] for c in live.send_json.call_args_list]
+        assert sent == [{"type": "host_shutdown"}]
+        anon.send_json.assert_not_called()
+        assert dead not in sockets.connections
+        sockets.connections.clear()
+
+
 class TestNotifyHostRestart:
     """host_restart / host_started broadcasts for the SIGHUP graceful
     restart (#2527)."""

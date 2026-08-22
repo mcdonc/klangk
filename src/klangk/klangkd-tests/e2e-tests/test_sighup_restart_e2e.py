@@ -392,6 +392,85 @@ async def test_sighup_during_workspace_restart(server, auth):
         pass
 
 
+async def test_sigterm_graceful_shutdown(server, auth):
+    """TERM/INT shutdown is graceful (#2527): the client receives a
+    ``host_shutdown`` event and a terminal stop for its workspace before
+    the process exits — not a bare socket drop.
+
+    Owns its server (it terminates it); the module-scoped `server`
+    fixture is untouched.
+    """
+    own = start_server(
+        KLANGKD_JWT_SECRET="term-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+        LOGFIRE_TOKEN="",
+    )
+    try:
+        client = own["client"]
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "test@example.com", "password": "testpass"},
+            timeout=10,
+        )
+        assert resp.status_code == 200
+        token = resp.json()["access_token"]
+
+        resp = client.post(
+            "/api/v1/workspaces",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"name": "term-shutdown"},
+            timeout=120,
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+
+        ws = await _ws_dial(own, f"/ws?token={token}", max_size=2**20)
+        try:
+            await ws.send(
+                json.dumps({"cmd": "workspace_connect", "workspaceId": ws_id})
+            )
+            # Wait for the container to be genuinely up.
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                msg = json.loads(raw)
+                if msg.get("type") == "container_ready":
+                    break
+
+            # SIGTERM — the graceful shutdown hook must fire before the
+            # process exits: host_shutdown broadcast first.
+            os.kill(own["proc"].pid, subprocess.signal.SIGTERM)
+
+            saw_host_shutdown = False
+            stopped_or_closed = False
+            try:
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                    msg = json.loads(raw)
+                    if msg.get("type") == "host_shutdown":
+                        saw_host_shutdown = True
+                    ev = msg.get("event") or {}
+                    if ev.get(
+                        "name"
+                    ) == "container_stopped" and "shutdown" in (
+                        ev.get("value") or {}
+                    ).get("reason", ""):
+                        stopped_or_closed = True
+            except websockets.ConnectionClosed:
+                stopped_or_closed = True  # the process exited
+            assert saw_host_shutdown, "host_shutdown event not received"
+            assert stopped_or_closed
+        finally:
+            await ws.close()
+        # The process exits on its own after the drain.
+        own["proc"].wait(timeout=60)
+    finally:
+        stop_server(own)
+
+
 # --- Config reload via SIGHUP (#1587) ---
 
 

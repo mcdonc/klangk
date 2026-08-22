@@ -1240,6 +1240,35 @@ async def test_main_screen_status_event_updates_live_extra(monkeypatch):
         )
 
 
+async def test_main_screen_host_events_update_live_extra(monkeypatch):
+    """#2527: host lifecycle notices render as a status line (and a
+    toast), without touching reconnect state."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        screen = app.screen
+        screen._on_status_event({"type": "host_shutdown"})
+        await pilot.pause()
+        assert app.live_extra == "server: shutting down"
+        screen._on_status_event({"type": "host_restart", "phase": "draining"})
+        await pilot.pause()
+        assert app.live_extra == "server: preparing to restart"
+        screen._on_status_event(
+            {"type": "host_restart", "phase": "restarting"}
+        )
+        await pilot.pause()
+        assert app.live_extra == "server: restarting"
+        screen._on_status_event({"type": "host_started"})
+        await pilot.pause()
+        assert app.live_extra == "server: back up"
+        # Reconnect state untouched by the notices.
+        assert screen._reconnect_attempt == 0
+
+
 async def test_refresh_status_no_widget(monkeypatch):
     """_refresh_status is a no-op when #status is not mounted yet."""
 

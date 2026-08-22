@@ -937,6 +937,28 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
+    def notify_host_shutdown(self) -> None:
+        """Broadcast host-shutdown to all connections (#2527).
+
+        Sent by the TERM/INT graceful-shutdown hook (launcher.py) before
+        uvicorn closes the WebSockets, so clients can show "server went
+        away" instead of a bare reconnect loop. The SIGHUP graceful
+        restart does NOT send this — it sends
+        :meth:`notify_host_restart` / :meth:`notify_host_started`
+        instead, because its runtime comes back.
+        """
+        message: dict = {"type": "host_shutdown"}
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append((sock, conn))
+        for sock, _ in dead:
+            self.connections.pop(sock, None)
+
     def notify_host_restart(self, phase: str) -> None:
         """Broadcast a host-restart progress event to all connections (#2527).
 

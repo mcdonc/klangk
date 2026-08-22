@@ -107,6 +107,11 @@ class Lifecycle:
         # skip the backstop and leave the node refusing every start with
         # nothing in the logs. The done-callback discards from this set.
         self._restart_tasks: set[asyncio.Task] = set()
+        # #2527: one-shot guard for the TERM/INT graceful shutdown (set by
+        # the signal hook in launcher.py before graceful_shutdown runs) and
+        # strong references to the hook task while it drains.
+        self.shutting_down: bool = False
+        self._shutdown_tasks: set[asyncio.Task] = set()
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -703,6 +708,54 @@ class Lifecycle:
                 "; ".join(changed),
             )
 
+    async def graceful_shutdown(self, *, signal_num: int) -> None:
+        """Graceful pre-exit work for TERM/INT (#2527): broadcast, refuse,
+        drain, then hand off to uvicorn's own exit.
+
+        Runs at signal-receipt time (uvicorn closes every WebSocket before
+        the lifespan teardown, so waiting for teardown would mean the
+        ``host_shutdown`` broadcast reaches nobody). Steps, each logged:
+
+        1. Broadcast ``host_shutdown`` so clients render "server went
+           away" instead of silently reconnect-looping.
+        2. Refuse new container starts (the in-memory drain flag — same
+           gate as the SIGHUP restart; a start racing the shutdown gets
+           a 503 instead of being killed by the process exit).
+        3. Gracefully drain every running workspace — clients get
+           terminal stop frames + ``container_stopped`` with reason
+           ``host shutdown``, then uvicorn's 1012/exit drop lands on
+           already-stopped sessions. Also denies a concurrent SIGHUP
+           restart (``shutting_down`` is checked in ``on_sighup``).
+        4. Call the uvicorn exit callback handed to the hook — uvicorn's
+           listener stop / connection drain / lifespan teardown (which
+           runs ``runtime_shutdown`` + ``process_shutdown``) takes over.
+
+        Time-bounded by the deploy's service manager: the hook's own
+        budget is the drain's per-workspace 5s podman grace (bounded by
+        the 15s ``restart_inflight_timeout``-style budgets upstream); a
+        second TERM/INT during the hook bypasses it straight to uvicorn.
+        """
+        import signal as signal_mod
+
+        state = self.app.state
+        registry = state.container_registry
+        name = signal_mod.Signals(signal_num).name
+        logger.info("%s: graceful shutdown beginning (phase: notify)", name)
+        state.sockets.notify_host_shutdown()
+        logger.info("%s: phase: draining (refusing new starts)", name)
+        registry.draining = True
+        try:
+            logger.info("%s: phase: drain (stopping workspaces)", name)
+            stopped = await registry.drain_all_containers(
+                reason="host shutdown"
+            )
+            logger.info("%s: drained %d workspace(s)", name, stopped)
+        except Exception as exc:  # noqa: BLE001 — never block the exit
+            logger.warning(
+                "%s: drain failed (proceeding with exit): %s", name, exc
+            )
+        logger.info("%s: handing off to server exit", name)
+
     def on_sighup(self) -> None:
         """Schedule a runtime restart on the running event loop.
 
@@ -711,7 +764,15 @@ class Lifecycle:
         kept in ``_restart_tasks`` (a strong reference, so the GC can
         never reap it mid-restart) and its done-callback performs
         failure recovery (#2527 review).
+
+        #2527: a HUP arriving after TERM/INT began the graceful shutdown
+        is ignored — recycling a runtime that is being torn down would
+        race the process exit (restart after drain, startup under a
+        closing listener).
         """
+        if self.shutting_down:
+            logger.info("SIGHUP ignored: shutdown in progress")
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # pragma: no cover - no loop during shutdown
