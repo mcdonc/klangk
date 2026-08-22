@@ -395,6 +395,19 @@ class ContainerRegistry(NetworkSidecarMixin):
             self._workspace_locks[workspace_id] = asyncio.Lock()
         return self._workspace_locks[workspace_id]
 
+    def workspace_operation_in_flight(self, workspace_id: str) -> bool:
+        """True while a start/stop holds this workspace's lock (#2527).
+
+        The signal the memory-pressure evictor uses to skip a workspace
+        whose container is mid-(re)create: the container is tracked from
+        ``podman create`` but its WS subscriber only registers after
+        ``container_ready``, so without this a connecting workspace is
+        briefly eviction-eligible and its fresh container is stopped
+        under the connecting client.
+        """
+        lock = self._workspace_locks.get(workspace_id)
+        return lock is not None and lock.locked()
+
     # --- State tracking ---
 
     def track_activity(
