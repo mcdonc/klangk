@@ -480,9 +480,9 @@ class Lifecycle:
            config.
         2. **draining** — broadcast ``host_restart {phase: "draining"}``
            and set the registry's in-memory drain flag so every
-           container-start path refuses new starts (the same choke point
-           as cordon, but never persisted — a crashed restart must not
-           leave the node refusing starts).
+           container-start path refuses new starts (the single start
+           choke point; the flag is never persisted, so a crashed
+           restart cannot leave the node refusing starts).
         3. **quiesce** — wait up to ``restart_inflight_timeout`` seconds
            (default 15) for in-flight HTTP requests to finish; stragglers
            at expiry are logged and left to finish against the recycling

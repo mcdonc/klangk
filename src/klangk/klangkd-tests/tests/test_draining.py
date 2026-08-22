@@ -1,15 +1,16 @@
-"""Cordon/drain operator controls (#2527) — model + registry level.
+"""Start-refusal during the SIGHUP graceful-restart drain (#2527) —
+registry level.
 
-Cordon: a persisted flag (``server_state`` table) that makes the
-container-start choke point refuse new starts everywhere — API start /
-restart, WS connect/restart, create's eager start, boot auto-start, and
-crash-recovery restart. Existing workspaces keep running.
+Draining: the in-memory flag that makes the container-start choke point
+refuse new starts everywhere — API start/restart, WS connect/restart,
+create's eager start, boot auto-start, and crash-recovery restart —
+while a graceful restart is in progress. Existing workspaces keep
+running until the restart's own drain stops them.
 
-Drain: stop every running workspace via the graceful logout/idle path,
-with terminal frames and a container_stopped reason broadcast.
-
-HTTP-surface tests (routes, auth, 503 mapping) live in test_api.py's
-TestCordonDrainApi.
+The drain itself (`drain_all_containers`) is also here: concurrent
+graceful stops with terminal frames, a container_stopped reason
+broadcast, an instance-label sweep for starts that raced the gate, and
+an honest stop count.
 """
 
 import asyncio
@@ -18,55 +19,19 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from klangk.exceptions import NodeCordonedError
+from klangk.exceptions import NodeDrainingError
 
 
-class TestServerStateModel:
-    async def test_flag_roundtrip_and_default(self, app_state, db):
-        """Default uncordoned; set/clear round-trips through the DB."""
-        m = app_state.state.model.server_state
-        assert await m.is_cordoned() is False
-        await m.set_cordoned(True)
-        assert await m.is_cordoned() is True
-        await m.set_cordoned(False)
-        assert await m.is_cordoned() is False
-
-    async def test_generic_kv_roundtrip(self, app_state, db):
-        """The table is a generic KV store; upsert replaces."""
-        m = app_state.state.model.server_state
-        await m.set("k", "v1")
-        await m.set("k", "v2")
-        assert await m.get("k") == "v2"
-        assert await m.get("missing") is None
-        assert await m.get("missing", "d") == "d"
-
-
-class TestCordonGate:
+class TestDrainingGate:
     async def test_registry_choke_point_raises(self, app_state, db):
-        """The single start choke point raises NodeCordonedError — the
+        """The single start choke point raises NodeDrainingError — the
         error every start path (WS, auto-start, crash restart) funnels
         through."""
         from klangk.container import ContainerStartSpec
 
         registry = app_state.state.container_registry
-        await app_state.state.model.server_state.set_cordoned(True)
-        with pytest.raises(NodeCordonedError):
-            await registry.start_container(
-                ContainerStartSpec(
-                    workspace_id="ws-x",
-                    host_path="/tmp/x",
-                    home_path="/tmp/x/home",
-                )
-            )
-
-    async def test_gate_blocked_by_draining_flag(self, app_state, db):
-        """The in-memory SIGHUP drain flag refuses starts through the same
-        choke point — without any DB cordon set."""
-        from klangk.container import ContainerStartSpec
-
-        registry = app_state.state.container_registry
         registry.draining = True
-        with pytest.raises(NodeCordonedError, match="draining"):
+        with pytest.raises(NodeDrainingError, match="draining"):
             await registry.start_container(
                 ContainerStartSpec(
                     workspace_id="ws-x",
@@ -75,13 +40,14 @@ class TestCordonGate:
                 )
             )
 
-    async def test_gate_opens_after_uncordon(self, app_state, db):
-        """After uncordon the same start proceeds past the gate (it may
-        still fail later on podman — that is not the gate's business)."""
+    async def test_gate_opens_when_flag_clears(self, app_state, db):
+        """With the flag clear the same start proceeds past the gate (it
+        may still fail later on podman — that is not the gate's
+        business)."""
         from klangk.container import ContainerStartSpec
 
         registry = app_state.state.container_registry
-        await app_state.state.model.server_state.set_cordoned(False)
+        registry.draining = False
         try:
             await registry.start_container(
                 ContainerStartSpec(
@@ -90,48 +56,26 @@ class TestCordonGate:
                     home_path="/tmp/x/home",
                 )
             )
-        except NodeCordonedError:  # pragma: no cover — gate must be open
-            pytest.fail("gate still closed after uncordon")
+        except NodeDrainingError:  # pragma: no cover — gate must be open
+            pytest.fail("gate still closed with draining flag clear")
         except Exception:
             pass  # later failure (podman etc.) is fine — gate let it pass
 
     async def test_existing_workspace_untouched(self, app_state, db):
-        """Cordon does not stop running workspaces: state present in the
-        registry survives cordon (drain is the stopping half)."""
+        """Cordoning state is not torn down: a tracked workspace's state
+        survives the drain flag (the drain is the stopping half)."""
         from klangk.container.state import ContainerState
 
         registry = app_state.state.container_registry
         state = ContainerState("ws-live", "cid-live", app_state)
         registry.states["ws-live"] = state
-        await app_state.state.model.server_state.set_cordoned(True)
+        registry.draining = True
         assert registry.states.get("ws-live") is state
 
 
 class TestAutostartSuppressed:
-    async def test_boot_autostart_skipped_when_cordoned(self, app_state, db):
-        """auto_start_workspaces returns 0 and starts nothing while
-        cordoned, even with allow_autostart on."""
-        settings = app_state.state.settings
-        with (
-            patch.object(settings, "allow_autostart", "1"),
-            patch.object(
-                app_state.state.model.workspaces,
-                "list_auto_start_workspaces",
-                AsyncMock(return_value=[{"id": "ws-a", "name": "a"}]),
-            ),
-            patch.object(
-                app_state.state.workspaces,
-                "start_workspace",
-                AsyncMock(side_effect=AssertionError("must not start")),
-            ),
-        ):
-            await app_state.state.model.server_state.set_cordoned(True)
-            n = await app_state.state.workspaces.auto_start_workspaces()
-            assert n == 0
-
     async def test_boot_autostart_skipped_when_draining(self, app_state, db):
-        """The in-memory SIGHUP drain flag alone suppresses boot
-        auto-start (same shared check as cordon)."""
+        """The in-memory drain flag alone suppresses boot auto-start."""
         settings = app_state.state.settings
         with (
             patch.object(settings, "allow_autostart", "1"),
@@ -150,7 +94,7 @@ class TestAutostartSuppressed:
             n = await app_state.state.workspaces.auto_start_workspaces()
             assert n == 0
 
-    async def test_boot_autostart_runs_when_uncordoned(self, app_state, db):
+    async def test_boot_autostart_runs_when_not_draining(self, app_state, db):
         settings = app_state.state.settings
         with (
             patch.object(settings, "allow_autostart", "1"),
@@ -170,53 +114,10 @@ class TestAutostartSuppressed:
 
 
 class TestCrashRestartSuppressed:
-    async def test_restart_loop_abandons_when_cordoned(self, app_state, db):
-        """A pending crash-restart does not fire while cordoned — a
-        drain's stopped state must stick (#2527). Restart must be
-        ENABLED so the cordon check (not the enabled check) is what
-        stops the attempt."""
-        from klangk.container.crash import RestartTracker
-
-        monitor = app_state.state.container_registry.crash
-        tracker = RestartTracker()
-        started = []
-
-        async def fake_start(ws):
-            started.append(ws["id"])
-            return "new-cid", "created"
-
-        async def fake_ws(ws_id):
-            return {"id": ws_id, "name": "ws", "settings": {}}
-
-        with (
-            patch.object(
-                app_state.state.settings, "container_restart_enabled", True
-            ),
-            patch.object(
-                app_state.state.model.server_state,
-                "is_cordoned",
-                AsyncMock(return_value=True),
-            ),
-            patch.object(
-                app_state.state.model.workspaces,
-                "get_workspace_by_id",
-                AsyncMock(side_effect=fake_ws),
-            ),
-            patch.object(
-                app_state.state.workspaces,
-                "start_workspace",
-                fake_start,
-            ),
-        ):
-            monitor.trackers["ws-c"] = tracker
-            await monitor.delayed_restart("ws-c", tracker)
-        assert started == []
-        assert tracker.next_attempt_at is None
-
     async def test_restart_loop_abandons_when_draining(self, app_state, db):
-        """A pending crash-restart also abandons on the in-memory SIGHUP
-        drain flag (no DB cordon set) — a mid-restart container death
-        must not re-start under the recycling runtime."""
+        """A pending crash-restart abandons on the drain flag — a
+        mid-restart container death must not re-start under the
+        recycling runtime."""
         from klangk.container.crash import RestartTracker
 
         monitor = app_state.state.container_registry.crash
@@ -369,7 +270,7 @@ class TestDrain:
     ):
         """The instance-label sweep catches a container whose start
         passed the gate just before it closed (not yet in the states
-        snapshot) — both drain paths stop it (#2527 review)."""
+        snapshot) — the drain stops it (#2527 review)."""
         from klangk.wshandler.session import WebSocketState
 
         registry = app_state.state.container_registry
@@ -473,7 +374,9 @@ class TestDrain:
         assert broadcast, "expected a container_stopped broadcast"
         event = broadcast[0]["event"]
         assert event["name"] == "container_stopped"
-        assert "drain" in event["value"]["reason"]
+        assert "drain" in event["value"]["reason"] or (
+            "restart" in event["value"]["reason"]
+        )
 
     async def test_drain_skips_broadcast_without_session(self, app_state):
         """No connected clients (get_session -> None) — drain still
@@ -521,9 +424,9 @@ class TestDrain:
     ):
         """Drain's session/agent reset rides the on_workspace_killed
         callback (wired in main.py) — assert it fires per workspace, so
-        a wiring change cannot silently leave stale sessions (#2527
-        review: the /stop endpoint calls reset_workspace_state itself,
-        drain relies on this callback)."""
+        a wiring change cannot leave stale sessions (#2527 review: the
+        /stop endpoint calls reset_workspace_state itself, drain relies
+        on this callback)."""
         registry = app_state.state.container_registry
         from klangk.wshandler.session import WebSocketState
 

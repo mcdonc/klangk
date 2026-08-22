@@ -2268,6 +2268,127 @@ class TestWorkspaceRoutes:
         assert resp.json()["auto_start"] is True
         mock_start.assert_awaited_once()
 
+    async def test_create_eager_start_drained_not_failed(
+        self, client, app, user
+    ):
+        """A graceful-restart drain racing create's eager start degrades
+        to a warning — the workspace is created but not started (#2527)."""
+        from klangk.exceptions import NodeDrainingError
+
+        headers = await _auth_headers(client)
+        app.state.container_registry.draining = True
+        try:
+            with (
+                patch.object(app.state.settings, "allow_autostart", "1"),
+                patch.object(
+                    app.state.workspaces,
+                    "start_workspace",
+                    new_callable=AsyncMock,
+                    side_effect=NodeDrainingError(
+                        "node is draining: new workspace starts are "
+                        "disabled (a restart is in progress)"
+                    ),
+                ),
+            ):
+                resp = await client.post(
+                    "/api/v1/workspaces",
+                    headers=headers,
+                    json={"name": "auto-ws", "auto_start": True},
+                )
+            assert resp.status_code == 200
+            assert resp.json()["auto_start"] is True
+        finally:
+            app.state.container_registry.draining = False
+
+    async def test_start_refused_503_while_draining(
+        self, client, app, user, registry, ws_admin
+    ):
+        """POST /start under the drain flag returns a clear 503 (#2527)."""
+        from klangk.exceptions import NodeDrainingError
+
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "dw"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        app.state.container_registry.draining = True
+        try:
+            with patch.object(
+                app.state.workspaces,
+                "start_workspace",
+                new_callable=AsyncMock,
+                side_effect=NodeDrainingError(
+                    "node is draining: new workspace starts are disabled "
+                    "(a restart is in progress)"
+                ),
+            ):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/start", headers=headers
+                )
+            assert resp.status_code == 503
+            assert "draining" in resp.json()["detail"]
+        finally:
+            app.state.container_registry.draining = False
+
+    async def test_restart_refused_503_up_front_while_draining(
+        self, client, app, user, registry, ws_admin
+    ):
+        """POST /restart checks the drain flag BEFORE stopping the
+        running container — a running workspace survives the refusal
+        (#2527)."""
+        from klangk.container.state import ContainerState
+
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "dw2"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        registry.states[ws_id] = ContainerState(ws_id, "cid-live", app)
+        app.state.container_registry.draining = True
+        try:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+            assert resp.status_code == 503
+            assert "draining" in resp.json()["detail"]
+            # The running container was NOT stopped by the refusal.
+            assert registry.states.get(ws_id) is not None
+            assert registry.states[ws_id].container_id == "cid-live"
+        finally:
+            app.state.container_registry.draining = False
+            registry.states.pop(ws_id, None)
+
+    async def test_restart_stop_then_drained_503(
+        self, client, app, user, registry, ws_admin
+    ):
+        """A drain that lands mid-restart (after the stop, before the
+        start) leaves the workspace stopped with a 503 — never
+        half-restarted (#2527)."""
+        from klangk.exceptions import NodeDrainingError
+
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "dw3"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        with patch.object(
+            app.state.workspaces,
+            "start_workspace",
+            new_callable=AsyncMock,
+            side_effect=NodeDrainingError(
+                "node is draining: new workspace starts are disabled "
+                "(a restart is in progress)"
+            ),
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+        assert resp.status_code == 503
+        assert "draining" in resp.json()["detail"]
+
     async def test_create_auto_start_eager_failure_logged(
         self, client, app, user
     ):
@@ -11558,202 +11679,3 @@ class TestInactivityDisable:
         assert kicked == 2
         assert closed[-1] == (4001, "Account disabled")
         app.state.sockets.connections.clear()
-
-
-# --- Cordon / drain (#2527) ---
-
-
-class TestCordonDrainApi:
-    async def _admin_headers(self, client):
-        return await _admin_login(client)
-
-    async def _user_headers(self, client):
-        return await _auth_headers(client)
-
-    async def test_cordon_get_put_roundtrip(
-        self, client, admin_user, app_state
-    ):
-        headers = await self._admin_headers(client)
-        resp = await client.get("/api/v1/admin/cordon", headers=headers)
-        assert resp.status_code == 200
-        assert resp.json() == {"cordoned": False}
-
-        resp = await client.put(
-            "/api/v1/admin/cordon", headers=headers, json={"cordoned": True}
-        )
-        assert resp.status_code == 200
-        assert resp.json() == {"cordoned": True}
-        # Persisted (DB-backed), not just echoed.
-        assert await app_state.state.model.server_state.is_cordoned() is True
-
-    async def test_cordon_requires_admin(self, client, user):
-        headers = await self._user_headers(client)
-        resp = await client.put(
-            "/api/v1/admin/cordon", headers=headers, json={"cordoned": True}
-        )
-        assert resp.status_code == 403
-
-    async def test_start_refused_503_while_cordoned(
-        self, client, app, user, registry, ws_admin
-    ):
-        headers = await _auth_headers(client)
-        create_resp = await client.post(
-            "/api/v1/workspaces", headers=headers, json={"name": "cw"}
-        )
-        assert create_resp.status_code == 200, create_resp.text
-        ws_id = create_resp.json()["id"]
-        await app.state.model.server_state.set_cordoned(True)
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/start", headers=headers
-        )
-        assert resp.status_code == 503
-        assert "cordoned" in resp.json()["detail"].lower()
-
-    async def test_restart_refused_503_while_cordoned(
-        self, client, app, user, registry, ws_admin
-    ):
-        headers = await _auth_headers(client)
-        create_resp = await client.post(
-            "/api/v1/workspaces", headers=headers, json={"name": "cw2"}
-        )
-        assert create_resp.status_code == 200, create_resp.text
-        ws_id = create_resp.json()["id"]
-        await app.state.model.server_state.set_cordoned(True)
-        resp = await client.post(
-            f"/api/v1/workspaces/{ws_id}/restart", headers=headers
-        )
-        assert resp.status_code == 503
-        assert "cordoned" in resp.json()["detail"].lower()
-
-    async def test_restart_refusal_leaves_running_workspace_alone(
-        self, client, app, user, registry, ws_admin
-    ):
-        """#2527 review: the cordon check fires BEFORE the stop, so a
-        running workspace survives a restart attempt on a cordoned node
-        (cordon's documented posture — drain is the stopping half)."""
-        headers = await _auth_headers(client)
-        create_resp = await client.post(
-            "/api/v1/workspaces", headers=headers, json={"name": "cw3"}
-        )
-        ws_id = create_resp.json()["id"]
-        # Simulate a running container.
-        registry.track_activity("cid-cw3", ws_id)
-        await app.state.model.server_state.set_cordoned(True)
-        with patch.object(
-            registry, "stop_and_remove_container", AsyncMock()
-        ) as mock_stop:
-            resp = await client.post(
-                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
-            )
-        assert resp.status_code == 503
-        mock_stop.assert_not_awaited()
-
-    async def test_restart_cordon_race_between_check_and_start(
-        self, client, app, user, ws_admin
-    ):
-        """Cordon lands between restart's up-front check and the start:
-        the inner NodeCordonedError handler still maps to 503 (the
-        workspace is left stopped — the stop already happened)."""
-        headers = await _auth_headers(client)
-        create_resp = await client.post(
-            "/api/v1/workspaces", headers=headers, json={"name": "cw4"}
-        )
-        ws_id = create_resp.json()["id"]
-        answers = iter([False, True])
-
-        async def flapping():
-            return next(answers, True)
-
-        with patch.object(
-            app.state.model.server_state, "is_cordoned", flapping
-        ):
-            resp = await client.post(
-                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
-            )
-        assert resp.status_code == 503
-        assert "cordoned" in resp.json()["detail"].lower()
-
-    async def test_drain_reports_count(self, client, app, admin_user):
-        from klangk.container.state import ContainerState
-
-        registry = app.state.container_registry
-        for i in range(2):
-            registry.states[f"ws-{i}"] = ContainerState(
-                f"ws-{i}", f"cid-{i}", app
-            )
-        headers = await self._admin_headers(client)
-        with (
-            patch.object(
-                registry,
-                "stop_and_remove_container",
-                AsyncMock(return_value=True),
-            ),
-            patch.object(registry, "notify_workspace_killed", AsyncMock()),
-            patch.object(
-                app.state.podman,
-                "list_containers",
-                AsyncMock(return_value=[]),
-            ),
-        ):
-            resp = await client.post("/api/v1/admin/drain", headers=headers)
-        assert resp.status_code == 200
-        assert resp.json() == {"stopped": 2}
-
-    async def test_drain_holds_draining_flag_during_drain(
-        self, client, app, admin_user
-    ):
-        """The endpoint refuses new starts for the duration of the drain
-        (a concurrent start — or a concurrent SIGHUP drain — cannot race
-        it) and releases the in-memory flag afterwards (#2527 review).
-        The persisted cordon flag is untouched either way."""
-        registry = app.state.container_registry
-        headers = await self._admin_headers(client)
-        seen = {}
-
-        async def fake_drain(*, reason="node drain"):
-            seen["draining"] = registry.draining
-            return 0
-
-        with patch.object(
-            registry, "drain_all_containers", side_effect=fake_drain
-        ):
-            resp = await client.post("/api/v1/admin/drain", headers=headers)
-        assert resp.status_code == 200
-        assert seen["draining"] is True
-        assert registry.draining is False
-
-    async def test_drain_requires_admin(self, client, user):
-        headers = await self._user_headers(client)
-        resp = await client.post("/api/v1/admin/drain", headers=headers)
-        assert resp.status_code == 403
-
-    async def test_config_carries_cordon_for_authed_only(
-        self, client, app, admin_user
-    ):
-        headers = await self._admin_headers(client)
-        await app.state.model.server_state.set_cordoned(True)
-        resp = await client.get("/api/v1/config", headers=headers)
-        assert resp.status_code == 200
-        assert resp.json()["cordoned"] is True
-
-        # Anonymous (pre-auth) config must not leak the flag.
-        resp = await client.get("/api/v1/config")
-        assert resp.status_code == 200
-        assert "cordoned" not in resp.json()
-
-    async def test_create_with_autostart_cordoned_mid_create(
-        self, client, app, user, ws_admin, registry
-    ):
-        """#2527: cordon racing a create leaves the workspace row intact
-        and does not fail the create — an eager start refusal is a
-        warning, not an error."""
-        headers = await _auth_headers(client)
-        app.state.settings.allow_autostart = "1"
-        await app.state.model.server_state.set_cordoned(True)
-        resp = await client.post(
-            "/api/v1/workspaces",
-            headers=headers,
-            json={"name": "cordoned-create", "auto_start": True},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["id"]

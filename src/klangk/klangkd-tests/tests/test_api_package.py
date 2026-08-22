@@ -35,7 +35,7 @@ api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
-EXPECTED_ROUTE_COUNT = 97
+EXPECTED_ROUTE_COUNT = 94
 
 # Per-domain submodules and the number of routes each owns.  92 sub-routes
 # + 3 routes defined directly on the main router (version, config,
@@ -48,7 +48,7 @@ SUBMODULE_ROUTES = {
     "images": 4,
     "browser_delegate": 2,
     "chat": 1,
-    "admin": 33,
+    "admin": 30,
     "llm_proxy": 2,
 }
 
