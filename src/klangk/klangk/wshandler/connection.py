@@ -185,10 +185,8 @@ class Connection:
     def _notify_user_terminal_windows(self, windows: list[dict]) -> None:
         self.terminal.notify_user_terminal_windows(windows)
 
-    async def activate_session(
-        self, session: TerminalSession, cols: int, rows: int
-    ) -> bool:
-        return await self.terminal.activate_session(session, cols, rows)
+    async def activate_session(self, session: TerminalSession) -> bool:
+        return await self.terminal.activate_session(session)
 
     async def stop_terminal(self) -> None:
         await self.terminal.stop()
