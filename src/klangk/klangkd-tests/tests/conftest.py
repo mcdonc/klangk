@@ -2,7 +2,6 @@
 
 import os
 import sys
-import tempfile
 
 # Must be set before coverage.py initialises in each xdist worker so that
 # code executed inside SQLAlchemy's greenlet context is tracked.
@@ -14,7 +13,7 @@ import pytest
 
 from klangk.settings import KlangkSettings
 
-from _helpers import make_settings
+from _helpers import make_settings, tracked_mkdtemp
 
 # Speed every hash in the suite up by dropping PBKDF2 to 1k iterations
 # (production default is 600k). The stored format embeds the iteration
@@ -50,9 +49,10 @@ def temp_data_dir(tmp_path, monkeypatch):
     # On macOS the default socket paths derived from tmp_path may exceed the
     # 104-char AF_UNIX sun_path limit because pytest tmp paths resolve
     # through /private/var/folders/... Set short socket paths so the
-    # settings validator passes (#1983).
+    # settings validator passes (#1983). Tracked so the dir can't orphan
+    # (#2662).
     if sys.platform == "darwin":
-        _sock_dir = tempfile.mkdtemp(prefix="ks-")
+        _sock_dir = tracked_mkdtemp("ks-")
         monkeypatch.setenv("KLANGKD_SOCKET", os.path.join(_sock_dir, "k.sock"))
         monkeypatch.setenv(
             "KLANGKD_CADDY_ADMIN_SOCKET",

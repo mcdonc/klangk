@@ -26,13 +26,12 @@ Run: devenv shell -- test-backend-e2e -k TestConsentPruneE2E
 import os
 import sqlite3
 import subprocess
-import tempfile
 import time
 
 import pytest
 
 from _e2e_env import close_popen_pipes
-from _e2e_server import start_server, stop_server
+from _e2e_server import start_server, stop_server, tracked_mkdtemp
 
 # Common server config: TCP via the proxy (the sidecar's WS back to klangkd
 # needs the egress listener), password auth, test mode.
@@ -259,8 +258,8 @@ def _relaunch(server: dict, **env: str) -> dict:
 
 
 def _fresh_dirs() -> tuple[str, str]:
-    data_dir = os.path.realpath(tempfile.mkdtemp(prefix="prune-e2e-data-"))
-    state_dir = os.path.realpath(tempfile.mkdtemp(prefix="prune-e2e-state-"))
+    data_dir = os.path.realpath(tracked_mkdtemp("prune-e2e-data-"))
+    state_dir = os.path.realpath(tracked_mkdtemp("prune-e2e-state-"))
     return data_dir, state_dir
 
 

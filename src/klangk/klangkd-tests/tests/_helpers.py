@@ -8,11 +8,41 @@ yet available.
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 
 from klangk.settings import KlangkSettings
+
+# Per-test DB holder (#1578). The autouse ``temp_data_dir`` fixture builds a
+_mktemp_registry: list[str] = []
+
+
+def rmtree_registered_temps() -> None:
+    """Remove every dir :func:`tracked_mkdtemp` made (process exit, #2662)."""
+    for path in _mktemp_registry:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def tracked_mkdtemp(prefix: str) -> str:
+    """``tempfile.mkdtemp`` whose dir is removed at process exit (#2662).
+
+    Prefer pytest's ``tmp_path`` for ordinary per-test scratch. Use this only
+    where ``tmp_path`` can't serve: settings built at module import time
+    (before fixtures set ``KLANGKD_*_DIR``) and the short AF_UNIX socket paths
+    macOS needs (#1983 — pytest tmp paths resolve through ``/private/var``
+    and can exceed the 104-char ``sun_path`` limit). The atexit sweep is the
+    safety net for paths that skip fixture teardown (crashed runs); explicit
+    ``shutil.rmtree`` teardown stays authoritative where one exists.
+    """
+    if not _mktemp_registry:
+        atexit.register(rmtree_registered_temps)
+    path = tempfile.mkdtemp(prefix=prefix)
+    _mktemp_registry.append(path)
+    return path
+
 
 # Per-test DB holder (#1578). The autouse ``temp_data_dir`` fixture builds a
 # DB from the per-test settings and stashes it here (``set_test_db``); the
@@ -54,24 +84,24 @@ def make_settings(
     value in ``env`` to override.
     """
     env = dict(env or {})
-    # Fall back to os.environ (set by the autouse temp_data_dir fixture) before
-    # creating orphan mkdtemp dirs that are never cleaned up.
+    # Fall back to os.environ (set by the autouse temp_data_dir fixture)
+    # before creating temp dirs. Tracked so module-import-time call sites
+    # (which run before any fixture) can't orphan them (#2662).
     env.setdefault(
         "KLANGKD_STATE_DIR",
         os.environ.get("KLANGKD_STATE_DIR")
-        or tempfile.mkdtemp(prefix="klangk-state-"),
+        or tracked_mkdtemp("klangk-state-"),
     )
     env.setdefault(
         "KLANGKD_DATA_DIR",
-        os.environ.get("KLANGKD_DATA_DIR")
-        or tempfile.mkdtemp(prefix="klangk-data-"),
+        os.environ.get("KLANGKD_DATA_DIR") or tracked_mkdtemp("klangk-data-"),
     )
     # On macOS the default socket paths derived from state_dir may exceed the
     # 104-char AF_UNIX sun_path limit because tempfile paths resolve through
     # /private/var/folders/... Set short socket paths so the settings
     # validator passes (#1983).
     if sys.platform == "darwin":
-        _sock_dir = tempfile.mkdtemp(prefix="ks-")
+        _sock_dir = tracked_mkdtemp("ks-")
         env.setdefault("KLANGKD_SOCKET", os.path.join(_sock_dir, "k.sock"))
         env.setdefault(
             "KLANGKD_CADDY_ADMIN_SOCKET",

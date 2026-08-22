@@ -8,12 +8,16 @@ Run with: devenv shell -- test-backend-e2e test_api_e2e.py
 
 import shutil
 import subprocess
-import tempfile
 import uuid
 
 import pytest
 
-from _e2e_server import httpx_client, start_server, stop_server
+from _e2e_server import (
+    httpx_client,
+    start_server,
+    stop_server,
+    tracked_mkdtemp,
+)
 from pathlib import Path
 
 
@@ -1014,7 +1018,7 @@ class TestAutoStartWithServiceCommand:
     @staticmethod
     def autostart_server(request):
         server = start_server(
-            data_dir=tempfile.mkdtemp(prefix="klangk-autostart-e2e-"),
+            data_dir=tracked_mkdtemp("klangk-autostart-e2e-"),
             KLANGKD_JWT_SECRET="autostart-e2e-secret",
             KLANGKD_DEFAULT_USER="admin@example.com",
             KLANGKD_DEFAULT_PASSWORD="adminpass",

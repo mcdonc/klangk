@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import subprocess
-import tempfile
 
 import httpx
 import pytest
@@ -33,7 +32,7 @@ sys.path.insert(
     ),
 )
 from _e2e_env import clean_env
-from _e2e_server import start_server, stop_server
+from _e2e_server import start_server, stop_server, tracked_mkdtemp
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +341,7 @@ class TestTerminalWindows:
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
     def _dedicated_server(tmp_path_factory, request):
-        data_dir = tempfile.mkdtemp(prefix="klangk-tw-e2e-")
+        data_dir = tracked_mkdtemp("klangk-tw-e2e-")
         proc, base_url = _start_server(data_dir)
         config_dir = tmp_path_factory.mktemp("klangk-tw-config")
         env = clean_env(HOME=str(config_dir))

@@ -28,6 +28,7 @@ Every server's env is built via :func:`_e2e_env.clean_env` (hermetic; no
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import subprocess
@@ -55,6 +56,30 @@ BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 FRONTEND_DIR = os.path.normpath(
     os.path.join(BACKEND_DIR, "..", "..", "frontend", "build", "web")
 )
+
+_mktemp_registry: list[str] = []
+
+
+def rmtree_registered_temps() -> None:
+    """Remove every dir :func:`tracked_mkdtemp` made (process exit, #2662)."""
+    for path in _mktemp_registry:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def tracked_mkdtemp(prefix: str) -> str:
+    """``tempfile.mkdtemp`` whose dir is removed at process exit (#2662).
+
+    ``start_server``'s explicit ``stop_server`` teardown stays authoritative;
+    this sweep is the safety net for dirs whose run never reaches it (a
+    readiness timeout, a crashed test session) — they used to orphan in
+    ``/tmp`` by the tens of thousands.
+    """
+    if not _mktemp_registry:
+        atexit.register(rmtree_registered_temps)
+    path = tempfile.mkdtemp(prefix=prefix)
+    _mktemp_registry.append(path)
+    return path
+
 
 # A dummy host for UDS clients: the UDS transport ignores it for the
 # connection, but httpx/websockets still need a syntactically valid URL
@@ -218,11 +243,9 @@ def start_server(
     :func:`ws_connect`. Pass the handle to :func:`stop_server` for teardown.
     """
     if data_dir is None:
-        data_dir = os.path.realpath(tempfile.mkdtemp(prefix="klangk-e2e-"))
+        data_dir = os.path.realpath(tracked_mkdtemp("klangk-e2e-"))
     if state_dir is None:
-        state_dir = os.path.realpath(
-            tempfile.mkdtemp(prefix="klangk-e2e-state-")
-        )
+        state_dir = os.path.realpath(tracked_mkdtemp("klangk-e2e-state-"))
     # Default to a file-streamed log inside the data dir so the failure
     # hooks in ``_e2e_logs`` can attach what the server said (#2623); a
     # captured pipe is only drainable at process exit and vanishes with

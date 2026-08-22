@@ -9,7 +9,6 @@ Run with: devenv shell -- test-cli-e2e -k TestTuiE2E
 
 import os
 import sys
-import tempfile
 import time
 
 import asyncio
@@ -25,7 +24,7 @@ sys.path.insert(
         os.path.dirname(__file__), "..", "..", "klangkd-tests", "e2e-tests"
     ),
 )
-from _e2e_server import start_server, stop_server  # noqa: E402
+from _e2e_server import start_server, stop_server, tracked_mkdtemp  # noqa: E402
 
 from klangk.cli.tui.app import KlangkApp  # noqa: E402
 from klangk.cli.tui.screens import (  # noqa: E402
@@ -102,7 +101,7 @@ async def _wait_for_workspace_loaded(app, pilot, timeout=30.0):
 
 @pytest.fixture(scope="module")
 def server():
-    data_dir = tempfile.mkdtemp(prefix="klangk-tui-e2e-")
+    data_dir = tracked_mkdtemp("klangk-tui-e2e-")
     log_path = os.path.join(data_dir, "server.log")
     srv = start_server(
         uds=False,

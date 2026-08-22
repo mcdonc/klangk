@@ -39,11 +39,12 @@ import platform
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 import uuid
 
 import pytest
+
+from _e2e_server import tracked_mkdtemp
 
 # The network sidecar image source (entrypoint.sh + Dockerfile), relative to
 # this e2e-tests dir. The proxy itself arrives as the klangksidecar wheel
@@ -292,7 +293,7 @@ def env():
     # the named context the Dockerfile consumes (COPY --from=sidecar). The
     # image pip-installs the wheel rather than a hand-copied proxy.py, so the
     # package can grow multifile without the build changing.
-    wheel_dir = tempfile.mkdtemp(prefix="netc-e2e-whl-")
+    wheel_dir = tracked_mkdtemp("netc-e2e-whl-")
     uv = subprocess.run(
         [
             "uv",
@@ -320,7 +321,7 @@ def env():
         timeout=300,
     )
     assert build.returncode == 0, build.stderr
-    tmp = tempfile.mkdtemp(prefix="netc-e2e-")
+    tmp = tracked_mkdtemp("netc-e2e-")
     fu = os.path.join(tmp, "fake_upstream.py")
     wq = os.path.join(tmp, "ws_query.py")
     sm = os.path.join(tmp, "somark_probe.py")
@@ -911,7 +912,7 @@ def consent_stack(env):
     (WS) + the sidecar pointed at it. Yields a dict with the container names +
     the trigger script path + image."""
     _require_platform()
-    tmp = tempfile.mkdtemp(prefix="consent-e2e-")
+    tmp = tracked_mkdtemp("consent-e2e-")
     fu = os.path.join(tmp, "consent_upstream.py")
     ver = os.path.join(tmp, "consent_verifier.py")
     trig = os.path.join(tmp, "consent_trigger.py")
