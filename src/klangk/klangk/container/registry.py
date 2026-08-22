@@ -1583,7 +1583,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         if self.draining:
             return (
                 "node is draining: new workspace starts are disabled "
-                "(a restart is in progress)"
+                "(a restart or shutdown is in progress)"
             )
         return None
 

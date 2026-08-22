@@ -17,7 +17,7 @@ class WsDebugEntry {
   final Map<String, dynamic>? data;
 
   WsDebugEntry({required this.direction, required this.summary, this.data})
-    : timestamp = DateTime.now();
+      : timestamp = DateTime.now();
 }
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
@@ -484,6 +484,12 @@ class WsClient extends ChangeNotifier implements ChatServices {
     _reconnecting = false;
     _reconnectAttempt = 0;
     _pendingWorkspaceId = null;
+    // #2527: a reconnect means the server is back — if the client missed
+    // the host_started broadcast (sent before it re-established the
+    // socket), clear the stale restart/shutdown notice now instead of
+    // leaving it stuck (and suppressing the next cycle's snackbar via
+    // the equality guard).
+    _hostNotice = null;
     _startHeartbeat();
     notifyListeners();
   }

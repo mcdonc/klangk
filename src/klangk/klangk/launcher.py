@@ -424,9 +424,12 @@ def _make_graceful_exit_server(app):
     sequence is untouched.
 
     Second signal: the hook is one-shot (``lifecycle.shutting_down``).
-    A TERM/INT during the hook delegates straight to uvicorn's handler —
-    and uvicorn's own logic turns a post-exit SIGINT into
-    ``force_exit``, preserving the "second Ctrl+C hard-exits" behavior.
+    A TERM/INT during the hook sets ``force_exit`` and delegates to
+    uvicorn's handler — uvicorn aborts its wait loops immediately, so
+    the "second Ctrl+C hard-exits" behavior is preserved (uvicorn
+    alone would need a third press, because the first signal's exit is
+    deferred to the hook's done-callback and should_exit is still
+    unset — #2527 review).
     """
     import contextlib
     import signal as signal_mod
@@ -460,18 +463,37 @@ def _make_graceful_exit_server(app):
 
                     # Strong reference so the GC can't reap the hook
                     # mid-drain (same hazard class as the SIGHUP restart
-                    # tasks); the done-callback discards it and starts
-                    # uvicorn's own exit — the hook only drains; the
-                    # exit handoff lives here so even a failed/raising
-                    # hook still terminates the process.
+                    # tasks); the done-callback discards it, surfaces a
+                    # hook failure, and starts uvicorn's own exit — the
+                    # hook only drains; the exit handoff lives here so
+                    # even a failed/raising hook still terminates the
+                    # process.
                     def hook_done(_task, _orig=original):
                         lifecycle._shutdown_tasks.discard(_task)
+                        if not _task.cancelled():
+                            exc = _task.exception()
+                            if exc is not None:
+                                logger.error(
+                                    "graceful-shutdown hook failed: %s",
+                                    exc,
+                                    exc_info=exc,
+                                )
                         _orig(sig, frame)
 
                     lifecycle._shutdown_tasks.add(task)
                     task.add_done_callback(hook_done)
                     ran_hook = True
             if not ran_hook:
+                # Second signal (hook already running / no lifecycle /
+                # no loop): force uvicorn's exit NOW. Calling bare
+                # handle_exit only sets should_exit — which the first
+                # signal's deferred handoff hasn't set yet — so a second
+                # press would merely start a concurrent graceful exit,
+                # killing sockets mid-drain, and a third would be needed
+                # for force_exit. Setting force_exit directly preserves
+                # uvicorn's "second Ctrl+C hard-exits" semantics (#2527
+                # review).
+                self.force_exit = True
                 original(sig, frame)
 
         original_handlers = {
