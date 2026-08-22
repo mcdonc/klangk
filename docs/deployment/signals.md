@@ -21,17 +21,24 @@ What happens, in order:
    auto-start, crash-restart) return a clear 503/error frame for the
    rest of the process's life; a start racing the shutdown is refused
    rather than killed mid-create.
-3. **Drain** — stop every running workspace through the same graceful
+3. **Quiesce** (#2664) — wait up to `KLANGKD_QUIESCE_TIMEOUT` seconds
+   (default 15) for in-flight HTTP requests to finish, so an upload or
+   terminal snapshot in progress isn't cut off by the drain below.
+   Stragglers at expiry are logged (WARNING) and left to finish against
+   the exiting process (uvicorn's own in-flight wait only starts after
+   this phase, when the containers are already stopped, so the wait
+   has to happen here to buy them anything).
+4. **Drain** — stop every running workspace through the same graceful
    path as SIGHUP's drain (concurrently per workspace, 5s podman stop
    grace): clients get terminal stop frames and a `container_stopped`
    event with reason `host shutdown`, not a bare socket drop. A SIGHUP
    arriving after the signal is ignored (the runtime is being torn
    down; a restart would race the exit).
-4. Accept no new requests, close every WebSocket client (uvicorn's own
-   exit sequence). A second Ctrl-C during the drain skips the rest of
-   the graceful work and forces the exit immediately.
-5. Tear down chat-agent subprocesses and cancel in-flight agent runs.
-6. Dispose the database engine and remove the PID file.
+5. Accept no new requests, close every WebSocket client (uvicorn's own
+   exit sequence). A second Ctrl-C during the quiesce or drain skips the
+   rest of the graceful work and forces the exit immediately.
+6. Tear down chat-agent subprocesses and cancel in-flight agent runs.
+7. Dispose the database engine and remove the PID file.
 
 Net effect: a _full_ stop with clean client-visible shutdown frames.
 Workspaces go away; on the next start, `auto_start` brings back any
@@ -39,10 +46,12 @@ that are configured for it. For a config reload with the same drain
 treatment while keeping the listener up, use SIGHUP (below).
 
 A drain failure is logged and never blocks the exit — the process always
-terminates. Budget the drain inside your service manager's stop
-deadline (`TimeoutStopSec` under systemd; the drain is bounded by the
-per-workspace stop grace, but a host with many workspaces takes
-proportionally longer).
+terminates. Budget the quiesce + drain inside your service manager's
+stop deadline (`TimeoutStopSec` under systemd): up to
+`KLANGKD_QUIESCE_TIMEOUT` seconds (default 15) of request quiesce, plus
+one per-workspace stop grace (5s; stops run concurrently across
+workspaces). Raising `KLANGKD_QUIESCE_TIMEOUT` past ~85s blows the
+default 90s `TimeoutStopSec`.
 
 ## SIGHUP — graceful restart (#1212, #1587, #2527)
 
@@ -69,7 +78,7 @@ authenticated WebSocket clients receive a `host_restart` event with a
    crash-recovery restart) refuses with a clear error until the restart
    completes. This flag is never persisted — a crashed restart
    cannot leave the node refusing starts.
-3. **Quiesce** — wait up to `KLANGKD_RESTART_INFLIGHT_TIMEOUT` seconds
+3. **Quiesce** — wait up to `KLANGKD_QUIESCE_TIMEOUT` seconds
    (default 15) for in-flight HTTP requests to finish. Requests still
    running at expiry are logged (WARNING); ordinary requests finish
    against the recycling runtime, but a long-lived streaming response

@@ -1073,14 +1073,16 @@ class KlangkSettings(BaseSettings):
     container_restart_enabled: bool = False
     container_restart_max_retries: int = 5
     container_restart_backoff_seconds: float = 5.0
-    # Graceful SIGHUP restart (#2527): after new container starts are
-    # refused, the restart waits this many seconds for in-flight HTTP
-    # requests to finish before draining the containers. Requests still
-    # running at expiry are logged and left to finish against the
-    # recycling runtime (streaming responses may be interrupted). Read
-    # from the freshly-reloaded settings, so a change takes effect on
-    # the very restart that re-reads it.
-    restart_inflight_timeout: float = 15.0
+    # Graceful SIGHUP restart and TERM/INT shutdown (#2527, #2664):
+    # after new container starts are refused, the restart/shutdown waits
+    # this many seconds for in-flight HTTP requests to finish before
+    # draining the containers. Requests still running at expiry are
+    # logged and left to finish against the recycling/exiting runtime
+    # (streaming responses may be interrupted). The restart path reads
+    # it from the freshly-reloaded settings, so a change takes effect
+    # on the very restart that re-reads it; the shutdown path reads it
+    # from the live settings.
+    quiesce_timeout: float = 15.0
     # FIPS mode (#2570, #2591, #2628): when enabled, every workspace
     # container must prove an actively-enforcing OpenSSL FIPS provider
     # at start (fail closed — the container is removed and the start
@@ -1479,7 +1481,7 @@ class KlangkSettings(BaseSettings):
         "memory_eviction_threshold_percent",
         "memory_eviction_recovery_percent",
         "memory_eviction_poll_interval",
-        "restart_inflight_timeout",
+        "quiesce_timeout",
         mode="before",
     )
     @classmethod
