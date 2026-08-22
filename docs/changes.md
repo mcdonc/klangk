@@ -1108,6 +1108,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Terminal tab state no longer flaps old→new under load (#2653).**
+  The window watcher's window-list refresh could land between a
+  rename/new/close command and its confirmation, briefly reverting
+  the tab strip and shared-terminal list to the pre-command state
+  (new → old → new) before the next event re-corrected it. Stale
+  in-flight watcher snapshots are now discarded instead of applied.
+
 - **Shared-terminal tab list not updating on rename under load
   (#2651).** Renaming a shared terminal could leave other users' tab
   lists showing the old name indefinitely: the window-watcher's
