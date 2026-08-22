@@ -529,6 +529,7 @@ class TestDrain:
 
         app_state.state.sockets = WebSocketState(app_state)
         self._track(app_state, registry, 2)
+        self._stub_sweep(app_state)
         killed = []
 
         async def on_killed(ws_id):
@@ -537,7 +538,7 @@ class TestDrain:
         registry.on_workspace_killed = on_killed
 
         async def fake_stop(cid, workspace_id=None):
-            pass
+            return True
 
         # No patch on notify_workspace_killed — the real wrapper is the
         # code under test (it invokes the callback above).

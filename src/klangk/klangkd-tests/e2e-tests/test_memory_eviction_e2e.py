@@ -233,15 +233,48 @@ class TestMemoryPressureEviction:
             )
 
             # Reconnect restarts the container (idle-stop semantics:
-            # state preserved, next connect brings it back).
-            await start_container_via_ws(server, auth, victim_id)
-            resp = server["client"].get(
-                f"/api/v1/workspaces/{victim_id}/status",
-                headers=auth["headers"],
-                timeout=10,
+            # state preserved, next connect brings it back). The socket
+            # stays OPEN for the status check: this server's evictor is
+            # permanently armed (poll=1s, sustain=1), so the moment the
+            # reconnect socket closes the restarted container is
+            # subscriber-less again and legitimately re-evicted — a
+            # close-then-poll here races the evictor (CI flake). A live
+            # subscriber is eviction-protected (the bystander's own
+            # guarantee), so assert with it connected, then close.
+            victim_ws = await _ws_dial(
+                server, f"/ws?token={auth['token']}", max_size=2**20
             )
-            assert resp.status_code == 200
-            assert is_running(resp), "reconnect did not restart container"
+            try:
+                await victim_ws.send(
+                    json.dumps(
+                        {
+                            "cmd": "workspace_connect",
+                            "workspaceId": victim_id,
+                        }
+                    )
+                )
+                deadline = asyncio.get_event_loop().time() + 60
+                ready = False
+                while asyncio.get_event_loop().time() < deadline:
+                    try:
+                        data = json.loads(
+                            await asyncio.wait_for(victim_ws.recv(), 5)
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+                    if data.get("type") == "container_ready":
+                        ready = True
+                        break
+                assert ready, "container_ready not received on reconnect"
+                resp = server["client"].get(
+                    f"/api/v1/workspaces/{victim_id}/status",
+                    headers=auth["headers"],
+                    timeout=10,
+                )
+                assert resp.status_code == 200
+                assert is_running(resp), "reconnect did not restart container"
+            finally:
+                await victim_ws.close()
         finally:
             await bystander_ws.close()
             for ws_id in (bystander_id, victim_id):
