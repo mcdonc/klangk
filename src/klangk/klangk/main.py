@@ -102,6 +102,17 @@ class Lifecycle:
         # running event loop (the constructor runs in build_app, outside a
         # loop).
         self._restart_lock: asyncio.Lock | None = None
+        # #2527: strong references to in-flight SIGHUP restart tasks. An
+        # unreferenced task is GC-eligible mid-execution — GC between
+        # ``registry.draining = True`` and the ``finally`` backstop would
+        # skip the backstop and leave the node refusing every start with
+        # nothing in the logs. The done-callback discards from this set.
+        self._restart_tasks: set[asyncio.Task] = set()
+        # #2527: one-shot guard for the TERM/INT graceful shutdown (set by
+        # the signal hook in launcher.py before graceful_shutdown runs) and
+        # strong references to the hook task while it drains.
+        self.shutting_down: bool = False
+        self._shutdown_tasks: set[asyncio.Task] = set()
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -421,6 +432,18 @@ class Lifecycle:
         # different instance whose ID no live instance matches). Tolerant of
         # label-less containers, so an older klangkd's live work is not culled.
         await registry.reap_dead_owner_containers()
+        # #2527: the reaps above remove every instance-labelled container —
+        # a client that reconnects after the restart's 1012 drop and starts
+        # a workspace before this point would have its fresh container
+        # destroyed by the reap. Keep refusing starts (the restart's drain
+        # flag) until the reaps are done; boot auto-start runs after this
+        # line, so it is unaffected. No-op at a genuine boot (the flag is
+        # never set outside a graceful restart). A shutdown's flag is
+        # never cleared here (#2527 review: the TERM path doesn't run
+        # startup(), but a shutdown racing a restart must not have its
+        # refusal lifted by the restart's recycle).
+        if not self.shutting_down:
+            registry.draining = False
         registry.start_cleanup_loop()
         registry.start_health_loop()
         registry.start_crash_loop()
@@ -453,21 +476,61 @@ class Lifecycle:
         await state.db.dispose_engine()
 
     async def restart_runtime(self) -> None:
-        """Graceful runtime restart: stop containers, keep the listener.
+        """Graceful host restart: quiesce, drain, re-read config, recycle.
 
-        Triggered by SIGHUP.  Before touching the runtime, configuration is
-        re-resolved (``settings.reload()``, #1587); if it is invalid the
-        restart is **denied** -- the running runtime is left untouched on
-        its last-known-good config rather than torn down against a broken
-        one.  On a valid reload the settings are **swapped** onto
-        ``app.state.settings`` and the OIDC/features/SSL-trust/agent-user
-        steps are re-run, then the runtime recycles.  All subsystems read
-        settings live via ``self.app.state.settings`` (#1608), so the swap
-        propagates automatically with no per-subsystem ``reconfigure()``.
+        Triggered by SIGHUP. Each phase is logged and (the client-visible
+        ones) announced as a ``host_restart`` WebSocket event with a
+        ``phase`` field; a final ``host_started`` broadcast closes the
+        sequence. The HTTP listener and DB stay up the whole time.
+
+        1. **validate** — re-resolve settings (``settings.reload()``,
+           #1587). An invalid config **denies** the restart: nothing is
+           touched, the runtime keeps running on its last-known-good
+           config.
+        2. **draining** — broadcast ``host_restart {phase: "draining"}``
+           and set the registry's in-memory drain flag so every
+           container-start path refuses new starts (the single start
+           choke point; the flag is never persisted, so a crashed
+           restart cannot leave the node refusing starts).
+        3. **quiesce** — wait up to ``quiesce_timeout`` seconds
+           (default 15) for in-flight HTTP requests to finish; stragglers
+           at expiry are logged and left to finish against the recycling
+           runtime.
+        4. **drain** — stop every running workspace through the graceful
+           path (``drain_all_containers``, #2527): clients get terminal
+           frames + a ``container_stopped`` event, not a dropped socket.
+           Previously running workspaces are *not* remembered — only
+           ``auto_start``-configured ones return with ``startup()``.
+        5. **apply** — swap the reloaded settings onto
+           ``app.state.settings`` and ``reconfigure()`` every subsystem
+           (all read settings live, #1608).
+        6. **recycle** — ``runtime_shutdown()`` then ``startup()``. The
+           drain flag stays set through ``startup()``'s podman pre-warm
+           and container reaps (so a client that reconnects and starts a
+           workspace in that window is refused — 503, with the reason —
+           instead of having its fresh container destroyed by the
+           reap), and is cleared by ``startup()`` once the reaps are
+           done, before auto-start runs.
+        7. **resume** — broadcast ``host_started``.
+
+        If any step raises, the exception propagates to the restart
+        task's done-callback (:meth:`_on_restart_task_done`), which logs
+        it and attempts a ``startup()`` recovery; if that also fails the
+        process exits (code 1) so the service manager restarts us
+        rather than leaving a live-but-zombie node.
         """
         if self._restart_lock is None:
             self._restart_lock = asyncio.Lock()
         async with self._restart_lock:
+            state = self.app.state
+            registry = state.container_registry
+            logger.info("SIGHUP: restart beginning (phase: validate)")
+            # #2527 review: a shutdown arriving before the restart begins
+            # wins outright (on_sighup also drops later signals, but this
+            # closes the checked-to-started race window).
+            if self.shutting_down:
+                logger.info("SIGHUP: restart aborted; shutdown in progress")
+                return
             new_settings, error = self._reload_settings()
             if error is not None:
                 logger.error(
@@ -479,12 +542,67 @@ class Lifecycle:
                     "existing configuration"
                 )
                 return
-            logger.info("SIGHUP: applying reloaded configuration")
-            await self._apply_reloaded_settings(new_settings)
-            logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
-            await self.runtime_shutdown()
-            await self.startup()
-            logger.info("SIGHUP: runtime restarted")
+            logger.info("SIGHUP: phase: draining (refusing new starts)")
+            state.sockets.notify_host_restart("draining")
+            registry.draining = True
+            try:
+                # #2527 review: read the timeout from the NEW settings so
+                # a reload takes effect on THIS restart, not the next.
+                timeout = new_settings.quiesce_timeout
+                logger.info(
+                    "SIGHUP: phase: quiesce (waiting up to %.1fs for "
+                    "in-flight requests)",
+                    timeout,
+                )
+                inflight = state.inflight_requests
+                idle = await inflight.wait_for_idle(timeout)
+                if not idle:
+                    logger.warning(
+                        "SIGHUP: %d request(s) still in flight after "
+                        "%.1fs; proceeding with the restart",
+                        inflight.count,
+                        timeout,
+                    )
+                logger.info("SIGHUP: phase: drain (stopping workspaces)")
+                stopped = await registry.drain_all_containers(
+                    reason="host restart"
+                )
+                logger.info("SIGHUP: drained %d workspace(s)", stopped)
+                # #2527 review: a TERM/INT landing mid-restart starts the
+                # shutdown drain concurrently; from here on the restart
+                # must not resurrect what the shutdown is tearing down
+                # (no settings apply, no runtime recycle, no auto-start),
+                # and its error recovery must not run either — the
+                # process is exiting. The done-callback sees the task
+                # complete normally (CancelledError would also be fine).
+                if self.shutting_down:
+                    logger.info(
+                        "SIGHUP: restart aborted mid-drain; shutdown in "
+                        "progress"
+                    )
+                    return
+                logger.info("SIGHUP: phase: apply (applying reloaded config)")
+                await self._apply_reloaded_settings(new_settings)
+                state.sockets.notify_host_restart("restarting")
+                logger.info(
+                    "SIGHUP: phase: restart (recycling runtime; "
+                    "HTTP listener stays up)"
+                )
+                await self.runtime_shutdown()
+                # draining deliberately stays True here: startup() clears
+                # it after its container reaps (see startup()).
+                await self.startup()
+            finally:
+                # A failed restart must never leave the node refusing
+                # starts: the in-memory flag has no DB persistence an
+                # operator could clear manually. EXCEPT when a shutdown
+                # owns the flag now — clearing it here would lift the
+                # shutdown's start-refusal while the process exits
+                # (#2527 review).
+                if not self.shutting_down:
+                    registry.draining = False
+            logger.info("SIGHUP: restart complete (phase: resumed)")
+            state.sockets.notify_host_started()
 
     def _reload_settings(
         self,
@@ -618,17 +736,169 @@ class Lifecycle:
                 "; ".join(changed),
             )
 
+    async def graceful_shutdown(self, *, signal_num: int) -> None:
+        """Graceful pre-exit work for TERM/INT (#2527): broadcast, refuse,
+        quiesce, drain, then hand off to uvicorn's own exit.
+
+        Runs at signal-receipt time (uvicorn closes every WebSocket before
+        the lifespan teardown, so waiting for teardown would mean the
+        ``host_shutdown`` broadcast reaches nobody). Steps, each logged:
+
+        1. Broadcast ``host_shutdown`` so clients render "server went
+           away" instead of silently reconnect-looping.
+        2. Refuse new container starts (the in-memory drain flag — same
+           gate as the SIGHUP restart; a start racing the shutdown gets
+           a 503 instead of being killed by the process exit).
+        3. Quiesce — wait up to ``quiesce_timeout`` seconds (read from
+           the live settings; default 15) for in-flight HTTP requests
+           to finish, so a file upload or terminal snapshot isn't cut
+           off by the drain below (#2664). Stragglers at expiry are
+           logged (WARNING) and left to finish against the exiting
+           process — uvicorn's own in-flight wait only starts after
+           this hook, when the containers are already stopped, so the
+           wait has to happen here to buy them anything.
+        4. Gracefully drain every running workspace — clients get
+           terminal stop frames + ``container_stopped`` with reason
+           ``host shutdown``, then uvicorn's 1012/exit drop lands on
+           already-stopped sessions. Also denies a concurrent SIGHUP
+           restart (``shutting_down`` is checked in ``on_sighup``).
+        5. Call the uvicorn exit callback handed to the hook — uvicorn's
+           listener stop / connection drain / lifespan teardown (which
+           runs ``runtime_shutdown`` + ``process_shutdown``) takes over.
+
+        Time-bounded by the deploy's service manager: the hook's own
+        budget is the ``quiesce_timeout`` wait (default 15s) plus the
+        drain's concurrent per-workspace 5s podman grace — inside
+        systemd's default 90s ``TimeoutStopSec``; a second TERM/INT
+        during the hook bypasses it straight to uvicorn.
+        """
+        state = self.app.state
+        registry = state.container_registry
+        name = signal.Signals(signal_num).name
+        logger.info("%s: graceful shutdown beginning (phase: notify)", name)
+        state.sockets.notify_host_shutdown()
+        logger.info("%s: phase: draining (refusing new starts)", name)
+        registry.draining = True
+        # #2664: same bounded quiesce as the SIGHUP restart path, so
+        # in-flight requests finish before their containers are
+        # stopped. Read from the LIVE settings (no reload happens on
+        # the exit path). Own try block: a quiesce failure must be
+        # labeled truthfully and must not skip the drain below.
+        try:
+            timeout = state.settings.quiesce_timeout
+            logger.info(
+                "%s: phase: quiesce (waiting up to %.1fs for in-flight "
+                "requests)",
+                name,
+                timeout,
+            )
+            inflight = state.inflight_requests
+            idle = await inflight.wait_for_idle(timeout)
+            if not idle:
+                logger.warning(
+                    "%s: %d request(s) still in flight after %.1fs; "
+                    "proceeding with the shutdown",
+                    name,
+                    inflight.count,
+                    timeout,
+                )
+        except Exception as exc:  # noqa: BLE001 — never block the exit
+            logger.warning(
+                "%s: quiesce failed (proceeding with shutdown): %s", name, exc
+            )
+        try:
+            logger.info("%s: phase: drain (stopping workspaces)", name)
+            stopped = await registry.drain_all_containers(
+                reason="host shutdown"
+            )
+            logger.info("%s: drained %d workspace(s)", name, stopped)
+        except Exception as exc:  # noqa: BLE001 — never block the exit
+            logger.warning(
+                "%s: drain failed (proceeding with exit): %s", name, exc
+            )
+        logger.info("%s: handing off to server exit", name)
+
     def on_sighup(self) -> None:
         """Schedule a runtime restart on the running event loop.
 
-        Signal callbacks can't be async, so this just creates a task.  The
-        restart itself is serialized by ``_restart_lock``.
+        Signal callbacks can't be async, so this just creates a task. The
+        restart itself is serialized by ``_restart_lock``. The task is
+        kept in ``_restart_tasks`` (a strong reference, so the GC can
+        never reap it mid-restart) and its done-callback performs
+        failure recovery (#2527 review).
+
+        #2527: a HUP arriving after TERM/INT began the graceful shutdown
+        is ignored — recycling a runtime that is being torn down would
+        race the process exit (restart after drain, startup under a
+        closing listener).
         """
+        if self.shutting_down:
+            logger.info("SIGHUP ignored: shutdown in progress")
+            return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # pragma: no cover - no loop during shutdown
             return
-        loop.create_task(self.restart_runtime())
+        task = loop.create_task(self.restart_runtime())
+        self._restart_tasks.add(task)
+        task.add_done_callback(self._on_restart_task_done)
+
+    def _on_restart_task_done(self, task: asyncio.Task) -> None:
+        """Reap a finished restart task; recover from failure (#2527).
+
+        A restart that raised leaves the node somewhere between drained
+        and recycled (containers stopped, loops cancelled, WebSockets
+        dropped) while the HTTP listener keeps serving — a zombie. Log
+        the failure and try ``startup()`` once more; if that also fails,
+        exit so the service manager restarts us.
+        """
+        self._restart_tasks.discard(task)
+        if task.cancelled():
+            logger.info("SIGHUP: restart task cancelled")
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        logger.error("SIGHUP: restart failed: %s", exc, exc_info=exc)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover - loop already gone
+            return
+        recovery = loop.create_task(self._recover_failed_restart())
+        self._restart_tasks.add(recovery)
+        recovery.add_done_callback(self._on_restart_task_done)
+
+    async def _recover_failed_restart(self) -> None:
+        """Best-effort recovery after a failed graceful restart.
+
+        Re-run ``startup()`` (idempotent by design). On success the node
+        is serving and starting containers again. On failure, a live
+        process that can neither restart its runtime nor serve workloads
+        would masquerade as healthy — exit(1) and let systemd/docker
+        restart us instead. Skipped entirely when a shutdown owns the
+        process (#2527 review): resurrecting the runtime during teardown
+        is exactly what the shutdown is undoing.
+        """
+        if self.shutting_down:
+            logger.info("SIGHUP: restart recovery skipped; shutting down")
+            return
+        state = self.app.state
+        state.container_registry.draining = False
+        try:
+            await self.startup()
+        except Exception as exc:  # noqa: BLE001
+            logger.critical(
+                "SIGHUP: restart recovery failed (%s); exiting for a "
+                "process restart",
+                exc,
+                exc_info=exc,
+            )
+            os._exit(1)
+        logger.error(
+            "SIGHUP: restart failed but runtime recovered; "
+            "configuration may be stale"
+        )
+        state.sockets.notify_host_started()
 
 
 # Addresses that are safe for no-auth single-user (``none``) mode: only the
@@ -900,6 +1170,66 @@ class LiveCORSMiddleware:
         await inner(scope, receive, send)
 
 
+class InFlightRequests:
+    """In-flight HTTP request counter (#2527 graceful restart/shutdown).
+
+    Backs the quiesce phase of both the SIGHUP restart and the
+    TERM/INT shutdown: after new container starts are refused,
+    :meth:`wait_for_idle` waits for the request count to reach zero
+    before the containers are drained. Not an owned subsystem —
+    a plain counter with no app dependency.
+    """
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    def increment(self) -> None:
+        if self.count == 0:
+            self._idle.clear()
+        self.count += 1
+
+    def decrement(self) -> None:
+        self.count = max(0, self.count - 1)
+        if self.count == 0:
+            self._idle.set()
+
+    async def wait_for_idle(self, timeout: float) -> bool:
+        """Wait until no requests are in flight; False on timeout."""
+        if self.count == 0:
+            return True
+        try:
+            await asyncio.wait_for(self._idle.wait(), timeout)
+        except TimeoutError:
+            return False
+        return True
+
+
+class InFlightMiddleware:
+    """Pure-ASGI wrapper counting in-flight ``http`` requests (#2527).
+
+    ``http`` scopes only — a WebSocket connection never "completes", so
+    counting it would block the drain quiesce forever. The counter is
+    shared via ``app.state.inflight_requests`` so the SIGHUP restart
+    and TERM/INT shutdown paths can wait on it.
+    """
+
+    def __init__(self, app_asgi, counter: InFlightRequests) -> None:
+        self.app = app_asgi
+        self.counter = counter
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        self.counter.increment()
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self.counter.decrement()
+
+
 # --- Static files (Flutter Web) ---
 # Must be last so API routes take priority
 
@@ -958,6 +1288,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     """
     app = FastAPI(title="Klangk", lifespan=lifespan)
     app.state.settings = settings
+    # #2527: in-flight HTTP request counter for the SIGHUP quiesce phase.
+    # Created before any middleware/route wiring; InFlightMiddleware wraps
+    # every request through this shared instance.
+    app.state.inflight_requests = InFlightRequests()
     # #1467: logging is configured centrally (module-level defaults are
     # already active from the import of klangk.logger; this call re-applies
     # the level from KLANGKD_LOG_LEVEL now that settings are finalized, and
@@ -1071,6 +1405,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # module). The lifespan and the SIGHUP restart path call its methods.
     app.state.lifecycle = Lifecycle(app)
 
+    app.add_middleware(InFlightMiddleware, counter=app.state.inflight_requests)
     app.add_middleware(LiveCORSMiddleware, fastapi_app=app)
 
     app.include_router(root_router)

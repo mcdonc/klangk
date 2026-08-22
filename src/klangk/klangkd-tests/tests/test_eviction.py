@@ -438,6 +438,21 @@ class TestEvictOne:
 
         assert await evictor.evict_one(0.03) is False
 
+    async def test_workspace_with_operation_in_flight_skipped(self):
+        """A mid-(re)connect workspace — per-workspace lock held — is
+        skipped: its container is tracked from podman create but has no
+        subscriber until container_ready, so an armed evictor would stop
+        the fresh container under the connecting client (#2527 e2e
+        flake)."""
+        app, evictor = self._evictor()
+        registry = app.state.container_registry
+        self._tracked(registry, "ws-connecting", "cid-c", 500)
+        async with registry._get_workspace_lock("ws-connecting"):
+            assert await evictor.evict_one(0.03) is False
+        assert "ws-connecting" in registry.states
+        # Lock released → eligible again.
+        assert await evictor.evict_one(0.03) is True
+
     async def test_never_stop_pin_skipped(self):
         """idle_timeout=0 means "never stop" (auto-start boot services,
         #1244) — eviction must respect the pin too (#2627 review B2):

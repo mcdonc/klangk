@@ -4126,6 +4126,44 @@ class TestStopContainer:
         # The workspace lock entry is deliberately retained (#1258).
         assert "ws" in self.registry._workspace_locks
 
+    async def test_stop_reports_success_and_failure(self):
+        """The bool return lets drains count only verifiable stops
+        (#2527 review): True when gone via this call, False on a podman
+        failure or a racing re-bind."""
+        # Tracked + clean remove → True.
+        self.registry.track_activity("cid-a", "ws-a")
+        with patch_podman(self.registry):
+            ok = await self.registry.stop_and_remove_container("cid-a")
+        assert ok is True
+
+        # Tracked + podman failure → False.
+        self.registry.track_activity("cid-b", "ws-b")
+        with patch_podman(
+            self.registry,
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "boom")
+            ),
+        ):
+            ok = await self.registry.stop_and_remove_container("cid-b")
+        assert ok is False
+
+        # Re-bound by a racing start → the fresh container is left alone;
+        # the old cid's stop reports False.
+        self.registry.track_activity("cid-old", "ws-c")
+        self.registry.track_activity("cid-new", "ws-c")  # re-bind
+        with patch_podman(self.registry):
+            ok = await self.registry.stop_and_remove_container(
+                "cid-old", workspace_id="ws-c"
+            )
+        assert ok is False
+        # The fresh container's state survived.
+        assert self.registry.states["ws-c"].container_id == "cid-new"
+
+        # Untracked container (no workspace) + clean remove → True.
+        with patch_podman(self.registry):
+            ok = await self.registry.stop_and_remove_container("cid-x")
+        assert ok is True
+
     async def test_stop_serializes_under_workspace_lock(self):
         # stop_and_remove_container must acquire the workspace lock before
         # mutating state, so it cannot tear down a registry entry while a

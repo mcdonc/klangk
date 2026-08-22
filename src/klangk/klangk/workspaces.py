@@ -556,6 +556,22 @@ class Workspaces:
         if not self.app.state.settings.allow_autostart:
             return 0
 
+        # Start-refusal check (#2527): a draining node suppresses boot
+        # auto-start entirely. The start choke point would refuse each
+        # workspace anyway (NodeDrainingError), but checking up front gives
+        # one clear log line instead of N per-workspace failure warnings.
+        # A SIGHUP graceful-restart drain never reaches here with the flag
+        # still set (startup() clears it after the reaps, before
+        # auto-start runs), but the check is shared so both refusers
+        # behave identically.
+        blocked = self.app.state.container_registry.new_starts_blocked_reason()
+        if blocked:
+            logger.info(
+                "Node refuses new starts (%s): suppressing boot auto-start",
+                blocked,
+            )
+            return 0
+
         ws_list = (
             await self.app.state.model.workspaces.list_auto_start_workspaces()
         )

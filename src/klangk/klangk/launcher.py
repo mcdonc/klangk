@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import asyncio
 import platform
 import shutil
 import socket
@@ -399,24 +400,28 @@ def main(  # pragma: no cover
     # proxy (same-uid socket access). Set here, from the bind decision —
     # not via a config field (#1422 retired KLANGKD_UDS_MODE).
     asgi_app.state.util.set_uds_mode(True)
-    try:
-        uvicorn.run(
+
+    server = _make_graceful_exit_server(asgi_app)(
+        uvicorn.Config(
             asgi_app,
             uds=uds_path,
-            # proxy_headers=False: over a UDS request.client is None; our
-            # trust helpers handle header trust via _UDS_MODE. Letting uvicorn
-            # also rewrite client would double-resolve.
+            # proxy_headers=False: over a UDS request.client is None;
+            # our trust helpers handle header trust via _UDS_MODE.
+            # Letting uvicorn also rewrite client would double-resolve.
             proxy_headers=False,
             ws_max_size=ws_max_size,
-            # Server stays at uvicorn's default (20/20). The TUI detects a
-            # wedged / half-open connection via its own client-side pings
-            # (set in ``cli/tui/ws.py``, 10s/10s) — its single reachability
-            # signal (#2052) — so there's no need to tighten the server
-            # globally (which would also affect the web UI and `klangk
-            # monitor`).
+            # Server stays at uvicorn's default (20/20). The TUI detects
+            # a wedged / half-open connection via its own client-side
+            # pings (set in ``cli/tui/ws.py``, 10s/10s) — its single
+            # reachability signal (#2052) — so there's no need to
+            # tighten the server globally (which would also affect the
+            # web UI and `klangk monitor`).
             ws_ping_interval=20,
             ws_ping_timeout=20,
         )
+    )
+    try:
+        server.run()
     except OSError as exc:
         logger.error(
             "uvicorn failed to bind UDS at %s: %s — exiting", uds_path, exc
@@ -437,6 +442,113 @@ def main(  # pragma: no cover
             config_status,
         )
         raise SystemExit(config_status) from None
+
+
+def _make_graceful_exit_server(app):
+    """Build a uvicorn Server class whose SIGTERM/SIGINT exit runs the
+    app's graceful-shutdown hook first (#2527).
+
+    uvicorn has no native pre-shutdown signal hook: ``capture_signals``
+    installs ``Server.handle_exit`` directly, and the ASGI lifespan
+    shutdown only fires *after* every connection — including every
+    WebSocket — is closed, far too late for a ``host_shutdown``
+    broadcast. The sanctioned extension point is the subclass: this
+    server's exit handler broadcasts + drains + refuses starts (the
+    Lifecycle hook) **before** delegating to uvicorn's ``handle_exit``,
+    so uvicorn's listener stop / connection drain / lifespan teardown
+    sequence is untouched.
+
+    Second signal: the hook is one-shot (``lifecycle.shutting_down``).
+    A TERM/INT during the hook sets ``force_exit`` and delegates to
+    uvicorn's handler — uvicorn aborts its wait loops immediately, so
+    the "second Ctrl+C hard-exits" behavior is preserved (uvicorn
+    alone would need a third press, because the first signal's exit is
+    deferred to the hook's done-callback and should_exit is still
+    unset — #2527 review).
+    """
+    import contextlib  # allow-deferred-import (serve-time import)
+    import signal as signal_mod  # allow-deferred-import (serve-time)
+    import threading  # allow-deferred-import (serve-time import)
+
+    import uvicorn  # allow-deferred-import (serve-time import)
+    from uvicorn.server import (  # allow-deferred-import (serve-time)
+        HANDLED_SIGNALS,
+    )
+
+    @contextlib.contextmanager
+    def capture_signals(self):
+        # Mirror uvicorn's capture_signals, wrapping handle_exit with
+        # the app hook. Main-thread guard as in uvicorn itself.
+        if threading.current_thread() is not threading.main_thread():
+            yield
+            return
+        original = self.handle_exit
+
+        def hooked(sig, frame):
+            lifecycle = getattr(app.state, "lifecycle", None)
+            ran_hook = False
+            if lifecycle is not None and not lifecycle.shutting_down:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None:
+                    lifecycle.shutting_down = True
+                    task = loop.create_task(
+                        lifecycle.graceful_shutdown(signal_num=sig)
+                    )
+
+                    # Strong reference so the GC can't reap the hook
+                    # mid-drain (same hazard class as the SIGHUP restart
+                    # tasks); the done-callback discards it, surfaces a
+                    # hook failure, and starts uvicorn's own exit — the
+                    # hook only drains; the exit handoff lives here so
+                    # even a failed/raising hook still terminates the
+                    # process.
+                    def hook_done(_task, _orig=original):
+                        lifecycle._shutdown_tasks.discard(_task)
+                        if not _task.cancelled():
+                            exc = _task.exception()
+                            if exc is not None:
+                                logger.error(
+                                    "graceful-shutdown hook failed: %s",
+                                    exc,
+                                    exc_info=exc,
+                                )
+                        _orig(sig, frame)
+
+                    lifecycle._shutdown_tasks.add(task)
+                    task.add_done_callback(hook_done)
+                    ran_hook = True
+            if not ran_hook:
+                # Second signal (hook already running / no lifecycle /
+                # no loop): force uvicorn's exit NOW. Calling bare
+                # handle_exit only sets should_exit — which the first
+                # signal's deferred handoff hasn't set yet — so a second
+                # press would merely start a concurrent graceful exit,
+                # killing sockets mid-drain, and a third would be needed
+                # for force_exit. Setting force_exit directly preserves
+                # uvicorn's "second Ctrl+C hard-exits" semantics (#2527
+                # review).
+                self.force_exit = True
+                original(sig, frame)
+
+        original_handlers = {
+            sig: signal_mod.signal(sig, hooked) for sig in HANDLED_SIGNALS
+        }
+        try:
+            yield
+        finally:
+            for sig, handler in original_handlers.items():
+                signal_mod.signal(sig, handler)
+        for captured_signal in reversed(self._captured_signals):
+            signal_mod.raise_signal(captured_signal)
+
+    return type(
+        "GracefulExitServer",
+        (uvicorn.Server,),
+        {"capture_signals": capture_signals},
+    )
 
 
 @app.command()

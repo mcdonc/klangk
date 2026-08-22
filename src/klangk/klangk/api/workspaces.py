@@ -31,6 +31,7 @@ from .. import (
     netfilter as netfilter_mod,
     wshandler,
 )
+from ..exceptions import NodeDrainingError
 from ..workspace_settings import (
     validate_settings,
     validate_settings_patch,
@@ -340,6 +341,16 @@ async def create_workspace(
     if body.auto_start:
         try:
             await app.state.workspaces.start_workspace(ws)
+        except NodeDrainingError:
+            # A graceful-restart drain raced the create (#2527): the
+            # workspace row exists but no container may start. Not worth
+            # failing the create — it simply won't run until the restart
+            # completes (a start then succeeds).
+            logger.warning(
+                "Node refuses new starts mid-create: workspace %s "
+                "created but not started",
+                ws["id"],
+            )
         except Exception:
             logger.warning(
                 "Eager start failed for workspace %s",
@@ -607,7 +618,15 @@ async def restart_workspace(
     fresh one with the same workspace config (#1244). The service
     command re-fires at the create choke point, so a service workspace
     recovers to healthy.
+
+    #2527: a draining node (graceful restart in progress) refuses the
+    restart up front — checking *before* the stop keeps a running
+    workspace running (existing workspaces survive until the restart's
+    own drain), instead of stopping it and then failing the start.
     """
+    blocked = app.state.container_registry.new_starts_blocked_reason()
+    if blocked:
+        raise HTTPException(status_code=503, detail=blocked)
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
@@ -626,6 +645,10 @@ async def restart_workspace(
     # create choke point in start_container.
     try:
         await app.state.workspaces.start_workspace(workspace)
+    except NodeDrainingError as exc:
+        # A draining node refuses fresh starts (#2527); the stop above
+        # already happened, so the workspace is simply left stopped.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         # User-config error (e.g. a bind-mount source path that doesn't
         # exist) — surface as a 400, not an unhandled 500 (#2157).
@@ -703,6 +726,10 @@ async def start_workspace(
         return {"status": "already_running"}
     try:
         await app.state.workspaces.start_workspace(workspace)
+    except NodeDrainingError as exc:
+        # Draining node (#2527): clear 503 so clients/CLI can distinguish
+        # "temporarily disabled by a restart" from a config error.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         # User-config error (e.g. a bind-mount source path that doesn't
         # exist) — surface as a 400, not an unhandled 500 (#2157). The WS

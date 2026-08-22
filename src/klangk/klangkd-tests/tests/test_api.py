@@ -2268,6 +2268,127 @@ class TestWorkspaceRoutes:
         assert resp.json()["auto_start"] is True
         mock_start.assert_awaited_once()
 
+    async def test_create_eager_start_drained_not_failed(
+        self, client, app, user
+    ):
+        """A graceful-restart drain racing create's eager start degrades
+        to a warning — the workspace is created but not started (#2527)."""
+        from klangk.exceptions import NodeDrainingError
+
+        headers = await _auth_headers(client)
+        app.state.container_registry.draining = True
+        try:
+            with (
+                patch.object(app.state.settings, "allow_autostart", "1"),
+                patch.object(
+                    app.state.workspaces,
+                    "start_workspace",
+                    new_callable=AsyncMock,
+                    side_effect=NodeDrainingError(
+                        "node is draining: new workspace starts are "
+                        "disabled (a restart is in progress)"
+                    ),
+                ),
+            ):
+                resp = await client.post(
+                    "/api/v1/workspaces",
+                    headers=headers,
+                    json={"name": "auto-ws", "auto_start": True},
+                )
+            assert resp.status_code == 200
+            assert resp.json()["auto_start"] is True
+        finally:
+            app.state.container_registry.draining = False
+
+    async def test_start_refused_503_while_draining(
+        self, client, app, user, registry, ws_admin
+    ):
+        """POST /start under the drain flag returns a clear 503 (#2527)."""
+        from klangk.exceptions import NodeDrainingError
+
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "dw"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        app.state.container_registry.draining = True
+        try:
+            with patch.object(
+                app.state.workspaces,
+                "start_workspace",
+                new_callable=AsyncMock,
+                side_effect=NodeDrainingError(
+                    "node is draining: new workspace starts are disabled "
+                    "(a restart is in progress)"
+                ),
+            ):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/start", headers=headers
+                )
+            assert resp.status_code == 503
+            assert "draining" in resp.json()["detail"]
+        finally:
+            app.state.container_registry.draining = False
+
+    async def test_restart_refused_503_up_front_while_draining(
+        self, client, app, user, registry, ws_admin
+    ):
+        """POST /restart checks the drain flag BEFORE stopping the
+        running container — a running workspace survives the refusal
+        (#2527)."""
+        from klangk.container.state import ContainerState
+
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "dw2"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        registry.states[ws_id] = ContainerState(ws_id, "cid-live", app)
+        app.state.container_registry.draining = True
+        try:
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+            assert resp.status_code == 503
+            assert "draining" in resp.json()["detail"]
+            # The running container was NOT stopped by the refusal.
+            assert registry.states.get(ws_id) is not None
+            assert registry.states[ws_id].container_id == "cid-live"
+        finally:
+            app.state.container_registry.draining = False
+            registry.states.pop(ws_id, None)
+
+    async def test_restart_stop_then_drained_503(
+        self, client, app, user, registry, ws_admin
+    ):
+        """A drain that lands mid-restart (after the stop, before the
+        start) leaves the workspace stopped with a 503 — never
+        half-restarted (#2527)."""
+        from klangk.exceptions import NodeDrainingError
+
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "dw3"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        with patch.object(
+            app.state.workspaces,
+            "start_workspace",
+            new_callable=AsyncMock,
+            side_effect=NodeDrainingError(
+                "node is draining: new workspace starts are disabled "
+                "(a restart is in progress)"
+            ),
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+        assert resp.status_code == 503
+        assert "draining" in resp.json()["detail"]
+
     async def test_create_auto_start_eager_failure_logged(
         self, client, app, user
     ):

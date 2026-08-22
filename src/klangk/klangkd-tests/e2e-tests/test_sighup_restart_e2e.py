@@ -125,23 +125,38 @@ def test_http_listener_stays_up_across_sighup(server):
 
 
 async def test_websocket_closed_with_1012_and_reconnects(server, auth):
-    """#2: SIGHUP closes WS clients with code 1012; they can reconnect."""
+    """#2: SIGHUP closes WS clients with code 1012; they can reconnect.
+
+    The graceful restart first sends ``host_restart`` events with a
+    ``phase`` field ("draining" at refuse-starts, "restarting" just
+    before the recycle); those arrive as ordinary frames before the
+    1012 close, so receive until the close and assert both (#2527)."""
     ws = await _ws_dial(server, f"/ws?token={auth['token']}", max_size=2**20)
     try:
         _send_sighup(server)
 
-        # The server closes every client with code 1012 ("service
-        # restarted").  websockets raises ConnectionClosed on a
-        # server-initiated close; the code is on the received close
-        # frame.  ``ConnectionClosed.code`` is deprecated in websockets
-        # >=13.1 (``rcvd`` is the received Close frame; None only if the
-        # peer hung up without a close frame, which can't carry 1012).
+        # The server broadcasts the restart phases, then closes every
+        # client with code 1012 ("service restarted").  websockets
+        # raises ConnectionClosed on a server-initiated close; the code
+        # is on the received close frame.  ``ConnectionClosed.code`` is
+        # deprecated in websockets >=13.1 (``rcvd`` is the received
+        # Close frame; None only if the peer hung up without a close
+        # frame, which can't carry 1012).
         closed = None
+        phases = []
         try:
-            await asyncio.wait_for(ws.recv(), timeout=60)
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                try:
+                    msg = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                if msg.get("type") == "host_restart":
+                    phases.append(msg.get("phase"))
         except websockets.ConnectionClosed as exc:
             closed = exc.rcvd.code if exc.rcvd is not None else None
         assert closed == 1012, f"expected close 1012, got {closed}"
+        assert "draining" in phases, f"missing draining phase, got {phases}"
     finally:
         await ws.close()
 
@@ -247,6 +262,217 @@ async def test_containers_stopped_then_autostarted(server, auth):
         )
     except httpx.ReadTimeout:
         pass
+
+
+async def _connect_until_ready(server, auth, workspace_id, timeout=90):
+    """workspace_connect until ``container_ready``; returns the open socket.
+
+    Retries through the graceful-restart window: while the node refuses
+    starts the connect gets an error frame (the socket stays open), so a
+    single attempt is not conclusive — keep dialing until the container
+    genuinely comes up or the deadline passes (#2527 restart-race e2e).
+    """
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        ws = await _ws_dial(
+            server, f"/ws?token={auth['token']}", max_size=2**20
+        )
+        ready = False
+        try:
+            await ws.send(
+                json.dumps(
+                    {
+                        "cmd": "workspace_connect",
+                        "workspaceId": workspace_id,
+                    }
+                )
+            )
+            inner = time.monotonic() + 15
+            while time.monotonic() < inner:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=5)
+                except asyncio.TimeoutError:
+                    break  # nothing more coming on this attempt
+                try:
+                    msg = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                last = msg
+                if msg.get("type") == "container_ready":
+                    ready = True
+                    break
+        except websockets.ConnectionClosed:
+            pass  # dropped mid-attempt (e.g. residual 1012); retry
+        finally:
+            if not ready:
+                await ws.close()
+        if ready:
+            return ws
+        await asyncio.sleep(1)
+    raise AssertionError(
+        f"container_ready not received within {timeout}s (last={last!r})"
+    )
+
+
+async def test_sighup_during_workspace_restart(server, auth):
+    """A settings-page restart racing SIGHUP lands safely in every
+    interleaving (#2527):
+
+    - HUP before the restart's up-front refusal check → 503, workspace
+      untouched (then drained by the HUP itself).
+    - HUP mid-restart → the old container is already stopped and the
+      fresh start is refused at the choke point → 503, workspace left
+      stopped — never half-restarted.
+    - Restart completing during the HUP → its own POST is an in-flight
+      request the quiesce phase waits for; the fresh container is then
+      stopped by the drain (tracked, or via the racing-start sweep).
+
+    In every case: the restart endpoint answers 200 or 503 (anything
+    else is a bug), the HUP completes with the server healthy, the
+    status endpoint stays coherent, and a fresh start works afterwards.
+    """
+    client = server["client"]
+    headers = auth["headers"]
+
+    resp = client.post(
+        "/api/v1/workspaces",
+        headers=headers,
+        json={"name": "sighup-restart-race"},
+        timeout=120,
+    )
+    assert resp.status_code == 200
+    workspace_id = resp.json()["id"]
+
+    # A running container first — a restart needs something to restart.
+    ws = await _connect_until_ready(server, auth, workspace_id)
+    await ws.close()
+    await asyncio.sleep(1)  # let the disconnect register
+
+    # Fire the restart, then the HUP a beat later: the restart is in
+    # its stop/create phase when the drain window opens under it.
+    restart_task = asyncio.ensure_future(
+        asyncio.to_thread(
+            client.post,
+            f"/api/v1/workspaces/{workspace_id}/restart",
+            headers=headers,
+            timeout=120,
+        )
+    )
+    await asyncio.sleep(0.2)
+    _send_sighup(server)
+    restart_resp = await restart_task
+
+    assert restart_resp.status_code in (200, 503), restart_resp.text
+    assert _wait_http_ok(server, timeout=90)
+
+    # Status endpoint is coherent after the dust settles.
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        r = client.get(
+            f"/api/v1/workspaces/{workspace_id}/status",
+            headers=headers,
+            timeout=10,
+        )
+        assert r.status_code == 200
+        # Drained (the common outcome) → stop polling. Still running is
+        # also legitimate (the restart won the post-HUP race); just
+        # verify it keeps reporting 200 and move on.
+        if not r.json().get("running", False):
+            break
+        await asyncio.sleep(1)
+
+    # A fresh start works once the restart cycle has finished.
+    ws2 = await _connect_until_ready(server, auth, workspace_id, timeout=120)
+    await ws2.close()
+
+    try:
+        client.delete(
+            f"/api/v1/workspaces/{workspace_id}",
+            headers=headers,
+            timeout=60,
+        )
+    except httpx.ReadTimeout:
+        pass
+
+
+async def test_sigterm_graceful_shutdown(server, auth):
+    """TERM/INT shutdown is graceful (#2527): the client receives a
+    ``host_shutdown`` event and a terminal stop for its workspace before
+    the process exits — not a bare socket drop.
+
+    Owns its server (it terminates it); the module-scoped `server`
+    fixture is untouched.
+    """
+    own = start_server(
+        KLANGKD_JWT_SECRET="term-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+        LOGFIRE_TOKEN="",
+    )
+    try:
+        client = own["client"]
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "test@example.com", "password": "testpass"},
+            timeout=10,
+        )
+        assert resp.status_code == 200
+        token = resp.json()["access_token"]
+
+        resp = client.post(
+            "/api/v1/workspaces",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"name": "term-shutdown"},
+            timeout=120,
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+
+        ws = await _ws_dial(own, f"/ws?token={token}", max_size=2**20)
+        try:
+            await ws.send(
+                json.dumps({"cmd": "workspace_connect", "workspaceId": ws_id})
+            )
+            # Wait for the container to be genuinely up.
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                msg = json.loads(raw)
+                if msg.get("type") == "container_ready":
+                    break
+
+            # SIGTERM — the graceful shutdown hook must fire before the
+            # process exits: host_shutdown broadcast first.
+            os.kill(own["proc"].pid, subprocess.signal.SIGTERM)
+
+            saw_host_shutdown = False
+            stopped_or_closed = False
+            try:
+                while True:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                    msg = json.loads(raw)
+                    if msg.get("type") == "host_shutdown":
+                        saw_host_shutdown = True
+                    ev = msg.get("event") or {}
+                    if ev.get(
+                        "name"
+                    ) == "container_stopped" and "shutdown" in (
+                        ev.get("value") or {}
+                    ).get("reason", ""):
+                        stopped_or_closed = True
+            except websockets.ConnectionClosed:
+                stopped_or_closed = True  # the process exited
+            assert saw_host_shutdown, "host_shutdown event not received"
+            assert stopped_or_closed
+        finally:
+            await ws.close()
+        # The process exits on its own after the drain.
+        own["proc"].wait(timeout=60)
+    finally:
+        stop_server(own)
 
 
 # --- Config reload via SIGHUP (#1587) ---

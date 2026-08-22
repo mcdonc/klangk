@@ -5,38 +5,93 @@ signals. Knowing which is which matters when you operate a deployment by
 hand — the difference between a _reload_ and a _full stop_ is whether
 running containers survive.
 
-## SIGINT / SIGTERM — stop the server
+## SIGINT / SIGTERM — graceful stop (#2527)
 
 The normal shutdown path (Ctrl-C, `systemctl stop`, container-runtime
-graceful exit). uvicorn handles these natively.
+graceful exit). Each phase is logged.
 
 What happens, in order:
 
-1. Accept no new requests.
-2. Close every WebSocket client.
-3. Tear down chat-agent subprocesses and cancel in-flight agent runs.
-4. **Stop and remove all workspace containers** (the idle-timeout cleanup
-   runs to completion).
-5. Dispose the database engine and remove the PID file.
+1. **Notify** — broadcast a `host_shutdown` WebSocket event to every
+   authenticated client, so the UI can render "server went away"
+   instead of silently reconnect-looping. (This runs at signal-receipt
+   time, before uvicorn closes the sockets — a lifespan-time broadcast
+   would reach nobody.)
+2. **Refuse new starts** — new workspace starts (API, WS, eager,
+   auto-start, crash-restart) return a clear 503/error frame for the
+   rest of the process's life; a start racing the shutdown is refused
+   rather than killed mid-create.
+3. **Quiesce** (#2664) — wait up to `KLANGKD_QUIESCE_TIMEOUT` seconds
+   (default 15) for in-flight HTTP requests to finish, so an upload or
+   terminal snapshot in progress isn't cut off by the drain below.
+   Stragglers at expiry are logged (WARNING) and left to finish against
+   the exiting process (uvicorn's own in-flight wait only starts after
+   this phase, when the containers are already stopped, so the wait
+   has to happen here to buy them anything).
+4. **Drain** — stop every running workspace through the same graceful
+   path as SIGHUP's drain (concurrently per workspace, 5s podman stop
+   grace): clients get terminal stop frames and a `container_stopped`
+   event with reason `host shutdown`, not a bare socket drop. A SIGHUP
+   arriving after the signal is ignored (the runtime is being torn
+   down; a restart would race the exit).
+5. Accept no new requests, close every WebSocket client (uvicorn's own
+   exit sequence). A second Ctrl-C during the quiesce or drain skips the
+   rest of the graceful work and forces the exit immediately.
+6. Tear down chat-agent subprocesses and cancel in-flight agent runs.
+7. Dispose the database engine and remove the PID file.
 
-Net effect: a _full_ stop. Workspaces go away; on the next start,
-`auto_start` brings back any that are configured for it.
+Net effect: a _full_ stop with clean client-visible shutdown frames.
+Workspaces go away; on the next start, `auto_start` brings back any
+that are configured for it. For a config reload with the same drain
+treatment while keeping the listener up, use SIGHUP (below).
 
-## SIGHUP — reload configuration + graceful runtime restart (#1212, #1587)
+A drain failure is logged and never blocks the exit — the process always
+terminates. Budget the quiesce + drain inside your service manager's
+stop deadline (`TimeoutStopSec` under systemd): up to
+`KLANGKD_QUIESCE_TIMEOUT` seconds (default 15) of request quiesce, plus
+one per-workspace stop grace (5s; stops run concurrently across
+workspaces). Raising `KLANGKD_QUIESCE_TIMEOUT` past ~85s blows the
+default 90s `TimeoutStopSec`.
+
+## SIGHUP — graceful restart (#1212, #1587, #2527)
 
 Sent by `kill -HUP $(cat $KLANGKD_STATE_DIR/klangk-<instance>.pid)`, or by
 your service manager's "reload" action.
 
 SIGHUP is **not** a process restart — the HTTP listener and the database
-stay up the whole time. It means "reload config and apply it" (the
-nginx/Postgres convention):
+stay up the whole time. It is a **graceful host restart**: finish what's
+in flight, refuse new work, drain the containers, then apply the new
+configuration and bring the runtime back up. Each phase is logged, and
+authenticated WebSocket clients receive a `host_restart` event with a
+`phase` field (`draining`, `restarting`) as it progresses, plus a final
+`host_started` broadcast when the restart completes.
 
-1. **Re-resolve configuration** from the environment (`KLANGK_*` env
-   vars and/or the YAML config file). If the new configuration is
-   **invalid** (bad value, dangling `file:`/`cmd:` ref, unreadable config
-   file), the restart is **denied** — the runtime stays running on its
-   last-known-good config and the reason is logged at `ERROR` level.
-2. **Apply reloadable settings.** The new `KlangkSettings` instance is
+1. **Validate** — re-resolve configuration from the environment
+   (`KLANGK_*` env vars and/or the YAML config file). If the new
+   configuration is **invalid** (bad value, dangling `file:`/`cmd:` ref,
+   unreadable config file), the restart is **denied** — the runtime stays
+   running on its last-known-good config, nothing is drained, and the
+   reason is logged at `ERROR` level.
+2. **Refuse new starts** — broadcast `host_restart {phase: "draining"}`
+   and set an in-memory drain flag: every path that could start a
+   container (API start/restart, WS connect, boot auto-start,
+   crash-recovery restart) refuses with a clear error until the restart
+   completes. This flag is never persisted — a crashed restart
+   cannot leave the node refusing starts.
+3. **Quiesce** — wait up to `KLANGKD_QUIESCE_TIMEOUT` seconds
+   (default 15) for in-flight HTTP requests to finish. Requests still
+   running at expiry are logged (WARNING); ordinary requests finish
+   against the recycling runtime, but a long-lived streaming response
+   (`/llm_proxy`, `/browser-delegate/stream`) cannot outlive the drain
+   and will be interrupted by the restart.
+4. **Drain** — stop every running workspace through the graceful path
+   (concurrently per workspace, each with a 5s podman stop grace):
+   clients get terminal status
+   frames and a `container_stopped` event with reason `host restart`,
+   not a dropped socket. Previously running workspaces are **not**
+   remembered — only workspaces configured for `auto_start` come back
+   (in step 7), exactly as on a fresh boot.
+5. **Apply reloadable settings.** The new `KlangkSettings` instance is
    swapped onto `app.state.settings`; all subsystems read it live. The
    OIDC discovery/JWKS caches are cleared and providers re-initialized,
    features are re-scanned, SSL trust is re-applied, and the agent user
@@ -44,18 +99,26 @@ nginx/Postgres convention):
    changes — set in the `features_config:` block — take effect in the DB). CORS origins (`KLANGKD_CORS_ORIGINS`) are picked up
    automatically by the live CORS middleware; `KLANGKD_FRONTEND_DIR` is
    remounted if it changed (#1610).
-3. **Close every WebSocket client** with close code `1012` ("service
-   restarted"). Both the web UI and `klangk monitor` reconnect
-   automatically with backoff and rebuild their state on reconnect.
-4. Tear down chat-agent subprocesses and cancel in-flight agent runs.
-5. **Stop and remove all workspace containers** and cancel the
-   idle/health background loops (`registry.shutdown()`).
-6. Re-run container-side startup: pre-warm podman, adopt/reap leftover
-   containers, restart the idle/health loops, and `auto_start` any
-   workspaces configured for it.
+6. **Recycle the runtime** — close every WebSocket client with close
+   code `1012` ("service restarted"), tear down chat-agent subprocesses
+   and in-flight agent runs, stop the idle/health/crash background
+   loops, then re-run container-side startup: pre-warm podman,
+   adopt/reap leftover containers, restart the loops, and `auto_start`
+   any workspaces configured for it.
+7. **Resume** — broadcast `host_started`. Both the web UI and
+   `klangk monitor` reconnect automatically with backoff and rebuild
+   their state on reconnect. New container starts stay refused
+   (503, "a restart is in progress") through step 6's podman pre-warm
+   and container reaps — a client that reconnects and starts a
+   workspace in that window gets a clean refusal instead of having its
+   fresh container reaped — then auto-start runs once starts are
+   allowed again.
 
-In-flight HTTP requests are never dropped — only long-lived WebSocket
-sessions are, and those reconnect on their own.
+If any step fails, the failure is logged, a recovery pass re-runs the
+startup sequence, and `host_started` is broadcast on recovery; if the
+recovery itself fails the process exits (code 1) so the service manager
+restarts it — the node never lingers half-restarted while its HTTP
+listener keeps serving.
 
 ### When to use it
 

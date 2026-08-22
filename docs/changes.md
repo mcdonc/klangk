@@ -102,6 +102,36 @@ operators or integrators to act when upgrading.
   endless restart loop. Supervisors can stop retrying it (systemd:
   `RestartPreventExitStatus=78`). See
   [Process signals](deployment/signals.md) for the exit-status table.
+- **Graceful stop on SIGTERM/SIGINT (#2527).** TERM/INT shutdown now
+  broadcasts a `host_shutdown` WebSocket event (so clients render
+- **Graceful stop on SIGTERM/SIGINT (#2527, #2664).** TERM/INT shutdown
+  now broadcasts a `host_shutdown` WebSocket event (so clients render
+  "server went away" instead of reconnect-looping), refuses new
+  workspace starts, waits up to `KLANGKD_QUIESCE_TIMEOUT` seconds
+  (default 15) for in-flight HTTP requests to finish, and drains every
+  running workspace through the same graceful path as SIGHUP (terminal
+  stop frames + `container_stopped` with reason `host shutdown`)
+  before uvicorn's exit sequence runs. A drain failure is logged and
+  never blocks the exit; a SIGHUP arriving during shutdown is ignored.
+  Clients surface `host_shutdown` / `host_restart` / `host_started` as
+  transient, non-blocking notices (web UI snackbar, TUI status line +
+  toast) — auto-reconnect is never visually impeded. Docs:
+  [Signals](deployment/signals.md).
+- **Graceful SIGHUP restart + `KLANGKD_QUIESCE_TIMEOUT` (#2527,
+  #2664).** SIGHUP is now a full graceful restart: new workspace
+  starts are refused, in-flight HTTP requests get
+  `KLANGKD_QUIESCE_TIMEOUT` seconds (default 15) to finish, running
+  workspaces are stopped gracefully (concurrently per workspace, each
+  with a 5s podman stop grace); the reloaded config is applied, and
+  the runtime recycles (drained workspaces are not restarted — only
+  `auto_start` ones return).
+  Clients get `host_restart` events with a `phase` field and a final
+  `host_started` broadcast; each phase is logged. Starts stay refused
+  until the post-restart container reaps finish, and a failed restart
+  logs, attempts a startup recovery, and exits (code 1) if recovery
+  fails — the node never lingers half-restarted. Invalid config still
+  denies the restart with nothing touched. Docs:
+  [Signals](deployment/signals.md).
 - **Decommissioning guide (#2593).** New [deployment chapter](../deployment/decommissioning.md)
   documenting the decommissioning notification chain (users, admins, integrators,
   infrastructure owners) and the shutdown sequence: workspace export, graceful
@@ -1148,6 +1178,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   sync's broadcast decision relies on — so the `shared_terminals`
   update was never sent to other workspace members. The update is now
   sent exactly once regardless of which path applies it first.
+
+- **Memory-pressure eviction no longer stops a workspace mid-connect (#2527).**
+  A reconnecting workspace's container is tracked from `podman create`
+  but has no WebSocket subscriber until `container_ready`, so an armed
+  evictor could stop the fresh container under the connecting client
+  (seen as a reconnect that immediately fails under sustained memory
+  pressure). Workspaces with a start/stop in flight (per-workspace lock
+  held) are now skipped by the evictor.
 
 - **`klangk terminal share`/`unshare` blind 10s timeout (#2633 CI
   flake).** The tmux window-watcher's re-sync broadcast the window list

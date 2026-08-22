@@ -317,6 +317,7 @@ port: "8997"
 | `container_restart_enabled`         | `false`                         | `KLANGKD_CONTAINER_RESTART_ENABLED`         |
 | `container_restart_max_retries`     | `5`                             | `KLANGKD_CONTAINER_RESTART_MAX_RETRIES`     |
 | `container_restart_backoff_seconds` | `5.0`                           | `KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS` |
+| `quiesce_timeout`                   | `15.0`                          | `KLANGKD_QUIESCE_TIMEOUT`                   |
 | `fips_mode`                         | `false`                         | `KLANGKD_FIPS_MODE`                         |
 | `health_check_interval`             |                                 | `KLANGKD_HEALTH_CHECK_INTERVAL`             |
 | `health_check_startup_grace`        |                                 | `KLANGKD_HEALTH_CHECK_STARTUP_GRACE`        |

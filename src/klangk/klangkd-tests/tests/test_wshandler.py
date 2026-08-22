@@ -26,7 +26,11 @@ from klangk import (
     container,
     workspaces as ws_mod,
 )
-from klangk.exceptions import ContainerGoneError, TerminalError
+from klangk.exceptions import (
+    ContainerGoneError,
+    NodeDrainingError,
+    TerminalError,
+)
 from klangk.podman import PodmanError
 from klangk.model.chat import ChatModel
 from _helpers import make_settings
@@ -11512,3 +11516,155 @@ class TestFormatContainerInfo:
         name, ports_str = format_container_info(ws_id, [], iid, "!!!")
         assert name == f"klangk-{iid}-{ws_id[:8]}"
         assert ports_str == ""
+
+
+class TestDrainingStartPaths:
+    """#2527: WS connect/restart on a draining node (graceful restart in
+    progress) send an error frame (new starts are refused)."""
+
+    async def test_connect_refused_while_draining(self, user, app_state):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        with (
+            patch.object(
+                conn.app.state.acl,
+                "get_principals",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                conn.app.state.acl,
+                "check_permission",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                conn.app.state.workspaces,
+                "get_workspace",
+                new=AsyncMock(return_value={"id": "ws-c", "name": "c"}),
+            ),
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                new=AsyncMock(
+                    side_effect=NodeDrainingError(
+                        "node is draining: new workspace starts are disabled"
+                    )
+                ),
+            ),
+            patch.object(conn, "handle_workspace_disconnect", new=AsyncMock()),
+        ):
+            await conn.handle_workspace_connect({"workspaceId": "ws-c"})
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and "draining" in m.get("message", "")
+            for m in sent
+        )
+
+    async def test_restart_refused_while_draining(self, user, app_state):
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        conn.workspace_id = "ws-c"
+        conn.workspace = {"id": "ws-c"}
+        with (
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)),
+            patch.object(
+                Connection,
+                "cleanup",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                new=AsyncMock(
+                    side_effect=NodeDrainingError(
+                        "node is draining: new workspace starts are disabled"
+                    )
+                ),
+            ),
+        ):
+            await conn.handle_restart_container()
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            isinstance(m, dict) and "draining" in m.get("message", "")
+            for m in sent
+        )
+
+
+class TestNotifyHostShutdown:
+    """host_shutdown broadcast for the TERM/INT graceful shutdown (#2527)."""
+
+    def _sockets_with(self, sockets, entries):
+        sockets.connections.clear()
+        for sock, conn in entries:
+            sockets.connections[sock] = conn
+        return sockets
+
+    def test_broadcast_reaches_authed_and_drops_dead(self):
+        sockets = _make_app_state().state.sockets
+        live = _mock_sock()
+        anon = _mock_sock()
+        dead = _mock_sock()
+        dead.send_json.side_effect = RuntimeError("closed")
+        self._sockets_with(
+            sockets,
+            [
+                (live, types.SimpleNamespace(user={"id": "u1"})),
+                (anon, types.SimpleNamespace(user={})),
+                (dead, types.SimpleNamespace(user={"id": "u2"})),
+            ],
+        )
+        sockets.notify_host_shutdown()
+        sent = [c[0][0] for c in live.send_json.call_args_list]
+        assert sent == [{"type": "host_shutdown"}]
+        anon.send_json.assert_not_called()
+        assert dead not in sockets.connections
+        sockets.connections.clear()
+
+
+class TestNotifyHostRestart:
+    """host_restart / host_started broadcasts for the SIGHUP graceful
+    restart (#2527)."""
+
+    def _sockets_with(self, sockets, entries):
+        sockets.connections.clear()
+        for sock, conn in entries:
+            sockets.connections[sock] = conn
+        return sockets
+
+    @pytest.mark.parametrize(
+        "method,args,expected",
+        [
+            (
+                "notify_host_restart",
+                ("draining",),
+                {"type": "host_restart", "phase": "draining"},
+            ),
+            (
+                "notify_host_restart",
+                ("restarting",),
+                {"type": "host_restart", "phase": "restarting"},
+            ),
+            ("notify_host_started", (), {"type": "host_started"}),
+        ],
+    )
+    def test_broadcasts_reach_authed_and_drop_dead(
+        self, method, args, expected
+    ):
+        sockets = _make_app_state().state.sockets
+        live = _mock_sock()
+        anon = _mock_sock()
+        dead = _mock_sock()
+        dead.send_json.side_effect = RuntimeError("closed")
+        self._sockets_with(
+            sockets,
+            [
+                (live, types.SimpleNamespace(user={"id": "u1"})),
+                (anon, types.SimpleNamespace(user={})),
+                (dead, types.SimpleNamespace(user={"id": "u2"})),
+            ],
+        )
+        getattr(sockets, method)(*args)
+        sent = [c[0][0] for c in live.send_json.call_args_list]
+        assert sent == [expected]
+        anon.send_json.assert_not_called()
+        assert dead not in sockets.connections
+        sockets.connections.clear()

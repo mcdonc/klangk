@@ -520,6 +520,20 @@ class CrashRecoveryMonitor:
             if not self.enabled:
                 tracker.next_attempt_at = None
                 return
+            # Start-refusal check (#2527): a graceful restart's drain
+            # must stick — crash recovery would otherwise re-start the
+            # workspace under the recycling runtime.
+            blocked = (
+                self.app.state.container_registry.new_starts_blocked_reason()
+            )
+            if blocked:
+                tracker.next_attempt_at = None
+                logger.info(
+                    "Workspace %s: restart suppressed (%s)",
+                    ws_id,
+                    blocked,
+                )
+                return
             ws = None
             try:
                 ws = await self.app.state.model.workspaces.get_workspace_by_id(
