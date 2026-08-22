@@ -1108,6 +1108,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Clean sidecar shutdown when its consent WebSocket is down
+  (#2657).** Removing a workspace whose egress sidecar sat in the
+  consent reconnect backoff dumped a raw
+  `asyncio.exceptions.CancelledError` traceback to the journal and
+  aborted teardown mid-way (exit code 1). SIGTERM teardown now
+  swallows the cancelled reconnect task and completes every cleanup
+  step.
+
 - **Egress sidecar startup log noise on read-only `/proc/sys` (#2656).**
   The sidecar entrypoint's best-effort sysctl writes (disable IPv6,
   `rp_filter=0`) leaked alarming `Read-only file system` shell errors to

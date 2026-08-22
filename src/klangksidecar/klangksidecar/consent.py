@@ -100,7 +100,15 @@ class SidecarConsentClient:
             self._task.cancel()
             try:
                 await self._task
-            except Exception:
+            except (asyncio.CancelledError, Exception):
+                # CancelledError first (#2657): the cancel we just issued
+                # makes the awaited task raise it wherever it is parked
+                # (reconnect backoff, token-retry sleep), and it is a
+                # BaseException (3.8+) that `except Exception` alone let
+                # escape -- aborting _shutdown (nfq.unbind/sock.close
+                # skipped) and dumping a raw traceback on every workspace
+                # removal whose WS was down. Same guard shape _shutdown
+                # uses for its sweep/sampler awaits (app.py).
                 pass
         self._fail_close_pending()
 
