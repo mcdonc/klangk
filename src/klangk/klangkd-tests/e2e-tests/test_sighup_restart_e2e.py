@@ -28,14 +28,18 @@ import asyncio
 import json
 import os
 import subprocess
-import tempfile
 import time
 
 import httpx
 import pytest
 import websockets
 
-from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
+from _e2e_server import (
+    start_server,
+    stop_server,
+    tracked_mkdtemp,
+    ws_connect as _ws_dial,
+)
 
 
 @pytest.fixture(scope="module")
@@ -258,8 +262,8 @@ def test_config_reload_via_sighup():
     """
     import yaml
 
-    data_dir = tempfile.mkdtemp(prefix="klangk-reload-e2e-")
-    state_dir = tempfile.mkdtemp(prefix="klangk-reload-e2e-state-")
+    data_dir = tracked_mkdtemp("klangk-reload-e2e-")
+    state_dir = tracked_mkdtemp("klangk-reload-e2e-state-")
 
     config_path = os.path.join(state_dir, "klangk.yaml")
     with open(config_path, "w") as f:

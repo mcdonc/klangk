@@ -51,10 +51,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
+
+from _e2e_server import tracked_mkdtemp
 
 # The default network-sidecar image has python3 + dnspython + openssl (the
 # proxy's deps), so a single image serves as both the DNS forwarder and the
@@ -343,7 +344,7 @@ class ControlledDns:
         """Bring up the target + dns containers and publish an empty map."""
         if self._p.target:
             return  # already started
-        d = tempfile.mkdtemp(prefix="ctrl-dns-")
+        d = tracked_mkdtemp("ctrl-dns-")
         self._p.dir = d
         self._p.map_path = os.path.join(d, "map.json")
         self._write_map()

@@ -11,7 +11,6 @@ Run with: devenv shell -- test-backend-e2e
 import logging
 import os
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
@@ -27,7 +26,7 @@ sys.path.insert(
     ),
 )
 from _e2e_env import clean_env
-from _e2e_server import start_server, stop_server
+from _e2e_server import start_server, stop_server, tracked_mkdtemp
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +80,7 @@ def _stop_server(server, data_dir=None):
 @pytest.fixture(scope="session")
 def server():
     """Start a real Klangk server for the test session."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-cli-e2e-")
+    data_dir = tracked_mkdtemp("klangk-cli-e2e-")
     port = str(free_port())
     proc, base_url = _start_server(data_dir, port)
     yield {
@@ -644,7 +643,7 @@ class TestAutoStart:
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
     def autostart_server(tmp_path_factory, request):
-        data_dir = tempfile.mkdtemp(prefix="klangk-autostart-")
+        data_dir = tracked_mkdtemp("klangk-autostart-")
         proc, base_url = _start_server(
             data_dir,
             str(free_port()),
@@ -762,7 +761,7 @@ class TestSandboxAutoStartServiceCommand:
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
     def autostart_server(tmp_path_factory, request):
-        data_dir = tempfile.mkdtemp(prefix="klangk-sandbox-defcmd-")
+        data_dir = tracked_mkdtemp("klangk-sandbox-defcmd-")
         proc, base_url = _start_server(
             data_dir,
             TestSandboxAutoStartServiceCommand.PORT,
@@ -1435,7 +1434,7 @@ class TestAllowedMountRoots:
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
     def restricted_server(tmp_path_factory, request):
-        data_dir = tempfile.mkdtemp(prefix="klangk-mount-roots-")
+        data_dir = tracked_mkdtemp("klangk-mount-roots-")
         proc, base_url = _start_server(
             data_dir,
             str(free_port()),
@@ -1507,7 +1506,7 @@ class TestVolumeUserIsolation:
     def two_user_server(tmp_path_factory, request):
         import httpx
 
-        data_dir = tempfile.mkdtemp(prefix="klangk-vol-iso-")
+        data_dir = tracked_mkdtemp("klangk-vol-iso-")
         proc, base_url = _start_server(data_dir, str(free_port()))
 
         # Register a second user via the API
@@ -1658,7 +1657,7 @@ class TestTerminalSharing:
     @pytest.fixture(autouse=True, scope="class")
     @staticmethod
     def _dedicated_server(tmp_path_factory, request):
-        data_dir = tempfile.mkdtemp(prefix="klangk-terminal-sharing-")
+        data_dir = tracked_mkdtemp("klangk-terminal-sharing-")
         proc, base_url = _start_server(data_dir, str(free_port()))
         config_dir = tmp_path_factory.mktemp("klangk-terminal-sharing-config")
         env = clean_env(HOME=str(config_dir))
@@ -1949,7 +1948,7 @@ class TestWorkspaceSharing:
 @pytest.fixture(scope="module")
 def short_token_server():
     """Start a server with very short token lifetime (~7 seconds)."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-refresh-e2e-")
+    data_dir = tracked_mkdtemp("klangk-refresh-e2e-")
     proc, base_url = _start_server(
         data_dir,
         str(free_port()),

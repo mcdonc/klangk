@@ -32,7 +32,7 @@ from klangk.caddy import (
     tcp_upstream,
     uds_upstream,
 )
-from _helpers import make_settings
+from _helpers import make_settings, tracked_mkdtemp
 
 
 def _renderer(settings):
@@ -468,7 +468,6 @@ class TestLlmBlockCaddyAdapt:
         """Run `caddy adapt --adapter caddyfile` on a rendered config; return JSON."""
         import json
         import subprocess
-        import tempfile
 
         with tempfile.NamedTemporaryFile(
             "w", suffix=".Caddyfile", delete=False
@@ -727,7 +726,7 @@ class TestWatchdogPaths:
         # which can exceed the 104-byte AF_UNIX sun_path limit. Use a short
         # temp dir so the socket path passes the settings validator (#1983).
         if sys.platform == "darwin":
-            state = tempfile.mkdtemp(prefix="ks-")
+            state = tracked_mkdtemp("ks-")
             sock = os.path.join(state, "caddy-admin.sock")
             s = make_settings(
                 {
@@ -760,7 +759,7 @@ class TestWatchdogPaths:
         suffix (that's version-fragile — #1709; mode enforced via os.chmod).
         The bare path (admin_socket) is what httpx dials."""
         if sys.platform == "darwin":
-            state = tempfile.mkdtemp(prefix="ks-")
+            state = tracked_mkdtemp("ks-")
             sock = os.path.join(state, "caddy-admin.sock")
             s = make_settings(
                 {
@@ -877,7 +876,7 @@ class TestWatchdogStart:
         # On macOS, pytest tmp_path can exceed the AF_UNIX sun_path limit;
         # use a short temp dir for the state + socket (#1983).
         if sys.platform == "darwin":
-            state = tempfile.mkdtemp(prefix="ks-")
+            state = tracked_mkdtemp("ks-")
         else:
             state = str(tmp_path)
         s = make_settings(

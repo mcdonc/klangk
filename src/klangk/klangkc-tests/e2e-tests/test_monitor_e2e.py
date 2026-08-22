@@ -28,7 +28,6 @@ import asyncio
 import json
 import os
 import subprocess
-import tempfile
 import time
 
 import httpx
@@ -44,7 +43,7 @@ sys.path.insert(
     ),
 )
 from _e2e_env import clean_env
-from _e2e_server import start_server, stop_server
+from _e2e_server import start_server, stop_server, tracked_mkdtemp
 
 
 # --- server / auth / cli-config fixtures (self-contained, per repo convention) ---
@@ -84,7 +83,7 @@ def _stop_server(server, data_dir=None):
 @pytest.fixture(scope="module")
 def server():
     """Start a real Klangk server with a fast health-check interval."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-monitor-e2e-")
+    data_dir = tracked_mkdtemp("klangk-monitor-e2e-")
     server, base_url = _start_server(data_dir)
     yield {"url": base_url, "data_dir": data_dir}
     _stop_server(server)

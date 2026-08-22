@@ -47,7 +47,7 @@ if _HERE not in sys.path:
 
 import httpx  # noqa: E402
 
-from _e2e_server import start_server, stop_server, ws_connect  # noqa: E402
+from _e2e_server import start_server, stop_server, tracked_mkdtemp, ws_connect  # noqa: E402
 
 from _controlled_dns import (  # noqa: E402
     ControlledDns,
@@ -1324,11 +1324,10 @@ class SmokeTest:
         subprocess) puts them on the shared ``podman`` bridge instead. No-op if
         the ambient CONTAINERS_CONF already sets a netns.
         """
-        import tempfile
 
         if os.environ.get("CONTAINERS_CONF"):
             return  # operator supplied their own; respect it
-        d = tempfile.mkdtemp(prefix="klangk-smoke-cc-")
+        d = tracked_mkdtemp("klangk-smoke-cc-")
         path = os.path.join(d, "containers.conf")
         with open(path, "w") as f:
             f.write('[containers]\nnetns = "bridge"\n')

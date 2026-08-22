@@ -1,6 +1,8 @@
 """Tests for klangk CLI commands (main.py)."""
 
 import json
+
+from _helpers import tracked_mkdtemp
 import klangk.cli.execsync
 import os
 import types
@@ -287,7 +289,6 @@ class TestMainCLI:
     def test_server_url_falls_back_to_default_uds(self, tmp_path, monkeypatch):
         """When the default klangkd UDS exists, server_url() uses it (#1676)."""
         import socket as _socket
-        import tempfile
         from pathlib import Path
 
         from klangk.cli import main
@@ -300,7 +301,7 @@ class TestMainCLI:
         CLIState().save()  # no active server, no --server
         # Use a short temp dir so the socket path stays under the 104-char
         # AF_UNIX sun_path limit on macOS (#1983).
-        short_tmp = Path(tempfile.mkdtemp(prefix="ks-"))
+        short_tmp = Path(tracked_mkdtemp("ks-"))
         monkeypatch.setenv("XDG_STATE_HOME", str(short_tmp))
         monkeypatch.delenv("KLANGK_STATE_DIR", raising=False)
         sock_dir = short_tmp / "klangkd"
@@ -318,7 +319,6 @@ class TestMainCLI:
     ):
         """KLANGK_STATE_DIR relocates the default UDS (#1676)."""
         import socket as _socket
-        import tempfile
         from pathlib import Path
 
         from klangk.cli import main
@@ -331,7 +331,7 @@ class TestMainCLI:
         CLIState().save()
         # Use a short temp dir so the socket path stays under the 104-char
         # AF_UNIX sun_path limit on macOS (#1983).
-        custom_state = Path(tempfile.mkdtemp(prefix="ks-"))
+        custom_state = Path(tracked_mkdtemp("ks-"))
         monkeypatch.setenv("KLANGK_STATE_DIR", str(custom_state))
         sock_path = custom_state / "klangk.sock"
         srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
@@ -384,7 +384,6 @@ class TestMainCLI:
     ):
         """A plain absolute KLANGK_SOCKET is used when it exists (#1676)."""
         import socket as _socket
-        import tempfile
         from pathlib import Path
 
         from klangk.cli import main
@@ -397,7 +396,7 @@ class TestMainCLI:
         CLIState().save()
         # Use a short temp dir so the socket path stays under the 104-char
         # AF_UNIX sun_path limit on macOS (#1983).
-        short_tmp = Path(tempfile.mkdtemp(prefix="ks-"))
+        short_tmp = Path(tracked_mkdtemp("ks-"))
         monkeypatch.setenv("XDG_STATE_HOME", str(short_tmp))
         sock_path = short_tmp / "relocated.sock"
         srv = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
@@ -413,7 +412,6 @@ class TestMainCLI:
     ):
         """active-server wins even when the default UDS exists."""
         import socket as _socket
-        import tempfile
         from pathlib import Path
 
         from klangk.cli import main
@@ -425,7 +423,7 @@ class TestMainCLI:
         config_path.write_text("")
         # Use a short temp dir so the socket path stays under the 104-char
         # AF_UNIX sun_path limit on macOS (#1983).
-        short_tmp = Path(tempfile.mkdtemp(prefix="ks-"))
+        short_tmp = Path(tracked_mkdtemp("ks-"))
         monkeypatch.setenv("XDG_STATE_HOME", str(short_tmp))
         sock_dir = short_tmp / "klangkd"
         sock_dir.mkdir()
@@ -443,7 +441,6 @@ class TestMainCLI:
     ):
         """--server override wins even when the default UDS exists."""
         import socket as _socket
-        import tempfile
         from pathlib import Path
 
         from klangk.cli import main
@@ -456,7 +453,7 @@ class TestMainCLI:
         CLIState().save()
         # Use a short temp dir so the socket path stays under the 104-char
         # AF_UNIX sun_path limit on macOS (#1983).
-        short_tmp = Path(tempfile.mkdtemp(prefix="ks-"))
+        short_tmp = Path(tracked_mkdtemp("ks-"))
         monkeypatch.setenv("XDG_STATE_HOME", str(short_tmp))
         sock_dir = short_tmp / "klangkd"
         sock_dir.mkdir()

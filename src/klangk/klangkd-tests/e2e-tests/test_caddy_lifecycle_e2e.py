@@ -19,7 +19,6 @@ Run with: devenv shell -- test-backend-e2e test_caddy_lifecycle_e2e.py
 import os
 import signal
 import subprocess
-import tempfile
 import time
 
 import httpx
@@ -27,6 +26,7 @@ import pytest
 
 from klangk.model import free_port
 from _e2e_env import clean_env, close_popen_pipes
+from _e2e_server import tracked_mkdtemp
 
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..")
 
@@ -60,7 +60,7 @@ def _port_listening(port):
 
 def _start_klangkd():
     """Start a klangkd process with the Caddy proxy engine, return (proc, port)."""
-    data_dir = tempfile.mkdtemp(prefix="klangk-caddy-lifecycle-")
+    data_dir = tracked_mkdtemp("klangk-caddy-lifecycle-")
     egress_port = str(free_port())
 
     env = clean_env(
