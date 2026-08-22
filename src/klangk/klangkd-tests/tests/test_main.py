@@ -1110,11 +1110,13 @@ class TestInFlightRequests:
 class TestGracefulShutdown:
     """TERM/INT graceful shutdown hook (#2527)."""
 
-    async def test_sequence_notify_refuse_drain_handoff(
+    async def test_sequence_notify_refuse_quiesce_drain_handoff(
         self, app_state, caplog
     ):
-        """The hook broadcasts host_shutdown, refuses starts, drains
-        with reason 'host shutdown', and logs each phase."""
+        """The hook broadcasts host_shutdown, refuses starts, quiesces
+        in-flight requests (bounded by the live settings' timeout,
+        #2664), drains with reason 'host shutdown', and logs each
+        phase."""
         import signal as signal_mod
 
         app_state = _make_app_state()
@@ -1128,6 +1130,12 @@ class TestGracefulShutdown:
                 side_effect=lambda: order.append("notify"),
             ),
             patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                side_effect=lambda timeout: order.append("quiesce") or True,
+            ) as mock_wait,
+            patch.object(
                 registry,
                 "drain_all_containers",
                 new_callable=AsyncMock,
@@ -1138,12 +1146,46 @@ class TestGracefulShutdown:
             caplog.at_level("INFO"),
         ):
             await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
-        assert order == ["notify", "drain:host shutdown"]
+        assert order == ["notify", "quiesce", "drain:host shutdown"]
+        # The shutdown reads the timeout from the LIVE settings (no
+        # reload happens on the exit path).
+        mock_wait.assert_awaited_once_with(
+            app_state.state.settings.quiesce_timeout
+        )
         # The drain flag stays set: nothing comes back after a shutdown.
         assert registry.draining is True
         assert any(
             "graceful shutdown beginning" in r.message for r in caplog.records
         )
+
+    async def test_shutdown_quiesce_timeout_proceeds(self, app_state, caplog):
+        """Straggler requests at quiesce expiry are logged (WARNING) and
+        the shutdown proceeds to the drain anyway — the exit is never
+        blocked by a stuck request."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        app_state.state.inflight_requests.increment()
+        with (
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                app_state.state.container_registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=0,
+            ) as mock_drain,
+            patch.object(app_state.state.sockets, "notify_host_shutdown"),
+            caplog.at_level("WARNING"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGINT)
+        assert any("still in flight" in r.message for r in caplog.records)
+        mock_drain.assert_awaited_once_with(reason="host shutdown")
 
     async def test_drain_failure_does_not_block_exit(self, app_state, caplog):
         """A drain exception is logged and the hook completes — the
@@ -1686,9 +1728,7 @@ class TestStartupShutdownRestart:
         mock_drain.assert_awaited_once_with(reason="host restart")
         # The quiesce timeout comes from the RELOADED settings, so a
         # change takes effect on this restart (#2527 review).
-        mock_wait.assert_awaited_once_with(
-            new_settings.restart_inflight_timeout
-        )
+        mock_wait.assert_awaited_once_with(new_settings.quiesce_timeout)
         # The flag never survives the restart.
         assert registry.draining is False
 
@@ -1789,7 +1829,7 @@ class TestStartupShutdownRestart:
             "autostart(draining=False)",
         ]
 
-    async def test_restart_inflight_timeout_proceeds(self, app_state, caplog):
+    async def test_restart_quiesce_timeout_proceeds(self, app_state, caplog):
         """Straggler requests at timeout expiry are logged; the restart
         proceeds anyway."""
         app_state = _make_app_state()
@@ -1894,9 +1934,7 @@ class TestStartupShutdownRestart:
                 lc, "runtime_shutdown", new_callable=AsyncMock
             ) as mock_down,
             patch.object(lc, "startup", new_callable=AsyncMock) as mock_up,
-            patch.object(
-                app_state.state.sockets, "notify_host_restart"
-            ) as mock_notify,
+            patch.object(app_state.state.sockets, "notify_host_restart"),
         ):
             await lc.restart_runtime()
         assert order == ["drain"]

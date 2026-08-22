@@ -431,12 +431,14 @@ def _make_graceful_exit_server(app):
     deferred to the hook's done-callback and should_exit is still
     unset — #2527 review).
     """
-    import contextlib
-    import signal as signal_mod
-    import threading
+    import contextlib  # allow-deferred-import (serve-time import)
+    import signal as signal_mod  # allow-deferred-import (serve-time)
+    import threading  # allow-deferred-import (serve-time import)
 
-    import uvicorn
-    from uvicorn.server import HANDLED_SIGNALS
+    import uvicorn  # allow-deferred-import (serve-time import)
+    from uvicorn.server import (  # allow-deferred-import (serve-time)
+        HANDLED_SIGNALS,
+    )
 
     @contextlib.contextmanager
     def capture_signals(self):

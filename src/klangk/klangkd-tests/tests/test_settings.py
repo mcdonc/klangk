@@ -1442,7 +1442,7 @@ class TestNumericSettingCoercion:
         "health_check_interval",
         "health_check_timeout",
         "health_check_startup_grace",
-        "restart_inflight_timeout",
+        "quiesce_timeout",
     ]
 
     @pytest.mark.parametrize(

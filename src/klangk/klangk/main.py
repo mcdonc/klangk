@@ -491,7 +491,7 @@ class Lifecycle:
            container-start path refuses new starts (the single start
            choke point; the flag is never persisted, so a crashed
            restart cannot leave the node refusing starts).
-        3. **quiesce** — wait up to ``restart_inflight_timeout`` seconds
+        3. **quiesce** — wait up to ``quiesce_timeout`` seconds
            (default 15) for in-flight HTTP requests to finish; stragglers
            at expiry are logged and left to finish against the recycling
            runtime.
@@ -547,7 +547,7 @@ class Lifecycle:
             try:
                 # #2527 review: read the timeout from the NEW settings so
                 # a reload takes effect on THIS restart, not the next.
-                timeout = new_settings.restart_inflight_timeout
+                timeout = new_settings.quiesce_timeout
                 logger.info(
                     "SIGHUP: phase: quiesce (waiting up to %.1fs for "
                     "in-flight requests)",
@@ -737,7 +737,7 @@ class Lifecycle:
 
     async def graceful_shutdown(self, *, signal_num: int) -> None:
         """Graceful pre-exit work for TERM/INT (#2527): broadcast, refuse,
-        drain, then hand off to uvicorn's own exit.
+        quiesce, drain, then hand off to uvicorn's own exit.
 
         Runs at signal-receipt time (uvicorn closes every WebSocket before
         the lifespan teardown, so waiting for teardown would mean the
@@ -748,30 +748,58 @@ class Lifecycle:
         2. Refuse new container starts (the in-memory drain flag — same
            gate as the SIGHUP restart; a start racing the shutdown gets
            a 503 instead of being killed by the process exit).
-        3. Gracefully drain every running workspace — clients get
+        3. Quiesce — wait up to ``quiesce_timeout`` seconds (read from
+           the live settings; default 15) for in-flight HTTP requests
+           to finish, so a file upload or terminal snapshot isn't cut
+           off by the drain below (#2664). Stragglers at expiry are
+           logged (WARNING) and left to finish against the exiting
+           process — uvicorn's own in-flight wait only starts after
+           this hook, when the containers are already stopped, so the
+           wait has to happen here to buy them anything.
+        4. Gracefully drain every running workspace — clients get
            terminal stop frames + ``container_stopped`` with reason
            ``host shutdown``, then uvicorn's 1012/exit drop lands on
            already-stopped sessions. Also denies a concurrent SIGHUP
            restart (``shutting_down`` is checked in ``on_sighup``).
-        4. Call the uvicorn exit callback handed to the hook — uvicorn's
+        5. Call the uvicorn exit callback handed to the hook — uvicorn's
            listener stop / connection drain / lifespan teardown (which
            runs ``runtime_shutdown`` + ``process_shutdown``) takes over.
 
         Time-bounded by the deploy's service manager: the hook's own
-        budget is the drain's per-workspace 5s podman grace (bounded by
-        the 15s ``restart_inflight_timeout``-style budgets upstream); a
-        second TERM/INT during the hook bypasses it straight to uvicorn.
+        budget is the ``quiesce_timeout`` wait (default 15s) plus the
+        drain's concurrent per-workspace 5s podman grace — inside
+        systemd's default 90s ``TimeoutStopSec``; a second TERM/INT
+        during the hook bypasses it straight to uvicorn.
         """
-        import signal as signal_mod
-
         state = self.app.state
         registry = state.container_registry
-        name = signal_mod.Signals(signal_num).name
+        name = signal.Signals(signal_num).name
         logger.info("%s: graceful shutdown beginning (phase: notify)", name)
         state.sockets.notify_host_shutdown()
         logger.info("%s: phase: draining (refusing new starts)", name)
         registry.draining = True
         try:
+            # #2664: same bounded quiesce as the SIGHUP restart path, so
+            # in-flight requests finish before their containers are
+            # stopped. Read from the LIVE settings (no reload happens
+            # on the exit path).
+            timeout = state.settings.quiesce_timeout
+            logger.info(
+                "%s: phase: quiesce (waiting up to %.1fs for in-flight "
+                "requests)",
+                name,
+                timeout,
+            )
+            inflight = state.inflight_requests
+            idle = await inflight.wait_for_idle(timeout)
+            if not idle:
+                logger.warning(
+                    "%s: %d request(s) still in flight after %.1fs; "
+                    "proceeding with the shutdown",
+                    name,
+                    inflight.count,
+                    timeout,
+                )
             logger.info("%s: phase: drain (stopping workspaces)", name)
             stopped = await registry.drain_all_containers(
                 reason="host shutdown"
@@ -1127,11 +1155,12 @@ class LiveCORSMiddleware:
 
 
 class InFlightRequests:
-    """In-flight HTTP request counter (#2527 graceful restart).
+    """In-flight HTTP request counter (#2527 graceful restart/shutdown).
 
-    Backs the SIGHUP quiesce phase: after new container starts are
-    refused, :meth:`wait_for_idle` waits for the request count to reach
-    zero before the containers are drained. Not an owned subsystem —
+    Backs the quiesce phase of both the SIGHUP restart and the
+    TERM/INT shutdown: after new container starts are refused,
+    :meth:`wait_for_idle` waits for the request count to reach zero
+    before the containers are drained. Not an owned subsystem —
     a plain counter with no app dependency.
     """
 
@@ -1166,8 +1195,8 @@ class InFlightMiddleware:
 
     ``http`` scopes only — a WebSocket connection never "completes", so
     counting it would block the drain quiesce forever. The counter is
-    shared via ``app.state.inflight_requests`` so the SIGHUP restart path
-    can wait on it.
+    shared via ``app.state.inflight_requests`` so the SIGHUP restart
+    and TERM/INT shutdown paths can wait on it.
     """
 
     def __init__(self, app_asgi, counter: InFlightRequests) -> None:
