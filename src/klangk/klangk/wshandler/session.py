@@ -959,6 +959,48 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
+    def notify_host_restart(self, phase: str) -> None:
+        """Broadcast a host-restart progress event to all connections (#2527).
+
+        Sent at each phase of the SIGHUP graceful restart (``draining``,
+        ``restarting``) so clients can show a "server restarting" banner
+        before the per-workspace stop frames and the 1012 disconnect
+        arrive.
+        """
+        message: dict = {
+            "type": "host_restart",
+            "phase": phase,
+        }
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append((sock, conn))
+        for sock, _ in dead:
+            self.connections.pop(sock, None)
+
+    def notify_host_started(self) -> None:
+        """Broadcast host-started to all connections (#2527).
+
+        Sent when a SIGHUP graceful restart completes. Most clients see it
+        after reconnecting (the restart drops every WebSocket with 1012);
+        it is the all-clear counterpart to :meth:`notify_host_restart`.
+        """
+        message: dict = {"type": "host_started"}
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append((sock, conn))
+        for sock, _ in dead:
+            self.connections.pop(sock, None)
+
     def notify_service_health(
         self,
         workspace_id: str,

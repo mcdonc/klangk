@@ -57,6 +57,22 @@ class TestCordonGate:
                 )
             )
 
+    async def test_gate_blocked_by_draining_flag(self, app_state, db):
+        """The in-memory SIGHUP drain flag refuses starts through the same
+        choke point — without any DB cordon set."""
+        from klangk.container import ContainerStartSpec
+
+        registry = app_state.state.container_registry
+        registry.draining = True
+        with pytest.raises(NodeCordonedError, match="draining"):
+            await registry.start_container(
+                ContainerStartSpec(
+                    workspace_id="ws-x",
+                    host_path="/tmp/x",
+                    home_path="/tmp/x/home",
+                )
+            )
+
     async def test_gate_opens_after_uncordon(self, app_state, db):
         """After uncordon the same start proceeds past the gate (it may
         still fail later on podman — that is not the gate's business)."""
@@ -108,6 +124,27 @@ class TestAutostartSuppressed:
             ),
         ):
             await app_state.state.model.server_state.set_cordoned(True)
+            n = await app_state.state.workspaces.auto_start_workspaces()
+            assert n == 0
+
+    async def test_boot_autostart_skipped_when_draining(self, app_state, db):
+        """The in-memory SIGHUP drain flag alone suppresses boot
+        auto-start (same shared check as cordon)."""
+        settings = app_state.state.settings
+        with (
+            patch.object(settings, "allow_autostart", "1"),
+            patch.object(
+                app_state.state.model.workspaces,
+                "list_auto_start_workspaces",
+                AsyncMock(return_value=[{"id": "ws-a", "name": "a"}]),
+            ),
+            patch.object(
+                app_state.state.workspaces,
+                "start_workspace",
+                AsyncMock(side_effect=AssertionError("must not start")),
+            ),
+        ):
+            app_state.state.container_registry.draining = True
             n = await app_state.state.workspaces.auto_start_workspaces()
             assert n == 0
 
@@ -169,6 +206,44 @@ class TestCrashRestartSuppressed:
                 fake_start,
             ),
         ):
+            monitor.trackers["ws-c"] = tracker
+            await monitor.delayed_restart("ws-c", tracker)
+        assert started == []
+        assert tracker.next_attempt_at is None
+
+    async def test_restart_loop_abandons_when_draining(self, app_state, db):
+        """A pending crash-restart also abandons on the in-memory SIGHUP
+        drain flag (no DB cordon set) — a mid-restart container death
+        must not re-start under the recycling runtime."""
+        from klangk.container.crash import RestartTracker
+
+        monitor = app_state.state.container_registry.crash
+        tracker = RestartTracker()
+        started = []
+
+        async def fake_start(ws):
+            started.append(ws["id"])
+            return "new-cid", "created"
+
+        async def fake_ws(ws_id):
+            return {"id": ws_id, "name": "ws", "settings": {}}
+
+        with (
+            patch.object(
+                app_state.state.settings, "container_restart_enabled", True
+            ),
+            patch.object(
+                app_state.state.model.workspaces,
+                "get_workspace_by_id",
+                AsyncMock(side_effect=fake_ws),
+            ),
+            patch.object(
+                app_state.state.workspaces,
+                "start_workspace",
+                fake_start,
+            ),
+        ):
+            app_state.state.container_registry.draining = True
             monitor.trackers["ws-c"] = tracker
             await monitor.delayed_restart("ws-c", tracker)
         assert started == []

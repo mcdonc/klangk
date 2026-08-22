@@ -122,3 +122,14 @@ auto-started workspaces until an operator uncordons.
   _starts_ are refused.
 - Drain does not delete workspaces — everything restarts on the next
   start (or boot auto-start, once uncordoned).
+
+## Relationship to SIGHUP
+
+`SIGHUP` performs a self-contained graceful restart (refuse starts →
+quiesce → drain → reload config → recycle; see
+[Signals](signals.md#sighup--graceful-restart-1212-1587-2527)). It uses
+the same drain path but an **in-memory** flag that self-clears — it does
+not read or write the persisted cordon flag, and `uncordon` is never
+needed after it. Use cordon/drain when an operator controls the host and
+the state must survive restarts; use SIGHUP for a config reload with a
+clean restart of the runtime.

@@ -452,21 +452,45 @@ class Lifecycle:
         await state.db.dispose_engine()
 
     async def restart_runtime(self) -> None:
-        """Graceful runtime restart: stop containers, keep the listener.
+        """Graceful host restart: quiesce, drain, re-read config, recycle.
 
-        Triggered by SIGHUP.  Before touching the runtime, configuration is
-        re-resolved (``settings.reload()``, #1587); if it is invalid the
-        restart is **denied** -- the running runtime is left untouched on
-        its last-known-good config rather than torn down against a broken
-        one.  On a valid reload the settings are **swapped** onto
-        ``app.state.settings`` and the OIDC/features/SSL-trust/agent-user
-        steps are re-run, then the runtime recycles.  All subsystems read
-        settings live via ``self.app.state.settings`` (#1608), so the swap
-        propagates automatically with no per-subsystem ``reconfigure()``.
+        Triggered by SIGHUP. Each phase is logged and (the client-visible
+        ones) announced as a ``host_restart`` WebSocket event with a
+        ``phase`` field; a final ``host_started`` broadcast closes the
+        sequence. The HTTP listener and DB stay up the whole time.
+
+        1. **validate** — re-resolve settings (``settings.reload()``,
+           #1587). An invalid config **denies** the restart: nothing is
+           touched, the runtime keeps running on its last-known-good
+           config.
+        2. **draining** — broadcast ``host_restart {phase: "draining"}``
+           and set the registry's in-memory drain flag so every
+           container-start path refuses new starts (the same choke point
+           as cordon, but never persisted — a crashed restart must not
+           leave the node refusing starts).
+        3. **quiesce** — wait up to ``restart_inflight_timeout`` seconds
+           (default 15) for in-flight HTTP requests to finish; stragglers
+           at expiry are logged and left to finish against the recycling
+           runtime.
+        4. **drain** — stop every running workspace through the graceful
+           path (``drain_all_containers``, #2527): clients get terminal
+           frames + a ``container_stopped`` event, not a dropped socket.
+           Previously running workspaces are *not* remembered — only
+           ``auto_start``-configured ones return with ``startup()``.
+        5. **apply** — swap the reloaded settings onto
+           ``app.state.settings`` and ``reconfigure()`` every subsystem
+           (all read settings live, #1608).
+        6. **recycle** — ``runtime_shutdown()`` then ``startup()``; the
+           drain flag is cleared before ``startup()`` so boot auto-start
+           behaves exactly like a fresh process start.
+        7. **resume** — broadcast ``host_started``.
         """
         if self._restart_lock is None:
             self._restart_lock = asyncio.Lock()
         async with self._restart_lock:
+            state = self.app.state
+            registry = state.container_registry
+            logger.info("SIGHUP: restart beginning (phase: validate)")
             new_settings, error = self._reload_settings()
             if error is not None:
                 logger.error(
@@ -478,12 +502,47 @@ class Lifecycle:
                     "existing configuration"
                 )
                 return
-            logger.info("SIGHUP: applying reloaded configuration")
-            await self._apply_reloaded_settings(new_settings)
-            logger.info("SIGHUP: restarting runtime (keeping HTTP listener)")
-            await self.runtime_shutdown()
-            await self.startup()
-            logger.info("SIGHUP: runtime restarted")
+            logger.info("SIGHUP: phase: draining (refusing new starts)")
+            state.sockets.notify_host_restart("draining")
+            registry.draining = True
+            try:
+                timeout = state.settings.restart_inflight_timeout
+                logger.info(
+                    "SIGHUP: phase: quiesce (waiting up to %.1fs for "
+                    "in-flight requests)",
+                    timeout,
+                )
+                inflight = state.inflight_requests
+                idle = await inflight.wait_for_idle(timeout)
+                if not idle:
+                    logger.warning(
+                        "SIGHUP: %d request(s) still in flight after "
+                        "%.1fs; proceeding with the restart",
+                        inflight.count,
+                        timeout,
+                    )
+                logger.info("SIGHUP: phase: drain (stopping workspaces)")
+                stopped = await registry.drain_all_containers(
+                    reason="host restart"
+                )
+                logger.info("SIGHUP: drained %d workspace(s)", stopped)
+                logger.info("SIGHUP: phase: apply (applying reloaded config)")
+                await self._apply_reloaded_settings(new_settings)
+                state.sockets.notify_host_restart("restarting")
+                logger.info(
+                    "SIGHUP: phase: restart (recycling runtime; "
+                    "HTTP listener stays up)"
+                )
+                await self.runtime_shutdown()
+                registry.draining = False
+                await self.startup()
+            finally:
+                # A failed restart must never leave the node refusing
+                # starts: the in-memory flag has no DB persistence an
+                # operator could clear manually.
+                registry.draining = False
+            logger.info("SIGHUP: restart complete (phase: resumed)")
+            state.sockets.notify_host_started()
 
     def _reload_settings(
         self,
@@ -890,6 +949,65 @@ class LiveCORSMiddleware:
         await inner(scope, receive, send)
 
 
+class InFlightRequests:
+    """In-flight HTTP request counter (#2527 graceful restart).
+
+    Backs the SIGHUP quiesce phase: after new container starts are
+    refused, :meth:`wait_for_idle` waits for the request count to reach
+    zero before the containers are drained. Not an owned subsystem —
+    a plain counter with no app dependency.
+    """
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    def increment(self) -> None:
+        if self.count == 0:
+            self._idle.clear()
+        self.count += 1
+
+    def decrement(self) -> None:
+        self.count = max(0, self.count - 1)
+        if self.count == 0:
+            self._idle.set()
+
+    async def wait_for_idle(self, timeout: float) -> bool:
+        """Wait until no requests are in flight; False on timeout."""
+        if self.count == 0:
+            return True
+        try:
+            await asyncio.wait_for(self._idle.wait(), timeout)
+        except TimeoutError:
+            return False
+        return True
+
+
+class InFlightMiddleware:
+    """Pure-ASGI wrapper counting in-flight ``http`` requests (#2527).
+
+    ``http`` scopes only — a WebSocket connection never "completes", so
+    counting it would block the drain quiesce forever. The counter is
+    shared via ``app.state.inflight_requests`` so the SIGHUP restart path
+    can wait on it.
+    """
+
+    def __init__(self, app_asgi, counter: InFlightRequests) -> None:
+        self.app = app_asgi
+        self.counter = counter
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        self.counter.increment()
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self.counter.decrement()
+
+
 # --- Static files (Flutter Web) ---
 # Must be last so API routes take priority
 
@@ -948,6 +1066,10 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     """
     app = FastAPI(title="Klangk", lifespan=lifespan)
     app.state.settings = settings
+    # #2527: in-flight HTTP request counter for the SIGHUP quiesce phase.
+    # Created before any middleware/route wiring; InFlightMiddleware wraps
+    # every request through this shared instance.
+    app.state.inflight_requests = InFlightRequests()
     # #1467: logging is configured centrally (module-level defaults are
     # already active from the import of klangk.logger; this call re-applies
     # the level from KLANGKD_LOG_LEVEL now that settings are finalized, and
@@ -1061,6 +1183,7 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # module). The lifespan and the SIGHUP restart path call its methods.
     app.state.lifecycle = Lifecycle(app)
 
+    app.add_middleware(InFlightMiddleware, counter=app.state.inflight_requests)
     app.add_middleware(LiveCORSMiddleware, fastapi_app=app)
 
     app.include_router(root_router)

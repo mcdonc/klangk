@@ -556,14 +556,20 @@ class Workspaces:
         if not self.app.state.settings.allow_autostart:
             return 0
 
-        # Cordon check (#2527): a cordoned node suppresses boot auto-start
-        # entirely. The start choke point would refuse each workspace anyway
-        # (NodeCordonedError), but checking up front gives one clear log line
-        # instead of N per-workspace failure warnings.
-        if await self.app.state.model.server_state.is_cordoned():
+        # Start-refusal check (#2527): a cordoned node suppresses boot
+        # auto-start entirely. The start choke point would refuse each
+        # workspace anyway (NodeCordonedError), but checking up front gives
+        # one clear log line instead of N per-workspace failure warnings.
+        # A SIGHUP graceful-restart drain never reaches here with the flag
+        # still set (it clears before startup()), but the check is shared
+        # so both refusers behave identically.
+        blocked = (
+            await self.app.state.container_registry.new_starts_blocked_reason()
+        )
+        if blocked:
             logger.info(
-                "Node is cordoned: suppressing boot auto-start "
-                "(uncordon and restart, or run drain --uncordon, to resume)"
+                "Node refuses new starts (%s): suppressing boot auto-start",
+                blocked,
             )
             return 0
 

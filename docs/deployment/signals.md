@@ -25,21 +25,42 @@ _when_ that happens (and give clients clean stop frames first), see
 [Cordon & Drain](cordon-drain.md) — drain before the stop, and cordon
 keeps a restarting/crash-looping klangkd from re-starting workspaces.
 
-## SIGHUP — reload configuration + graceful runtime restart (#1212, #1587)
+## SIGHUP — graceful restart (#1212, #1587, #2527)
 
 Sent by `kill -HUP $(cat $KLANGKD_STATE_DIR/klangk-<instance>.pid)`, or by
 your service manager's "reload" action.
 
 SIGHUP is **not** a process restart — the HTTP listener and the database
-stay up the whole time. It means "reload config and apply it" (the
-nginx/Postgres convention):
+stay up the whole time. It is a **graceful host restart**: finish what's
+in flight, refuse new work, drain the containers, then apply the new
+configuration and bring the runtime back up. Each phase is logged, and
+authenticated WebSocket clients receive a `host_restart` event with a
+`phase` field (`draining`, `restarting`) as it progresses, plus a final
+`host_started` broadcast when the restart completes.
 
-1. **Re-resolve configuration** from the environment (`KLANGK_*` env
-   vars and/or the YAML config file). If the new configuration is
-   **invalid** (bad value, dangling `file:`/`cmd:` ref, unreadable config
-   file), the restart is **denied** — the runtime stays running on its
-   last-known-good config and the reason is logged at `ERROR` level.
-2. **Apply reloadable settings.** The new `KlangkSettings` instance is
+1. **Validate** — re-resolve configuration from the environment
+   (`KLANGK_*` env vars and/or the YAML config file). If the new
+   configuration is **invalid** (bad value, dangling `file:`/`cmd:` ref,
+   unreadable config file), the restart is **denied** — the runtime stays
+   running on its last-known-good config, nothing is drained, and the
+   reason is logged at `ERROR` level.
+2. **Refuse new starts** — broadcast `host_restart {phase: "draining"}`
+   and set an in-memory drain flag: every path that could start a
+   container (API start/restart, WS connect, boot auto-start,
+   crash-recovery restart) refuses with a clear error until the restart
+   completes. Unlike an operator cordon, this flag is never persisted —
+   a crashed restart cannot leave the node refusing starts.
+3. **Quiesce** — wait up to `KLANGKD_RESTART_INFLIGHT_TIMEOUT` seconds
+   (default 15) for in-flight HTTP requests to finish. Requests still
+   running at expiry are logged (WARNING) and left to finish against the
+   recycling runtime; nothing is dropped mid-response.
+4. **Drain** — stop every running workspace through the graceful path
+   (the same one `klangk admin drain` uses): clients get terminal status
+   frames and a `container_stopped` event with reason `host restart`,
+   not a dropped socket. Previously running workspaces are **not**
+   remembered — only workspaces configured for `auto_start` come back
+   (in step 7), exactly as on a fresh boot.
+5. **Apply reloadable settings.** The new `KlangkSettings` instance is
    swapped onto `app.state.settings`; all subsystems read it live. The
    OIDC discovery/JWKS caches are cleared and providers re-initialized,
    features are re-scanned, SSL trust is re-applied, and the agent user
@@ -47,18 +68,20 @@ nginx/Postgres convention):
    changes — set in the `features_config:` block — take effect in the DB). CORS origins (`KLANGKD_CORS_ORIGINS`) are picked up
    automatically by the live CORS middleware; `KLANGKD_FRONTEND_DIR` is
    remounted if it changed (#1610).
-3. **Close every WebSocket client** with close code `1012` ("service
-   restarted"). Both the web UI and `klangk monitor` reconnect
-   automatically with backoff and rebuild their state on reconnect.
-4. Tear down chat-agent subprocesses and cancel in-flight agent runs.
-5. **Stop and remove all workspace containers** and cancel the
-   idle/health background loops (`registry.shutdown()`).
-6. Re-run container-side startup: pre-warm podman, adopt/reap leftover
-   containers, restart the idle/health loops, and `auto_start` any
-   workspaces configured for it.
+6. **Recycle the runtime** — close every WebSocket client with close
+   code `1012` ("service restarted"), tear down chat-agent subprocesses
+   and in-flight agent runs, stop the idle/health/crash background
+   loops, then re-run container-side startup: pre-warm podman,
+   adopt/reap leftover containers, restart the loops, and `auto_start`
+   any workspaces configured for it.
+7. **Resume** — broadcast `host_started`. Both the web UI and
+   `klangk monitor` reconnect automatically with backoff and rebuild
+   their state on reconnect.
 
-In-flight HTTP requests are never dropped — only long-lived WebSocket
-sessions are, and those reconnect on their own.
+For an operator-driven cordon + drain (which survives restarts and
+needs an explicit uncordon), see
+[Cordon & drain](cordon-drain.md) — that is the tool for host
+maintenance; SIGHUP is the tool for config reload with a clean slate.
 
 ### When to use it
 
