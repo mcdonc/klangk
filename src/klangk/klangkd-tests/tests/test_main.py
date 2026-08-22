@@ -1171,6 +1171,269 @@ class TestInFlightRequests:
         assert counter.count == 0
 
 
+class TestGracefulShutdown:
+    """TERM/INT graceful shutdown hook (#2527)."""
+
+    async def test_sequence_notify_refuse_drain_handoff(
+        self, app_state, caplog
+    ):
+        """The hook broadcasts host_shutdown, refuses starts, drains
+        with reason 'host shutdown', and logs each phase."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        order = []
+        with (
+            patch.object(
+                app_state.state.sockets,
+                "notify_host_shutdown",
+                side_effect=lambda: order.append("notify"),
+            ),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                side_effect=lambda **kw: (
+                    order.append("drain:" + kw.get("reason", "")) or 2
+                ),
+            ),
+            caplog.at_level("INFO"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
+        assert order == ["notify", "drain:host shutdown"]
+        # The drain flag stays set: nothing comes back after a shutdown.
+        assert registry.draining is True
+        assert any(
+            "graceful shutdown beginning" in r.message for r in caplog.records
+        )
+
+    async def test_drain_failure_does_not_block_exit(self, app_state, caplog):
+        """A drain exception is logged and the hook completes — the
+        process must still exit (never a wedged live server)."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        with (
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("podman exploded"),
+            ),
+            patch.object(
+                app_state.state.sockets, "notify_host_shutdown"
+            ) as mock_notify,
+            caplog.at_level("WARNING"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGINT)
+        mock_notify.assert_called_once()
+        assert any("drain failed" in r.message for r in caplog.records)
+
+    async def test_sighup_ignored_during_shutdown(self, app_state):
+        """A HUP racing the shutdown is dropped, not scheduled —
+        recycling a runtime that is being torn down would race the
+        process exit."""
+        lc = _make_app_state().state.lifecycle
+        lc.shutting_down = True
+        with patch.object(
+            lc, "restart_runtime", new_callable=AsyncMock
+        ) as mock_restart:
+            lc.on_sighup()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        mock_restart.assert_not_awaited()
+
+    async def test_sighup_schedules_when_not_shutting_down(self, app_state):
+        """Sanity: with no shutdown in flight, HUP schedules as before."""
+        lc = _make_app_state().state.lifecycle
+        with patch.object(
+            lc, "restart_runtime", new_callable=AsyncMock
+        ) as mock_restart:
+            lc.on_sighup()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        mock_restart.assert_awaited_once()
+
+
+class TestGracefulExitServer:
+    """The uvicorn Server subclass that runs the shutdown hook before
+    uvicorn's own exit (launcher.py, #2527)."""
+
+    def _server_cls(self, app_state):
+        from klangk.launcher import _make_graceful_exit_server
+
+        return _make_graceful_exit_server(app_state)
+
+    async def test_hook_runs_once_then_original_called(self, app_state):
+        """First TERM schedules graceful_shutdown (NOT handle_exit — the
+        exit must wait for the drain); a second signal during the hook
+        goes straight to uvicorn's handler."""
+        import types as types_mod
+
+        app_state = _make_app_state()
+        cls = self._server_cls(app_state)
+        server = types_mod.SimpleNamespace(
+            handle_exit=MagicMock(), _captured_signals=[]
+        )
+        lc = app_state.state.lifecycle
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_hook(*, signal_num):
+            started.set()
+            await release.wait()
+
+        with patch.object(lc, "graceful_shutdown", side_effect=slow_hook):
+            hooked = None
+
+            def grab(sig, handler):
+                nonlocal hooked
+                hooked = handler
+                return MagicMock()
+
+            with patch("signal.signal", side_effect=grab) as mock_set:
+                gen = cls.capture_signals(server)
+                with gen:
+                    assert hooked is not None
+                    hooked(15, None)  # SIGTERM
+                    # Hook started; exit waits for it to finish.
+                    await asyncio.wait_for(started.wait(), 5)
+                    server.handle_exit.assert_not_called()
+                    # Second signal during the hook: straight to uvicorn.
+                    hooked(2, None)  # SIGINT
+                    server.handle_exit.assert_called_once_with(2, None)
+                    mock_set.assert_called()
+                    # Hook completing hands the exit to uvicorn (again —
+                    # one-shot guard means only the callback fires).
+                    server.handle_exit.reset_mock()
+                    release.set()
+                    for _ in range(5):
+                        await asyncio.sleep(0)
+                    server.handle_exit.assert_called_once_with(15, None)
+                    assert lc._shutdown_tasks == set()
+
+    async def test_no_lifecycle_calls_original_directly(self, app_state):
+        """Without a lifecycle on app.state (early boot crash window),
+        the wrapper is a transparent passthrough to uvicorn."""
+        import types as types_mod
+
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace()
+        )
+        cls = self._server_cls(app_state)
+        server = types_mod.SimpleNamespace(
+            handle_exit=MagicMock(), _captured_signals=[]
+        )
+        hooked = None
+
+        def grab(sig, handler):
+            nonlocal hooked
+            hooked = handler
+            return MagicMock()
+
+        with patch("signal.signal", side_effect=grab):
+            with cls.capture_signals(server):
+                hooked(15, None)
+        server.handle_exit.assert_called_once()
+
+    async def test_non_main_thread_is_passthrough(self, app_state):
+        """Off the main thread uvicorn (and we) install no handlers —
+        the context manager yields without touching signal.signal."""
+        import types as types_mod
+
+        app_state = _make_app_state()
+        cls = self._server_cls(app_state)
+        server = types_mod.SimpleNamespace(
+            handle_exit=MagicMock(), _captured_signals=[]
+        )
+
+        calls = []
+
+        # Run the context manager from a real non-main thread: the
+        # main-thread guard yields without installing handlers.
+        import threading
+
+        err = []
+
+        def off_main():
+            try:
+                with patch(
+                    "signal.signal", side_effect=lambda *a: calls.append(a)
+                ):
+                    with cls.capture_signals(server):
+                        pass
+            except Exception as exc:  # pragma: no cover - guard
+                err.append(exc)
+
+        t = threading.Thread(target=off_main)
+        t.start()
+        t.join()
+        assert err == []
+        assert calls == []  # no handlers installed off-main-thread
+
+    async def test_no_running_loop_calls_original(self, app_state):
+        """A signal arriving with no event loop (early boot window)
+        skips the async hook and hands the exit straight to uvicorn."""
+        import types as types_mod
+
+        app_state = _make_app_state()
+        cls = self._server_cls(app_state)
+        server = types_mod.SimpleNamespace(
+            handle_exit=MagicMock(), _captured_signals=[]
+        )
+        hooked = None
+
+        def grab(sig, handler):
+            nonlocal hooked
+            hooked = handler
+            return MagicMock()
+
+        async def no_loop():
+            # get_running_loop raises outside a running loop; simulate by
+            # patching it, since we must run inside a loop to drive the
+            # synchronous handler.
+            with patch(
+                "klangk.launcher.asyncio.get_running_loop",
+                side_effect=RuntimeError,
+            ):
+                with patch("signal.signal", side_effect=grab):
+                    with cls.capture_signals(server):
+                        hooked(15, None)
+            server.handle_exit.assert_called_once()
+
+        await no_loop()
+        # shutting_down was NOT set (the hook never ran).
+        assert app_state.state.lifecycle.shutting_down is False
+
+    async def test_captured_signals_reraised_on_exit(self, app_state):
+        """Leaving capture_signals re-raises captured signals exactly as
+        uvicorn does (so a supervisor's default disposition applies)."""
+        import types as types_mod
+
+        app_state = types_mod.SimpleNamespace(
+            state=types_mod.SimpleNamespace()
+        )
+        cls = self._server_cls(app_state)
+        server = types_mod.SimpleNamespace(
+            handle_exit=MagicMock(),
+            _captured_signals=[15],
+        )
+        raised = []
+        with (
+            patch(
+                "signal.raise_signal", side_effect=lambda s: raised.append(s)
+            ),
+            patch("signal.signal", return_value=MagicMock()),
+        ):
+            with cls.capture_signals(server):
+                pass
+        assert raised == [15]
+
+
 class TestStartupShutdownRestart:
     async def test_startup_calls_container_sequence(self, app_state):
         app_state = _make_app_state()

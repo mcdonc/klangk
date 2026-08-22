@@ -17,7 +17,7 @@ class WsDebugEntry {
   final Map<String, dynamic>? data;
 
   WsDebugEntry({required this.direction, required this.summary, this.data})
-      : timestamp = DateTime.now();
+    : timestamp = DateTime.now();
 }
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
@@ -105,6 +105,17 @@ class WsClient extends ChangeNotifier implements ChatServices {
 
   final _errorController = StreamController<String>.broadcast();
   final _terminalOutputController = StreamController<String>.broadcast();
+  // #2527: host lifecycle notices (host_shutdown / host_restart phases /
+  // host_started) as a broadcast stream AND a listenable field for status
+  // lines. Notifications only — never gating the reconnect machinery.
+  final _hostNoticeController = StreamController<String>.broadcast();
+  Stream<String> get hostNotices => _hostNoticeController.stream;
+  String? _hostNotice;
+
+  /// The current host lifecycle notice, if any ('Server restarting…',
+  /// 'Server shutting down'). Non-blocking: the UI surfaces it in a
+  /// transient banner/status; auto-reconnect proceeds unaffected (#2527).
+  String? get hostNotice => _hostNotice;
   final _browserRequestController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _customEventController =
@@ -142,11 +153,13 @@ class WsClient extends ChangeNotifier implements ChatServices {
   /// {id, email, handle} (the shape [ChatInputBar] reads); presence rows
   /// arrive with user_* keys.
   List<Map<String, dynamic>> get mentionCandidates => presenceUsers
-      .map((u) => {
-            'id': u['user_id'] ?? '',
-            'email': u['user_email'] ?? '',
-            'handle': u['user_handle'] ?? '',
-          })
+      .map(
+        (u) => {
+          'id': u['user_id'] ?? '',
+          'email': u['user_email'] ?? '',
+          'handle': u['user_handle'] ?? '',
+        },
+      )
       .toList();
 
   /// Terminal windows in the current tmux session.
@@ -364,7 +377,28 @@ class WsClient extends ChangeNotifier implements ChatServices {
     'container_status': _containerStatusController.add,
     'service_health': _serviceHealthController.add,
     'event': _customEventController.add,
+    'host_shutdown': (json) => _onHostNotice('Server shutting down'),
+    'host_started': (json) => _onHostNotice(null),
+    'host_restart': (json) {
+      final phase = json['phase'] as String? ?? '';
+      if (phase == 'restarting') {
+        _onHostNotice('Server restarting…');
+      } else if (phase == 'draining') {
+        _onHostNotice('Server preparing to restart…');
+      }
+    },
   };
+
+  /// Set/clear the host lifecycle notice and notify listeners (#2527).
+  /// Notification only — the reconnect loop is untouched, so a restart/
+  /// shutdown never visually impedes reconnection (overlays stay with the
+  /// existing disconnected logic).
+  void _onHostNotice(String? notice) {
+    if (_hostNotice == notice) return;
+    _hostNotice = notice;
+    if (notice != null) _hostNoticeController.add(notice);
+    notifyListeners();
+  }
 
   void _listenToChannel() {
     _channel!.stream.listen(
@@ -465,10 +499,7 @@ class WsClient extends ChangeNotifier implements ChatServices {
     }
     // Emit a single replacement event so listeners can clear-and-replace
     // instead of appending (which would duplicate buffered messages).
-    _chatController.add({
-      'type': 'chat_history_replace',
-      'messages': typed,
-    });
+    _chatController.add({'type': 'chat_history_replace', 'messages': typed});
   }
 
   void _onPresenceList(Map<String, dynamic> json) {
@@ -765,6 +796,7 @@ class WsClient extends ChangeNotifier implements ChatServices {
     _cancelReconnect();
     disconnect();
     _errorController.close();
+    _hostNoticeController.close();
     _terminalOutputController.close();
     _browserRequestController.close();
     _chatController.close();

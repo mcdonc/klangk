@@ -1229,6 +1229,29 @@ class MainScreen(Screen):
 
     def _on_status_event(self, event: dict) -> None:
         etype = event.get("type", "event")
+        # #2527: host lifecycle notices become a human-readable status
+        # line; notification only — the reconnect loop (silent first retry,
+        # backoff, unreachable overlay) is untouched, so a restart/shutdown
+        # never visually impedes reconnection.
+        if etype == "host_shutdown":
+            self.app.live_extra = "server: shutting down"
+            self._refresh_status()
+            self.app.notify("Server is shutting down", severity="warning")
+            return
+        if etype == "host_restart":
+            phase = str(event.get("phase") or "")
+            word = {
+                "draining": "preparing to restart",
+                "restarting": "restarting",
+            }.get(phase, "restarting")
+            self.app.live_extra = f"server: {word}"
+            self._refresh_status()
+            self.app.notify(f"Server is {word}")
+            return
+        if etype == "host_started":
+            self.app.live_extra = "server: back up"
+            self._refresh_status()
+            return
         self.app.live_extra = f"live: {etype}"
         self._refresh_status()
         if etype == "workspaces_changed":
