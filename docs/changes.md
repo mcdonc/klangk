@@ -1148,6 +1148,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **First terminal load shows the bash prompt (#2671).** On the first
+  open of a workspace terminal (fresh container or browser refresh),
+  the prompt could be scrolled off the top of the viewport — only a
+  blinking cursor on a blank screen — until Enter was pressed. The
+  forced initial tmux redraw now uses the client's current terminal
+  size instead of a possibly stale start-time size, so the prompt is
+  visible immediately on attach.
+
 - **Clean sidecar shutdown when its consent WebSocket is down
   (#2657).** Removing a workspace whose egress sidecar sat in the
   consent reconnect backoff dumped a raw

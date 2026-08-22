@@ -778,7 +778,7 @@ class TerminalController:
                     await conn.app.state.terminal.attach_browser(
                         conn.container_id, browser_id
                     )
-                if not await conn.activate_session(session, cols, rows):
+                if not await conn.activate_session(session):
                     return
                 conn.sock.send_json({"type": "terminal_started"})
                 try:
@@ -1131,9 +1131,7 @@ class TerminalController:
         if session is not None:
             await session.stop()
 
-    async def activate_session(
-        self, session: TerminalSession, cols: int, rows: int
-    ) -> bool:
+    async def activate_session(self, session: TerminalSession) -> bool:
         """Wire up a started session for output forwarding.
 
         Checks the session is still current, creates the output task,
@@ -1154,7 +1152,19 @@ class TerminalController:
         # Resize to force tmux to redraw at the client's terminal size.
         # Without this, reattaching shows a blank screen because tmux
         # skips the redraw when the PTY size matches the default.
-        await session.resize(cols, rows)
+        #
+        # Resize to the controller's CURRENT dims (``self.cols``/
+        # ``self.rows``), not the dims captured when terminal_start was
+        # handled (#2671). The client can shrink between the two -- e.g.
+        # the tab strip appearing fires a terminal_resize before the
+        # attach exec's PTY exists, and ``TerminalSession.resize`` drops
+        # it while ``_shell`` is None. Forcing the stale start-time size
+        # then makes tmux repaint TALLER than the client grid (e.g. 29
+        # rows into 27), and the extra line-feeds scroll the prompt off
+        # the top of the (alternate-screen) viewport -- the "bash prompt
+        # invisible until Enter" first-load bug. Resizing to the latest
+        # client size makes the forced redraw match the real grid.
+        await session.resize(self.cols, self.rows)
         self._conn.app.state.container_registry.record_activity(
             self._conn.container_id
         )
@@ -1464,7 +1474,7 @@ class SharedTerminalController:
                     window_id,
                     conn.app.state.terminal,
                 )
-                if not await conn.activate_session(session, cols, rows):
+                if not await conn.activate_session(session):
                     return
                 conn.sock.send_json(
                     {

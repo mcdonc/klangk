@@ -6415,7 +6415,7 @@ class TestTerminalController:
         stale = AsyncMock()
         # Controller's current session is a different object.
         ctrl.session = AsyncMock()
-        result = await ctrl.activate_session(stale, 80, 24)
+        result = await ctrl.activate_session(stale)
         assert result is False
         stale.stop.assert_awaited_once()
 
@@ -6426,11 +6426,38 @@ class TestTerminalController:
         session = _mock_terminal()
         ctrl.session = session
         with patch.object(registry, "record_activity") as rec:
-            result = await ctrl.activate_session(session, 80, 24)
+            result = await ctrl.activate_session(session)
         assert result is True
         assert ctrl.output_task is not None
         session.resize.assert_awaited_once_with(80, 24)
         rec.assert_called_once_with("cid")
+        ctrl.output_task.cancel()
+        try:
+            await ctrl.output_task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_activate_session_uses_current_client_size(self):
+        """activate_session resizes to the controller's CURRENT dims, not
+        the dims captured at terminal_start (#2671).
+
+        The client can shrink between terminal_start and activation (the
+        tab strip appearing fires a terminal_resize while the attach
+        exec's PTY doesn't exist yet, so TerminalSession.resize drops
+        it). If the forced redraw then used the stale start-time size,
+        tmux would repaint taller than the client grid and scroll the
+        prompt off the top of the viewport.
+        """
+        ctrl, _, _ = self._controller()
+        session = _mock_terminal()
+        ctrl.session = session
+        # terminal_start captured 100x30; the client has since resized
+        # to 100x27 (tab strip appearing).
+        ctrl.cols = 100
+        ctrl.rows = 27
+        result = await ctrl.activate_session(session)
+        assert result is True
+        session.resize.assert_awaited_once_with(100, 27)
         ctrl.output_task.cancel()
         try:
             await ctrl.output_task
@@ -6928,9 +6955,9 @@ class TestTerminalController:
         with patch.object(
             conn.terminal, "activate_session", new=AsyncMock(return_value=True)
         ) as m:
-            result = await conn.activate_session(session, 80, 24)
+            result = await conn.activate_session(session)
         assert result is True
-        m.assert_awaited_once_with(session, 80, 24)
+        m.assert_awaited_once_with(session)
 
     async def test_connection_stop_terminal_delegate(self):
         conn = _base_conn()
