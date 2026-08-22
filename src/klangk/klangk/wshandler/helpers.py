@@ -6,7 +6,10 @@ from .. import model
 from ..container import _workspace_container_name, _workspace_name_slug
 from .safe_websocket import SafeWebSocket
 from .constants import log_ws_msg
-from .session import WebSocketState
+from .session import (
+    WebSocketState,
+    get_shared_terminals as get_shared_terminals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,59 +46,6 @@ async def get_presence_list(
             }
         )
     return users
-
-
-def get_shared_terminals(ws_session, sockets: WebSocketState) -> list[dict]:
-    """Collect all shared windows across all users in a workspace."""
-    # Build viewer map: (owner_user_id, window_id) -> [{user_id, email}]
-    viewer_map: dict[tuple[str, str], list[dict]] = {}
-    for sock in ws_session.subscribers:
-        conn = sockets.connections.get(sock)
-        if not conn or not conn.viewing_shared:
-            continue
-        key = (
-            conn.viewing_shared["user_id"],
-            conn.viewing_shared["window_id"],
-        )
-        viewer_map.setdefault(key, []).append(
-            {"user_id": conn.user["id"], "email": conn.user.get("email", "")}
-        )
-
-    terminals = []
-    for user_id, windows in ws_session.terminal_windows.items():
-        # Look up the user's handle from any active connection. The
-        # agent (AGENT_USER_ID) has no WS connection, so its handle is
-        # the cached ``agent_handle`` populated by ``_sync_service_windows``
-        # -- the agent is always attributable, never "offline" (#1133).
-        handle = None
-        if user_id == model.AGENT_USER_ID:
-            handle = ws_session.agent_handle
-        else:
-            for sock in ws_session.subscribers:
-                conn = sockets.connections.get(sock)
-                if conn and conn.user.get("id") == user_id:
-                    handle = conn.user.get("handle")
-                    break
-        if not handle:
-            continue
-        for w in windows:
-            if w.get("shared"):
-                wid = w.get("id", "")
-                viewers = viewer_map.get((user_id, wid), [])
-                terminals.append(
-                    {
-                        "user_id": user_id,
-                        "handle": handle,
-                        "window_name": w["name"],
-                        "window_id": wid,
-                        "viewers": viewers,
-                        # The agent's shared windows live in the standalone
-                        # ``service`` tmux session (#1158); flag them so the
-                        # UI can present the service tab distinctly (#1159).
-                        "is_service": user_id == model.AGENT_USER_ID,
-                    }
-                )
-    return terminals
 
 
 async def reset_workspace_state(

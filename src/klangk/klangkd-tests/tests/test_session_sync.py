@@ -3,14 +3,16 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from klangk.wshandler.session import WorkspaceSession
+from klangk.wshandler.session import WorkspaceSession, WebSocketState
 
 
-def _session_with_user(user_id: str = "u1"):
+def _session_with_user(user_id: str = "u1", handle: str | None = None):
     sock = MagicMock()
     sock.send_json = MagicMock()
     conn = MagicMock()
     conn.user = {"id": user_id}
+    if handle is not None:
+        conn.user["handle"] = handle
     sockets = MagicMock()
     sockets.connections = {sock: conn}
     terminal = MagicMock()
@@ -171,3 +173,248 @@ async def test_sync_map_preserves_shared_flags_and_forces_service_cmd():
     assert by_id["@1"]["shared"] is True  # carried over
     assert by_id["@2"]["shared"] is True  # service-cmd by definition
     assert by_id["@0"]["shared"] is False
+
+
+# --- #2651: the watcher's sync must broadcast shared_terminals too ---
+
+
+async def test_sync_broadcasts_shared_terminals_on_shared_rename():
+    """A shared window renamed in tmux must reach shared-terminal viewers
+    even when the watcher's re-sync is the path that applies it.
+
+    The rename command handler broadcasts ``shared_terminals`` only when
+    its merge sees the old→new name delta; under load this debounced
+    re-sync can apply the renamed list to the session map first and
+    erase that delta. The watcher must then broadcast the shared list
+    itself — otherwise other users' tab lists never update (the e2e
+    rename test's recvUntil starved exactly this way, #2651).
+    """
+    sess, sock, terminal = _session_with_user(handle="alice")
+    sess.terminal_windows["u1"] = [
+        {"id": "@0", "index": 0, "name": "bash", "shared": True}
+    ]
+    terminal.list_windows = AsyncMock(
+        return_value=[
+            {"id": "@0", "index": 0, "name": "my-build", "active": True}
+        ]
+    )
+
+    await sess._sync_windows_once()
+
+    calls = [c[0][0] for c in sock.send_json.call_args_list]
+    shared = [m for m in calls if m.get("type") == "shared_terminals"]
+    assert len(shared) == 1
+    assert [t["window_name"] for t in shared[0]["terminals"]] == ["my-build"]
+
+
+async def test_sync_shared_rename_broadcast_fires_exactly_once():
+    """Whichever path applies a shared rename first broadcasts it; the
+    second apply finds no delta and stays quiet (#2651).
+
+    Simulates the CI race: the watcher's re-sync lands between the tmux
+    rename and the rename handler's own list_windows, so the handler's
+    sync_terminal_windows sees an unchanged shared set.
+    """
+    sess, sock, terminal = _session_with_user(handle="alice")
+    sess.terminal_windows["u1"] = [
+        {"id": "@0", "index": 0, "name": "bash", "shared": True}
+    ]
+    renamed = [{"id": "@0", "index": 0, "name": "my-build", "active": True}]
+    terminal.list_windows = AsyncMock(return_value=renamed)
+
+    await sess._sync_windows_once()  # watcher applies the rename first
+    # The rename handler's own sync with the same list: no second delta.
+    assert sess.apply_window_list("u1", renamed) is False
+
+    calls = [c[0][0] for c in sock.send_json.call_args_list]
+    shared = [m for m in calls if m.get("type") == "shared_terminals"]
+    assert len(shared) == 1
+
+
+async def test_sync_no_shared_broadcast_without_shared_delta():
+    """A rename of a non-shared window updates terminal_windows only."""
+    sess, sock, terminal = _session_with_user(handle="alice")
+    sess.terminal_windows["u1"] = [
+        {"id": "@0", "index": 0, "name": "bash", "shared": False}
+    ]
+    terminal.list_windows = AsyncMock(
+        return_value=[{"id": "@0", "index": 0, "name": "dev", "active": True}]
+    )
+
+    await sess._sync_windows_once()
+
+    calls = [c[0][0] for c in sock.send_json.call_args_list]
+    assert [m for m in calls if m.get("type") == "shared_terminals"] == []
+
+
+def test_apply_window_list_reports_shared_deltas():
+    """apply_window_list flags exactly the changes viewers must hear
+    about: a shared window added/closed, or any shared rename."""
+    sess, _sock, _terminal = _session_with_user()
+    sess.terminal_windows["u1"] = [
+        {"id": "@0", "index": 0, "name": "bash", "shared": True},
+        {"id": "@1", "index": 1, "name": "aux", "shared": False},
+    ]
+
+    # Same windows (active flag aside) → no delta.
+    assert (
+        sess.apply_window_list(
+            "u1",
+            [
+                {"id": "@0", "index": 0, "name": "bash", "active": True},
+                {"id": "@1", "index": 1, "name": "aux", "active": False},
+            ],
+        )
+        is False
+    )
+    # Shared window renamed → delta.
+    assert (
+        sess.apply_window_list(
+            "u1",
+            [
+                {"id": "@0", "index": 0, "name": "my-build", "active": True},
+                {"id": "@1", "index": 1, "name": "aux", "active": False},
+            ],
+        )
+        is True
+    )
+    # Shared window closed → delta.
+    assert (
+        sess.apply_window_list(
+            "u1", [{"id": "@1", "index": 0, "name": "aux", "active": True}]
+        )
+        is True
+    )
+    # Map reflects the last applied list, shared flags carried by id.
+    assert sess.terminal_windows["u1"] == [
+        {"id": "@1", "index": 0, "name": "aux", "shared": False}
+    ]
+
+
+# --- #2653: stale in-flight watcher snapshots must be discarded ---
+
+
+async def test_sync_discards_stale_inflight_snapshot():
+    """A watcher snapshot racing a command-handler apply is dropped.
+
+    The watcher's ``list_windows`` is a podman exec round-trip: under
+    load it can start before a tmux rename commits and return after
+    the rename handler already applied and broadcast the renamed
+    list. Applying the stale pre-rename snapshot would revert the map,
+    the baseline, and the client frames (new → old → new flap,
+    #2653). The generation stamped before the exec must discard it.
+    """
+    sess, sock, terminal = _session_with_user()
+    # Seeded shared: the concurrent apply below must report a shared
+    # rename delta — the issue's worst case (a revert broadcast to
+    # shared_terminals viewers), and what the recorded-delta assert
+    # at the end checks for.
+    sess.terminal_windows["u1"] = [
+        {"id": "@0", "index": 0, "name": "bash", "shared": True}
+    ]
+    stale = [{"id": "@0", "index": 0, "name": "bash", "active": True}]
+    renamed = [{"id": "@0", "index": 0, "name": "my-build", "active": True}]
+    deltas: list[bool] = []
+
+    async def straddling_exec(container_id, uid):
+        # While the watcher's exec is in flight, the rename handler
+        # commits and applies (and would broadcast) the renamed list.
+        # A real handler's notify_user_terminal_windows also refreshes
+        # the watcher's baseline. The apply's return value is recorded
+        # rather than asserted here — this coroutine runs inside
+        # _sync_windows_once's except-Exception guard, which would
+        # swallow an AssertionError and turn the failure into a
+        # baffling KeyError on _last_windows below.
+        deltas.append(sess.apply_window_list("u1", renamed))
+        sess._last_windows["u1"] = renamed
+        return stale  # our exec queried tmux before the rename committed
+
+    terminal.list_windows = AsyncMock(side_effect=straddling_exec)
+
+    await sess._sync_windows_once()
+
+    # The concurrent handler's apply did see (and broadcast) the
+    # shared rename — and the watcher's stale snapshot was discarded
+    # after it: the map and the baseline still hold the renamed list
+    # and no frame was broadcast for the revert.
+    assert deltas == [True]
+    assert sess.terminal_windows["u1"][0]["name"] == "my-build"
+    assert sess._last_windows["u1"] == renamed
+    sock.send_json.assert_not_called()
+
+
+async def test_sync_applies_change_when_generation_unmoved():
+    """A genuine tmux-side change (no concurrent command-handler apply)
+    still passes the generation check and broadcasts (#2653 guard must
+    not eat real watcher deltas — e.g. a rename typed inside tmux)."""
+    sess, sock, terminal = _session_with_user()
+    terminal.list_windows = AsyncMock(
+        return_value=[{"id": "@0", "index": 0, "name": "dev", "active": True}]
+    )
+
+    await sess._sync_windows_once()
+
+    assert sess.terminal_windows["u1"][0]["name"] == "dev"
+    sock.send_json.assert_called_once()
+
+
+def test_apply_window_list_bumps_generation():
+    """Every apply is the newest applied state: the per-user generation
+    advances on each apply_window_list call (#2653)."""
+    sess, _sock, _terminal = _session_with_user()
+    windows = [{"id": "@0", "index": 0, "name": "bash", "active": True}]
+
+    assert sess._window_generations.get("u1", 0) == 0
+    sess.apply_window_list("u1", windows)
+    assert sess._window_generations["u1"] == 1
+    sess.apply_window_list("u1", windows)
+    assert sess._window_generations["u1"] == 2
+
+
+# --- #2652 review follow-ups ---
+
+
+def test_get_or_create_session_falls_back_to_state_app():
+    """Omitting ``app`` still yields a session wired to the state's app.
+
+    A session built with ``app=None`` silently skips every
+    ``shared_terminals`` broadcast (the guard in
+    ``broadcast_shared_terminals``), so the factory must never produce
+    one even when a caller forgets the argument (#2652 review).
+    """
+    app = MagicMock()
+    sockets = WebSocketState(app=app)
+
+    sess = sockets.get_or_create_session("ws")
+
+    assert sess.app is app
+
+
+def test_get_or_create_session_explicit_app_wins():
+    """An explicitly passed ``app`` is honored over the state's own."""
+    sockets = WebSocketState(app=MagicMock())
+    other = MagicMock()
+
+    sess = sockets.get_or_create_session("ws", other)
+
+    assert sess.app is other
+
+
+def test_broadcast_shared_terminals_noop_without_app():
+    """A bare session (``app=None``) broadcasts nothing.
+
+    Covers the defensive guard instead of hiding it behind a pragma —
+    with the ``get_or_create_session`` fallback this is unreachable in
+    production, but the constructor still permits it.
+    """
+    sock = MagicMock()
+    sock.send_json = MagicMock()
+    sess = WorkspaceSession("ws")
+    sess.subscribers.add(sock)
+    sess.terminal_windows["u1"] = [
+        {"id": "@0", "index": 0, "name": "bash", "shared": True}
+    ]
+
+    sess.broadcast_shared_terminals()
+
+    sock.send_json.assert_not_called()

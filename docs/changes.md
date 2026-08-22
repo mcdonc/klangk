@@ -1108,6 +1108,22 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Terminal tab state no longer flaps old→new under load (#2653).**
+  The window watcher's window-list refresh could land between a
+  rename/new/close command and its confirmation, briefly reverting
+  the tab strip and shared-terminal list to the pre-command state
+  (new → old → new) before the next event re-corrected it. Stale
+  in-flight watcher snapshots are now discarded instead of applied.
+
+- **Shared-terminal tab list not updating on rename under load
+  (#2651).** Renaming a shared terminal could leave other users' tab
+  lists showing the old name indefinitely: the window-watcher's
+  debounced re-sync could apply the renamed window list to the session
+  state before the rename command's own sync, erasing the change the
+  sync's broadcast decision relies on — so the `shared_terminals`
+  update was never sent to other workspace members. The update is now
+  sent exactly once regardless of which path applies it first.
+
 - **`klangk terminal share`/`unshare` blind 10s timeout (#2633 CI
   flake).** The tmux window-watcher's re-sync broadcast the window list
   to clients without updating the in-memory map the share handlers
