@@ -74,15 +74,33 @@ String? guardAuth({
 /// Feature routes are excluded: they are public but a logged-in user may
 /// legitimately navigate to them.
 ///
+/// The target is permission-checked against the *current* session: an
+/// `/admin`-prefixed target (e.g. stashed by an admin's logout or expiry,
+/// then inherited by whoever logs in next on this browser) falls back to
+/// `/workspaces` unless [isAdmin] (#2670).
+///
+/// The stash is deliberately NOT consumed here. GoRouter re-parses the
+/// *committed* location on every refreshListenable notification, and
+/// AuthService.login() fires two notifications in quick succession
+/// (saveToken's, then its finally-block's). Consuming on the first
+/// evaluation made the second — still re-parsing `/login` — see a null
+/// stash and win the navigation with the `/workspaces` fallback (#2670).
+/// The cross-session leak is instead cut where it originates:
+/// `_clearToken()` clears the stash on logout / any session-ending 401.
+///
 /// Returns the redirect target, or null to allow.
 String? guardLoggedInPublicRoute({
   required bool isLoggedIn,
   required String loc,
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
+  required bool isAdmin,
 }) {
   if (isLoggedIn && publicRoutes.contains(loc) && !featurePaths.contains(loc)) {
-    return pendingRedirect ?? '/workspaces';
+    final target = pendingRedirect;
+    if (target == null) return '/workspaces';
+    if (target.startsWith('/admin') && !isAdmin) return '/workspaces';
+    return target;
   }
   return null;
 }
@@ -115,6 +133,7 @@ String? evaluateGuards({
   required String currentUri,
   required Set<String> publicRoutes,
   required Set<String> featurePaths,
+  required bool isAdmin,
 }) {
   if (bannerRequired) {
     return guardBanner(bannerRequired: true, loc: loc);
@@ -131,6 +150,7 @@ String? evaluateGuards({
         loc: loc,
         publicRoutes: publicRoutes,
         featurePaths: featurePaths,
+        isAdmin: isAdmin,
       ) ??
       guardRoot(isLoggedIn: isLoggedIn, loc: loc);
 }
