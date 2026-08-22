@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -8,44 +7,30 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:klangk_frontend/app.dart';
+import 'package:klangk_frontend/app_guards.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
 import 'package:klangk_frontend/auth/login_page.dart';
-import 'package:klangk_frontend/workspace/host_services.dart';
-import 'package:klangk_frontend/ws/ws_client.dart';
+import 'package:klangk_frontend/auth/pending_redirect.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
-/// App-level redirect tests that drive the real GoRouter (built by
-/// KlangkApp._createRouter) through the real AuthService login flow.
+/// App-level redirect tests that drive a real GoRouter through the real
+/// AuthService login flow.
 ///
-/// These pin the interaction between the router guards and AuthService's
-/// notifyListeners calls — something the pure guard unit tests cannot see,
-/// because GoRouter re-parses the *committed* location on every
-/// refreshListenable notification, and login() fires two notifications in
-/// quick succession (saveToken's, then the finally-block's).
-class _FakeWebSocketChannel extends Fake implements WebSocketChannel {
-  final _incoming = StreamController<dynamic>.broadcast();
-  final _sink = _FakeSink();
-
-  @override
-  Stream<dynamic> get stream => _incoming.stream;
-
-  @override
-  WebSocketSink get sink => _sink;
-
-  @override
-  Future<void> get ready => Future.value();
-}
-
-class _FakeSink extends Fake implements WebSocketSink {
-  @override
-  void add(dynamic data) {}
-
-  @override
-  Future close([int? closeCode, String? closeReason]) async {}
-}
-
+/// The router here mirrors KlangkApp._createRouter's redirect wiring
+/// (evaluateGuards over publicRoutes + featurePaths, refreshListenable on
+/// auth) but mounts dummy builders — deliberately NOT the real KlangkApp:
+/// importing app.dart would transitively load every page module into the
+/// test isolate, and dart coverage reports all *loaded* files, so the
+/// pages that have no dedicated unit tests would surface as uncovered and
+/// collapse the 100% gate.
+///
+/// What these pin that the pure guard unit tests cannot: GoRouter
+/// re-parses the *committed* location on every refreshListenable
+/// notification, and login() fires two notifications back-to-back
+/// (saveToken's notifyListeners, then the finally-block's microtasks
+/// later). A guard that answers those evaluations differently (the
+/// consume-once bug, #2670 review) sends the deep-link login to
+/// /workspaces.
 void main() {
   String makeJwt(Map<String, dynamic> payload) {
     final header = base64Url
@@ -61,24 +46,21 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     testAuthHttpClientOverride = null;
     testConfigHttpClientOverride = null;
-    // The workspace page mounts a WorkspaceConnector on arrival; without a
-    // channel factory it would parse a ws:// URL derived from Uri.base,
-    // which is meaningless in a widget test.
-    WsClient.testChannelFactory = (_) => _FakeWebSocketChannel();
+    pendingRedirect = null;
   });
 
   tearDown(() {
     testBaseUrlOverride = null;
     testAuthHttpClientOverride = null;
     testConfigHttpClientOverride = null;
-    WsClient.testChannelFactory = null;
+    pendingRedirect = null;
   });
 
   // All HTTP the app issues during this flow: config (login page +
-  // AuthService), login, my-permissions, and the workspace lookups the
-  // workspace page performs after landing (answered with 404/empty so the
-  // page settles into its error state instead of connecting anything).
-  void installMocks(String token) {
+  // AuthService), login, and my-permissions. No token exp claim -> no
+  // refresh timer for the test to fight with.
+  String installMocks() {
+    final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
     testConfigHttpClientOverride = MockClient((request) async {
       return http.Response(
         jsonEncode({
@@ -94,10 +76,7 @@ void main() {
     testAuthHttpClientOverride = MockClient((request) async {
       final path = request.url.path;
       if (path.contains('/api/v1/auth/login')) {
-        return http.Response(
-          jsonEncode({'access_token': token}),
-          200,
-        );
+        return http.Response(jsonEncode({'access_token': token}), 200);
       }
       if (path.contains('/api/v1/my-permissions')) {
         return http.Response(
@@ -116,52 +95,66 @@ void main() {
           200,
         );
       }
-      // Workspace list / shared list / per-resource permissions lookups.
-      if (path.contains('/api/v1/workspaces')) {
-        return http.Response(jsonEncode([]), 200);
-      }
       return http.Response('Not found', 404);
     });
+    return token;
   }
 
-  Widget buildApp() {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => AuthService()),
-        ChangeNotifierProxyProvider<AuthService, WsClient>(
-          create: (_) => WsClient(),
-          update: (_, auth, client) => client!..updateAuth(auth),
+  GoRouter buildRouter(AuthService auth, String initialLocation) {
+    const featurePaths = <String>{};
+    return GoRouter(
+      initialLocation: initialLocation,
+      refreshListenable: auth,
+      redirect: (context, state) {
+        final loc = state.matchedLocation;
+        final routes = {...publicRoutes, ...featurePaths};
+        return evaluateGuards(
+          isLoggedIn: auth.isLoggedIn,
+          bannerRequired: auth.bannerRequired,
+          loc: loc,
+          currentUri: state.uri.toString(),
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: auth.isAdmin,
+        );
+      },
+      routes: [
+        GoRoute(
+          path: '/login',
+          builder: (context, state) => const LoginPage(),
         ),
-        Provider<WorkspaceServices>(
-          create: (ctx) => HostWorkspaceServices(
-            ctx.read<WsClient>(),
-            ctx.read<AuthService>(),
+        GoRoute(
+          path: '/workspaces',
+          builder: (context, state) =>
+              const Scaffold(body: Center(child: Text('workspaces-list'))),
+        ),
+        GoRoute(
+          path: '/workspace/:id',
+          builder: (context, state) => Scaffold(
+            body:
+                Center(child: Text('workspace-${state.pathParameters['id']}')),
           ),
         ),
       ],
-      child: const KlangkApp(initialLocation: '/workspace/test-ws-123'),
     );
-  }
-
-  Future<String> currentLocation(WidgetTester tester) async {
-    // The Router's internal Navigator sits below InheritedGoRouter, so its
-    // context can resolve GoRouter.of (the builder-wrapped StaleBuildBanner
-    // is above the Router and cannot).
-    final ctx = tester.element(find.byType(Navigator).first);
-    final router = GoRouter.of(ctx);
-    return router.routerDelegate.currentConfiguration.uri.toString();
   }
 
   testWidgets(
       'deep-link login lands on the stashed workspace, not /workspaces (#2670)',
       (tester) async {
-    // No exp claim -> no token-refresh timer for the test to fight with.
-    installMocks(makeJwt({'sub': 'user-1', 'email': 'user@example.com'}));
+    installMocks();
 
-    await tester.pumpWidget(buildApp());
+    final auth = AuthService();
+    final router = buildRouter(auth, '/workspace/test-ws-123');
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: auth,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Log In'), findsWidgets);
-    expect(await currentLocation(tester), '/login');
+    expect(pendingRedirect, '/workspace/test-ws-123');
 
     // Log in through the real form — this exercises the real login()
     // double notifyListeners (saveToken + finally), which is exactly what
@@ -170,14 +163,39 @@ void main() {
     await tester.enterText(fields.first, 'user@example.com');
     await tester.enterText(fields.last, 'password');
     await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+    await tester.pumpAndSettle();
 
-    // Bounded pumps: process the notify -> re-parse -> redirect chain
-    // without pumpAndSettle (the workspace page's connector retries on
-    // timers that never quiesce in a test).
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    expect(
+      router.routerDelegate.currentConfiguration.uri.toString(),
+      '/workspace/test-ws-123',
+    );
+    expect(find.text('workspace-test-ws-123'), findsOneWidget);
+  });
 
-    expect(await currentLocation(tester), '/workspace/test-ws-123');
+  testWidgets('plain login (no stash) lands on /workspaces', (tester) async {
+    installMocks();
+
+    final auth = AuthService();
+    final router = buildRouter(auth, '/login');
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: auth,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(pendingRedirect, isNull);
+
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.first, 'user@example.com');
+    await tester.enterText(fields.last, 'password');
+    await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+    await tester.pumpAndSettle();
+
+    expect(
+      router.routerDelegate.currentConfiguration.uri.toString(),
+      '/workspaces',
+    );
+    expect(find.text('workspaces-list'), findsOneWidget);
   });
 }
