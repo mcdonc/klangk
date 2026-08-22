@@ -59,6 +59,27 @@ Alternatively, create it system-wide at `/etc/containers/policy.json`.
 Without this file, podman operations fail with confusing errors about
 missing signatures or policies.
 
+## Short Image Names (registries.conf)
+
+Podman also needs a `containers-registries.conf(5)` to resolve a short
+image name like `alpine:3.21` to a registry. The devenv shell creates one
+automatically (`unqualified-search-registries = ["docker.io"]`, exported
+via `CONTAINERS_REGISTRIES_CONF`), but outside of devenv you need to
+create it yourself:
+
+```bash
+mkdir -p ~/.config/containers
+cat > ~/.config/containers/registries.conf <<'EOF'
+unqualified-search-registries = ["docker.io"]
+EOF
+```
+
+Without this file, builds referencing a short name fail with `short-name
+"alpine:3.21" did not resolve to an alias and no
+containers-registries.conf(5) was found`. Alternatively, use a
+fully-qualified image reference (`docker.io/library/alpine:3.21`) in the
+Dockerfile, which skips resolution entirely.
+
 ## Configuring Storage
 
 By default, podman stores images and runtime state under

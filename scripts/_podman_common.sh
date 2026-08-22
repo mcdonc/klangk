@@ -3,7 +3,9 @@
 #   build-workspace-image.sh, build-base-image.sh, pull-base-image.sh
 #
 # Sets SIG_POLICY_ARGS, expanded into every `podman build` / `podman pull`
-# invocation via "${SIG_POLICY_ARGS[@]}".
+# invocation via "${SIG_POLICY_ARGS[@]}", and ensures the registries.conf
+# named by CONTAINERS_REGISTRIES_CONF exists (#286) so short image names
+# resolve.
 #
 # Rootless podman from Nix ships no default /etc/containers/policy.json, so a
 # build/pull that verifies image signatures fails in a fresh environment
@@ -40,6 +42,22 @@ if [ -n "${CONTAINERS_SIGNATURE_POLICY:-}" ]; then
       >"$CONTAINERS_SIGNATURE_POLICY"
   fi
   SIG_POLICY_ARGS=(--signature-policy "$CONTAINERS_SIGNATURE_POLICY")
+fi
+
+# Rootless podman from nix ships no registries.conf either, so short image
+# names in our Dockerfiles (alpine:3.21, python:3.13-slim, …) fail to resolve
+# (#286). Unlike the policy, podman reads CONTAINERS_REGISTRIES_CONF
+# directly, so no flag is passed — every podman call in the environment
+# inherits it. The scripts only ensure the file exists: podman hard-fails
+# with "loading registries configuration ... no such file or directory" when
+# the env var points at a missing path.
+if [ -n "${CONTAINERS_REGISTRIES_CONF:-}" ] &&
+  [ ! -f "$CONTAINERS_REGISTRIES_CONF" ]; then
+  mkdir -p "$(dirname "$CONTAINERS_REGISTRIES_CONF")"
+  # Same config as enterShell generates: every short name our Dockerfiles
+  # use lives on docker.io.
+  echo 'unqualified-search-registries = ["docker.io"]' \
+    >"$CONTAINERS_REGISTRIES_CONF"
 fi
 
 # --- Shared image-build helpers (build-workspace-image.sh,

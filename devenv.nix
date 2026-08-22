@@ -299,6 +299,23 @@ in
     else
       config.devenv.state + "/klangk/podman/policy.json"
   );
+  # Same story for registries.conf (#286): rootless podman from nix ships
+  # none, so any build whose Dockerfile uses a short image name (alpine:3.21,
+  # python:3.13-slim, debian:trixie-slim, node:26-slim) fails with "short-name
+  # ... did not resolve to an alias and no containers-registries-conf(5) was
+  # found". Unlike the policy, podman DOES read this env var directly (no CLI
+  # flag needed), so every podman invocation in the shell — including ones
+  # that don't go through scripts/_podman_common.sh — picks it up. enterShell
+  # seeds the file; _podman_common.sh re-creates it as a safety net for direct
+  # script invocation (podman hard-fails when the var points at a missing
+  # file). On macOS podman builds inside its VM, which ships its own
+  # registries.conf, so leave this empty there.
+  env.CONTAINERS_REGISTRIES_CONF = lib.mkOverride 1500 (
+    if pkgs.stdenv.hostPlatform.isDarwin then
+      ""
+    else
+      config.devenv.state + "/klangk/podman/registries.conf"
+  );
   env.KLANGKD_VERSION_FILE = versionFile;
   # state_dir / frontend_dir live in klangkd.yaml (cmd:-indirected to
   # $DEVENV_STATE / $DEVENV_ROOT) — see klangkd.yaml.devenv. IMAGE_NAME and
@@ -682,6 +699,10 @@ in
     if [ ! -f "$_PODMAN_CONF/policy.json" ]; then
       echo '{"default": [{"type": "insecureAcceptAnything"}]}' \
         > "$_PODMAN_CONF/policy.json"
+    fi
+    if [ ! -f "$_PODMAN_CONF/registries.conf" ]; then
+      echo 'unqualified-search-registries = ["docker.io"]' \
+        > "$_PODMAN_CONF/registries.conf"
     fi
 
     # On macOS, podman requires a VM; init and start it if needed.
