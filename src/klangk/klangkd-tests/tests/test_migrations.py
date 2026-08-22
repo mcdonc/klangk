@@ -49,7 +49,6 @@ class TestRunner:
             (3, "0003_user_sessions"),
             (4, "0004_user_sessions_workstation"),
             (5, "0005_user_inactivity"),
-            (6, "0006_server_state"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -110,7 +109,6 @@ class TestRunner:
                 (3, "0003_user_sessions"),
                 (4, "0004_user_sessions_workstation"),
                 (5, "0005_user_inactivity"),
-                (6, "0006_server_state"),
             ]
 
     async def test_pending_only(self, tmp_path):

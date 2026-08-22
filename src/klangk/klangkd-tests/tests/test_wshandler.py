@@ -28,7 +28,7 @@ from klangk import (
 )
 from klangk.exceptions import (
     ContainerGoneError,
-    NodeCordonedError,
+    NodeDrainingError,
     TerminalError,
 )
 from klangk.podman import PodmanError
@@ -11518,11 +11518,11 @@ class TestFormatContainerInfo:
         assert ports_str == ""
 
 
-class TestCordonedStartPaths:
-    """#2527: WS connect/restart on a cordoned node send an error frame
-    (the node refuses new container starts)."""
+class TestDrainingStartPaths:
+    """#2527: WS connect/restart on a draining node (graceful restart in
+    progress) send an error frame (new starts are refused)."""
 
-    async def test_connect_refused_while_cordoned(self, user, app_state):
+    async def test_connect_refused_while_draining(self, user, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         with (
@@ -11545,8 +11545,8 @@ class TestCordonedStartPaths:
                 Connection,
                 "start_workspace_container",
                 new=AsyncMock(
-                    side_effect=NodeCordonedError(
-                        "node is cordoned: new workspace starts are disabled"
+                    side_effect=NodeDrainingError(
+                        "node is draining: new workspace starts are disabled"
                     )
                 ),
             ),
@@ -11555,11 +11555,11 @@ class TestCordonedStartPaths:
             await conn.handle_workspace_connect({"workspaceId": "ws-c"})
         sent = [c[0][0] for c in sock.send_json.call_args_list]
         assert any(
-            isinstance(m, dict) and "cordoned" in m.get("message", "")
+            isinstance(m, dict) and "draining" in m.get("message", "")
             for m in sent
         )
 
-    async def test_restart_refused_while_cordoned(self, user, app_state):
+    async def test_restart_refused_while_draining(self, user, app_state):
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-c"
@@ -11575,8 +11575,8 @@ class TestCordonedStartPaths:
                 Connection,
                 "start_workspace_container",
                 new=AsyncMock(
-                    side_effect=NodeCordonedError(
-                        "node is cordoned: new workspace starts are disabled"
+                    side_effect=NodeDrainingError(
+                        "node is draining: new workspace starts are disabled"
                     )
                 ),
             ),
@@ -11584,38 +11584,9 @@ class TestCordonedStartPaths:
             await conn.handle_restart_container()
         sent = [c[0][0] for c in sock.send_json.call_args_list]
         assert any(
-            isinstance(m, dict) and "cordoned" in m.get("message", "")
+            isinstance(m, dict) and "draining" in m.get("message", "")
             for m in sent
         )
-
-
-class TestNotifyNodeCordoned:
-    def _sockets_with(self, sockets, entries):
-        sockets.connections.clear()
-        for sock, conn in entries:
-            sockets.connections[sock] = conn
-        return sockets
-
-    def test_broadcast_reaches_authed_and_drops_dead(self):
-        sockets = _make_app_state().state.sockets
-        live = _mock_sock()
-        anon = _mock_sock()
-        dead = _mock_sock()
-        dead.send_json.side_effect = RuntimeError("closed")
-        self._sockets_with(
-            sockets,
-            [
-                (live, types.SimpleNamespace(user={"id": "u1"})),
-                (anon, types.SimpleNamespace(user={})),
-                (dead, types.SimpleNamespace(user={"id": "u2"})),
-            ],
-        )
-        sockets.notify_node_cordoned(True)
-        sent = [c[0][0] for c in live.send_json.call_args_list]
-        assert sent == [{"type": "node_cordon", "cordoned": True}]
-        anon.send_json.assert_not_called()
-        assert dead not in sockets.connections
-        sockets.connections.clear()
 
 
 class TestNotifyHostRestart:

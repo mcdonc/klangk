@@ -20,10 +20,9 @@ What happens, in order:
 5. Dispose the database engine and remove the PID file.
 
 Net effect: a _full_ stop. Workspaces go away; on the next start,
-`auto_start` brings back any that are configured for it. To control
-_when_ that happens (and give clients clean stop frames first), see
-[Cordon & Drain](cordon-drain.md) — drain before the stop, and cordon
-keeps a restarting/crash-looping klangkd from re-starting workspaces.
+`auto_start` brings back any that are configured for it. For a config
+reload with the same graceful stop/start treatment while keeping the
+listener up, use SIGHUP (below).
 
 ## SIGHUP — graceful restart (#1212, #1587, #2527)
 
@@ -48,7 +47,8 @@ authenticated WebSocket clients receive a `host_restart` event with a
    and set an in-memory drain flag: every path that could start a
    container (API start/restart, WS connect, boot auto-start,
    crash-recovery restart) refuses with a clear error until the restart
-   completes. Unlike an operator cordon, this flag is never persisted —
+   completes. This flag is never persisted — a crashed restart
+   cannot leave the node refusing starts.
    a crashed restart cannot leave the node refusing starts.
 3. **Quiesce** — wait up to `KLANGKD_RESTART_INFLIGHT_TIMEOUT` seconds
    (default 15) for in-flight HTTP requests to finish. Requests still
@@ -57,8 +57,8 @@ authenticated WebSocket clients receive a `host_restart` event with a
    (`/llm_proxy`, `/browser-delegate/stream`) cannot outlive the drain
    and will be interrupted by the restart.
 4. **Drain** — stop every running workspace through the graceful path
-   (the same one `klangk admin drain` uses, concurrently per workspace,
-   each with a 5s podman stop grace): clients get terminal status
+   (concurrently per workspace, each with a 5s podman stop grace):
+   clients get terminal status
    frames and a `container_stopped` event with reason `host restart`,
    not a dropped socket. Previously running workspaces are **not**
    remembered — only workspaces configured for `auto_start` come back
@@ -91,11 +91,6 @@ startup sequence, and `host_started` is broadcast on recovery; if the
 recovery itself fails the process exits (code 1) so the service manager
 restarts it — the node never lingers half-restarted while its HTTP
 listener keeps serving.
-
-For an operator-driven cordon + drain (which survives restarts and
-needs an explicit uncordon), see
-[Cordon & drain](cordon-drain.md) — that is the tool for host
-maintenance; SIGHUP is the tool for config reload with a clean slate.
 
 ### When to use it
 

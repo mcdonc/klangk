@@ -24,14 +24,13 @@ class SendmailError(RuntimeError):
     """The sendmail subprocess exited with a non-zero status."""
 
 
-class NodeCordonedError(RuntimeError):
-    """New workspace starts are refused on this node (#2527).
+class NodeDrainingError(RuntimeError):
+    """New workspace starts are refused: a graceful restart (#2527).
 
-    Raised at the container-start choke point when the persisted cordon
-    flag is set (operator maintenance) or the in-memory drain flag is
-    set (a graceful restart in progress); the message distinguishes the
-    two. Existing workspaces keep running; only fresh container creation
-    is blocked. The API layer translates it to a 503 with a clear
-    detail, the WS start paths send an error frame, and the crash
-    restart loop abandons quietly.
+    Raised at the container-start choke point while the in-memory drain
+    flag is set (a SIGHUP graceful restart is in progress). Existing
+    workspaces keep running; only fresh container creation is blocked.
+    The API layer translates it to a 503 with a clear detail, the WS
+    start paths send an error frame, and the crash restart loop
+    abandons quietly.
     """

@@ -22,7 +22,6 @@ from .acl import ACLModel
 from .chat import ChatModel
 from .egress_consent import EgressConsentModel
 from .ports import PortsModel
-from .server_state import ServerStateModel
 from .sessions import SessionsModel
 from .tokens import TokensModel
 from .login_attempts import LoginAttemptsModel
@@ -53,7 +52,6 @@ class Model:
         self.workspaces = WorkspacesModel(app)
         self.chat = ChatModel(app)
         self.egress_consent = EgressConsentModel(app)
-        self.server_state = ServerStateModel(app)
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -68,7 +66,6 @@ class Model:
             self.workspaces,
             self.chat,
             self.egress_consent,
-            self.server_state,
         ):
             sub.reconfigure(app)
 

@@ -17,7 +17,7 @@ import time
 
 from .. import podman
 from .. import fips as fips_mod
-from ..exceptions import NodeCordonedError
+from ..exceptions import NodeDrainingError
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
@@ -175,9 +175,9 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.stop_epoch: dict[str, int] = {}
         # In-memory drain flag (#2527): while a SIGHUP graceful restart
         # quiesces the node, every container-start path refuses new
-        # starts. Deliberately NOT persisted (unlike the cordon flag) —
-        # it must self-clear when the restart completes, and a crashed
-        # restart must not leave the node refusing starts.
+        # starts. Deliberately NOT persisted — it must self-clear when
+        # the restart completes, and a crashed restart must not leave
+        # the node refusing starts.
         self.draining: bool = False
         self._workspace_locks: dict[str, asyncio.Lock] = {}
         self._service_session_locks: dict[str, asyncio.Lock] = {}
@@ -1103,19 +1103,17 @@ class ContainerRegistry(NetworkSidecarMixin):
                     self._ws_with_network_sidecar.add(workspace_id)
                 return result
 
-        # Start-refusal gate (#2527): cordon (operator maintenance) and
-        # drain (SIGHUP graceful restart) both refuse every *new* container
-        # creation through this single choke point. Placed after the
-        # existing-container reuse above so a client connecting to a
-        # still-running workspace keeps working between cordon and drain
-        # (existing workspaces keep running — only fresh starts are
-        # blocked). The cordon flag is read from the DB at start time, so
-        # it survives restarts and applies immediately across all start
+        # Start-refusal gate (#2527): while a graceful restart's drain
+        # flag is set, every *new* container creation through this single
+        # choke point is refused. Placed after the existing-container
+        # reuse above so a client connecting to a still-running workspace
+        # keeps working — existing workspaces keep running, only fresh
+        # starts are blocked — and applies immediately across all start
         # paths (API start/restart, WS connect, create eager start, boot
         # auto-start, crash-recovery restart).
-        blocked_reason = await self.new_starts_blocked_reason()
+        blocked_reason = self.new_starts_blocked_reason()
         if blocked_reason:
-            raise NodeCordonedError(blocked_reason)
+            raise NodeDrainingError(blocked_reason)
 
         # A fresh container (re)start means no `restart`-duration consent
         # verdict can still be in effect -- the sidecar's in-memory rules
@@ -1571,23 +1569,21 @@ class ContainerRegistry(NetworkSidecarMixin):
                     ws["container_id"], workspace_id=ws["id"]
                 )
 
-    async def new_starts_blocked_reason(self) -> str | None:
+    def new_starts_blocked_reason(self) -> str | None:
         """Why new container starts are refused, or None if allowed (#2527).
 
-        Two refusers share the single start choke point: the persisted
-        cordon flag (operator maintenance; survives restarts) and the
-        in-memory drain flag (SIGHUP graceful restart; self-clears).
-        Callers that only need a boolean can truth-test the return.
+        The single refuser is the in-memory drain flag: while a SIGHUP
+        graceful restart quiesces the node, every container-start path
+        (API start/restart, WS connect, create eager start, boot
+        auto-start, crash-recovery restart) refuses new starts through
+        this shared reason at the single start choke point. Never
+        persisted — it must self-clear when the restart completes, and a
+        crashed restart must not leave the node refusing starts.
         """
         if self.draining:
             return (
                 "node is draining: new workspace starts are disabled "
                 "(a restart is in progress)"
-            )
-        if await self.app.state.model.server_state.is_cordoned():
-            return (
-                "node is cordoned: new workspace starts are disabled "
-                "(an operator is preparing this host; uncordon to resume)"
             )
         return None
 

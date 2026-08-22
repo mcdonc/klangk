@@ -39,12 +39,6 @@ def make_app_state(env=None):
 
     app_state.state.util = util_mod.Util(app_state)
     wire_db_and_model(app_state)
-    # #2527: the crash loop consults the cordon flag on every restart
-    # attempt; these tests exercise restart mechanics, not cordon (which
-    # has its own tests), so pin it uncordoned without a schema-bearing DB.
-    app_state.state.model.server_state.is_cordoned = AsyncMock(
-        return_value=False
-    )
     return app_state
 
 
