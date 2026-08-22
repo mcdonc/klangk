@@ -3244,3 +3244,44 @@ class TestSigtermShutdown:
         assert elapsed < 1.0  # bounded well under the 5s window
         nfq.unbind.assert_called()  # teardown proceeded past the timed-out stop
         sock.close.assert_called()
+
+    async def test_stop_swallows_cancelled_backoff_task(self, proxy, tmp_path):
+        # Regression (#2657): stop() awaited its cancelled _run task behind an
+        # `except Exception`, but the CancelledError a cancelled task raises is
+        # a BaseException (3.8+), so a stop() issued while _run was parked in
+        # the token-retry / reconnect-backoff sleep escaped stop(), escaped
+        # _shutdown's `except Exception` around the wait_for, and dumped a raw
+        # traceback out of asyncio.run on every workspace removal whose WS was
+        # down (eviction e2e saw it via the evict-bystander container) --
+        # skipping nfq.unbind/sock.close and exiting 1. The guard now matches
+        # _shutdown's sweep/sampler pattern.
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "missing"), 5)
+        await c.start()
+        await asyncio.sleep(0.05)  # let _run park in the token-retry sleep
+        assert not c._task.done()
+        fut = asyncio.get_running_loop().create_future()
+        c._pending["lid"] = fut
+        await c.stop()  # must return, not raise CancelledError
+        assert c._task.done()
+        # Teardown continued past the guarded await: pending requests were
+        # fail-closed (deny) by _fail_close_pending.
+        assert fut.done() and fut.result() == ("deny", "once")
+
+    async def test_shutdown_survives_cancelled_error_from_client_stop(self, proxy):
+        # #2657 defense in depth: _shutdown's wait_for(client.stop()) guard is
+        # widened to (CancelledError, Exception) so no BaseException path out
+        # of the client can abort teardown -- the same widening its own
+        # sweep/sampler guards already have.
+        nfq = MagicMock()
+        nfq.get_fd = MagicMock(return_value=9)
+        sock = MagicMock()
+        sweep = asyncio.get_running_loop().create_task(asyncio.sleep(100))
+
+        class _RaisingClient:
+            async def stop(self):
+                raise asyncio.CancelledError()
+
+        await proxy._shutdown(_RaisingClient(), nfq, sock, sweep)
+        nfq.unbind.assert_called_once()  # teardown was NOT aborted
+        sock.close.assert_called_once()
+        assert sweep.cancelled()

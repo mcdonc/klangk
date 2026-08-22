@@ -51,7 +51,12 @@ async def _shutdown(
     if client is not None:
         try:
             await asyncio.wait_for(client.stop(), _SHUTDOWN_CLIENT_TIMEOUT)
-        except Exception:
+        except (asyncio.CancelledError, Exception):
+            # CancelledError widened in (#2657): stop() awaiting its cancelled
+            # _run task raises it through the wait_for, `except Exception`
+            # doesn't catch a BaseException (3.8+), and the escape aborted the
+            # rest of teardown -- the exact failure mode the sweep/sampler
+            # guards below already widen against.
             pass
     if sweep is not None:
         sweep.cancel()
