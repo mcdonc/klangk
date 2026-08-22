@@ -305,18 +305,27 @@ async def test_sync_discards_stale_inflight_snapshot():
     #2653). The generation stamped before the exec must discard it.
     """
     sess, sock, terminal = _session_with_user()
+    # Seeded shared: the concurrent apply below must report a shared
+    # rename delta — the issue's worst case (a revert broadcast to
+    # shared_terminals viewers), and what the recorded-delta assert
+    # at the end checks for.
     sess.terminal_windows["u1"] = [
         {"id": "@0", "index": 0, "name": "bash", "shared": True}
     ]
     stale = [{"id": "@0", "index": 0, "name": "bash", "active": True}]
     renamed = [{"id": "@0", "index": 0, "name": "my-build", "active": True}]
+    deltas: list[bool] = []
 
     async def straddling_exec(container_id, uid):
         # While the watcher's exec is in flight, the rename handler
         # commits and applies (and would broadcast) the renamed list.
         # A real handler's notify_user_terminal_windows also refreshes
-        # the watcher's baseline.
-        assert sess.apply_window_list("u1", renamed) is True
+        # the watcher's baseline. The apply's return value is recorded
+        # rather than asserted here — this coroutine runs inside
+        # _sync_windows_once's except-Exception guard, which would
+        # swallow an AssertionError and turn the failure into a
+        # baffling KeyError on _last_windows below.
+        deltas.append(sess.apply_window_list("u1", renamed))
         sess._last_windows["u1"] = renamed
         return stale  # our exec queried tmux before the rename committed
 
@@ -324,8 +333,11 @@ async def test_sync_discards_stale_inflight_snapshot():
 
     await sess._sync_windows_once()
 
-    # The stale snapshot was discarded: the map and the baseline still
-    # hold the renamed list and no frame was broadcast.
+    # The concurrent handler's apply did see (and broadcast) the
+    # shared rename — and the watcher's stale snapshot was discarded
+    # after it: the map and the baseline still hold the renamed list
+    # and no frame was broadcast for the revert.
+    assert deltas == [True]
     assert sess.terminal_windows["u1"][0]["name"] == "my-build"
     assert sess._last_windows["u1"] == renamed
     sock.send_json.assert_not_called()
