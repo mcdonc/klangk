@@ -619,17 +619,15 @@ async def restart_workspace(
     command re-fires at the create choke point, so a service workspace
     recovers to healthy.
 
-    #2527: a cordoned node refuses the restart up front — checking
-    *before* the stop keeps a running workspace running (the cordon
-    posture promises existing workspaces survive until drain), instead
-    of stopping it and then failing the start.
+    #2527: a node refusing new starts (cordon or a graceful-restart
+    drain) refuses the restart up front — checking *before* the stop
+    keeps a running workspace running (the cordon posture promises
+    existing workspaces survive until drain), instead of stopping it
+    and then failing the start.
     """
-    if await app.state.model.server_state.is_cordoned():
-        raise HTTPException(
-            status_code=503,
-            detail="node is cordoned: new workspace starts are disabled "
-            "(an operator is preparing this host; uncordon to resume)",
-        )
+    blocked = await app.state.container_registry.new_starts_blocked_reason()
+    if blocked:
+        raise HTTPException(status_code=503, detail=blocked)
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
