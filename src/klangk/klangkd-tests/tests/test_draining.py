@@ -62,8 +62,8 @@ class TestDrainingGate:
             pass  # later failure (podman etc.) is fine — gate let it pass
 
     async def test_existing_workspace_untouched(self, app_state, db):
-        """Cordoning state is not torn down: a tracked workspace's state
-        survives the drain flag (the drain is the stopping half)."""
+        """Tracked state is not torn down by the flag alone: a tracked
+        workspace's state survives until the drain actually stops it."""
         from klangk.container.state import ContainerState
 
         registry = app_state.state.container_registry

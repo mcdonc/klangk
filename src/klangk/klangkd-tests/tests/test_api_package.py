@@ -248,13 +248,13 @@ class TestSubmoduleStructure:
         )
 
     def test_submodule_route_counts_sum_to_subtotal(self):
-        """The 9 sub-routers together account for 89 of the 94 routes."""
+        """The 9 sub-routers together account for the sub-route subtotal."""
         from importlib import import_module
 
         total = 0
         for submod in SUBMODULE_ROUTES:
             total += len(import_module(f"klangk.api.{submod}").router.routes)
-        # 88 sub-routes + 3 direct (version/config/my-permissions) + 2
+        # 89 sub-routes + 3 direct (version/config/my-permissions) + 2
         # root (health/empty) == 94.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 

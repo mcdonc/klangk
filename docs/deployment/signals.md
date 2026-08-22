@@ -28,8 +28,8 @@ What happens, in order:
    arriving after the signal is ignored (the runtime is being torn
    down; a restart would race the exit).
 4. Accept no new requests, close every WebSocket client (uvicorn's own
-   exit sequence — a second Ctrl-C hard-exits through uvicorn, as
-   always).
+   exit sequence). A second Ctrl-C during the drain skips the rest of
+   the graceful work and forces the exit immediately.
 5. Tear down chat-agent subprocesses and cancel in-flight agent runs.
 6. Dispose the database engine and remove the PID file.
 
@@ -69,7 +69,6 @@ authenticated WebSocket clients receive a `host_restart` event with a
    crash-recovery restart) refuses with a clear error until the restart
    completes. This flag is never persisted — a crashed restart
    cannot leave the node refusing starts.
-   a crashed restart cannot leave the node refusing starts.
 3. **Quiesce** — wait up to `KLANGKD_RESTART_INFLIGHT_TIMEOUT` seconds
    (default 15) for in-flight HTTP requests to finish. Requests still
    running at expiry are logged (WARNING); ordinary requests finish

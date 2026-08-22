@@ -438,8 +438,12 @@ class Lifecycle:
         # destroyed by the reap. Keep refusing starts (the restart's drain
         # flag) until the reaps are done; boot auto-start runs after this
         # line, so it is unaffected. No-op at a genuine boot (the flag is
-        # never set outside a graceful restart).
-        registry.draining = False
+        # never set outside a graceful restart). A shutdown's flag is
+        # never cleared here (#2527 review: the TERM path doesn't run
+        # startup(), but a shutdown racing a restart must not have its
+        # refusal lifted by the restart's recycle).
+        if not self.shutting_down:
+            registry.draining = False
         registry.start_cleanup_loop()
         registry.start_health_loop()
         registry.start_crash_loop()
@@ -521,6 +525,12 @@ class Lifecycle:
             state = self.app.state
             registry = state.container_registry
             logger.info("SIGHUP: restart beginning (phase: validate)")
+            # #2527 review: a shutdown arriving before the restart begins
+            # wins outright (on_sighup also drops later signals, but this
+            # closes the checked-to-started race window).
+            if self.shutting_down:
+                logger.info("SIGHUP: restart aborted; shutdown in progress")
+                return
             new_settings, error = self._reload_settings()
             if error is not None:
                 logger.error(
@@ -558,6 +568,19 @@ class Lifecycle:
                     reason="host restart"
                 )
                 logger.info("SIGHUP: drained %d workspace(s)", stopped)
+                # #2527 review: a TERM/INT landing mid-restart starts the
+                # shutdown drain concurrently; from here on the restart
+                # must not resurrect what the shutdown is tearing down
+                # (no settings apply, no runtime recycle, no auto-start),
+                # and its error recovery must not run either — the
+                # process is exiting. The done-callback sees the task
+                # complete normally (CancelledError would also be fine).
+                if self.shutting_down:
+                    logger.info(
+                        "SIGHUP: restart aborted mid-drain; shutdown in "
+                        "progress"
+                    )
+                    return
                 logger.info("SIGHUP: phase: apply (applying reloaded config)")
                 await self._apply_reloaded_settings(new_settings)
                 state.sockets.notify_host_restart("restarting")
@@ -572,8 +595,12 @@ class Lifecycle:
             finally:
                 # A failed restart must never leave the node refusing
                 # starts: the in-memory flag has no DB persistence an
-                # operator could clear manually.
-                registry.draining = False
+                # operator could clear manually. EXCEPT when a shutdown
+                # owns the flag now — clearing it here would lift the
+                # shutdown's start-refusal while the process exits
+                # (#2527 review).
+                if not self.shutting_down:
+                    registry.draining = False
             logger.info("SIGHUP: restart complete (phase: resumed)")
             state.sockets.notify_host_started()
 
@@ -814,8 +841,13 @@ class Lifecycle:
         is serving and starting containers again. On failure, a live
         process that can neither restart its runtime nor serve workloads
         would masquerade as healthy — exit(1) and let systemd/docker
-        restart us instead.
+        restart us instead. Skipped entirely when a shutdown owns the
+        process (#2527 review): resurrecting the runtime during teardown
+        is exactly what the shutdown is undoing.
         """
+        if self.shutting_down:
+            logger.info("SIGHUP: restart recovery skipped; shutting down")
+            return
         state = self.app.state
         state.container_registry.draining = False
         try:

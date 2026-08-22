@@ -539,7 +539,8 @@ void main() {
         expect(client.connected, isTrue);
 
         // workspace_connect should have been re-sent
-        final msgs = channels[1].sentMessages
+        final msgs = channels[1]
+            .sentMessages
             .map((s) => jsonDecode(s as String) as Map<String, dynamic>)
             .toList();
         expect(msgs.any((m) => m['cmd'] == 'workspace_connect'), isTrue);
@@ -855,8 +856,7 @@ void main() {
         expect(
           client.reconnecting,
           isFalse,
-          reason:
-              'successful reconnect with no workspace must clear '
+          reason: 'successful reconnect with no workspace must clear '
               '_reconnecting',
         );
 
@@ -883,7 +883,8 @@ void main() {
       },
     );
 
-    test('drop during reconnect connectWorkspace allows re-reconnect', () async {
+    test('drop during reconnect connectWorkspace allows re-reconnect',
+        () async {
       // Regression: if the WebSocket dropped during the connectWorkspace phase
       // of _attemptReconnect, _reconnecting stayed true and _scheduleReconnect
       // short-circuited permanently.
@@ -1125,6 +1126,21 @@ void main() {
       await Future.delayed(Duration.zero);
       expect(client.hostNotice, isNull);
       expect(client.reconnecting, isFalse);
+    });
+
+    test('container_ready clears a stale host notice (#2527)', () async {
+      // A client that missed host_started (reconnected after the
+      // broadcast) must not keep the notice stuck.
+      channel.serverSend({'type': 'host_shutdown'});
+      await Future.delayed(Duration.zero);
+      expect(client.hostNotice, 'Server shutting down');
+
+      channel.serverSend({
+        'type': 'container_ready',
+        'workspaceId': 'ws-1',
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.hostNotice, isNull);
     });
 
     test('host notices stream on hostNotices (#2527)', () async {
