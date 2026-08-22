@@ -38,7 +38,8 @@ def merge_window_entries(old: list[dict], windows: list[dict]) -> list[dict]:
     Both the controller's sync (:meth:`sync_terminal_windows` in
     controllers.py) and the window-watcher's debounced re-sync
     (:meth:`_sync_windows_once`) MUST update the in-memory map through
-    this helper before broadcasting — the share/unshare handlers read
+    :meth:`WorkspaceSession.apply_window_list` (which wraps this helper)
+    before broadcasting — the share/unshare handlers read
     the map, and a frame sent without the matching map update let a
     client act on a window the server would then not find (the
     ``klangk terminal share`` 10s-blind-timeout flake).
@@ -57,6 +58,59 @@ def merge_window_entries(old: list[dict], windows: list[dict]) -> list[dict]:
             }
         )
     return entries
+
+
+def get_shared_terminals(ws_session, sockets) -> list[dict]:
+    """Collect all shared windows across all users in a workspace."""
+    # Build viewer map: (owner_user_id, window_id) -> [{user_id, email}]
+    viewer_map: dict[tuple[str, str], list[dict]] = {}
+    for sock in ws_session.subscribers:
+        conn = sockets.connections.get(sock)
+        if not conn or not conn.viewing_shared:
+            continue
+        key = (
+            conn.viewing_shared["user_id"],
+            conn.viewing_shared["window_id"],
+        )
+        viewer_map.setdefault(key, []).append(
+            {"user_id": conn.user["id"], "email": conn.user.get("email", "")}
+        )
+
+    terminals = []
+    for user_id, windows in ws_session.terminal_windows.items():
+        # Look up the user's handle from any active connection. The
+        # agent (AGENT_USER_ID) has no WS connection, so its handle is
+        # the cached ``agent_handle`` populated by ``_sync_service_windows``
+        # -- the agent is always attributable, never "offline" (#1133).
+        handle = None
+        if user_id == model.AGENT_USER_ID:
+            handle = ws_session.agent_handle
+        else:
+            for sock in ws_session.subscribers:
+                conn = sockets.connections.get(sock)
+                if conn and conn.user.get("id") == user_id:
+                    handle = conn.user.get("handle")
+                    break
+        if not handle:
+            continue
+        for w in windows:
+            if w.get("shared"):
+                wid = w.get("id", "")
+                viewers = viewer_map.get((user_id, wid), [])
+                terminals.append(
+                    {
+                        "user_id": user_id,
+                        "handle": handle,
+                        "window_name": w["name"],
+                        "window_id": wid,
+                        "viewers": viewers,
+                        # The agent's shared windows live in the standalone
+                        # ``service`` tmux session (#1158); flag them so the
+                        # UI can present the service tab distinctly (#1159).
+                        "is_service": user_id == model.AGENT_USER_ID,
+                    }
+                )
+    return terminals
 
 
 def _iso_utc(ts: float | None) -> str | None:
@@ -209,6 +263,46 @@ class WorkspaceSession:
         """Send message to all subscribers, removing dead ones."""
         return broadcast_to_set(self.subscribers, message)
 
+    def apply_window_list(self, user_id: str, windows: list[dict]) -> bool:
+        """Fold a fresh tmux ``list_windows`` result into the session map.
+
+        Returns True when the shared-window set or any shared window name
+        changed — the signal that ``shared_terminals`` viewers need a
+        re-broadcast. Both window-list producers (the terminal command
+        handlers and the debounced window-watcher sync) MUST go through
+        this method so a shared rename is detected exactly once, by
+        whichever path applies it first (#2651: the watcher merged
+        renamed entries into the map without broadcasting, erasing the
+        delta the rename handler's own broadcast relied on, so other
+        users' shared-terminal tab lists never updated).
+
+        Entries are matched by window id (``@N`` — unique and never
+        reused within a tmux server's lifetime, stable across renames
+        and index reuse, #2192) and ``shared`` flags carry over; the
+        agent's ``service-cmd`` window is shared by definition (#1114).
+        """
+        old = self.terminal_windows.get(user_id, [])
+        new_entries = merge_window_entries(old, windows)
+        self.terminal_windows[user_id] = new_entries
+        # Broadcast-worthy delta: shared set changed (a shared window
+        # was added or closed) or any shared window was renamed.
+        old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
+        new_shared = {w["id"] for w in new_entries if w.get("shared")}
+        old_shared_names = {
+            (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
+        }
+        new_shared_names = {
+            (w["id"], w["name"]) for w in new_entries if w.get("shared")
+        }
+        return old_shared != new_shared or old_shared_names != new_shared_names
+
+    def broadcast_shared_terminals(self) -> None:
+        """Send the current shared-terminal list to all subscribers."""
+        if self.app is None:  # pragma: no cover - bare sessions in tests
+            return
+        terminals = get_shared_terminals(self, self.app.state.sockets)
+        self.broadcast({"type": "shared_terminals", "terminals": terminals})
+
     def start_token_renewal(self, expiry: datetime) -> None:
         """Schedule periodic workspace token renewal.
 
@@ -276,9 +370,7 @@ class WorkspaceSession:
             # _start_terminal's sync left the map empty/stale and
             # ``klangk terminal share`` blind-timed-out on the missing
             # window.
-            self.terminal_windows[uid] = merge_window_entries(
-                self.terminal_windows.get(uid, []), windows
-            )
+            shared_changed = self.apply_window_list(uid, windows)
             msg = {"type": "terminal_windows", "windows": windows}
             for sock in list(self.subscribers):
                 conn = sockets.connections.get(sock)
@@ -287,6 +379,13 @@ class WorkspaceSession:
                         sock.send_json(msg)
                     except WS_ERRORS:
                         pass
+            # A rename/close/add that touched a shared window must also
+            # reach shared-terminal viewers: this path can be the first
+            # to apply the change (under load its list_windows exec can
+            # beat the command handler's), and the handler's own delta
+            # check would then see no change (#2651).
+            if shared_changed:
+                self.broadcast_shared_terminals()
 
     async def _token_renewal_loop(self) -> None:
         """Periodically renew the workspace token before it expires."""

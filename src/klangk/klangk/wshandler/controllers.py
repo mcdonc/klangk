@@ -22,7 +22,6 @@ from ..terminal import (
 from .safe_websocket import SlowClientError, WS_ERRORS
 from .constants import MAX_INPUT_SIZE
 from .helpers import send_error, send_event, get_shared_terminals
-from .session import merge_window_entries
 
 if TYPE_CHECKING:
     from .connection import Connection
@@ -912,28 +911,19 @@ class TerminalController:
         if not ws_session:
             return
         user_id = self._conn.user["id"]
-        old = ws_session.terminal_windows.get(user_id, [])
-        # Shared merge lives in one place (session.merge_window_entries,
-        # #2633 CI race): id-matched (tmux window ids are unique and never
-        # reused within a server's lifetime — stable across renames and
-        # index reuse, #2192), shared flags carry over, service-cmd stays
-        # shared. After a container restart the in-container tmux server
-        # is gone and all custom tabs are lost anyway, so there is
-        # nothing to match by.
-        new_entries = merge_window_entries(old, windows)
-        ws_session.terminal_windows[user_id] = new_entries
-        new_shared = {w["id"] for w in new_entries if w.get("shared")}
-        # Broadcast if shared set changed (e.g. shared window was closed)
-        # or if any shared window was renamed.
-        old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
-        old_shared_names = {
-            (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
-        }
-        new_shared_names = {
-            (w["id"], w["name"]) for w in new_entries if w.get("shared")
-        }
-        if old_shared != new_shared or old_shared_names != new_shared_names:
-            self._conn.broadcast_shared_terminals(ws_session)
+        # Shared merge and delta detection live in one place
+        # (WorkspaceSession.apply_window_list, #2633 CI race + #2651):
+        # entries are matched by tmux window id
+        # (unique and never reused within a server's lifetime — stable
+        # across renames and index reuse, #2192), shared flags carry
+        # over, service-cmd stays shared. The window-watcher sync uses
+        # the same method, so whichever path applies a shared-window
+        # rename first is also the one that broadcasts it — a watcher
+        # re-sync landing between the rename and this handler's
+        # list_windows used to erase the delta and the coadmin's
+        # shared_terminals frame was never sent (#2651).
+        if ws_session.apply_window_list(user_id, windows):
+            ws_session.broadcast_shared_terminals()
 
     def _merge_service_windows(self, ws_session, windows: list[dict]) -> None:
         """Merge the agent's ``service`` session windows into the map.
@@ -1528,12 +1518,7 @@ class SharedTerminalController:
 
     def broadcast_shared_terminals(self, ws_session) -> None:
         """Broadcast the current shared terminal list to all subscribers."""
-        terminals = get_shared_terminals(
-            ws_session, self._conn.app.state.sockets
-        )
-        ws_session.broadcast(
-            {"type": "shared_terminals", "terminals": terminals}
-        )
+        ws_session.broadcast_shared_terminals()
 
     # Keep old handler name for backwards compat with existing E2E tests
     async def create_shared_terminal(self, msg: dict) -> None:

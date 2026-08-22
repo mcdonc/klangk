@@ -5911,6 +5911,96 @@ class TestTerminalWindowHandlers:
         sent = sock.send_json.call_args[0][0]
         assert sent["type"] == "error"
 
+    async def test_rename_shared_window_broadcasts_shared_terminals(
+        self, user, app_state
+    ):
+        """Renaming a shared window updates other users' shared list.
+
+        The broadcast comes from the handler's sync when it is the path
+        that applies the rename (controller-first ordering of the #2651
+        race).
+        """
+        async with _conn_in_workspace(
+            user, "ws-1", user_home="/home/admin"
+        ) as (sock, conn, session, app_state):
+            session.terminal_windows[user["id"]] = [
+                {"name": "bash", "index": 0, "id": "@0", "shared": True}
+            ]
+            with (
+                patch.object(_mock_term, "rename_window"),
+                patch.object(
+                    _mock_term,
+                    "list_windows",
+                    return_value=[
+                        {
+                            "id": "@0",
+                            "index": 0,
+                            "name": "my-build",
+                            "active": True,
+                        }
+                    ],
+                ),
+            ):
+                await conn.handle_terminal_rename_window(
+                    {"index": 0, "name": "my-build"}
+                )
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            shared = [c for c in calls if c.get("type") == "shared_terminals"]
+            assert len(shared) == 1
+            assert [t["window_name"] for t in shared[0]["terminals"]] == [
+                "my-build"
+            ]
+
+    async def test_rename_shared_window_after_watcher_applied(
+        self, user, app_state
+    ):
+        """No duplicate shared broadcast when the watcher applied first.
+
+        Watcher-first ordering of the #2651 race: the debounced window
+        sync already merged the renamed list into the session map (and
+        broadcast the shared update itself — covered in
+        test_session_sync.py), so the handler's sync finds no delta and
+        must not broadcast again. The rename still reaches the client as
+        a terminal_windows frame.
+        """
+        async with _conn_in_workspace(
+            user, "ws-1", user_home="/home/admin"
+        ) as (sock, conn, session, app_state):
+            renamed = [
+                {
+                    "id": "@0",
+                    "index": 0,
+                    "name": "my-build",
+                    "active": True,
+                }
+            ]
+            # State as the watcher's re-sync left it: map merged,
+            # baseline current.
+            session.terminal_windows[user["id"]] = [
+                {"name": "my-build", "index": 0, "id": "@0", "shared": True}
+            ]
+            session._last_windows[user["id"]] = renamed
+            with (
+                patch.object(_mock_term, "rename_window"),
+                patch.object(
+                    _mock_term,
+                    "list_windows",
+                    return_value=renamed,
+                ),
+            ):
+                await conn.handle_terminal_rename_window(
+                    {"index": 0, "name": "my-build"}
+                )
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert [
+                c for c in calls if c.get("type") == "shared_terminals"
+            ] == []
+            assert any(
+                c.get("type") == "terminal_windows"
+                and any(w["name"] == "my-build" for w in c["windows"])
+                for c in calls
+            )
+
     async def test_list_windows(self):
         sock = _mock_sock()
         conn = _base_conn(ws=sock)
