@@ -74,12 +74,19 @@ String? guardAuth({
 /// Feature routes are excluded: they are public but a logged-in user may
 /// legitimately navigate to them.
 ///
-/// The pending redirect is **consume-once**: it is cleared as soon as
-/// this guard uses it, so a stash from one login can never leak into a
-/// later session (#2670). The target is also permission-checked against
-/// the *current* session: an `/admin`-prefixed target (e.g. stashed by
-/// an admin's logout or expiry, then inherited by whoever logs in next
-/// on this browser) falls back to `/workspaces` unless [isAdmin].
+/// The target is permission-checked against the *current* session: an
+/// `/admin`-prefixed target (e.g. stashed by an admin's logout or expiry,
+/// then inherited by whoever logs in next on this browser) falls back to
+/// `/workspaces` unless [isAdmin] (#2670).
+///
+/// The stash is deliberately NOT consumed here. GoRouter re-parses the
+/// *committed* location on every refreshListenable notification, and
+/// AuthService.login() fires two notifications in quick succession
+/// (saveToken's, then its finally-block's). Consuming on the first
+/// evaluation made the second — still re-parsing `/login` — see a null
+/// stash and win the navigation with the `/workspaces` fallback (#2670).
+/// The cross-session leak is instead cut where it originates:
+/// `_clearToken()` clears the stash on logout / any session-ending 401.
 ///
 /// Returns the redirect target, or null to allow.
 String? guardLoggedInPublicRoute({
@@ -91,7 +98,6 @@ String? guardLoggedInPublicRoute({
 }) {
   if (isLoggedIn && publicRoutes.contains(loc) && !featurePaths.contains(loc)) {
     final target = pendingRedirect;
-    pendingRedirect = null;
     if (target == null) return '/workspaces';
     if (target.startsWith('/admin') && !isAdmin) return '/workspaces';
     return target;

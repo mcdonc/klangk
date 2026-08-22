@@ -181,48 +181,48 @@ void main() {
       );
     });
 
-    test('consumes the pending redirect (consume-once, #2670)', () {
+    test('guard is idempotent across repeated evaluations (#2670)', () {
+      // GoRouter re-parses the committed location on every refreshListenable
+      // notification, and login() notifies twice in quick succession — the
+      // guard must give both evaluations the same answer. It therefore must
+      // NOT consume the stash; see the guard's doc comment.
       pendingRedirect = '/workspace/abc';
-      expect(
-        guardLoggedInPublicRoute(
-          isLoggedIn: true,
-          loc: '/login',
-          publicRoutes: routes,
-          featurePaths: featurePaths,
-          isAdmin: false,
-        ),
-        '/workspace/abc',
+      final first = guardLoggedInPublicRoute(
+        isLoggedIn: true,
+        loc: '/login',
+        publicRoutes: routes,
+        featurePaths: featurePaths,
+        isAdmin: false,
       );
-      // A later login (or a logged-in visit to /login) must not inherit
-      // the consumed target.
-      expect(pendingRedirect, isNull);
-      expect(
-        guardLoggedInPublicRoute(
-          isLoggedIn: true,
-          loc: '/login',
-          publicRoutes: routes,
-          featurePaths: featurePaths,
-          isAdmin: false,
-        ),
-        '/workspaces',
+      final second = guardLoggedInPublicRoute(
+        isLoggedIn: true,
+        loc: '/login',
+        publicRoutes: routes,
+        featurePaths: featurePaths,
+        isAdmin: false,
       );
+      expect(first, '/workspace/abc');
+      expect(second, '/workspace/abc');
     });
 
-    test('does not leave a stale redirect when consuming with a fallback', () {
-      // Even when the guard falls back to /workspaces (no stash or
-      // permission-rejected target), the stash must not survive.
+    test('admin-target rejection is stable across evaluations (#2670)', () {
+      // A rejected target must yield the same fallback on every
+      // evaluation — clearing it here would re-introduce the double-
+      // notify race (the second evaluation would fall back while the
+      // first had already bounced the user).
       pendingRedirect = '/admin/users';
-      expect(
-        guardLoggedInPublicRoute(
-          isLoggedIn: true,
-          loc: '/login',
-          publicRoutes: routes,
-          featurePaths: featurePaths,
-          isAdmin: false,
-        ),
-        '/workspaces',
-      );
-      expect(pendingRedirect, isNull);
+      for (var i = 0; i < 2; i++) {
+        expect(
+          guardLoggedInPublicRoute(
+            isLoggedIn: true,
+            loc: '/login',
+            publicRoutes: routes,
+            featurePaths: featurePaths,
+            isAdmin: false,
+          ),
+          '/workspaces',
+        );
+      }
     });
 
     test('rejects an admin target for a non-admin session (#2670)', () {
@@ -389,8 +389,10 @@ void main() {
         ),
         '/workspaces',
       );
-      // And the stale target is consumed, not left for the next bounce.
-      expect(pendingRedirect, isNull);
+      // The rejected stash is not consumed here — clearing happens on
+      // session end (_clearToken). Idempotence is what makes the
+      // double-notify race harmless.
+      expect(pendingRedirect, '/admin/users');
     });
 
     test('logged-in admin on /login with admin target -> target', () {
@@ -407,7 +409,6 @@ void main() {
         ),
         '/admin/users',
       );
-      expect(pendingRedirect, isNull);
     });
 
     test('logged-in on / -> /workspaces (root, not public-route guard)', () {
