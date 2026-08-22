@@ -106,12 +106,16 @@ operators or integrators to act when upgrading.
   SIGHUP is now a full graceful restart: new workspace starts are
   refused, in-flight HTTP requests get
   `KLANGKD_RESTART_INFLIGHT_TIMEOUT` seconds (default 15) to finish,
-  running workspaces are drained through the same graceful path as
-  `klangk admin drain`, the reloaded config is applied, and the runtime
-  recycles (drained workspaces are not restarted — only `auto_start`
-  ones return). Clients get `host_restart` events with a `phase` field
-  and a final `host_started` broadcast; each phase is logged. Invalid
-  config still denies the restart with nothing touched. Docs:
+  running workspaces are drained (concurrently, each with a 5s podman
+  stop grace) through the same graceful path as `klangk admin drain`,
+  the reloaded config is applied, and the runtime recycles (drained
+  workspaces are not restarted — only `auto_start` ones return).
+  Clients get `host_restart` events with a `phase` field and a final
+  `host_started` broadcast; each phase is logged. Starts stay refused
+  until the post-restart container reaps finish, and a failed restart
+  logs, attempts a startup recovery, and exits (code 1) if recovery
+  fails — the node never lingers half-restarted. Invalid config still
+  denies the restart with nothing touched. Docs:
   [Signals](deployment/signals.md).
 - **Cordon/drain mode (#2527).** New operator controls for clean
   host maintenance: `klangk admin cordon` refuses new workspace starts

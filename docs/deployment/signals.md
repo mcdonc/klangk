@@ -52,10 +52,13 @@ authenticated WebSocket clients receive a `host_restart` event with a
    a crashed restart cannot leave the node refusing starts.
 3. **Quiesce** — wait up to `KLANGKD_RESTART_INFLIGHT_TIMEOUT` seconds
    (default 15) for in-flight HTTP requests to finish. Requests still
-   running at expiry are logged (WARNING) and left to finish against the
-   recycling runtime; nothing is dropped mid-response.
+   running at expiry are logged (WARNING); ordinary requests finish
+   against the recycling runtime, but a long-lived streaming response
+   (`/llm_proxy`, `/browser-delegate/stream`) cannot outlive the drain
+   and will be interrupted by the restart.
 4. **Drain** — stop every running workspace through the graceful path
-   (the same one `klangk admin drain` uses): clients get terminal status
+   (the same one `klangk admin drain` uses, concurrently per workspace,
+   each with a 5s podman stop grace): clients get terminal status
    frames and a `container_stopped` event with reason `host restart`,
    not a dropped socket. Previously running workspaces are **not**
    remembered — only workspaces configured for `auto_start` come back
@@ -76,7 +79,18 @@ authenticated WebSocket clients receive a `host_restart` event with a
    any workspaces configured for it.
 7. **Resume** — broadcast `host_started`. Both the web UI and
    `klangk monitor` reconnect automatically with backoff and rebuild
-   their state on reconnect.
+   their state on reconnect. New container starts stay refused
+   (503, "a restart is in progress") through step 6's podman pre-warm
+   and container reaps — a client that reconnects and starts a
+   workspace in that window gets a clean refusal instead of having its
+   fresh container reaped — then auto-start runs once starts are
+   allowed again.
+
+If any step fails, the failure is logged, a recovery pass re-runs the
+startup sequence, and `host_started` is broadcast on recovery; if the
+recovery itself fails the process exits (code 1) so the service manager
+restarts it — the node never lingers half-restarted while its HTTP
+listener keeps serving.
 
 For an operator-driven cordon + drain (which survives restarts and
 needs an explicit uncordon), see

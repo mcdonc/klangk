@@ -1128,6 +1128,48 @@ class TestInFlightRequests:
         counter.decrement()
         assert counter.count == 0
 
+    async def test_middleware_counts_through_real_app(self, app_state):
+        """The middleware installed by build_app actually wraps the HTTP
+        stack: a request through a real (small) FastAPI app + ASGITransport
+        is counted in flight and released on completion — exercising the
+        wrap order, not just direct __call__ (#2527 review)."""
+        from fastapi import FastAPI
+        from httpx import ASGITransport, AsyncClient as HC
+
+        counter = main.InFlightRequests()
+        app = FastAPI()
+        app.add_middleware(main.InFlightMiddleware, counter=counter)
+
+        @app.get("/slow")
+        async def slow():  # pragma: no cover - trivial
+            assert counter.count == 1
+            return {"ok": True}
+
+        transport = ASGITransport(app=app)
+        async with HC(transport=transport, base_url="http://t") as client:
+            assert counter.count == 0
+            resp = await client.get("/slow")
+            assert resp.status_code == 200
+            assert resp.json() == {"ok": True}
+        assert counter.count == 0
+
+    async def test_middleware_counts_503_responses(self, app_state):
+        """Error responses (here: 404 from an unknown route) still
+        decrement — a leak would pin the SIGHUP quiesce at its timeout
+        forever."""
+        from fastapi import FastAPI
+        from httpx import ASGITransport, AsyncClient as HC
+
+        counter = main.InFlightRequests()
+        app = FastAPI()
+        app.add_middleware(main.InFlightMiddleware, counter=counter)
+
+        transport = ASGITransport(app=app)
+        async with HC(transport=transport, base_url="http://t") as client:
+            resp = await client.get("/nope")
+            assert resp.status_code == 404
+        assert counter.count == 0
+
 
 class TestStartupShutdownRestart:
     async def test_startup_calls_container_sequence(self, app_state):
@@ -1394,9 +1436,110 @@ class TestStartupShutdownRestart:
             "notify:started",
         ]
         mock_drain.assert_awaited_once_with(reason="host restart")
-        mock_wait.assert_awaited_once()
+        # The quiesce timeout comes from the RELOADED settings, so a
+        # change takes effect on this restart (#2527 review).
+        mock_wait.assert_awaited_once_with(
+            new_settings.restart_inflight_timeout
+        )
         # The flag never survives the restart.
         assert registry.draining is False
+
+    async def test_restart_keeps_drain_flag_through_startup(self, app_state):
+        """The drain flag is NOT cleared before startup() — startup clears
+        it itself after the container reaps, so a client that reconnects
+        and starts a workspace during the prewarm/reap window is refused
+        instead of having its container destroyed by the reap (#2527
+        review)."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._restart_lock = None
+        registry = app_state.state.container_registry
+        seen = {}
+
+        async def fake_shutdown():
+            seen["at_shutdown"] = registry.draining
+
+        async def fake_startup():
+            seen["at_startup"] = registry.draining
+
+        with (
+            patch.object(
+                lc,
+                "_reload_settings",
+                return_value=(
+                    make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
+                    None,
+                ),
+            ),
+            patch.object(lc, "runtime_shutdown", side_effect=fake_shutdown),
+            patch.object(lc, "startup", side_effect=fake_startup),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch.object(
+                lc, "_apply_reloaded_settings", new_callable=AsyncMock
+            ),
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
+            await lc.restart_runtime()
+        assert seen["at_shutdown"] is True
+        assert seen["at_startup"] is True  # still refusing during startup
+
+    async def test_startup_clears_drain_after_reaps(self, app_state):
+        """startup() clears the drain flag once its container reaps are
+        done (the window where a fresh client container could be reaped
+        closes), and auto-start then runs with starts allowed."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        order = []
+
+        async def fake_reap(*args, **kwargs):
+            order.append("reap")
+            order.append(f"draining={registry.draining}")
+
+        with (
+            patch.object(registry, "prewarm_podman", new_callable=AsyncMock),
+            patch.object(
+                registry,
+                "reap_instance_containers",
+                side_effect=fake_reap,
+            ),
+            patch.object(
+                registry,
+                "reap_dead_owner_containers",
+                side_effect=fake_reap,
+            ),
+            patch.object(registry, "start_cleanup_loop"),
+            patch.object(registry, "start_health_loop"),
+            patch.object(registry, "start_crash_loop"),
+            patch.object(
+                app_state.state.workspaces,
+                "auto_start_workspaces",
+                new_callable=AsyncMock,
+                side_effect=lambda: (
+                    order.append(f"autostart(draining={registry.draining})")
+                    or 0
+                ),
+            ),
+        ):
+            registry.draining = True
+            await lc.startup()
+        assert order == [
+            "reap",
+            "draining=True",
+            "reap",
+            "draining=True",
+            "autostart(draining=False)",
+        ]
 
     async def test_restart_inflight_timeout_proceeds(self, app_state, caplog):
         """Straggler requests at timeout expiry are logged; the restart
@@ -1753,6 +1896,92 @@ class TestStartupShutdownRestart:
             await asyncio.sleep(0)
             await asyncio.sleep(0)
         mock_restart.assert_awaited_once()
+
+    async def test_on_sighup_keeps_strong_task_reference(self, app_state):
+        """The restart task is held in _restart_tasks (an unreferenced
+        task is GC-eligible mid-restart — the GC hazard the review
+        flagged) and discarded when done."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        with patch.object(lc, "restart_runtime", new_callable=AsyncMock):
+            lc.on_sighup()
+            assert len(lc._restart_tasks) == 1
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        assert lc._restart_tasks == set()
+
+    async def test_failed_restart_logs_and_recovers(self, app_state, caplog):
+        """A restart that raises is logged and recovered: startup() is
+        re-run, host_started is broadcast, the node never lingers
+        half-restarted."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        with (
+            patch.object(
+                lc,
+                "restart_runtime",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("drain exploded"),
+            ),
+            patch.object(
+                lc, "startup", new_callable=AsyncMock
+            ) as mock_startup,
+            patch.object(
+                app_state.state.sockets, "notify_host_started"
+            ) as mock_started,
+            caplog.at_level("ERROR"),
+        ):
+            lc.on_sighup()
+            for _ in range(4):
+                await asyncio.sleep(0)
+        mock_startup.assert_awaited_once()
+        mock_started.assert_called_once()
+        assert any("restart failed" in r.message for r in caplog.records)
+        assert lc._restart_tasks == set()
+
+    async def test_failed_recovery_exits_process(self, app_state, caplog):
+        """Recovery that also fails exits the process (code 1) so the
+        service manager restarts us instead of a live zombie."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        with (
+            patch.object(
+                lc,
+                "restart_runtime",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("drain exploded"),
+            ),
+            patch.object(
+                lc,
+                "startup",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("startup also exploded"),
+            ),
+            patch("klangk.main.os._exit") as mock_exit,
+            caplog.at_level("CRITICAL"),
+        ):
+            lc.on_sighup()
+            for _ in range(6):
+                await asyncio.sleep(0)
+        mock_exit.assert_called_once_with(1)
+        assert any("recovery failed" in r.message for r in caplog.records)
+
+    async def test_cancelled_restart_task_logs_quietly(self, app_state):
+        """A cancelled restart task (shutdown raced it) is not treated
+        as a failure."""
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+
+        async def hang():
+            await asyncio.sleep(60)
+
+        task = asyncio.ensure_future(hang())
+        lc._restart_tasks.add(task)
+        task.add_done_callback(lc._on_restart_task_done)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert lc._restart_tasks == set()
 
     async def test_lifespan_registers_sighup_handler(self, db, app_state):
         """The lifespan installs (and removes) a SIGHUP handler."""

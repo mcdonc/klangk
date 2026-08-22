@@ -1398,8 +1398,15 @@ class ContainerRegistry(NetworkSidecarMixin):
 
     async def stop_and_remove_container(
         self, container_id: str, workspace_id: str | None = None
-    ) -> None:
+    ) -> bool:
         """Stop and remove a container.
+
+        Returns True when the container ended up gone via this call (the
+        podman remove succeeded, or it was already gone — 404); False
+        when the stop/remove failed (logged at warning) or a racing
+        start re-bound the workspace and the fresh container was left
+        alone (#2527 review: drains count only True results, so the
+        reported stop count never overstates).
 
         The slow ``self.app.state.podman.remove_container`` call for the
         workspace container runs *outside* the workspace lock; the
@@ -1443,10 +1450,13 @@ class ContainerRegistry(NetworkSidecarMixin):
             # before the scheduler re-checks (#2524 review).
             self.stop_epoch[ws_id] = self.stop_epoch.get(ws_id, 0) + 1
             self.crash.on_expected_stop(ws_id)
+        stopped = False
+        torn_down = False
         try:
             try:
                 await self.app.state.podman.remove_container(container_id)
                 logger.info("Stopped container %s", container_id)
+                stopped = True
             except podman.PodmanError as e:
                 logger.warning(
                     "Failed to stop container %s: %s",
@@ -1482,12 +1492,20 @@ class ContainerRegistry(NetworkSidecarMixin):
                         self._cid_to_wsid.pop(container_id, None)
                         self.revoke_workspace_browsers(ws_id)
                         self.states.pop(ws_id, None)
+                        torn_down = True
+                    else:
+                        # Re-bound to a fresh container by a racing start:
+                        # the fresh container is not ours to stop.
+                        torn_down = False
             # Drop the per-container service-firing lock (#1188), then sweep
             # any other entries orphaned by container churn (e.g. a racing
             # re-bind that popped this container's mapping before teardown)
             # (#1351).
             self.clear_service_session_lock(container_id)
             self.prune_service_session_locks(set(self._cid_to_wsid))
+            # Gone via this call AND (untracked, or our registry state torn
+            # down — i.e. not left alone by the rebind guard).
+            return stopped if ws_id is None else (stopped and torn_down)
         finally:
             if ws_id:
                 self.stopping.discard(ws_id)
@@ -1569,20 +1587,37 @@ class ContainerRegistry(NetworkSidecarMixin):
         status/service-death frames so connected clients see a clean
         "stopped" instead of a dropped WebSocket, then
         :meth:`stop_and_remove_container` runs the graceful podman stop
-        with the deploy's stop grace. The container_stopped broadcast
-        carries the drain reason so the UI shows it.
+        (``podman stop -t 5`` then ``rm -f`` — a fixed 5s kill grace,
+        #2527 review). The container_stopped broadcast carries the drain
+        reason so the UI shows it.
 
-        Iterates a snapshot (list(...) of states) so a container exiting
-        mid-loop cannot mutate the dict under us. Returns the number of
-        workspaces stopped.
+        Workspaces drain **concurrently** (per-workspace stops are
+        independent and already serialize on the per-workspace lock —
+        the same concurrency ``shutdown()`` uses), so a node with many
+        workspaces does not pay N sequential 5s stops.
+
+        After the tracked workspaces, a **label sweep** re-lists this
+        instance's containers and removes any stragglers — a start that
+        passed the refusal gate just before it closed (its
+        ``track_activity`` had not landed when the states snapshot was
+        taken) is caught here rather than left running (#2527 review).
+
+        Returns the number of workspaces/containers verifiably stopped
+        (``stop_and_remove_container`` returning False — failed stop or
+        a racing re-bind — is logged and not counted).
         """
-        stopped = 0
-        for ws_id, state in list(self.states.items()):
-            cid = state.container_id
-            if not cid:
-                continue
+
+        async def drain_one(ws_id: str, cid: str) -> bool:
             await self.notify_workspace_killed(ws_id)
-            await self.stop_and_remove_container(cid, workspace_id=ws_id)
+            ok = await self.stop_and_remove_container(cid, workspace_id=ws_id)
+            if not ok:
+                logger.warning(
+                    "Drain: workspace %s container %s not stopped "
+                    "(failed or re-bound by a racing start)",
+                    ws_id,
+                    cid[:12],
+                )
+                return False
             # Same "stopped on purpose" broadcast as the /stop endpoint:
             # clients re-render as stopped, not disconnected.
             session = self.app.state.sockets.get_session(ws_id)
@@ -1597,7 +1632,43 @@ class ContainerRegistry(NetworkSidecarMixin):
                         },
                     }
                 )
-            stopped += 1
+            return True
+
+        # Snapshot so a container exiting mid-drain cannot mutate the
+        # dict under us.
+        tracked = [
+            (ws_id, state.container_id)
+            for ws_id, state in list(self.states.items())
+            if state.container_id
+        ]
+        results = await asyncio.gather(
+            *(drain_one(ws_id, cid) for ws_id, cid in tracked),
+            return_exceptions=True,
+        )
+        stopped = 0
+        for (ws_id, _cid), result in zip(tracked, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Drain: workspace %s stop raised: %r", ws_id, result
+                )
+            elif result:
+                stopped += 1
+        # Label sweep: catch starts that raced the gate (created after
+        # the snapshot) and anything else instance-labelled still alive.
+        try:
+            leftovers = await self.app.state.podman.list_containers(
+                f"klangk.instance={self.app.state.util.instance_id()}"
+            )
+        except (podman.PodmanError, OSError) as e:
+            logger.warning("Drain: error sweeping leftover containers: %s", e)
+            leftovers = []
+        for c in leftovers:
+            cid = container_ident(c)
+            if not cid:
+                continue
+            logger.info("Drain: sweeping racing-start container %s", cid[:12])
+            if await self.stop_and_remove_container(cid):
+                stopped += 1
         return stopped
 
     # --- Pre-warm ---

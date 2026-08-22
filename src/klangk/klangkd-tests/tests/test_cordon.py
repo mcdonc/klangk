@@ -12,6 +12,8 @@ HTTP-surface tests (routes, auth, 503 mapping) live in test_api.py's
 TestCordonDrainApi.
 """
 
+import asyncio
+import types
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -260,16 +262,26 @@ class TestDrain:
                 ws_id, f"cid-{i}", app_state
             )
 
+    def _stub_sweep(self, app_state, containers=()):
+        """Give the registry's app a podman stub so the drain's
+        instance-label sweep lists predictable containers without a CLI
+        call (the conftest app_state has no podman wired)."""
+        app_state.state.podman = types.SimpleNamespace(
+            list_containers=AsyncMock(return_value=list(containers))
+        )
+
     async def test_drain_stops_everything(self, app_state, db):
         from klangk.wshandler.session import WebSocketState
 
         registry = app_state.state.container_registry
         app_state.state.sockets = WebSocketState(app_state)
         self._track(app_state, registry, 3)
+        self._stub_sweep(app_state)
         stopped = []
 
         async def fake_stop(cid, workspace_id=None):
             stopped.append(workspace_id)
+            return True
 
         with (
             patch.object(registry, "stop_and_remove_container", fake_stop),
@@ -279,6 +291,155 @@ class TestDrain:
         assert n == 3
         assert sorted(stopped) == ["ws-0", "ws-1", "ws-2"]
 
+    async def test_drain_runs_concurrently(self, app_state, db):
+        """Per-workspace stops overlap (a node with many workspaces must
+        not pay N sequential 5s stops) — a stop that is still in flight
+        while another begins proves the gather (#2527 review)."""
+        from klangk.wshandler.session import WebSocketState
+
+        registry = app_state.state.container_registry
+        app_state.state.sockets = WebSocketState(app_state)
+        self._track(app_state, registry, 2)
+        self._stub_sweep(app_state)
+        in_flight: list[str] = []
+        overlapped: list[str] = []
+
+        async def fake_stop(cid, workspace_id=None):
+            in_flight.append(workspace_id)
+            await asyncio.sleep(0.02)
+            if len(in_flight) > 1:
+                overlapped.append(workspace_id)
+            in_flight.remove(workspace_id)
+            return True
+
+        with (
+            patch.object(registry, "stop_and_remove_container", fake_stop),
+            patch.object(registry, "notify_workspace_killed", AsyncMock()),
+        ):
+            n = await registry.drain_all_containers()
+        assert n == 2
+        assert overlapped, "drain stops did not overlap"
+
+    async def test_drain_does_not_count_failed_stops(self, app_state, db):
+        """A stop that reports failure (or a racing re-bind) is logged,
+        not counted — the reported count never overstates (#2527
+        review)."""
+        from klangk.wshandler.session import WebSocketState
+
+        registry = app_state.state.container_registry
+        app_state.state.sockets = WebSocketState(app_state)
+        self._track(app_state, registry, 2)
+        self._stub_sweep(app_state)
+
+        async def fake_stop(cid, workspace_id=None):
+            return workspace_id == "ws-0"
+
+        with (
+            patch.object(registry, "stop_and_remove_container", fake_stop),
+            patch.object(registry, "notify_workspace_killed", AsyncMock()),
+        ):
+            n = await registry.drain_all_containers()
+        assert n == 1
+
+    async def test_drain_exception_is_contained(self, app_state, db, caplog):
+        """One workspace's stop raising does not abort the drain."""
+        from klangk.wshandler.session import WebSocketState
+
+        registry = app_state.state.container_registry
+        app_state.state.sockets = WebSocketState(app_state)
+        self._track(app_state, registry, 2)
+        self._stub_sweep(app_state)
+
+        async def fake_stop(cid, workspace_id=None):
+            if workspace_id == "ws-1":
+                raise RuntimeError("podman exploded")
+            return True
+
+        with (
+            patch.object(registry, "stop_and_remove_container", fake_stop),
+            patch.object(registry, "notify_workspace_killed", AsyncMock()),
+            caplog.at_level("WARNING"),
+        ):
+            n = await registry.drain_all_containers()
+        assert n == 1
+        assert any("podman exploded" in r.message for r in caplog.records)
+
+    async def test_drain_sweeps_racing_start_containers(
+        self, app_state, db, caplog
+    ):
+        """The instance-label sweep catches a container whose start
+        passed the gate just before it closed (not yet in the states
+        snapshot) — both drain paths stop it (#2527 review)."""
+        from klangk.wshandler.session import WebSocketState
+
+        registry = app_state.state.container_registry
+        app_state.state.sockets = WebSocketState(app_state)
+        # Nothing tracked; the "racing start" container exists only in
+        # podman's view of this instance's containers.
+        self._stub_sweep(
+            app_state, [{"Id": "cid-race", "Names": ["klangk-ws-race"]}]
+        )
+        swept = []
+
+        async def fake_stop(cid, workspace_id=None):
+            swept.append(cid)
+            return True
+
+        with (
+            patch.object(registry, "stop_and_remove_container", fake_stop),
+            caplog.at_level("INFO"),
+        ):
+            n = await registry.drain_all_containers()
+        assert n == 1
+        assert swept == ["cid-race"]
+        assert any("racing-start" in r.message for r in caplog.records)
+
+    async def test_drain_sweep_tolerates_podman_errors(
+        self, app_state, db, caplog
+    ):
+        """A failing sweep listing (podman down) is logged and skipped —
+        the tracked-workspace drain result stands."""
+        from klangk.wshandler.session import WebSocketState
+
+        registry = app_state.state.container_registry
+        app_state.state.sockets = WebSocketState(app_state)
+        self._track(app_state, registry, 1)
+        # Only PodmanError/OSError are tolerated by the sweep.
+        from klangk.podman import PodmanError
+
+        app_state.state.podman = types.SimpleNamespace(
+            list_containers=AsyncMock(
+                side_effect=PodmanError(500, "podman down")
+            )
+        )
+
+        async def fake_stop(cid, workspace_id=None):
+            return True
+
+        with (
+            patch.object(registry, "stop_and_remove_container", fake_stop),
+            patch.object(registry, "notify_workspace_killed", AsyncMock()),
+            caplog.at_level("WARNING"),
+        ):
+            n = await registry.drain_all_containers()
+        assert n == 1
+        assert any("sweeping leftover" in r.message for r in caplog.records)
+
+    async def test_drain_sweep_skips_identless_containers(self, app_state, db):
+        """A sweep result with no usable identifier is skipped, not
+        stopped."""
+        from klangk.wshandler.session import WebSocketState
+
+        registry = app_state.state.container_registry
+        app_state.state.sockets = WebSocketState(app_state)
+        self._stub_sweep(app_state, [{"Id": "", "Names": []}])
+        with patch.object(
+            registry, "stop_and_remove_container", AsyncMock()
+        ) as mock_stop:
+            n = await registry.drain_all_containers()
+        assert n == 0
+        mock_stop.assert_not_awaited()
+
     async def test_drain_broadcasts_reason(self, app_state):
         """Connected clients get a container_stopped frame carrying the
         drain reason (clean 'stopped', not a dropped WebSocket)."""
@@ -287,6 +448,7 @@ class TestDrain:
         registry = app_state.state.container_registry
         app_state.state.sockets = WebSocketState(app_state)
         self._track(app_state, registry, 1)
+        self._stub_sweep(app_state)
         broadcast = []
 
         class FakeSession:
@@ -299,7 +461,11 @@ class TestDrain:
                 "get_session",
                 return_value=FakeSession(),
             ),
-            patch.object(registry, "stop_and_remove_container", AsyncMock()),
+            patch.object(
+                registry,
+                "stop_and_remove_container",
+                AsyncMock(return_value=True),
+            ),
             patch.object(registry, "notify_workspace_killed", AsyncMock()),
         ):
             n = await registry.drain_all_containers()
@@ -317,8 +483,13 @@ class TestDrain:
         registry = app_state.state.container_registry
         app_state.state.sockets = WebSocketState(app_state)
         self._track(app_state, registry, 1)
+        self._stub_sweep(app_state)
         with (
-            patch.object(registry, "stop_and_remove_container", AsyncMock()),
+            patch.object(
+                registry,
+                "stop_and_remove_container",
+                AsyncMock(return_value=True),
+            ),
             patch.object(registry, "notify_workspace_killed", AsyncMock()),
         ):
             n = await registry.drain_all_containers()
@@ -334,6 +505,7 @@ class TestDrain:
         app_state.state.sockets = WebSocketState(app_state)
         state = ContainerState("ws-nocid", None, app_state)
         registry.states["ws-nocid"] = state
+        self._stub_sweep(app_state)
         with (
             patch.object(
                 registry, "stop_and_remove_container", AsyncMock()
@@ -346,6 +518,7 @@ class TestDrain:
 
     async def test_drain_idempotent(self, app_state):
         registry = app_state.state.container_registry
+        self._stub_sweep(app_state)
         with (
             patch.object(registry, "stop_and_remove_container", AsyncMock()),
             patch.object(registry, "notify_workspace_killed", AsyncMock()),

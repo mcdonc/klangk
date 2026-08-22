@@ -839,13 +839,23 @@ async def drain_node(
 
     Same path as logout/idle stop — terminal status frames reach
     connected clients (clean "stopped", not a dropped WebSocket), and
-    each container stops with the deploy's podman stop grace. Idempotent
+    each container stops with a fixed 5s podman stop grace. Idempotent
     on an already-drained node (0 stopped). Typically preceded by
     cordon; the CLI ``drain`` command does cordon-then-drain by default.
+    The in-memory drain flag is held for the duration so new starts
+    (and a concurrent SIGHUP restart's drain) are refused mid-drain
+    rather than racing it (#2527 review).
     """
-    stopped = await app.state.container_registry.drain_all_containers(
-        reason="node drain (operator)"
-    )
+    registry = app.state.container_registry
+    registry.draining = True
+    try:
+        stopped = await registry.drain_all_containers(
+            reason="node drain (operator)"
+        )
+    finally:
+        # An operator cordon (set separately) keeps refusing starts; the
+        # in-memory flag only covers the drain's own window.
+        registry.draining = False
     logger.info(
         "Node drained by %s: %d workspace(s) stopped",
         admin.get("email") or admin.get("id"),
