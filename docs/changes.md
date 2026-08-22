@@ -1148,6 +1148,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Workspace Restart button after a server restart (#2674).** Clicking
+  Restart while the browser sat on the container-stopped overlay during a
+  host shutdown/restart used to spin forever: the WebSocket had given up
+  auto-reconnecting while the server was down, so the restart command was
+  silently dropped. The button now reconnects and rejoins the workspace,
+  which auto-starts the container, clears the spinner, and reattaches the
+  terminal. If the server is still unreachable, the Restart button is
+  restored so the user can retry.
+
 - **First terminal load shows the bash prompt (#2671).** On the first
   open of a workspace terminal (fresh container or browser refresh),
   the prompt could be scrolled off the top of the viewport — only a

@@ -17,6 +17,7 @@ import '../layout/ide_layout.dart';
 import '../terminal/ghostty_terminal.dart';
 import '../terminal/terminal_link.dart';
 import 'workspace_file_api.dart';
+import 'restart_flow.dart';
 import 'workspace_overlays.dart';
 import 'consent_banner.dart';
 import 'consent_decider_service.dart';
@@ -146,8 +147,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
   Future<void> _fetchWorkspaceName() async {
     final auth = context.read<AuthService>();
     try {
-      final ws =
-          await _findWorkspace(auth, '/api/v1/workspaces') ??
+      final ws = await _findWorkspace(auth, '/api/v1/workspaces') ??
           await _findWorkspace(auth, '/api/v1/workspaces/shared');
       if (ws != null && mounted) {
         final name = ws['name'] as String?;
@@ -251,8 +251,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         final deletedUserId = msg['user_id'] as String? ?? '';
         final deletedWindow = msg['window_name'] as String? ?? '';
         final deletedWid = msg['window_id'] as String? ?? '';
-        final wasViewing =
-            _activeSharedTerminal != null &&
+        final wasViewing = _activeSharedTerminal != null &&
             _activeSharedTerminal!['user_id'] == deletedUserId &&
             _activeSharedTerminal!['window_id'] == deletedWid;
         if (wasViewing) {
@@ -352,17 +351,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
       // Snapshot the previous window ids BEFORE reassigning, so we can tell a
       // switch to an existing window apart from a brand-new window becoming
       // active.
-      final prevWindowIds = _prevTerminalWindows
-          .map((w) => w['id'] as String?)
-          .toSet();
+      final prevWindowIds =
+          _prevTerminalWindows.map((w) => w['id'] as String?).toSet();
       _prevTerminalWindows = wsClient.terminalWindows;
       _prevSharedTerminals = wsClient.sharedTerminals;
       // Track selected own-window: initialize on first message, or
       // reset if the selected window was closed.
       if (wsClient.terminalWindows.isNotEmpty) {
-        final ids = wsClient.terminalWindows
-            .map((w) => w['id'] as String?)
-            .toSet();
+        final ids =
+            wsClient.terminalWindows.map((w) => w['id'] as String?).toSet();
         // Follow tmux's active window on a switch to an EXISTING window (or
         // the first load) so the Flutter tab matches the status-bar selection
         // (#2171) — but NOT when a brand-new window just became active. The
@@ -375,8 +372,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
             break;
           }
         }
-        final followActive =
-            activeId != null &&
+        final followActive = activeId != null &&
             (prevWindowIds.isEmpty || prevWindowIds.contains(activeId));
         if (followActive) {
           _selectedOwnWindowId = activeId;
@@ -410,10 +406,24 @@ class _WorkspacePageState extends State<WorkspacePage> {
     }
   }
 
-  void _restartContainer() {
+  Future<void> _restartContainer() async {
     setState(() => _restarting = true);
     final wsClient = context.read<WsClient>();
-    wsClient.sendRestartContainer();
+    // #2674: with the WebSocket down (host restarted while this page was
+    // open, auto-reconnect exhausted) a restart_container send would be
+    // silently dropped and the spinner would never clear — reconnect
+    // instead; the workspace_connect on reconnect auto-starts the
+    // container and container_ready clears the overlay.
+    final result = await requestContainerRestart(
+      wsClient: wsClient,
+      workspaceId: widget.workspaceId,
+    );
+    if (!mounted) return;
+    if (result == RestartRequestResult.failed) {
+      // Server still unreachable: restore the button so the user can
+      // retry rather than spinning forever.
+      setState(() => _restarting = false);
+    }
   }
 
   void _switchToIsolated(WsClient wsClient, String windowId) {
@@ -596,9 +606,8 @@ class _WorkspacePageState extends State<WorkspacePage> {
       sharing: _hasPerm('share')
           ? WorkspaceSharingPanel(workspaceId: widget.workspaceId)
           : null,
-      consentRules: _consent != null
-          ? ConsentRulesPanel(service: _consent!)
-          : null,
+      consentRules:
+          _consent != null ? ConsentRulesPanel(service: _consent!) : null,
       terminalKey: _terminalKey,
       fileViewerKey: _fileViewerKey,
       initialFile: widget.initialFile,
