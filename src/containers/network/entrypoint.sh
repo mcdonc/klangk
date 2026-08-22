@@ -31,23 +31,27 @@ $IPT6 -P OUTPUT DROP
 # the createContainer-hook sysctl that was dropped (it ran before pasta
 # configured the netns and broke pasta's v6 address setup), this runs in the
 # sidecar entrypoint — AFTER pasta has configured the netns — so it just
-# removes the v6 addresses rather than blocking setup. Best-effort: rootless
-# per-netns ipv6 sysctl writability isn't guaranteed, and a silent no-op is
-# fine because the ip6tables DROP above is the certain backstop. Written via
-# procfs so no extra package (sysctl is in Alpine's procps, not installed).
-if [ -w /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
-  echo 1 >/proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null ||
-    echo "egress-sidecar: could not disable IPv6 stack (relying on ip6tables DROP)" >&2
-fi
+# removes the v6 addresses rather than blocking setup. Best-effort and fully
+# silent: rootless per-netns sysctl writability isn't guaranteed (a read-only
+# /proc/sys defeats [ -w ] too — access(2) checks mode bits, not the mount),
+# and a no-op is fine because the ip6tables DROP above is the certain
+# backstop. Redirections apply left-to-right, so 2>/dev/null must precede the
+# write target; placed after it, the shell leaks "can't create ..." to the
+# still-open stderr (#2656). Written via procfs so no extra package (sysctl
+# is in Alpine's procps, not installed).
+echo 1 2>/dev/null >/proc/sys/net/ipv6/conf/all/disable_ipv6 || :
 # Disable rp_filter (reverse-path) in this netns so the proxy's forged eager-deny
 # RST (#2345) is delivered: the RST is sourced from the denied host's IP and
 # looped back to the local stack so connect() gets ECONNREFUSED at once; a
 # foreign-source packet arriving on lo can trip rp_filter and be silently
 # dropped. This is a single-uplink isolated netns with no multipath asymmetry,
 # so disabling rp_filter is safe. Best-effort (rootless per-netns writability).
+# The 2>/dev/null sits on `done` so it also covers the write redirections
+# inside the loop (per-write `>"$f" 2>/dev/null` still leaks the shell's own
+# error message — #2656).
 for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
-  echo 0 >"$f" 2>/dev/null || true
-done
+  echo 0 >"$f" || true
+done 2>/dev/null
 # Loopback by *destination* (not -o lo): REDIRECT keeps the packet's original
 # output interface, so -o lo misses the redirected :53 packet under a DROP policy.
 $IPT -A OUTPUT -d 127.0.0.0/8 -j ACCEPT

@@ -1108,6 +1108,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Egress sidecar startup log noise on read-only `/proc/sys` (#2656).**
+  The sidecar entrypoint's best-effort sysctl writes (disable IPv6,
+  `rp_filter=0`) leaked alarming `Read-only file system` shell errors to
+  journald on hosts that mount `/proc/sys` read-only in containers. Both
+  writes are now fully silent; the egress deny is unaffected (ip6tables
+  OUTPUT DROP remains the backstop).
+
 - **Terminal tab state no longer flaps old→new under load (#2653).**
   The window watcher's window-list refresh could land between a
   rename/new/close command and its confirmation, briefly reverting
