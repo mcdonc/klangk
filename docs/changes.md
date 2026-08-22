@@ -1148,6 +1148,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Short image names resolve in fresh checkouts (#286).** devenv now
+  exports `CONTAINERS_REGISTRIES_CONF` and seeds a
+  `registries.conf` (`unqualified-search-registries = ["docker.io"]`)
+  next to the podman signature policy, so image builds that reference
+  short names (`alpine:3.21`, `python:3.13-slim`, …) no longer fail with
+  `short-name ... did not resolve to an alias and no
+containers-registries.conf(5) was found`.
+
 - **Workspace Restart button after a server restart (#2674).** Clicking
   Restart while the browser sat on the container-stopped overlay during a
   host shutdown/restart used to spin forever: the WebSocket had given up
