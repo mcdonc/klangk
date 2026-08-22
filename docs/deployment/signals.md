@@ -92,3 +92,30 @@ non-reloadable change needs a full `klangkd` restart:
 SIGHUP can be sent several times in quick succession. A second signal
 arriving mid-restart queues behind the first via an `asyncio.Lock`, so
 restarts never race — they run strictly one after another.
+
+## Exit statuses
+
+`klangkd`'s exit status tells a supervisor _why_ the process left — in
+particular, whether restarting can help (#2666):
+
+| Status | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`    | Clean shutdown (SIGINT/SIGTERM).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `78`   | **Configuration error** (`EX_CONFIG`, sysexits.h). Startup was refused over bad configuration — e.g. a `KLANGKD_DEFAULT_PASSWORD` that violates the password policy, `auth_modes: password` without a staged password, an insecure JWT secret with prevention on, `auth_modes: none` on a non-loopback bind, a missing OIDC login hook, or a containerized FIPS backend whose OpenSSL is not FIPS-enforcing. **Restarting cannot fix this** — fix the config/image first. The refusal reason is logged at `ERROR` right before exit. |
+| `3`    | uvicorn startup failure that is _not_ a config refusal (e.g. an unusable database). Retrying makes sense once the underlying fault is repaired.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `1`    | Launcher pre-flight refusals (another instance already running, a browser/egress port already owned) or a UDS bind failure.                                                                                                                                                                                                                                                                                                                                                                                                          |
+
+### Telling systemd not to restart-loop a config error
+
+A config refusal is permanent, so a supervisor that restarts on any
+failure will loop on it forever. With systemd, pin the status:
+
+```ini
+[Service]
+Restart=on-failure
+RestartPreventExitStatus=78
+```
+
+A bad password then stops the unit in a single failed attempt instead of
+burning CPU in a restart loop; `journalctl -u <unit>` shows the
+`ConfigurationError` naming the setting to fix.

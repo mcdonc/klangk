@@ -56,6 +56,7 @@ import uvicorn
 # instead of logging and exiting (#1993).
 import klangk.logger  # noqa: F401
 from klangk import first_run
+from klangk.exceptions import EX_CONFIG
 from klangk.settings import KlangkSettings
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,25 @@ def _check_port_preflight(host: str, port: int) -> bool:
         return False
     finally:
         sock.close()
+
+
+def config_error_exit_status(app_state) -> int | None:
+    """Return ``EX_CONFIG`` if the lifespan flagged a config refusal.
+
+    The lifespan records the first deterministic ``ConfigurationError`` it
+    hits during startup (password-policy-violating ``KLANGKD_DEFAULT_PASSWORD``,
+    missing password in password mode, insecure JWT secret with prevention
+    on, unsafe no-auth bind, …) on ``app.state.startup_config_error`` (#2666).
+    The launcher consults this when uvicorn exits with a startup failure:
+    uvicorn's own status (3) is indistinguishable between "config is wrong
+    forever" and "transient failure, try again", so a supervisor restart-loops
+    both. ``EX_CONFIG`` (78, sysexits.h) marks the permanent class — systemd
+    ``RestartPreventExitStatus=78`` stops the loop.
+    """
+    flagged = getattr(app_state, "startup_config_error", None)
+    if flagged is None:
+        return None
+    return EX_CONFIG
 
 
 def _prepend_gnubin_paths() -> None:  # pragma: no cover
@@ -402,6 +422,21 @@ def main(  # pragma: no cover
             "uvicorn failed to bind UDS at %s: %s — exiting", uds_path, exc
         )
         sys.exit(1)
+    except SystemExit:
+        # uvicorn exits STARTUP_FAILURE (3) for every startup failure. If the
+        # failure was a deterministic config error (flagged by the lifespan
+        # on app.state), translate to EX_CONFIG (78) so supervisors can stop
+        # restart-looping a config that cannot fix itself (#2666).
+        config_status = config_error_exit_status(asgi_app.state)
+        if config_status is None:
+            raise
+        logger.error(
+            "klangkd refused to start over a configuration error — exiting "
+            "with status %d (EX_CONFIG); restarting cannot fix this, fix "
+            "the config instead",
+            config_status,
+        )
+        raise SystemExit(config_status) from None
 
 
 @app.command()

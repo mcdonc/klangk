@@ -34,6 +34,7 @@ from klangk import (
     workspaces,
 )
 from klangk.container import ContainerRegistry
+from klangk.exceptions import ConfigurationError
 from _helpers import make_settings
 from klangk.wshandler.session import WebSocketState
 
@@ -138,13 +139,29 @@ class TestSeedDefaultUser:
         user = await app_state.state.model.users.get_user_by_email("seed-test")
         assert user is not None
 
+    async def test_password_mode_without_default_password_fails_fast(
+        self, db, app_state
+    ):
+        """Password mode with no staged password is a config refusal
+        (#1645, and a ConfigurationError so the launcher exits EX_CONFIG
+        — #2666)."""
+        with pytest.raises(
+            ConfigurationError, match="requires KLANGKD_DEFAULT_PASSWORD"
+        ):
+            await _lifecycle(
+                make_settings(
+                    {
+                        "KLANGKD_AUTH_MODES": "password",
+                        "KLANGKD_DEFAULT_USER": "seed-test",
+                    }
+                )
+            ).seed_default_user()
+
     async def test_default_password_violating_policy_fails_fast(
         self, db, app_state
     ):
         """#2581: the seeded admin must satisfy the configured policy."""
-        import pytest as _pytest
-
-        with _pytest.raises(RuntimeError, match="DEFAULT_PASSWORD"):
+        with pytest.raises(ConfigurationError, match="DEFAULT_PASSWORD"):
             await _lifecycle(
                 make_settings(
                     {
@@ -160,9 +177,7 @@ class TestSeedDefaultUser:
         assert user is None
 
     async def test_default_password_too_short_fails_fast(self, db, app_state):
-        import pytest as _pytest
-
-        with _pytest.raises(RuntimeError, match="MIN_PASSWORD_LENGTH"):
+        with pytest.raises(ConfigurationError, match="MIN_PASSWORD_LENGTH"):
             await _lifecycle(
                 make_settings(
                     {
@@ -640,7 +655,7 @@ class TestNoAuthBindSafety:
     def test_refuses_ipv6_wildcard(self):
         """``::`` binds every interface (incl. IPv6) and is NOT loopback —
         must be refused even though it isn't ``0.0.0.0``."""
-        with pytest.raises(SystemExit) as exc_info:
+        with pytest.raises(ConfigurationError) as exc_info:
             main.enforce_no_auth_bind_safety(
                 _bind_safety_app_state(auth_mode="none", listen="::")
             )
@@ -649,13 +664,13 @@ class TestNoAuthBindSafety:
     def test_refuses_non_loopback_hostname(self):
         """A bare hostname (other than ``localhost``) is not an IP literal and
         not a recognized loopback name — fail-closed (refuse)."""
-        with pytest.raises(SystemExit):
+        with pytest.raises(ConfigurationError):
             main.enforce_no_auth_bind_safety(
                 _bind_safety_app_state(auth_mode="none", listen="myhost")
             )
 
     def test_refuses_non_loopback_bind(self):
-        with pytest.raises(SystemExit) as exc_info:
+        with pytest.raises(ConfigurationError) as exc_info:
             main.enforce_no_auth_bind_safety(
                 _bind_safety_app_state(auth_mode="none", listen="0.0.0.0")
             )
@@ -911,6 +926,8 @@ class TestLifespan:
                 mock_start.assert_called_once()
             mock_shutdown.assert_awaited_once()
             mock_remove.assert_called_once()
+        # A clean startup leaves no config-error flag for the launcher (#2666).
+        assert getattr(app.state, "startup_config_error", None) is None
 
     async def test_lifespan_workspace_killed_resets_state(self, db, app_state):
         """The workspace-killed callback threads app.state into
@@ -990,6 +1007,53 @@ class TestLifespan:
         ):
             async with main.lifespan(app):
                 pass  # pragma: no cover
+
+    async def test_lifespan_flags_config_error_for_launcher(
+        self, db, app_state
+    ):
+        """A ConfigurationError escaping startup is flagged on app.state so
+        the launcher can exit EX_CONFIG (78) instead of uvicorn's generic
+        startup-failure status — a supervisor restart-looping a bad config
+        cannot converge (#2666)."""
+        app = FastAPI()
+        app_state = _make_app_state()
+        app.state.container_registry = app_state.state.container_registry
+        app.state.sockets = app_state.state.sockets
+        app.state.settings = app_state.state.settings
+        app.state.ssl_trust = app_state.state.ssl_trust
+        app.state.db = app_state.state.db
+        app.state.model = app_state.state.model
+        app.state.oidc = oidc.OIDC(app)
+        app.state.util = util_mod.Util(app)
+        app.state.auth = auth_mod.Auth(app)
+        app.state.lifecycle = app_state.state.lifecycle
+        registry = app_state.state.container_registry
+        refusal = ConfigurationError(
+            "KLANGKD_DEFAULT_PASSWORD violates the configured password policy"
+        )
+        with (
+            patch.object(
+                registry, "reap_instance_containers", new_callable=AsyncMock
+            ),
+            patch.object(
+                registry, "reap_dead_owner_containers", new_callable=AsyncMock
+            ),
+            patch.object(registry, "start_cleanup_loop"),
+            patch.object(registry, "shutdown", new_callable=AsyncMock),
+            patch.object(util_mod.Util, "check_pid_file", return_value=None),
+            patch.object(util_mod.Util, "write_pid_file"),
+            patch.object(util_mod.Util, "remove_pid_file"),
+            patch.object(
+                app.state.lifecycle,
+                "seed_default_user",
+                new_callable=AsyncMock,
+                side_effect=refusal,
+            ),
+            pytest.raises(ConfigurationError, match="DEFAULT_PASSWORD"),
+        ):
+            async with main.lifespan(app):
+                pass  # pragma: no cover
+        assert app.state.startup_config_error == str(refusal)
 
 
 # --- SIGHUP runtime restart (#1212) ---
