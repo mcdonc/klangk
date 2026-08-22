@@ -3,7 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from klangk.wshandler.session import WorkspaceSession
+from klangk.wshandler.session import WorkspaceSession, WebSocketState
 
 
 def _session_with_user(user_id: str = "u1", handle: str | None = None):
@@ -289,3 +289,52 @@ def test_apply_window_list_reports_shared_deltas():
     assert sess.terminal_windows["u1"] == [
         {"id": "@1", "index": 0, "name": "aux", "shared": False}
     ]
+
+
+# --- #2652 review follow-ups ---
+
+
+def test_get_or_create_session_falls_back_to_state_app():
+    """Omitting ``app`` still yields a session wired to the state's app.
+
+    A session built with ``app=None`` silently skips every
+    ``shared_terminals`` broadcast (the guard in
+    ``broadcast_shared_terminals``), so the factory must never produce
+    one even when a caller forgets the argument (#2652 review).
+    """
+    app = MagicMock()
+    sockets = WebSocketState(app=app)
+
+    sess = sockets.get_or_create_session("ws")
+
+    assert sess.app is app
+
+
+def test_get_or_create_session_explicit_app_wins():
+    """An explicitly passed ``app`` is honored over the state's own."""
+    sockets = WebSocketState(app=MagicMock())
+    other = MagicMock()
+
+    sess = sockets.get_or_create_session("ws", other)
+
+    assert sess.app is other
+
+
+def test_broadcast_shared_terminals_noop_without_app():
+    """A bare session (``app=None``) broadcasts nothing.
+
+    Covers the defensive guard instead of hiding it behind a pragma —
+    with the ``get_or_create_session`` fallback this is unreachable in
+    production, but the constructor still permits it.
+    """
+    sock = MagicMock()
+    sock.send_json = MagicMock()
+    sess = WorkspaceSession("ws")
+    sess.subscribers.add(sock)
+    sess.terminal_windows["u1"] = [
+        {"id": "@0", "index": 0, "name": "bash", "shared": True}
+    ]
+
+    sess.broadcast_shared_terminals()
+
+    sock.send_json.assert_not_called()

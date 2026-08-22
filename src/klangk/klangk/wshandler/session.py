@@ -60,7 +60,7 @@ def merge_window_entries(old: list[dict], windows: list[dict]) -> list[dict]:
     return entries
 
 
-def get_shared_terminals(ws_session, sockets) -> list[dict]:
+def get_shared_terminals(ws_session, sockets: "WebSocketState") -> list[dict]:
     """Collect all shared windows across all users in a workspace."""
     # Build viewer map: (owner_user_id, window_id) -> [{user_id, email}]
     viewer_map: dict[tuple[str, str], list[dict]] = {}
@@ -298,7 +298,7 @@ class WorkspaceSession:
 
     def broadcast_shared_terminals(self) -> None:
         """Send the current shared-terminal list to all subscribers."""
-        if self.app is None:  # pragma: no cover - bare sessions in tests
+        if self.app is None:
             return
         terminals = get_shared_terminals(self, self.app.state.sockets)
         self.broadcast({"type": "shared_terminals", "terminals": terminals})
@@ -654,7 +654,13 @@ class WebSocketState:
         try:
             return self.sessions[workspace_id]
         except KeyError:
-            session = WorkspaceSession(workspace_id, app=app)
+            # Fall back to the state object's own app when a caller
+            # omits it: a session built with ``app=None`` would silently
+            # skip every ``shared_terminals`` broadcast
+            # (WorkspaceSession.broadcast_shared_terminals guards on
+            # ``self.app``), with no error to surface the mistake (#2652
+            # review).
+            session = WorkspaceSession(workspace_id, app=app or self.app)
             return self.sessions.setdefault(workspace_id, session)
 
     async def remove_session(self, workspace_id: str) -> None:

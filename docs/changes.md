@@ -1114,11 +1114,8 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   debounced re-sync could apply the renamed window list to the session
   state before the rename command's own sync, erasing the change the
   sync's broadcast decision relies on — so the `shared_terminals`
-  update was never sent to other workspace members (visible as the
-  e2e rename test timing out under CI load). Both sync paths now
-  detect and broadcast shared-window changes through one shared
-  merge, so the update is sent exactly once regardless of which path
-  applies it first.
+  update was never sent to other workspace members. The update is now
+  sent exactly once regardless of which path applies it first.
 
 - **`klangk terminal share`/`unshare` blind 10s timeout (#2633 CI
   flake).** The tmux window-watcher's re-sync broadcast the window list
