@@ -369,6 +369,14 @@ class MemoryPressureEvictor:
         for ws_id, state in registry.states.items():
             if ws_id in registry.stopping:
                 continue
+            # A start/stop in flight (the per-workspace lock is held)
+            # means the workspace is mid-transition: a reconnecting
+            # workspace's container is tracked from podman create but
+            # has no subscriber until container_ready, so without this
+            # check an armed evictor stops the fresh container under
+            # the connecting client (#2527 e2e flake).
+            if registry.workspace_operation_in_flight(ws_id):
+                continue
             if state.get_idle_timeout() == 0:
                 continue
             session = sockets.sessions.get(ws_id)

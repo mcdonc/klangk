@@ -1175,6 +1175,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   update was never sent to other workspace members. The update is now
   sent exactly once regardless of which path applies it first.
 
+- **Memory-pressure eviction no longer stops a workspace mid-connect (#2527).**
+  A reconnecting workspace's container is tracked from `podman create`
+  but has no WebSocket subscriber until `container_ready`, so an armed
+  evictor could stop the fresh container under the connecting client
+  (seen as a reconnect that immediately fails under sustained memory
+  pressure). Workspaces with a start/stop in flight (per-workspace lock
+  held) are now skipped by the evictor.
+
 - **`klangk terminal share`/`unshare` blind 10s timeout (#2633 CI
   flake).** The tmux window-watcher's re-sync broadcast the window list
   to clients without updating the in-memory map the share handlers

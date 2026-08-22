@@ -233,48 +233,71 @@ class TestMemoryPressureEviction:
             )
 
             # Reconnect restarts the container (idle-stop semantics:
-            # state preserved, next connect brings it back). The socket
-            # stays OPEN for the status check: this server's evictor is
-            # permanently armed (poll=1s, sustain=1), so the moment the
-            # reconnect socket closes the restarted container is
-            # subscriber-less again and legitimately re-evicted — a
-            # close-then-poll here races the evictor (CI flake). A live
-            # subscriber is eviction-protected (the bystander's own
-            # guarantee), so assert with it connected, then close.
-            victim_ws = await _ws_dial(
-                server, f"/ws?token={auth['token']}", max_size=2**20
-            )
-            try:
-                await victim_ws.send(
-                    json.dumps(
-                        {
-                            "cmd": "workspace_connect",
-                            "workspaceId": victim_id,
-                        }
-                    )
+            # state preserved, next connect brings it back).
+            #
+            # Two races make a single connect+GET flaky here (CI #2527):
+            # (a) the eviction's podman stop can still be in flight when
+            #     status first reports stopped — a reconnect then REUSES
+            #     the dying container, gets container_ready, and the stop
+            #     lands under the client, popping the state again; wait
+            #     out the 5s stop grace first.
+            # (b) this server's evictor is permanently armed (poll=1s,
+            #     sustain=1), so the restarted container must keep a live
+            #     subscriber — the socket stays open through the status
+            #     poll (a subscriber-less workspace is legitimately
+            #     re-evicted).
+            # If status still doesn't report running, close and retry the
+            # whole cycle.
+            await asyncio.sleep(6)
+            restarted = False
+            for attempt in range(3):
+                victim_ws = await _ws_dial(
+                    server, f"/ws?token={auth['token']}", max_size=2**20
                 )
-                deadline = asyncio.get_event_loop().time() + 60
-                ready = False
-                while asyncio.get_event_loop().time() < deadline:
-                    try:
-                        data = json.loads(
-                            await asyncio.wait_for(victim_ws.recv(), 5)
+                try:
+                    await victim_ws.send(
+                        json.dumps(
+                            {
+                                "cmd": "workspace_connect",
+                                "workspaceId": victim_id,
+                            }
                         )
-                    except asyncio.TimeoutError:
+                    )
+                    ready = False
+                    inner = asyncio.get_event_loop().time() + 15
+                    while asyncio.get_event_loop().time() < inner:
+                        try:
+                            data = json.loads(
+                                await asyncio.wait_for(victim_ws.recv(), 5)
+                            )
+                        except asyncio.TimeoutError:
+                            break
+                        if data.get("type") == "container_ready":
+                            ready = True
+                            break
+                    if not ready:
                         continue
-                    if data.get("type") == "container_ready":
-                        ready = True
+                    # Poll status while subscribed until it agrees the
+                    # container is running (creation → status propagation
+                    # is not instantaneous).
+                    poll = asyncio.get_event_loop().time() + 10
+                    while asyncio.get_event_loop().time() < poll:
+                        r = server["client"].get(
+                            f"/api/v1/workspaces/{victim_id}/status",
+                            headers=auth["headers"],
+                            timeout=10,
+                        )
+                        assert r.status_code == 200
+                        if is_running(r):
+                            restarted = True
+                            break
+                        await asyncio.sleep(1)
+                    if restarted:
                         break
-                assert ready, "container_ready not received on reconnect"
-                resp = server["client"].get(
-                    f"/api/v1/workspaces/{victim_id}/status",
-                    headers=auth["headers"],
-                    timeout=10,
-                )
-                assert resp.status_code == 200
-                assert is_running(resp), "reconnect did not restart container"
-            finally:
-                await victim_ws.close()
+                finally:
+                    await victim_ws.close()
+                await asyncio.sleep(2)
+            assert restarted, "reconnect did not restart container"
         finally:
             await bystander_ws.close()
             for ws_id in (bystander_id, victim_id):
