@@ -25,11 +25,13 @@ class SendmailError(RuntimeError):
 
 
 class NodeCordonedError(RuntimeError):
-    """The node is cordoned: new workspace starts are refused (#2527).
+    """New workspace starts are refused on this node (#2527).
 
     Raised at the container-start choke point when the persisted cordon
-    flag is set. Existing workspaces keep running; only fresh container
-    creation is blocked. The API layer translates it to a 503 with a
-    clear detail, the WS start paths send an error frame, and the crash
+    flag is set (operator maintenance) or the in-memory drain flag is
+    set (a graceful restart in progress); the message distinguishes the
+    two. Existing workspaces keep running; only fresh container creation
+    is blocked. The API layer translates it to a 503 with a clear
+    detail, the WS start paths send an error frame, and the crash
     restart loop abandons quietly.
     """

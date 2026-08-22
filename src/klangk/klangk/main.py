@@ -101,6 +101,12 @@ class Lifecycle:
         # running event loop (the constructor runs in build_app, outside a
         # loop).
         self._restart_lock: asyncio.Lock | None = None
+        # #2527: strong references to in-flight SIGHUP restart tasks. An
+        # unreferenced task is GC-eligible mid-execution — GC between
+        # ``registry.draining = True`` and the ``finally`` backstop would
+        # skip the backstop and leave the node refusing every start with
+        # nothing in the logs. The done-callback discards from this set.
+        self._restart_tasks: set[asyncio.Task] = set()
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -420,6 +426,14 @@ class Lifecycle:
         # different instance whose ID no live instance matches). Tolerant of
         # label-less containers, so an older klangkd's live work is not culled.
         await registry.reap_dead_owner_containers()
+        # #2527: the reaps above remove every instance-labelled container —
+        # a client that reconnects after the restart's 1012 drop and starts
+        # a workspace before this point would have its fresh container
+        # destroyed by the reap. Keep refusing starts (the restart's drain
+        # flag) until the reaps are done; boot auto-start runs after this
+        # line, so it is unaffected. No-op at a genuine boot (the flag is
+        # never set outside a graceful restart).
+        registry.draining = False
         registry.start_cleanup_loop()
         registry.start_health_loop()
         registry.start_crash_loop()
@@ -480,10 +494,20 @@ class Lifecycle:
         5. **apply** — swap the reloaded settings onto
            ``app.state.settings`` and ``reconfigure()`` every subsystem
            (all read settings live, #1608).
-        6. **recycle** — ``runtime_shutdown()`` then ``startup()``; the
-           drain flag is cleared before ``startup()`` so boot auto-start
-           behaves exactly like a fresh process start.
+        6. **recycle** — ``runtime_shutdown()`` then ``startup()``. The
+           drain flag stays set through ``startup()``'s podman pre-warm
+           and container reaps (so a client that reconnects and starts a
+           workspace in that window is refused — 503, with the reason —
+           instead of having its fresh container destroyed by the
+           reap), and is cleared by ``startup()`` once the reaps are
+           done, before auto-start runs.
         7. **resume** — broadcast ``host_started``.
+
+        If any step raises, the exception propagates to the restart
+        task's done-callback (:meth:`_on_restart_task_done`), which logs
+        it and attempts a ``startup()`` recovery; if that also fails the
+        process exits (code 1) so the service manager restarts us
+        rather than leaving a live-but-zombie node.
         """
         if self._restart_lock is None:
             self._restart_lock = asyncio.Lock()
@@ -506,7 +530,9 @@ class Lifecycle:
             state.sockets.notify_host_restart("draining")
             registry.draining = True
             try:
-                timeout = state.settings.restart_inflight_timeout
+                # #2527 review: read the timeout from the NEW settings so
+                # a reload takes effect on THIS restart, not the next.
+                timeout = new_settings.restart_inflight_timeout
                 logger.info(
                     "SIGHUP: phase: quiesce (waiting up to %.1fs for "
                     "in-flight requests)",
@@ -534,7 +560,8 @@ class Lifecycle:
                     "HTTP listener stays up)"
                 )
                 await self.runtime_shutdown()
-                registry.draining = False
+                # draining deliberately stays True here: startup() clears
+                # it after its container reaps (see startup()).
                 await self.startup()
             finally:
                 # A failed restart must never leave the node refusing
@@ -679,14 +706,71 @@ class Lifecycle:
     def on_sighup(self) -> None:
         """Schedule a runtime restart on the running event loop.
 
-        Signal callbacks can't be async, so this just creates a task.  The
-        restart itself is serialized by ``_restart_lock``.
+        Signal callbacks can't be async, so this just creates a task. The
+        restart itself is serialized by ``_restart_lock``. The task is
+        kept in ``_restart_tasks`` (a strong reference, so the GC can
+        never reap it mid-restart) and its done-callback performs
+        failure recovery (#2527 review).
         """
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # pragma: no cover - no loop during shutdown
             return
-        loop.create_task(self.restart_runtime())
+        task = loop.create_task(self.restart_runtime())
+        self._restart_tasks.add(task)
+        task.add_done_callback(self._on_restart_task_done)
+
+    def _on_restart_task_done(self, task: asyncio.Task) -> None:
+        """Reap a finished restart task; recover from failure (#2527).
+
+        A restart that raised leaves the node somewhere between drained
+        and recycled (containers stopped, loops cancelled, WebSockets
+        dropped) while the HTTP listener keeps serving — a zombie. Log
+        the failure and try ``startup()`` once more; if that also fails,
+        exit so the service manager restarts us.
+        """
+        self._restart_tasks.discard(task)
+        if task.cancelled():
+            logger.info("SIGHUP: restart task cancelled")
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        logger.error("SIGHUP: restart failed: %s", exc, exc_info=exc)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover - loop already gone
+            return
+        recovery = loop.create_task(self._recover_failed_restart())
+        self._restart_tasks.add(recovery)
+        recovery.add_done_callback(self._on_restart_task_done)
+
+    async def _recover_failed_restart(self) -> None:
+        """Best-effort recovery after a failed graceful restart.
+
+        Re-run ``startup()`` (idempotent by design). On success the node
+        is serving and starting containers again. On failure, a live
+        process that can neither restart its runtime nor serve workloads
+        would masquerade as healthy — exit(1) and let systemd/docker
+        restart us instead.
+        """
+        state = self.app.state
+        state.container_registry.draining = False
+        try:
+            await self.startup()
+        except Exception as exc:  # noqa: BLE001
+            logger.critical(
+                "SIGHUP: restart recovery failed (%s); exiting for a "
+                "process restart",
+                exc,
+                exc_info=exc,
+            )
+            os._exit(1)
+        logger.error(
+            "SIGHUP: restart failed but runtime recovered; "
+            "configuration may be stale"
+        )
+        state.sockets.notify_host_started()
 
 
 # Addresses that are safe for no-auth single-user (``none``) mode: only the

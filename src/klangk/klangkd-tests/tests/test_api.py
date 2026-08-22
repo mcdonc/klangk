@@ -11635,12 +11635,44 @@ class TestCordonDrainApi:
             )
         headers = await self._admin_headers(client)
         with (
-            patch.object(registry, "stop_and_remove_container", AsyncMock()),
+            patch.object(
+                registry,
+                "stop_and_remove_container",
+                AsyncMock(return_value=True),
+            ),
             patch.object(registry, "notify_workspace_killed", AsyncMock()),
+            patch.object(
+                app.state.podman,
+                "list_containers",
+                AsyncMock(return_value=[]),
+            ),
         ):
             resp = await client.post("/api/v1/admin/drain", headers=headers)
         assert resp.status_code == 200
         assert resp.json() == {"stopped": 2}
+
+    async def test_drain_holds_draining_flag_during_drain(
+        self, client, app, admin_user
+    ):
+        """The endpoint refuses new starts for the duration of the drain
+        (a concurrent start — or a concurrent SIGHUP drain — cannot race
+        it) and releases the in-memory flag afterwards (#2527 review).
+        The persisted cordon flag is untouched either way."""
+        registry = app.state.container_registry
+        headers = await self._admin_headers(client)
+        seen = {}
+
+        async def fake_drain(*, reason="node drain"):
+            seen["draining"] = registry.draining
+            return 0
+
+        with patch.object(
+            registry, "drain_all_containers", side_effect=fake_drain
+        ):
+            resp = await client.post("/api/v1/admin/drain", headers=headers)
+        assert resp.status_code == 200
+        assert seen["draining"] is True
+        assert registry.draining is False
 
     async def test_drain_requires_admin(self, client, user):
         headers = await self._user_headers(client)

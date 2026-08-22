@@ -342,12 +342,13 @@ async def create_workspace(
         try:
             await app.state.workspaces.start_workspace(ws)
         except NodeCordonedError:
-            # Cordon raced the create (#2527): the workspace row exists
-            # but no container may start. Not worth failing the create —
-            # it simply won't run until uncordon (a start then succeeds).
+            # Cordon/drain raced the create (#2527): the workspace row
+            # exists but no container may start. Not worth failing the
+            # create — it simply won't run until starts are allowed
+            # again (a start then succeeds).
             logger.warning(
-                "Node cordoned mid-create: workspace %s created but not "
-                "started",
+                "Node refuses new starts mid-create: workspace %s "
+                "created but not started",
                 ws["id"],
             )
         except Exception:
