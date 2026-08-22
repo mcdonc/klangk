@@ -778,11 +778,12 @@ class Lifecycle:
         state.sockets.notify_host_shutdown()
         logger.info("%s: phase: draining (refusing new starts)", name)
         registry.draining = True
+        # #2664: same bounded quiesce as the SIGHUP restart path, so
+        # in-flight requests finish before their containers are
+        # stopped. Read from the LIVE settings (no reload happens on
+        # the exit path). Own try block: a quiesce failure must be
+        # labeled truthfully and must not skip the drain below.
         try:
-            # #2664: same bounded quiesce as the SIGHUP restart path, so
-            # in-flight requests finish before their containers are
-            # stopped. Read from the LIVE settings (no reload happens
-            # on the exit path).
             timeout = state.settings.quiesce_timeout
             logger.info(
                 "%s: phase: quiesce (waiting up to %.1fs for in-flight "
@@ -800,6 +801,11 @@ class Lifecycle:
                     inflight.count,
                     timeout,
                 )
+        except Exception as exc:  # noqa: BLE001 — never block the exit
+            logger.warning(
+                "%s: quiesce failed (proceeding with shutdown): %s", name, exc
+            )
+        try:
             logger.info("%s: phase: drain (stopping workspaces)", name)
             stopped = await registry.drain_all_containers(
                 reason="host shutdown"

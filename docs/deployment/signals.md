@@ -35,8 +35,8 @@ What happens, in order:
    arriving after the signal is ignored (the runtime is being torn
    down; a restart would race the exit).
 5. Accept no new requests, close every WebSocket client (uvicorn's own
-   exit sequence). A second Ctrl-C during the drain skips the rest of
-   the graceful work and forces the exit immediately.
+   exit sequence). A second Ctrl-C during the quiesce or drain skips the
+   rest of the graceful work and forces the exit immediately.
 6. Tear down chat-agent subprocesses and cancel in-flight agent runs.
 7. Dispose the database engine and remove the PID file.
 
@@ -46,10 +46,12 @@ that are configured for it. For a config reload with the same drain
 treatment while keeping the listener up, use SIGHUP (below).
 
 A drain failure is logged and never blocks the exit — the process always
-terminates. Budget the drain inside your service manager's stop
-deadline (`TimeoutStopSec` under systemd; the drain is bounded by the
-per-workspace stop grace, but a host with many workspaces takes
-proportionally longer).
+terminates. Budget the quiesce + drain inside your service manager's
+stop deadline (`TimeoutStopSec` under systemd): up to
+`KLANGKD_QUIESCE_TIMEOUT` seconds (default 15) of request quiesce, plus
+one per-workspace stop grace (5s; stops run concurrently across
+workspaces). Raising `KLANGKD_QUIESCE_TIMEOUT` past ~85s blows the
+default 90s `TimeoutStopSec`.
 
 ## SIGHUP — graceful restart (#1212, #1587, #2527)
 

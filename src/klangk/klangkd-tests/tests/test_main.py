@@ -1147,8 +1147,8 @@ class TestGracefulShutdown:
         ):
             await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
         assert order == ["notify", "quiesce", "drain:host shutdown"]
-        # The shutdown reads the timeout from the LIVE settings (no
-        # reload happens on the exit path).
+        # The shutdown reads the timeout from the live settings (the
+        # app's own settings object — no reload happens on this path).
         mock_wait.assert_awaited_once_with(
             app_state.state.settings.quiesce_timeout
         )
@@ -1184,7 +1184,41 @@ class TestGracefulShutdown:
             caplog.at_level("WARNING"),
         ):
             await lc.graceful_shutdown(signal_num=signal_mod.SIGINT)
-        assert any("still in flight" in r.message for r in caplog.records)
+        assert any(
+            "still in flight" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        )
+        mock_drain.assert_awaited_once_with(reason="host shutdown")
+
+    async def test_shutdown_quiesce_failure_still_drains(
+        self, app_state, caplog
+    ):
+        """A quiesce-phase exception is labeled truthfully (not as a
+        drain failure) and never skips the drain — the exit path must
+        always stop the containers (#2664 review)."""
+        import signal as signal_mod
+
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        with (
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("counter exploded"),
+            ),
+            patch.object(
+                app_state.state.container_registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=1,
+            ) as mock_drain,
+            patch.object(app_state.state.sockets, "notify_host_shutdown"),
+            caplog.at_level("WARNING"),
+        ):
+            await lc.graceful_shutdown(signal_num=signal_mod.SIGTERM)
+        assert any("quiesce failed" in r.message for r in caplog.records)
+        assert not any("drain failed" in r.message for r in caplog.records)
         mock_drain.assert_awaited_once_with(reason="host shutdown")
 
     async def test_drain_failure_does_not_block_exit(self, app_state, caplog):
@@ -1865,7 +1899,10 @@ class TestStartupShutdownRestart:
         ):
             with caplog.at_level("WARNING"):
                 await lc.restart_runtime()
-        assert any("still in flight" in r.message for r in caplog.records)
+        assert any(
+            "still in flight" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        )
         assert app_state.state.container_registry.draining is False
 
     async def test_restart_failure_clears_draining(self, app_state):
