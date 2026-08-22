@@ -246,6 +246,22 @@ class _WorkspacePageState extends State<WorkspacePage> {
           });
         }
       },
+      // #2676: the server refuses a failed restart with an error frame
+      // (instead of dropping the socket), so the spinner must clear here —
+      // no container_ready ever arrives for it.
+      onRestartError: (error) {
+        if (!mounted || !_restarting) return;
+        setState(() => _restarting = false);
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Restart failed: $error'),
+              duration: const Duration(seconds: 6),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      },
       onSharedTerminalDeleted: (msg) {
         if (!mounted) return;
         final deletedUserId = msg['user_id'] as String? ?? '';

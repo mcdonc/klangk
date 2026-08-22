@@ -1023,9 +1023,10 @@ class TestStartContainer:
         self, monkeypatch
     ):
         # #2265 + #2286: the pre-create removal of a lingering sidecar is
-        # best-effort -- if the per-container remove errors (the id is already
-        # gone, or podman hiccups), _remove_network_sidecar swallows it and
-        # the create proceeds normally.
+        # best-effort -- if the per-container remove errors, the state is
+        # judged by a re-list (#2676): the rm error here is the already-gone
+        # race (list saw it, rm 404s, the re-list no longer does), so the
+        # create proceeds normally.
         ws_id = "abcdef1234567890"
         monkeypatch.setattr(
             self.registry.app.state.settings,
@@ -1045,7 +1046,9 @@ class TestStartContainer:
         }
         with patch_podman(
             self.registry,
-            list_containers=AsyncMock(return_value=[stale]),
+            # First list (the clear) sees the stale sidecar; the post-failure
+            # re-list no longer does — the already-gone race.
+            list_containers=AsyncMock(side_effect=[[stale], []]),
             remove_container=AsyncMock(
                 side_effect=podman.PodmanError(500, "not found")
             ),
@@ -1057,6 +1060,214 @@ class TestStartContainer:
             cid == "new-cid"
         )  # create still happened despite the remove error
         assert p.create_container.await_count == 1
+
+    async def test_start_network_sidecar_clears_dependents_then_creates(
+        self, monkeypatch
+    ):
+        # #2676: podman refuses to rm -f a sidecar whose workspace container
+        # is still joined to its netns ("has dependent containers"). The
+        # clear removes THIS workspace's own role=workspace containers (the
+        # dependents) and retries the sidecar removal, so a create-path start
+        # against a stale live container+sidecar pair succeeds instead of
+        # dying on the raw dependent-containers refusal.
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        from klangk import netfilter as _nf
+
+        monkeypatch.setattr(_nf, "_detect_host_resolvers", lambda: ["8.8.8.8"])
+        sidecar = {
+            "Id": "sidecar-cid",
+            "Names": ["klangk-net-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        ws_container = {
+            "Id": "ws-cid",
+            "Names": ["klangk-ws-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+        }
+
+        async def remove(ident, force=True):
+            if ident == "sidecar-cid":
+                # First sidecar rm: refused (dependent). Retry after the
+                # dependent was removed: succeeds.
+                if remove.sidecar_calls == 0:
+                    remove.sidecar_calls += 1
+                    raise podman.PodmanError(
+                        500,
+                        "container sidecar-cid has dependent containers "
+                        "which must be removed before it: ws-cid",
+                    )
+                return
+
+        remove.sidecar_calls = 0
+
+        with patch_podman(
+            self.registry,
+            # 1) the clear's list (sees pair), 2) the dependent listing
+            # (sees pair), 3) would be the survivor re-list — never reached
+            # because the retry removes the sidecar.
+            list_containers=AsyncMock(
+                side_effect=[[sidecar, ws_container]] * 3
+            ),
+            remove_container=AsyncMock(side_effect=remove),
+        ) as p:
+            cid = await self.registry._start_network_sidecar(
+                ws_id, ["github.com:443"]
+            )
+        assert cid == "new-cid"
+        removed = [c.args[0] for c in p.remove_container.call_args_list]
+        # Dependent (this workspace's container) removed before the sidecar
+        # retry, never the other way around.
+        assert removed == ["sidecar-cid", "ws-cid", "sidecar-cid"]
+        assert p.create_container.await_count == 1
+
+    async def test_start_network_sidecar_clean_error_when_sidecar_survives(
+        self, monkeypatch
+    ):
+        # #2676: when the dependent can't be removed (here: the rm keeps
+        # refusing — e.g. a foreign container joined to the netns), the
+        # create path refuses with a clear, actionable error instead of
+        # swallowing the refusal and letting create_container --replace hit
+        # podman's raw dependent-containers 500.
+        ws_id = "abcdef1234567890"
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "net-img",
+        )
+        sidecar = {
+            "Id": "sidecar-cid",
+            "Names": ["klangk-net-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        ws_container = {
+            "Id": "ws-cid",
+            "Names": ["klangk-ws-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+        }
+        dep_refusal = podman.PodmanError(
+            500,
+            "container sidecar-cid has dependent containers which must "
+            "be removed before it: foreign-cid",
+        )
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                side_effect=[[sidecar, ws_container]] * 4
+            ),
+            remove_container=AsyncMock(side_effect=dep_refusal),
+        ) as p:
+            with pytest.raises(podman.PodmanError) as excinfo:
+                await self.registry._start_network_sidecar(
+                    ws_id, ["github.com:443"]
+                )
+        assert "cannot remove the existing network sidecar" in str(
+            excinfo.value
+        )
+        assert "dependent" in str(excinfo.value)
+        # The create never ran — no collision attempt against the survivor.
+        p.create_container.assert_not_awaited()
+
+    async def test_remove_network_sidecar_true_when_clear(self, monkeypatch):
+        # #2676: the bool contract — nothing to remove means cleared.
+        ws_id = "abcdef1234567890"
+        with patch_podman(self.registry) as p:
+            assert await self.registry._remove_network_sidecar(ws_id) is True
+        p.remove_container.assert_not_awaited()
+
+    async def test_remove_network_sidecar_survivor_relist_error_proceeds(
+        self, monkeypatch
+    ):
+        # #2676: when the survivor re-list itself errors after a refused
+        # removal, the state is unknowable — proceed (the old best-effort
+        # semantics) instead of refusing the create on a podman hiccup.
+        ws_id = "abcdef1234567890"
+        sidecar = {
+            "Id": "sidecar-cid",
+            "Names": ["klangk-net-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                side_effect=[
+                    [sidecar],
+                    podman.PodmanError(500, "podman down"),
+                ]
+            ),
+            remove_container=AsyncMock(
+                side_effect=podman.PodmanError(500, "refused")
+            ),
+        ):
+            assert await self.registry._remove_network_sidecar(ws_id) is True
+
+    async def test_remove_dependents_only_own_workspace_role(
+        self, monkeypatch
+    ):
+        # #2676: the dependent sweep touches only containers carrying both
+        # this workspace's label and role=workspace — a sidecar (or any
+        # other role) in the same listing is skipped — and an unknowable
+        # listing (podman down) is a quiet no-op.
+        ws_id = "abcdef1234567890"
+        ws_container = {
+            "Id": "ws-cid",
+            "Names": ["klangk-ws-abcdef12"],
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+        }
+        sidecar = {
+            "Id": "sidecar-cid",
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        # role=workspace but no id/name at all — skipped, not removed.
+        nameless = {
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+        }
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                return_value=[sidecar, nameless, ws_container]
+            ),
+        ) as p:
+            await self.registry._remove_dependent_workspace_containers(ws_id)
+        p.remove_container.assert_awaited_once_with("ws-cid", force=True)
+
+        # Unknowable listing: no removals, no raise.
+        with patch_podman(
+            self.registry,
+            list_containers=AsyncMock(
+                side_effect=podman.PodmanError(500, "podman down")
+            ),
+        ) as p:
+            await self.registry._remove_dependent_workspace_containers(ws_id)
+        p.remove_container.assert_not_awaited()
 
     async def test_start_network_sidecar_failure_raises(self, monkeypatch):
         # #2254 review B2: a network sidecar that can't start must surface the failure

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from .. import container, model
 from ..exceptions import NodeDrainingError
 from ..terminal import TerminalSession
-from ..podman import ExecSession
+from ..podman import ExecSession, PodmanError
 from .constants import (
     agent_conversations,
     agent_tasks,
@@ -533,8 +533,6 @@ class Connection:
 
         # Save before cleanup — cleanup clears state fields.
         workspace_id = self.workspace_id
-        user = self.user
-        workspace = self.workspace
 
         send_event(self.sock, "container_restart", "Restarting container...")
 
@@ -543,10 +541,16 @@ class Connection:
         except WS_ERRORS as e:
             logger.warning("Cleanup error during restart: %s", e)
 
-        if workspace is None:
-            workspace = await self.app.state.workspaces.get_workspace(
-                workspace_id, user["id"]
-            )
+        # Always read the workspace fresh from the DB (#2676): the cached
+        # self.workspace dict can carry a stale container_id (an unclean
+        # host shutdown/restart can leave the running container under a new
+        # id), which sends the restart down the create path into a network
+        # sidecar collision instead of the reuse path a reconnect takes.
+        # Like handle_workspace_connect, read without the owner filter —
+        # access is already gated by the terminal-permission ACL check
+        # above, and an owner-only read would break restart for shared
+        # workspaces' non-owner members.
+        workspace = await self.app.state.workspaces.get_workspace(workspace_id)
         if workspace is None:
             send_error(self.sock, "Workspace not found")
             return
@@ -557,6 +561,12 @@ class Connection:
             # Draining node (#2527) — same clear refusal on the WS restart
             # path as the API's 503.
             send_error(self.sock, str(exc))
+            return
+        except (PodmanError, ValueError) as exc:
+            # A failed (re)start must not drop the whole WebSocket with a
+            # traceback (#2676) — the user's session survives and can retry;
+            # the error frame surfaces the actionable podman message.
+            send_error(self.sock, f"Container restart failed: {exc}")
             return
         self.app.state.container_registry.record_activity(self.container_id)
 
