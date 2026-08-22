@@ -28,7 +28,7 @@ auth_modes: password
 # --- Auth / identity ---
 jwt_secret: secret-change-in-production
 default_user: admin@example.com
-default_password: admin
+default_password: admin123abc
 
 # --- Storage ---
 # state_dir/data_dir are required (no defaults, #1461). In dev these resolve
