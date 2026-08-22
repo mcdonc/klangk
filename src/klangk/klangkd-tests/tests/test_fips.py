@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from klangk import fips
+from klangk.exceptions import ConfigurationError
 
 
 def _hashlib_stub(
@@ -374,7 +375,8 @@ class TestVerifyProcessFips:
         assert any("NOT FIPS-enforcing" in r.message for r in caplog.records)
 
     def test_on_not_verified_in_container_refuses_boot(self, caplog):
-        """Containerized backend + failed probe → SystemExit (#2628).
+        """Containerized backend + failed probe → ConfigurationError (#2628,
+        #2666 — a ConfigurationError so the launcher exits EX_CONFIG).
 
         Inside a container the process OpenSSL is the crypto boundary of
         an image we ship — the boot must abort, not warn.
@@ -386,7 +388,7 @@ class TestVerifyProcessFips:
             patch.object(fips, "running_in_container", return_value=True),
         ):
             with caplog.at_level(logging.ERROR):
-                with pytest.raises(SystemExit, match="FIPS-enforcing"):
+                with pytest.raises(ConfigurationError, match="FIPS-enforcing"):
                     fips.verify_process_fips(self._settings(True))
         assert any("refusing to start" in r.message for r in caplog.records)
 

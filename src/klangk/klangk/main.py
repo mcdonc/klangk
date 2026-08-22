@@ -39,6 +39,7 @@ from . import (
 )
 from .llm_router import LLMRouter
 from .auth import _PASSWORD_CLASSES, password_class_counts
+from .exceptions import ConfigurationError
 from .settings import KlangkSettings
 from .logger import configure as configure_logging
 from .api import root_router, router
@@ -249,7 +250,7 @@ class Lifecycle:
             # deployments (#1645).
             password = settings.default_password
             if password is None:
-                raise RuntimeError(
+                raise ConfigurationError(
                     f"auth_modes={auth_modes} requires KLANGKD_DEFAULT_PASSWORD "
                     "(set it in klangkd.yaml or the env). Refusing to boot "
                     "without a known admin password."
@@ -275,7 +276,7 @@ class Lifecycle:
                         f"(KLANGKD_PASSWORD_REQUIRE_{_key.upper()}={_need})"
                     )
             if _policy_errors:
-                raise RuntimeError(
+                raise ConfigurationError(
                     "KLANGKD_DEFAULT_PASSWORD violates the configured "
                     f"password policy: it {_policy_errors[0]}"
                     + (
@@ -685,7 +686,7 @@ def enforce_no_auth_bind_safety(app) -> None:
             host,
         )
         return
-    raise SystemExit(
+    raise ConfigurationError(
         "Refusing to start: KLANGKD_AUTH_MODES=none but KLANGKD_LISTEN=%r "
         "is not a loopback address. no-auth mode freely issues an admin "
         "token, so it must bind loopback (127.0.0.0/8, ::1, or localhost). "
@@ -739,19 +740,28 @@ async def lifespan(app: FastAPI):
     # and therefore before trust is applied.
     setup_logfire(app)
 
-    app.state.auth.require_secure_jwt_secret()
-    # #2570: with KLANGKD_FIPS_MODE on, audit klangkd's own OpenSSL (its
-    # password hashing + JWT signing) once at startup — verified, or a
-    # prominent warning (klangkd may legitimately run on a non-FIPS
-    # control host; workspace containers are the fail-closed gate).
-    fips_mod.verify_process_fips(app.state.settings)
-    # Features reads the build-emitted features.json at construction
-    # (Features(app) in build_app); no separate load() step (#1655).
-    app.state.oidc.init_providers()
-    enforce_no_auth_bind_safety(app)
-    app.state.oidc.load_login_hook()
-    await app.state.lifecycle.seed_default_user()
-    await app.state.lifecycle.seed_agent_user()
+    # Deterministic config validation + seeding. A ConfigurationError from
+    # this stretch is a config problem a restart cannot fix; flag it on
+    # app.state so the launcher can exit EX_CONFIG (78) instead of uvicorn's
+    # generic startup-failure status — without that, a supervisor
+    # restart-loops a bad password/secret/bind forever (#2666).
+    try:
+        app.state.auth.require_secure_jwt_secret()
+        # #2570: with KLANGKD_FIPS_MODE on, audit klangkd's own OpenSSL (its
+        # password hashing + JWT signing) once at startup — verified, or a
+        # prominent warning (klangkd may legitimately run on a non-FIPS
+        # control host; workspace containers are the fail-closed gate).
+        fips_mod.verify_process_fips(app.state.settings)
+        # Features reads the build-emitted features.json at construction
+        # (Features(app) in build_app); no separate load() step (#1655).
+        app.state.oidc.init_providers()
+        enforce_no_auth_bind_safety(app)
+        app.state.oidc.load_login_hook()
+        await app.state.lifecycle.seed_default_user()
+        await app.state.lifecycle.seed_agent_user()
+    except ConfigurationError as exc:
+        app.state.startup_config_error = str(exc)
+        raise
     registry = app.state.container_registry
 
     async def _on_workspace_killed(ws_id):

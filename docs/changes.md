@@ -92,6 +92,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`EX_CONFIG` exit status 78 for deterministic config errors (#2666).**
+  When `klangkd` refuses to boot over bad configuration — e.g. a
+  `KLANGKD_DEFAULT_PASSWORD` that violates the password policy, password
+  mode without a staged password, `auth_modes: none` on a non-loopback
+  bind, or a containerized FIPS backend with non-FIPS OpenSSL — it now
+  exits with status 78 instead of uvicorn's generic startup-failure
+  status, so a first-boot misconfiguration no longer presents as an
+  endless restart loop. Supervisors can stop retrying it (systemd:
+  `RestartPreventExitStatus=78`). See
+  [Process signals](deployment/signals.md) for the exit-status table.
 - **Decommissioning guide (#2593).** New [deployment chapter](../deployment/decommissioning.md)
   documenting the decommissioning notification chain (users, admins, integrators,
   infrastructure owners) and the shutdown sequence: workspace export, graceful

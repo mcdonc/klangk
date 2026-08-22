@@ -55,6 +55,8 @@ import os
 import ssl
 import subprocess
 
+from .exceptions import ConfigurationError
+
 logger = logging.getLogger(__name__)
 
 # A short sentinel payload for the digest probes.
@@ -351,7 +353,8 @@ def verify_process_fips(settings) -> None:
 
     - **Containerized backend** (``running_in_container()``): the
       process OpenSSL is the crypto boundary of an image *we* ship — a
-      failed probe raises :class:`SystemExit` and the boot aborts.
+      failed probe raises :class:`ConfigurationError` and the boot
+      aborts.
     - **Control host**: a failed probe logs a prominent warning and
       the boot continues — klangkd may legitimately run on a host
       whose OpenSSL is not the FIPS variant while every workspace it
@@ -384,7 +387,7 @@ def verify_process_fips(settings) -> None:
             version,
             detail,
         )
-        raise SystemExit(
+        raise ConfigurationError(
             "KLANGKD_FIPS_MODE: containerized backend's OpenSSL is not "
             f"FIPS-enforcing ({detail})"
         )
