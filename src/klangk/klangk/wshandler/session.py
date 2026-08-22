@@ -197,6 +197,15 @@ class WorkspaceSession:
         # list_windows snapshot per user_id, so we re-broadcast only on a
         # real change (#2161 / #2171).
         self._last_windows: dict[str, list] = {}
+        # Monotonic per-user generation of the applied window list
+        # (#2653). Bumped by every apply_window_list; the debounced
+        # watcher stamps it before starting its list_windows exec and
+        # discards a snapshot that returns to a moved counter — a podman
+        # exec that started before a tmux rename/new/close committed can
+        # land after the command handler applied the newer list, and
+        # applying it would transiently revert the map, the baseline,
+        # and the broadcasts (new → old → new flap).
+        self._window_generations: dict[str, int] = {}
         self._window_watcher: WindowEventWatcher | None = None
         self._window_sync_handle: asyncio.TimerHandle | None = None
 
@@ -224,6 +233,7 @@ class WorkspaceSession:
         if watcher is not None:
             asyncio.create_task(watcher.stop())  # pragma: no cover
         self._last_windows.clear()
+        self._window_generations.clear()
 
     async def add_subscriber(
         self,
@@ -280,10 +290,20 @@ class WorkspaceSession:
         reused within a tmux server's lifetime, stable across renames
         and index reuse, #2192) and ``shared`` flags carry over; the
         agent's ``service-cmd`` window is shared by definition (#1114).
+
+        Applying also bumps the per-user window generation so the
+        watcher can tell a stale in-flight snapshot from a current one
+        (#2653).
         """
         old = self.terminal_windows.get(user_id, [])
         new_entries = merge_window_entries(old, windows)
         self.terminal_windows[user_id] = new_entries
+        # This list is now the newest applied state for the user (#2653):
+        # a watcher list_windows exec still in flight predates it, and
+        # its snapshot must be discarded instead of applied over it.
+        self._window_generations[user_id] = (
+            self._window_generations.get(user_id, 0) + 1
+        )
         # Broadcast-worthy delta: shared set changed (a shared window
         # was added or closed) or any shared window was renamed.
         old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
@@ -356,9 +376,22 @@ class WorkspaceSession:
             if uid and uid != model.AGENT_USER_ID:
                 user_ids.add(uid)
         for uid in user_ids:
+            # Stamp the apply generation before the exec (#2653): the
+            # list_windows below is a podman round-trip that can straddle
+            # a command handler's tmux mutation and its apply. If the
+            # counter moved by the time the exec returns, a newer list
+            # was applied while we were in flight and this snapshot is
+            # stale — applying it would revert the map, the baseline,
+            # and the client frames to the pre-mutation state.
+            generation = self._window_generations.get(uid, 0)
             try:
                 windows = await terminal.list_windows(self.container_id, uid)
             except Exception:  # pragma: no cover - container mid-restart
+                continue
+            if self._window_generations.get(uid, 0) != generation:
+                # Stale in-flight snapshot (#2653): the newer applied
+                # list already updated the map, the baseline, and the
+                # broadcasts; drop ours instead of reverting them.
                 continue
             if self._last_windows.get(uid) == windows:
                 continue

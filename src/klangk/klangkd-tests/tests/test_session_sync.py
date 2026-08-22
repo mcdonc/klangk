@@ -291,6 +291,86 @@ def test_apply_window_list_reports_shared_deltas():
     ]
 
 
+# --- #2653: stale in-flight watcher snapshots must be discarded ---
+
+
+async def test_sync_discards_stale_inflight_snapshot():
+    """A watcher snapshot racing a command-handler apply is dropped.
+
+    The watcher's ``list_windows`` is a podman exec round-trip: under
+    load it can start before a tmux rename commits and return after
+    the rename handler already applied and broadcast the renamed
+    list. Applying the stale pre-rename snapshot would revert the map,
+    the baseline, and the client frames (new → old → new flap,
+    #2653). The generation stamped before the exec must discard it.
+    """
+    sess, sock, terminal = _session_with_user()
+    # Seeded shared: the concurrent apply below must report a shared
+    # rename delta — the issue's worst case (a revert broadcast to
+    # shared_terminals viewers), and what the recorded-delta assert
+    # at the end checks for.
+    sess.terminal_windows["u1"] = [
+        {"id": "@0", "index": 0, "name": "bash", "shared": True}
+    ]
+    stale = [{"id": "@0", "index": 0, "name": "bash", "active": True}]
+    renamed = [{"id": "@0", "index": 0, "name": "my-build", "active": True}]
+    deltas: list[bool] = []
+
+    async def straddling_exec(container_id, uid):
+        # While the watcher's exec is in flight, the rename handler
+        # commits and applies (and would broadcast) the renamed list.
+        # A real handler's notify_user_terminal_windows also refreshes
+        # the watcher's baseline. The apply's return value is recorded
+        # rather than asserted here — this coroutine runs inside
+        # _sync_windows_once's except-Exception guard, which would
+        # swallow an AssertionError and turn the failure into a
+        # baffling KeyError on _last_windows below.
+        deltas.append(sess.apply_window_list("u1", renamed))
+        sess._last_windows["u1"] = renamed
+        return stale  # our exec queried tmux before the rename committed
+
+    terminal.list_windows = AsyncMock(side_effect=straddling_exec)
+
+    await sess._sync_windows_once()
+
+    # The concurrent handler's apply did see (and broadcast) the
+    # shared rename — and the watcher's stale snapshot was discarded
+    # after it: the map and the baseline still hold the renamed list
+    # and no frame was broadcast for the revert.
+    assert deltas == [True]
+    assert sess.terminal_windows["u1"][0]["name"] == "my-build"
+    assert sess._last_windows["u1"] == renamed
+    sock.send_json.assert_not_called()
+
+
+async def test_sync_applies_change_when_generation_unmoved():
+    """A genuine tmux-side change (no concurrent command-handler apply)
+    still passes the generation check and broadcasts (#2653 guard must
+    not eat real watcher deltas — e.g. a rename typed inside tmux)."""
+    sess, sock, terminal = _session_with_user()
+    terminal.list_windows = AsyncMock(
+        return_value=[{"id": "@0", "index": 0, "name": "dev", "active": True}]
+    )
+
+    await sess._sync_windows_once()
+
+    assert sess.terminal_windows["u1"][0]["name"] == "dev"
+    sock.send_json.assert_called_once()
+
+
+def test_apply_window_list_bumps_generation():
+    """Every apply is the newest applied state: the per-user generation
+    advances on each apply_window_list call (#2653)."""
+    sess, _sock, _terminal = _session_with_user()
+    windows = [{"id": "@0", "index": 0, "name": "bash", "active": True}]
+
+    assert sess._window_generations.get("u1", 0) == 0
+    sess.apply_window_list("u1", windows)
+    assert sess._window_generations["u1"] == 1
+    sess.apply_window_list("u1", windows)
+    assert sess._window_generations["u1"] == 2
+
+
 # --- #2652 review follow-ups ---
 
 
