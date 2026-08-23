@@ -370,4 +370,90 @@ void main() {
       expect(capturedQ, 'needle');
     });
   });
+
+  group('AdminUsersPage invite dialog', () {
+    /// Finder for a TextField whose labelText matches [label].
+    Finder fieldLabeled(String label) => find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField && widget.decoration?.labelText == label,
+        );
+
+    /// Serves the invitations list and captures any POST (invite) body into
+    /// [posts].
+    void serveInvitationsCapturePosts(List<Map<String, dynamic>> posts) {
+      testAuthHttpClientOverride = _mockClient((request) async {
+        if (request.url.path == '/api/v1/admin/invitations') {
+          if (request.method == 'POST') {
+            posts.add(jsonDecode(request.body) as Map<String, dynamic>);
+            return http.Response(
+              jsonEncode(_invitation('new@example.com')),
+              200,
+            );
+          }
+          return http.Response(
+            _invitationsEnvelope([], total: 0, pendingCount: 0),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/admin/users') {
+          return http.Response(
+            jsonEncode({
+              'users': <Map<String, dynamic>>[],
+              'page': 1,
+              'page_size': 10,
+              'total': 0,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/admin/groups') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+    }
+
+    testWidgets(
+        'invalid email shows inline error and keeps Send Invitation disabled',
+        (tester) async {
+      final posts = <Map<String, dynamic>>[];
+      serveInvitationsCapturePosts(posts);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Invite user'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('Email'), 'notanemail');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
+        'Enter a valid email',
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Send Invitation'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(posts, isEmpty);
+
+      // Correcting the address clears the error, enables the button, and
+      // submits (#2668).
+      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
+        isNull,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Send Invitation'));
+      await tester.pumpAndSettle();
+
+      expect(posts.single['email'], 'new@example.com');
+      expect(find.text('Invitation sent to new@example.com'), findsOneWidget);
+    });
+  });
 }

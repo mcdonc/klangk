@@ -5400,6 +5400,107 @@ class TestHandleRestartContainer:
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("not found" in str(c) for c in calls)
 
+    async def test_restart_reads_workspace_fresh_from_db(
+        self, user, app_state
+    ):
+        """#2676: restart must not trust the connection's cached workspace
+        dict. After an unclean host restart the cached container_id can be
+        stale, sending the restart down the create path (sidecar collision)
+        instead of the reuse path a reconnect takes 3 seconds later. The
+        DB row is the source of truth for container_id."""
+        app_state = _make_app_state()
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-fresh"
+        )
+        fresh = {**workspace, "container_id": "cid-fresh"}
+        stale = {**workspace, "container_id": "cid-stale"}
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid-stale"
+        conn.workspace = stale
+        conn._has_perm = AsyncMock(return_value=True)
+
+        started: list[tuple[str, dict]] = []
+
+        async def fake_start(wid, ws_obj):
+            started.append((wid, ws_obj))
+            conn.container_id = "cid-fresh"
+            conn.workspace_id = wid
+
+        with (
+            patch.object(
+                app_state.state.workspaces,
+                "get_workspace",
+                AsyncMock(return_value=fresh),
+            ) as mock_get,
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                side_effect=fake_start,
+            ),
+            patch.object(Connection, "cleanup", new_callable=AsyncMock),
+            patch.object(
+                app_state.state.container_registry, "record_activity"
+            ),
+            patch.object(
+                app_state.state.container_registry,
+                "get_workspace_ports",
+                return_value=[],
+            ),
+        ):
+            await conn.handle_restart_container()
+
+        # Read fresh (not the cached stale dict) and started with it.
+        mock_get.assert_awaited_once_with(workspace["id"])
+        assert started == [(workspace["id"], fresh)]
+
+    async def test_restart_podman_error_sends_error_frame(
+        self, user, app_state
+    ):
+        """#2676: a failed (re)start must not drop the WebSocket with a
+        traceback — the error frame keeps the session alive and surfaces
+        the actionable podman message."""
+        from klangk.podman import PodmanError
+
+        app_state = _make_app_state()
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-podman-err"
+        )
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid-old"
+        conn.workspace = workspace
+        conn._has_perm = AsyncMock(return_value=True)
+
+        with (
+            patch.object(Connection, "cleanup", new_callable=AsyncMock),
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                AsyncMock(
+                    side_effect=PodmanError(
+                        500,
+                        "cannot remove the existing network sidecar "
+                        "for workspace abcd1234",
+                    )
+                ),
+            ),
+        ):
+            # Must not raise (which would drop the WS in dispatch).
+            await conn.handle_restart_container()
+
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        errors = [
+            c
+            for c in calls
+            if isinstance(c, dict) and c.get("type") == "error"
+        ]
+        assert len(errors) == 1
+        assert "Container restart failed" in errors[0]["message"]
+        assert "network sidecar" in errors[0]["message"]
+
     async def test_restart_fractional_timeout(
         self, user, monkeypatch, app_state
     ):
@@ -11590,9 +11691,14 @@ class TestDrainingStartPaths:
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.workspace_id = "ws-c"
-        conn.workspace = {"id": "ws-c"}
+        conn.workspace = {"id": "ws-c", "name": "c"}
         with (
             patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)),
+            patch.object(
+                app_state.state.workspaces,
+                "get_workspace",
+                new=AsyncMock(return_value={"id": "ws-c", "name": "c"}),
+            ),
             patch.object(
                 Connection,
                 "cleanup",

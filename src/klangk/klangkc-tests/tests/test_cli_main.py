@@ -3970,6 +3970,25 @@ class TestInviteCLI:
         assert result.exit_code == 0
         assert "a@b.com" in result.stdout
 
+    def test_invite_invalid_email_rejected_locally(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """A malformed address fails fast client-side (#2668) — no POST."""
+        from klangk.cli import main
+
+        client = MagicMock()
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main.app, ["admin", "invitations", "send", "notanemail"]
+        )
+        assert result.exit_code == 1
+        assert "Enter a valid email address" in result.output
+        client.post.assert_not_called()
+
     def test_invite_error(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 

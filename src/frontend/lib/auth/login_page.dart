@@ -8,6 +8,7 @@ import 'auth_service.dart';
 import 'pending_redirect.dart';
 import '../branding.dart';
 import '../utils/page_title.dart';
+import '../utils/validators.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
 import '../widgets/klangk_logo.dart';
@@ -215,14 +216,12 @@ class _LoginPageState extends State<LoginPage> {
         validator: (v) {
           if (v == null || v.trim().isEmpty) return 'Required';
           final value = v.trim();
-          if (RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value)) {
+          if (isValidEmail(value)) {
             return null;
           }
           // Login also accepts a handle (#616); registration requires
           // an email (a deliverable address is needed for verification).
-          if (!_isRegister &&
-              RegExp(r'^[a-z0-9._-]+$').hasMatch(value) &&
-              value.length <= 32) {
+          if (!_isRegister && isValidHandleChars(value) && value.length <= 32) {
             return null;
           }
           return _isRegister

@@ -285,8 +285,25 @@ class NetworkSidecarMixin:
         # differ from a prior generation's (a rename) and can't be
         # reconstructed from the id alone. The instance reaper is the
         # backstop for orphans; this just keeps a restart from deadlocking.
-        await self._remove_network_sidecar(workspace_id)
+        # #2676: when the clear fails — a container is still joined to the
+        # old sidecar's netns (podman's "dependent containers" refusal) or
+        # podman otherwise refuses the removal — refuse here with a clear
+        # error instead of swallowing it and letting create_container's
+        # --replace collide with the same refusal (a raw 500 + traceback at
+        # the caller, guaranteed whenever the dependent survives). Inside
+        # the try so the fail-closed warning below logs it like any other
+        # sidecar start failure.
         try:
+            if not await self._remove_network_sidecar(workspace_id):
+                raise podman.PodmanError(
+                    500,
+                    "cannot remove the existing network sidecar for "
+                    f"workspace {workspace_id[:8]}: a container is still "
+                    "joined to its network namespace (podman's dependent "
+                    "containers refusal) or podman refused the removal; "
+                    "stop or remove the workspace's containers before "
+                    "starting it again",
+                )
             # NET_RAW lets the proxy forge the eager-deny RST directly from
             # the NFQUEUE callback (#2345) so a denied connect() gets
             # ECONNREFUSED at once, independent of the conntrack/retransmit
@@ -364,7 +381,7 @@ class NetworkSidecarMixin:
             return
         await self._remove_network_sidecar(workspace_id)
 
-    async def _remove_network_sidecar(self, workspace_id: str) -> None:
+    async def _remove_network_sidecar(self, workspace_id: str) -> bool:
         """Best-effort remove this workspace's network sidecar by label (#2286).
 
         Keyed on ``klangk.workspace=<workspace_id>`` +
@@ -374,20 +391,29 @@ class NetworkSidecarMixin:
         restart (the in-memory set is gone). Label-based removal finds the
         sidecar regardless, leaves the workspace container (role=workspace)
         untouched, and is 404-tolerant.
+
+        Returns True when no same-label sidecar remains — none existed, all
+        were removed, or the state is unknowable (a list failure keeps the
+        old proceed-anyway semantics). Returns False when a labeled sidecar
+        survived removal (#2676): the create path that calls this before
+        ``create_container --replace`` refuses to collide with it (podman's
+        rm does not override the dependent-containers check), and the stop
+        paths log it and fall back to the reaper.
+
+        #2676: a sidecar whose workspace container is still joined to its
+        netns (``--network container:<sidecar>``) cannot be removed — podman
+        refuses with "has dependent containers" and ``rm -f`` does not
+        override that check (the same lesson as the reapers'
+        dependents-first ordering, #2476). On that refusal the dependent
+        workspace containers of *this* workspace (label-matched, so a
+        foreign container joined to the netns is never touched) are removed
+        first and the sidecar removal retried once — the create path that
+        called this is about to replace those containers anyway.
         """
-        try:
-            containers = await self.app.state.podman.list_containers(
-                f"klangk.workspace={workspace_id}"
-            )
-        except (podman.PodmanError, OSError, ValueError) as exc:
-            # ValueError: corrupted ps JSON (json.loads in list_containers) —
-            # best-effort removal must never raise into the caller.
-            logger.warning(
-                "cannot list containers to remove network sidecar for %s: %s",
-                workspace_id[:8],
-                exc,
-            )
-            return
+        containers = await self._list_workspace_containers(workspace_id)
+        if containers is None:
+            return True
+        failures: list[tuple[str, podman.PodmanError]] = []
         for c in containers:
             labels = c.get("Labels") or {}
             if labels.get("klangk.role") != "network-sidecar":
@@ -395,12 +421,124 @@ class NetworkSidecarMixin:
             ident = container_ident(c)
             if not ident:
                 continue
+            exc = await self._force_remove_sidecar(workspace_id, ident)
+            if exc is not None:
+                failures.append((ident, exc))
+        if not failures:
+            return True
+        # A removal refused. Re-list: the error may be a benign race (the
+        # container vanished between list and rm — "no such container");
+        # only a sidecar that is still present can collide with the create
+        # that follows, so judge by observable state, not the error text.
+        remaining = await self._list_workspace_containers(workspace_id)
+        if remaining is None:
+            return True
+        remaining_sidecars = {
+            container_ident(c)
+            for c in remaining
+            if (c.get("Labels") or {}).get("klangk.role") == "network-sidecar"
+        }
+        blocked = [(i, e) for i, e in failures if i in remaining_sidecars]
+        for ident, exc in blocked:
+            logger.warning(
+                "network sidecar %s for %s could not be removed: %s",
+                ident[:12],
+                workspace_id[:8],
+                exc,
+            )
+        return not blocked
+
+    async def _list_workspace_containers(
+        self, workspace_id: str
+    ) -> list[dict] | None:
+        """List this workspace's labeled containers, or None when unknowable.
+
+        Best-effort callers must never raise into their caller (#2286):
+        podman errors, OSError, and corrupted ps JSON (``json.loads`` in
+        ``list_containers`` — ValueError) all map to None so the caller can
+        proceed as before.
+        """
+        try:
+            return await self.app.state.podman.list_containers(
+                f"klangk.workspace={workspace_id}"
+            )
+        except (podman.PodmanError, OSError, ValueError) as exc:
+            logger.warning(
+                "cannot list containers for network sidecar of %s: %s",
+                workspace_id[:8],
+                exc,
+            )
+            return None
+
+    async def _force_remove_sidecar(
+        self, workspace_id: str, ident: str
+    ) -> podman.PodmanError | None:
+        """Force-remove one sidecar container; None on success (#2676).
+
+        On podman's dependent-containers refusal, first remove this
+        workspace's own labeled workspace containers (the dependents) and
+        retry the sidecar removal once. Returns the final error (if any)
+        for the caller to classify against a fresh listing; never raises.
+        """
+        try:
+            await self.app.state.podman.remove_container(ident, force=True)
+        except podman.PodmanError as exc:
+            if "dependent containers" not in str(exc):
+                return exc  # already gone / transient — caller re-lists
+            logger.info(
+                "sidecar %s for %s has dependent containers; removing the "
+                "workspace's own containers to free it (#2676)",
+                ident[:12],
+                workspace_id[:8],
+            )
+            await self._remove_dependent_workspace_containers(workspace_id)
+            try:
+                await self.app.state.podman.remove_container(ident, force=True)
+            except podman.PodmanError as retry_exc:
+                return retry_exc
+        logger.info(
+            "network sidecar removed for %s: %s",
+            workspace_id[:8],
+            ident[:12],
+        )
+        return None
+
+    async def _remove_dependent_workspace_containers(
+        self, workspace_id: str
+    ) -> None:
+        """Remove this workspace's labeled workspace (dependent) containers.
+
+        Called only when podman refuses to remove a sidecar because a
+        dependent container is still joined to its netns (#2676). Only
+        containers carrying both ``klangk.workspace=<id>`` and
+        ``klangk.role=workspace`` are touched — ours — so a foreign
+        dependent stays put and the sidecar refusal surfaces to the caller
+        instead. Best-effort: each removal's failure is logged and
+        swallowed so one stuck container never aborts the loop.
+        """
+        containers = await self._list_workspace_containers(workspace_id)
+        if containers is None:
+            return
+        for c in containers:
+            labels = c.get("Labels") or {}
+            if labels.get("klangk.role") != "workspace":
+                continue
+            ident = container_ident(c)
+            if not ident:
+                continue
             try:
                 await self.app.state.podman.remove_container(ident, force=True)
                 logger.info(
-                    "network sidecar removed for %s: %s",
-                    workspace_id[:8],
+                    "removed dependent workspace container %s to free the "
+                    "network sidecar for %s",
                     ident[:12],
+                    workspace_id[:8],
                 )
-            except podman.PodmanError:
-                pass  # already gone — expected
+            except podman.PodmanError as exc:
+                logger.warning(
+                    "could not remove dependent workspace container %s for "
+                    "%s: %s",
+                    ident[:12],
+                    workspace_id[:8],
+                    exc,
+                )

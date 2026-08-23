@@ -243,6 +243,62 @@ void main() {
       ws.close();
     });
 
+    test('forwards non-permission errors to onRestartError (#2676)', () async {
+      final ws = _MockWsClient();
+      final restartErrors = <String>[];
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-1',
+        featureRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {},
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPermissionError: (_) {},
+        onRestartError: (e) => restartErrors.add(e),
+      );
+
+      await connector.connect();
+
+      // A refused restart (server sends an error frame instead of dropping
+      // the socket) reaches the hook…
+      ws.emitError('Container restart failed: dependent containers');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(restartErrors, ['Container restart failed: dependent containers']);
+
+      // …but permission errors do not (they stay on onPermissionError).
+      ws.emitError('Permission denied');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(restartErrors, hasLength(1));
+
+      connector.dispose();
+      ws.close();
+    });
+
+    test('onRestartError absent: non-permission errors are dropped', () async {
+      final ws = _MockWsClient();
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-1',
+        featureRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {},
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPermissionError: (_) {},
+      );
+
+      await connector.connect();
+
+      ws.emitError('Connection timeout');
+      await Future<void>.delayed(Duration.zero);
+
+      connector.dispose();
+      ws.close();
+    });
+
     test('reconnect disposes old subscriptions and reconnects', () async {
       final ws = _MockWsClient();
       int connectedCount = 0;

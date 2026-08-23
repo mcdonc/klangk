@@ -1199,6 +1199,19 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   web client also no longer sends a logout request once its token is
   already cleared.
 
+- **Admin dialogs validate email format before submitting (#2668).** The
+  Add User, Edit User, and Invite User dialogs now check the address
+  client-side against the same rule the server applies: a malformed value
+  shows an inline "Enter a valid email" error and keeps the confirm button
+  disabled, instead of surfacing a raw API error. `klangk admin invitations
+send` rejects a malformed address locally the same way.
+
+- **Admin route guard (#2669).** An authenticated non-admin visiting
+  `/admin/users` directly (typed URL, stale bookmark or redirect) no
+  longer sees the dead-end "No admin sections available" page; the
+  router now bounces them to the workspace list. Logged-out visitors
+  keep the normal login flow, and admins are unaffected.
+
 - **Short image names resolve in fresh checkouts (#286).** devenv now
   exports `CONTAINERS_REGISTRIES_CONF` and seeds a
   `registries.conf` (`unqualified-search-registries = ["docker.io"]`)
@@ -1228,14 +1241,21 @@ containers-registries.conf(5) was found`.
   it fell off the right edge of a typical terminal and was invisible.
   The live segment (countdown, host notices) now renders first; the
   static segments follow it.
-- **TUI status line was invisible on the workspaces screen (#2661).**  The status bar (server, user, live state) has been painted underneath
+- **TUI status line was invisible on the workspaces screen (#2661).** The status bar (server, user, live state) has been painted underneath
   the keybind footer since the screens refactor (#1875) — two
   bottom-docked Textual widgets fully overlap, and the later-mounted
   footer wins the row. It now stacks in its own docked container above
   the footer, which also makes the scheduled-host-action countdown
   (`host: shutdown at 23:00 (in 1h 12m)`) visible.(fix(tui): stack the status bar above the keybind footer)
 
-- **Workspace Restart button after a server restart (#2674).** Clicking
+- **Restart button with a still-running container (#2676).** Pressing
+  Restart after an unclean host shutdown/restart no longer fails with a
+  raw `dependent containers` podman error and a dropped WebSocket: the
+  restart now always reads the workspace fresh from the database (so a
+  live container is reused, like a reconnect does), a create-path start
+  whose lingering network sidecar is pinned by a dependent removes the
+  dependent first, and any remaining start failure is reported as an
+  error frame with a clear message while the session stays connected.- **Workspace Restart button after a server restart (#2674).** Clicking
   Restart while the browser sat on the container-stopped overlay during a
   host shutdown/restart used to spin forever: the WebSocket had given up
   auto-reconnecting while the server was down, so the restart command was
