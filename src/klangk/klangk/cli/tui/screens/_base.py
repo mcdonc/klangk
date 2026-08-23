@@ -167,21 +167,14 @@ class StatusScreen(Screen):
     chaining because the base defines none.
     """
 
-    DEFAULT_CSS = """
-    #status_dock {
-        dock: bottom;
-        height: auto;
-    }
-    /* StatusBar and Footer stack inside the docked container: two
-    bottom-docked siblings fully overlap in Textual (same edge row,
-    last-mounted paints on top), which left the StatusBar hidden under
-    the Footer since #1875 — and with it the #2661 host countdown. The
-    container docks once; the children flow inside. */
-    #status_dock StatusBar,
-    #status_dock Footer {
-        dock: none;
-    }
-    """
+    # NOTE: the #status_dock chrome (dock: bottom, height: auto, and the
+    # StatusBar/Footer `dock: none` override) lives in KlangkApp.CSS, not
+    # here — Textual scopes DEFAULT_CSS to the defining class's type name,
+    # and that scope only follows a screen's FIRST base chain. On
+    # LoginScreen(SpatialNavScreen, StatusScreen) and the TabSkipMixin
+    # forms these rules never matched: the dock grew to 1fr and squeezed
+    # the screen body (the login server list collapsed to one row). App
+    # CSS is unscoped and outranks every DEFAULT_CSS.
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)

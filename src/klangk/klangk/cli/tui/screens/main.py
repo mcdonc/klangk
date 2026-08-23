@@ -253,6 +253,23 @@ class MainScreen(StatusScreen):
     # Sort keys matching Flutter defaults: created desc.
     SORT_KEYS = ("created", "name", "running")
 
+    # Status-broadcast types that never write the status-bar live segment
+    # (#2690): each already has a dedicated UI surface — `container_status`
+    # patches the running dot, `workspaces_changed` refreshes the lists,
+    # `terminals_changed` / `service_health` update the detail screen — so
+    # mirroring them in the bar too left a stale `live: container_status`
+    # after a stop/recycle drain and let routine broadcasts clobber the
+    # #2661 schedule countdown. Genuinely unhandled types keep the
+    # `live: <type>` debug pulse.
+    _STATUS_SILENT_EVENTS = frozenset(
+        {
+            "container_status",
+            "workspaces_changed",
+            "terminals_changed",
+            "service_health",
+        }
+    )
+
     def on_mount(self) -> None:
         self.app.title = "Klangk: Workspaces"
         self._initial_focus_done = False
@@ -1317,8 +1334,12 @@ class MainScreen(StatusScreen):
                 severity="warning",
             )
             return
-        self.app.live_extra = f"live: {etype}"
-        self._refresh_status()
+        # #2690: silent types keep the current segment (a pending #2661
+        # countdown survives routine container_status traffic); only
+        # genuinely unhandled types take the debug pulse.
+        if etype not in self._STATUS_SILENT_EVENTS:
+            self.app.live_extra = f"live: {etype}"
+            self._refresh_status()
         if etype == "workspaces_changed":
             self.refresh_lists()
         elif etype == "container_status":

@@ -119,6 +119,25 @@ class KlangkApp(App):
     #filter_input, #filter_input:focus {
         border: none;
     }
+    /* Shared status-row chrome (#2689): every full-page screen composes a
+    bottom #status_dock holding the StatusBar directly above the Footer.
+    Two bottom-docked siblings fully overlap in Textual (same edge row,
+    last-mounted paints on top), which left the StatusBar hidden under
+    the Footer since #1875 — the container docks once; the children flow
+    inside. These rules live in the App CSS, not StatusScreen's
+    DEFAULT_CSS, because Textual scopes DEFAULT_CSS to the defining
+    class's type name and that scope only follows a screen's FIRST base
+    chain — on LoginScreen(SpatialNavScreen, StatusScreen) and the
+    TabSkipMixin forms the scoped rules never matched, so the dock grew
+    to 1fr and squeezed the login form's server list to one row. */
+    #status_dock {
+        dock: bottom;
+        height: auto;
+    }
+    #status_dock StatusBar,
+    #status_dock Footer {
+        dock: none;
+    }
     /* Match the Select dropdown to the underline-style inputs: drop the
     side borders (the "shadows") so it aligns cleanly with adjacent fields. */
     SelectCurrent, Select:focus > SelectCurrent {

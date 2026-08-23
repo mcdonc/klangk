@@ -1197,6 +1197,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **No stale `live: …` segment in the TUI status bar after a server
+  stop/recycle (#2690).** Routine broadcasts (`container_status`,
+  `workspaces_changed`, `terminals_changed`, `service_health`) no
+  longer write the live status segment — they already have dedicated UI
+  surfaces — so the bar no longer shows a raw event name indefinitely
+  after a drain cycle, and a pending scheduled stop/recycle countdown
+  is no longer clobbered by them.
 - **Concurrent shells on one interactive-egress workspace now land on their
   selected terminal (#2692).** Selecting a terminal (e.g. from the TUI with
   `terminal-open-cmd`) while another consent-popup shell on the same
