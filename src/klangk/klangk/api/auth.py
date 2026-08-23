@@ -14,6 +14,7 @@ from fastapi import (
 from fastapi.responses import (
     JSONResponse,
 )
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from .. import (
@@ -600,7 +601,8 @@ async def get_me(
 @router.post("/auth/logout")
 async def logout(
     request: Request,
-    user: dict | None = Depends(auth.get_current_user_optional),
+    user: dict | None = Depends(auth.get_current_user_lenient),
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth.security),
 ):
     # Logout only invalidates credentials -- it deliberately does NOT stop the
     # user's containers. Per #301/#1235 the idle timeout is the only thing
@@ -612,11 +614,12 @@ async def logout(
     # Blocklist the token so it can't be reused after logout. Logout is
     # idempotent (#2687): a token that is already expired, revoked, or
     # logged out has reached the desired end state, so the request still
-    # succeeds. That is why this endpoint uses get_current_user_optional —
-    # a strict dependency would 401 before this handler ever ran.
-    authorization = request.headers.get("authorization", "")
-    if authorization.startswith("Bearer "):
-        await request.app.state.auth.logout(authorization[7:])
+    # succeeds — hence get_current_user_lenient (never raises, tolerates
+    # disabled accounts) and the parsed credentials object (HTTPBearer
+    # accepts a case-insensitive scheme, so re-slicing the raw header
+    # would miss a lowercase ``bearer`` token).
+    if credentials is not None:
+        await request.app.state.auth.logout(credentials.credentials)
 
     result: dict = {"status": "ok"}
     if user is None:

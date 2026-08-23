@@ -1151,9 +1151,11 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 - **Idempotent `POST /auth/logout` (#2687).** Logout now returns 200 even
   when the presented token is already expired, revoked, or absent — the
   token being dead is logout's desired end state, not an auth failure.
-  Previously these cases returned 401, and clients reacting to the 401
-  produced long request loops in the access log. The web client also no
-  longer sends a logout request once its token is already cleared.
+  Disabled accounts logging out also get 200 (and their token revoked)
+  instead of 403. Previously these cases returned 401/403, and clients
+  reacting to them produced long request loops in the access log. The
+  web client also no longer sends a logout request once its token is
+  already cleared.
 
 - **Short image names resolve in fresh checkouts (#286).** devenv now
   exports `CONTAINERS_REGISTRIES_CONF` and seeds a

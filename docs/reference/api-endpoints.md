@@ -1056,7 +1056,11 @@ refresh and blocklist machinery.
 Log out the current session. Blocklists the token's JTI so it cannot be
 reused.
 
-**Auth:** JWT required.
+**Auth:** none required — logout is idempotent (#2687). An absent,
+expired, revoked, or invalid token still returns 200 (the token being
+unusable is logout's desired end state); the token is blocklisted when
+one is presented. `oidc_logout_url` is returned only when a valid token
+resolves to a live user.
 
 No request body.
 
