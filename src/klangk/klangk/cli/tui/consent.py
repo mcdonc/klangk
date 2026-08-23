@@ -661,6 +661,10 @@ class ConsentDeciderApp(App):
         # when launched by the shell-layer wrapper; None for standalone use.
         self.popup_socket = popup_socket
         self.popup_session = popup_session
+        # The in-flight popup-show task (#2699): one show at a time, so a
+        # burst of held requests (snapshot or rapid-fire) reuses the show
+        # already opening instead of piling up tmux subprocesses.
+        self._show_popup_task: asyncio.Task | None = None
 
     @property
     def _persistent(self) -> bool:
@@ -899,7 +903,16 @@ class ConsentDeciderApp(App):
                 if action == ADDED:
                     # A held request arrived: surface it as the popup over the
                     # shell (no-op in standalone, skipped if already shown).
-                    self._show_popup()
+                    # Scheduled OFF the event loop (#2699): the show is
+                    # synchronous tmux subprocess work and must never gate
+                    # the render below — inline, the Allow/Deny row only
+                    # appeared ~seconds after the popup wrapper, because a
+                    # `display-popup` blocks until dismissed and always
+                    # outlives its 3 s timeout. The task only starts on the
+                    # next loop tick, so the render below lands first and
+                    # the popup viewer (which paints whatever the hidden
+                    # session already shows) attaches to a painted row.
+                    self._schedule_popup_show()
                 try:
                     if action == ERROR:
                         self._flash(str(payload))
@@ -1271,6 +1284,43 @@ class ConsentDeciderApp(App):
         except Exception:  # noqa: BLE001
             logger.debug("consent-decide viewer detach failed")
 
+    def _schedule_popup_show(self) -> None:
+        """Schedule :meth:`_show_popup` on a worker thread, once at a time.
+
+        The show is synchronous tmux work — two ``list-clients`` queries
+        plus a ``display-popup`` subprocess that **blocks until the popup
+        is dismissed** (it always outlives its 3 s timeout, then is killed;
+        the popup itself stays up). Called inline from the async pump this
+        froze the UI event loop for the full timeout, so the held-request
+        row only rendered seconds after the popup wrapper appeared
+        (#2699). Off the loop, the row renders immediately (the render is
+        not gated on the show) and the popup wrapper follows within one
+        tmux round-trip.
+
+        Deduplicated: while one show is in flight, later ADDED frames skip
+        — the popup shows the whole held-request queue, not one request,
+        so the in-flight show already covers them. A failed/finished show
+        clears the slot so the next held request retries.
+        """
+        if not self.popup_socket or not self.popup_session:
+            return  # standalone: no popup to show (skip the thread entirely)
+        task = self._show_popup_task
+        if task is not None and not task.done():
+            return  # a show is already in flight; it covers this request too
+        self._show_popup_task = asyncio.create_task(self._popup_show_worker())
+
+    async def _popup_show_worker(self) -> None:
+        """Run :meth:`_show_popup` off the event loop; never raises (#2699).
+
+        :meth:`_show_popup` already swallows its subprocess errors; this
+        guard keeps the fire-and-forget task from surfacing anything (an
+        unretrieved task exception would just log noise).
+        """
+        try:
+            await asyncio.to_thread(self._show_popup)
+        except Exception:  # noqa: BLE001
+            logger.debug("consent-decide popup show failed")
+
     def _show_popup(self) -> None:
         """Show the popup on the user's shell client when a request arrives.
 
@@ -1278,6 +1328,9 @@ class ConsentDeciderApp(App):
         Skipped when the popup is already open (the hidden session has a
         viewer client attached). A failed show is swallowed -- the decider
         keeps running and the user can reopen with the shell's reopen key.
+        Blocking by design (see :meth:`_schedule_popup_show`): callers on
+        the event loop must go through the scheduler, which runs this on a
+        worker thread.
         """
         sock = self.popup_socket
         sess = self.popup_session

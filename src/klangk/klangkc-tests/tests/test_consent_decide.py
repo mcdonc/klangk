@@ -2989,3 +2989,160 @@ class TestPersistentPopupRole:
 
         monkeypatch.setattr(tui_consent.subprocess, "run", boom)
         app._show_popup()  # must not raise
+
+
+class TestPopupShowOffLoop:
+    """#2699: the ADDED-path popup show runs off the UI event loop.
+
+    ``_show_popup`` is synchronous tmux subprocess work — two
+    ``list-clients`` queries plus a ``display-popup`` that blocks until
+    the popup is dismissed (it always outlives its 3 s timeout, then is
+    killed; the popup stays up). Called inline from the async pump it
+    froze the event loop, so the Allow/Deny row rendered ~seconds after
+    the popup wrapper appeared while the hold countdown burned.
+    """
+
+    async def test_slow_tmux_does_not_delay_row_render(self, monkeypatch):
+        # A contended/slow tmux server (here: list-clients takes 1.5s) must
+        # not delay the row render: the show is scheduled off the loop and
+        # the render is not gated on it.
+        import threading
+
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        started = threading.Event()
+
+        def slow_has_client(sock, sess):
+            started.set()
+            time.sleep(1.5)
+            return False
+
+        monkeypatch.setattr(tui_consent, "hidden_has_client", slow_has_client)
+        monkeypatch.setattr(
+            tui_consent, "outer_clients", lambda sock, sess: ["clientA"]
+        )
+        async with app.run_test():
+            t0 = time.monotonic()
+            # One ADDED frame, then the socket closes.
+            await app._pump(
+                FakeWS([_req_frame("r1", host="evil.example.com")])
+            )
+            elapsed = time.monotonic() - t0
+            # The pump returned (and rendered) without waiting for tmux.
+            # Inline, this took >= 1.5s; off-loop it is effectively instant.
+            assert elapsed < 1.0, (
+                f"row render gated on the popup show ({elapsed:.2f}s)"
+            )
+            # The row IS rendered despite the show still being in flight.
+            assert len(app.query_one("#requests", ListView).children) == 1
+            # ...and the show did run (on its worker thread).
+            assert started.wait(timeout=5)
+            # Let the in-flight show finish so run_test teardown is clean.
+            task = app._show_popup_task
+            assert task is not None
+            while not task.done():
+                await asyncio.sleep(0.05)
+
+    async def test_snapshot_reconnect_surfaces_row_and_popup(
+        self, monkeypatch
+    ):
+        # Acceptance: a request held while the decider's WS was reconnecting
+        # arrives in the connect snapshot -- the row renders and the popup is
+        # scheduled for it promptly on reconnect (#2699).
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        monkeypatch.setattr(
+            tui_consent, "hidden_has_client", lambda sock, sess: False
+        )
+        monkeypatch.setattr(
+            tui_consent, "outer_clients", lambda sock, sess: ["clientA"]
+        )
+        ran: list[list[str]] = []
+        monkeypatch.setattr(
+            tui_consent.subprocess, "run", lambda cmd, **kw: ran.append(cmd)
+        )
+        async with app.run_test() as pilot:
+            # Reconnect: the server's snapshot replays the currently-held
+            # request as an egress_request frame.
+            await app._pump(
+                FakeWS([_req_frame("r1", host="evil.example.com")])
+            )
+            await pilot.pause()
+            assert set(app.controller.pending) == {"r1"}
+            assert len(app.query_one("#requests", ListView).children) == 1
+            # ...and the popup show was scheduled off-loop and ran.
+            for _ in range(100):
+                if ran:
+                    break
+                await asyncio.sleep(0.02)
+            assert ran, "popup show never ran"
+            assert ran[0][:5] == [
+                "tmux",
+                "-S",
+                "/tmp/k.sock",
+                "display-popup",
+                "-c",
+            ]
+
+    async def test_schedule_dedupes_in_flight_show(self, monkeypatch):
+        # A burst of held requests (snapshot replay) must not pile up shows:
+        # while one is in flight, later ADDED frames reuse it.
+        import threading
+
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+        calls = []
+        release = threading.Event()
+
+        def slow_show():
+            calls.append(True)
+            release.wait(timeout=5)
+
+        monkeypatch.setattr(app, "_show_popup", slow_show)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._schedule_popup_show()
+            app._schedule_popup_show()
+            app._schedule_popup_show()
+            for _ in range(100):
+                if calls:
+                    break
+                await asyncio.sleep(0.02)
+            assert len(calls) == 1  # deduped onto the in-flight show
+            release.set()
+            task = app._show_popup_task
+            while not task.done():
+                await asyncio.sleep(0.05)
+            # After the show finished, the next request schedules a new one.
+            app._schedule_popup_show()
+            for _ in range(100):
+                if len(calls) >= 2:
+                    break
+                await asyncio.sleep(0.02)
+            assert len(calls) == 2
+            task = app._show_popup_task
+            while not task.done():
+                await asyncio.sleep(0.05)
+
+    def test_schedule_noop_without_popup_context(self):
+        # Standalone decider: scheduling neither spawns a task nor shows.
+        app = _make_app()
+        app._schedule_popup_show()
+        assert app._show_popup_task is None
+
+    async def test_popup_show_worker_swallows_errors(self, monkeypatch):
+        # The fire-and-forget worker must never surface an exception (an
+        # unretrieved task exception is log noise at best).
+        app = _make_app(
+            popup_socket="/tmp/k.sock", popup_session="klangk-consent-w"
+        )
+
+        async def boom(*a, **k):
+            raise RuntimeError("thread pool blew up")
+
+        monkeypatch.setattr(tui_consent.asyncio, "to_thread", boom)
+        async with app.run_test():
+            await app._popup_show_worker()  # must not raise
