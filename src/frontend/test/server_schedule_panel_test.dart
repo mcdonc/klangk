@@ -40,7 +40,14 @@ class _FakeChannel extends Fake implements WebSocketChannel {
   @override
   Future<void> get ready => Future.value();
 
+  @override
+  int? get closeCode => null;
+
   void serverSend(Map<String, dynamic> msg) => _incoming.add(jsonEncode(msg));
+
+  /// Close the incoming stream — triggers the client's onDone path
+  /// (the server-side close).
+  void serverClose() => _incoming.close();
 }
 
 class _FakeSink extends Fake implements WebSocketSink {
@@ -196,6 +203,24 @@ void main() {
       expect(parseServerDelay('2x'), isNull);
       expect(parseServerDelay('m5'), isNull);
       expect(parseServerDelay('2h blah'), isNull);
+    });
+
+    test('returns null (never throws) for infinity-overflow input', () {
+      // Exponents that overflow the double to infinity must fail parsing,
+      // not throw inside Duration(microseconds: .round()) mid-build.
+      expect(parseServerDelay('1e400'), isNull);
+      expect(parseServerDelay('1e308'), isNull);
+      expect(parseServerDelay('-1e308'), isNull);
+      expect(parseServerDelay('1e309'), isNull);
+    });
+
+    test('caps at the server max in_seconds (1e10)', () {
+      // The API 422s in_seconds > 1e10 (~317 years); the parser rejects
+      // those up front instead of round-tripping a doomed request.
+      expect(parseServerDelay('99999999999999999999h'), isNull);
+      expect(parseServerDelay('1e9'), isNull); // 1e9 minutes > 1e10 s
+      // Just under the cap (in hours) still parses.
+      expect(parseServerDelay('2777777h'), isNotNull);
     });
   });
 
@@ -396,6 +421,150 @@ void main() {
       expect(find.byType(SnackBar), findsOneWidget);
       expect(find.textContaining('Schedule not found'), findsOneWidget);
     });
+
+    testWidgets('a past-due schedule shows "happening now"', (tester) async {
+      testAuthHttpClientOverride = _mockClient((request) async {
+        if (request.url.path == '/api/v1/admin/server/schedule') {
+          return http.Response(
+            _schedulesEnvelope(
+                [_schedule('s1', 'stop', const Duration(seconds: -10))]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pump(tester, panelApp());
+
+      expect(find.textContaining('Stop at'), findsOneWidget);
+      expect(find.text('happening now'), findsOneWidget);
+    });
+
+    testWidgets('a malformed fire_at degrades to "fires soon"', (tester) async {
+      testAuthHttpClientOverride = _mockClient((request) async {
+        if (request.url.path == '/api/v1/admin/server/schedule') {
+          return http.Response(
+            jsonEncode({
+              'schedules': [
+                {
+                  'id': 's1',
+                  'action': 'stop',
+                  'fire_at': 'not-a-date',
+                  'created_by': 'admin-user',
+                  'created_at': '2026-01-01T00:00:00+00:00',
+                },
+              ],
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pump(tester, panelApp());
+
+      expect(find.text('Scheduled server stop'), findsOneWidget);
+      expect(find.text('fires soon'), findsOneWidget);
+    });
+
+    testWidgets('a REST refresh does not flash the spinner over live data',
+        (tester) async {
+      // WS snapshot is live; the post-cancel REST refresh hangs. The
+      // list must keep rendering the snapshot — no spinner, no error.
+      var gets = 0;
+      final hangingGet = Completer<http.Response>();
+      testAuthHttpClientOverride = _mockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/admin/server/schedule' &&
+            request.method == 'GET') {
+          gets++;
+          if (gets == 1) {
+            return http.Response(
+              _schedulesEnvelope(
+                  [_schedule('s1', 'stop', const Duration(hours: 1))]),
+              200,
+            );
+          }
+          return hangingGet.future;
+        }
+        if (path == '/api/v1/admin/server/schedule/s1' &&
+            request.method == 'DELETE') {
+          return http.Response(jsonEncode({'cancelled': 's1'}), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+      final channel = _FakeChannel();
+      final ws = WsClient();
+      ws.connectForTest(channel);
+      channel.serverSend({
+        'type': 'server_schedule',
+        'schedules': [_schedule('s1', 'stop', const Duration(hours: 1))],
+      });
+
+      await pump(tester, panelApp(ws: ws));
+
+      await tester.tap(iconButton('Cancel schedule'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel Schedule'));
+      // One pump runs the DELETE microtask and starts the hanging GET
+      // (_loading = true) — the live snapshot must stay on screen.
+      await tester.pump();
+
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.textContaining('Stop at'), findsOneWidget);
+
+      hangingGet.complete(http.Response(_schedulesEnvelope([]), 200));
+      await tester.pumpAndSettle();
+      // WS is still connected and its snapshot still says pending — it
+      // stays the live source even after the (empty) REST refresh.
+      expect(find.textContaining('Stop at'), findsOneWidget);
+    });
+
+    testWidgets('after the socket drops, the REST refresh is the source',
+        (tester) async {
+      // The reviewer's scenario: socket silently drops, admin cancels —
+      // DELETE succeeds over HTTP, the broadcast reaches nobody. The
+      // cleared snapshot must let the REST refresh show through.
+      var pending = [_schedule('s1', 'stop', const Duration(hours: 1))];
+      testAuthHttpClientOverride = _mockClient((request) async {
+        final path = request.url.path;
+        if (path == '/api/v1/admin/server/schedule' &&
+            request.method == 'GET') {
+          return http.Response(_schedulesEnvelope(pending), 200);
+        }
+        if (path == '/api/v1/admin/server/schedule/s1' &&
+            request.method == 'DELETE') {
+          pending = [];
+          return http.Response(jsonEncode({'cancelled': 's1'}), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+      final channel = _FakeChannel();
+      final ws = WsClient();
+      ws.connectForTest(channel);
+      channel.serverSend({
+        'type': 'server_schedule',
+        'schedules': [_schedule('s1', 'stop', const Duration(hours: 1))],
+      });
+
+      await pump(tester, panelApp(ws: ws));
+      expect(find.textContaining('Stop at'), findsOneWidget);
+
+      // Server closes the socket; the snapshot is cleared server-side
+      // model stays — the panel falls back to its REST list.
+      channel.serverClose();
+      await tester.pumpAndSettle();
+      expect(ws.serverSchedulesNow, isNull);
+      // The REST-loaded row is still displayed.
+      expect(find.textContaining('Stop at'), findsOneWidget);
+
+      await tester.tap(iconButton('Cancel schedule'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel Schedule'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No scheduled server actions'), findsOneWidget);
+    });
   });
 
   group('ScheduleServerActionDialog', () {
@@ -537,6 +706,15 @@ void main() {
       expect(posted!['action'], 'stop');
       expect(posted!['at'], isA<String>());
       expect(posted!.containsKey('in_seconds'), isFalse);
+      // The picker defaults to ~now+1h; the submitted instant must be
+      // UTC-suffixed ('...Z') and land ~1h out regardless of the test
+      // machine's timezone — a naive string would be read as UTC by the
+      // server and shift the fire time by the local offset (#2684).
+      final at = DateTime.parse(posted!['at'] as String);
+      expect(at.isUtc, isTrue);
+      expect(posted!['at'], endsWith('Z'));
+      final drift = at.difference(DateTime.now().toUtc()).inMinutes;
+      expect(drift, inInclusiveRange(58, 62));
       expect(find.byType(ScheduleServerActionDialog), findsNothing);
     });
   });

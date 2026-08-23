@@ -24,16 +24,23 @@ import '../ws/ws_client.dart';
 
 /// Parse a human delay ("2h", "90m", "2h 30m", "45s") into a [Duration].
 ///
-/// A bare number means minutes ("120" == "120m" == "2h"). Returns null for
-/// anything unparseable or non-positive — the dialog treats that as an
-/// invalid form.
+/// A bare number means minutes ("120" == "120m" == "2h"). Returns null
+/// for anything unparseable, non-positive, non-finite, or beyond the
+/// server's max delay (`in_seconds` <= 1e10 — the API 422s anything
+/// longer) — the dialog treats null as an invalid form. The finiteness
+/// and bound checks also keep `Duration(microseconds: ...)` from ever
+/// seeing an infinity (`.round()` would throw mid-build).
 Duration? parseServerDelay(String raw) {
+  // Server-side cap for in_seconds (server_schedule._MAX_IN_SECONDS).
+  const maxMicros = 1e10 * 1e6;
   final text = raw.trim().toLowerCase();
   if (text.isEmpty) return null;
   final bare = double.tryParse(text);
   if (bare != null) {
-    if (bare <= 0) return null;
-    return Duration(microseconds: (bare * 60 * 1e6).round());
+    if (!bare.isFinite || bare <= 0) return null;
+    final micros = bare * 60 * 1e6;
+    if (!micros.isFinite || micros > maxMicros) return null;
+    return Duration(microseconds: micros.round());
   }
   final segment = RegExp(r'^(\d+(?:\.\d+)?)(h|m|s)');
   var rest = text.replaceAll(' ', '');
@@ -48,6 +55,7 @@ Duration? parseServerDelay(String raw) {
       _ => 1e6,
     };
     micros += value * factor;
+    if (!micros.isFinite || micros > maxMicros) return null;
     rest = rest.substring(m.end);
   }
   if (micros <= 0) return null;
@@ -75,7 +83,12 @@ class _ServerSchedulePanelState extends State<ServerSchedulePanel> {
     // Live countdowns tick locally from fire_at (the WS snapshot pushes
     // only on change + periodically — same rationale as the banner).
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      // Only a non-empty list has a countdown worth re-rendering — an
+      // idle tab (nothing scheduled) must not rebuild every second.
+      final ws = context.read<WsClient>();
+      final hasRows = (ws.serverSchedulesNow ?? _restSchedules).isNotEmpty;
+      if (hasRows) setState(() {});
     });
     _loadSchedules();
   }
@@ -187,7 +200,8 @@ class _ServerSchedulePanelState extends State<ServerSchedulePanel> {
     // The WS snapshot (when connected) is the live truth; the REST list
     // is the pre-snapshot / disconnected fallback.
     final ws = context.watch<WsClient>();
-    final schedules = ws.serverSchedulesNow ?? _restSchedules;
+    final live = ws.serverSchedulesNow;
+    final schedules = live ?? _restSchedules;
     final sorted = [...schedules]..sort(
         (a, b) =>
             (parseFireAt(a['fire_at'])?.millisecondsSinceEpoch ?? 0).compareTo(
@@ -215,15 +229,24 @@ class _ServerSchedulePanelState extends State<ServerSchedulePanel> {
                   const TextStyle(color: KColors.textSecondary, fontSize: 12),
             ),
           ),
-          Expanded(child: _buildList(sorted)),
+          Expanded(child: _buildList(sorted, hasLive: live != null)),
         ],
       ),
     );
   }
 
-  Widget _buildList(List<Map<String, dynamic>> schedules) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
+  Widget _buildList(
+    List<Map<String, dynamic>> schedules, {
+    required bool hasLive,
+  }) {
+    // The spinner/error states describe the REST fetch; when a live WS
+    // snapshot is on screen it stays rendered through any REST
+    // refresh/failure — no flash-to-spinner on every mutation, and a
+    // transient REST failure never masks live data.
+    if (!hasLive && _loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (!hasLive && _error != null) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -382,7 +405,11 @@ class _ScheduleServerActionDialogState
       if (_useDelay)
         'in_seconds': _delay!.inMilliseconds / 1000
       else
-        'at': _at!.toIso8601String(),
+        // toUtc() so the ISO string carries a 'Z' suffix: a local
+        // DateTime's toIso8601String() has no offset, and the server
+        // reads a naive timestamp as UTC — the picked wall time must
+        // survive the round trip in any browser timezone.
+        'at': _at!.toUtc().toIso8601String(),
     });
     final auth = context.read<AuthService>();
     final resp = await auth.authPost(
