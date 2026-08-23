@@ -249,11 +249,26 @@ def configure_outer_session(socket: str, session: str) -> list[list[str]]:
       familiar status bar (with its ``+``) shows.
     - ``mouse off``: the outer does not intercept mouse events, so raw mouse
       sequences pass through to the inner container tmux (its ``+`` etc.).
+    - ``set-clipboard on`` + the ``clipboard`` terminal feature: the inner
+      shell (the container tmux's attach client) writes OSC 52 (clipboard
+      set) into its pane when a selection is made in the container tmux
+      (#2694); the outer re-emits it to the real terminal. This MUST be
+      ``on``, not ``external`` — tmux only forwards pane-originated OSC 52
+      to its own clients in ``on`` mode (verified against tmux 3.5a/3.6a;
+      ``external`` drops pane sequences silently). The clipboard feature is
+      set for every TERM because stock terminfo lacks the Ms capability;
+      terminals that can't do OSC 52 just ignore the sequence. Both are set
+      explicitly (they are defaults-adjacent) to survive a user's
+      ``~/.tmux.conf`` on this socket's server.
     """
     return [
         _tmux(socket, "set-option", "-t", session, "prefix", OUTER_PREFIX),
         _tmux(socket, "set-option", "-t", session, "status", "off"),
         _tmux(socket, "set-option", "-t", session, "mouse", "off"),
+        _tmux(socket, "set-option", "-g", "set-clipboard", "on"),
+        _tmux(
+            socket, "set-option", "-ga", "terminal-features", ",*:clipboard"
+        ),
     ]
 
 
@@ -526,9 +541,13 @@ def run_consent_shell(
 def _term_size() -> tuple[int, int]:
     try:
         size = os.get_terminal_size()
-        return size.columns, size.lines
+        # A pty can report 0x0 (no TIOCSWINSZ ever applied); tmux rejects
+        # ``new-session -x 0 -y 0`` outright, so fall back to the default.
+        if size.columns >= 1 and size.lines >= 1:
+            return size.columns, size.lines
     except OSError:
-        return 80, 24
+        pass
+    return 80, 24
 
 
 @contextmanager

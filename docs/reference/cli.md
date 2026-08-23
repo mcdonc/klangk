@@ -355,7 +355,7 @@ active window.
 `klangk shell` provides the same tmux-based terminal as the web frontend, but clipboard behavior differs:
 
 - **Web frontend**: Text selections auto-copy to the system clipboard via the browser bridge. Mouse wheel scrolls through scrollback. No extra setup needed.
-- **CLI (`klangk shell`)**: Text selections auto-copy to the system clipboard via [OSC 52](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands), which requires your terminal emulator to support it. Mouse wheel scrollback works. Native text selection (viewport-only) is available via **Shift+drag**.
+- **CLI (`klangk shell`)**: Text selections auto-copy to the system clipboard via [OSC 52](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands), which requires your terminal emulator to support it. The container's tmux emits the escape to the attached client and it is carried over the WebSocket to your terminal — including inside the consent-popup wrapper (the local wrapper tmux re-emits it) and in external terminals opened via `KLANGKC_TERMINAL_OPEN_CMD`. Mouse wheel scrollback works. Native text selection (viewport-only) is available via **Shift+drag**.
 
 ### OSC 52 terminal support
 

@@ -65,7 +65,11 @@ container. It starts on demand when you click the Terminal tab.
   selection is a tmux copy-mode selection (not a native browser
   selection), so it can span the full scrollback buffer, not just the
   visible viewport. To make a native browser selection instead (e.g.,
-  for copying a URL), hold **Shift** while dragging.
+  for copying a URL), hold **Shift** while dragging. The same selections
+  also auto-copy in `klangk shell` (CLI) via
+  [OSC 52](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands)
+  — see the [CLI reference](../reference/cli.md#terminal-behavior-differences)
+  for the terminal-support matrix.
 - Right-click context menu with Paste (and Copy when text is selected)
 - Mouse wheel scrollback via tmux copy mode
 - If the container stops (idle timeout or crash), an overlay appears

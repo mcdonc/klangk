@@ -191,6 +191,27 @@ class TestBuilders:
                 "mouse",
                 "off",
             ],
+            # Clipboard forwarding (#2694): re-emit the inner shell's OSC 52
+            # (clipboard set) to the real terminal, and claim the clipboard
+            # feature for every TERM (stock terminfo lacks Ms).
+            [
+                "tmux",
+                "-S",
+                "/tmp/s.sock",
+                "set-option",
+                "-g",
+                "set-clipboard",
+                "on",
+            ],
+            [
+                "tmux",
+                "-S",
+                "/tmp/s.sock",
+                "set-option",
+                "-ga",
+                "terminal-features",
+                ",*:clipboard",
+            ],
         ]
 
     def test_configure_hidden_session(self):
@@ -385,14 +406,17 @@ class TestRunConsentShell:
         assert rc == 0
         socket = sp.socket_path("wsid")
         # run_consent_shell generates per-invocation names (#2692) —
-        # recover them from the actual new-session commands.
+        # recover them from the actual new-session commands. Stale-session
+        # sweeping happens in sweep_dead_sessions (its own subprocess,
+        # #2693), not through `run`, so ran starts at the outer session.
         outer = ran[0][ran[0].index("-s") + 1]
-        hidden = ran[4][ran[4].index("-s") + 1]
+        hidden = ran[6][ran[6].index("-s") + 1]
         assert re.match(r"klangk-shell-wsid-p\d+-[0-9a-f]+$", outer)
         assert re.match(r"klangk-consent-wsid-p\d+-[0-9a-f]+$", hidden)
-        # 1 outer + 3 outer-config + 1 hidden + 1 hidden-config + 1 binding
-        # + 1 attach + 2 kills = 10
-        assert len(ran) == 10
+        # 1 outer + 5 outer-config (incl. 2 clipboard opts, #2694)
+        # + 1 hidden + 1 hidden-config + 1 binding + 1 attach + 2 kills
+        # = 12
+        assert len(ran) == 12
         # outer session created with the inner argv, then configured
         assert (
             ran[0]
@@ -407,24 +431,29 @@ class TestRunConsentShell:
         )  # size may differ; check the session
         assert ran[0][1:4] == ["-S", socket, "new-session"]
         assert ran[0][4] == "-d"
-        # configure: prefix/status/mouse
-        assert ran[1:4] == sp.configure_outer_session(socket, outer)
+        # configure: prefix/status/mouse + clipboard forwarding (#2694)
+        outer_cmds = sp.configure_outer_session(socket, outer)
+        assert ran[1 : 1 + len(outer_cmds)] == outer_cmds
         # hidden session
-        assert ran[4][1:4] == ["-S", socket, "new-session"]
+        next_i = 1 + len(outer_cmds)
+        assert ran[next_i][1:4] == ["-S", socket, "new-session"]
+        assert ran[next_i][ran[next_i].index("-s") + 1] == hidden
         # hidden session status bar hidden (popup shows only the decider)
-        assert ran[5:6] == sp.configure_hidden_session(socket, hidden)
+        assert ran[next_i + 1 : next_i + 2] == sp.configure_hidden_session(
+            socket, hidden
+        )
         # the reopen binding (no auto-show hook)
-        assert ran[6:7] == sp.popup_binding_cmds(
+        assert ran[next_i + 2 : next_i + 3] == sp.popup_binding_cmds(
             socket,
             hidden,
             w=sp.DEFAULT_POPUP_SIZE[0],
             h=sp.DEFAULT_POPUP_SIZE[1],
         )
         # attach to outer
-        assert ran[7] == sp.attach_cmd(socket, outer)
+        assert ran[next_i + 3] == sp.attach_cmd(socket, outer)
         # cleanup: kill hidden then outer
-        assert ran[8] == sp.kill_session_cmd(socket, hidden)
-        assert ran[9] == sp.kill_session_cmd(socket, outer)
+        assert ran[next_i + 4] == sp.kill_session_cmd(socket, hidden)
+        assert ran[next_i + 5] == sp.kill_session_cmd(socket, outer)
 
     def test_session_names_pair_is_shared_with_decider(self):
         """When session_names is passed, the wrapper uses exactly that pair
@@ -454,9 +483,9 @@ class TestRunConsentShell:
         )
         socket = sp.socket_path("wsid")
         assert ran[0][ran[0].index("-s") + 1] == names[0]
-        assert ran[4][ran[4].index("-s") + 1] == names[1]
-        assert ran[7] == sp.attach_cmd(socket, names[0])
-        assert ran[9] == sp.kill_session_cmd(socket, names[0])
+        assert ran[6][ran[6].index("-s") + 1] == names[1]
+        assert ran[9] == sp.attach_cmd(socket, names[0])
+        assert ran[11] == sp.kill_session_cmd(socket, names[0])
 
     def test_returns_attach_exit_code(self):
         def fake_run(argv, quiet=False):
@@ -496,7 +525,7 @@ class TestRunConsentShell:
         # final two commands are the cleanup kills regardless; the
         # per-invocation names are recovered from the create commands (#2692)
         socket = sp.socket_path("wsid")
-        hidden = ran[4][ran[4].index("-s") + 1]
+        hidden = ran[6][ran[6].index("-s") + 1]
         outer = ran[0][ran[0].index("-s") + 1]
         assert ran[-2] == sp.kill_session_cmd(socket, hidden)
         assert ran[-1] == sp.kill_session_cmd(socket, outer)
@@ -521,16 +550,19 @@ class TestRunConsentShell:
             run=fake_run,
             attach=fake_attach,
         )
+        # ran starts at the outer session (sweeping is #2693's own
+        # subprocess, not `run`); ran[1:6] = the 5 outer-config commands
+        # (incl. 2 clipboard opts, #2694 — see the builder test).
         outer_cmd = ran[0]
         # outer session sized to the terminal
         assert outer_cmd[outer_cmd.index("-x") + 1] == "100"
         assert outer_cmd[outer_cmd.index("-y") + 1] == "30"
-        hidden_cmd = ran[4]
+        hidden_cmd = ran[6]
         # hidden session sized to the popup
         assert hidden_cmd[hidden_cmd.index("-x") + 1] == "50"
         assert hidden_cmd[hidden_cmd.index("-y") + 1] == "10"
         # popup command (the reopen binding) uses the popup size
-        assert "-w 50 -h 10" in ran[6][5]
+        assert "-w 50 -h 10" in ran[8][5]
 
     # ---------------------------------------------------------------------------
     # real-subprocess helpers (the orchestrator's defaults)
@@ -558,7 +590,7 @@ class TestRunConsentShell:
                 attach=boom,
             )
         socket = sp.socket_path("wsid")
-        hidden = ran[4][0][ran[4][0].index("-s") + 1]
+        hidden = ran[6][0][ran[6][0].index("-s") + 1]
         outer = ran[0][0][ran[0][0].index("-s") + 1]
         assert ran[-2][0] == sp.kill_session_cmd(socket, hidden)
         assert ran[-1][0] == sp.kill_session_cmd(socket, outer)
