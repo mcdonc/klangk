@@ -702,6 +702,59 @@ void main() {
       expect(isPrimaryEnabled(tester, 'Add'), isFalse);
     });
 
+    testWidgets('Add: invalid email shows inline error and disables Add',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+
+      // A malformed address is flagged inline even when everything else is
+      // valid, and Add stays disabled (#2668).
+      await tester.enterText(fieldLabeled('Email'), 'notanemail');
+      await tester.enterText(fieldLabeled('Password'), 'longenough');
+      await tester.pumpAndSettle();
+      await tester.enterText(fieldLabeled('Confirm Password'), 'longenough');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
+        'Enter a valid email',
+      );
+      expect(isPrimaryEnabled(tester, 'Add'), isFalse);
+      expect(writes, isEmpty);
+
+      // Correcting the address clears the error and enables Add.
+      await tester.enterText(fieldLabeled('Email'), 'new@example.com');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
+        isNull,
+      );
+      expect(isPrimaryEnabled(tester, 'Add'), isTrue);
+    });
+
+    testWidgets('Add: verification-email path also requires a valid email',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
+      await pumpPage(tester);
+
+      await tester.tap(find.byTooltip('Add user'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send verification email'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(fieldLabeled('Email'), 'foo@');
+      await tester.pumpAndSettle();
+
+      expect(isPrimaryEnabled(tester, 'Add'), isFalse);
+      expect(writes, isEmpty);
+    });
+
     testWidgets('Add: sends email + password when valid', (tester) async {
       final writes = <Map<String, dynamic>>[];
       serveUsersCaptureWrite(writes, (_p, _ps, _s, _o, _q) => [], total: 0);
@@ -795,6 +848,41 @@ void main() {
 
       expect(find.byType(AlertDialog), findsNothing);
       expect(writes, isEmpty);
+    });
+
+    testWidgets('Edit: invalid email shows inline error and disables Save',
+        (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      serveUsersCaptureWrite(
+        writes,
+        (_p, _ps, _s, _o, _q) => [_user('alice@example.com', id: 'u1')],
+        total: 1,
+      );
+      await pumpPage(tester);
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pumpAndSettle();
+
+      // Replacing the prefilled valid address with a malformed one flags
+      // the field and keeps Save disabled (#2668).
+      await tester.enterText(fieldLabeled('Email'), 'a b@c.com');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
+        'Enter a valid email',
+      );
+      expect(isPrimaryEnabled(tester, 'Save'), isFalse);
+      expect(writes, isEmpty);
+
+      // Restoring a valid address re-enables Save.
+      await tester.enterText(fieldLabeled('Email'), 'alice2@example.com');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<TextField>(fieldLabeled('Email')).decoration?.errorText,
+        isNull,
+      );
+      expect(isPrimaryEnabled(tester, 'Save'), isTrue);
     });
 
     testWidgets('Edit: blank password keeps Save enabled and sends email only',

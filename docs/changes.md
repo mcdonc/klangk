@@ -1173,6 +1173,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   web client also no longer sends a logout request once its token is
   already cleared.
 
+- **Admin dialogs validate email format before submitting (#2668).** The
+  Add User, Edit User, and Invite User dialogs now check the address
+  client-side against the same rule the server applies: a malformed value
+  shows an inline "Enter a valid email" error and keeps the confirm button
+  disabled, instead of surfacing a raw API error. `klangk admin invitations
+  send` rejects a malformed address locally the same way.
+
 - **Short image names resolve in fresh checkouts (#286).** devenv now
   exports `CONTAINERS_REGISTRIES_CONF` and seeds a
   `registries.conf` (`unqualified-search-registries = ["docker.io"]`)
