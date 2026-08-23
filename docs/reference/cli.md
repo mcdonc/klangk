@@ -135,10 +135,14 @@ value (same syntax as the string form):
 export KLANGKC_TERMINAL_OPEN_CMD="konsole --hold -e"
 ```
 
-If the configured command cannot be launched (not installed, no
-`DISPLAY`), the TUI shows an inline error and falls back to running the
-shell in the current terminal. When unset, behavior is unchanged from
-before.
+If the configured command cannot be executed (not installed, not
+executable), the TUI shows an inline error and falls back to running the
+shell in the current terminal. A command that starts but then fails on
+its own (e.g. `wezterm cli spawn` with no wezterm GUI running) does not
+trigger the fallback — prefer simple `terminal -e` style commands. Note
+that in the string form the value is shell-split, so backslashes (as in
+Windows paths) need the list form. When unset, behavior is unchanged
+from before.
 
 ### klangk-state.yaml
 

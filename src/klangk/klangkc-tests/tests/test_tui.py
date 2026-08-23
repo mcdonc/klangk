@@ -6473,7 +6473,9 @@ async def test_detail_terminal_select_external_terminal(monkeypatch):
         await pilot.pause()
         app.screen.on_list_view_selected(FakeSelected("0"))
         # Spawned via Popen with the configured terminal command prefixed,
-        # in its own session so the window outlives the TUI.
+        # in its own session so the window outlives the TUI, and with
+        # launcher output discarded so a post-exec failure can't trash
+        # the TUI's screen (#2686 review).
         assert len(popped) == 1
         argv, kwargs = popped[0]
         assert argv[:3] == ["konsole", "--hold", "-e"]
@@ -6488,6 +6490,8 @@ async def test_detail_terminal_select_external_terminal(monkeypatch):
             "@0",
         ]
         assert kwargs.get("start_new_session") is True
+        assert kwargs.get("stdout") == scr_detail.subprocess.DEVNULL
+        assert kwargs.get("stderr") == scr_detail.subprocess.DEVNULL
         # Not run inline — the TUI stays up, no suspend.
         assert ran == []
 
@@ -6543,14 +6547,18 @@ async def test_detail_terminal_select_external_failure_falls_back(
         await pilot.pause()
         monkeypatch.setattr(app, "suspend", fake_suspend)
         app.screen.on_list_view_selected(FakeSelected("0"))
-        # Fell back to the inline path.
-        assert len(spawned) == 1
-        assert spawned[0][-3:] == ["shell", "alpha", "@0"]
-        # The failure is surfaced inline.
+        # The inline fallback is deferred (call_after_refresh) so the error message
+        # paints before suspend() blanks the screen — not launched yet.
+        assert spawned == []
         msg = str(
             app.screen.query_one("#detail_msg", scr_detail.Static).render()
         )
         assert "terminal-open-cmd failed" in msg
+        # Let the timer fire, then the deferred inline launch runs.
+        await pilot.pause()
+        await pilot.pause()
+        assert len(spawned) == 1
+        assert spawned[0][-3:] == ["shell", "alpha", "@0"]
 
 
 async def test_detail_shared_terminal_select_external_terminal(monkeypatch):

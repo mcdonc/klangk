@@ -745,9 +745,13 @@ class WorkspaceDetailScreen(Screen):
         after ``-e``). The TUI stays up — no suspend. Returns None on that
         path: launchers like konsole always exit 0 and return immediately
         (or when the window closes), so there is no exit code worth acting
-        on. A spawn failure (command missing, no DISPLAY) shows an inline
-        message and falls through to the inline path, so the selection
-        still works.
+        on. Output is discarded — the launcher runs in its own window, and
+        a launcher that fails after exec'ing (e.g. no DISPLAY server) would
+        otherwise spray its abort message across the TUI's screen. Only an
+        ``OSError`` from Popen itself (command missing / not executable)
+        triggers the fallback: the error is shown inline and the inline
+        launch is deferred via ``set_timer`` so the message paints before
+        suspend() blanks the screen (#2686 review).
 
         Unset — current behavior: suspend the TUI, clear the primary
         screen buffer (which still shows whatever was there before the
@@ -759,7 +763,12 @@ class WorkspaceDetailScreen(Screen):
             try:
                 # Own session so the new window outlives the TUI / this
                 # command's process group.
-                subprocess.Popen([*term_cmd, *cmd], start_new_session=True)
+                subprocess.Popen(
+                    [*term_cmd, *cmd],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
                 return None
             except OSError as exc:
                 self._msg(
@@ -767,6 +776,16 @@ class WorkspaceDetailScreen(Screen):
                     " opening in this terminal instead.",
                     error=True,
                 )
+                # Defer one refresh cycle so the message above renders
+                # before suspend() takes over the screen.
+                self.call_after_refresh(lambda: self._launch_shell_inline(cmd))
+                return None
+        return self._launch_shell_inline(cmd)
+
+    def _launch_shell_inline(
+        self, cmd: list[str]
+    ) -> subprocess.CompletedProcess:
+        """Suspend the TUI and run the shell argv in this terminal."""
         with self.app.suspend():
             sys.stdout.write("\033[2J\033[H")
             sys.stdout.flush()

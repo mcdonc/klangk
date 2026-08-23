@@ -266,6 +266,23 @@ class TestCLIConfig:
         assert cfgmod._parse_terminal_open_cmd(
             'alacritty -T "klangk shell" -e'
         ) == ["alacritty", "-T", "klangk shell", "-e"]
+        # An unbalanced quote raises ValueError out of shlex.split — it
+        # must degrade to None (one yaml typo must not crash every CLI
+        # command that loads the config, #2686 review).
+        assert cfgmod._parse_terminal_open_cmd('konsole "-e') is None
+
+    def test_terminal_open_cmd_envvar_unbalanced_quote_no_crash(
+        self, tmp_path, monkeypatch
+    ):
+        """A typo'd envvar must not raise from get_terminal_open_cmd — the
+        TUI calls it inside a message handler, where an exception is a
+        crash screen (#2686 review)."""
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_text("forward-agent: true\n")
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "konsole '-e")
+        cfg = CLIConfig.load()
+        assert cfg.get_terminal_open_cmd() is None
 
     def test_terminal_open_cmd_envvar_wins(self, tmp_path, monkeypatch):
         config_path = tmp_path / "klangk.yaml"

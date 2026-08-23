@@ -102,17 +102,31 @@ def default_server_uds_path() -> str:
     return os.path.join(state_dir, _SOCKET_NAME)
 
 
+def _split_terminal_cmd(text: str) -> list[str] | None:
+    """shlex-split a terminal command string, ignoring syntax errors.
+
+    An unbalanced quote raises ``ValueError`` out of ``shlex.split`` — a
+    one-character typo in klangk.yaml / the envvar must not crash every
+    CLI command that loads the config (or the TUI mid-message-handler),
+    so the value degrades to None (inline shell) instead (#2686 review).
+    """
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return None
+
+
 def _parse_terminal_open_cmd(value) -> list[str] | None:
     """Normalize a ``terminal-open-cmd`` yaml value to an argv list.
 
     Accepts a shell string (``"konsole --hold -e"``, split with shlex) or
-    a list of strings (``[konsole, --hold, -e]``). Empty and wrong-typed
-    values are ignored (None) so a bad edit degrades to the inline shell
-    instead of crashing the TUI (#2685).
+    a list of strings (``[konsole, --hold, -e]``). Empty, wrong-typed, and
+    unparseable values are ignored (None) so a bad edit degrades to the
+    inline shell instead of crashing the CLI/TUI (#2685).
     """
     if isinstance(value, str):
         value = value.strip()
-        return shlex.split(value) if value else None
+        return _split_terminal_cmd(value) if value else None
     if isinstance(value, list) and all(isinstance(v, str) for v in value):
         return list(value) if value else None
     return None
@@ -200,7 +214,7 @@ class CLIConfig:
         """
         env = os.environ.get(TERMINAL_OPEN_CMD_ENV, "").strip()
         if env:
-            return shlex.split(env)
+            return _split_terminal_cmd(env)
         return self.terminal_open_cmd
 
 
