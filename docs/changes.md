@@ -1190,15 +1190,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
-- **Concurrent consent-popup shells no longer share one tmux session (#2692).**
-  The consent-popup wrapper named its outer/hidden sessions after the
-  workspace, so a second `klangk shell` into the same workspace (e.g. a
-  terminal opened from the TUI while another was still open) failed its
-  `new-session` and silently attached to the first shell's session —
-  showing the first shell's terminal regardless of which one was
-  selected. Sessions now carry a per-invocation suffix; the wrapper also
-  no longer prints best-effort tmux cleanup failures into the terminal
-  after the shell exits.
+- **Concurrent shells on one interactive-egress workspace now land on their
+  selected terminal (#2692).** Selecting a terminal (e.g. from the TUI with
+  `terminal-open-cmd`) while another consent-popup shell on the same
+  workspace was still open attached to the first shell's terminal instead.
+  Abandoned shells also no longer accumulate sessions and popups after the
+  terminal window is closed or the client is killed.
 - **Idempotent `POST /auth/logout` (#2687).** Logout now returns 200 even
   when the presented token is already expired, revoked, or absent — the
   token being dead is logout's desired end state, not an auth failure.

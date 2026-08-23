@@ -6,8 +6,11 @@ command sequence (with the tmux runner / attach injected as recorders).
 
 from __future__ import annotations
 
+import re
 import shlex
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 from klangk.cli import shell_popup as sp
@@ -121,12 +124,12 @@ class TestNaming:
         attach to) the first shell's sessions (#2692)."""
         a = sp.popup_session_names("wsid")
         b = sp.popup_session_names("wsid")
-        assert a[0].startswith("klangk-shell-wsid-")
-        assert a[1].startswith("klangk-consent-wsid-")
+        assert re.match(r"klangk-shell-wsid-p\d+-[0-9a-f]+$", a[0])
+        assert re.match(r"klangk-consent-wsid-p\d+-[0-9a-f]+$", a[1])
         # Unique across invocations...
         assert a != b
         # ...and the pair shares one suffix (wrapper + decider agree).
-        assert a[0].rsplit("-", 1)[-1] == a[1].rsplit("-", 1)[-1]
+        assert a[0].rsplit("-", 2)[-2:] == a[1].rsplit("-", 2)[-2:]
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +365,7 @@ class TestRunConsentShell:
         """Drive run_consent_shell with recording run/attach stubs."""
         ran: list[list[str]] = []
 
-        def fake_run(argv):
+        def fake_run(argv, quiet=False):
             ran.append(argv)
             return 0
 
@@ -385,8 +388,8 @@ class TestRunConsentShell:
         # recover them from the actual new-session commands.
         outer = ran[0][ran[0].index("-s") + 1]
         hidden = ran[4][ran[4].index("-s") + 1]
-        assert outer.startswith("klangk-shell-wsid-")
-        assert hidden.startswith("klangk-consent-wsid-")
+        assert re.match(r"klangk-shell-wsid-p\d+-[0-9a-f]+$", outer)
+        assert re.match(r"klangk-consent-wsid-p\d+-[0-9a-f]+$", hidden)
         # 1 outer + 3 outer-config + 1 hidden + 1 hidden-config + 1 binding
         # + 1 attach + 2 kills = 10
         assert len(ran) == 10
@@ -429,7 +432,7 @@ class TestRunConsentShell:
         wrapper must target the same sessions (#2692)."""
         ran = []
 
-        def fake_run(argv):
+        def fake_run(argv, quiet=False):
             ran.append(argv)
             return 0
 
@@ -437,7 +440,10 @@ class TestRunConsentShell:
             ran.append(argv)
             return 0
 
-        names = ("klangk-shell-wsid-decafbad", "klangk-consent-wsid-decafbad")
+        names = (
+            "klangk-shell-wsid-p1234-decafbad",
+            "klangk-consent-wsid-p1234-decafbad",
+        )
         sp.run_consent_shell(
             workspace_id="wsid",
             inner_argv=["x"],
@@ -453,7 +459,7 @@ class TestRunConsentShell:
         assert ran[9] == sp.kill_session_cmd(socket, names[0])
 
     def test_returns_attach_exit_code(self):
-        def fake_run(argv):
+        def fake_run(argv, quiet=False):
             return 0
 
         def fake_attach(argv):
@@ -472,7 +478,7 @@ class TestRunConsentShell:
         # A failing run (nonzero rc) must not skip cleanup.
         ran: list[list[str]] = []
 
-        def fake_run(argv):
+        def fake_run(argv, quiet=False):
             ran.append(argv)
             return 1  # simulate a failing tmux command
 
@@ -498,7 +504,7 @@ class TestRunConsentShell:
     def test_custom_popup_and_term_size(self):
         ran: list[list[str]] = []
 
-        def fake_run(argv):
+        def fake_run(argv, quiet=False):
             ran.append(argv)
             return 0
 
@@ -526,10 +532,135 @@ class TestRunConsentShell:
         # popup command (the reopen binding) uses the popup size
         assert "-w 50 -h 10" in ran[6][5]
 
+    # ---------------------------------------------------------------------------
+    # real-subprocess helpers (the orchestrator's defaults)
+    # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# real-subprocess helpers (the orchestrator's defaults)
-# ---------------------------------------------------------------------------
+    def test_cleanup_runs_when_attach_raises(self):
+        """An exception out of attach (e.g. KeyboardInterrupt) must still
+        reap this invocation's sessions — per-invocation names are never
+        reused, so a leak accumulates (#2693 review)."""
+        ran = []
+
+        def fake_run(argv, quiet=False):
+            ran.append((argv, quiet))
+            return 0
+
+        def boom(argv):
+            raise KeyboardInterrupt()
+
+        with pytest.raises(KeyboardInterrupt):
+            sp.run_consent_shell(
+                workspace_id="wsid",
+                inner_argv=["x"],
+                decider_argv=["y"],
+                run=fake_run,
+                attach=boom,
+            )
+        socket = sp.socket_path("wsid")
+        hidden = ran[4][0][ran[4][0].index("-s") + 1]
+        outer = ran[0][0][ran[0][0].index("-s") + 1]
+        assert ran[-2][0] == sp.kill_session_cmd(socket, hidden)
+        assert ran[-1][0] == sp.kill_session_cmd(socket, outer)
+        # cleanup kills are quiet
+        assert ran[-2][1] is True and ran[-1][1] is True
+
+    def test_setup_failures_log_at_warning_cleanup_at_debug(self, caplog):
+        """Setup-step failures stay at warning (a failed outer new-session
+        is the #2692 failure class — it must be visible); cleanup kills
+        are quiet (#2693 review)."""
+        import subprocess as sub
+
+        proc = sub.CompletedProcess(["tmux"], 1, stderr=b"boom")
+        with patch("klangk.cli.shell_popup.subprocess.run", return_value=proc):
+            with caplog.at_level("WARNING", logger="klangk.cli.shell_popup"):
+                assert sp._default_run(["tmux", "-S", "s", "new-session"]) == 1
+                assert (
+                    sp._default_run(
+                        ["tmux", "-S", "s", "kill-session"], quiet=True
+                    )
+                    == 1
+                )
+        warns = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warns) == 1  # only the setup command
+        assert "new-session" in warns[0].getMessage()
+
+    def test_sweep_dead_sessions_reaps_orphans_only(self):
+        """Sessions whose embedded wrapper pid is dead are reaped; a live
+        wrapper's session and pid-less (foreign) sessions are left alone
+        (#2693 review)."""
+        import subprocess as sub
+
+        dead_pid, live_pid, other_pid = 999998, 4242, 31337
+        listing = (
+            f"klangk-shell-wsid-p{dead_pid}-abc123\n"
+            f"klangk-shell-wsid-p{live_pid}-def456\n"
+            f"klangk-shell-wsid-p{other_pid}-7890ab\n"
+            "klangk-shell-wsid-noPid-ffffff\n"
+            "other-session\n"
+        )
+        proc = sub.CompletedProcess(["tmux"], 0, stdout=listing)
+        killed = []
+
+        def fake_run(argv, quiet=False):
+            killed.append(" ".join(argv))
+            return 0
+
+        def alive(path):
+            # only live_pid is alive; every other pid (incl. this process)
+            # counts as dead so exactly two sessions are reaped
+            return path == f"/proc/{live_pid}"
+
+        with patch("klangk.cli.shell_popup.subprocess.run", return_value=proc):
+            n = sp.sweep_dead_sessions("wsid", run=fake_run, alive=alive)
+
+        assert n == 2  # dead_pid + other_pid
+        joined = " | ".join(killed)
+        assert f"p{dead_pid}" in joined
+        assert f"p{other_pid}" in joined
+        assert f"p{live_pid}" not in joined
+        assert "noPid" not in joined  # no pid marker — foreign/legacy, skipped
+        assert "other-session" not in joined
+
+    def test_sweep_dead_sessions_handles_missing_server_and_errors(self):
+        """No tmux server on the socket (rc!=0), and a failure to even run
+        tmux — both are a no-op sweep, never a raise (#2693 review)."""
+        import subprocess as sub
+
+        proc = sub.CompletedProcess(["tmux"], 1, stdout="")
+        with patch("klangk.cli.shell_popup.subprocess.run", return_value=proc):
+            assert sp.sweep_dead_sessions("wsid") == 0
+        with patch(
+            "klangk.cli.shell_popup.subprocess.run", side_effect=OSError("x")
+        ):
+            assert sp.sweep_dead_sessions("wsid") == 0
+
+    def test_cleanup_on_signal_runs_cleanup_on_sighup(self):
+        """SIGHUP inside the block runs cleanup then kills the process —
+        the window-close path must not strand the sessions (#2693
+        review). Driven by invoking the installed handler directly."""
+        import signal
+
+        calls = []
+        installed = {}
+
+        def record(sig, handler):
+            installed[sig] = handler
+
+        with (
+            patch("klangk.cli.shell_popup.signal.signal", side_effect=record),
+            patch(
+                "klangk.cli.shell_popup.os.kill",
+                side_effect=lambda *a: calls.append(("kill", a)),
+            ),
+        ):
+            with sp._cleanup_on_signal(lambda: calls.append("cleanup")):
+                handler = installed.get(signal.SIGHUP)
+                assert callable(handler)
+                handler(signal.SIGHUP, None)
+        assert calls[0] == "cleanup"
+        assert calls[1][0] == "kill"
+        assert calls[1][1][1] == signal.SIGHUP
 
 
 class TestDefaultHelpers:
@@ -700,8 +831,8 @@ class TestShellWiring:
             captured["decider_argv"].index("--popup-session") + 1
         ]
         assert decider_session == names[1]
-        assert names[0].startswith("klangk-shell-wsid-")
-        assert names[1].startswith("klangk-consent-wsid-")
+        assert re.match(r"klangk-shell-wsid-p\d+-[0-9a-f]+$", names[0])
+        assert re.match(r"klangk-consent-wsid-p\d+-[0-9a-f]+$", names[1])
 
     def test_run_consent_popup_prints_disconnect_line(self, capsys):
         """After the attach returns the user sees a clean exit line, so
