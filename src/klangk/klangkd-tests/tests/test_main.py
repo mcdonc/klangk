@@ -897,6 +897,13 @@ class TestLifespan:
 
         app.state.auth = auth_mod.Auth(app)
         app.state.lifecycle = app_state.state.lifecycle
+        # #2661: stub the host scheduler so the lifespan wires + starts /
+        # stops it (guarded — minimal apps omit it; that branch is the
+        # getattr default above).
+        scheduler_stub = types.SimpleNamespace(
+            start=MagicMock(), stop=AsyncMock()
+        )
+        app.state.host_scheduler = scheduler_stub
         registry = app_state.state.container_registry
         with (
             patch.object(
@@ -926,6 +933,8 @@ class TestLifespan:
                 mock_write.assert_called_once()
                 mock_adopt.assert_awaited_once()
                 mock_start.assert_called_once()
+                scheduler_stub.start.assert_called_once()
+            scheduler_stub.stop.assert_awaited_once()
             mock_shutdown.assert_awaited_once()
             mock_remove.assert_called_once()
         # A clean startup leaves no config-error flag for the launcher (#2666).

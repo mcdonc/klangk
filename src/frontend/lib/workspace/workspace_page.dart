@@ -20,6 +20,7 @@ import 'workspace_file_api.dart';
 import 'restart_flow.dart';
 import 'workspace_overlays.dart';
 import 'consent_banner.dart';
+import 'host_schedule_banner.dart';
 import 'consent_decider_service.dart';
 import 'consent_rules_panel.dart';
 import 'package:http/http.dart' as http;
@@ -509,6 +510,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         children: [
           if (_egressMode == 'interactive' && _consent != null)
             ConsentBanner(service: _consent!),
+          const HostScheduleBanner(),
           Expanded(
             child: Stack(
               children: [

@@ -1083,6 +1083,16 @@ class KlangkSettings(BaseSettings):
     # on the very restart that re-reads it; the shutdown path reads it
     # from the live settings.
     quiesce_timeout: float = 15.0
+    # Scheduled host shutdown/restart (#2661): the shell commands the
+    # scheduler runs when a scheduled action fires, AFTER workspaces are
+    # drained gracefully and clients are notified. Empty (the default)
+    # means "dry run" — the schedule fires, everything is torn down and
+    # announced, but no OS-level command is issued (klangkd typically
+    # lacks the privileges to power off its host; the deployer wires
+    # e.g. ``sudo systemctl poweroff`` here via a polkit rule or sudoers
+    # entry). Reloadable on SIGHUP.
+    host_shutdown_command: str = ""
+    host_restart_command: str = ""
     # FIPS mode (#2570, #2591, #2628): when enabled, every workspace
     # container must prove an actively-enforcing OpenSSL FIPS provider
     # at start (fail closed — the container is removed and the start

@@ -22,6 +22,7 @@ from . import (
     emailsvc,
     files,
     fips as fips_mod,
+    host_schedule,
     inactivity,
     model,
     caddy as caddy_mod,
@@ -1059,6 +1060,13 @@ async def lifespan(app: FastAPI):
     # analogue) — stops idle workspaces before the kernel OOM killer picks a
     # random victim (possibly klangkd itself).
     app.state.memory_evictor.start()
+    # #2661: scheduled host shutdown/restart loop — fires persisted
+    # schedules (surviving this daemon's restarts) and keeps every
+    # client informed with the pending-schedule snapshot. Guarded: some
+    # minimal test apps wire the lifespan without build_app's full state.
+    host_scheduler = getattr(app.state, "host_scheduler", None)
+    if host_scheduler is not None:
+        host_scheduler.start()
     # Start the proxy (only when bound to a UDS — klangkd; no-op for TCP tests).
     # Rendered + owned by Python (#1396); replaces scripts/nginx.sh.
     await app.state.proxy_watchdog.start()
@@ -1078,6 +1086,9 @@ async def lifespan(app: FastAPI):
     finally:
         loop.remove_signal_handler(signal.SIGHUP)
         await app.state.consent_sweeper.stop()
+        host_scheduler = getattr(app.state, "host_scheduler", None)
+        if host_scheduler is not None:
+            await host_scheduler.stop()
         await app.state.inactivity_sweeper.stop()
         await app.state.memory_evictor.stop()
         await app.state.consent_coordinator.stop()
@@ -1336,6 +1347,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # workspaces (sibling loop to the registry's IdleMonitor). Reads its
     # thresholds live off settings (SIGHUP-reloadable) via self.app.
     app.state.memory_evictor = container.eviction.MemoryPressureEvictor(app)
+    # #2661: scheduled host shutdown/restart — persists schedules in the
+    # DB (surviving daemon restarts), broadcasts the pending snapshot to
+    # all clients, and fires due actions (drain workspaces, then the
+    # configured KLANGKD_HOST_*_COMMAND).
+    app.state.host_scheduler = host_schedule.HostScheduler(app)
     app.state.consent_coordinator = consent.ConsentCoordinator(app)
     app.state.consent_deciders = consent.ConsentDeciderRegistry(app)
     # #2339: live network-sidecar sockets by workspace, so a revoke can push a

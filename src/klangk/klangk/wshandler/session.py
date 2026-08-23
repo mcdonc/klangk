@@ -937,6 +937,25 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
+    def broadcast_to_all(self, message: dict) -> None:
+        """Broadcast *message* to every authenticated connection.
+
+        Generic fan-out counterpart to the typed ``notify_host_*``
+        methods, used by the host scheduler (#2661) for
+        ``host_schedule`` / ``host_schedule_fired`` frames. Dead sockets
+        are dropped (dispatch.py owns cleanup on disconnect).
+        """
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append(sock)
+        for sock in dead:
+            self.connections.pop(sock, None)
+
     def notify_host_shutdown(self) -> None:
         """Broadcast host-shutdown to all connections (#2527).
 

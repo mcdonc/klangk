@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from .acl import ACLModel
 from .chat import ChatModel
 from .egress_consent import EgressConsentModel
+from .host_schedules import HostSchedulesModel
 from .ports import PortsModel
 from .sessions import SessionsModel
 from .tokens import TokensModel
@@ -52,6 +53,7 @@ class Model:
         self.workspaces = WorkspacesModel(app)
         self.chat = ChatModel(app)
         self.egress_consent = EgressConsentModel(app)
+        self.host_schedules = HostSchedulesModel(app)
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -66,6 +68,7 @@ class Model:
             self.workspaces,
             self.chat,
             self.egress_consent,
+            self.host_schedules,
         ):
             sub.reconfigure(app)
 

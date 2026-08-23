@@ -86,6 +86,34 @@ def _is_unreachable(exc: BaseException) -> bool:
     return isinstance(exc, (httpx.TransportError, OSError))
 
 
+def _host_schedule_line(schedule: dict) -> str:
+    """Status-line text for the next pending host action (#2661).
+
+    Shows fire time (local) plus a coarse remaining duration, e.g.
+    ``host: shutdown at 23:00 (in 1h 12m)``.
+    """
+    action = str(schedule.get("action") or "action")
+    raw = str(schedule.get("fire_at") or "")
+    try:
+        fire_at = datetime.datetime.fromisoformat(raw)
+    except ValueError:
+        return f"host: {action} scheduled"
+    if fire_at.tzinfo is None:
+        fire_at = fire_at.replace(
+            tzinfo=datetime.datetime.now().astimezone().tzinfo
+        )
+    fire_at = fire_at.astimezone()
+    remaining = fire_at - datetime.datetime.now().astimezone()
+    total = max(0, int(remaining.total_seconds()))
+    if total >= 3600:
+        left = f"{total // 3600}h {(total % 3600) // 60}m"
+    elif total >= 60:
+        left = f"{total // 60}m"
+    else:
+        left = f"{total}s"
+    return f"host: {action} at {fire_at:%H:%M} (in {left})"
+
+
 def _reconnect_backoff(attempt: int) -> float:
     """Backoff delay (seconds) for reconnect *attempt* (1-based).
 
@@ -1251,6 +1279,32 @@ class MainScreen(Screen):
         if etype == "host_started":
             self.app.live_extra = "server: back up"
             self._refresh_status()
+            return
+        if etype == "host_schedule":
+            # #2661: pending host shutdown/restart — show the next one as
+            # a status line with fire time + remaining. The countdown text
+            # is refreshed by the scheduler's periodic snapshot (every
+            # ~30s); precise-enough ticking without a local timer.
+            schedules = event.get("schedules") or []
+            if not schedules:
+                if self.app.live_extra and self.app.live_extra.startswith(
+                    "host:"
+                ):
+                    self.app.live_extra = ""
+                    self._refresh_status()
+                return
+            next_up = schedules[0]
+            self.app.live_extra = _host_schedule_line(next_up)
+            self._refresh_status()
+            return
+        if etype == "host_schedule_fired":
+            action = str(event.get("action") or "action")
+            self.app.live_extra = f"host: scheduled {action} firing"
+            self._refresh_status()
+            self.app.notify(
+                f"Scheduled host {action} is happening now",
+                severity="warning",
+            )
             return
         self.app.live_extra = f"live: {etype}"
         self._refresh_status()

@@ -112,6 +112,19 @@ class WsClient extends ChangeNotifier implements ChatServices {
   Stream<String> get hostNotices => _hostNoticeController.stream;
   String? _hostNotice;
 
+  // #2661: pending host shutdown/restart schedules (the `host_schedule`
+  // snapshot). Listenable + broadcast stream; the banner widget renders a
+  // live countdown locally from each schedule's `fire_at`, so the server
+  // only needs to push this on change + periodically.
+  final _hostScheduleController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
+  Stream<List<Map<String, dynamic>>> get hostSchedules =>
+      _hostScheduleController.stream;
+  List<Map<String, dynamic>>? _hostSchedules;
+
+  /// Pending host schedules, if any (`[{id, action, fire_at, ...}]`).
+  List<Map<String, dynamic>>? get hostSchedulesNow => _hostSchedules;
+
   /// The current host lifecycle notice, if any ('Server restarting…',
   /// 'Server shutting down'). Non-blocking: the UI surfaces it in a
   /// transient banner/status; auto-reconnect proceeds unaffected (#2527).
@@ -379,6 +392,21 @@ class WsClient extends ChangeNotifier implements ChatServices {
     'event': _customEventController.add,
     'host_shutdown': (json) => _onHostNotice('Server shutting down'),
     'host_started': (json) => _onHostNotice(null),
+    'host_schedule': (json) {
+      final raw = json['schedules'];
+      _hostSchedules = (raw is List)
+          ? raw
+              .whereType<Map<String, dynamic>>()
+              .map((s) => Map<String, dynamic>.from(s))
+              .toList()
+          : <Map<String, dynamic>>[];
+      _hostScheduleController.add(_hostSchedules!);
+      notifyListeners();
+    },
+    'host_schedule_fired': (json) {
+      final action = json['action'] as String? ?? 'action';
+      _onHostNotice('Scheduled host $action is running…');
+    },
     'host_restart': (json) {
       final phase = json['phase'] as String? ?? '';
       if (phase == 'restarting') {
