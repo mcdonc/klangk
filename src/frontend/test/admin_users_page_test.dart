@@ -6,7 +6,9 @@ import 'package:http/testing.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/admin/admin_users_page.dart';
+import 'package:klangk_frontend/admin/server_schedule_panel.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
+import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// A paged envelope, matching the backend `GET /admin/users` response.
@@ -99,6 +101,10 @@ http.Client _mockClient(
         200,
       );
     }
+    if (request.url.path == '/api/v1/admin/server/schedule' &&
+        request.method == 'GET') {
+      return http.Response(jsonEncode({'schedules': []}), 200);
+    }
     return handler(request);
   });
 }
@@ -118,6 +124,9 @@ void main() {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
+        // The Server tab (#2684) watches the WS client for the live
+        // `server_schedule` snapshot; unconnected is fine for these tests.
+        ChangeNotifierProvider(create: (_) => WsClient()),
       ],
       child: const MaterialApp(home: AdminUsersPage()),
     );
@@ -390,6 +399,56 @@ void main() {
       await pumpPage(tester);
 
       expect(find.textContaining('Groups:'), findsNothing);
+    });
+  });
+
+  group('AdminUsersPage server tab', () {
+    testWidgets('shows the Server tab for an admin and renders the panel',
+        (tester) async {
+      serveUsers((page, pageSize, sort, order, q) => []);
+
+      await pumpPage(tester);
+
+      expect(find.text('Server'), findsOneWidget);
+      await tester.tap(find.text('Server'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ServerSchedulePanel), findsOneWidget);
+      expect(find.text('No scheduled server actions'), findsOneWidget);
+    });
+
+    testWidgets('hides the Server tab without the admin permission',
+        (tester) async {
+      // Only /admin/users view — no /admin grant, so no Server tab.
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-user',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/admin/users': ['view'],
+              },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/admin/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpPage(tester);
+
+      expect(find.text('Server'), findsNothing);
     });
   });
 

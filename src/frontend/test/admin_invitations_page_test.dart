@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:klangk_frontend/admin/admin_users_page.dart';
 import 'package:klangk_frontend/auth/auth_service.dart';
+import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// A paged invitations envelope, matching the backend
@@ -87,6 +88,10 @@ http.Client _mockClient(
         200,
       );
     }
+    if (request.url.path == '/api/v1/admin/server/schedule' &&
+        request.method == 'GET') {
+      return http.Response(jsonEncode({'schedules': []}), 200);
+    }
     return handler(request);
   });
 }
@@ -106,6 +111,9 @@ void main() {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
+        // The Server tab (#2684) watches the WS client for the live
+        // `server_schedule` snapshot; unconnected is fine for these tests.
+        ChangeNotifierProvider(create: (_) => WsClient()),
       ],
       child: const MaterialApp(home: AdminUsersPage()),
     );

@@ -200,6 +200,32 @@ void main() {
       expect(notified, isTrue);
       client.dispose();
     });
+
+    test('disconnect clears the server_schedule snapshot (#2684)', () async {
+      final channel = _FakeWebSocketChannel();
+      final client = WsClient();
+      client.connectForTest(channel);
+      channel.serverSend({
+        'type': 'server_schedule',
+        'schedules': [
+          {
+            'id': 's1',
+            'action': 'stop',
+            'fire_at': DateTime.now()
+                .toUtc()
+                .add(const Duration(hours: 1))
+                .toIso8601String(),
+          },
+        ],
+      });
+      await Future.delayed(Duration.zero);
+      expect(client.serverSchedulesNow, hasLength(1));
+
+      client.disconnect();
+
+      expect(client.serverSchedulesNow, isNull);
+      client.dispose();
+    });
   });
 
   group('WsClient send methods (no channel)', () {

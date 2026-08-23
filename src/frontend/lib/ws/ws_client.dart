@@ -461,6 +461,11 @@ class WsClient extends ChangeNotifier implements ChatServices {
         presenceUsers = [];
         terminalWindows = [];
         sharedTerminals = [];
+        // #2661/#2684: a stale schedule snapshot must not survive the
+        // socket that delivered it — the banner hides and the admin
+        // Server tab falls back to its REST list (a live countdown that
+        // can no longer be refreshed is worse than none).
+        _serverSchedules = null;
         final code = _channel?.closeCode;
         final authFailure = code == 4001 || code == 4002;
         // Set the auth-failure flag BEFORE notifyListeners so the UI (which
@@ -488,6 +493,7 @@ class WsClient extends ChangeNotifier implements ChatServices {
         presenceUsers = [];
         terminalWindows = [];
         sharedTerminals = [];
+        _serverSchedules = null;
         final code = _channel?.closeCode;
         final authFailure = code == 4001 || code == 4002;
         if (authFailure) {
@@ -596,6 +602,7 @@ class WsClient extends ChangeNotifier implements ChatServices {
     _connected = false;
     _connecting = false;
     _currentWorkspaceId = null;
+    _serverSchedules = null;
     notifyListeners();
   }
 

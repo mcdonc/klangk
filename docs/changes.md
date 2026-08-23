@@ -92,6 +92,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Admin page → Server tab (#2684).** Admins can now schedule a server
+  stop or recycle from the Admin page: pick an action and either an
+  absolute time (date/time pickers) or a delay (`2h`, `90m`, `45s`, or a
+  bare number of minutes). Pending schedules list soonest-first with the
+  same live countdown clients see, and each can be cancelled with a
+  confirm step. The list follows the live `server_schedule` snapshot, so
+  changes made by other admins appear immediately. The API remains
+  available for scripting; see
+  [Server Scheduling](features/server-scheduling.md).
+
 - **TUI status bar on every screen (#2689).** The `server / user /
 last login` status line — including live segments such as the
   scheduled stop/recycle countdown, host notices, and reachability

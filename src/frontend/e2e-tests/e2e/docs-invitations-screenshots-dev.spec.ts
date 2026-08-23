@@ -97,10 +97,10 @@ test.describe("invitation screenshots", () => {
       clip: { x: 0, y: 56, width, height: height - 56 },
     });
 
-    // Click Invitations tab (third of four tabs)
-    // Tabs: Users | Groups | Invitations | Access Control
-    // Each tab occupies width/4 of the screen
-    const tabWidth = width / 4;
+    // Click Invitations tab (third of five tabs)
+    // Tabs: Users | Groups | Invitations | Server | Access Control
+    // Each tab occupies width/5 of the screen
+    const tabWidth = width / 5;
     const invitationsTabX = tabWidth * 2 + tabWidth / 2; // center of 3rd tab
     const tabY = 76; // tab bar Y position
     await page.mouse.click(invitationsTabX, tabY);

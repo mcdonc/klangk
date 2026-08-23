@@ -12,6 +12,7 @@ import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 import '../widgets/skeuo_tab.dart';
 import '../utils/validators.dart';
+import 'server_schedule_panel.dart';
 
 class AdminUsersPage extends StatefulWidget {
   const AdminUsersPage({super.key});
@@ -39,6 +40,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   bool _canUsers = false;
   bool _canGroups = false;
   bool _canInvitations = false;
+  bool _canServer = false;
 
   // Pending invitation count for the tab badge — updated by the
   // _InvitationsTab widget via callback.
@@ -85,6 +87,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         auth.hasPermission('/admin/groups', 'view');
     _canInvitations = auth.hasPermission('/admin', '*') ||
         auth.hasPermission('/admin/invitations', 'view');
+    // The schedule API needs the `admin` permission on /admin (ancestors
+    // included), so gate the tab on exactly that.
+    _canServer = auth.hasPermission('/admin', 'admin');
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -433,6 +438,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canUsers) types.add('users');
     if (_canGroups) types.add('groups');
     if (_canInvitations) types.add('invitations');
+    if (_canServer) types.add('server');
     if (types.isNotEmpty) types.add('acl');
     return types;
   }
@@ -487,6 +493,13 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         ),
       );
     }
+    if (_canServer) {
+      addTab(
+        label: 'Server',
+        icon: Icons.dns,
+        view: const ServerSchedulePanel(),
+      );
+    }
     if (tabTypes.isNotEmpty) {
       addTab(
         label: 'Access Control',
@@ -514,7 +527,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           tooltip: 'Add user',
           child: const Icon(Icons.person_add),
         ),
-      'invitations' || 'groups' => null, // FABs handled inside tab widgets
+      'invitations' || 'groups' || 'server' => null, // FABs inside tabs
       _ => null,
     };
   }

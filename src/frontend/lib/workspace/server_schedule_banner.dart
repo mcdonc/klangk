@@ -20,14 +20,14 @@ import 'package:provider/provider.dart';
 import '../ws/ws_client.dart';
 
 /// Parses an ISO-8601 `fire_at` into a local [DateTime]; null when absent
-/// or malformed (the banner falls back to a static line).
-DateTime? _parseFireAt(dynamic raw) {
+/// or malformed (callers fall back to a static line).
+DateTime? parseFireAt(dynamic raw) {
   if (raw is! String || raw.isEmpty) return null;
   return DateTime.tryParse(raw)?.toLocal();
 }
 
 /// "1h 12m" / "12m" / "45s" — coarse, human, stable-width-enough.
-String _remainingLabel(Duration d) {
+String remainingLabel(Duration d) {
   final s = d.inSeconds < 0 ? 0 : d.inSeconds;
   if (s >= 3600) return '${s ~/ 3600}h ${(s % 3600) ~/ 60}m';
   if (s >= 60) return '${s ~/ 60}m';
@@ -72,8 +72,8 @@ class _ServerScheduleBannerState extends State<ServerScheduleBanner> {
     // Soonest fire_at first (the server sends them ordered, but be safe).
     final parsed = <(String, DateTime)>[
       for (final s in schedules)
-        if (_parseFireAt(s['fire_at']) != null)
-          (s['action'] as String? ?? 'action', _parseFireAt(s['fire_at'])!),
+        if (parseFireAt(s['fire_at']) != null)
+          (s['action'] as String? ?? 'action', parseFireAt(s['fire_at'])!),
     ]..sort((a, b) => a.$2.compareTo(b.$2));
     if (parsed.isEmpty) {
       final action = schedules.first['action'] as String? ?? 'action';
@@ -86,7 +86,7 @@ class _ServerScheduleBannerState extends State<ServerScheduleBanner> {
     final label = remaining.isNegative
         ? 'server $action happening now'
         : 'Server $verb at ${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(fireAt))} '
-            '(in ${_remainingLabel(remaining)} — workspaces stop)';
+            '(in ${remainingLabel(remaining)} — workspaces stop)';
     return _row('⏻ $label');
   }
 
