@@ -7,7 +7,7 @@
 //
 // The order matters: the first guard to return non-null wins. The
 // precedence matches the original inline redirect callback:
-//   banner -> auth -> logged-in-on-public -> root.
+//   banner -> auth -> logged-in-on-public -> admin -> root.
 
 import 'auth/pending_redirect.dart';
 
@@ -105,6 +105,34 @@ String? guardLoggedInPublicRoute({
   return null;
 }
 
+/// Admin-route gate (#2669).
+///
+/// A logged-in non-admin on an `/admin`-prefixed route is bounced to
+/// `/workspaces` — the route is reachable by URL or a stale redirect even
+/// though the app-bar admin icon is gated, and its page is a dead end
+/// ("No admin sections available") for them.
+///
+/// Fires only for *logged-in* users: a logged-out visitor must keep the
+/// `guardAuth` flow (stash + `/login`), and `guardLoggedInPublicRoute`
+/// already rejects `/admin`-prefixed stashes for non-admins on login
+/// (#2670), so the two checks meet in the middle.
+///
+/// Loop safety: the target `/workspaces` is not `/admin`-prefixed and no
+/// guard redirects away from it for a logged-in user, so this can never
+/// re-enter itself; the guard is pure w.r.t. its inputs, so repeated
+/// evaluations of the same committed location (GoRouter re-parses on
+/// every refreshListenable notification) all agree.
+String? guardAdminRoute({
+  required bool isLoggedIn,
+  required bool isAdmin,
+  required String loc,
+}) {
+  if (isLoggedIn && !isAdmin && loc.startsWith('/admin')) {
+    return '/workspaces';
+  }
+  return null;
+}
+
 /// Root shortcut: a logged-in user at `/` goes to `/workspaces`.
 ///
 /// Returns the redirect target, or null to allow.
@@ -151,6 +179,11 @@ String? evaluateGuards({
         publicRoutes: publicRoutes,
         featurePaths: featurePaths,
         isAdmin: isAdmin,
+      ) ??
+      guardAdminRoute(
+        isLoggedIn: isLoggedIn,
+        isAdmin: isAdmin,
+        loc: loc,
       ) ??
       guardRoot(isLoggedIn: isLoggedIn, loc: loc);
 }

@@ -59,7 +59,7 @@ void main() {
   // All HTTP the app issues during this flow: config (login page +
   // AuthService), login, and my-permissions. No token exp claim -> no
   // refresh timer for the test to fight with.
-  String installMocks() {
+  String installMocks({Map<String, List<String>> permissions = const {}}) {
     final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
     testConfigHttpClientOverride = MockClient((request) async {
       return http.Response(
@@ -83,7 +83,7 @@ void main() {
           jsonEncode({
             'user_id': 'u1',
             'email': 'user@example.com',
-            'permissions': <String, List<String>>{},
+            'permissions': permissions,
             'groups': <Map<String, dynamic>>[],
           }),
           200,
@@ -134,6 +134,11 @@ void main() {
             body:
                 Center(child: Text('workspace-${state.pathParameters['id']}')),
           ),
+        ),
+        GoRoute(
+          path: '/admin/users',
+          builder: (context, state) =>
+              const Scaffold(body: Center(child: Text('admin-users'))),
         ),
       ],
     );
@@ -197,5 +202,72 @@ void main() {
       '/workspaces',
     );
     expect(find.text('workspaces-list'), findsOneWidget);
+  });
+
+  // Restored-session tests for the admin-route guard (#2669). KlangkApp
+  // builds its router only after auth initializes, so the guard's first
+  // evaluation of the initial location sees the *real* session state.
+  // Mirror that here: let the persisted token restore (permissions fetch
+  // included) settle before mounting the router at /admin/users.
+  Future<AuthService> restoreSession(
+      WidgetTester tester, Map<String, List<String>> permissions) async {
+    final token = makeJwt({'sub': 'user-1', 'email': 'user@example.com'});
+    // ignore: invalid_use_of_visible_for_testing
+    SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+    installMocks(permissions: permissions);
+    final auth = AuthService();
+    // A quiet host widget: pump until _loadToken (config + permissions)
+    // completes and initialized flips true.
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await tester.pumpAndSettle();
+    expect(auth.initialized, isTrue);
+    return auth;
+  }
+
+  testWidgets(
+      'restored non-admin session at /admin/users lands on /workspaces, '
+      'no redirect loop (#2669)', (tester) async {
+    final auth = await restoreSession(tester, const {});
+    expect(auth.isAdmin, isFalse);
+
+    final router = buildRouter(auth, '/admin/users');
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: auth,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The dead-end admin page must not be showing.
+    expect(find.text('admin-users'), findsNothing);
+    expect(
+      router.routerDelegate.currentConfiguration.uri.toString(),
+      '/workspaces',
+    );
+    expect(find.text('workspaces-list'), findsOneWidget);
+  });
+
+  testWidgets('restored admin session at /admin/users stays put (#2669)',
+      (tester) async {
+    final auth = await restoreSession(tester, const {
+      '/admin': ['*'],
+    });
+    expect(auth.isAdmin, isTrue);
+
+    final router = buildRouter(auth, '/admin/users');
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: auth,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      router.routerDelegate.currentConfiguration.uri.toString(),
+      '/admin/users',
+    );
+    expect(find.text('admin-users'), findsOneWidget);
   });
 }
