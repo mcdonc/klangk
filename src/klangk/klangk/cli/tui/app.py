@@ -17,6 +17,7 @@ from .screens import (
     ServerDownScreen,
     ServerSwitchScreen,
     SessionExpiredScreen,
+    StatusScreen,
     WorkspaceDetailScreen,
 )
 from .state import TuiState
@@ -197,7 +198,14 @@ class KlangkApp(App):
     def __init__(self, state: TuiState) -> None:
         super().__init__()
         self.tui_state = state
+        # App-level StatusBar state (#2689): ``live_extra`` carries the
+        # live segment (host notices, the #2661 schedule countdown,
+        # reachability flags) written by the MainScreen's status WS
+        # handler; ``last_login`` is the formatted stamp fetched once by
+        # MainScreen's last-login worker. Both live here — not on any one
+        # screen — so every StatusScreen renders the same status row.
         self.live_extra = ""
+        self.last_login: str | None = None
         self._expiring = False
         # App-wide server-down overlay (#2012). ``_server_down_screen`` is the
         # shown modal (None when hidden); ``_server_down_dismissed`` is set when
@@ -236,14 +244,40 @@ class KlangkApp(App):
         elif isinstance(screen, MainScreen):
             self.title = "Klangk: Workspaces"
 
+    def _sync_chrome(self) -> None:
+        """After any navigation: mirror the active screen in the window
+        title (#1778) and refresh every StatusBar (#2689).
+
+        Textual fires no re-mount on pop-back, so the App owns both syncs —
+        the pattern ``_sync_title`` established. Refreshing on every
+        push/pop keeps the status line populated on the newly-shown screen
+        without per-screen refresh work.
+        """
+        self._sync_title()
+        self.refresh_status()
+
+    def refresh_status(self) -> None:
+        """Refresh the StatusBar on every mounted full-page screen (#2689).
+
+        ``live_extra`` / ``last_login`` are App-level state updated by the
+        MainScreen's status WS handler and last-login worker (MainScreen
+        stays mounted underneath every screen pushed above it). Refreshing
+        every mounted StatusScreen — rather than only the top one — keeps
+        the line live on whichever screen is current and leaves lower
+        screens fresh for pop-back.
+        """
+        for screen in self.screen_stack:
+            if isinstance(screen, StatusScreen):
+                screen.refresh_status_bar()
+
     def push_screen(self, screen, *args, **kwargs):
         result = super().push_screen(screen, *args, **kwargs)
-        self.call_after_refresh(self._sync_title)
+        self.call_after_refresh(self._sync_chrome)
         return result
 
     def pop_screen(self):
         result = super().pop_screen()
-        self.call_after_refresh(self._sync_title)
+        self.call_after_refresh(self._sync_chrome)
         return result
 
     # --- navigation hooks used by screens ---
@@ -257,6 +291,7 @@ class KlangkApp(App):
             await asyncio.to_thread(self.tui_state.logout)
             self.pop_screen()  # MainScreen
             self.live_extra = ""
+            self.last_login = None
             self.push_screen(LoginScreen())
 
         self.run_worker(_logout, exit_on_error=False)
@@ -376,6 +411,7 @@ class KlangkApp(App):
                 if self.screen_stack:
                     self._pop_above(self.screen_stack[0])
                 self.live_extra = ""
+                self.last_login = None
                 self.push_screen(LoginScreen())
             finally:
                 self._expiring = False
@@ -444,6 +480,7 @@ __all__ = [
     "LoginScreen",
     "MainScreen",
     "ServerSwitchScreen",
+    "StatusScreen",
     "TuiState",
     "run_tui",
 ]

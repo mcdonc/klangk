@@ -9,11 +9,9 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen, Screen
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
-    Footer,
-    Header,
     Input,
     Label,
     ListItem,
@@ -23,10 +21,10 @@ from textual.widgets import (
 
 from ...config import AliasConflictError
 from ...transport import is_valid_server_spec
-from ._base import ConfirmScreen, SpatialListView
+from ._base import ConfirmScreen, SpatialListView, StatusScreen
 
 
-class ServerSwitchScreen(Screen):
+class ServerSwitchScreen(StatusScreen):
     """Pick a known server alias to switch to."""
 
     BINDINGS = [
@@ -55,7 +53,11 @@ class ServerSwitchScreen(Screen):
     """
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
+        # Header / status dock (StatusBar + Footer) come from StatusScreen
+        # (#2689).
+        yield from super().compose()
+
+    def compose_body(self) -> ComposeResult:
         yield Vertical(
             Horizontal(
                 Static("Switch server", id="server_title"),
@@ -68,7 +70,6 @@ class ServerSwitchScreen(Screen):
             SpatialListView(id="server_options"),
             id="switch_box",
         )
-        yield Footer()
 
     def on_mount(self) -> None:
         self._populate()
@@ -163,13 +164,15 @@ class ServerSwitchScreen(Screen):
 
 # Retained for the login/auto-add path and pending #1763 (duplicate-alias
 # handling); intentionally not surfaced as a MainScreen action yet.
-class AddServerScreen(Screen):
+class AddServerScreen(StatusScreen):
     """Add a new server alias and switch to it."""
 
     BINDINGS = [("escape", "app.pop_screen", "Back")]
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
+        yield from super().compose()
+
+    def compose_body(self) -> ComposeResult:
         yield Vertical(
             Static("Add server", classes="title"),
             Input(placeholder="Alias (e.g. prod)", id="alias"),
@@ -181,7 +184,6 @@ class AddServerScreen(Screen):
             Static("", id="add_msg"),
             id="add_box",
         )
-        yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "add":

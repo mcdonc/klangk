@@ -14,8 +14,6 @@ from textual.screen import Screen
 from textual.widgets import (
     Button,
     Checkbox,
-    Footer,
-    Header,
     Input,
     OptionList,
     Select,
@@ -32,7 +30,12 @@ from ...mount import (
     validate_allowed_domain_spec,
     validate_mount_spec,
 )
-from ._base import ConfirmScreen, NonFocusableVerticalScroll, TabSkipMixin
+from ._base import (
+    ConfirmScreen,
+    NonFocusableVerticalScroll,
+    StatusScreen,
+    TabSkipMixin,
+)
 
 
 def _collect_settings(screen: Screen) -> dict | None:
@@ -72,7 +75,7 @@ _EGRESS_MODE_OPTIONS = [
 ]
 
 
-class CreateWorkspaceScreen(TabSkipMixin, Screen):
+class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
     """Full-screen workspace create form (parity with Flutter
     ``CreateWorkspaceDialog``).
 
@@ -176,6 +179,11 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             self._select_value = "(server default)"
 
     def compose(self) -> ComposeResult:
+        # Header / status dock (StatusBar + Footer) come from StatusScreen
+        # (#2689).
+        yield from super().compose()
+
+    def compose_body(self) -> ComposeResult:
         if self._select_value is not None:
             image_select = Select(
                 self._select_options, value=self._select_value, id="image"
@@ -184,7 +192,6 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             # No valid default to preselect — leave the picker unselected
             # (the server applies its default image if none is chosen).
             image_select = Select(self._select_options, id="image")
-        yield Header(show_clock=False)
         with NonFocusableVerticalScroll(id="create_box"):
             yield Static("New workspace", classes="title")
             yield Static("", id="create_msg")
@@ -304,7 +311,6 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
                 Button("Create", id="create", variant="primary"),
                 classes="actions",
             )
-        yield Footer()
 
     def on_mount(self) -> None:
         shown = self._allow_autostart
@@ -663,7 +669,7 @@ class CreateWorkspaceScreen(TabSkipMixin, Screen):
             self._create()
 
 
-class EditWorkspaceScreen(TabSkipMixin, Screen):
+class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
     """Full-screen workspace edit form (parity with Flutter
     ``WorkspaceSettingsPanel``).
 
@@ -783,13 +789,17 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
             self._select_value = "(none)"
 
     def compose(self) -> ComposeResult:
+        # Header / status dock (StatusBar + Footer) come from StatusScreen
+        # (#2689).
+        yield from super().compose()
+
+    def compose_body(self) -> ComposeResult:
         if self._select_value is not None:
             image_select = Select(
                 self._select_options, value=self._select_value, id="image"
             )
         else:  # pragma: no cover
             image_select = Select(self._select_options, id="image")
-        yield Header(show_clock=False)
         with NonFocusableVerticalScroll(id="edit_box"):
             yield Static(
                 Text(f"Edit workspace: {self._ws.name}"), classes="title"
@@ -947,7 +957,6 @@ class EditWorkspaceScreen(TabSkipMixin, Screen):
                 Button("Save", id="save", variant="primary"),
                 classes="actions",
             )
-        yield Footer()
 
     def on_mount(self) -> None:
         shown = self._allow_autostart

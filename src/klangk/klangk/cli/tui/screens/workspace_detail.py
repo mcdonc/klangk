@@ -18,10 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.dom import NoMatches
-from textual.screen import Screen
 from textual.widgets import (
-    Footer,
-    Header,
     Label,
     ListItem,
     ListView,
@@ -35,6 +32,7 @@ from ._base import (
     DuplicateScreen,
     InputScreen,
     SpatialListView,
+    StatusScreen,
     TransferScreen,
 )
 from .workspace_form import EditWorkspaceScreen
@@ -42,7 +40,7 @@ from .workspace_form import EditWorkspaceScreen
 logger = logging.getLogger(__name__)
 
 
-class WorkspaceDetailScreen(Screen):
+class WorkspaceDetailScreen(StatusScreen):
     """Read-only workspace detail + restart / duplicate / delete actions."""
 
     BINDINGS = [
@@ -117,7 +115,12 @@ class WorkspaceDetailScreen(Screen):
         self._render_lock = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
+        # Header / status dock (StatusBar + Footer) come from StatusScreen
+        # (#2689) — the server/user/last-login/live line stays visible
+        # while inside a workspace, including the #2661 host countdown.
+        yield from super().compose()
+
+    def compose_body(self) -> ComposeResult:
         # Spatial nav (#1781): Down off the last own-terminal row enters
         # the shared-terminal list; Up off its first row returns to the
         # own-terminal list. Tab remains a fallback.
@@ -145,7 +148,6 @@ class WorkspaceDetailScreen(Screen):
             Static("", id="detail_msg"),
             id="detail_box",
         )
-        yield Footer()
 
     def on_mount(self) -> None:
         self.run_worker(self._mount_async, exit_on_error=False)

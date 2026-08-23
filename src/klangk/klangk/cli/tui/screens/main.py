@@ -15,13 +15,10 @@ from rich.text import Text
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.dom import NoMatches
-from textual.screen import Screen
 from textual.widgets import (
     Button,
-    Footer,
-    Header,
     Input,
     Label,
     ListItem,
@@ -34,13 +31,13 @@ from textual.widgets import (
 
 from ...client import AuthError, WorkspaceNotFoundError, decode_token_claims
 from ...auth import refresh_token as _refresh_token
-from ..widgets import StatusBar
 from ..ws import listen_for_status
 from ._base import (
     CheatsheetScreen,
     ConfirmScreen,
     DuplicateScreen,
     InputScreen,
+    StatusScreen,
     TransferScreen,
     WorkspaceListView,
 )
@@ -162,7 +159,7 @@ async def run_token_refresh_loop(state) -> str:
             return "expired"
 
 
-class MainScreen(Screen):
+class MainScreen(StatusScreen):
     """The TUI home: a two-page workspace list (owned / shared) + status bar,
     with a live WS feed. Selecting a workspace opens its detail screen."""
 
@@ -188,14 +185,6 @@ class MainScreen(Screen):
         height: 1;
         color: $text-muted;
         padding: 0 1;
-    }
-    #status_dock {
-        dock: bottom;
-        height: auto;
-    }
-    #status_dock StatusBar,
-    #status_dock Footer {
-        dock: none;
     }
     #filter_bar {
         dock: bottom;
@@ -239,7 +228,20 @@ class MainScreen(Screen):
     ]
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
+        # Header + tabs + status dock (StatusBar over Footer) come from
+        # StatusScreen (#2689); the filter bar is yielded LAST so that —
+        # since docked-bottom widgets overlap rather than stack — it paints
+        # on top of the Footer row when shown. It is hidden by default and
+        # toggled by `/` (#1764).
+        yield from super().compose()
+        with Horizontal(id="filter_bar"):
+            yield Input(
+                placeholder="Filter by name… (/ to focus, Esc to clear)",
+                id="filter_input",
+            )
+            yield Button("sort: created ▼", id="sort_btn", variant="default")
+
+    def compose_body(self) -> ComposeResult:
         with TabbedContent(id="ws_tabs"):
             with TabPane("Owned by me", id="owned_pane"):
                 yield Static("", classes="ws_hints")
@@ -247,23 +249,6 @@ class MainScreen(Screen):
             with TabPane("Shared to me", id="shared_pane"):
                 yield Static("", classes="ws_hints")
                 yield WorkspaceListView(id="shared_list")
-        # StatusBar and Footer stack inside a docked container: two
-        # bottom-docked siblings fully overlap in Textual (same edge row,
-        # last-mounted paints on top), which left the StatusBar hidden
-        # under the Footer since #1875 — and with it the #2661 host
-        # countdown. The container docks once; the children flow inside.
-        with Vertical(id="status_dock"):
-            yield StatusBar(id="status")
-            yield Footer()
-        # Filter bar is yielded LAST so that — since docked-bottom widgets
-        # overlap rather than stack — it paints on top of the Footer row
-        # when shown. It is hidden by default and toggled by `/` (#1764).
-        with Horizontal(id="filter_bar"):
-            yield Input(
-                placeholder="Filter by name… (/ to focus, Esc to clear)",
-                id="filter_input",
-            )
-            yield Button("sort: created ▼", id="sort_btn", variant="default")
 
     # Sort keys matching Flutter defaults: created desc.
     SORT_KEYS = ("created", "name", "running")
@@ -307,12 +292,13 @@ class MainScreen(Screen):
         self._running_overlay: dict[str, bool] = {}
         # The user's last successful login, rendered for the status bar
         # (#2583). Fetched once on mount by ``_load_last_login`` (a
-        # blocking /auth/me hit, so it runs in a worker) and None until
-        # that returns. Re-fetched by ``reload_last_login`` after a
-        # server switch — the App reuses this screen there, so on_mount
-        # does not re-run and the old server's value would linger next
-        # to the new identity.
-        self._last_login: str | None = None
+        # blocking /auth/me hit, so it runs in a worker), stored on the
+        # App as ``app.last_login`` so every StatusScreen's bar renders
+        # it (#2689), and None until that returns. Re-fetched by
+        # ``reload_last_login`` after a server switch — the App reuses
+        # this screen there, so on_mount does not re-run and the old
+        # server's value would linger next to the new identity.
+        self.app.last_login = None
         self.query_one("#filter_bar").display = False
         self._refresh_action_hints()
         # One-time list load. There is no reachability heartbeat and no REST
@@ -347,7 +333,7 @@ class MainScreen(Screen):
         fetch for the old server is cancelled rather than racing this
         one.
         """
-        self._last_login = None
+        self.app.last_login = None
         self._refresh_status()
         if self.app.tui_state.is_authenticated():
             self.app.run_worker(
@@ -363,11 +349,14 @@ class MainScreen(Screen):
         bar (#2583).
 
         ``TuiState.last_login_at`` does a blocking ``/auth/me`` round
-        trip, so it runs on a thread.
+        trip, so it runs on a thread. The formatted stamp is stored on
+        the App (``app.last_login``) — every StatusScreen renders it
+        (#2689) — and the App-wide refresh updates whichever screen is
+        on top.
         """
         iso = await asyncio.to_thread(self.app.tui_state.last_login_at)
         if iso:
-            self._last_login = self._fmt_login_ts(iso)
+            self.app.last_login = self._fmt_login_ts(iso)
             self._refresh_status()
 
     def on_tabbed_content_tab_activated(self, event) -> None:
@@ -1164,16 +1153,15 @@ class MainScreen(Screen):
             lv.append(item)
 
     def _refresh_status(self) -> None:
-        state = self.app.tui_state
-        try:
-            self.query_one("#status", StatusBar).set_state(
-                server=state.current_url(),
-                user=state.email() or "(unknown)",
-                extra=self.app.live_extra,
-                last_login=self._last_login,
-            )
-        except NoMatches:
-            pass  # Widget not mounted yet; status will refresh on mount.
+        """Refresh the StatusBar on every mounted screen (#2689).
+
+        The status WS handler lives on this screen, which stays mounted
+        underneath everything pushed above it — but the live segments it
+        writes to ``app.live_extra`` (host notices, the #2661 countdown,
+        reachability flags) must render on whatever screen is current
+        (detail, forms, login), so delegate to the App-wide refresh.
+        """
+        self.app.refresh_status()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         # Deferred: genuine cycle (workspace_detail imports MainScreen;

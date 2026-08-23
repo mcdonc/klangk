@@ -12,8 +12,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Button,
-    Footer,
-    Header,
     Input,
     Label,
     ListItem,
@@ -24,10 +22,15 @@ from textual.widgets import (
 from ..state import LoginError
 from ...config import AliasConflictError
 from ...transport import is_valid_server_spec
-from ._base import ConfirmScreen, ServerListView, SpatialNavScreen
+from ._base import (
+    ConfirmScreen,
+    ServerListView,
+    SpatialNavScreen,
+    StatusScreen,
+)
 
 
-class LoginScreen(SpatialNavScreen):
+class LoginScreen(SpatialNavScreen, StatusScreen):
     """Credential screen that also picks the server to log into.
 
     A fresh user with no server configured can pick a known alias, select
@@ -70,7 +73,11 @@ class LoginScreen(SpatialNavScreen):
     """
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
+        # Header / status dock (StatusBar + Footer) come from StatusScreen
+        # (#2689).
+        yield from super().compose()
+
+    def compose_body(self) -> ComposeResult:
         yield Vertical(
             Horizontal(
                 Static("", id="server_line"),
@@ -97,7 +104,6 @@ class LoginScreen(SpatialNavScreen):
             Static("", id="message"),
             id="login_box",
         )
-        yield Footer()
 
     def on_mount(self) -> None:
         self._populate_servers()
@@ -242,6 +248,8 @@ class LoginScreen(SpatialNavScreen):
         self.query_one("#server_line", Static).update(
             f"Server: {state.current_url()}"
         )
+        # The StatusBar's server segment tracks the same pick (#2689).
+        self.app.refresh_status()
         self._enable_credentials()
         notice = self.query_one("#notice", Static)
         # The SSO button is only meaningful when the server offers OIDC.

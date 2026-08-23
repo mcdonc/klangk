@@ -92,6 +92,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI status bar on every screen (#2689).** The `server / user /
+last login` status line — including live segments such as the
+  scheduled stop/recycle countdown, host notices, and reachability
+  flags — now renders on every TUI screen (workspace detail, create/edit
+  forms, server switch, login), not only the workspaces list. The line
+  stays current while you work inside a workspace screen and no longer
+  disappears when navigating.
 - **`terminal-open-cmd` / `KLANGKC_TERMINAL_OPEN_CMD` (#2685).** New CLI
   setting (klangk.yaml or envvar) that names the command used to open a
   new terminal window, e.g. `konsole -e`. When set, selecting a

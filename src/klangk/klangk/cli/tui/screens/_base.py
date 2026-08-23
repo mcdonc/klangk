@@ -14,6 +14,8 @@ from textual.dom import NoMatches
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
+    Footer,
+    Header,
     Input,
     ListItem,
     ListView,
@@ -21,6 +23,8 @@ from textual.widgets import (
     Static,
     Tabs,
 )
+
+from ..widgets import StatusBar
 
 
 _ScreenResult = TypeVar("_ScreenResult")
@@ -142,6 +146,66 @@ class ConfirmScreen(ButtonRowModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "yes")
+
+
+class StatusScreen(Screen):
+    """Full-page screen with the shared status-row chrome (#2689).
+
+    Composes ``Header`` + :meth:`compose_body` + a bottom ``#status_dock``
+    holding the ``StatusBar`` (``#status``) directly above the ``Footer`` —
+    the chrome ``MainScreen`` always had — so the ``server / user / last
+    login / live extra`` line is constant across navigation instead of
+    disappearing the moment you drill into a workspace.
+
+    The bar renders App-level state (``app.live_extra``, ``app.last_login``)
+    via :meth:`refresh_status_bar`. Freshness is driven from the App:
+    ``KlangkApp.refresh_status`` re-renders every mounted ``StatusScreen``
+    after each push/pop (the ``_sync_chrome`` pattern — screens don't re-run
+    on pop-back) and whenever a status WS event updates ``live_extra`` on
+    the MainScreen underneath. Subclasses only implement
+    :meth:`compose_body`; an ``on_show`` override needs no ``super()``
+    chaining because the base defines none.
+    """
+
+    DEFAULT_CSS = """
+    #status_dock {
+        dock: bottom;
+        height: auto;
+    }
+    /* StatusBar and Footer stack inside the docked container: two
+    bottom-docked siblings fully overlap in Textual (same edge row,
+    last-mounted paints on top), which left the StatusBar hidden under
+    the Footer since #1875 — and with it the #2661 host countdown. The
+    container docks once; the children flow inside. */
+    #status_dock StatusBar,
+    #status_dock Footer {
+        dock: none;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=False)
+        yield from self.compose_body()
+        with Vertical(id="status_dock"):
+            yield StatusBar(id="status")
+            yield Footer()
+
+    def compose_body(self) -> ComposeResult:
+        """The screen's content between the Header and the status dock."""
+        yield from ()
+
+    def refresh_status_bar(self) -> None:
+        """Render App-level status state into this screen's ``#status``."""
+        try:
+            self.query_one("#status", StatusBar).set_state(
+                server=self.app.tui_state.current_url(),
+                # None email (login screen) renders as "(not logged in)".
+                user=self.app.tui_state.email(),
+                extra=self.app.live_extra,
+                last_login=self.app.last_login,
+            )
+        except NoMatches:
+            pass  # Widget not mounted yet; refreshed on next nav/mount.
 
 
 class ServerDownScreen(ModalScreen[None]):
