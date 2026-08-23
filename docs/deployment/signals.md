@@ -156,6 +156,38 @@ SIGHUP can be sent several times in quick succession. A second signal
 arriving mid-restart queues behind the first via an `asyncio.Lock`, so
 restarts never race — they run strictly one after another.
 
+## Scheduled shutdown / restart (#2661)
+
+The signal paths above act **on receipt**. For a planned action, an
+admin can schedule a host shutdown or restart ahead of time
+(`POST /api/v1/admin/host/schedule` — see
+[Host Scheduling](../features/host-scheduling.md)). Schedules persist
+in the DB across `klangkd` restarts, and every connected client sees a
+live countdown (web UI banner, TUI status line) from the moment the
+schedule is created.
+
+When the schedule fires, the teardown mirrors the SIGTERM/SIGINT path:
+
+1. The schedule row is deleted first — a crash mid-fire cannot re-fire
+   it on the next boot.
+2. Clients are notified (`host_schedule_fired`) and new starts are
+   refused.
+3. **Quiesce** — wait up to `KLANGKD_QUIESCE_TIMEOUT` seconds for
+   in-flight HTTP requests, then drain every workspace through the
+   same graceful path (terminal stop frames + `container_stopped` with
+   reason `host shutdown` / `host restart`).
+4. `KLANGKD_HOST_SHUTDOWN_COMMAND` / `KLANGKD_HOST_RESTART_COMMAND`
+   runs. Both are **empty by default — a dry run**: the notification
+   and teardown still happen, but `klangkd` does not itself exit or
+   power off the host; a privileged command (e.g.
+   `sudo systemctl poweroff`) must be wired in to take the host down.
+   Both settings are reloadable on SIGHUP.
+
+A signal can arrive mid-fire (e.g. someone runs `systemctl stop` while
+a schedule is draining): both paths then run concurrently — each
+stops whatever workspaces are still running, and a teardown failure in
+either is logged and never blocks the other.
+
 ## Exit statuses
 
 `klangkd`'s exit status tells a supervisor _why_ the process left — in

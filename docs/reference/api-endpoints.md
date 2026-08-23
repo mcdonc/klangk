@@ -42,6 +42,24 @@ No request body.
 
 ---
 
+### DELETE `/api/v1/admin/host/schedule/{schedule_id}`
+
+Cancel a pending host shutdown/restart schedule (#2661). All connected clients' countdowns update immediately.
+
+**Auth:** JWT required. User must have `admin` permission on `/`.
+
+No request body.
+
+```json
+{ "cancelled": "uuid" }
+```
+
+`404` if no pending schedule has that id (already fired or cancelled).
+
+See [Host Scheduling](../features/host-scheduling.md).
+
+---
+
 ### DELETE `/api/v1/admin/invitations/{id}`
 
 Revoke a pending invitation.
@@ -232,6 +250,32 @@ No request body.
 ```json
 [{ "id": "uuid", "email": "user@example.com", "handle": "user" }]
 ```
+
+---
+
+### GET `/api/v1/admin/host/schedule`
+
+List pending host shutdown/restart schedules (#2661). Rows exist only while pending — fired or cancelled schedules are deleted.
+
+**Auth:** JWT required. User must have `admin` permission on `/`.
+
+No request body.
+
+```json
+{
+  "schedules": [
+    {
+      "id": "uuid",
+      "action": "restart",
+      "fire_at": "2026-08-24T21:00:00+00:00",
+      "created_by": "uuid",
+      "created_at": "2026-08-24T18:12:00+00:00"
+    }
+  ]
+}
+```
+
+See [Host Scheduling](../features/host-scheduling.md).
 
 ---
 
@@ -849,6 +893,34 @@ Add a user to a group (admin).
 ```json
 { "status": "added" }
 ```
+
+---
+
+### POST `/api/v1/admin/host/schedule`
+
+Schedule a host shutdown or restart for a future time (#2661). Provide `at` (absolute ISO-8601; a naive timestamp is interpreted as UTC) or `in_seconds` (positive relative delay; ignored when `at` is given); `action` is `shutdown` or `restart`. The schedule persists in the DB across `klangkd` restarts; when it fires, workspaces are drained gracefully and the configured `KLANGKD_HOST_SHUTDOWN_COMMAND` / `KLANGKD_HOST_RESTART_COMMAND` runs (empty = dry run). Every connected client sees a live countdown.
+
+**Auth:** JWT required. User must have `admin` permission on `/`.
+
+```json
+{ "action": "restart", "at": "2026-08-24T23:00:00+02:00" }
+```
+
+Returns the created schedule:
+
+```json
+{
+  "id": "uuid",
+  "action": "restart",
+  "fire_at": "2026-08-24T21:00:00+00:00",
+  "created_by": "uuid",
+  "created_at": "2026-08-24T18:12:00+00:00"
+}
+```
+
+`422` if `action` is invalid, `at` does not parse as ISO-8601, `in_seconds` is not a positive number, or neither `at` nor `in_seconds` is provided.
+
+See [Host Scheduling](../features/host-scheduling.md).
 
 ---
 
