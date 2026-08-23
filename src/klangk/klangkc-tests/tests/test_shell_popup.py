@@ -191,6 +191,27 @@ class TestBuilders:
                 "mouse",
                 "off",
             ],
+            # Clipboard forwarding (#2694): re-emit the inner shell's OSC 52
+            # (clipboard set) to the real terminal, and claim the clipboard
+            # feature for every TERM (stock terminfo lacks Ms).
+            [
+                "tmux",
+                "-S",
+                "/tmp/s.sock",
+                "set-option",
+                "-g",
+                "set-clipboard",
+                "external",
+            ],
+            [
+                "tmux",
+                "-S",
+                "/tmp/s.sock",
+                "set-option",
+                "-ga",
+                "terminal-features",
+                ",*:clipboard",
+            ],
         ]
 
     def test_configure_hidden_session(self):
@@ -384,15 +405,18 @@ class TestRunConsentShell:
         )
         assert rc == 0
         socket = sp.socket_path("wsid")
+        # stale-session reap first (#2694): best-effort kills of both
+        # names so an aborted previous run can't wedge every later run.
         # run_consent_shell generates per-invocation names (#2692) —
         # recover them from the actual new-session commands.
-        outer = ran[0][ran[0].index("-s") + 1]
-        hidden = ran[4][ran[4].index("-s") + 1]
+        outer = ran[2][ran[2].index("-s") + 1]
+        hidden = ran[8][ran[8].index("-s") + 1]
         assert re.match(r"klangk-shell-wsid-p\d+-[0-9a-f]+$", outer)
         assert re.match(r"klangk-consent-wsid-p\d+-[0-9a-f]+$", hidden)
-        # 1 outer + 3 outer-config + 1 hidden + 1 hidden-config + 1 binding
-        # + 1 attach + 2 kills = 10
-        assert len(ran) == 10
+        # 2 reaps + 1 outer + 5 outer-config (incl. 2 clipboard opts,
+        # #2694) + 1 hidden + 1 hidden-config + 1 binding + 1 attach
+        # + 2 kills = 14
+        assert len(ran) == 14
         # outer session created with the inner argv, then configured
         assert (
             ran[0]
@@ -407,24 +431,32 @@ class TestRunConsentShell:
         )  # size may differ; check the session
         assert ran[0][1:4] == ["-S", socket, "new-session"]
         assert ran[0][4] == "-d"
-        # configure: prefix/status/mouse
-        assert ran[1:4] == sp.configure_outer_session(socket, outer)
+        assert (
+            ran[0] == sp.kill_session_cmd(socket, outer)
+            or ran[0][1:4] == ["-S", socket, "kill-session"]
+        )
+        # configure: prefix/status/mouse + clipboard forwarding (#2694)
+        outer_cmds = sp.configure_outer_session(socket, outer)
+        assert ran[3 : 3 + len(outer_cmds)] == outer_cmds
         # hidden session
-        assert ran[4][1:4] == ["-S", socket, "new-session"]
+        assert ran[8][1:4] == ["-S", socket, "new-session"]
+        next_i = 8
         # hidden session status bar hidden (popup shows only the decider)
-        assert ran[5:6] == sp.configure_hidden_session(socket, hidden)
+        assert ran[next_i + 1 : next_i + 2] == sp.configure_hidden_session(
+            socket, hidden
+        )
         # the reopen binding (no auto-show hook)
-        assert ran[6:7] == sp.popup_binding_cmds(
+        assert ran[next_i + 2 : next_i + 3] == sp.popup_binding_cmds(
             socket,
             hidden,
             w=sp.DEFAULT_POPUP_SIZE[0],
             h=sp.DEFAULT_POPUP_SIZE[1],
         )
         # attach to outer
-        assert ran[7] == sp.attach_cmd(socket, outer)
+        assert ran[next_i + 3] == sp.attach_cmd(socket, outer)
         # cleanup: kill hidden then outer
-        assert ran[8] == sp.kill_session_cmd(socket, hidden)
-        assert ran[9] == sp.kill_session_cmd(socket, outer)
+        assert ran[next_i + 4] == sp.kill_session_cmd(socket, hidden)
+        assert ran[next_i + 5] == sp.kill_session_cmd(socket, outer)
 
     def test_session_names_pair_is_shared_with_decider(self):
         """When session_names is passed, the wrapper uses exactly that pair
@@ -525,12 +557,13 @@ class TestRunConsentShell:
         # outer session sized to the terminal
         assert outer_cmd[outer_cmd.index("-x") + 1] == "100"
         assert outer_cmd[outer_cmd.index("-y") + 1] == "30"
-        hidden_cmd = ran[4]
+        # ran[1:6] = the 5 outer-config commands (see the builder test)
+        hidden_cmd = ran[6]
         # hidden session sized to the popup
         assert hidden_cmd[hidden_cmd.index("-x") + 1] == "50"
         assert hidden_cmd[hidden_cmd.index("-y") + 1] == "10"
         # popup command (the reopen binding) uses the popup size
-        assert "-w 50 -h 10" in ran[6][5]
+        assert "-w 50 -h 10" in ran[8][5]
 
     # ---------------------------------------------------------------------------
     # real-subprocess helpers (the orchestrator's defaults)

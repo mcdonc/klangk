@@ -249,11 +249,24 @@ def configure_outer_session(socket: str, session: str) -> list[list[str]]:
       familiar status bar (with its ``+``) shows.
     - ``mouse off``: the outer does not intercept mouse events, so raw mouse
       sequences pass through to the inner container tmux (its ``+`` etc.).
+    - ``set-clipboard external`` + the ``clipboard`` terminal feature: the
+      inner shell writes OSC 52 (clipboard set) into its pane when a
+      selection is made in the container tmux (#2694); the outer re-emits it
+      to the real terminal. Stock terminfo often lacks the Ms capability, so
+      the feature claims clipboard support for every TERM — terminals that
+      can't do OSC 52 just ignore the sequence. ``external`` (also the
+      default) keeps pane apps from creating tmux paste buffers; it is set
+      explicitly to survive a user's ``~/.tmux.conf`` loading ``off`` on this
+      socket's server.
     """
     return [
         _tmux(socket, "set-option", "-t", session, "prefix", OUTER_PREFIX),
         _tmux(socket, "set-option", "-t", session, "status", "off"),
         _tmux(socket, "set-option", "-t", session, "mouse", "off"),
+        _tmux(socket, "set-option", "-g", "set-clipboard", "external"),
+        _tmux(
+            socket, "set-option", "-ga", "terminal-features", ",*:clipboard"
+        ),
     ]
 
 

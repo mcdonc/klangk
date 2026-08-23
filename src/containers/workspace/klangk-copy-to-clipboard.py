@@ -8,9 +8,16 @@ Two strategies, tried in order:
 
 1. **Bridge** (web frontend): POST clipboard_write to the browser-delegate
    bridge endpoint, which tells the Flutter app to call Clipboard.setData.
-2. **OSC 52** (klangk shell / any terminal): emit the OSC 52 escape
-   sequence so the outer terminal emulator copies to the system clipboard.
-   Supported by iTerm2, Windows Terminal, kitty, alacritty, foot, etc.
+2. **OSC 52** (fallback, any terminal): emit the OSC 52 escape sequence so
+   the outer terminal emulator copies to the system clipboard. Supported
+   by iTerm2, Windows Terminal, kitty, alacritty, foot, etc.
+
+Note for ``klangk shell`` (CLI): this script runs as tmux's copy-command and
+has NO controlling terminal, so the OSC 52 write below is a no-op there.
+The container tmux (set-clipboard on + the Ms terminal override in
+/etc/tmux.conf) emits OSC 52 to the attached client itself, which carries
+it over the WebSocket to the user's terminal (#2694). The fallback still
+matters when the script is run manually with a real tty.
 """
 
 import base64

@@ -1196,6 +1196,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   workspace was still open attached to the first shell's terminal instead.
   Abandoned shells also no longer accumulate sessions and popups after the
   terminal window is closed or the client is killed.
+- **`klangk shell` selections copy to the local clipboard again (#2694).**
+  The container tmux now runs with `set-clipboard on` plus an `Ms`
+  terminal override, so a copy-mode selection emits OSC 52 to the attached
+  client and reaches your terminal's clipboard through the WebSocket —
+  including shells in external terminals
+  (`KLANGKC_TERMINAL_OPEN_CMD`) and inside the consent-popup wrapper,
+  whose local tmux now re-emits OSC 52. Previously the escape was written
+  by a helper with no controlling terminal and silently went nowhere.
+  Requires a workspace image rebuild; workspaces started from an older
+  image keep the old behavior until their container is recreated.
 - **Idempotent `POST /auth/logout` (#2687).** Logout now returns 200 even
   when the presented token is already expired, revoked, or absent — the
   token being dead is logout's desired end state, not an auth failure.
