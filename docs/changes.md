@@ -1197,7 +1197,6 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
-<<<<<<< HEAD
 - **No stale `live: …` segment in the TUI status bar after a server
   stop/recycle (#2690).** Routine broadcasts (`container_status`,
   `workspaces_changed`, `terminals_changed`, `service_health`) no
@@ -1213,7 +1212,6 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   countdown burned. The show now runs on a worker thread; a request held
   while the decider was reconnecting also surfaces promptly on the
   reconnect snapshot.
->>>>>>> 914f3666 (fix(cli): render consent popup row off the blocked event loop (#2699))
 - **Concurrent shells on one interactive-egress workspace now land on their
   selected terminal (#2692).** Selecting a terminal (e.g. from the TUI with
   `terminal-open-cmd`) while another consent-popup shell on the same
