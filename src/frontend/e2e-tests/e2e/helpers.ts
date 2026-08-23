@@ -113,11 +113,15 @@ export async function registerUser(
 }
 
 /** Type email + password into the Flutter login form and click Login.
- *  Returns once the response is received (does not wait for Workspaces). */
-export async function loginViaUI(page: Page, email: string, password: string) {
-  await page.goto("/");
-  await waitForFlutter(page);
-
+ *  Use when the app is already showing the login form and a page load
+ *  must be avoided — e.g. the pendingRedirect tests (#2670), whose
+ *  in-memory stash would not survive a reload. Does not wait for
+ *  Workspaces; callers assert on the outcome. */
+export async function loginOnCurrentPage(
+  page: Page,
+  email: string,
+  password: string,
+) {
   const { width, height } = vp(page);
   const cx = width / 2;
   const f = fv(page);
@@ -133,6 +137,15 @@ export async function loginViaUI(page: Page, email: string, password: string) {
   await page.keyboard.type(password);
 
   await f.click({ position: { x: cx, y: height * 0.64 }, force: true });
+}
+
+/** Load the app fresh, log in via the Flutter login form, and wait for
+ *  the Workspaces page. */
+export async function loginViaUI(page: Page, email: string, password: string) {
+  await page.goto("/");
+  await waitForFlutter(page);
+  await loginOnCurrentPage(page, email, password);
+
   await expect(page).toHaveTitle(/Workspaces/i, { timeout: 10_000 });
 }
 

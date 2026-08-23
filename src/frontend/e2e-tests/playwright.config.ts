@@ -81,6 +81,7 @@ export default defineConfig({
       name: "chromium",
       testMatch: [
         "klangk.spec.ts",
+        "pending-redirect.spec.ts",
         "terminal-keymap.spec.ts",
         "per-user-home.spec.ts",
         "terminal-tabs.spec.ts",
