@@ -110,13 +110,17 @@ command to run after `-e` / `--`):
 # kitty
 # terminal-open-cmd: kitty
 
-# konsole (--hold keeps the window open after the shell exits so error
-# messages stay readable)
-terminal-open-cmd: konsole --hold -e
+# konsole — the window closes on its own when the shell disconnects
+terminal-open-cmd: konsole -e
 
 # wezterm
 terminal-open-cmd: wezterm cli spawn --
 ```
+
+Add `--hold` (konsole) or your terminal's equivalent **only** when you
+want the window to remain open after the shell exits — e.g. to read
+connect errors or final output. Without it the window closes itself,
+which is usually what you want.
 
 A list form is also accepted (no shell quoting to worry about):
 
@@ -132,7 +136,7 @@ The environment variable `KLANGKC_TERMINAL_OPEN_CMD` overrides the file
 value (same syntax as the string form):
 
 ```bash
-export KLANGKC_TERMINAL_OPEN_CMD="konsole --hold -e"
+export KLANGKC_TERMINAL_OPEN_CMD="konsole -e"
 ```
 
 If the configured command cannot be executed (not installed, not
@@ -151,10 +155,10 @@ press **Enter**, then **~**, then **.** (period). Typing `exit` or
 **Ctrl+D** only ends the inner shell; klangk respawns it. After the
 escape the CLI prints `Disconnected from <workspace>.` (a following
 `[exited]` line is tmux confirming the outer session ended — not an
-error). The terminal window itself then closes unless your configured
-command holds it open: with `konsole --hold -e` the window stays so you
-can read the final messages — close it with the window's normal close
-button; without `--hold` it closes on its own.
+error). The terminal window then closes on its own. If you configured a
+holding variant (e.g. `konsole --hold -e`) because you want the window
+to remain open — say, to read final messages — close it with the
+window's normal close button when you're done.
 
 ### klangk-state.yaml
 

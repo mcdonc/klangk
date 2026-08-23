@@ -94,11 +94,13 @@ operators or integrators to act when upgrading.
 
 - **`terminal-open-cmd` / `KLANGKC_TERMINAL_OPEN_CMD` (#2685).** New CLI
   setting (klangk.yaml or envvar) that names the command used to open a
-  new terminal window, e.g. `konsole --hold -e`. When set, selecting a
+  new terminal window, e.g. `konsole -e`. When set, selecting a
   terminal in the TUI spawns `klangk shell` in a new terminal window
   instead of suspending the TUI and taking over the current terminal;
-  the TUI stays running. If the command can't be launched, the TUI shows
-  an error and falls back to the previous inline behavior. See
+  the TUI stays running, and the window closes on its own when the shell
+  disconnects (a holding flag like `--hold` keeps it open if wanted). If
+  the command can't be launched, the TUI shows an error and falls back
+  to the previous inline behavior. See
   [CLI reference](reference/cli.md).
 - **Clearer shell exit (#2685).** `klangk shell` now says how to exit
   ("Exit this shell: press Enter, then ~.") and prints
