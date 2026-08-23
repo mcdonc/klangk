@@ -1190,6 +1190,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Concurrent shells on one interactive-egress workspace now land on their
+  selected terminal (#2692).** Selecting a terminal (e.g. from the TUI with
+  `terminal-open-cmd`) while another consent-popup shell on the same
+  workspace was still open attached to the first shell's terminal instead.
+  Abandoned shells also no longer accumulate sessions and popups after the
+  terminal window is closed or the client is killed.
 - **Idempotent `POST /auth/logout` (#2687).** Logout now returns 200 even
   when the presented token is already expired, revoked, or absent — the
   token being dead is logout's desired end state, not an auth failure.

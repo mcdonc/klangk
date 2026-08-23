@@ -38,10 +38,14 @@ from __future__ import annotations
 import logging
 import os
 import re
+import signal
+from collections.abc import Callable
+from contextlib import contextmanager
 import shlex
 import shutil
 import subprocess
 import tempfile
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +136,72 @@ def outer_session_name(workspace_id: str) -> str:
 
 def hidden_session_name(workspace_id: str) -> str:
     return f"klangk-consent-{_sanitize(workspace_id)}"
+
+
+def popup_session_names(workspace_id: str) -> tuple[str, str]:
+    """Per-invocation (outer, hidden) session names for the russian-doll.
+
+    The names embed the wrapper pid + a random suffix so each
+    ``klangk shell`` invocation gets its OWN outer + hidden pair on the
+    shared per-workspace socket. Deterministic per-workspace names made a
+    second concurrent shell into the same workspace fail its
+    ``new-session`` (duplicate session) and silently attach to the FIRST
+    shell's session — showing that shell's window regardless of the
+    terminal the user selected (#2692). The caller must use one call's
+    result for BOTH the decider argv and ``run_consent_shell`` so the
+    names stay paired. The pid lets :func:`sweep_dead_sessions` reap
+    sessions whose wrapper died without cleanup (SIGKILL; SIGHUP and
+    exceptions are handled in ``run_consent_shell``) — per-invocation
+    names are never reused, so orphans would otherwise accumulate
+    (#2693 review).
+    """
+    suffix = f"p{os.getpid()}-{uuid.uuid4().hex[:6]}"
+    return (
+        f"{outer_session_name(workspace_id)}-{suffix}",
+        f"{hidden_session_name(workspace_id)}-{suffix}",
+    )
+
+
+def sweep_dead_sessions(
+    workspace_id: str, run=None, alive=os.path.exists
+) -> int:
+    """Kill wrapper sessions whose owning process is dead. Returns count.
+
+    Session names embed the wrapper pid (``...-p<pid>-<rand>``). A session
+    whose ``/proc/<pid>`` is absent was left by a SIGKILLed wrapper (every
+    softer death path runs cleanup in ``run_consent_shell``) and is safe
+    to reap — it can never be reattached, and the hidden decider inside
+    it would keep its consent WebSocket reconnecting forever. Called at
+    wrapper startup, BEFORE this invocation's own sessions exist, so a
+    live wrapper's sessions are never at risk. No pid in the name (old
+    sessions, foreign sessions) → left alone. Best-effort: never raises.
+    """
+    socket = socket_path(workspace_id)
+    runner = run or _default_run
+    try:
+        proc = subprocess.run(
+            _tmux(socket, "list-sessions", "-F", "#{session_name}"),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if proc.returncode != 0:
+        # No server running on the socket — nothing to sweep.
+        return 0
+    reaped = 0
+    for name in proc.stdout.splitlines():
+        m = re.search(r"-p(\d+)-[0-9a-f]+$", name)
+        if not m:
+            continue
+        pid = int(m.group(1))
+        if pid == os.getpid() or alive(f"/proc/{pid}"):
+            continue
+        runner(kill_session_cmd(socket, name), quiet=True)
+        reaped += 1
+    return reaped
 
 
 # ---------------------------------------------------------------------------
@@ -340,15 +410,18 @@ def should_use_popup(
 # ---------------------------------------------------------------------------
 
 
-def _default_run(argv: list[str]) -> int:
+def _default_run(argv: list[str], quiet: bool = False) -> int:
     """Run a tmux control command, logging failures (never raising).
 
-    Output is captured, never shown: several of these commands run as
-    best-effort cleanup after the shell exits (kill-session on a server
-    that already terminated when the last session died), and tmux's
-    "no server running on <sock>" stderr there read like a crash instead
-    of a clean disconnect (#2685 follow-up). A non-zero exit code (with
-    captured stderr) goes to the log instead of the terminal.
+    Output is captured, never shown: post-exit cleanup commands
+    (kill-session on a server that already terminated when its last
+    session died) would spray tmux's ``no server running on <sock>``
+    stderr into the terminal, reading like a crash instead of a clean
+    disconnect (#2685 follow-up). Cleanup callers pass ``quiet=True`` —
+    their failures are expected and logged at debug (the CLI configures
+    no logging, so debug is effectively silent). Setup-step failures stay
+    at warning: they are real failures the user must be able to see (a
+    failed outer ``new-session`` is exactly the #2692 failure class).
     """
     try:
         proc = subprocess.run(
@@ -360,7 +433,8 @@ def _default_run(argv: list[str]) -> int:
         )
         return 1
     if proc.returncode != 0:
-        logger.warning(
+        log = logger.debug if quiet else logger.warning
+        log(
             "consent-popup tmux command failed (rc=%d): %s %s",
             proc.returncode,
             argv,
@@ -383,6 +457,7 @@ def run_consent_shell(
     term_size: tuple[int, int] | None = None,
     run=_default_run,
     attach=_default_attach,
+    session_names: tuple[str, str] | None = None,
 ) -> int:
     """Bring up the consent-popup russian-doll and attach the user to it.
 
@@ -391,14 +466,28 @@ def run_consent_shell(
     does not re-wrap). *decider_argv* is the ``klangk consent-decide``
     invocation in its persistent popup role. Returns the attach's exit code.
 
+    *session_names* is the per-invocation ``(outer, hidden)`` pair from
+    :func:`popup_session_names`; when omitted it is generated here. Callers
+    that build the decider argv from the hidden session name MUST pass the
+    same pair so the decider and the wrapper agree (#2692).
+
     On any setup failure the outer session may not exist; cleanup is
     best-effort and never raises.
     """
     socket = socket_path(workspace_id)
-    outer = outer_session_name(workspace_id)
-    hidden = hidden_session_name(workspace_id)
+    # Reap sessions left by wrappers that died without cleanup (SIGKILL);
+    # runs before this invocation's own sessions exist (#2693 review).
+    sweep_dead_sessions(workspace_id)
+    outer, hidden = session_names or popup_session_names(workspace_id)
     cols, rows = term_size or _term_size()
     pw, ph = popup_size
+
+    def cleanup() -> None:
+        # Best-effort reap of this invocation's sessions. quiet=True: the
+        # tmux server may already be gone (it exits with its last session),
+        # and post-exit failure noise read like a crash (#2685 follow-up).
+        run(kill_session_cmd(socket, hidden), quiet=True)
+        run(kill_session_cmd(socket, outer), quiet=True)
 
     # 1. outer session running the inner (normal) shell.
     run(new_detached_session(socket, outer, inner_argv, x=cols, y=rows))
@@ -416,11 +505,21 @@ def run_consent_shell(
     #    startup when there's nothing to decide).
     for cmd in popup_binding_cmds(socket, hidden, w=pw, h=ph):
         run(cmd)
-    # 5. attach the user's terminal to the outer session (blocks).
-    rc = attach(attach_cmd(socket, outer))
-    # 6. cleanup: reap the hidden decider session (and a lingering outer).
-    run(kill_session_cmd(socket, hidden))
-    run(kill_session_cmd(socket, outer))
+    # 5. attach the user's terminal to the outer session (blocks). Cleanup
+    #    runs even when the attach dies abnormally — the terminal window
+    #    being closed delivers SIGHUP mid-attach, and an unhandled
+    #    KeyboardInterrupt/OSError must not strand the detached sessions
+    #    (per-invocation names are never reused, so leaks accumulate, #2693
+    #    review).
+    with _cleanup_on_signal(cleanup):
+        try:
+            rc = attach(attach_cmd(socket, outer))
+        except BaseException:
+            cleanup()
+            raise
+    # 6. cleanup (normal path): reap the hidden decider session (and a
+    #    lingering outer).
+    cleanup()
     return rc
 
 
@@ -430,6 +529,34 @@ def _term_size() -> tuple[int, int]:
         return size.columns, size.lines
     except OSError:
         return 80, 24
+
+
+@contextmanager
+def _cleanup_on_signal(cleanup: Callable[[], None]):
+    """Run *cleanup* if SIGHUP arrives inside the block.
+
+    The wrapper's attach blocks in ``tmux attach``; closing the terminal
+    window delivers SIGHUP to the process group. tmux dies with it, but the
+    *detached* outer/hidden sessions survive — and with per-invocation names
+    they are never reused, so each window-close would strand a tmux server,
+    two sessions, and the decider's consent WebSocket forever (#2693
+    review). The handler reaps them, then re-raises the default SIGHUP
+    behavior (process death) so the exit status stays truthful.
+    """
+    prev = signal.getsignal(signal.SIGHUP)
+
+    def on_hup(signum, frame):
+        try:
+            cleanup()
+        finally:
+            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+            os.kill(os.getpid(), signal.SIGHUP)
+
+    try:
+        signal.signal(signal.SIGHUP, on_hup)
+        yield
+    finally:
+        signal.signal(signal.SIGHUP, prev)
 
 
 # Re-exported for the shell command to build the inner/decider invocations.
@@ -453,9 +580,11 @@ __all__ = [
     "outer_session_name",
     "parse_tmux_version",
     "popup_binding_cmds",
+    "popup_session_names",
     "popup_viewer_shell_string",
     "run_consent_shell",
     "should_use_popup",
+    "sweep_dead_sessions",
     "show_popup_argv",
     "socket_path",
     "tmux_usable",
