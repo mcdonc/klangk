@@ -27,8 +27,23 @@ on receipt.
 
 ## Scheduling an action
 
-There is no dedicated admin UI (#2684); schedules are managed through
-the API (see [API Reference](../reference/api-endpoints.md) —
+Schedules are managed from the Admin page (**Admin → Server**, #2684) —
+the tab is visible to users with the `admin` permission. Pick the
+action (**Stop** or **Recycle**) and when it should fire:
+
+- **After a delay** — a human delay like `2h`, `90m`, `45s`, or `2h 30m`
+  (a bare number means minutes).
+- **At a time** — date and time pickers; the time is your local time.
+
+The form shows when the action will fire and surfaces the API's
+validation errors inline. Pending schedules are listed soonest-first
+with the same live countdown clients see, and each row has a cancel
+button (with a confirm step). The list follows the live
+`server_schedule` snapshot, so a schedule created or cancelled from
+another session (or via the API) appears and disappears immediately.
+
+For scripting, the same operations are available through the API (see
+[API Reference](../reference/api-endpoints.md) —
 `/api/v1/admin/server/schedule`):
 
 ```bash
