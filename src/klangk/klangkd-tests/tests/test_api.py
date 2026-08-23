@@ -964,8 +964,47 @@ class TestAuthRoutes:
         mock_stop.assert_not_called()
 
     async def test_logout_no_auth(self, client):
+        # Idempotent (#2687): no token presented means nothing to revoke,
+        # which is the desired end state — not an auth failure.
         resp = await client.post("/api/v1/auth/logout")
-        assert resp.status_code == 401
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    async def test_logout_idempotent_revoked_token(self, client, user):
+        """Second logout with the already-blocklisted token: still 200
+        (#2687). A strict auth dependency 401s here, which taught clients
+        to treat logout as failing."""
+        headers = await _auth_headers(client)
+        resp = await client.post("/api/v1/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        resp = await client.post("/api/v1/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    async def test_logout_expired_token(self, client, user, app_state):
+        """Logout with an expired token: 200, not 401 (#2687). The token
+        is dead either way; logout reports success."""
+        import datetime as dt
+        import uuid
+
+        from jose import jwt as pyjwt
+
+        from _helpers import make_settings
+
+        settings = make_settings({})
+        payload = {
+            "sub": "00000000-0000-0000-0000-000000000001",
+            "email": "testuser@example.com",
+            "jti": str(uuid.uuid4()),
+            "exp": dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1),
+        }
+        token = pyjwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+        resp = await client.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
 
     async def test_refresh(self, client, user):
         headers = await _auth_headers(client)

@@ -484,17 +484,22 @@ class AuthService extends ChangeNotifier {
   /// a redirect, or null for local-only logout.
   Future<String?> logout() async {
     String? oidcLogoutUrl;
-    try {
-      final resp = await _client.post(
-        Uri.parse('$_baseUrl/api/v1/auth/logout'),
-        headers: _authHeaders,
-      );
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        oidcLogoutUrl = data['oidc_logout_url'] as String?;
+    // Skip the server call when there is no token left to revoke (#2687):
+    // WS auth failures (4001/4002) call logout() repeatedly, and a
+    // tokenless POST would only add noise to the access log.
+    if (_token != null) {
+      try {
+        final resp = await _client.post(
+          Uri.parse('$_baseUrl/api/v1/auth/logout'),
+          headers: _authHeaders,
+        );
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body);
+          oidcLogoutUrl = data['oidc_logout_url'] as String?;
+        }
+      } catch (e) {
+        debugPrint('[AuthService] logout request failed: $e');
       }
-    } catch (e) {
-      debugPrint('[AuthService] logout request failed: $e');
     }
     await _clearToken();
     return oidcLogoutUrl;
