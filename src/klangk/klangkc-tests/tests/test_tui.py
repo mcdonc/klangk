@@ -6431,6 +6431,181 @@ async def test_detail_terminal_select_spawns_shell(monkeypatch):
         assert "Connecting to alpha" not in captured[0]
 
 
+async def test_detail_terminal_select_external_terminal(monkeypatch):
+    """With terminal-open-cmd configured, the shell spawns in a new
+    terminal window via Popen (argv appended after the configured command)
+    and the TUI is not suspended (#2685)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "konsole --hold -e")
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    st.current_url = lambda: "https://x.example"
+
+    class FakeProc:
+        returncode = 0
+
+    popped = []
+
+    def fake_popen(argv, **k):
+        popped.append((argv, k))
+        return FakeProc()
+
+    monkeypatch.setattr(scr_detail.subprocess, "Popen", fake_popen)
+    ran = []
+    monkeypatch.setattr(
+        scr_detail.subprocess,
+        "run",
+        lambda cmd, **k: (
+            ran.append(cmd) or scr_detail.subprocess.CompletedProcess(cmd, 0)
+        ),
+    )
+
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        app.screen.on_list_view_selected(FakeSelected("0"))
+        # Spawned via Popen with the configured terminal command prefixed,
+        # in its own session so the window outlives the TUI, and with
+        # launcher output discarded so a post-exec failure can't trash
+        # the TUI's screen (#2686 review).
+        assert len(popped) == 1
+        argv, kwargs = popped[0]
+        assert argv[:3] == ["konsole", "--hold", "-e"]
+        assert argv[3:] == [
+            scr_detail.sys.executable,
+            "-m",
+            "klangk.cli.main",
+            "--server",
+            "https://x.example",
+            "shell",
+            "alpha",
+            "@0",
+        ]
+        assert kwargs.get("start_new_session") is True
+        assert kwargs.get("stdout") == scr_detail.subprocess.DEVNULL
+        assert kwargs.get("stderr") == scr_detail.subprocess.DEVNULL
+        # Not run inline — the TUI stays up, no suspend.
+        assert ran == []
+
+
+async def test_detail_terminal_select_external_failure_falls_back(
+    monkeypatch,
+):
+    """A broken terminal-open-cmd (command missing) shows an inline error
+    and falls back to the inline suspend-and-run path (#2685)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "no-such-terminal -e")
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_terminals=_async_terms)
+    st.find_workspace = lambda n: a
+    st.current_url = lambda: "https://x.example"
+
+    def boom(argv, **k):
+        raise FileNotFoundError("no-such-terminal not found")
+
+    monkeypatch.setattr(scr_detail.subprocess, "Popen", boom)
+    spawned = []
+    monkeypatch.setattr(
+        scr_detail.subprocess,
+        "run",
+        lambda cmd, **k: (
+            spawned.append(cmd)
+            or scr_detail.subprocess.CompletedProcess(cmd, 0)
+        ),
+    )
+
+    import io
+    import sys
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_suspend():
+        saved = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            yield
+        finally:
+            sys.stdout = saved
+
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.screen._load_terminals()
+        await pilot.pause()
+        monkeypatch.setattr(app, "suspend", fake_suspend)
+        app.screen.on_list_view_selected(FakeSelected("0"))
+        # The inline fallback is deferred (call_after_refresh) so the error message
+        # paints before suspend() blanks the screen — not launched yet.
+        assert spawned == []
+        msg = str(
+            app.screen.query_one("#detail_msg", scr_detail.Static).render()
+        )
+        assert "terminal-open-cmd failed" in msg
+        # Let the timer fire, then the deferred inline launch runs.
+        await pilot.pause()
+        await pilot.pause()
+        assert len(spawned) == 1
+        assert spawned[0][-3:] == ["shell", "alpha", "@0"]
+
+
+async def test_detail_shared_terminal_select_external_terminal(monkeypatch):
+    """Shared-terminal joins honor terminal-open-cmd too (#2685)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "konsole --hold -e")
+    a = _wsobj("alpha", running=True)
+    st = _ws(list_shared_terminals=_async_shared)
+    st.find_workspace = lambda n: a
+    st.current_url = lambda: "https://x.example"
+
+    class FakeProc:
+        returncode = 0
+
+    popped = []
+
+    def fake_popen(argv, **k):
+        popped.append(argv)
+        return FakeProc()
+
+    monkeypatch.setattr(scr_detail.subprocess, "Popen", fake_popen)
+    ran = []
+    monkeypatch.setattr(
+        scr_detail.subprocess,
+        "run",
+        lambda cmd, **k: (
+            ran.append(cmd) or scr_detail.subprocess.CompletedProcess(cmd, 0)
+        ),
+    )
+
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app.screen.on_list_view_selected(
+            FakeSelected("alice:build", control_id="shared_term_list")
+        )
+        assert len(popped) == 1
+        assert popped[0][-3:] == ["shell", "alpha", "alice:build"]
+        assert popped[0][:3] == ["konsole", "--hold", "-e"]
+        assert ran == []
+
+
 async def test_detail_terminal_select_refuses_when_id_unresolvable(
     monkeypatch,
 ):

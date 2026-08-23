@@ -126,11 +126,14 @@ def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
     )
     context._err.print(
         f"[dim]A consent popup appears when an egress request is held; "
-        f"{OUTER_PREFIX} {REOPEN_KEY} reopens  ·  q/Q hides[/dim]"
+        f"{OUTER_PREFIX} {REOPEN_KEY} reopens  ·  q/Q hides  ·  "
+        f"Enter, then ~. exits[/dim]"
     )
-    return run_consent_shell(
+    rc = run_consent_shell(
         workspace_id=ws.id, inner_argv=inner, decider_argv=decider
     )
+    context._err.print(f"Disconnected from [bold]{ws.name}[/bold].")
+    return rc
 
 
 @context.app.command()
@@ -203,7 +206,9 @@ def shell(
             ws = workspaces[idx]
 
     context._err.print(f"Connecting to [bold]{ws.name}[/bold]...")
-    context._err.print("[dim]Escape: Enter, then ~.[/dim]")
+    context._err.print(
+        "[dim]Exit this shell: press Enter, then ~. (like ssh).[/dim]"
+    )
     forward_agent = resolve_forward_agent(
         forward_agent,
         config_default=context._cfg().get_forward_agent(context.server_url())
@@ -226,6 +231,7 @@ def shell(
                 max_size=context.ws_max_size(),
             )
         )
+        context._err.print(f"Disconnected from [bold]{ws.name}[/bold].")
     except websockets.InvalidStatus as e:
         reset_terminal()
         drain_stdin()

@@ -85,14 +85,80 @@ freely after the initial creation.
 
 #### Settings
 
-| Setting         | Scope            | Default  | Description                                       |
-| --------------- | ---------------- | -------- | ------------------------------------------------- |
-| `forward-agent` | global or server | `true`   | Forward local SSH agent into containers           |
-| `ws-max-size`   | global or server | 16777216 | Maximum WebSocket message size in bytes           |
-| `user`          | server only      |          | Default user (email or handle) for `klangk login` |
-| `url`           | server only      |          | Server URL (required for each server entry)       |
+| Setting             | Scope            | Default  | Description                                       |
+| ------------------- | ---------------- | -------- | ------------------------------------------------- |
+| `forward-agent`     | global or server | `true`   | Forward local SSH agent into containers           |
+| `ws-max-size`       | global or server | 16777216 | Maximum WebSocket message size in bytes           |
+| `user`              | server only      |          | Default user (email or handle) for `klangk login` |
+| `url`               | server only      |          | Server URL (required for each server entry)       |
+| `terminal-open-cmd` | global           |          | Open TUI shell launches in a new terminal window  |
 
 Per-server settings override global settings. CLI flags override both.
+
+#### Opening shells in a new terminal (`terminal-open-cmd`)
+
+By default, selecting a terminal in the TUI suspends the TUI and runs
+`klangk shell` in the same terminal. With `terminal-open-cmd` set, each
+selection instead spawns `klangk shell` in a **new terminal window** via
+the configured command, and the TUI stays running (#2685).
+
+The value is the command that opens a terminal; the `klangk shell`
+invocation is appended as trailing arguments (most terminals take the
+command to run after `-e` / `--`):
+
+```yaml
+# kitty
+# terminal-open-cmd: kitty
+
+# konsole — the window closes on its own when the shell disconnects
+terminal-open-cmd: konsole -e
+
+# wezterm
+terminal-open-cmd: wezterm cli spawn --
+```
+
+Add `--hold` (konsole) or your terminal's equivalent **only** when you
+want the window to remain open after the shell exits — e.g. to read
+connect errors or final output. Without it the window closes itself,
+which is usually what you want.
+
+A list form is also accepted (no shell quoting to worry about):
+
+```yaml
+terminal-open-cmd:
+  - alacritty
+  - -T
+  - klangk shell
+  - -e
+```
+
+The environment variable `KLANGKC_TERMINAL_OPEN_CMD` overrides the file
+value (same syntax as the string form):
+
+```bash
+export KLANGKC_TERMINAL_OPEN_CMD="konsole -e"
+```
+
+If the configured command cannot be executed (not installed, not
+executable), the TUI shows an inline error and falls back to running the
+shell in the current terminal. A command that starts but then fails on
+its own (e.g. `wezterm cli spawn` with no wezterm GUI running) does not
+trigger the fallback — prefer simple `terminal -e` style commands. Note
+that in the string form the value is shell-split, so backslashes (as in
+Windows paths) need the list form. When unset, behavior is unchanged
+from before.
+
+#### Exiting an external-terminal shell
+
+Disconnect from the remote shell itself with the SSH-style escape —
+press **Enter**, then **~**, then **.** (period). Typing `exit` or
+**Ctrl+D** only ends the inner shell; klangk respawns it. After the
+escape the CLI prints `Disconnected from <workspace>.` (a following
+`[exited]` line is tmux confirming the outer session ended — not an
+error). The terminal window then closes on its own. If you configured a
+holding variant (e.g. `konsole --hold -e`) because you want the window
+to remain open — say, to read final messages — close it with the
+window's normal close button when you're done.
 
 ### klangk-state.yaml
 

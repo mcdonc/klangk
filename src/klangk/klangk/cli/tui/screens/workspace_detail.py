@@ -693,7 +693,10 @@ class WorkspaceDetailScreen(Screen):
         return self.app.tui_state.current_user_id()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Suspend the TUI and spawn ``klangk shell`` for the selected terminal."""
+        """Spawn ``klangk shell`` for the selected terminal.
+
+        Inline in this terminal (TUI suspended) by default, or in a new
+        terminal window when ``terminal-open-cmd`` is configured (#2685)."""
         if event.control.id == "shared_term_list":
             self._launch_shared_terminal(event)
             return
@@ -714,26 +717,79 @@ class WorkspaceDetailScreen(Screen):
             )
             self.run_worker(self._load_terminals, exit_on_error=False)
             return
-        cmd = [sys.executable, "-m", "klangk.cli.main"]
-        server = self.app.tui_state.current_url()
-        if server:
-            cmd += ["--server", server]
-        cmd += ["shell", self._name, target]
-        with self.app.suspend():
-            # suspend() restored the primary screen buffer, which still
-            # shows whatever was on screen before the TUI launched. Clear
-            # it so that stale content never flashes before `klangk shell`
-            # attaches (#2010). No connecting line — klangk shell prints
-            # its own on attach.
-            sys.stdout.write("\033[2J\033[H")
-            sys.stdout.flush()
-            completed = subprocess.run(cmd)
-        if completed.returncode != 0:
+        completed = self._launch_shell(self._shell_argv(target))
+        if completed is not None and completed.returncode != 0:
             # The shell exited non-zero — most likely the window was
             # deleted server-side between list refresh and selection.
             # Refresh so the dead row self-heals instead of failing
             # identically on every re-select (#1955 review).
             self.run_worker(self._load_terminals, exit_on_error=False)
+
+    def _shell_argv(self, target: str) -> list[str]:
+        """The ``klangk shell`` argv for a terminal target on this workspace."""
+        cmd = [sys.executable, "-m", "klangk.cli.main"]
+        server = self.app.tui_state.current_url()
+        if server:
+            cmd += ["--server", server]
+        return cmd + ["shell", self._name, target]
+
+    def _launch_shell(
+        self, cmd: list[str]
+    ) -> subprocess.CompletedProcess | None:
+        """Run the ``klangk shell`` argv, externally when configured.
+
+        With a terminal-open command configured (#2685: ``terminal-open-cmd``
+        in klangk.yaml or ``KLANGKC_TERMINAL_OPEN_CMD``), spawn the shell in
+        a new terminal window via the configured argv (``term_cmd + cmd`` —
+        terminal emulators like konsole take the command as trailing args
+        after ``-e``). The TUI stays up — no suspend. Returns None on that
+        path: launchers like konsole always exit 0 and return immediately
+        (or when the window closes), so there is no exit code worth acting
+        on. Output is discarded — the launcher runs in its own window, and
+        a launcher that fails after exec'ing (e.g. no DISPLAY server) would
+        otherwise spray its abort message across the TUI's screen. Only an
+        ``OSError`` from Popen itself (command missing / not executable)
+        triggers the fallback: the error is shown inline and the inline
+        launch is deferred via ``set_timer`` so the message paints before
+        suspend() blanks the screen (#2686 review).
+
+        Unset — current behavior: suspend the TUI, clear the primary
+        screen buffer (which still shows whatever was there before the
+        TUI launched, #2010), run inline, return the CompletedProcess so
+        the caller can act on a non-zero exit.
+        """
+        term_cmd = self.app.tui_state.cfg().get_terminal_open_cmd()
+        if term_cmd:
+            try:
+                # Own session so the new window outlives the TUI / this
+                # command's process group.
+                subprocess.Popen(
+                    [*term_cmd, *cmd],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return None
+            except OSError as exc:
+                self._msg(
+                    f"terminal-open-cmd failed ({exc}) —"
+                    " opening in this terminal instead.",
+                    error=True,
+                )
+                # Defer one refresh cycle so the message above renders
+                # before suspend() takes over the screen.
+                self.call_after_refresh(lambda: self._launch_shell_inline(cmd))
+                return None
+        return self._launch_shell_inline(cmd)
+
+    def _launch_shell_inline(
+        self, cmd: list[str]
+    ) -> subprocess.CompletedProcess:
+        """Suspend the TUI and run the shell argv in this terminal."""
+        with self.app.suspend():
+            sys.stdout.write("\033[2J\033[H")
+            sys.stdout.flush()
+            return subprocess.run(cmd)
 
     def _launch_shared_terminal(self, event: ListView.Selected) -> None:
         """Join the selected shared terminal via ``klangk shell <ws> <handle>:<win>``.
@@ -751,16 +807,8 @@ class WorkspaceDetailScreen(Screen):
             self._msg("Invalid shared terminal — refreshing.", error=True)
             self.run_worker(self._load_shared_terminals, exit_on_error=False)
             return
-        cmd = [sys.executable, "-m", "klangk.cli.main"]
-        server = self.app.tui_state.current_url()
-        if server:
-            cmd += ["--server", server]
-        cmd += ["shell", self._name, target]
-        with self.app.suspend():
-            sys.stdout.write("\033[2J\033[H")
-            sys.stdout.flush()
-            completed = subprocess.run(cmd)
-        if completed.returncode != 0:
+        completed = self._launch_shell(self._shell_argv(target))
+        if completed is not None and completed.returncode != 0:
             # The shared window may have been unshared/closed server-side
             # between refresh and selection — refresh the shared list.
             self.run_worker(self._load_shared_terminals, exit_on_error=False)
