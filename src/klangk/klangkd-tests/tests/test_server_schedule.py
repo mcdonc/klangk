@@ -150,29 +150,39 @@ class TestResolveFireAt:
         assert _parse_fire_at("2030-01-01T12:00:00").tzinfo is not None
 
 
-def test_migration_registered():
-    assert any(m.name == "0006_server_schedules" for m in MIGRATIONS)
+def test_migrations_registered():
+    # 0006 keeps its recorded name (frozen once shipped); the table
+    # rename is 0007.
+    names = {m.name for m in MIGRATIONS}
+    assert "0006_host_schedules" in names
+    assert "0007_server_schedules" in names
 
 
-async def test_migration_drops_pre_rename_table(app_state):
-    """A dev DB carrying the unreleased `host_schedules` name is migrated:
-    the old table is dropped and the new one created."""
+async def test_table_renamed_by_migration_0007(app_state):
+    """A DB that ran 0006 (host_schedules) gets its table renamed to
+    server_schedules by 0007; any intermediate server_schedules table
+    (from an unreleased dev build) is dropped first."""
     app = app_state
     await app.state.model.init_db()
-    # Simulate the pre-rename schema (never shipped in a release).
     async with app.state.db.transaction() as db:
+        # Reset to a pre-0007 DB: 0006's host_schedules exists (as on
+        # every DB that ran the original #2661 build), plus the leftover
+        # server_schedules an intermediate unreleased commit created.
         await db.execute("DROP TABLE IF EXISTS server_schedules")
         await db.execute(
             "CREATE TABLE host_schedules (id TEXT PRIMARY KEY,"
             " action TEXT NOT NULL, fire_at TEXT NOT NULL,"
             " created_by TEXT NOT NULL, created_at TEXT NOT NULL)"
         )
-    from klangk.model.migrations.m0006_server_schedules import (
-        apply_with_rename,
-    )
+        await db.execute(
+            "CREATE TABLE server_schedules (id TEXT PRIMARY KEY,"
+            " action TEXT NOT NULL, fire_at TEXT NOT NULL,"
+            " created_by TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+    from klangk.model.migrations.m0007_server_schedules import apply
 
     async with app.state.db.transaction() as db:
-        await apply_with_rename(db)
+        await apply(db)
     names = {
         r["name"]
         for r in await app.state.db.fetchall(
