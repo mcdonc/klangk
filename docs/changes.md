@@ -100,6 +100,12 @@ operators or integrators to act when upgrading.
   the TUI stays running. If the command can't be launched, the TUI shows
   an error and falls back to the previous inline behavior. See
   [CLI reference](reference/cli.md).
+- **Clearer shell exit (#2685).** `klangk shell` now says how to exit
+  ("Exit this shell: press Enter, then ~.") and prints
+  `Disconnected from <workspace>.` after a clean disconnect, so tmux's
+  `[exited]` line reads as a normal exit instead of a crash. The
+  consent-popup wrapper's cleanup no longer sprays
+  `no server running on …sock` into the terminal after the shell ends.
 - **`EX_CONFIG` exit status 78 for deterministic config errors (#2666).**
   When `klangkd` refuses to boot over bad configuration — e.g. a
   `KLANGKD_DEFAULT_PASSWORD` that violates the password policy, password

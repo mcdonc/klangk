@@ -341,14 +341,32 @@ def should_use_popup(
 
 
 def _default_run(argv: list[str]) -> int:
-    """Run a tmux control command, logging failures (never raising)."""
+    """Run a tmux control command, logging failures (never raising).
+
+    Output is captured, never shown: several of these commands run as
+    best-effort cleanup after the shell exits (kill-session on a server
+    that already terminated when the last session died), and tmux's
+    "no server running on <sock>" stderr there read like a crash instead
+    of a clean disconnect (#2685 follow-up). A non-zero exit code (with
+    captured stderr) goes to the log instead of the terminal.
+    """
     try:
-        return subprocess.run(argv, check=False).returncode
+        proc = subprocess.run(
+            argv, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
     except OSError as exc:
         logger.warning(
             "consent-popup tmux command failed: %s (%s)", argv[0], exc
         )
         return 1
+    if proc.returncode != 0:
+        logger.warning(
+            "consent-popup tmux command failed (rc=%d): %s %s",
+            proc.returncode,
+            argv,
+            proc.stderr.decode(errors="replace").strip(),
+        )
+    return proc.returncode
 
 
 def _default_attach(argv: list[str]) -> int:

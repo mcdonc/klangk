@@ -144,6 +144,18 @@ that in the string form the value is shell-split, so backslashes (as in
 Windows paths) need the list form. When unset, behavior is unchanged
 from before.
 
+#### Exiting an external-terminal shell
+
+Disconnect from the remote shell itself with the SSH-style escape —
+press **Enter**, then **~**, then **.** (period). Typing `exit` or
+**Ctrl+D** only ends the inner shell; klangk respawns it. After the
+escape the CLI prints `Disconnected from <workspace>.` (a following
+`[exited]` line is tmux confirming the outer session ended — not an
+error). The terminal window itself then closes unless your configured
+command holds it open: with `konsole --hold -e` the window stays so you
+can read the final messages — close it with the window's normal close
+button; without `--hold` it closes on its own.
+
 ### klangk-state.yaml
 
 Auto-managed. Stores the active server, active user per server, and

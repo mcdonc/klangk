@@ -507,6 +507,19 @@ class TestDefaultHelpers:
         ):
             assert sp._default_run(["tmux"]) == 7
 
+    def test_default_run_captures_output(self):
+        """Best-effort tmux commands must never spray stderr into the
+        user's terminal — the post-exit kill-session against an
+        already-dead server read like a crash (#2685 follow-up)."""
+        proc = MagicMock(returncode=1, stderr=b"no server running on /x.sock")
+        with patch(
+            "klangk.cli.shell_popup.subprocess.run", return_value=proc
+        ) as fake_run:
+            assert sp._default_run(["tmux"]) == 1
+        kwargs = fake_run.call_args.kwargs
+        assert kwargs["stdout"] is sp.subprocess.PIPE
+        assert kwargs["stderr"] is sp.subprocess.PIPE
+
     def test_default_run_oserror_returns_1(self):
         with patch(
             "klangk.cli.shell_popup.subprocess.run",
@@ -598,7 +611,9 @@ class TestShellWiring:
         ws = SimpleNamespace(egress_mode="interactive")
         with (
             patch("klangk.cli.main.sys.stdin.isatty", return_value=True),
-            patch("klangk.cli.shellcmd.host_tmux_version", return_value=(3, 6)),
+            patch(
+                "klangk.cli.shellcmd.host_tmux_version", return_value=(3, 6)
+            ),
         ):
             assert cli_main._consent_popup_enabled(ws, False) is True
 
@@ -606,7 +621,9 @@ class TestShellWiring:
         ws = SimpleNamespace(egress_mode="interactive")
         with (
             patch("klangk.cli.main.sys.stdin.isatty", return_value=True),
-            patch("klangk.cli.shellcmd.host_tmux_version", return_value=(3, 1)),
+            patch(
+                "klangk.cli.shellcmd.host_tmux_version", return_value=(3, 1)
+            ),
         ):
             assert cli_main._consent_popup_enabled(ws, False) is False
 
@@ -619,8 +636,12 @@ class TestShellWiring:
             return 7
 
         with (
-            patch("klangk.cli.shellcmd.run_consent_shell", side_effect=fake_run),
-            patch("klangk.cli.context.server_url", return_value="http://server"),
+            patch(
+                "klangk.cli.shellcmd.run_consent_shell", side_effect=fake_run
+            ),
+            patch(
+                "klangk.cli.context.server_url", return_value="http://server"
+            ),
         ):
             rc = cli_main._run_consent_popup(ws, "@1", True)
         assert rc == 7
@@ -629,3 +650,25 @@ class TestShellWiring:
         assert "ws" in captured["inner_argv"]
         assert "--popup-socket" in captured["decider_argv"]
         assert "--popup-session" in captured["decider_argv"]
+
+    def test_run_consent_popup_prints_disconnect_line(self, capsys):
+        """After the attach returns the user sees a clean exit line, so
+        tmux's own `[exited]` (and the returned-to dead screen) reads as
+        a clean disconnect, not a crash (#2685 follow-up)."""
+        ws = SimpleNamespace(id="wsid", name="mork")
+
+        def fake_run(**kwargs):
+            return 0
+
+        with (
+            patch(
+                "klangk.cli.shellcmd.run_consent_shell", side_effect=fake_run
+            ),
+            patch(
+                "klangk.cli.context.server_url", return_value="http://server"
+            ),
+        ):
+            rc = cli_main._run_consent_popup(ws, "@1", True)
+        assert rc == 0
+        out = capsys.readouterr()
+        assert "Disconnected from mork" in out.err

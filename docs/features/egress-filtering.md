@@ -177,7 +177,11 @@ left pending forever.
 - **`klangk shell`** — shelling into an interactive workspace wraps the
   shell in a local tmux that floats the decider over it as a popup: a
   held request pops up without leaving the shell (`C-a p` reopens it;
-  skip the wrapper with `--no-consent-popup`) (#2383).
+  skip the wrapper with `--no-consent-popup`) (#2383). Disconnect with
+  the SSH-style escape — press **Enter**, then **~**, then **.** — after
+  which the CLI prints `Disconnected from <workspace>.` and the wrapper
+  cleans up; the `[exited]` line that may follow is tmux confirming the
+  outer session ended, not an error.
 - **Web UI** — the workspace page shows a consent banner with per-row
   allow/deny split buttons: a bare click uses the default duration
   (until restart), and the attached ▾ menu sends the verdict with any
