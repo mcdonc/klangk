@@ -30,6 +30,13 @@ class WorkspaceConnector {
   /// Called when a permission/auth error arrives.
   final void Function(String error) onPermissionError;
 
+  /// Called when a non-permission error arrives while a restart is in
+  /// flight (#2676): the server now refuses a failed container restart
+  /// with an `error` frame instead of dropping the socket, so the page
+  /// must clear its restart spinner on this callback. May fire for
+  /// unrelated errors too — the owner filters by its own state.
+  final void Function(String error)? onRestartError;
+
   BrowserDelegate? _browserDelegate;
   StreamSubscription<Map<String, dynamic>>? _customEventSub;
   StreamSubscription<String>? _errorSub;
@@ -43,6 +50,7 @@ class WorkspaceConnector {
     required this.onContainerEvent,
     required this.onSharedTerminalDeleted,
     required this.onPermissionError,
+    this.onRestartError,
   });
 
   /// Whether [connect] has been called and subscriptions are active.
@@ -130,6 +138,10 @@ class WorkspaceConnector {
       final lower = error.toLowerCase();
       if (lower.contains('permission') || lower.contains('denied')) {
         onPermissionError(error);
+      } else {
+        // #2676: anything else (e.g. a refused container restart) goes to
+        // the optional restart-error hook; the owner decides relevance.
+        onRestartError?.call(error);
       }
     });
 

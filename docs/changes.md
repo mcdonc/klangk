@@ -1196,6 +1196,14 @@ containers-registries.conf(5) was found`.
   admin previously logged out now lands on `/workspaces`, not the admin
   page the previous session was viewing.
 
+- **Restart button with a still-running container (#2676).** Pressing
+  Restart after an unclean host shutdown/restart no longer fails with a
+  raw `dependent containers` podman error and a dropped WebSocket: the
+  restart now always reads the workspace fresh from the database (so a
+  live container is reused, like a reconnect does), a create-path start
+  whose lingering network sidecar is pinned by a dependent removes the
+  dependent first, and any remaining start failure is reported as an
+  error frame with a clear message while the session stays connected.
 - **Workspace Restart button after a server restart (#2674).** Clicking
   Restart while the browser sat on the container-stopped overlay during a
   host shutdown/restart used to spin forever: the WebSocket had given up
