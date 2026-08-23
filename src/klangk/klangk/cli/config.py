@@ -15,6 +15,7 @@ from __future__ import annotations
 
 
 import os
+import shlex
 import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +54,11 @@ _STATE_PATH = _xdg_state_home() / _CLI_SUBDIR / "klangk-state.yaml"
 
 
 _DEFAULT_WS_MAX_SIZE = 2**24  # 16 MB
+
+
+# Envvar override for ``terminal-open-cmd`` — ``KLANGKC_<FIELD>``
+# convention (#2685). Set (non-empty) it wins over the yaml value.
+TERMINAL_OPEN_CMD_ENV = "KLANGKC_TERMINAL_OPEN_CMD"
 
 
 # Server-side XDG subdir + socket filename, mirrored from
@@ -96,6 +102,22 @@ def default_server_uds_path() -> str:
     return os.path.join(state_dir, _SOCKET_NAME)
 
 
+def _parse_terminal_open_cmd(value) -> list[str] | None:
+    """Normalize a ``terminal-open-cmd`` yaml value to an argv list.
+
+    Accepts a shell string (``"konsole --hold -e"``, split with shlex) or
+    a list of strings (``[konsole, --hold, -e]``). Empty and wrong-typed
+    values are ignored (None) so a bad edit degrades to the inline shell
+    instead of crashing the TUI (#2685).
+    """
+    if isinstance(value, str):
+        value = value.strip()
+        return shlex.split(value) if value else None
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return list(value) if value else None
+    return None
+
+
 @dataclass
 class ServerEntry:
     """A named server in klangk.yaml."""
@@ -112,6 +134,7 @@ class CLIConfig:
 
     forward_agent: bool | None = None
     ws_max_size: int | None = None
+    terminal_open_cmd: list[str] | None = None
     servers: dict[str, ServerEntry] = field(default_factory=dict)
 
     @classmethod
@@ -133,6 +156,9 @@ class CLIConfig:
         return cls(
             forward_agent=data.get("forward-agent"),
             ws_max_size=data.get("ws-max-size"),
+            terminal_open_cmd=_parse_terminal_open_cmd(
+                data.get("terminal-open-cmd")
+            ),
             servers=servers,
         )
 
@@ -162,6 +188,20 @@ class CLIConfig:
             if entry.url == server_url and entry.ws_max_size is not None:
                 return entry.ws_max_size
         return self.ws_max_size or _DEFAULT_WS_MAX_SIZE
+
+    def get_terminal_open_cmd(self) -> list[str] | None:
+        """Return the argv that opens a new terminal window, or None.
+
+        ``KLANGKC_TERMINAL_OPEN_CMD`` (a shell string) wins over the yaml
+        ``terminal-open-cmd`` value, so a single ``export`` redirects TUI
+        shell launches without editing klangk.yaml (#2685). An empty or
+        unset envvar falls through to the file value; None means "not
+        configured" — launch the shell inline (current behavior).
+        """
+        env = os.environ.get(TERMINAL_OPEN_CMD_ENV, "").strip()
+        if env:
+            return shlex.split(env)
+        return self.terminal_open_cmd
 
 
 def ensure_config() -> None:

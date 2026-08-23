@@ -92,6 +92,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`terminal-open-cmd` / `KLANGKC_TERMINAL_OPEN_CMD` (#2685).** New CLI
+  setting (klangk.yaml or envvar) that names the command used to open a
+  new terminal window, e.g. `konsole --hold -e`. When set, selecting a
+  terminal in the TUI spawns `klangk shell` in a new terminal window
+  instead of suspending the TUI and taking over the current terminal;
+  the TUI stays running. If the command can't be launched, the TUI shows
+  an error and falls back to the previous inline behavior. See
+  [CLI reference](reference/cli.md).
 - **`EX_CONFIG` exit status 78 for deterministic config errors (#2666).**
   When `klangkd` refuses to boot over bad configuration — e.g. a
   `KLANGKD_DEFAULT_PASSWORD` that violates the password policy, password

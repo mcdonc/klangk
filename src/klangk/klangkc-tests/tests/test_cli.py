@@ -216,6 +216,76 @@ class TestCLIConfig:
         cfg = CLIConfig.load()
         assert cfg.servers["prod"].user == "admin@prod.com"
 
+    # --- terminal-open-cmd (#2685) ---
+
+    def test_terminal_open_cmd_absent(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_text("forward-agent: true\n")
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.delenv("KLANGKC_TERMINAL_OPEN_CMD", raising=False)
+        cfg = CLIConfig.load()
+        assert cfg.terminal_open_cmd is None
+        assert cfg.get_terminal_open_cmd() is None
+
+    def test_terminal_open_cmd_string_form(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_text('terminal-open-cmd: "konsole --hold -e"\n')
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.delenv("KLANGKC_TERMINAL_OPEN_CMD", raising=False)
+        cfg = CLIConfig.load()
+        assert cfg.get_terminal_open_cmd() == ["konsole", "--hold", "-e"]
+
+    def test_terminal_open_cmd_list_form(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_text(
+            "terminal-open-cmd:\n  - kitty\n  - --class\n  - klangk shell\n"
+        )
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.delenv("KLANGKC_TERMINAL_OPEN_CMD", raising=False)
+        cfg = CLIConfig.load()
+        assert cfg.get_terminal_open_cmd() == [
+            "kitty",
+            "--class",
+            "klangk shell",
+        ]
+
+    def test_terminal_open_cmd_invalid_values_ignored(
+        self, tmp_path, monkeypatch
+    ):
+        """Empty / wrong-typed values degrade to None (inline shell), not a
+        crash of every CLIConfig.load() caller."""
+        import klangk.cli.config as cfgmod
+
+        assert cfgmod._parse_terminal_open_cmd("") is None
+        assert cfgmod._parse_terminal_open_cmd("   ") is None
+        assert cfgmod._parse_terminal_open_cmd([]) is None
+        assert cfgmod._parse_terminal_open_cmd(42) is None
+        assert cfgmod._parse_terminal_open_cmd({"a": 1}) is None
+        assert cfgmod._parse_terminal_open_cmd(["a", 2]) is None
+        # Quoted args survive shlex splitting in the string form.
+        assert cfgmod._parse_terminal_open_cmd(
+            'alacritty -T "klangk shell" -e'
+        ) == ["alacritty", "-T", "klangk shell", "-e"]
+
+    def test_terminal_open_cmd_envvar_wins(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_text('terminal-open-cmd: "kitty"\n')
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "konsole --hold -e")
+        cfg = CLIConfig.load()
+        # The envvar overrides the file value.
+        assert cfg.get_terminal_open_cmd() == ["konsole", "--hold", "-e"]
+
+    def test_terminal_open_cmd_envvar_empty_falls_back_to_file(
+        self, tmp_path, monkeypatch
+    ):
+        config_path = tmp_path / "klangk.yaml"
+        config_path.write_text('terminal-open-cmd: "kitty"\n')
+        monkeypatch.setattr("klangk.cli.config._CONFIG_PATH", config_path)
+        monkeypatch.setenv("KLANGKC_TERMINAL_OPEN_CMD", "   ")
+        cfg = CLIConfig.load()
+        assert cfg.get_terminal_open_cmd() == ["kitty"]
+
 
 # --- seed_config tests ---
 

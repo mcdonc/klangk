@@ -85,14 +85,60 @@ freely after the initial creation.
 
 #### Settings
 
-| Setting         | Scope            | Default  | Description                                       |
-| --------------- | ---------------- | -------- | ------------------------------------------------- |
-| `forward-agent` | global or server | `true`   | Forward local SSH agent into containers           |
-| `ws-max-size`   | global or server | 16777216 | Maximum WebSocket message size in bytes           |
-| `user`          | server only      |          | Default user (email or handle) for `klangk login` |
-| `url`           | server only      |          | Server URL (required for each server entry)       |
+| Setting             | Scope            | Default  | Description                                       |
+| ------------------- | ---------------- | -------- | ------------------------------------------------- |
+| `forward-agent`     | global or server | `true`   | Forward local SSH agent into containers           |
+| `ws-max-size`       | global or server | 16777216 | Maximum WebSocket message size in bytes           |
+| `user`              | server only      |          | Default user (email or handle) for `klangk login` |
+| `url`               | server only      |          | Server URL (required for each server entry)       |
+| `terminal-open-cmd` | global           |          | Open TUI shell launches in a new terminal window  |
 
 Per-server settings override global settings. CLI flags override both.
+
+#### Opening shells in a new terminal (`terminal-open-cmd`)
+
+By default, selecting a terminal in the TUI suspends the TUI and runs
+`klangk shell` in the same terminal. With `terminal-open-cmd` set, each
+selection instead spawns `klangk shell` in a **new terminal window** via
+the configured command, and the TUI stays running (#2685).
+
+The value is the command that opens a terminal; the `klangk shell`
+invocation is appended as trailing arguments (most terminals take the
+command to run after `-e` / `--`):
+
+```yaml
+# kitty
+# terminal-open-cmd: kitty
+
+# konsole (--hold keeps the window open after the shell exits so error
+# messages stay readable)
+terminal-open-cmd: konsole --hold -e
+
+# wezterm
+terminal-open-cmd: wezterm cli spawn --
+```
+
+A list form is also accepted (no shell quoting to worry about):
+
+```yaml
+terminal-open-cmd:
+  - alacritty
+  - -T
+  - klangk shell
+  - -e
+```
+
+The environment variable `KLANGKC_TERMINAL_OPEN_CMD` overrides the file
+value (same syntax as the string form):
+
+```bash
+export KLANGKC_TERMINAL_OPEN_CMD="konsole --hold -e"
+```
+
+If the configured command cannot be launched (not installed, no
+`DISPLAY`), the TUI shows an inline error and falls back to running the
+shell in the current terminal. When unset, behavior is unchanged from
+before.
 
 ### klangk-state.yaml
 
