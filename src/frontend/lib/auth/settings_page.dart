@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'auth_service.dart';
 import '../utils/page_title.dart';
+import '../utils/validators.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 
@@ -591,7 +592,7 @@ class _EmailSectionState extends State<_EmailSection> {
             ),
             validator: (v) {
               if (v == null || v.trim().isEmpty) return 'Required';
-              if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) {
+              if (!isValidEmail(v)) {
                 return 'Enter a valid email address';
               }
               return null;

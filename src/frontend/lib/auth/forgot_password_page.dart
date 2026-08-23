@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'auth_service.dart';
 import '../utils/page_title.dart';
+import '../utils/validators.dart';
 import '../widgets/klangk_logo.dart';
 
 class ForgotPasswordPage extends StatefulWidget {
@@ -138,7 +139,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             ),
             validator: (v) {
               if (v == null || v.trim().isEmpty) return 'Required';
-              if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) {
+              if (!isValidEmail(v)) {
                 return 'Enter a valid email address';
               }
               return null;

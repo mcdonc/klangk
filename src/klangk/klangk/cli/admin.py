@@ -16,6 +16,7 @@ from rich.table import Table
 from .client import KlangkClient
 from rich.prompt import Prompt
 
+from . import account
 from . import context
 
 
@@ -173,6 +174,12 @@ def admin_invitations_send(
     ),
 ) -> None:
     """Send an invitation email (admin only)."""
+    # Same format check the server applies (#2668) — fail fast locally
+    # instead of surfacing the API error after the round-trip.
+    err = account.validate_email(email)
+    if err:
+        context._err.print(f"[red]{err}[/red]")
+        raise typer.Exit(code=1)
     context.require_auth()
     client = context._client()
     resp = client.post("/api/v1/admin/invitations", json={"email": email})

@@ -11,6 +11,7 @@ import '../widgets/acl_editor.dart';
 import '../widgets/app_bar_actions.dart';
 import '../widgets/app_bar_title.dart';
 import '../widgets/skeuo_tab.dart';
+import '../utils/validators.dart';
 
 class AdminUsersPage extends StatefulWidget {
   const AdminUsersPage({super.key});
@@ -1341,8 +1342,13 @@ class _AddUserDialogState extends State<_AddUserDialog> {
     final passwordValid =
         password.isNotEmpty && policyError == null && password == confirm;
     final email = _emailController.text.trim();
-    final canAdd =
-        email.isNotEmpty && (_sendVerificationEmail || passwordValid);
+    // Flag a malformed address as soon as it's typed, mirroring how the
+    // password fields surface policy errors (blank stays quiet).
+    final emailError =
+        email.isEmpty || isValidEmail(email) ? null : 'Enter a valid email';
+    final canAdd = email.isNotEmpty &&
+        emailError == null &&
+        (_sendVerificationEmail || passwordValid);
     return AlertDialog(
       title: Text('Add User', style: TextStyle(color: KColors.textPrimary)),
       content: SizedBox(
@@ -1358,6 +1364,7 @@ class _AddUserDialogState extends State<_AddUserDialog> {
                 floatingLabelStyle: labelStyle,
                 floatingLabelBehavior: FloatingLabelBehavior.always,
                 border: const OutlineInputBorder(),
+                errorText: emailError,
               ),
               autofocus: true,
               onChanged: (_) => setState(() {}),
@@ -1432,9 +1439,9 @@ class _AddUserDialogState extends State<_AddUserDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          // Disabled until the form is valid: email present, and either the
-          // verification-email path is chosen or the password meets the
-          // minimum length and matches its confirmation.
+          // Disabled until the form is valid: a syntactically valid email,
+          // and either the verification-email path is chosen or the password
+          // meets the minimum length and matches its confirmation.
           onPressed: canAdd
               ? () {
                   if (_sendVerificationEmail) {
@@ -1513,7 +1520,10 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     final passwordValid =
         !settingPassword || (policyError == null && password == confirm);
     final email = _emailController.text.trim();
-    final canSave = email.isNotEmpty && passwordValid;
+    // Same as the add dialog: only flag a malformed address once typed.
+    final emailError =
+        email.isEmpty || isValidEmail(email) ? null : 'Enter a valid email';
+    final canSave = email.isNotEmpty && emailError == null && passwordValid;
     return AlertDialog(
       title: Text('Edit User', style: TextStyle(color: KColors.textPrimary)),
       content: SizedBox(
@@ -1529,6 +1539,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 floatingLabelStyle: labelStyle,
                 floatingLabelBehavior: FloatingLabelBehavior.always,
                 border: const OutlineInputBorder(),
+                errorText: emailError,
               ),
               autofocus: true,
               onChanged: (_) => setState(() {}),
@@ -1603,9 +1614,9 @@ class _EditUserDialogState extends State<_EditUserDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          // Disabled until valid: email present, and either no password is
-          // being set or the new password meets the minimum length and matches
-          // its confirmation.
+          // Disabled until valid: a syntactically valid email, and either
+          // no password is being set or the new password meets the minimum
+          // length and matches its confirmation.
           onPressed: canSave
               ? () {
                   final handle = _handleController.text.trim();
@@ -1642,6 +1653,10 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
       color: KColors.textPrimary,
       fontWeight: FontWeight.bold,
     );
+    final email = _emailController.text.trim();
+    final emailError =
+        email.isEmpty || isValidEmail(email) ? null : 'Enter a valid email';
+    final canInvite = emailError == null && email.isNotEmpty;
     return AlertDialog(
       title: Text('Invite User', style: TextStyle(color: KColors.textPrimary)),
       content: SizedBox(
@@ -1661,11 +1676,12 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
                 floatingLabelStyle: labelStyle,
                 floatingLabelBehavior: FloatingLabelBehavior.always,
                 border: const OutlineInputBorder(),
+                errorText: emailError,
               ),
               autofocus: true,
+              onChanged: (_) => setState(() {}),
               onSubmitted: (_) {
-                final email = _emailController.text.trim();
-                if (email.isNotEmpty) Navigator.pop(context, email);
+                if (canInvite) Navigator.pop(context, email);
               },
             ),
           ],
@@ -1678,11 +1694,7 @@ class _InviteUserDialogState extends State<_InviteUserDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () {
-            final email = _emailController.text.trim();
-            if (email.isEmpty) return;
-            Navigator.pop(context, email);
-          },
+          onPressed: canInvite ? () => Navigator.pop(context, email) : null,
           child: const Text('Send Invitation'),
         ),
       ],
