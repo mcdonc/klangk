@@ -1209,7 +1209,14 @@ containers-registries.conf(5) was found`.
   token-refresh loops on every startup — the TUI received no live
   events at all (reachability signals, workspace status changes, and
   the host-shutdown countdown). It now runs in its own worker group.- **TUI status line was invisible on the workspaces screen (#2661).**
-  The status bar (server, user, live state) has been painted underneath
+  the host-shutdown countdown). It now runs in its own worker group.
+- **TUI countdown was truncated off the right edge (#2661).** The
+  scheduled stop/recycle countdown is appended to the status line as
+  its last segment — past `server`/`user`/`last login` (~76 columns),
+  it fell off the right edge of a typical terminal and was invisible.
+  The live segment (countdown, host notices) now renders first; the
+  static segments follow it.
+- **TUI status line was invisible on the workspaces screen (#2661).**  The status bar (server, user, live state) has been painted underneath
   the keybind footer since the screens refactor (#1875) — two
   bottom-docked Textual widgets fully overlap, and the later-mounted
   footer wins the row. It now stacks in its own docked container above

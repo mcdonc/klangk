@@ -7125,6 +7125,35 @@ async def test_status_bar_last_login_segment(monkeypatch):
         assert "last login" not in str(status.render())
 
 
+async def test_status_bar_extra_segment_leads(monkeypatch):
+    """The live `extra` segment renders FIRST (#2661): appended last, the
+    schedule countdown fell off the right edge of a typical terminal
+    (server/user/last-login alone span ~76 cols) — an invisible
+    countdown on exactly the screens that need it."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(last_login_at=lambda: None))
+    async with app.run_test() as pilot:
+        status = app.screen.query_one("#status", StatusBar)
+        status.set_state(
+            server="https://x.example",
+            user="me@x.example",
+            extra="server: stop at 19:00 (in 1h 12m)",
+            last_login="2026-08-20 10:00",
+        )
+        await pilot.pause()
+        rendered = str(status.render())
+        assert rendered.startswith("server: stop at 19:00 (in 1h 12m)")
+        assert "user: me@x.example" in rendered
+        # Static segments still render without an extra.
+        status.set_state(server="https://x.example", user="me@x.example")
+        await pilot.pause()
+        assert str(status.render()).startswith("server: https://x.example")
+
+
 def test_fmt_login_ts_invalid():
     """Unparseable timestamps render empty (#2583)."""
     assert MainScreen._fmt_login_ts("not-a-date") == ""
