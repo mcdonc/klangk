@@ -14,6 +14,7 @@ from fastapi import (
 from fastapi.responses import (
     JSONResponse,
 )
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from .. import (
@@ -600,7 +601,8 @@ async def get_me(
 @router.post("/auth/logout")
 async def logout(
     request: Request,
-    user: dict = Depends(auth.get_current_user),
+    user: dict | None = Depends(auth.get_current_user_lenient),
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth.security),
 ):
     # Logout only invalidates credentials -- it deliberately does NOT stop the
     # user's containers. Per #301/#1235 the idle timeout is the only thing
@@ -609,32 +611,23 @@ async def logout(
     # the ``terminal`` permission). Stopping on logout was a holdover from
     # the per-user-container era and destroyed service sessions that should
     # outlive any single user's login.
-    # --- instrumentation: identify who is calling logout (#1877 follow-up) ---
-    authorization = request.headers.get("authorization", "")
-    _h = request.headers
-    _ip = (
-        _h.get("x-forwarded-for")
-        or _h.get("x-real-ip")
-        or getattr(request.client, "host", "?")
-    )
-    logger.info(
-        "LOGOUT CALL x_forwarded_for=%r ip=%s ua=%s origin=%s referer=%s "
-        "scope_client=%s scope_server=%s",
-        _h.get("x-forwarded-for"),
-        _ip,
-        _h.get("user-agent", "?"),
-        _h.get("origin", "?"),
-        _h.get("referer", "?"),
-        request.scope.get("client"),
-        request.scope.get("server"),
-    )
-    # Blocklist the token so it can't be reused after logout
-    if authorization.startswith("Bearer "):
-        await request.app.state.auth.logout(authorization[7:])
+    # Blocklist the token so it can't be reused after logout. Logout is
+    # idempotent (#2687): a token that is already expired, revoked, or
+    # logged out has reached the desired end state, so the request still
+    # succeeds — hence get_current_user_lenient (never raises, tolerates
+    # disabled accounts) and the parsed credentials object (HTTPBearer
+    # accepts a case-insensitive scheme, so re-slicing the raw header
+    # would miss a lowercase ``bearer`` token).
+    if credentials is not None:
+        await request.app.state.auth.logout(credentials.credentials)
 
+    result: dict = {"status": "ok"}
+    if user is None:
+        # Anonymous/invalid token: nothing left to do. The OIDC logout
+        # redirect requires a live user record, so it is skipped.
+        return result
     # If the user logged in via OIDC and the provider has logout_redirect
     # enabled, return the IdP logout URL so the frontend can redirect.
-    result: dict = {"status": "ok"}
     db_user = await request.app.state.model.users.get_user_by_email(
         user["email"]
     )

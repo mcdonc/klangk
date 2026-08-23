@@ -583,6 +583,25 @@ void main() {
       expect(service.token, isNull);
     });
 
+    test('skips server call when already logged out (#2687)', () async {
+      var serverCalled = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/auth/logout')) {
+          serverCalled = true;
+        }
+        return http.Response('', 200);
+      });
+
+      SharedPreferences.setMockInitialValues({});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isLoggedIn, isFalse);
+
+      await service.logout();
+      expect(service.isLoggedIn, isFalse);
+      expect(serverCalled, isFalse);
+    });
+
     test('returns oidc logout url when present', () async {
       testAuthHttpClientOverride = MockClient((request) async {
         return http.Response(

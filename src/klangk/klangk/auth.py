@@ -1155,3 +1155,31 @@ async def get_current_user_optional(
         return user
     except JWTError:
         return None
+
+
+async def get_current_user_lenient(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> dict | None:
+    """Like get_current_user_optional but never raises — tolerates revoked
+    tokens and disabled accounts.
+
+    Used by logout (#2687), which must return 200 for a token in any
+    state: a disabled account logging out is a client cleaning up after
+    itself, not an auth attempt, so the #2588 403 does not apply. Does
+    not record activity (the session is ending) and does not check the
+    blocklist (the token is about to be blocklisted anyway; a repeat
+    logout still resolving its user only affects the optional OIDC
+    redirect URL).
+    """
+    if credentials is None:
+        return None
+    auth = request.app.state.auth
+    try:
+        payload = auth.decode_token(credentials.credentials)
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        return await request.app.state.model.users.get_user_by_id(user_id)
+    except JWTError:
+        return None

@@ -964,8 +964,109 @@ class TestAuthRoutes:
         mock_stop.assert_not_called()
 
     async def test_logout_no_auth(self, client):
+        # Idempotent (#2687): no token presented means nothing to revoke,
+        # which is the desired end state — not an auth failure.
         resp = await client.post("/api/v1/auth/logout")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    async def test_logout_idempotent_revoked_token(self, client, user):
+        """Second logout with the already-blocklisted token: still 200
+        (#2687). A strict auth dependency 401s here, which taught clients
+        to treat logout as failing."""
+        headers = await _auth_headers(client)
+        resp = await client.post("/api/v1/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        # Security property: the first logout actually revoked the token.
+        resp = await client.get("/api/v1/auth/me", headers=headers)
         assert resp.status_code == 401
+        resp = await client.post("/api/v1/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    async def test_logout_disabled_account(self, client, user, app_state):
+        """A disabled account logging out gets 200 and the token is still
+        blocklisted (#2687): logout is a client cleaning up, not an auth
+        attempt, so the #2588 403-for-disabled must not apply here."""
+        headers = await _auth_headers(client)
+        await app_state.state.model.users.set_user_disabled(user["id"], True)
+        resp = await client.post("/api/v1/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/auth/me", headers=headers)
+        assert resp.status_code == 401
+
+    async def test_logout_lowercase_bearer_scheme(self, client, user):
+        """HTTPBearer accepts a case-insensitive scheme, so a lowercase
+        ``bearer`` token must still be blocklisted (#2687)."""
+        headers = await _auth_headers(client)
+        token = headers["Authorization"][len("Bearer ") :]
+        resp = await client.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"bearer {token}"},
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/auth/me", headers=headers)
+        assert resp.status_code == 401
+
+    async def test_logout_expired_token(self, client):
+        """Logout with an expired token: 200, not 401 (#2687). The token
+        is dead either way; logout reports success."""
+        import datetime as dt
+        import uuid
+
+        from jose import jwt as pyjwt
+
+        from _helpers import make_settings
+
+        settings = make_settings({})
+        payload = {
+            "sub": "00000000-0000-0000-0000-000000000001",
+            "email": "testuser@example.com",
+            "jti": str(uuid.uuid4()),
+            "exp": dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1),
+        }
+        token = pyjwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+        resp = await client.post(
+            "/api/v1/auth/logout",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    async def test_logout_lenient_resolution_edge_cases(self, client):
+        """Forged-but-validly-signed tokens that resolve to no user still
+        log out with 200 — the lenient dependency returns None, never
+        raises (#2687)."""
+        import datetime as dt
+        import uuid
+
+        from jose import jwt as pyjwt
+
+        from _helpers import make_settings
+
+        settings = make_settings({})
+        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)
+        no_sub = pyjwt.encode(
+            {"jti": str(uuid.uuid4()), "exp": exp},
+            settings.jwt_secret,
+            algorithm="HS256",
+        )
+        ghost_sub = pyjwt.encode(
+            {
+                "sub": "00000000-0000-0000-0000-00000000dead",
+                "jti": str(uuid.uuid4()),
+                "exp": exp,
+            },
+            settings.jwt_secret,
+            algorithm="HS256",
+        )
+        for token in (no_sub, ghost_sub):
+            resp = await client.post(
+                "/api/v1/auth/logout",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "ok"
 
     async def test_refresh(self, client, user):
         headers = await _auth_headers(client)
