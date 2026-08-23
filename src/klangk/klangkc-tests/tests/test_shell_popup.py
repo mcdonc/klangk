@@ -115,6 +115,19 @@ class TestNaming:
         bad = sp.outer_session_name("a.b:c")
         assert "." not in bad and ":" not in bad
 
+    def test_popup_session_names_unique_per_invocation(self):
+        """Each invocation gets its own (outer, hidden) pair so a second
+        concurrent shell into the same workspace cannot collide with (or
+        attach to) the first shell's sessions (#2692)."""
+        a = sp.popup_session_names("wsid")
+        b = sp.popup_session_names("wsid")
+        assert a[0].startswith("klangk-shell-wsid-")
+        assert a[1].startswith("klangk-consent-wsid-")
+        # Unique across invocations...
+        assert a != b
+        # ...and the pair shares one suffix (wrapper + decider agree).
+        assert a[0].rsplit("-", 1)[-1] == a[1].rsplit("-", 1)[-1]
+
 
 # ---------------------------------------------------------------------------
 # pure command builders
@@ -368,8 +381,12 @@ class TestRunConsentShell:
         )
         assert rc == 0
         socket = sp.socket_path("wsid")
-        outer = sp.outer_session_name("wsid")
-        hidden = sp.hidden_session_name("wsid")
+        # run_consent_shell generates per-invocation names (#2692) —
+        # recover them from the actual new-session commands.
+        outer = ran[0][ran[0].index("-s") + 1]
+        hidden = ran[4][ran[4].index("-s") + 1]
+        assert outer.startswith("klangk-shell-wsid-")
+        assert hidden.startswith("klangk-consent-wsid-")
         # 1 outer + 3 outer-config + 1 hidden + 1 hidden-config + 1 binding
         # + 1 attach + 2 kills = 10
         assert len(ran) == 10
@@ -387,12 +404,10 @@ class TestRunConsentShell:
         )  # size may differ; check the session
         assert ran[0][1:4] == ["-S", socket, "new-session"]
         assert ran[0][4] == "-d"
-        assert ran[0][ran[0].index("-s") + 1] == outer
         # configure: prefix/status/mouse
         assert ran[1:4] == sp.configure_outer_session(socket, outer)
         # hidden session
         assert ran[4][1:4] == ["-S", socket, "new-session"]
-        assert ran[4][ran[4].index("-s") + 1] == hidden
         # hidden session status bar hidden (popup shows only the decider)
         assert ran[5:6] == sp.configure_hidden_session(socket, hidden)
         # the reopen binding (no auto-show hook)
@@ -407,6 +422,35 @@ class TestRunConsentShell:
         # cleanup: kill hidden then outer
         assert ran[8] == sp.kill_session_cmd(socket, hidden)
         assert ran[9] == sp.kill_session_cmd(socket, outer)
+
+    def test_session_names_pair_is_shared_with_decider(self):
+        """When session_names is passed, the wrapper uses exactly that pair
+        — the caller's decider argv (built from the same pair) and the
+        wrapper must target the same sessions (#2692)."""
+        ran = []
+
+        def fake_run(argv):
+            ran.append(argv)
+            return 0
+
+        def fake_attach(argv):
+            ran.append(argv)
+            return 0
+
+        names = ("klangk-shell-wsid-decafbad", "klangk-consent-wsid-decafbad")
+        sp.run_consent_shell(
+            workspace_id="wsid",
+            inner_argv=["x"],
+            decider_argv=["y"],
+            run=fake_run,
+            attach=fake_attach,
+            session_names=names,
+        )
+        socket = sp.socket_path("wsid")
+        assert ran[0][ran[0].index("-s") + 1] == names[0]
+        assert ran[4][ran[4].index("-s") + 1] == names[1]
+        assert ran[7] == sp.attach_cmd(socket, names[0])
+        assert ran[9] == sp.kill_session_cmd(socket, names[0])
 
     def test_returns_attach_exit_code(self):
         def fake_run(argv):
@@ -443,14 +487,13 @@ class TestRunConsentShell:
             run=fake_run,
             attach=fake_attach,
         )
-        # final two commands are the cleanup kills regardless
+        # final two commands are the cleanup kills regardless; the
+        # per-invocation names are recovered from the create commands (#2692)
         socket = sp.socket_path("wsid")
-        assert ran[-2] == sp.kill_session_cmd(
-            socket, sp.hidden_session_name("wsid")
-        )
-        assert ran[-1] == sp.kill_session_cmd(
-            socket, sp.outer_session_name("wsid")
-        )
+        hidden = ran[4][ran[4].index("-s") + 1]
+        outer = ran[0][ran[0].index("-s") + 1]
+        assert ran[-2] == sp.kill_session_cmd(socket, hidden)
+        assert ran[-1] == sp.kill_session_cmd(socket, outer)
 
     def test_custom_popup_and_term_size(self):
         ran: list[list[str]] = []
@@ -650,6 +693,15 @@ class TestShellWiring:
         assert "ws" in captured["inner_argv"]
         assert "--popup-socket" in captured["decider_argv"]
         assert "--popup-session" in captured["decider_argv"]
+        # The decider session name and the wrapper session_names pair name
+        # the SAME hidden session (one suffix, one invocation, #2692).
+        names = captured["session_names"]
+        decider_session = captured["decider_argv"][
+            captured["decider_argv"].index("--popup-session") + 1
+        ]
+        assert decider_session == names[1]
+        assert names[0].startswith("klangk-shell-wsid-")
+        assert names[1].startswith("klangk-consent-wsid-")
 
     def test_run_consent_popup_prints_disconnect_line(self, capsys):
         """After the attach returns the user sees a clean exit line, so

@@ -25,8 +25,8 @@ from .shell_popup import (
     EGRESS_INTERACTIVE,
     OUTER_PREFIX,
     REOPEN_KEY,
-    hidden_session_name,
     host_tmux_version,
+    popup_session_names,
     run_consent_shell,
     should_use_popup,
     socket_path,
@@ -118,9 +118,12 @@ def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
     """Bring up the consent-popup russian-doll + attach the user to it (#2383)."""
     server = context.server_url()
     socket = socket_path(ws.id)
-    hidden = hidden_session_name(ws.id)
+    # One per-invocation (outer, hidden) pair shared by the wrapper and the
+    # decider argv — deterministic per-workspace names made a concurrent
+    # second shell attach to the FIRST shell's session (#2692).
+    names = popup_session_names(ws.id)
     inner = _popup_inner_shell_argv(server, ws.name, terminal, forward_agent)
-    decider = _popup_decider_argv(server, ws.name, socket, hidden)
+    decider = _popup_decider_argv(server, ws.name, socket, names[1])
     context._err.print(
         f"Connecting to [bold]{ws.name}[/bold] with consent popup…"
     )
@@ -130,7 +133,10 @@ def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
         f"Enter, then ~. exits[/dim]"
     )
     rc = run_consent_shell(
-        workspace_id=ws.id, inner_argv=inner, decider_argv=decider
+        workspace_id=ws.id,
+        inner_argv=inner,
+        decider_argv=decider,
+        session_names=names,
     )
     context._err.print(f"Disconnected from [bold]{ws.name}[/bold].")
     return rc

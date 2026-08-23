@@ -42,6 +42,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,25 @@ def outer_session_name(workspace_id: str) -> str:
 
 def hidden_session_name(workspace_id: str) -> str:
     return f"klangk-consent-{_sanitize(workspace_id)}"
+
+
+def popup_session_names(workspace_id: str) -> tuple[str, str]:
+    """Per-invocation (outer, hidden) session names for the russian-doll.
+
+    The names embed a random suffix so each ``klangk shell`` invocation
+    gets its OWN outer + hidden pair on the shared per-workspace socket.
+    Deterministic per-workspace names made a second concurrent shell into
+    the same workspace fail its ``new-session`` (duplicate session) and
+    silently attach to the FIRST shell's session — showing that shell's
+    window regardless of the terminal the user selected (#2692). The
+    caller must use one call's result for BOTH the decider argv and
+    ``run_consent_shell`` so the names stay paired.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    return (
+        f"{outer_session_name(workspace_id)}-{suffix}",
+        f"{hidden_session_name(workspace_id)}-{suffix}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -355,12 +375,16 @@ def _default_run(argv: list[str]) -> int:
             argv, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
     except OSError as exc:
-        logger.warning(
+        logger.debug(
             "consent-popup tmux command failed: %s (%s)", argv[0], exc
         )
         return 1
     if proc.returncode != 0:
-        logger.warning(
+        # Best-effort commands (setup steps tolerate absence; cleanup runs
+        # after the server may have exited with its last session) — debug,
+        # not warning: at warning level these sprayed into the user's
+        # terminal after every consent-wrapped shell exit (#2692).
+        logger.debug(
             "consent-popup tmux command failed (rc=%d): %s %s",
             proc.returncode,
             argv,
@@ -383,6 +407,7 @@ def run_consent_shell(
     term_size: tuple[int, int] | None = None,
     run=_default_run,
     attach=_default_attach,
+    session_names: tuple[str, str] | None = None,
 ) -> int:
     """Bring up the consent-popup russian-doll and attach the user to it.
 
@@ -391,12 +416,16 @@ def run_consent_shell(
     does not re-wrap). *decider_argv* is the ``klangk consent-decide``
     invocation in its persistent popup role. Returns the attach's exit code.
 
+    *session_names* is the per-invocation ``(outer, hidden)`` pair from
+    :func:`popup_session_names`; when omitted it is generated here. Callers
+    that build the decider argv from the hidden session name MUST pass the
+    same pair so the decider and the wrapper agree (#2692).
+
     On any setup failure the outer session may not exist; cleanup is
     best-effort and never raises.
     """
     socket = socket_path(workspace_id)
-    outer = outer_session_name(workspace_id)
-    hidden = hidden_session_name(workspace_id)
+    outer, hidden = session_names or popup_session_names(workspace_id)
     cols, rows = term_size or _term_size()
     pw, ph = popup_size
 
@@ -453,6 +482,7 @@ __all__ = [
     "outer_session_name",
     "parse_tmux_version",
     "popup_binding_cmds",
+    "popup_session_names",
     "popup_viewer_shell_string",
     "run_consent_shell",
     "should_use_popup",
