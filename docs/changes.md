@@ -1189,6 +1189,14 @@ containers-registries.conf(5) was found`.
   admin previously logged out now lands on `/workspaces`, not the admin
   page the previous session was viewing.
 
+- **TUI status line was invisible on the workspaces screen (#2661).**
+  The status bar (server, user, live state) has been painted underneath
+  the keybind footer since the screens refactor (#1875) — two
+  bottom-docked Textual widgets fully overlap, and the later-mounted
+  footer wins the row. It now stacks in its own docked container above
+  the footer, which also makes the scheduled-host-action countdown
+  (`host: shutdown at 23:00 (in 1h 12m)`) visible.(fix(tui): stack the status bar above the keybind footer)
+
 - **Workspace Restart button after a server restart (#2674).** Clicking
   Restart while the browser sat on the container-stopped overlay during a
   host shutdown/restart used to spin forever: the WebSocket had given up

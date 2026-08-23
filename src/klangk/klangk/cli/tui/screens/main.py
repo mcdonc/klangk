@@ -15,7 +15,7 @@ from rich.text import Text
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.dom import NoMatches
 from textual.screen import Screen
 from textual.widgets import (
@@ -188,6 +188,14 @@ class MainScreen(Screen):
         color: $text-muted;
         padding: 0 1;
     }
+    #status_dock {
+        dock: bottom;
+        height: auto;
+    }
+    #status_dock StatusBar,
+    #status_dock Footer {
+        dock: none;
+    }
     #filter_bar {
         dock: bottom;
         height: 1;
@@ -238,8 +246,14 @@ class MainScreen(Screen):
             with TabPane("Shared to me", id="shared_pane"):
                 yield Static("", classes="ws_hints")
                 yield WorkspaceListView(id="shared_list")
-        yield StatusBar(id="status")
-        yield Footer()
+        # StatusBar and Footer stack inside a docked container: two
+        # bottom-docked siblings fully overlap in Textual (same edge row,
+        # last-mounted paints on top), which left the StatusBar hidden
+        # under the Footer since #1875 — and with it the #2661 host
+        # countdown. The container docks once; the children flow inside.
+        with Vertical(id="status_dock"):
+            yield StatusBar(id="status")
+            yield Footer()
         # Filter bar is yielded LAST so that — since docked-bottom widgets
         # overlap rather than stack — it paints on top of the Footer row
         # when shown. It is hidden by default and toggled by `/` (#1764).
