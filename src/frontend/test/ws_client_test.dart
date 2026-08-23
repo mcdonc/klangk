@@ -1107,20 +1107,20 @@ void main() {
     });
 
     test('host lifecycle notices set/clear hostNotice (#2527)', () async {
-      // host_shutdown -> notice; host_restart phases -> notice;
+      // host_shutdown -> notice; server_recycle phases -> notice;
       // host_started -> cleared. Reconnect state is untouched.
       channel.serverSend({'type': 'host_shutdown'});
       await Future.delayed(Duration.zero);
       expect(client.hostNotice, 'Server shutting down');
       expect(client.reconnecting, isFalse); // no reconnect impedance
 
-      channel.serverSend({'type': 'host_restart', 'phase': 'draining'});
+      channel.serverSend({'type': 'server_recycle', 'phase': 'draining'});
       await Future.delayed(Duration.zero);
-      expect(client.hostNotice, 'Server preparing to restart…');
+      expect(client.hostNotice, 'Server preparing to recycle…');
 
-      channel.serverSend({'type': 'host_restart', 'phase': 'restarting'});
+      channel.serverSend({'type': 'server_recycle', 'phase': 'recycling'});
       await Future.delayed(Duration.zero);
-      expect(client.hostNotice, 'Server restarting…');
+      expect(client.hostNotice, 'Server recycling…');
 
       channel.serverSend({'type': 'host_started'});
       await Future.delayed(Duration.zero);

@@ -15,7 +15,7 @@ from rich.text import Text
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.dom import NoMatches
 from textual.screen import Screen
 from textual.widgets import (
@@ -84,6 +84,35 @@ def _is_unreachable(exc: BaseException) -> bool:
     responded, so it is reachable.
     """
     return isinstance(exc, (httpx.TransportError, OSError))
+
+
+def _server_schedule_line(schedule: dict) -> str:
+    """Status-line text for the next pending server action (#2661).
+
+    Shows fire time (local) plus a coarse remaining duration, e.g.
+    ``server: stop at 23:00 (in 1h 12m)`` / ``server: recycle at 23:00
+    (in 1h 12m)``.
+    """
+    action = str(schedule.get("action") or "action")
+    raw = str(schedule.get("fire_at") or "")
+    try:
+        fire_at = datetime.datetime.fromisoformat(raw)
+    except ValueError:
+        return f"server: {action} scheduled"
+    if fire_at.tzinfo is None:
+        fire_at = fire_at.replace(
+            tzinfo=datetime.datetime.now().astimezone().tzinfo
+        )
+    fire_at = fire_at.astimezone()
+    remaining = fire_at - datetime.datetime.now().astimezone()
+    total = max(0, int(remaining.total_seconds()))
+    if total >= 3600:
+        left = f"{total // 3600}h {(total % 3600) // 60}m"
+    elif total >= 60:
+        left = f"{total // 60}m"
+    else:
+        left = f"{total}s"
+    return f"server: {action} at {fire_at:%H:%M} (in {left})"
 
 
 def _reconnect_backoff(attempt: int) -> float:
@@ -160,6 +189,14 @@ class MainScreen(Screen):
         color: $text-muted;
         padding: 0 1;
     }
+    #status_dock {
+        dock: bottom;
+        height: auto;
+    }
+    #status_dock StatusBar,
+    #status_dock Footer {
+        dock: none;
+    }
     #filter_bar {
         dock: bottom;
         height: 1;
@@ -210,8 +247,14 @@ class MainScreen(Screen):
             with TabPane("Shared to me", id="shared_pane"):
                 yield Static("", classes="ws_hints")
                 yield WorkspaceListView(id="shared_list")
-        yield StatusBar(id="status")
-        yield Footer()
+        # StatusBar and Footer stack inside a docked container: two
+        # bottom-docked siblings fully overlap in Textual (same edge row,
+        # last-mounted paints on top), which left the StatusBar hidden
+        # under the Footer since #1875 — and with it the #2661 host
+        # countdown. The container docks once; the children flow inside.
+        with Vertical(id="status_dock"):
+            yield StatusBar(id="status")
+            yield Footer()
         # Filter bar is yielded LAST so that — since docked-bottom widgets
         # overlap rather than stack — it paints on top of the Footer row
         # when shown. It is hidden by default and toggled by `/` (#1764).
@@ -283,6 +326,13 @@ class MainScreen(Screen):
             self.app.run_worker(
                 self._load_last_login,
                 name="last-login",
+                # Own group: exclusive cancels the group's other workers,
+                # and in the default group that was status-ws +
+                # token-refresh — the mount-time last-login fetch killed
+                # both background loops at spawn (#2612 regression; the
+                # status WS, its events, and the #2661 host countdown
+                # never started).
+                group="last-login",
                 exclusive=True,
                 exit_on_error=False,
             )
@@ -303,6 +353,7 @@ class MainScreen(Screen):
             self.app.run_worker(
                 self._load_last_login,
                 name="last-login",
+                group="last-login",
                 exclusive=True,
                 exit_on_error=False,
             )
@@ -1238,12 +1289,12 @@ class MainScreen(Screen):
             self._refresh_status()
             self.app.notify("Server is shutting down", severity="warning")
             return
-        if etype == "host_restart":
+        if etype == "server_recycle":
             phase = str(event.get("phase") or "")
             word = {
-                "draining": "preparing to restart",
-                "restarting": "restarting",
-            }.get(phase, "restarting")
+                "draining": "preparing to recycle",
+                "recycling": "recycling",
+            }.get(phase, "recycling")
             self.app.live_extra = f"server: {word}"
             self._refresh_status()
             self.app.notify(f"Server is {word}")
@@ -1251,6 +1302,32 @@ class MainScreen(Screen):
         if etype == "host_started":
             self.app.live_extra = "server: back up"
             self._refresh_status()
+            return
+        if etype == "server_schedule":
+            # #2661: pending server stop/recycle — show the next one as
+            # a status line with fire time + remaining. The countdown text
+            # is refreshed by the scheduler's periodic snapshot (every
+            # ~30s); precise-enough ticking without a local timer.
+            schedules = event.get("schedules") or []
+            if not schedules:
+                if self.app.live_extra and self.app.live_extra.startswith(
+                    "server:"
+                ):
+                    self.app.live_extra = ""
+                    self._refresh_status()
+                return
+            next_up = schedules[0]
+            self.app.live_extra = _server_schedule_line(next_up)
+            self._refresh_status()
+            return
+        if etype == "server_schedule_fired":
+            action = str(event.get("action") or "action")
+            self.app.live_extra = f"server: scheduled {action} running"
+            self._refresh_status()
+            self.app.notify(
+                f"Scheduled server {action} is happening now",
+                severity="warning",
+            )
             return
         self.app.live_extra = f"live: {etype}"
         self._refresh_status()

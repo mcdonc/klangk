@@ -26,6 +26,7 @@ nav = [
     { "Auto-Start" = "features/auto-start.md" },
     { "Health Check" = "features/health-check.md" },
     { "Crash Recovery" = "features/crash-recovery.md" },
+    { "Server Scheduling" = "features/server-scheduling.md" },
     { "Egress Filtering" = "features/egress-filtering.md" },
     { "Sandbox" = "features/sandbox.md" },
     { "Chat" = "features/chat.md" },

@@ -108,6 +108,20 @@ operators or integrators to act when upgrading.
   `[exited]` line reads as a normal exit instead of a crash. The
   consent-popup wrapper's cleanup no longer sprays
   `no server running on …sock` into the terminal after the shell ends.
+- **Scheduled server stop/recycle (#2661).** Admins can schedule a
+  server stop or recycle at an absolute time or after a delay
+  (`POST /api/v1/admin/server/schedule` with
+  `{action: "stop" | "recycle", at | in_seconds}`; list/cancel via
+  `GET`/`DELETE` on the same resource). Schedules persist in the DB
+  across `klangkd` restarts and fire without anyone connected. A
+  **stop** runs the graceful TERM/INT path and the process exits
+  (code 0) — the service manager owns what happens next; a **recycle**
+  runs the SIGHUP graceful runtime recycle in-process (listener and DB stay
+  up) and never exits. In both, workspaces are drained gracefully and
+  every connected client sees a live-countdown notification: a banner
+  in the Flutter UI (`Server stops at 23:00 (in 1h 12m — workspaces
+stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
+  TUI. See [Server Scheduling](features/server-scheduling.md).
 - **`EX_CONFIG` exit status 78 for deterministic config errors (#2666).**
   When `klangkd` refuses to boot over bad configuration — e.g. a
   `KLANGKD_DEFAULT_PASSWORD` that violates the password policy, password
@@ -129,7 +143,7 @@ operators or integrators to act when upgrading.
   stop frames + `container_stopped` with reason `host shutdown`)
   before uvicorn's exit sequence runs. A drain failure is logged and
   never blocks the exit; a SIGHUP arriving during shutdown is ignored.
-  Clients surface `host_shutdown` / `host_restart` / `host_started` as
+  Clients surface `host_shutdown` / `server_recycle` / `host_started` as
   transient, non-blocking notices (web UI snackbar, TUI status line +
   toast) — auto-reconnect is never visually impeded. Docs:
   [Signals](deployment/signals.md).
@@ -141,7 +155,7 @@ operators or integrators to act when upgrading.
   with a 5s podman stop grace); the reloaded config is applied, and
   the runtime recycles (drained workspaces are not restarted — only
   `auto_start` ones return).
-  Clients get `host_restart` events with a `phase` field and a final
+  Clients get `server_recycle` events with a `phase` field and a final
   `host_started` broadcast; each phase is logged. Starts stay refused
   until the post-restart container reaps finish, and a failed restart
   logs, attempts a startup recovery, and exits (code 1) if recovery
@@ -830,6 +844,18 @@ operators or integrators to act when upgrading.
 
 ### Changed
 
+- **`host_restart` WS event renamed to `server_recycle` (#2661).** The
+  graceful recycle path (SIGHUP and scheduled `recycle`) now broadcasts
+  `server_recycle {phase: draining | recycling}` instead of
+  `host_restart`, its `container_stopped` drain reason is `server
+recycle`, and the Flutter notice reads "Server recycling…" — matching
+  the stop/recycle terminology. Unreleased alongside #2661, so no
+  migration concern. The Flutter workspace page no longer raises the
+  blocking "Container stopped — click Restart" overlay for a server
+  recycle: the server stays up, the WebSocket reconnects (1012), and
+  auto-start brings workspaces back, so the reconnect overlay owns the
+  gap.
+
 - **Password hashing (#2576).** Passwords are now hashed with
   PBKDF2-HMAC-SHA512 via `hashlib` (600,000 iterations, stored as
   `pbkdf2_sha512$…`) instead of bcrypt, and the `bcrypt` dependency is
@@ -1178,7 +1204,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   client-side against the same rule the server applies: a malformed value
   shows an inline "Enter a valid email" error and keeps the confirm button
   disabled, instead of surfacing a raw API error. `klangk admin invitations
-  send` rejects a malformed address locally the same way.
+send` rejects a malformed address locally the same way.
 
 - **Admin route guard (#2669).** An authenticated non-admin visiting
   `/admin/users` directly (typed URL, stale bookmark or redirect) no
@@ -1202,6 +1228,26 @@ containers-registries.conf(5) was found`.
   admin previously logged out now lands on `/workspaces`, not the admin
   page the previous session was viewing.
 
+- **TUI live status events stopped working entirely (#2612 regression).**
+  The mount-time "last login" fetch ran as an exclusive worker in the
+  default worker group, which cancelled the just-started status-WS and
+  token-refresh loops on every startup — the TUI received no live
+  events at all (reachability signals, workspace status changes, and
+  the host-shutdown countdown). It now runs in its own worker group.- **TUI status line was invisible on the workspaces screen (#2661).**
+  the host-shutdown countdown). It now runs in its own worker group.
+- **TUI countdown was truncated off the right edge (#2661).** The
+  scheduled stop/recycle countdown is appended to the status line as
+  its last segment — past `server`/`user`/`last login` (~76 columns),
+  it fell off the right edge of a typical terminal and was invisible.
+  The live segment (countdown, host notices) now renders first; the
+  static segments follow it.
+- **TUI status line was invisible on the workspaces screen (#2661).** The status bar (server, user, live state) has been painted underneath
+  the keybind footer since the screens refactor (#1875) — two
+  bottom-docked Textual widgets fully overlap, and the later-mounted
+  footer wins the row. It now stacks in its own docked container above
+  the footer, which also makes the scheduled-host-action countdown
+  (`host: shutdown at 23:00 (in 1h 12m)`) visible.(fix(tui): stack the status bar above the keybind footer)
+
 - **Restart button with a still-running container (#2676).** Pressing
   Restart after an unclean host shutdown/restart no longer fails with a
   raw `dependent containers` podman error and a dropped WebSocket: the
@@ -1209,8 +1255,7 @@ containers-registries.conf(5) was found`.
   live container is reused, like a reconnect does), a create-path start
   whose lingering network sidecar is pinned by a dependent removes the
   dependent first, and any remaining start failure is reported as an
-  error frame with a clear message while the session stays connected.
-- **Workspace Restart button after a server restart (#2674).** Clicking
+  error frame with a clear message while the session stays connected.- **Workspace Restart button after a server restart (#2674).** Clicking
   Restart while the browser sat on the container-stopped overlay during a
   host shutdown/restart used to spin forever: the WebSocket had given up
   auto-reconnecting while the server was down, so the restart command was

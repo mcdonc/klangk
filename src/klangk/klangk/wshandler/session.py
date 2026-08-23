@@ -937,15 +937,35 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
+    def broadcast_to_all(self, message: dict) -> None:
+        """Broadcast *message* to every authenticated connection.
+
+        Generic fan-out counterpart to the typed ``notify_host_*``
+        methods, used by the host scheduler (#2661) for
+        ``server_schedule`` / ``server_schedule_fired`` frames. Dead sockets
+        are dropped (dispatch.py owns cleanup on disconnect).
+        """
+        dead = []
+        for sock, conn in self.connections.items():
+            if conn.user.get("id") is None:
+                continue
+            try:
+                sock.send_json(message)
+            except WS_ERRORS:
+                dead.append(sock)
+        for sock in dead:
+            self.connections.pop(sock, None)
+
     def notify_host_shutdown(self) -> None:
         """Broadcast host-shutdown to all connections (#2527).
 
-        Sent by the TERM/INT graceful-shutdown hook (launcher.py) before
-        uvicorn closes the WebSockets, so clients can show "server went
-        away" instead of a bare reconnect loop. The SIGHUP graceful
-        restart does NOT send this — it sends
-        :meth:`notify_host_restart` / :meth:`notify_host_started`
-        instead, because its runtime comes back.
+        Sent by the TERM/INT graceful-shutdown hook (launcher.py) and by a
+        scheduled stop firing (#2661) before uvicorn closes the
+        WebSockets, so clients can show "server went away" instead of a
+        bare reconnect loop. A recycle (SIGHUP or scheduled) does NOT
+        send this — it sends :meth:`notify_server_recycle` /
+        :meth:`notify_host_started` instead, because its runtime comes
+        back.
         """
         message: dict = {"type": "host_shutdown"}
         dead = []
@@ -959,16 +979,16 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
-    def notify_host_restart(self, phase: str) -> None:
-        """Broadcast a host-restart progress event to all connections (#2527).
+    def notify_server_recycle(self, phase: str) -> None:
+        """Broadcast a server-recycle progress event (#2527, #2661).
 
-        Sent at each phase of the SIGHUP graceful restart (``draining``,
-        ``restarting``) so clients can show a "server restarting" banner
-        before the per-workspace stop frames and the 1012 disconnect
-        arrive.
+        Sent at each phase of the graceful runtime recycle (``draining``,
+        ``recycling``) — SIGHUP and a scheduled recycle both — so clients
+        can show a "server recycling" notice before the per-workspace
+        stop frames and the 1012 disconnect arrive.
         """
         message: dict = {
-            "type": "host_restart",
+            "type": "server_recycle",
             "phase": phase,
         }
         dead = []
@@ -985,9 +1005,9 @@ class WebSocketState:
     def notify_host_started(self) -> None:
         """Broadcast host-started to all connections (#2527).
 
-        Sent when a SIGHUP graceful restart completes. Most clients see it
-        after reconnecting (the restart drops every WebSocket with 1012);
-        it is the all-clear counterpart to :meth:`notify_host_restart`.
+        Sent when a graceful recycle completes. Most clients see it after
+        reconnecting (the recycle drops every WebSocket with 1012); it is
+        the all-clear counterpart to :meth:`notify_server_recycle`.
         """
         message: dict = {"type": "host_started"}
         dead = []

@@ -28,14 +28,21 @@ class StatusBar(Static):
         extra: str = "",
         last_login: str | None = None,
     ) -> None:
-        text = (
-            f"server: {server or '(none)'}"
+        # The live `extra` segment (host notices, the #2661 schedule
+        # countdown) renders FIRST when set: it is the time-sensitive
+        # bit, and appending it last let it fall off the right edge of
+        # a typical terminal once server/user/last-login (~76 cols)
+        # had claimed the row — an invisible countdown on the very
+        # screens that need it.
+        text = ""
+        if extra:
+            text += f"{extra}"
+        text += (
+            f"{'   |   ' if text else ''}server: {server or '(none)'}"
             f"   |   user: {user or '(not logged in)'}"
         )
         if last_login:
             text += f"   |   last login: {last_login}"
-        if extra:
-            text += f"   |   {extra}"
         # Render literally — server URL / user / live `extra` may contain
         # bracket characters that would otherwise be parsed as markup.
         self.update(Text(text))

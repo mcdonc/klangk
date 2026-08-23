@@ -105,14 +105,27 @@ class WsClient extends ChangeNotifier implements ChatServices {
 
   final _errorController = StreamController<String>.broadcast();
   final _terminalOutputController = StreamController<String>.broadcast();
-  // #2527: host lifecycle notices (host_shutdown / host_restart phases /
+  // #2527: host lifecycle notices (host_shutdown / server_recycle phases /
   // host_started) as a broadcast stream AND a listenable field for status
   // lines. Notifications only — never gating the reconnect machinery.
   final _hostNoticeController = StreamController<String>.broadcast();
   Stream<String> get hostNotices => _hostNoticeController.stream;
   String? _hostNotice;
 
-  /// The current host lifecycle notice, if any ('Server restarting…',
+  // #2661: pending server stop/recycle schedules (the `server_schedule`
+  // snapshot). Listenable + broadcast stream; the banner widget renders a
+  // live countdown locally from each schedule's `fire_at`, so the server
+  // only needs to push this on change + periodically.
+  final _serverScheduleController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
+  Stream<List<Map<String, dynamic>>> get serverSchedules =>
+      _serverScheduleController.stream;
+  List<Map<String, dynamic>>? _serverSchedules;
+
+  /// Pending server schedules, if any (`[{id, action, fire_at, ...}]`).
+  List<Map<String, dynamic>>? get serverSchedulesNow => _serverSchedules;
+
+  /// The current host lifecycle notice, if any ('Server recycling…',
   /// 'Server shutting down'). Non-blocking: the UI surfaces it in a
   /// transient banner/status; auto-reconnect proceeds unaffected (#2527).
   String? get hostNotice => _hostNotice;
@@ -379,12 +392,28 @@ class WsClient extends ChangeNotifier implements ChatServices {
     'event': _customEventController.add,
     'host_shutdown': (json) => _onHostNotice('Server shutting down'),
     'host_started': (json) => _onHostNotice(null),
-    'host_restart': (json) {
+    'server_schedule': (json) {
+      final raw = json['schedules'];
+      _serverSchedules = (raw is List)
+          ? raw
+              .whereType<Map<String, dynamic>>()
+              .map((s) => Map<String, dynamic>.from(s))
+              .toList()
+          : <Map<String, dynamic>>[];
+      _serverScheduleController.add(_serverSchedules!);
+      notifyListeners();
+    },
+    'server_schedule_fired': (json) {
+      final action = json['action'] as String? ?? 'action';
+      final what = action == 'recycle' ? 'recycle' : 'stop';
+      _onHostNotice('Scheduled server $what is running…');
+    },
+    'server_recycle': (json) {
       final phase = json['phase'] as String? ?? '';
-      if (phase == 'restarting') {
-        _onHostNotice('Server restarting…');
+      if (phase == 'recycling') {
+        _onHostNotice('Server recycling…');
       } else if (phase == 'draining') {
-        _onHostNotice('Server preparing to restart…');
+        _onHostNotice('Server preparing to recycle…');
       }
     },
   };

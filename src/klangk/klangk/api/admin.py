@@ -18,6 +18,7 @@ from .. import (
     auth,
     wshandler,
 )
+from ..server_schedule import resolve_fire_at
 from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
@@ -818,3 +819,70 @@ ALL_PERMISSIONS = [
     "manage_invitations",
     "*",
 ]
+
+
+class ServerScheduleRequest(BaseModel):
+    """Body for scheduling a server stop/recycle (#2661)."""
+
+    action: str  # "stop" | "recycle"
+    at: str | None = None  # absolute ISO-8601 timestamp
+    in_seconds: float | None = None  # relative delay, > 0
+
+
+@router.post("/admin/server/schedule")
+async def schedule_server_action(
+    payload: ServerScheduleRequest,
+    request: Request,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    """Schedule a server stop or recycle for a future time (#2661).
+
+    Provide ``at`` (absolute ISO-8601; naive = UTC) or ``in_seconds``
+    (positive delay). The schedule persists across klangkd restarts.
+    When it fires: a **stop** runs the graceful TERM/INT path and the
+    process exits (code 0) — the service manager owns what happens
+    next; a **recycle** runs the SIGHUP graceful restart in-process
+    (listener and DB stay up) and never exits. In both, workspaces are
+    drained gracefully and every connected client sees a live countdown.
+    """
+    app = request.app
+    try:
+        fire_at = resolve_fire_at(payload.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    try:
+        schedule = await app.state.model.server_schedules.create_schedule(
+            payload.action, fire_at, created_by=admin["id"]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    await app.state.server_scheduler.notify_pending()
+    return schedule
+
+
+@router.get("/admin/server/schedule")
+async def list_server_schedules(
+    request: Request,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    """List pending server stop/recycle schedules (#2661)."""
+    return {
+        "schedules": await request.app.state.model.server_schedules.pending_schedules()
+    }
+
+
+@router.delete("/admin/server/schedule/{schedule_id}")
+async def cancel_server_schedule(
+    schedule_id: str,
+    request: Request,
+    admin: dict = Depends(acl.has_permission("admin")),
+):
+    """Cancel a pending server stop/recycle schedule (#2661)."""
+    app = request.app
+    cancelled = await app.state.model.server_schedules.cancel_schedule(
+        schedule_id
+    )
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    await app.state.server_scheduler.notify_pending()
+    return {"cancelled": schedule_id}

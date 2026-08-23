@@ -7,7 +7,9 @@ and the ``add_server_to_config`` helper — under the 100% coverage gate.
 
 from __future__ import annotations
 
+import asyncio
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -1254,14 +1256,16 @@ async def test_main_screen_host_events_update_live_extra(monkeypatch):
         screen._on_status_event({"type": "host_shutdown"})
         await pilot.pause()
         assert app.live_extra == "server: shutting down"
-        screen._on_status_event({"type": "host_restart", "phase": "draining"})
-        await pilot.pause()
-        assert app.live_extra == "server: preparing to restart"
         screen._on_status_event(
-            {"type": "host_restart", "phase": "restarting"}
+            {"type": "server_recycle", "phase": "draining"}
         )
         await pilot.pause()
-        assert app.live_extra == "server: restarting"
+        assert app.live_extra == "server: preparing to recycle"
+        screen._on_status_event(
+            {"type": "server_recycle", "phase": "recycling"}
+        )
+        await pilot.pause()
+        assert app.live_extra == "server: recycling"
         screen._on_status_event({"type": "host_started"})
         await pilot.pause()
         assert app.live_extra == "server: back up"
@@ -7123,6 +7127,35 @@ async def test_status_bar_last_login_segment(monkeypatch):
         assert "last login" not in str(status.render())
 
 
+async def test_status_bar_extra_segment_leads(monkeypatch):
+    """The live `extra` segment renders FIRST (#2661): appended last, the
+    schedule countdown fell off the right edge of a typical terminal
+    (server/user/last-login alone span ~76 cols) — an invisible
+    countdown on exactly the screens that need it."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(last_login_at=lambda: None))
+    async with app.run_test() as pilot:
+        status = app.screen.query_one("#status", StatusBar)
+        status.set_state(
+            server="https://x.example",
+            user="me@x.example",
+            extra="server: stop at 19:00 (in 1h 12m)",
+            last_login="2026-08-20 10:00",
+        )
+        await pilot.pause()
+        rendered = str(status.render())
+        assert rendered.startswith("server: stop at 19:00 (in 1h 12m)")
+        assert "user: me@x.example" in rendered
+        # Static segments still render without an extra.
+        status.set_state(server="https://x.example", user="me@x.example")
+        await pilot.pause()
+        assert str(status.render()).startswith("server: https://x.example")
+
+
 def test_fmt_login_ts_invalid():
     """Unparseable timestamps render empty (#2583)."""
     assert MainScreen._fmt_login_ts("not-a-date") == ""
@@ -12041,3 +12074,121 @@ async def test_edit_screen_prepopulates_settings(monkeypatch):
         assert es.query_one("#tmp_size", Input).value == "3g"
         assert es.query_one("#memory_limit", Input).value == ""
         assert es.query_one("#pids_limit", Input).value == ""
+
+
+async def test_main_screen_server_schedule_events(monkeypatch):
+    """#2661: pending server schedules render as a status line with fire
+    time + remaining; an empty snapshot clears it; firing notifies."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        screen = app.screen
+        fire_at = (
+            datetime.now(timezone.utc) + timedelta(hours=1, minutes=5)
+        ).isoformat()
+        screen._on_status_event(
+            {
+                "type": "server_schedule",
+                "schedules": [{"action": "stop", "fire_at": fire_at}],
+            }
+        )
+        await pilot.pause()
+        assert app.live_extra.startswith("server: stop at ")
+        assert re.search(r"\(in 1h \d+m\)", app.live_extra)
+        # Empty snapshot clears the server: line only.
+        screen._on_status_event({"type": "server_schedule", "schedules": []})
+        await pilot.pause()
+        assert app.live_extra == ""
+        # A non-server line is never clobbered by an empty snapshot.
+        app.live_extra = "live: other"
+        screen._on_status_event({"type": "server_schedule", "schedules": []})
+        await pilot.pause()
+        assert app.live_extra == "live: other"
+        # Firing warns.
+        screen._on_status_event(
+            {"type": "server_schedule_fired", "action": "stop"}
+        )
+        await pilot.pause()
+        assert app.live_extra == "server: scheduled stop running"
+
+
+def test_server_schedule_line_formats():
+    soon = (
+        datetime.now(timezone.utc) + timedelta(minutes=2, seconds=30)
+    ).isoformat()
+    line = scr_main._server_schedule_line(
+        {"action": "recycle", "fire_at": soon}
+    )
+    assert line.startswith("server: recycle at ")
+    assert "(in 2m)" in line
+    hours = (
+        datetime.now(timezone.utc) + timedelta(hours=2, minutes=3, seconds=45)
+    ).isoformat()
+    assert "(in 2h 3m)" in scr_main._server_schedule_line(
+        {"action": "stop", "fire_at": hours}
+    )
+    # Bad/absent fire_at degrades to a static line, never raises.
+    assert (
+        scr_main._server_schedule_line({"action": "stop", "fire_at": "x"})
+        == "server: stop scheduled"
+    )
+    assert (
+        scr_main._server_schedule_line({"action": "recycle"})
+        == "server: recycle scheduled"
+    )
+    # Naive (no-tz) fire_at is treated as local time, not rejected.
+    naive = (datetime.now() + timedelta(minutes=2, seconds=30)).isoformat()
+    assert "(in 2m)" in scr_main._server_schedule_line(
+        {"action": "stop", "fire_at": naive}
+    )
+    # Sub-minute remaining renders seconds.
+    seconds = (datetime.now(timezone.utc) + timedelta(seconds=45)).isoformat()
+    assert re.search(
+        r"\(in 4\ds\)",
+        scr_main._server_schedule_line({"action": "stop", "fire_at": seconds}),
+    )
+
+
+async def test_mount_does_not_cancel_status_ws_worker(monkeypatch):
+    """#2612 regression: the mount-time ``last-login`` worker must not
+    cancel the status-WS / token-refresh workers.
+
+    ``last-login`` runs ``exclusive=True``; in textual, exclusivity is
+    per (node, group). All three workers are spawned on the app node, so
+    leaving them in the default group made the last-login spawn cancel
+    the just-started status-WS and token-refresh loops — the status WS
+    never ran, so no live events (and none of #2052's reachability
+    machinery) worked. The last-login worker now uses its own group.
+    """
+
+    flags = {"entered": False, "cancelled": False}
+
+    async def slow_status_loop(self):
+        flags["entered"] = True
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            flags["cancelled"] = True
+            raise
+
+    monkeypatch.setattr(MainScreen, "_status_loop", slow_status_loop)
+
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        # Let the mount-time workers start and a few loop ticks pass —
+        # the old bug cancelled status-ws during on_mount's own
+        # last-login spawn.
+        for _ in range(5):
+            await pilot.pause()
+            await asyncio.sleep(0.05)
+        assert flags["entered"], "status-ws worker never started"
+        assert not flags["cancelled"], (
+            "status-ws worker was cancelled at mount (last-login "
+            "exclusive in the default group — #2612 regression)"
+        )
+        running = [w.name for w in app.workers if w.is_running]
+        assert "status-ws" in running

@@ -11754,7 +11754,7 @@ class TestNotifyHostShutdown:
 
 
 class TestNotifyHostRestart:
-    """host_restart / host_started broadcasts for the SIGHUP graceful
+    """server_recycle / host_started broadcasts for the SIGHUP graceful
     restart (#2527)."""
 
     def _sockets_with(self, sockets, entries):
@@ -11767,14 +11767,14 @@ class TestNotifyHostRestart:
         "method,args,expected",
         [
             (
-                "notify_host_restart",
+                "notify_server_recycle",
                 ("draining",),
-                {"type": "host_restart", "phase": "draining"},
+                {"type": "server_recycle", "phase": "draining"},
             ),
             (
-                "notify_host_restart",
-                ("restarting",),
-                {"type": "host_restart", "phase": "restarting"},
+                "notify_server_recycle",
+                ("recycling",),
+                {"type": "server_recycle", "phase": "recycling"},
             ),
             ("notify_host_started", (), {"type": "host_started"}),
         ],
@@ -11801,3 +11801,28 @@ class TestNotifyHostRestart:
         anon.send_json.assert_not_called()
         assert dead not in sockets.connections
         sockets.connections.clear()
+
+
+class TestServerScheduleSnapshotOnConnect:
+    """#2661: a just-connected socket receives the pending-schedule
+    snapshot immediately (not only on the scheduler's next tick)."""
+
+    async def test_connect_sends_schedule_snapshot(self, user, app_state):
+        from types import SimpleNamespace
+
+        app_state = _make_app_state()
+        scheduler = SimpleNamespace(
+            send_snapshot_to=AsyncMock(),
+        )
+        app_state.state.server_scheduler = scheduler
+
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
+
+        await handle_websocket(websocket, app_state)
+
+        scheduler.send_snapshot_to.assert_awaited_once()
+        # The SafeWebSocket wrapper was passed, not the raw one.
+        (safe_ws,) = scheduler.send_snapshot_to.await_args.args
+        assert safe_ws is not websocket

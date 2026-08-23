@@ -93,6 +93,13 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
     # status immediately instead of being blind until the next
     # transition (#1175 item 1).
     app.state.sockets.send_service_health_snapshot(safe_ws)
+    # #2661: replay any pending server stop/recycle schedule so a
+    # just-connected client can show the countdown immediately instead
+    # of waiting for the scheduler's next periodic broadcast. Guarded:
+    # minimal test apps may not wire the scheduler.
+    server_scheduler = getattr(app.state, "server_scheduler", None)
+    if server_scheduler is not None:
+        await server_scheduler.send_snapshot_to(safe_ws)
 
     try:
         while True:
