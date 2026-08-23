@@ -687,6 +687,24 @@ class ContainerRegistry(NetworkSidecarMixin):
                 "Could not find container %s, creating new one",
                 existing_container_id,
             )
+            # #2676: the id can be stale (an unclean host shutdown/restart,
+            # or another connection recreated the container without this
+            # caller's DB snapshot updating). Reconcile against live podman
+            # state by label before creating: a running workspace container
+            # is adopted exactly like a matching id above (this is the path
+            # a reconnect takes and why it self-heals), and a stopped one is
+            # removed. Without this, the create path would race the live
+            # pair — the sidecar pre-remove is refused with "dependent
+            # containers" while its workspace container is attached.
+            adopted = await self._adopt_labeled_container(
+                workspace_id,
+                t_start,
+                health_check=health_check,
+                owner_id=owner_id,
+                setup_state=setup_state,
+            )
+            if adopted is not None:
+                return adopted
             return None
         if info["State"]["Running"]:
             # FIPS gate on adoption (#2626 review): a container started
@@ -722,6 +740,84 @@ class ContainerRegistry(NetworkSidecarMixin):
             existing_container_id,
             workspace_id,
         )
+        return None
+
+    async def _adopt_labeled_container(
+        self,
+        workspace_id: str,
+        t_start: float,
+        *,
+        health_check: str | None = None,
+        owner_id: str | None = None,
+        setup_state: str | None = None,
+    ) -> tuple[str, str] | None:
+        """Adopt a live workspace container found by label (#2676).
+
+        The id passed to :meth:`start_container` can be stale (an unclean
+        host shutdown/restart, or another connection recreated the container
+        without the caller's snapshot updating). This reconcile step looks
+        up the workspace's container by its ``klangk.workspace`` label —
+        the same identity the reaper and sidecar sweeps key on — and:
+
+        - running  -> adopt it: same semantics as the matching-id branch of
+          :meth:`_handle_existing_container` (FIPS gate, re-track), plus the
+          DB ``container_id`` is re-persisted so the staleness heals for
+          every later caller;
+        - stopped  -> remove it (so the create path's sidecar pre-remove
+          can't be refused for a still-attached dependent), then fall
+          through to create.
+
+        Returns ``(container_id, "connected")`` on adoption, or ``None``
+        when no labeled container exists (a plain fresh create).
+        """
+        try:
+            containers = await self.app.state.podman.list_containers(
+                f"klangk.workspace={workspace_id}"
+            )
+        except (podman.PodmanError, OSError, ValueError):
+            # Best-effort reconcile: a failed ps must not break a start
+            # that may legitimately create a fresh container.
+            return None
+        for c in containers:
+            labels = c.get("Labels") or {}
+            if labels.get("klangk.role") != "workspace":
+                continue  # the network sidecar shares the workspace label
+            ident = container_ident(c)
+            if not ident:
+                continue
+            running = str(c.get("State", "")).lower() == "running"
+            if not running:
+                await self.app.state.podman.remove_container(ident)
+                logger.info(
+                    "workspace-open: removed stopped labeled container %s "
+                    "for workspace %s, will recreate",
+                    ident[:12],
+                    workspace_id[:8],
+                )
+                continue
+            # Adopt the running container — this is exactly what a fresh
+            # connect does with a current id, and why a reconnect after a
+            # failed restart self-heals today (#2676).
+            if self.app.state.settings.fips_mode:
+                await self._fips_gate(workspace_id, ident)
+            await self.app.state.model.workspaces.update_workspace_container(
+                workspace_id, ident
+            )
+            self.track_activity(
+                ident,
+                workspace_id,
+                health_check=health_check,
+                owner_id=owner_id,
+                setup_state=setup_state,
+            )
+            logger.info(
+                "workspace-open: DONE — adopted running labeled container "
+                "%s for stale-id workspace %s: %.3fs",
+                ident[:12],
+                workspace_id[:8],
+                time.monotonic() - t_start,
+            )
+            return ident, "connected"
         return None
 
     async def _reconcile_ports(

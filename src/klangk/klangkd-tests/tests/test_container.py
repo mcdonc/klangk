@@ -2805,6 +2805,183 @@ class TestStartContainer:
         p.start_container.assert_not_awaited()
         p.create_container.assert_not_awaited()
 
+    async def test_stale_id_adopts_running_labeled_container(
+        self, workspace, user
+    ):
+        # #2676: after an unclean host restart the id carried by the
+        # caller's snapshot can be stale while a (differently-id'd)
+        # workspace container is actually running. The start path must
+        # reconcile against live podman state by label — adopting the
+        # running container exactly like a matching-id reconnect —
+        # instead of racing the create path into the live pair.
+        ws_id = workspace["id"]
+        live = {
+            "Id": "live-cid",
+            "Names": ["klangk-ws"],
+            "State": "running",
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+        }
+        with patch_podman(
+            self.registry,
+            inspect_container=AsyncMock(return_value=None),
+            list_containers=AsyncMock(return_value=[live]),
+        ) as p:
+            cid, status = await self.registry.start_container(
+                container.ContainerStartSpec(
+                    ws_id,
+                    "/tmp/ws",
+                    "/tmp/home",
+                    existing_container_id="stale-cid",
+                )
+            )
+        assert cid == "live-cid"
+        assert status == "connected"
+        p.create_container.assert_not_awaited()
+        p.start_container.assert_not_awaited()
+        p.remove_container.assert_not_awaited()
+        # The DB id is re-persisted so the staleness heals for every
+        # later caller (restart, API start, reconnect).
+        fresh = await self.registry.app.state.model.workspaces.get_workspace(
+            ws_id, user["id"]
+        )
+        assert fresh["container_id"] == "live-cid"
+
+    async def test_stale_id_adopt_skips_unidentifiable_entries(
+        self, workspace
+    ):
+        # #2676: a ps entry with no usable ident (no Id/ID/Names) is
+        # skipped, not crashed on.
+        ws_id = workspace["id"]
+        identless = {
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+            # no Id / ID / Names
+        }
+        with patch_podman(
+            self.registry,
+            inspect_container=AsyncMock(return_value=None),
+            list_containers=AsyncMock(return_value=[identless]),
+        ) as p:
+            cid, status = await self.registry.start_container(
+                container.ContainerStartSpec(
+                    ws_id,
+                    "/tmp/ws",
+                    "/tmp/home",
+                    existing_container_id="stale-cid",
+                )
+            )
+        # Nothing to adopt — a fresh container was created.
+        assert cid == "new-cid"
+        assert status == "created"
+        p.remove_container.assert_not_awaited()
+
+    async def test_stale_id_adopt_runs_fips_gate(self, workspace, monkeypatch):
+        # #2676: adoption is the _handle_existing_container running branch
+        # — the FIPS gate (#2626) must run on the label-adopted container
+        # too, not only on a matching-id adopt.
+        ws_id = workspace["id"]
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "fips_mode", True
+        )
+        live = {
+            "Id": "live-cid",
+            "State": "running",
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+        }
+        gate = AsyncMock()
+        with (
+            patch_podman(
+                self.registry,
+                inspect_container=AsyncMock(return_value=None),
+                list_containers=AsyncMock(return_value=[live]),
+            ),
+            patch.object(self.registry, "_fips_gate", gate),
+        ):
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    ws_id,
+                    "/tmp/ws",
+                    "/tmp/home",
+                    existing_container_id="stale-cid",
+                )
+            )
+        gate.assert_awaited_once_with(ws_id, "live-cid")
+
+    async def test_stale_id_removes_stopped_labeled_container(self, workspace):
+        # #2676: a STOPPED labeled container found by the reconcile scan is
+        # removed before the create proceeds — a present dependent would
+        # make the sidecar pre-remove's rm fail with "dependent containers".
+        ws_id = workspace["id"]
+        stopped = {
+            "Id": "stopped-cid",
+            "Names": ["klangk-ws"],
+            "State": "exited",
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "workspace",
+            },
+        }
+        sidecar = {
+            "Id": "sidecar-cid",
+            "Names": ["klangk-net"],
+            "State": "exited",
+            "Labels": {
+                "klangk.workspace": ws_id,
+                "klangk.role": "network-sidecar",
+            },
+        }
+        with patch_podman(
+            self.registry,
+            inspect_container=AsyncMock(return_value=None),
+            list_containers=AsyncMock(return_value=[stopped, sidecar]),
+        ) as p:
+            cid, status = await self.registry.start_container(
+                container.ContainerStartSpec(
+                    ws_id,
+                    "/tmp/ws",
+                    "/tmp/home",
+                    existing_container_id="stale-cid",
+                )
+            )
+        assert cid == "new-cid"
+        assert status == "created"
+        # Only the workspace container was removed — the scan's role
+        # filter leaves the sidecar to the sidecar paths.
+        assert p.remove_container.await_args_list[0].args == ("stopped-cid",)
+        assert len(p.remove_container.await_args_list) == 1
+
+    async def test_stale_id_scan_failure_falls_through_to_create(
+        self, workspace
+    ):
+        # #2676: the label reconcile is best-effort — a failed `podman ps`
+        # must not break a start that would legitimately create a fresh
+        # container.
+        with patch_podman(
+            self.registry,
+            inspect_container=AsyncMock(return_value=None),
+            list_containers=AsyncMock(
+                side_effect=podman.PodmanError(500, "ps failed")
+            ),
+        ):
+            cid, status = await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    existing_container_id="stale-cid",
+                )
+            )
+        assert cid == "new-cid"
+        assert status == "created"
+
     async def test_reuse_running_filtered_container_retracks_sidecar(
         self, workspace, monkeypatch
     ):
