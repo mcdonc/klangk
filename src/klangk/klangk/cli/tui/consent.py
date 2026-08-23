@@ -148,6 +148,14 @@ _FLASH_TTL = 5.0
 # shell is restarted.
 _REFUSED_RETRY_INTERVAL = 60.0
 
+# Popup-show retry (#2699 review): how many times a worker re-attempts a
+# show that targeted nothing (no outer client found — e.g. a contended tmux
+# server timing out ``list-clients``), and how long it waits between
+# attempts. Without a retry, requests that arrived during the failed
+# attempt's dedupe window would never get a popup (holds auto-deny unseen).
+_POPUP_SHOW_ATTEMPTS = 3
+_POPUP_SHOW_RETRY_DELAY = 1.0
+
 
 # Sent as the WS handshake User-Agent so klangkd's refusal log (#2490) can
 # attribute a 403 to this client (vs a browser or anything else).
@@ -661,6 +669,13 @@ class ConsentDeciderApp(App):
         # when launched by the shell-layer wrapper; None for standalone use.
         self.popup_socket = popup_socket
         self.popup_session = popup_session
+        # The in-flight popup-show task (#2699): one show at a time, so a
+        # burst of held requests (snapshot or rapid-fire) reuses the show
+        # already opening instead of piling up tmux subprocesses.
+        self._show_popup_task: asyncio.Task | None = None
+        # The in-flight viewer-hide task (#2699 review): same off-loop
+        # treatment for the ``q``/``Esc`` detach path.
+        self._hide_task: asyncio.Task | None = None
 
     @property
     def _persistent(self) -> bool:
@@ -899,7 +914,16 @@ class ConsentDeciderApp(App):
                 if action == ADDED:
                     # A held request arrived: surface it as the popup over the
                     # shell (no-op in standalone, skipped if already shown).
-                    self._show_popup()
+                    # Scheduled OFF the event loop (#2699): the show is
+                    # synchronous tmux subprocess work and must never gate
+                    # the render below — inline, the Allow/Deny row only
+                    # appeared ~seconds after the popup wrapper, because a
+                    # `display-popup` blocks until dismissed and always
+                    # outlives its 3 s timeout. The task starts on the next
+                    # loop tick, so in practice the row paints before the
+                    # viewer attaches (worst case it shows a tick later —
+                    # never seconds).
+                    self._schedule_popup_show()
                 try:
                     if action == ERROR:
                         self._flash(str(payload))
@@ -1244,12 +1268,33 @@ class ConsentDeciderApp(App):
         never quit by a key (it dies only when the shell ends). Standalone
         quits as before. (On the rules screen ``Esc`` still returns to the
         queue — that screen's own binding takes precedence.) Reopen the popup
-        with the shell wrapper's reopen key.
+        with the shell wrapper's reopen key. The detach itself is scheduled
+        off the event loop (:meth:`_schedule_viewer_hide`) — it is the same
+        blocking-tmux-subprocess failure mode the show path fixed (#2699).
         """
         if self._persistent:
-            self._hide_viewer()
+            self._schedule_viewer_hide()
         else:
             self.exit()
+
+    def _schedule_viewer_hide(self) -> None:
+        """Schedule :meth:`_hide_viewer` on a worker thread, once at a time.
+
+        ``_hide_viewer`` is a synchronous ``tmux detach-client`` subprocess
+        (3 s timeout); run inline from the key action a contended tmux
+        server froze the UI for up to 3 s on ``q``/``Esc`` — the identical
+        failure mode the show path fixed (#2699). Deduplicated like the
+        show: ``q`` mashing reuses the in-flight detach (a second detach of
+        an already-detaching viewer is pointless).
+        """
+        if not self.popup_socket or not self.popup_session:
+            return  # standalone: nothing to detach
+        task = self._hide_task
+        if task is not None and not task.done():
+            return  # a detach is already in flight
+        self._hide_task = asyncio.create_task(
+            asyncio.to_thread(self._hide_viewer)
+        )
 
     def _hide_viewer(self) -> None:
         """Detach the popup viewer so it hides; the decider stays registered.
@@ -1257,6 +1302,9 @@ class ConsentDeciderApp(App):
         No-op when not running under a popup (standalone `consent-decide`).
         A failed/stale detach is swallowed -- the decider keeps running
         either way, and the viewer is reopened with the reopen key.
+        Blocking by design (see :meth:`_schedule_viewer_hide`): callers on
+        the event loop must go through the scheduler, which runs this on a
+        worker thread.
         """
         sock = self.popup_socket
         sess = self.popup_session
@@ -1271,22 +1319,85 @@ class ConsentDeciderApp(App):
         except Exception:  # noqa: BLE001
             logger.debug("consent-decide viewer detach failed")
 
-    def _show_popup(self) -> None:
+    def _schedule_popup_show(self) -> None:
+        """Schedule :meth:`_show_popup` on a worker thread, once at a time.
+
+        The show is synchronous tmux work — two ``list-clients`` queries
+        plus a ``display-popup`` subprocess that **blocks until the popup
+        is dismissed** (it always outlives its 3 s timeout, then is killed;
+        the popup itself stays up). Called inline from the async pump this
+        froze the UI event loop for the full timeout, so the held-request
+        row only rendered seconds after the popup wrapper appeared
+        (#2699). Off the loop, the row renders immediately (the render is
+        not gated on the show) and the popup wrapper follows within one
+        tmux round-trip.
+
+        Deduplicated: while one show is in flight, later ADDED frames skip
+        — the popup shows the whole held-request queue, not one request,
+        so the in-flight show already covers them. A show that targeted
+        nothing is retried inside the worker (see
+        :meth:`_popup_show_worker`); once the worker ends, the slot frees
+        so the next held request schedules a fresh one.
+        """
+        if not self.popup_socket or not self.popup_session:
+            return  # standalone: no popup to show (skip the thread entirely)
+        task = self._show_popup_task
+        if task is not None and not task.done():
+            return  # a show is already in flight; it covers this request too
+        self._show_popup_task = asyncio.create_task(self._popup_show_worker())
+
+    async def _popup_show_worker(self) -> None:
+        """Run :meth:`_show_popup` off the event loop; never raises (#2699).
+
+        Retries a show that targeted nothing while holds remain pending
+        (#2699 review): a failed first attempt (contended tmux server,
+        ``list-clients`` timeout) must not strand requests that arrived
+        during the attempt's dedupe window — without a retry they would
+        sit unpopup'd until the next ADDED frame or a reconnect, and
+        auto-deny unseen. Bounded by ``_POPUP_SHOW_ATTEMPTS``; once the
+        worker ends the slot frees and the next ADDED frame schedules a
+        fresh one. :meth:`_show_popup` swallows its subprocess errors;
+        this guard keeps the fire-and-forget task from surfacing anything
+        (an unretrieved task exception would just log noise).
+        """
+        try:
+            for _ in range(_POPUP_SHOW_ATTEMPTS):
+                shown = await asyncio.to_thread(self._show_popup)
+                if shown or not self.controller.pending:
+                    return
+                await asyncio.sleep(_POPUP_SHOW_RETRY_DELAY)
+        except Exception:  # noqa: BLE001
+            logger.exception("consent-decide popup show failed")
+
+    def _show_popup(self) -> bool:
         """Show the popup on the user's shell client when a request arrives.
 
         No-op when not running under a popup (standalone ``consent-decide``).
         Skipped when the popup is already open (the hidden session has a
         viewer client attached). A failed show is swallowed -- the decider
         keeps running and the user can reopen with the shell's reopen key.
+        Blocking by design (see :meth:`_schedule_popup_show`): callers on
+        the event loop must go through the scheduler, which runs this on a
+        worker thread.
+
+        Returns True when the popup is (or was just made) visible on at
+        least one shell client — including the already-open case. A
+        per-client ``display-popup`` that hits its timeout still counts as
+        shown: the call blocks while the popup is open, so the timeout
+        means it opened and stayed. False means nothing could be targeted
+        (standalone, or no outer client was found — e.g. a contended tmux
+        server timing out ``list-clients``); the worker retries so holds
+        that arrived meanwhile are not stranded.
         """
         sock = self.popup_socket
         sess = self.popup_session
         if not sock or not sess:
-            return
+            return False
         if hidden_has_client(sock, sess):
-            return  # popup already open
+            return True  # popup already open
         w, h = DEFAULT_POPUP_SIZE
-        for client in outer_clients(sock, sess):
+        clients = outer_clients(sock, sess)
+        for client in clients:
             try:
                 subprocess.run(
                     show_popup_argv(sock, sess, client, w=w, h=h),
@@ -1295,6 +1406,7 @@ class ConsentDeciderApp(App):
                 )
             except Exception:  # noqa: BLE001
                 logger.debug("consent-decide popup show failed")
+        return bool(clients)
 
     def _decide(self, decision: str) -> None:
         rid = self._focused_request_id()

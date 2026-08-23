@@ -1214,6 +1214,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   surfaces — so the bar no longer shows a raw event name indefinitely
   after a drain cycle, and a pending scheduled stop/recycle countdown
   is no longer clobbered by them.
+- **Consent popup shows the held request immediately (#2699).** The
+  Allow/Deny row now renders within a few hundred ms of the popup frame
+  appearing over a shell. Previously the decider ran its tmux
+  `display-popup` subprocesses on the UI event loop, where the call
+  blocks until its timeout, delaying the row by seconds while the hold
+  countdown burned. The show now runs on a worker thread; a request held
+  while the decider was reconnecting also surfaces promptly on the
+  reconnect snapshot.
 - **Concurrent shells on one interactive-egress workspace now land on their
   selected terminal (#2692).** Selecting a terminal (e.g. from the TUI with
   `terminal-open-cmd`) while another consent-popup shell on the same
