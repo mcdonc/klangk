@@ -533,6 +533,17 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
     ("POST", f"{P}/admin/invitations", {"email": "email"}, None),
     ("DELETE", f"{P}/admin/invitations/{{invitation_id}}", None, None),
     ("POST", f"{P}/admin/invitations/{{invitation_id}}/resend", None, None),
+    # Host scheduling (#2661). `action` is "shutdown"|"restart"; `at` is
+    # absolute ISO-8601 and `in_seconds` a positive delay — the fuzzer's
+    # generic values mostly hit the 422 paths, which is the point.
+    ("GET", f"{P}/admin/host/schedule", None, None),
+    (
+        "POST",
+        f"{P}/admin/host/schedule",
+        {"action": "string", "at": "string", "in_seconds": "int"},
+        None,
+    ),
+    ("DELETE", f"{P}/admin/host/schedule/{{schedule_id}}", None, None),
     ("GET", f"{P}/admin/acl/tree", None, None),
     ("GET", f"{P}/admin/acl/by-principal/user/{{user_id}}", None, None),
     ("GET", f"{P}/admin/acl/by-principal/group/{{group_id}}", None, None),

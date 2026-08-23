@@ -510,7 +510,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         children: [
           if (_egressMode == 'interactive' && _consent != null)
             ConsentBanner(service: _consent!),
-          const HostScheduleBanner(),
+          HostScheduleBanner(),
           Expanded(
             child: Stack(
               children: [

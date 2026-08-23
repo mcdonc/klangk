@@ -47,7 +47,7 @@ WsClient _clientWithSchedules(List<Map<String, dynamic>>? schedules) {
 
 Widget _wrap(WsClient client) => ChangeNotifierProvider<WsClient>.value(
       value: client,
-      child: const MaterialApp(
+      child: MaterialApp(
         home: Scaffold(body: HostScheduleBanner()),
       ),
     );
@@ -115,6 +115,89 @@ void main() {
     await tester.pump();
     final text = tester.widget<Text>(find.byType(Text).first).data!;
     expect(text, contains('Scheduled host restart'));
+  });
+
+  testWidgets('counts down in seconds under a minute', (tester) async {
+    final fireAt = DateTime.now().toUtc().add(const Duration(seconds: 45));
+    await tester.pumpWidget(
+      _wrap(
+        _clientWithSchedules([
+          {'action': 'shutdown', 'fire_at': fireAt.toIso8601String()},
+        ]),
+      ),
+    );
+    await tester.pump();
+    final text = tester.widget<Text>(find.byType(Text).first).data!;
+    expect(RegExp(r'\b4\ds\b').hasMatch(text), isTrue);
+  });
+
+  testWidgets('the 1s ticker rebuilds the banner while pending',
+      (tester) async {
+    final fireAt = DateTime.now().toUtc().add(const Duration(seconds: 45));
+    await tester.pumpWidget(
+      _wrap(
+        _clientWithSchedules([
+          {'action': 'shutdown', 'fire_at': fireAt.toIso8601String()},
+        ]),
+      ),
+    );
+    await tester.pump();
+    // Advance fake time: each 1s elapse fires the banner's periodic
+    // Timer (its setState rebuild). The label is computed from the
+    // REAL clock (DateTime.now), so we assert it keeps rendering the
+    // seconds countdown, not that it ticked down.
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    final text = tester.widget<Text>(find.byType(Text).first).data!;
+    expect(RegExp(r'\b4\ds\b').hasMatch(text), isTrue);
+  });
+
+  testWidgets('a malformed schedules payload clears the banner',
+      (tester) async {
+    final channel = _FakeChannel();
+    final client = WsClient();
+    client.connectForTest(channel);
+    channel.serverSend({
+      'type': 'host_schedule',
+      'schedules': [
+        {
+          'action': 'shutdown',
+          'fire_at': DateTime.now()
+              .toUtc()
+              .add(const Duration(minutes: 5))
+              .toIso8601String(),
+        },
+      ],
+    });
+    await tester.pumpWidget(_wrap(client));
+    await tester.pump();
+    expect(find.byType(Text), findsOneWidget);
+    // Non-list snapshot (protocol drift / partial write) → empty list,
+    // hostSchedulesNow resets, and the banner's next ticker rebuild
+    // (it reads, not watches, the client) renders nothing.
+    channel.serverSend({'type': 'host_schedule', 'schedules': 'garbage'});
+    await tester.pump(const Duration(seconds: 1));
+    expect(client.hostSchedulesNow, isEmpty);
+    expect(find.byType(Text), findsNothing);
+  });
+
+  testWidgets('hostSchedules stream emits each snapshot', (tester) async {
+    final channel = _FakeChannel();
+    final client = WsClient();
+    client.connectForTest(channel);
+    final received = <List<Map<String, dynamic>>>[];
+    client.hostSchedules.listen(received.add);
+    final fireAt = DateTime.now().toUtc().add(const Duration(minutes: 5));
+    channel.serverSend({
+      'type': 'host_schedule',
+      'schedules': [
+        {'action': 'restart', 'fire_at': fireAt.toIso8601String()},
+      ],
+    });
+    await tester.pump();
+    expect(received, hasLength(1));
+    expect(received.single.single['action'], 'restart');
+    expect(client.hostSchedulesNow, hasLength(1));
   });
 
   testWidgets('firing surfaces as a host notice', (tester) async {

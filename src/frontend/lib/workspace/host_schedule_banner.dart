@@ -38,7 +38,10 @@ String _remainingLabel(Duration d) {
 /// host action with a live countdown. Renders nothing when no schedule
 /// is pending.
 class HostScheduleBanner extends StatefulWidget {
-  const HostScheduleBanner({super.key});
+  // Non-const on purpose: a const constructor's declaration line never
+  // executes (canonical const instance), which makes the 100% coverage
+  // gate flag it nondeterministically across toolchains.
+  HostScheduleBanner({super.key});
 
   @override
   State<HostScheduleBanner> createState() => _HostScheduleBannerState();
