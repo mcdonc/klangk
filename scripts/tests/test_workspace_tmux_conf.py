@@ -4,9 +4,16 @@ Selection auto-copy in ``klangk shell`` depends on three tmux.conf lines
 working together; any one of them silently dropped breaks a clipboard path
 with no test failure elsewhere:
 
-1. ``set -g set-clipboard on`` — makes the container tmux itself emit the
+1. ``set -g set-clipboard external`` — makes the container tmux emit the
    OSC 52 (clipboard set) escape to its attached client when a copy-mode
-   selection is made. The attached client is the server-side
+   selection is made. ``external`` (not ``on``): tmux forwards
+   pane-originated OSC 52 to its clients only in ``on`` mode — with
+   ``external``, container apps can neither READ the CLI user's terminal
+   clipboard through query forwarding nor write it directly; only tmux's
+   own copy-mode copies go out. The consent-popup wrapper (the CLI's
+   local tmux) uses ``on`` because IT must forward the pane-originated
+   sequence written by the container attach client (see
+   shell_popup.configure_outer_session). The attached client is the server-side
    ``podman exec tmux attach`` whose pty output is forwarded over the
    WebSocket to the CLI, so this is the ONLY working OSC 52 transport for
    CLI shells: the copy-command helper (klangk-copy-to-clipboard) runs
@@ -50,11 +57,18 @@ def conf() -> str:
         return f.read()
 
 
-def test_set_clipboard_on(conf: str) -> None:
-    """Copies must emit OSC 52 to attached clients (#2694)."""
-    assert re.search(r"^set -g set-clipboard on$", conf, re.M), (
-        "set-clipboard on dropped: klangk shell selections would stop "
-        "reaching the local clipboard via OSC 52"
+def test_set_clipboard_external(conf: str) -> None:
+    """Copies must emit OSC 52 to attached clients (#2694).
+
+    external (not on): copy-mode copies still emit, but pane-app OSC 52
+    (notably clipboard read queries) is NOT forwarded to attached CLI
+    clients — on would open a clipboard-exfiltration path from the
+    container to the user's terminal.
+    """
+    assert re.search(r"^set -g set-clipboard external$", conf, re.M), (
+        "set-clipboard external dropped: klangk shell selections would "
+        "stop reaching the local clipboard via OSC 52 (and on would "
+        "forward container clipboard-read queries)"
     )
 
 
