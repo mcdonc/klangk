@@ -269,6 +269,51 @@ void main() {
     });
   });
 
+  group('guardAdminRoute', () {
+    test('logged-in non-admin on /admin/users -> /workspaces (#2669)', () {
+      expect(
+        guardAdminRoute(isLoggedIn: true, isAdmin: false, loc: '/admin/users'),
+        '/workspaces',
+      );
+    });
+
+    test('logged-in admin on /admin/users -> allowed (null)', () {
+      expect(
+        guardAdminRoute(isLoggedIn: true, isAdmin: true, loc: '/admin/users'),
+        isNull,
+      );
+    });
+
+    test('logged-out non-admin on /admin/users -> allowed (null)', () {
+      // Must not fire for logged-out visitors: guardAuth owns that case
+      // (stash + /login), and firing here would strand them on the
+      // workspace list without ever seeing the login form.
+      expect(
+        guardAdminRoute(isLoggedIn: false, isAdmin: false, loc: '/admin/users'),
+        isNull,
+      );
+    });
+
+    test('non-admin on non-admin route -> allowed (null)', () {
+      expect(
+        guardAdminRoute(isLoggedIn: true, isAdmin: false, loc: '/workspaces'),
+        isNull,
+      );
+    });
+
+    test('idempotent across repeated evaluations of the same location', () {
+      // GoRouter re-parses the committed location on every
+      // refreshListenable notification; the guard must answer every
+      // evaluation identically (the #2670 lesson).
+      final first = guardAdminRoute(
+          isLoggedIn: true, isAdmin: false, loc: '/admin/users');
+      final second = guardAdminRoute(
+          isLoggedIn: true, isAdmin: false, loc: '/admin/users');
+      expect(first, second);
+      expect(first, '/workspaces');
+    });
+  });
+
   group('guardRoot', () {
     test('sends logged-in users at / to /workspaces', () {
       expect(guardRoot(isLoggedIn: true, loc: '/'), '/workspaces');
@@ -409,6 +454,55 @@ void main() {
         ),
         '/admin/users',
       );
+    });
+
+    test('logged-in non-admin on /admin/users -> /workspaces (#2669)', () {
+      expect(
+        evaluateGuards(
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/admin/users',
+          currentUri: '/admin/users',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspaces',
+      );
+    });
+
+    test('logged-in admin on /admin/users -> allowed (null) (#2669)', () {
+      expect(
+        evaluateGuards(
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/admin/users',
+          currentUri: '/admin/users',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: true,
+        ),
+        isNull,
+      );
+    });
+
+    test('logged-out on /admin/users -> /login with stash, not /workspaces',
+        () {
+      // The auth gate owns logged-out visitors; the admin gate must not
+      // preempt it (see guardAdminRoute 'logged-out' test).
+      expect(
+        evaluateGuards(
+          isLoggedIn: false,
+          bannerRequired: false,
+          loc: '/admin/users',
+          currentUri: '/admin/users',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/login',
+      );
+      expect(pendingRedirect, '/admin/users');
     });
 
     test('logged-in on / -> /workspaces (root, not public-route guard)', () {

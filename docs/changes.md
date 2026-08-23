@@ -1180,6 +1180,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   disabled, instead of surfacing a raw API error. `klangk admin invitations
   send` rejects a malformed address locally the same way.
 
+- **Admin route guard (#2669).** An authenticated non-admin visiting
+  `/admin/users` directly (typed URL, stale bookmark or redirect) no
+  longer sees the dead-end "No admin sections available" page; the
+  router now bounces them to the workspace list. Logged-out visitors
+  keep the normal login flow, and admins are unaffected.
+
 - **Short image names resolve in fresh checkouts (#286).** devenv now
   exports `CONTAINERS_REGISTRIES_CONF` and seeds a
   `registries.conf` (`unqualified-search-registries = ["docker.io"]`)
