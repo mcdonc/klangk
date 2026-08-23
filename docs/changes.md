@@ -1156,6 +1156,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   `short-name ... did not resolve to an alias and no
 containers-registries.conf(5) was found`.
 
+- **Post-login redirect no longer leaks across sessions (#2670).** The
+  "return to where you were" URL stashed when a logged-out user hits a
+  protected route is now cleared on logout (and on any 401 that ends the
+  session), so it can never outlive its session. It is also checked
+  against the new session: a non-admin logging in on a browser where an
+  admin previously logged out now lands on `/workspaces`, not the admin
+  page the previous session was viewing.
+
 - **Workspace Restart button after a server restart (#2674).** Clicking
   Restart while the browser sat on the container-stopped overlay during a
   host shutdown/restart used to spin forever: the WebSocket had given up

@@ -123,6 +123,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/workspace/abc',
       );
@@ -135,6 +136,7 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/workspaces',
       );
@@ -147,6 +149,7 @@ void main() {
           loc: '/celebrate',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -159,6 +162,7 @@ void main() {
           loc: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -171,8 +175,96 @@ void main() {
           loc: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
+      );
+    });
+
+    test('guard is idempotent across repeated evaluations (#2670)', () {
+      // GoRouter re-parses the committed location on every refreshListenable
+      // notification, and login() notifies twice in quick succession — the
+      // guard must give both evaluations the same answer. It therefore must
+      // NOT consume the stash; see the guard's doc comment.
+      pendingRedirect = '/workspace/abc';
+      final first = guardLoggedInPublicRoute(
+        isLoggedIn: true,
+        loc: '/login',
+        publicRoutes: routes,
+        featurePaths: featurePaths,
+        isAdmin: false,
+      );
+      final second = guardLoggedInPublicRoute(
+        isLoggedIn: true,
+        loc: '/login',
+        publicRoutes: routes,
+        featurePaths: featurePaths,
+        isAdmin: false,
+      );
+      expect(first, '/workspace/abc');
+      expect(second, '/workspace/abc');
+    });
+
+    test('admin-target rejection is stable across evaluations (#2670)', () {
+      // A rejected target must yield the same fallback on every
+      // evaluation — clearing it here would re-introduce the double-
+      // notify race (the second evaluation would fall back while the
+      // first had already bounced the user).
+      pendingRedirect = '/admin/users';
+      for (var i = 0; i < 2; i++) {
+        expect(
+          guardLoggedInPublicRoute(
+            isLoggedIn: true,
+            loc: '/login',
+            publicRoutes: routes,
+            featurePaths: featurePaths,
+            isAdmin: false,
+          ),
+          '/workspaces',
+        );
+      }
+    });
+
+    test('rejects an admin target for a non-admin session (#2670)', () {
+      // Stashed by a previous (admin) session's logout or expiry.
+      pendingRedirect = '/admin/users';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspaces',
+      );
+    });
+
+    test('allows an admin target for an admin session', () {
+      pendingRedirect = '/admin/users';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: true,
+        ),
+        '/admin/users',
+      );
+    });
+
+    test('allows non-admin targets for a non-admin session', () {
+      pendingRedirect = '/workspace/abc?file=main.dart';
+      expect(
+        guardLoggedInPublicRoute(
+          isLoggedIn: true,
+          loc: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspace/abc?file=main.dart',
       );
     });
   });
@@ -206,6 +298,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/consent',
       );
@@ -225,6 +318,7 @@ void main() {
           currentUri: '/consent',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -239,6 +333,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/consent',
       );
@@ -253,6 +348,7 @@ void main() {
           currentUri: '/workspace/abc?x=1',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/login',
       );
@@ -269,8 +365,49 @@ void main() {
           currentUri: '/login',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/workspace/zzz',
+      );
+    });
+
+    test(
+        'logged-in non-admin on /login with stale admin target -> '
+        '/workspaces (#2670)', () {
+      // The repro from #2670: an admin session stashed /admin/users (via
+      // logout or expiry), and a non-admin logs in on the same browser.
+      pendingRedirect = '/admin/users';
+      expect(
+        evaluateGuards(
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/login',
+          currentUri: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: false,
+        ),
+        '/workspaces',
+      );
+      // The rejected stash is not consumed here — clearing happens on
+      // session end (_clearToken). Idempotence is what makes the
+      // double-notify race harmless.
+      expect(pendingRedirect, '/admin/users');
+    });
+
+    test('logged-in admin on /login with admin target -> target', () {
+      pendingRedirect = '/admin/users';
+      expect(
+        evaluateGuards(
+          isLoggedIn: true,
+          bannerRequired: false,
+          loc: '/login',
+          currentUri: '/login',
+          publicRoutes: routes,
+          featurePaths: featurePaths,
+          isAdmin: true,
+        ),
+        '/admin/users',
       );
     });
 
@@ -285,6 +422,7 @@ void main() {
           currentUri: '/',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/workspaces',
       );
@@ -299,6 +437,7 @@ void main() {
           currentUri: '/workspaces',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -313,6 +452,7 @@ void main() {
           currentUri: '/celebrate',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         isNull,
       );
@@ -327,6 +467,7 @@ void main() {
           currentUri: '/consent',
           publicRoutes: routes,
           featurePaths: featurePaths,
+          isAdmin: false,
         ),
         '/login',
       );

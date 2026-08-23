@@ -135,6 +135,33 @@ void main() {
       expect(find.text('Please log in to continue.'), findsNothing);
     });
 
+    testWidgets('failed login keeps the pending redirect (#2670)',
+        (tester) async {
+      // The stash may only be consumed by the router guard after a
+      // successful login; a failed attempt must not drop it, or the
+      // user would lose their return destination on a typo'd password.
+      pendingRedirect = '/workspace/abc123';
+      testAuthHttpClientOverride = MockClient((request) async {
+        return http.Response(
+          jsonEncode({'detail': 'Invalid credentials'}),
+          401,
+        );
+      });
+
+      await tester.pumpWidget(buildLoginPage());
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.first, 'user@example.com');
+      await tester.enterText(fields.last, 'wrongpass');
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Invalid credentials'), findsOneWidget);
+      expect(pendingRedirect, '/workspace/abc123');
+    });
+
     testWidgets('login mode rejects an invalid identifier', (tester) async {
       await tester.pumpWidget(buildLoginPage());
       await tester.pumpAndSettle();
