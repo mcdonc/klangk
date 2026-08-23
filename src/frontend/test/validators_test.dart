@@ -19,4 +19,19 @@ void main() {
       expect(isValidEmail('a@b@c.com'), isFalse);
     });
   });
+
+  group('isValidHandleChars', () {
+    test('accepts handle characters', () {
+      expect(isValidHandleChars('hero'), isTrue);
+      expect(isValidHandleChars('first.last_2-x'), isTrue);
+      expect(isValidHandleChars('  padded  '), isTrue);
+    });
+
+    test('rejects non-handle characters', () {
+      expect(isValidHandleChars(''), isFalse);
+      expect(isValidHandleChars('Upper'), isFalse);
+      expect(isValidHandleChars('has space'), isFalse);
+      expect(isValidHandleChars('a@b.com'), isFalse);
+    });
+  });
 }

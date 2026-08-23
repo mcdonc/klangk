@@ -438,7 +438,7 @@ class _HandleSectionState extends State<_HandleSection> {
             validator: (v) {
               if (v == null || v.trim().isEmpty) return 'Required';
               if (v != v.toLowerCase()) return 'Must be lowercase';
-              if (!RegExp(r'^[a-z0-9._-]+$').hasMatch(v)) {
+              if (!isValidHandleChars(v)) {
                 return 'Only lowercase letters, numbers, dots, hyphens, underscores';
               }
               return null;

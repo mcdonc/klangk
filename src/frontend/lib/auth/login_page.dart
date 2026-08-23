@@ -221,9 +221,7 @@ class _LoginPageState extends State<LoginPage> {
           }
           // Login also accepts a handle (#616); registration requires
           // an email (a deliverable address is needed for verification).
-          if (!_isRegister &&
-              RegExp(r'^[a-z0-9._-]+$').hasMatch(value) &&
-              value.length <= 32) {
+          if (!_isRegister && isValidHandleChars(value) && value.length <= 32) {
             return null;
           }
           return _isRegister
