@@ -7,6 +7,7 @@ and the ``add_server_to_config`` helper — under the 100% coverage gate.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12119,3 +12120,44 @@ def test_host_schedule_line_formats():
             {"action": "shutdown", "fire_at": seconds}
         ),
     )
+
+
+async def test_mount_does_not_cancel_status_ws_worker(monkeypatch):
+    """#2612 regression: the mount-time ``last-login`` worker must not
+    cancel the status-WS / token-refresh workers.
+
+    ``last-login`` runs ``exclusive=True``; in textual, exclusivity is
+    per (node, group). All three workers are spawned on the app node, so
+    leaving them in the default group made the last-login spawn cancel
+    the just-started status-WS and token-refresh loops — the status WS
+    never ran, so no live events (and none of #2052's reachability
+    machinery) worked. The last-login worker now uses its own group.
+    """
+
+    flags = {"entered": False, "cancelled": False}
+
+    async def slow_status_loop(self):
+        flags["entered"] = True
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            flags["cancelled"] = True
+            raise
+
+    monkeypatch.setattr(MainScreen, "_status_loop", slow_status_loop)
+
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        # Let the mount-time workers start and a few loop ticks pass —
+        # the old bug cancelled status-ws during on_mount's own
+        # last-login spawn.
+        for _ in range(5):
+            await pilot.pause()
+            await asyncio.sleep(0.05)
+        assert flags["entered"], "status-ws worker never started"
+        assert not flags["cancelled"], (
+            "status-ws worker was cancelled at mount (last-login "
+            "exclusive in the default group — #2612 regression)"
+        )
+        running = [w.name for w in app.workers if w.is_running]
+        assert "status-ws" in running

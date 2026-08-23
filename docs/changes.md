@@ -1164,6 +1164,7 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+<<<<<<< HEAD
 - **Idempotent `POST /auth/logout` (#2687).** Logout now returns 200 even
   when the presented token is already expired, revoked, or absent — the
   token being dead is logout's desired end state, not an auth failure.
@@ -1189,6 +1190,14 @@ containers-registries.conf(5) was found`.
   admin previously logged out now lands on `/workspaces`, not the admin
   page the previous session was viewing.
 
+=======
+- **TUI live status events stopped working entirely (#2612 regression).**
+  The mount-time "last login" fetch ran as an exclusive worker in the
+  default worker group, which cancelled the just-started status-WS and
+  token-refresh loops on every startup — the TUI received no live
+  events at all (reachability signals, workspace status changes, and
+  the host-shutdown countdown). It now runs in its own worker group.
+>>>>>>> 01fc559d (fix(tui): last-login worker no longer cancels the status-WS loop)
 - **TUI status line was invisible on the workspaces screen (#2661).**
   The status bar (server, user, live state) has been painted underneath
   the keybind footer since the screens refactor (#1875) — two

@@ -325,6 +325,13 @@ class MainScreen(Screen):
             self.app.run_worker(
                 self._load_last_login,
                 name="last-login",
+                # Own group: exclusive cancels the group's other workers,
+                # and in the default group that was status-ws +
+                # token-refresh — the mount-time last-login fetch killed
+                # both background loops at spawn (#2612 regression; the
+                # status WS, its events, and the #2661 host countdown
+                # never started).
+                group="last-login",
                 exclusive=True,
                 exit_on_error=False,
             )
@@ -345,6 +352,7 @@ class MainScreen(Screen):
             self.app.run_worker(
                 self._load_last_login,
                 name="last-login",
+                group="last-login",
                 exclusive=True,
                 exit_on_error=False,
             )
