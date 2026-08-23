@@ -63,6 +63,7 @@ from klangk.cli.tui.screens import (
     ServerDownScreen,
     ServerSwitchScreen,
     SessionExpiredScreen,
+    StatusScreen,
     TransferScreen,
     WorkspaceDetailScreen,
 )
@@ -1234,12 +1235,81 @@ async def test_main_screen_status_event_updates_live_extra(monkeypatch):
     app = KlangkApp(_authed_state())
     async with app.run_test() as pilot:
         screen = app.screen
-        screen._on_status_event({"type": "service_health"})
+        # A genuinely unhandled type takes the debug pulse (#2690: types
+        # with a dedicated UI surface are silent — see the coexistence
+        # test below).
+        screen._on_status_event({"type": "mystery_broadcast"})
         await pilot.pause()
-        assert app.live_extra == "live: service_health"
-        assert "live: service_health" in str(
+        assert app.live_extra == "live: mystery_broadcast"
+        assert "live: mystery_broadcast" in str(
             screen.query_one("#status").render()
         )
+
+
+async def test_status_silent_events_leave_segment(monkeypatch):
+    """#2690: container_status / workspaces_changed / terminals_changed /
+    service_health never write the live segment — after a stop/recycle
+    drain the bar shows no stale `live: …`, and a pending #2661 countdown
+    survives the routine broadcasts that follow."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha", running=True)]))
+    async with app.run_test() as pilot:
+        screen = app.screen
+        # Seed a pending schedule countdown (#2661).
+        fire_at = (datetime.now() + timedelta(hours=1)).isoformat()
+        screen._on_status_event(
+            {
+                "type": "server_schedule",
+                "schedules": [{"action": "stop", "fire_at": fire_at}],
+            }
+        )
+        await pilot.pause()
+        countdown = app.live_extra
+        assert countdown.startswith("server: stop at")
+        # The drain-noise types must not clobber it.
+        for etype in ("container_status", "workspaces_changed"):
+            screen._on_status_event(
+                {"type": etype, "workspace_id": "id-alpha", "running": False}
+            )
+            await pilot.pause()
+            assert app.live_extra == countdown
+        for etype in ("terminals_changed", "service_health"):
+            screen._on_status_event({"type": etype})
+            await pilot.pause()
+            assert app.live_extra == countdown
+
+
+async def test_status_no_stale_segment_after_cycle(monkeypatch):
+    """#2690: after a schedule fires and the drain's container_status
+    broadcasts arrive, the bar keeps the fired notice — no raw
+    `live: container_status` residue."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_ws(owned=[_wsobj("alpha", running=True)]))
+    async with app.run_test() as pilot:
+        screen = app.screen
+        screen._on_status_event(
+            {"type": "server_schedule_fired", "action": "stop"}
+        )
+        await pilot.pause()
+        assert app.live_extra == "server: scheduled stop running"
+        # Server comes back; workspaces auto-start — a burst of silent
+        # broadcasts. None may overwrite the notice with a raw type name.
+        for _ in range(3):
+            screen._on_status_event(
+                {"type": "container_status", "running": True}
+            )
+            await pilot.pause()
+        assert app.live_extra == "server: scheduled stop running"
+        rendered = str(screen.query_one("#status").render())
+        assert "live: container_status" not in rendered
 
 
 async def test_main_screen_host_events_update_live_extra(monkeypatch):
@@ -4649,13 +4719,15 @@ async def test_status_event_refreshes_on_change(monkeypatch):
     st.list_owned_workspaces = owned
     app = KlangkApp(st)
     async with app.run_test() as pilot:
-        app.screen._on_status_event({"type": "service_health"})
+        app.screen._on_status_event({"type": "mystery_broadcast"})
         await pilot.pause()
-        assert app.live_extra == "live: service_health"
+        assert app.live_extra == "live: mystery_broadcast"
         before = calls["n"]
         app.screen._on_status_event({"type": "workspaces_changed"})
         await pilot.pause()
         assert calls["n"] > before  # list re-fetched
+        # Silent type: the segment is untouched (#2690).
+        assert app.live_extra == "live: mystery_broadcast"
 
 
 async def test_detail_loads_and_renders(monkeypatch):
@@ -7115,14 +7187,15 @@ async def test_status_bar_last_login_segment(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(last_login_at=lambda: None))
     async with app.run_test() as pilot:
+        await pilot.pause()  # let mount-time app-level refreshes land
         status = app.screen.query_one("#status", StatusBar)
-        status.set_state(
-            server="https://x", user="me@x", last_login="2026-08-20 10:00"
-        )
+        app.last_login = "2026-08-20 10:00"
+        app.refresh_status()
         await pilot.pause()
         assert "last login: 2026-08-20 10:00" in str(status.render())
         # Without a last login the segment is absent.
-        status.set_state(server="https://x", user="me@x")
+        app.last_login = None
+        app.refresh_status()
         await pilot.pause()
         assert "last login" not in str(status.render())
 
@@ -7139,21 +7212,220 @@ async def test_status_bar_extra_segment_leads(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     app = KlangkApp(_ws(last_login_at=lambda: None))
     async with app.run_test() as pilot:
+        await pilot.pause()  # let mount-time app-level refreshes land
         status = app.screen.query_one("#status", StatusBar)
-        status.set_state(
-            server="https://x.example",
-            user="me@x.example",
-            extra="server: stop at 19:00 (in 1h 12m)",
-            last_login="2026-08-20 10:00",
-        )
+        app.live_extra = "server: stop at 19:00 (in 1h 12m)"
+        app.last_login = "2026-08-20 10:00"
+        app.refresh_status()
         await pilot.pause()
         rendered = str(status.render())
         assert rendered.startswith("server: stop at 19:00 (in 1h 12m)")
         assert "user: me@x.example" in rendered
         # Static segments still render without an extra.
-        status.set_state(server="https://x.example", user="me@x.example")
+        app.live_extra = ""
+        app.refresh_status()
         await pilot.pause()
         assert str(status.render()).startswith("server: https://x.example")
+
+
+async def test_status_bar_on_every_screen(monkeypatch):
+    """Every full-page screen mounts the StatusBar and renders the
+    server/user line from App-level state (#2689) — not just the
+    workspaces list."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    wsobj = _wsobj("alpha", running=True)
+    st = _ws(owned=[wsobj])
+    st.find_workspace = lambda n: wsobj
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        # MainScreen (workspaces list).
+        main = app.screen
+        rendered = str(main.query_one("#status", StatusBar).render())
+        assert "server: https://x.example" in rendered
+        assert "user: me@x.example" in rendered
+
+        # Workspace detail screen.
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        assert isinstance(app.screen, WorkspaceDetailScreen)
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert "server: https://x.example" in rendered
+        assert "user: me@x.example" in rendered
+
+        # Create form.
+        app.push_screen(
+            CreateWorkspaceScreen(
+                allowed=["img"],
+                default="img",
+                allow_autostart=True,
+                default_allowed_domains=[],
+                nix_available=False,
+            )
+        )
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert "user: me@x.example" in rendered
+
+        # Server-switch screen.
+        app.push_screen(ServerSwitchScreen())
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert "server: https://x.example" in rendered
+
+        # Pop back — the line doesn't blank on navigation (#2689).
+        app.pop_screen()
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert "server: https://x.example" in rendered
+
+
+async def test_status_bar_on_login_screen(monkeypatch):
+    """The login screen also shows the status row (server segment; user
+    renders as '(not logged in)' pre-auth) (#2689)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    st = _st(
+        is_authenticated=lambda: False,
+        auth_mode=lambda: "password",
+        current_url=lambda: "https://x.example",
+        email=lambda: None,
+        token=lambda: None,
+        known_servers=lambda: [],
+        list_owned_workspaces=lambda: [],
+        list_shared_workspaces=lambda: [],
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert "server: https://x.example" in rendered
+        assert "(not logged in)" in rendered
+
+
+async def test_countdown_visible_on_detail_screen(monkeypatch):
+    """A #2661 schedule event arriving while the detail screen is on top
+    renders on its StatusBar — live segment leading the row — and survives
+    pop-back to the list (#2689)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    wsobj = _wsobj("alpha", running=True)
+    st = _ws(owned=[wsobj])
+    st.find_workspace = lambda n: wsobj
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        main = app.screen
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        fire_at = (datetime.now() + timedelta(hours=1)).isoformat()
+        # The status WS handler lives on the MainScreen underneath; the
+        # event must still reach the detail screen's bar.
+        main._on_status_event(
+            {
+                "type": "server_schedule",
+                "schedules": [{"action": "stop", "fire_at": fire_at}],
+            }
+        )
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert rendered.startswith("server: stop at")
+        assert "(in" in rendered
+        assert "user: me@x.example" in rendered
+        # Pop back — the countdown doesn't blank on navigation.
+        app.pop_screen()
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#status", StatusBar).render())
+        assert rendered.startswith("server: stop at")
+
+
+def test_status_screen_default_body_empty():
+    """The StatusScreen base's compose_body default yields nothing — every
+    real screen overrides it (#2689)."""
+    assert list(StatusScreen().compose_body()) == []
+
+
+async def test_status_dock_layout_every_screen(monkeypatch):
+    """The shared #status_dock is exactly two rows, pinned to the bottom,
+    on every full-page screen — including the screens whose SECOND base
+    is StatusScreen (LoginScreen, TabSkipMixin forms). Textual scopes
+    DEFAULT_CSS to the defining class's type name and that scope only
+    follows a screen's first base chain, so these rules must live in the
+    App CSS; in StatusScreen.DEFAULT_CSS the dock silently grew to 1fr
+    and squeezed the login form's server list to a single row (#2689)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    app = KlangkApp(_authed_state())
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        # Single inheritance: MainScreen(StatusScreen).
+        dock = app.screen.query_one("#status_dock")
+        assert dock.size.height == 2
+        assert dock.region.y == 22
+        # Multiple inheritance: CreateWorkspaceScreen(TabSkipMixin,
+        # StatusScreen).
+        app.push_screen(
+            CreateWorkspaceScreen(
+                allowed=["img"],
+                default="img",
+                allow_autostart=True,
+                default_allowed_domains=[],
+                nix_available=False,
+            )
+        )
+        await pilot.pause()
+        dock = app.screen.query_one("#status_dock")
+        assert dock.size.height == 2
+        assert dock.region.y == 22
+
+
+async def test_login_server_list_not_compressed(monkeypatch):
+    """Regression (#2689): the login screen's server list shows every
+    known entry, not one squeezed row — the dock chrome must not eat the
+    body's space."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    st = _st(
+        is_authenticated=lambda: False,
+        auth_mode=lambda: "password",
+        current_url=lambda: "https://x.example",
+        email=lambda: None,
+        token=lambda: None,
+        known_servers=lambda: [
+            tui_state_mod.ServerInfo(alias="a", url="https://a.example"),
+            tui_state_mod.ServerInfo(alias="b", url="https://b.example"),
+        ],
+        default_uds=lambda: None,
+        list_owned_workspaces=lambda: [],
+        list_shared_workspaces=lambda: [],
+    )
+    app = KlangkApp(st)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, LoginScreen)
+        lv = app.screen.query_one("#server_options", ListView)
+        items = lv.query(ListItem)
+        assert len(items) == 2
+        # Every entry row sits inside the visible region: the list is at
+        # least as tall as its rows, not clipped to one.
+        assert lv.size.height >= 2
+        for item in items:
+            assert lv.region.contains_region(item.region)
 
 
 def test_fmt_login_ts_invalid():

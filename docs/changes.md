@@ -92,6 +92,13 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **TUI status bar on every screen (#2689).** The `server / user /
+last login` status line — including live segments such as the
+  scheduled stop/recycle countdown, host notices, and reachability
+  flags — now renders on every TUI screen (workspace detail, create/edit
+  forms, server switch, login), not only the workspaces list. The line
+  stays current while you work inside a workspace screen and no longer
+  disappears when navigating.
 - **`terminal-open-cmd` / `KLANGKC_TERMINAL_OPEN_CMD` (#2685).** New CLI
   setting (klangk.yaml or envvar) that names the command used to open a
   new terminal window, e.g. `konsole -e`. When set, selecting a
@@ -1190,6 +1197,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **No stale `live: …` segment in the TUI status bar after a server
+  stop/recycle (#2690).** Routine broadcasts (`container_status`,
+  `workspaces_changed`, `terminals_changed`, `service_health`) no
+  longer write the live status segment — they already have dedicated UI
+  surfaces — so the bar no longer shows a raw event name indefinitely
+  after a drain cycle, and a pending scheduled stop/recycle countdown
+  is no longer clobbered by them.
 - **Concurrent shells on one interactive-egress workspace now land on their
   selected terminal (#2692).** Selecting a terminal (e.g. from the TUI with
   `terminal-open-cmd`) while another consent-popup shell on the same
