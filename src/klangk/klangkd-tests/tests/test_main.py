@@ -1325,7 +1325,7 @@ class TestGracefulShutdown:
         lc = _make_app_state().state.lifecycle
         lc.shutting_down = True
         with patch.object(
-            lc, "restart_runtime", new_callable=AsyncMock
+            lc, "recycle_runtime", new_callable=AsyncMock
         ) as mock_restart:
             lc.on_sighup()
             await asyncio.sleep(0)
@@ -1336,7 +1336,7 @@ class TestGracefulShutdown:
         """Sanity: with no shutdown in flight, HUP schedules as before."""
         lc = _make_app_state().state.lifecycle
         with patch.object(
-            lc, "restart_runtime", new_callable=AsyncMock
+            lc, "recycle_runtime", new_callable=AsyncMock
         ) as mock_restart:
             lc.on_sighup()
             await asyncio.sleep(0)
@@ -1640,44 +1640,44 @@ class TestStartupShutdownRestart:
         mock_remove.assert_called_once()
         app_state.state.db.dispose_engine.assert_awaited_once()
 
-    async def test_restart_runtime_runs_shutdown_then_startup(self, app_state):
+    async def test_recycle_runtime_runs_shutdown_then_startup(self, app_state):
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None  # force fresh lock creation
+        lc._recycle_lock = None  # force fresh lock creation
         with (
             patch.object(
                 lc, "runtime_shutdown", new_callable=AsyncMock
             ) as mock_down,
             patch.object(lc, "startup", new_callable=AsyncMock) as mock_up,
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         mock_down.assert_awaited_once()
         mock_up.assert_awaited_once()
         # Lock was created and is now held-free.
-        assert lc._restart_lock is not None
+        assert lc._recycle_lock is not None
 
-    async def test_restart_runtime_reuses_existing_lock(self, app_state):
-        # Seed a lock explicitly; ``restart_runtime`` must reuse it rather
+    async def test_recycle_runtime_reuses_existing_lock(self, app_state):
+        # Seed a lock explicitly; ``recycle_runtime`` must reuse it rather
         # than create a new one. The lock is now per-instance (#1571), so a
         # fresh Lifecycle starts at the pre-first-use floor without a
         # cross-test reset fixture.
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = asyncio.Lock()
-        existing = lc._restart_lock
+        lc._recycle_lock = asyncio.Lock()
+        existing = lc._recycle_lock
         with (
             patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
             patch.object(lc, "startup", new_callable=AsyncMock),
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         # Same lock object reused, not replaced.
-        assert lc._restart_lock is existing
+        assert lc._recycle_lock is existing
 
-    async def test_restart_lock_serializes_concurrent_calls(self, app_state):
+    async def test_recycle_lock_serializes_concurrent_calls(self, app_state):
         """Two restarts kicked off together run strictly one-after-another."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         order = []
 
         async def fake_shutdown():
@@ -1693,8 +1693,8 @@ class TestStartupShutdownRestart:
             patch.object(lc, "startup", side_effect=fake_startup),
         ):
             await asyncio.gather(
-                lc.restart_runtime(),
-                lc.restart_runtime(),
+                lc.recycle_runtime(),
+                lc.recycle_runtime(),
             )
         # Two complete down-start...down-end...up cycles, never interleaved.
         assert order == [
@@ -1710,7 +1710,7 @@ class TestStartupShutdownRestart:
         """Invalid config denies the restart; no teardown, no startup."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         with (
             patch.object(
                 lc,
@@ -1722,7 +1722,7 @@ class TestStartupShutdownRestart:
             ) as mock_down,
             patch.object(lc, "startup", new_callable=AsyncMock) as mock_up,
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         mock_reload.assert_called_once()
         mock_down.assert_not_awaited()
         mock_up.assert_not_awaited()
@@ -1731,7 +1731,7 @@ class TestStartupShutdownRestart:
         """Valid config: reload → apply → shutdown → startup."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
         order = []
         with (
@@ -1759,7 +1759,7 @@ class TestStartupShutdownRestart:
                 side_effect=lambda: order.append("startup"),
             ),
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         assert order == ["apply", "shutdown", "startup"]
 
     async def test_restart_graceful_sequence(self, app_state):
@@ -1769,7 +1769,7 @@ class TestStartupShutdownRestart:
         drain flag before startup → broadcast host_started."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         registry = app_state.state.container_registry
         new_settings = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
         order = []
@@ -1779,7 +1779,7 @@ class TestStartupShutdownRestart:
             ),
             patch.object(
                 app_state.state.sockets,
-                "notify_host_restart",
+                "notify_server_recycle",
                 side_effect=lambda phase: order.append(f"notify:{phase}"),
             ),
             patch.object(
@@ -1822,17 +1822,17 @@ class TestStartupShutdownRestart:
                 side_effect=lambda: order.append("startup"),
             ),
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         assert order == [
             "notify:draining",
-            "drain:host restart",
+            "drain:server recycle",
             "apply",
-            "notify:restarting",
+            "notify:recycling",
             "shutdown(draining=True)",
             "startup",
             "notify:started",
         ]
-        mock_drain.assert_awaited_once_with(reason="host restart")
+        mock_drain.assert_awaited_once_with(reason="server recycle")
         # The quiesce timeout comes from the RELOADED settings, so a
         # change takes effect on this restart (#2527 review).
         mock_wait.assert_awaited_once_with(new_settings.quiesce_timeout)
@@ -1847,7 +1847,7 @@ class TestStartupShutdownRestart:
         review)."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         registry = app_state.state.container_registry
         seen = {}
 
@@ -1884,7 +1884,7 @@ class TestStartupShutdownRestart:
                 return_value=True,
             ),
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         assert seen["at_shutdown"] is True
         assert seen["at_startup"] is True  # still refusing during startup
 
@@ -1941,7 +1941,7 @@ class TestStartupShutdownRestart:
         proceeds anyway."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         app_state.state.inflight_requests.increment()
         with (
             patch.object(
@@ -1971,7 +1971,7 @@ class TestStartupShutdownRestart:
             patch.object(lc, "startup", new_callable=AsyncMock),
         ):
             with caplog.at_level("WARNING"):
-                await lc.restart_runtime()
+                await lc.recycle_runtime()
         assert any(
             "still in flight" in r.message and r.levelname == "WARNING"
             for r in caplog.records
@@ -1983,7 +1983,7 @@ class TestStartupShutdownRestart:
         starts (the in-memory flag has no DB persistence to clear)."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         registry = app_state.state.container_registry
         with (
             patch.object(
@@ -2002,7 +2002,7 @@ class TestStartupShutdownRestart:
             ),
         ):
             with pytest.raises(RuntimeError, match="podman exploded"):
-                await lc.restart_runtime()
+                await lc.recycle_runtime()
         assert registry.draining is False
 
     async def test_restart_aborts_when_shutdown_arrives_mid_drain(
@@ -2015,7 +2015,7 @@ class TestStartupShutdownRestart:
         while exiting)."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         registry = app_state.state.container_registry
         order = []
 
@@ -2044,9 +2044,9 @@ class TestStartupShutdownRestart:
                 lc, "runtime_shutdown", new_callable=AsyncMock
             ) as mock_down,
             patch.object(lc, "startup", new_callable=AsyncMock) as mock_up,
-            patch.object(app_state.state.sockets, "notify_host_restart"),
+            patch.object(app_state.state.sockets, "notify_server_recycle"),
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         assert order == ["drain"]
         mock_apply.assert_not_awaited()  # no config apply during teardown
         mock_down.assert_not_awaited()  # no runtime recycle
@@ -2062,13 +2062,13 @@ class TestStartupShutdownRestart:
         nothing touched."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         lc.shutting_down = True
         with (
             patch.object(lc, "_reload_settings") as mock_reload,
             patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         mock_reload.assert_not_called()
 
     async def test_recovery_skipped_during_shutdown(self, app_state):
@@ -2079,7 +2079,7 @@ class TestStartupShutdownRestart:
         registry = app_state.state.container_registry
         registry.draining = True  # the shutdown owns it
         with patch.object(lc, "startup", new_callable=AsyncMock) as mock_up:
-            await lc._recover_failed_restart()
+            await lc._recover_failed_recycle()
         mock_up.assert_not_awaited()
         assert registry.draining is True  # not lifted
 
@@ -2121,17 +2121,17 @@ class TestStartupShutdownRestart:
         """The deny path never broadcasts, never sets the drain flag."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        lc._restart_lock = None
+        lc._recycle_lock = None
         registry = app_state.state.container_registry
         with (
             patch.object(
                 lc, "_reload_settings", return_value=(None, "bad config")
             ),
             patch.object(
-                app_state.state.sockets, "notify_host_restart"
+                app_state.state.sockets, "notify_server_recycle"
             ) as mock_notify,
         ):
-            await lc.restart_runtime()
+            await lc.recycle_runtime()
         mock_notify.assert_not_called()
         assert registry.draining is False
 
@@ -2395,11 +2395,11 @@ class TestStartupShutdownRestart:
         assert await app_state.state.model.users.agent_handle() == "newbot"
 
     async def test_on_sighup_schedules_restart(self, app_state):
-        """on_sighup creates a task that runs restart_runtime."""
+        """on_sighup creates a task that runs recycle_runtime."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
         with patch.object(
-            lc, "restart_runtime", new_callable=AsyncMock
+            lc, "recycle_runtime", new_callable=AsyncMock
         ) as mock_restart:
             lc.on_sighup()
             # Let the scheduled task run.
@@ -2408,17 +2408,17 @@ class TestStartupShutdownRestart:
         mock_restart.assert_awaited_once()
 
     async def test_on_sighup_keeps_strong_task_reference(self, app_state):
-        """The restart task is held in _restart_tasks (an unreferenced
+        """The restart task is held in _recycle_tasks (an unreferenced
         task is GC-eligible mid-restart — the GC hazard the review
         flagged) and discarded when done."""
         app_state = _make_app_state()
         lc = app_state.state.lifecycle
-        with patch.object(lc, "restart_runtime", new_callable=AsyncMock):
+        with patch.object(lc, "recycle_runtime", new_callable=AsyncMock):
             lc.on_sighup()
-            assert len(lc._restart_tasks) == 1
+            assert len(lc._recycle_tasks) == 1
             await asyncio.sleep(0)
             await asyncio.sleep(0)
-        assert lc._restart_tasks == set()
+        assert lc._recycle_tasks == set()
 
     async def test_failed_restart_logs_and_recovers(self, app_state, caplog):
         """A restart that raises is logged and recovered: startup() is
@@ -2429,7 +2429,7 @@ class TestStartupShutdownRestart:
         with (
             patch.object(
                 lc,
-                "restart_runtime",
+                "recycle_runtime",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("drain exploded"),
             ),
@@ -2446,8 +2446,8 @@ class TestStartupShutdownRestart:
                 await asyncio.sleep(0)
         mock_startup.assert_awaited_once()
         mock_started.assert_called_once()
-        assert any("restart failed" in r.message for r in caplog.records)
-        assert lc._restart_tasks == set()
+        assert any("recycle failed" in r.message for r in caplog.records)
+        assert lc._recycle_tasks == set()
 
     async def test_failed_recovery_exits_process(self, app_state, caplog):
         """Recovery that also fails exits the process (code 1) so the
@@ -2457,7 +2457,7 @@ class TestStartupShutdownRestart:
         with (
             patch.object(
                 lc,
-                "restart_runtime",
+                "recycle_runtime",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("drain exploded"),
             ),
@@ -2486,12 +2486,12 @@ class TestStartupShutdownRestart:
             await asyncio.sleep(60)
 
         task = asyncio.ensure_future(hang())
-        lc._restart_tasks.add(task)
-        task.add_done_callback(lc._on_restart_task_done)
+        lc._recycle_tasks.add(task)
+        task.add_done_callback(lc._on_recycle_task_done)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert lc._restart_tasks == set()
+        assert lc._recycle_tasks == set()
 
     async def test_lifespan_registers_sighup_handler(self, db, app_state):
         """The lifespan installs (and removes) a SIGHUP handler."""

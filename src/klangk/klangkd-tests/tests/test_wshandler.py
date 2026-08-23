@@ -11648,7 +11648,7 @@ class TestNotifyHostShutdown:
 
 
 class TestNotifyHostRestart:
-    """host_restart / host_started broadcasts for the SIGHUP graceful
+    """server_recycle / host_started broadcasts for the SIGHUP graceful
     restart (#2527)."""
 
     def _sockets_with(self, sockets, entries):
@@ -11661,14 +11661,14 @@ class TestNotifyHostRestart:
         "method,args,expected",
         [
             (
-                "notify_host_restart",
+                "notify_server_recycle",
                 ("draining",),
-                {"type": "host_restart", "phase": "draining"},
+                {"type": "server_recycle", "phase": "draining"},
             ),
             (
-                "notify_host_restart",
-                ("restarting",),
-                {"type": "host_restart", "phase": "restarting"},
+                "notify_server_recycle",
+                ("recycling",),
+                {"type": "server_recycle", "phase": "recycling"},
             ),
             ("notify_host_started", (), {"type": "host_started"}),
         ],

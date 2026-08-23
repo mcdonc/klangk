@@ -127,7 +127,7 @@ def test_http_listener_stays_up_across_sighup(server):
 async def test_websocket_closed_with_1012_and_reconnects(server, auth):
     """#2: SIGHUP closes WS clients with code 1012; they can reconnect.
 
-    The graceful restart first sends ``host_restart`` events with a
+    The graceful restart first sends ``server_recycle`` events with a
     ``phase`` field ("draining" at refuse-starts, "restarting" just
     before the recycle); those arrive as ordinary frames before the
     1012 close, so receive until the close and assert both (#2527)."""
@@ -151,7 +151,7 @@ async def test_websocket_closed_with_1012_and_reconnects(server, auth):
                     msg = json.loads(raw)
                 except (TypeError, ValueError):
                     continue
-                if msg.get("type") == "host_restart":
+                if msg.get("type") == "server_recycle":
                     phases.append(msg.get("phase"))
         except websockets.ConnectionClosed as exc:
             closed = exc.rcvd.code if exc.rcvd is not None else None

@@ -1289,12 +1289,12 @@ class MainScreen(Screen):
             self._refresh_status()
             self.app.notify("Server is shutting down", severity="warning")
             return
-        if etype == "host_restart":
+        if etype == "server_recycle":
             phase = str(event.get("phase") or "")
             word = {
-                "draining": "preparing to restart",
-                "restarting": "restarting",
-            }.get(phase, "restarting")
+                "draining": "preparing to recycle",
+                "recycling": "recycling",
+            }.get(phase, "recycling")
             self.app.live_extra = f"server: {word}"
             self._refresh_status()
             self.app.notify(f"Server is {word}")

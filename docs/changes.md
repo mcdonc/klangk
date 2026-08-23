@@ -116,7 +116,7 @@ operators or integrators to act when upgrading.
   across `klangkd` restarts and fire without anyone connected. A
   **stop** runs the graceful TERM/INT path and the process exits
   (code 0) — the service manager owns what happens next; a **recycle**
-  runs the SIGHUP graceful restart in-process (listener and DB stay
+  runs the SIGHUP graceful runtime recycle in-process (listener and DB stay
   up) and never exits. In both, workspaces are drained gracefully and
   every connected client sees a live-countdown notification: a banner
   in the Flutter UI (`Server stops at 23:00 (in 1h 12m — workspaces
@@ -143,7 +143,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   stop frames + `container_stopped` with reason `host shutdown`)
   before uvicorn's exit sequence runs. A drain failure is logged and
   never blocks the exit; a SIGHUP arriving during shutdown is ignored.
-  Clients surface `host_shutdown` / `host_restart` / `host_started` as
+  Clients surface `host_shutdown` / `server_recycle` / `host_started` as
   transient, non-blocking notices (web UI snackbar, TUI status line +
   toast) — auto-reconnect is never visually impeded. Docs:
   [Signals](deployment/signals.md).
@@ -155,7 +155,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   with a 5s podman stop grace); the reloaded config is applied, and
   the runtime recycles (drained workspaces are not restarted — only
   `auto_start` ones return).
-  Clients get `host_restart` events with a `phase` field and a final
+  Clients get `server_recycle` events with a `phase` field and a final
   `host_started` broadcast; each phase is logged. Starts stay refused
   until the post-restart container reaps finish, and a failed restart
   logs, attempts a startup recovery, and exits (code 1) if recovery
@@ -843,6 +843,18 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   `KLANGKD_ALLOW_INSECURE_NO_AUTH`.
 
 ### Changed
+
+- **`host_restart` WS event renamed to `server_recycle` (#2661).** The
+  graceful recycle path (SIGHUP and scheduled `recycle`) now broadcasts
+  `server_recycle {phase: draining | recycling}` instead of
+  `host_restart`, its `container_stopped` drain reason is `server
+recycle`, and the Flutter notice reads "Server recycling…" — matching
+  the stop/recycle terminology. Unreleased alongside #2661, so no
+  migration concern. The Flutter workspace page no longer raises the
+  blocking "Container stopped — click Restart" overlay for a server
+  recycle: the server stays up, the WebSocket reconnects (1012), and
+  auto-start brings workspaces back, so the reconnect overlay owns the
+  gap.
 
 - **Password hashing (#2576).** Passwords are now hashed with
   PBKDF2-HMAC-SHA512 via `hashlib` (600,000 iterations, stored as

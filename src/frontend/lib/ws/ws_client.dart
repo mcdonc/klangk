@@ -105,7 +105,7 @@ class WsClient extends ChangeNotifier implements ChatServices {
 
   final _errorController = StreamController<String>.broadcast();
   final _terminalOutputController = StreamController<String>.broadcast();
-  // #2527: host lifecycle notices (host_shutdown / host_restart phases /
+  // #2527: host lifecycle notices (host_shutdown / server_recycle phases /
   // host_started) as a broadcast stream AND a listenable field for status
   // lines. Notifications only — never gating the reconnect machinery.
   final _hostNoticeController = StreamController<String>.broadcast();
@@ -125,7 +125,7 @@ class WsClient extends ChangeNotifier implements ChatServices {
   /// Pending server schedules, if any (`[{id, action, fire_at, ...}]`).
   List<Map<String, dynamic>>? get serverSchedulesNow => _serverSchedules;
 
-  /// The current host lifecycle notice, if any ('Server restarting…',
+  /// The current host lifecycle notice, if any ('Server recycling…',
   /// 'Server shutting down'). Non-blocking: the UI surfaces it in a
   /// transient banner/status; auto-reconnect proceeds unaffected (#2527).
   String? get hostNotice => _hostNotice;
@@ -408,12 +408,12 @@ class WsClient extends ChangeNotifier implements ChatServices {
       final what = action == 'recycle' ? 'recycle' : 'stop';
       _onHostNotice('Scheduled server $what is running…');
     },
-    'host_restart': (json) {
+    'server_recycle': (json) {
       final phase = json['phase'] as String? ?? '';
-      if (phase == 'restarting') {
-        _onHostNotice('Server restarting…');
+      if (phase == 'recycling') {
+        _onHostNotice('Server recycling…');
       } else if (phase == 'draining') {
-        _onHostNotice('Server preparing to restart…');
+        _onHostNotice('Server preparing to recycle…');
       }
     },
   };

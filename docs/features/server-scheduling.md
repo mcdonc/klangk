@@ -16,10 +16,10 @@ that stops the klangkd unit).
 
 ## Actions
 
-| Action    | What fires                                                                                                                                                                                                                                                                    |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `stop`    | The graceful TERM/INT path: notify, refuse starts, quiesce, drain every workspace, **exit 0**. What happens next is the service manager's decision (`Restart=always` brings klangkd back; `Restart=no` leaves it down).                                                       |
-| `recycle` | The [SIGHUP](../deployment/signals.md) graceful restart, always: quiesce, drain, recycle the runtime **in-process** (HTTP listener and DB stay up), `host_started`. The process never exits — a deploy that wants the supervisor to restart klangkd schedules a stop instead. |
+| Action    | What fires                                                                                                                                                                                                                                                                            |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stop`    | The graceful TERM/INT path: notify, refuse starts, quiesce, drain every workspace, **exit 0**. What happens next is the service manager's decision (`Restart=always` brings klangkd back; `Restart=no` leaves it down).                                                               |
+| `recycle` | The [SIGHUP](../deployment/signals.md) graceful runtime recycle, always: quiesce, drain, recycle the runtime **in-process** (HTTP listener and DB stay up), `host_started`. The process never exits — a deploy that wants the supervisor to restart klangkd schedules a stop instead. |
 
 This is the "plan ahead" counterpart to the immediate signal paths —
 see [Process Signals](../deployment/signals.md) for what TERM/INT/HUP do
@@ -73,7 +73,7 @@ actions.
   mid-countdown learns about it at once. When the schedule fires, a
   `server_schedule_fired` event surfaces as a transient notice; the
   stop/recycle sequences then proceed with the same
-  `host_shutdown` / `host_restart {phase}` → `host_started` events the
+  `host_shutdown` / `server_recycle {phase}` → `host_started` events the
   signal paths emit.
 
 ## What happens when a schedule fires
@@ -92,7 +92,7 @@ existing graceful lifecycle paths (#2661 scope: no OS commands):
      `container_stopped`), and exits. Budget the stop inside your
      service manager's deadline — see the timing notes in
      [Process Signals](../deployment/signals.md).
-   - `recycle` → the SIGHUP graceful restart, verbatim: validate
+   - `recycle` → the SIGHUP graceful recycle, verbatim: validate
      (current config), refuse starts, quiesce, drain, recycle the
      runtime in-process, `host_started`. Never exits.
 

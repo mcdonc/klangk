@@ -1256,14 +1256,16 @@ async def test_main_screen_host_events_update_live_extra(monkeypatch):
         screen._on_status_event({"type": "host_shutdown"})
         await pilot.pause()
         assert app.live_extra == "server: shutting down"
-        screen._on_status_event({"type": "host_restart", "phase": "draining"})
-        await pilot.pause()
-        assert app.live_extra == "server: preparing to restart"
         screen._on_status_event(
-            {"type": "host_restart", "phase": "restarting"}
+            {"type": "server_recycle", "phase": "draining"}
         )
         await pilot.pause()
-        assert app.live_extra == "server: restarting"
+        assert app.live_extra == "server: preparing to recycle"
+        screen._on_status_event(
+            {"type": "server_recycle", "phase": "recycling"}
+        )
+        await pilot.pause()
+        assert app.live_extra == "server: recycling"
         screen._on_status_event({"type": "host_started"})
         await pilot.pause()
         assert app.live_extra == "server: back up"

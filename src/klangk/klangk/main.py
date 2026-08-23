@@ -102,13 +102,13 @@ class Lifecycle:
         # racing. Lazily created on first restart so the lock binds to the
         # running event loop (the constructor runs in build_app, outside a
         # loop).
-        self._restart_lock: asyncio.Lock | None = None
+        self._recycle_lock: asyncio.Lock | None = None
         # #2527: strong references to in-flight SIGHUP restart tasks. An
         # unreferenced task is GC-eligible mid-execution — GC between
         # ``registry.draining = True`` and the ``finally`` backstop would
         # skip the backstop and leave the node refusing every start with
         # nothing in the logs. The done-callback discards from this set.
-        self._restart_tasks: set[asyncio.Task] = set()
+        self._recycle_tasks: set[asyncio.Task] = set()
         # #2527: one-shot guard for the TERM/INT graceful shutdown (set by
         # the signal hook in launcher.py before graceful_shutdown runs) and
         # strong references to the hook task while it drains.
@@ -476,19 +476,21 @@ class Lifecycle:
         state.util.remove_pid_file()
         await state.db.dispose_engine()
 
-    async def restart_runtime(self) -> None:
-        """Graceful host restart: quiesce, drain, re-read config, recycle.
+    async def recycle_runtime(self) -> None:
+        """Graceful runtime recycle: quiesce, drain, re-read config, recycle.
 
-        Triggered by SIGHUP. Each phase is logged and (the client-visible
-        ones) announced as a ``host_restart`` WebSocket event with a
-        ``phase`` field; a final ``host_started`` broadcast closes the
-        sequence. The HTTP listener and DB stay up the whole time.
+        Triggered by SIGHUP and by a scheduled recycle (#2661) — the
+        sequence is identical either way. Each phase is logged and (the
+        client-visible ones) announced as a ``server_recycle`` WebSocket
+        event with a ``phase`` field; a final ``host_started`` broadcast
+        closes the sequence. The HTTP listener and DB stay up the whole
+        time; the process never exits.
 
         1. **validate** — re-resolve settings (``settings.reload()``,
            #1587). An invalid config **denies** the restart: nothing is
            touched, the runtime keeps running on its last-known-good
            config.
-        2. **draining** — broadcast ``host_restart {phase: "draining"}``
+        2. **draining** — broadcast ``server_recycle {phase: "draining"}``
            and set the registry's in-memory drain flag so every
            container-start path refuses new starts (the single start
            choke point; the flag is never persisted, so a crashed
@@ -515,14 +517,14 @@ class Lifecycle:
         7. **resume** — broadcast ``host_started``.
 
         If any step raises, the exception propagates to the restart
-        task's done-callback (:meth:`_on_restart_task_done`), which logs
+        task's done-callback (:meth:`_on_recycle_task_done`), which logs
         it and attempts a ``startup()`` recovery; if that also fails the
         process exits (code 1) so the service manager restarts us
         rather than leaving a live-but-zombie node.
         """
-        if self._restart_lock is None:
-            self._restart_lock = asyncio.Lock()
-        async with self._restart_lock:
+        if self._recycle_lock is None:
+            self._recycle_lock = asyncio.Lock()
+        async with self._recycle_lock:
             state = self.app.state
             registry = state.container_registry
             logger.info("SIGHUP: restart beginning (phase: validate)")
@@ -544,7 +546,7 @@ class Lifecycle:
                 )
                 return
             logger.info("SIGHUP: phase: draining (refusing new starts)")
-            state.sockets.notify_host_restart("draining")
+            state.sockets.notify_server_recycle("draining")
             registry.draining = True
             try:
                 # #2527 review: read the timeout from the NEW settings so
@@ -566,7 +568,7 @@ class Lifecycle:
                     )
                 logger.info("SIGHUP: phase: drain (stopping workspaces)")
                 stopped = await registry.drain_all_containers(
-                    reason="host restart"
+                    reason="server recycle"
                 )
                 logger.info("SIGHUP: drained %d workspace(s)", stopped)
                 # #2527 review: a TERM/INT landing mid-restart starts the
@@ -584,7 +586,7 @@ class Lifecycle:
                     return
                 logger.info("SIGHUP: phase: apply (applying reloaded config)")
                 await self._apply_reloaded_settings(new_settings)
-                state.sockets.notify_host_restart("restarting")
+                state.sockets.notify_server_recycle("recycling")
                 logger.info(
                     "SIGHUP: phase: restart (recycling runtime; "
                     "HTTP listener stays up)"
@@ -842,8 +844,8 @@ class Lifecycle:
         listener and DB stay up and the process never exits.
 
         Signal callbacks can't be async, so this just creates a task. The
-        restart itself is serialized by ``_restart_lock``. The task is
-        kept in ``_restart_tasks`` (a strong reference, so the GC can
+        recycle itself is serialized by ``_recycle_lock``. The task is
+        kept in ``_recycle_tasks`` (a strong reference, so the GC can
         never reap it mid-restart) and its done-callback performs
         failure recovery (#2527 review).
         """
@@ -854,11 +856,11 @@ class Lifecycle:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # pragma: no cover - no loop during shutdown
             return
-        task = loop.create_task(self.restart_runtime())
-        self._restart_tasks.add(task)
-        task.add_done_callback(self._on_restart_task_done)
+        task = loop.create_task(self.recycle_runtime())
+        self._recycle_tasks.add(task)
+        task.add_done_callback(self._on_recycle_task_done)
 
-    def _on_restart_task_done(self, task: asyncio.Task) -> None:
+    def _on_recycle_task_done(self, task: asyncio.Task) -> None:
         """Reap a finished restart task; recover from failure (#2527).
 
         A restart that raised leaves the node somewhere between drained
@@ -867,23 +869,23 @@ class Lifecycle:
         the failure and try ``startup()`` once more; if that also fails,
         exit so the service manager restarts us.
         """
-        self._restart_tasks.discard(task)
+        self._recycle_tasks.discard(task)
         if task.cancelled():
-            logger.info("SIGHUP: restart task cancelled")
+            logger.info("SIGHUP: recycle task cancelled")
             return
         exc = task.exception()
         if exc is None:
             return
-        logger.error("SIGHUP: restart failed: %s", exc, exc_info=exc)
+        logger.error("SIGHUP: recycle failed: %s", exc, exc_info=exc)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:  # pragma: no cover - loop already gone
             return
-        recovery = loop.create_task(self._recover_failed_restart())
-        self._restart_tasks.add(recovery)
-        recovery.add_done_callback(self._on_restart_task_done)
+        recovery = loop.create_task(self._recover_failed_recycle())
+        self._recycle_tasks.add(recovery)
+        recovery.add_done_callback(self._on_recycle_task_done)
 
-    async def _recover_failed_restart(self) -> None:
+    async def _recover_failed_recycle(self) -> None:
         """Best-effort recovery after a failed graceful restart.
 
         Re-run ``startup()`` (idempotent by design). On success the node
@@ -910,7 +912,7 @@ class Lifecycle:
             )
             os._exit(1)
         logger.error(
-            "SIGHUP: restart failed but runtime recovered; "
+            "SIGHUP: recycle failed but runtime recovered; "
             "configuration may be stale"
         )
         state.sockets.notify_host_started()

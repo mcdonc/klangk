@@ -53,41 +53,41 @@ one per-workspace stop grace (5s; stops run concurrently across
 workspaces). Raising `KLANGKD_QUIESCE_TIMEOUT` past ~85s blows the
 default 90s `TimeoutStopSec`.
 
-## SIGHUP — graceful restart (#1212, #1587, #2527)
+## SIGHUP — graceful runtime recycle (#1212, #1587, #2527, #2661)
 
 Sent by `kill -HUP $(cat $KLANGKD_STATE_DIR/klangk-<instance>.pid)`, or by
 your service manager's "reload" action.
 
 SIGHUP is **not** a process restart — the HTTP listener and the database
-stay up the whole time. It is a **graceful host restart**: finish what's
+stay up the whole time. It is a **graceful runtime recycle**: finish what's
 in flight, refuse new work, drain the containers, then apply the new
 configuration and bring the runtime back up. Each phase is logged, and
-authenticated WebSocket clients receive a `host_restart` event with a
-`phase` field (`draining`, `restarting`) as it progresses, plus a final
-`host_started` broadcast when the restart completes.
+authenticated WebSocket clients receive a `server_recycle` event with a
+`phase` field (`draining`, `recycling`) as it progresses, plus a final
+`host_started` broadcast when the recycle completes.
 
 1. **Validate** — re-resolve configuration from the environment
    (`KLANGK_*` env vars and/or the YAML config file). If the new
    configuration is **invalid** (bad value, dangling `file:`/`cmd:` ref,
-   unreadable config file), the restart is **denied** — the runtime stays
+   unreadable config file), the recycle is **denied** — the runtime stays
    running on its last-known-good config, nothing is drained, and the
    reason is logged at `ERROR` level.
-2. **Refuse new starts** — broadcast `host_restart {phase: "draining"}`
+2. **Refuse new starts** — broadcast `server_recycle {phase: "draining"}`
    and set an in-memory drain flag: every path that could start a
    container (API start/restart, WS connect, boot auto-start,
-   crash-recovery restart) refuses with a clear error until the restart
-   completes. This flag is never persisted — a crashed restart
+   crash-recovery restart) refuses with a clear error until the recycle
+   completes. This flag is never persisted — a crashed recycle
    cannot leave the node refusing starts.
 3. **Quiesce** — wait up to `KLANGKD_QUIESCE_TIMEOUT` seconds
    (default 15) for in-flight HTTP requests to finish. Requests still
    running at expiry are logged (WARNING); ordinary requests finish
    against the recycling runtime, but a long-lived streaming response
    (`/llm_proxy`, `/browser-delegate/stream`) cannot outlive the drain
-   and will be interrupted by the restart.
+   and will be interrupted by the recycle.
 4. **Drain** — stop every running workspace through the graceful path
    (concurrently per workspace, each with a 5s podman stop grace):
    clients get terminal status
-   frames and a `container_stopped` event with reason `host restart`,
+   frames and a `container_stopped` event with reason `server recycle`,
    not a dropped socket. Previously running workspaces are **not**
    remembered — only workspaces configured for `auto_start` come back
    (in step 7), exactly as on a fresh boot.
@@ -108,7 +108,7 @@ authenticated WebSocket clients receive a `host_restart` event with a
 7. **Resume** — broadcast `host_started`. Both the web UI and
    `klangk monitor` reconnect automatically with backoff and rebuild
    their state on reconnect. New container starts stay refused
-   (503, "a restart is in progress") through step 6's podman pre-warm
+   (503, "a recycle is in progress") through step 6's podman pre-warm
    and container reaps — a client that reconnects and starts a
    workspace in that window gets a clean refusal instead of having its
    fresh container reaped — then auto-start runs once starts are
@@ -153,8 +153,8 @@ non-reloadable change needs a full `klangkd` restart:
 ### Concurrency
 
 SIGHUP can be sent several times in quick succession. A second signal
-arriving mid-restart queues behind the first via an `asyncio.Lock`, so
-restarts never race — they run strictly one after another.
+arriving mid-recycle queues behind the first via an `asyncio.Lock`, so
+recycles never race — they run strictly one after another.
 
 ## Scheduled stop / recycle (#2661)
 
@@ -174,7 +174,7 @@ the paths documented above:
 - **`stop`** → SIGTERM to self: the SIGINT/SIGTERM graceful-stop path
   (refuse starts, quiesce, drain, exit 0) runs verbatim. What happens
   next is the service manager's decision.
-- **`recycle`** → the SIGHUP graceful restart, verbatim (quiesce,
+- **`recycle`** → the SIGHUP graceful recycle, verbatim (quiesce,
   drain, recycle the runtime in-process, `host_started`); the process
   never exits. A recycle firing during a shutdown-in-progress is
   skipped — its row is still consumed, so it cannot re-fire on the

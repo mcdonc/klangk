@@ -234,6 +234,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
         if (!mounted) return;
         if (name == 'container_stopped' && !_containerStopped) {
           final reason = value?['reason'] ?? '';
+          // #2661: a stop whose reason is the server's own recycle is
+          // NOT user-actionable — the server stays up, the WebSocket
+          // drops with 1012 and auto-reconnects, and auto-start brings
+          // the workspace back. Raising the blocking "stopped — click
+          // Restart" overlay here would demand a click for a cycle
+          // that needs none; the reconnect overlay owns the gap.
+          if (reason == 'server recycle') return;
           setState(() {
             _containerStopped = true;
             _stopReason = reason.toString().isNotEmpty
