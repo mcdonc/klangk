@@ -90,11 +90,11 @@ async def app(db, temp_data_dir):
 
     app.state.auth = auth_mod.Auth(app)
     app.state.terminal = terminal_mod.Terminal(app)
-    # #2661: host scheduler (never started here — the loop isn't under
+    # #2661: server scheduler (never started here — the loop isn't under
     # test; the API endpoints reach notify_pending()).
-    from klangk import host_schedule as host_schedule_mod
+    from klangk import server_schedule as server_schedule_mod
 
-    app.state.host_scheduler = host_schedule_mod.HostScheduler(app)
+    app.state.server_scheduler = server_schedule_mod.ServerScheduler(app)
     # #1572: wire DB + Model so converted domains (tokens,
     # login_attempts, invitations, ports) reached via app.state.model.*
     # resolve the same per-test DB.
@@ -11787,8 +11787,8 @@ class TestInactivityDisable:
         app.state.sockets.connections.clear()
 
 
-class TestAdminHostSchedule:
-    """#2661: schedule/list/cancel a host shutdown or restart."""
+class TestAdminServerSchedule:
+    """#2661: schedule/list/cancel a server stop or recycle."""
 
     async def _admin_headers(self, client):
         resp = await client.post(
@@ -11805,33 +11805,37 @@ class TestAdminHostSchedule:
     ):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/host/schedule",
+            "/api/v1/admin/server/schedule",
             headers=headers,
-            json={"action": "shutdown", "in_seconds": 3600},
+            json={"action": "stop", "in_seconds": 3600},
         )
         assert resp.status_code == 200, resp.text
         schedule = resp.json()
-        assert schedule["action"] == "shutdown"
+        assert schedule["action"] == "stop"
         assert schedule["id"]
 
-        resp = await client.get("/api/v1/admin/host/schedule", headers=headers)
+        resp = await client.get(
+            "/api/v1/admin/server/schedule", headers=headers
+        )
         assert resp.status_code == 200
         assert [s["id"] for s in resp.json()["schedules"]] == [schedule["id"]]
 
         resp = await client.delete(
-            f"/api/v1/admin/host/schedule/{schedule['id']}",
+            f"/api/v1/admin/server/schedule/{schedule['id']}",
             headers=headers,
         )
         assert resp.status_code == 200
-        resp = await client.get("/api/v1/admin/host/schedule", headers=headers)
+        resp = await client.get(
+            "/api/v1/admin/server/schedule", headers=headers
+        )
         assert resp.json()["schedules"] == []
 
     async def test_schedule_absolute_at(self, client, app, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.post(
-            "/api/v1/admin/host/schedule",
+            "/api/v1/admin/server/schedule",
             headers=headers,
-            json={"action": "restart", "at": "2030-01-01T00:00:00+00:00"},
+            json={"action": "recycle", "at": "2030-01-01T00:00:00+00:00"},
         )
         assert resp.status_code == 200
         assert resp.json()["fire_at"].startswith("2030-01-01T00:00:00")
@@ -11839,14 +11843,14 @@ class TestAdminHostSchedule:
     async def test_schedule_invalid_payload_422(self, client, app, admin_user):
         headers = await self._admin_headers(client)
         for body in (
-            {"action": "shutdown"},  # neither at nor in_seconds
-            {"action": "shutdown", "in_seconds": 0},
-            {"action": "shutdown", "in_seconds": "soon"},
+            {"action": "stop"},  # neither at nor in_seconds
+            {"action": "stop", "in_seconds": 0},
+            {"action": "stop", "in_seconds": "soon"},
             {"action": "explode", "in_seconds": 60},
-            {"action": "shutdown", "at": "not-a-date"},
+            {"action": "stop", "at": "not-a-date"},
         ):
             resp = await client.post(
-                "/api/v1/admin/host/schedule",
+                "/api/v1/admin/server/schedule",
                 headers=headers,
                 json=body,
             )
@@ -11855,28 +11859,28 @@ class TestAdminHostSchedule:
     async def test_schedule_requires_admin(self, client, app, user):
         headers = await _auth_headers(client)
         resp = await client.post(
-            "/api/v1/admin/host/schedule",
+            "/api/v1/admin/server/schedule",
             headers=headers,
-            json={"action": "shutdown", "in_seconds": 60},
+            json={"action": "stop", "in_seconds": 60},
         )
         assert resp.status_code == 403
 
     async def test_cancel_missing_404(self, client, app, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.delete(
-            "/api/v1/admin/host/schedule/nope", headers=headers
+            "/api/v1/admin/server/schedule/nope", headers=headers
         )
         assert resp.status_code == 404
 
     async def test_schedule_broadcasts_snapshot(self, client, app, admin_user):
         headers = await self._admin_headers(client)
         with patch.object(
-            app.state.host_scheduler, "notify_pending", new=AsyncMock()
+            app.state.server_scheduler, "notify_pending", new=AsyncMock()
         ) as mock_notify:
             resp = await client.post(
-                "/api/v1/admin/host/schedule",
+                "/api/v1/admin/server/schedule",
                 headers=headers,
-                json={"action": "shutdown", "in_seconds": 60},
+                json={"action": "stop", "in_seconds": 60},
             )
         assert resp.status_code == 200
         mock_notify.assert_awaited_once()

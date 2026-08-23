@@ -1,24 +1,24 @@
-"""Pending host shutdown/restart schedules (#2661).
+"""Pending server stop/recycle schedules (#2661).
 
 Rows live only while *pending* — the scheduler deletes a row when it fires
-or when it is cancelled — so the table is the authoritative "what host
+or when it is cancelled — so the table is the authoritative "what server
 actions are scheduled" set across klangkd restarts.
 
-:class:`HostSchedulesModel` is the ``app_state``-owned form reached via
-``app_state.model.host_schedules``, following the same ``app``-only
+:class:`ServerSchedulesModel` is the ``app_state``-owned form reached via
+``app_state.model.server_schedules``, following the same ``app``-only
 ownership rule as the sibling models (#1563).
 """
 
 import uuid
 from datetime import datetime, timezone
 
-_VALID_ACTIONS = ("shutdown", "restart")
+_VALID_ACTIONS = ("stop", "recycle")
 
 
 def normalize_action(action: str) -> str:
     """Validate and normalize a schedule action.
 
-    Raises ``ValueError`` for anything but ``shutdown`` / ``restart`` so
+    Raises ``ValueError`` for anything but ``stop`` / ``recycle`` so
     the API layer can turn it into a 422 without the model guessing.
     """
     value = (action or "").strip().lower()
@@ -39,8 +39,8 @@ def _row_to_dict(row) -> dict:
     }
 
 
-class HostSchedulesModel:
-    """CRUD for pending host schedules, resolved through ``app_state.db``."""
+class ServerSchedulesModel:
+    """CRUD for pending server schedules, resolved through ``app_state.db``."""
 
     def __init__(self, app):
         self.app = app
@@ -64,7 +64,7 @@ class HostSchedulesModel:
         created_at = datetime.now(timezone.utc)
         async with self.app.state.db.transaction() as db:
             await db.execute(
-                "INSERT INTO host_schedules"
+                "INSERT INTO server_schedules"
                 " (id, action, fire_at, created_by, created_at)"
                 " VALUES (?, ?, ?, ?, ?)",
                 (
@@ -87,7 +87,7 @@ class HostSchedulesModel:
         """Every pending schedule, soonest first."""
         rows = await self.app.state.db.fetchall(
             "SELECT id, action, fire_at, created_by, created_at"
-            " FROM host_schedules ORDER BY fire_at"
+            " FROM server_schedules ORDER BY fire_at"
         )
         return [_row_to_dict(row) for row in rows]
 
@@ -95,7 +95,7 @@ class HostSchedulesModel:
         """Delete a pending schedule. Returns False when it doesn't exist."""
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
-                "DELETE FROM host_schedules WHERE id = ?", (schedule_id,)
+                "DELETE FROM server_schedules WHERE id = ?", (schedule_id,)
             )
             return bool(cursor.rowcount)
 
@@ -103,5 +103,5 @@ class HostSchedulesModel:
         """Unconditionally drop a row (used after it fires)."""
         async with self.app.state.db.transaction() as db:
             await db.execute(
-                "DELETE FROM host_schedules WHERE id = ?", (schedule_id,)
+                "DELETE FROM server_schedules WHERE id = ?", (schedule_id,)
             )

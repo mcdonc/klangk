@@ -1,18 +1,24 @@
-"""Scheduled host shutdown/restart (#2661).
+"""Scheduled server stop/recycle (#2661).
 
-:class:`HostScheduler` is the ``app.state``-owned service that owns the
-schedule loop: it watches the persisted ``host_schedules`` rows, keeps
-every connected client informed (``host_schedule`` broadcast with the
+:class:`ServerScheduler` is the ``app.state``-owned service that owns the
+schedule loop: it watches the persisted ``server_schedules`` rows, keeps
+every connected client informed (``server_schedule`` broadcast with the
 pending list — clients render the countdown locally from ``fire_at``),
 and fires due schedules.
 
-Firing mirrors the graceful TERM/INT shutdown (#2527): broadcast the
-action, refuse new container starts, quiesce in-flight HTTP requests,
-gracefully drain every workspace, then run the configured OS command
-(``KLANGKD_HOST_SHUTDOWN_COMMAND`` / ``_RESTART_``). An empty command is
-a dry run — everything up to the OS step still happens (teardown +
-notifications), which is the right default for a klangkd that lacks the
-privileges to power off its host.
+Firing reuses the existing graceful lifecycle paths verbatim — the
+scheduler owns no teardown of its own (#2661 scope change: "host
+shutdown/restart" and the OS power commands are gone):
+
+* **stop** — send the process SIGTERM: the #2527 graceful-shutdown path
+  broadcasts ``host_shutdown``, refuses new starts, quiesces in-flight
+  requests, drains every workspace, and exits (code 0). What happens
+  next is the service manager's decision, not klangkd's.
+* **recycle** — request the SIGHUP graceful restart
+  (:meth:`klangk.main.Lifecycle.request_recycle`): quiesce, drain,
+  recycle the runtime in-process, ``host_started``. The process never
+  exits; a deploy that wants the supervisor to restart klangkd uses a
+  scheduled stop instead.
 
 The schedule is persisted in the DB, so it survives a klangkd restart:
 on boot the loop simply re-reads the pending rows.
@@ -20,6 +26,8 @@ on boot the loop simply re-reads the pending rows.
 
 import asyncio
 import logging
+import os
+import signal
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
@@ -32,8 +40,8 @@ _POLL_INTERVAL_SECONDS = 5.0
 _BROADCAST_INTERVAL_SECONDS = 30.0
 
 
-class HostScheduler:
-    """Owns the scheduled host-action loop (app-only ownership, #1563)."""
+class ServerScheduler:
+    """Owns the scheduled server-action loop (app-only ownership, #1563)."""
 
     def __init__(self, app) -> None:
         self.app = app
@@ -67,20 +75,16 @@ class HostScheduler:
 
     async def snapshot(self) -> list[dict]:
         """The pending schedules as client-facing dicts."""
-        return await self.app.state.model.host_schedules.pending_schedules()
+        return await self.app.state.model.server_schedules.pending_schedules()
 
     def snapshot_message(self, schedules: list[dict]) -> dict:
-        """The ``host_schedule`` WS message for *schedules*."""
-        return {"type": "host_schedule", "schedules": schedules}
+        """The ``server_schedule`` WS message for *schedules*."""
+        return {"type": "server_schedule", "schedules": schedules}
 
     async def notify_pending(self) -> None:
         """Broadcast the current pending list to every connection."""
         schedules = await self.snapshot()
-        self._last_snapshot = schedules
-        self._last_broadcast = datetime.now(timezone.utc)
-        self.app.state.sockets.broadcast_to_all(
-            self.snapshot_message(schedules)
-        )
+        self.notify_pending_sync(schedules)
 
     def notify_pending_sync(self, schedules: list[dict]) -> None:
         """Broadcast an already-fetched pending list (post-mutation path)."""
@@ -107,7 +111,7 @@ class HostScheduler:
     # --- loop ---
 
     async def _run(self) -> None:
-        logger.info("Host scheduler loop started")
+        logger.info("Server scheduler loop started")
         try:
             while True:
                 try:
@@ -117,10 +121,10 @@ class HostScheduler:
                 except Exception:
                     # One bad tick (DB hiccup, podman error) must not kill
                     # the loop — the schedule stays armed for the next one.
-                    logger.exception("Host scheduler tick failed")
+                    logger.exception("Server scheduler tick failed")
                 await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         except asyncio.CancelledError:
-            logger.info("Host scheduler loop stopped")
+            logger.info("Server scheduler loop stopped")
             raise
 
     async def _tick(self) -> None:
@@ -143,72 +147,45 @@ class HostScheduler:
     # --- firing ---
 
     async def _fire(self, schedule: dict) -> None:
-        """Fire one due schedule: teardown, notify, OS command."""
+        """Fire one due schedule by handing off to the graceful paths."""
         action = schedule["action"]
         schedule_id = schedule["id"]
         logger.info(
-            "Host scheduler: firing scheduled %s (%s)",
+            "Server scheduler: firing scheduled %s (%s)",
             action,
             schedule_id,
         )
         # Remove the row first: the action is happening, and this keeps a
         # klangkd restart (e.g. a crash mid-fire) from re-firing it.
-        await self.app.state.model.host_schedules.delete_schedule(schedule_id)
-        state = self.app.state
-        sockets = state.sockets
-        sockets.broadcast_to_all(
-            {"type": "host_schedule_fired", "action": action}
+        await self.app.state.model.server_schedules.delete_schedule(
+            schedule_id
         )
-        registry = state.container_registry
-        registry.draining = True
-        try:
-            timeout = state.settings.quiesce_timeout
+        self.app.state.sockets.broadcast_to_all(
+            {"type": "server_schedule_fired", "action": action}
+        )
+        if action == "stop":
+            # Reuse the #2527 TERM/INT path wholesale: broadcast
+            # host_shutdown, refuse starts, quiesce, drain, exit 0. The
+            # signal is delivered on this (loop) thread, so the hook
+            # creates the graceful-shutdown task on the running loop.
             logger.info(
-                "Host scheduler: quiesce (waiting up to %.1fs for "
-                "in-flight requests)",
-                timeout,
+                "Server scheduler: requesting graceful stop (SIGTERM to self)"
             )
-            inflight = state.inflight_requests
-            idle = await inflight.wait_for_idle(timeout)
-            if not idle:
-                logger.warning(
-                    "Host scheduler: %d request(s) still in flight after "
-                    "%.1fs; proceeding",
-                    inflight.count,
-                    timeout,
+            os.kill(os.getpid(), signal.SIGTERM)
+        else:
+            # Recycle == the SIGHUP graceful path, always (#2661):
+            # quiesce, drain, recycle the runtime in-process. The
+            # process never exits — a deploy that wants the supervisor
+            # to restart klangkd schedules a stop instead.
+            lifecycle = self.app.state.lifecycle
+            if lifecycle.shutting_down:
+                logger.info(
+                    "Server scheduler: recycle skipped; shutdown already "
+                    "in progress"
                 )
-            logger.info("Host scheduler: draining workspaces")
-            stopped = await registry.drain_all_containers(
-                reason=f"scheduled host {action}"
-            )
-            logger.info("Host scheduler: drained %d workspace(s)", stopped)
-        except Exception:
-            logger.exception(
-                "Host scheduler: teardown for scheduled %s failed", action
-            )
-        command = (
-            state.settings.host_shutdown_command
-            if action == "shutdown"
-            else state.settings.host_restart_command
-        )
-        if not command:
-            logger.warning(
-                "Host scheduler: no %s command configured "
-                "(KLANGKD_HOST_%s_COMMAND is empty); dry run — teardown "
-                "complete, host left running",
-                action,
-                action.upper(),
-            )
-            return
-        logger.info("Host scheduler: running %s command: %s", action, command)
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        logger.info(
-            "Host scheduler: %s command exited rc=%s", action, proc.returncode
-        )
+                return
+            logger.info("Server scheduler: requesting graceful recycle")
+            lifecycle.request_recycle(source="scheduled recycle")
 
 
 def _parse_fire_at(value: str) -> datetime:

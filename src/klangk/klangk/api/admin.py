@@ -18,7 +18,7 @@ from .. import (
     auth,
     wshandler,
 )
-from ..host_schedule import resolve_fire_at
+from ..server_schedule import resolve_fire_at
 from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
@@ -821,28 +821,29 @@ ALL_PERMISSIONS = [
 ]
 
 
-class HostScheduleRequest(BaseModel):
-    """Body for scheduling a host shutdown/restart (#2661)."""
+class ServerScheduleRequest(BaseModel):
+    """Body for scheduling a server stop/recycle (#2661)."""
 
-    action: str  # "shutdown" | "restart"
+    action: str  # "stop" | "recycle"
     at: str | None = None  # absolute ISO-8601 timestamp
     in_seconds: float | None = None  # relative delay, > 0
 
 
-@router.post("/admin/host/schedule")
-async def schedule_host_action(
-    payload: HostScheduleRequest,
+@router.post("/admin/server/schedule")
+async def schedule_server_action(
+    payload: ServerScheduleRequest,
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
 ):
-    """Schedule a host shutdown or restart for a future time (#2661).
+    """Schedule a server stop or recycle for a future time (#2661).
 
-    Exactly one of ``at`` (absolute ISO-8601) or ``in_seconds`` (relative
-    delay) must be provided. The schedule persists across klangkd
-    restarts; when it fires, workspaces are drained gracefully and the
-    configured ``KLANGKD_HOST_SHUTDOWN_COMMAND`` /
-    ``KLANGKD_HOST_RESTART_COMMAND`` runs. Every connected client is
-    notified immediately (live countdown; TUI status line).
+    Provide ``at`` (absolute ISO-8601; naive = UTC) or ``in_seconds``
+    (positive delay). The schedule persists across klangkd restarts.
+    When it fires: a **stop** runs the graceful TERM/INT path and the
+    process exits (code 0) — the service manager owns what happens
+    next; a **recycle** runs the SIGHUP graceful restart in-process
+    (listener and DB stay up) and never exits. In both, workspaces are
+    drained gracefully and every connected client sees a live countdown.
     """
     app = request.app
     try:
@@ -850,38 +851,38 @@ async def schedule_host_action(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     try:
-        schedule = await app.state.model.host_schedules.create_schedule(
+        schedule = await app.state.model.server_schedules.create_schedule(
             payload.action, fire_at, created_by=admin["id"]
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
-    await app.state.host_scheduler.notify_pending()
+    await app.state.server_scheduler.notify_pending()
     return schedule
 
 
-@router.get("/admin/host/schedule")
-async def list_host_schedules(
+@router.get("/admin/server/schedule")
+async def list_server_schedules(
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
 ):
-    """List pending host shutdown/restart schedules (#2661)."""
+    """List pending server stop/recycle schedules (#2661)."""
     return {
-        "schedules": await request.app.state.model.host_schedules.pending_schedules()
+        "schedules": await request.app.state.model.server_schedules.pending_schedules()
     }
 
 
-@router.delete("/admin/host/schedule/{schedule_id}")
-async def cancel_host_schedule(
+@router.delete("/admin/server/schedule/{schedule_id}")
+async def cancel_server_schedule(
     schedule_id: str,
     request: Request,
     admin: dict = Depends(acl.has_permission("admin")),
 ):
-    """Cancel a pending host shutdown/restart schedule (#2661)."""
+    """Cancel a pending server stop/recycle schedule (#2661)."""
     app = request.app
-    cancelled = await app.state.model.host_schedules.cancel_schedule(
+    cancelled = await app.state.model.server_schedules.cancel_schedule(
         schedule_id
     )
     if not cancelled:
         raise HTTPException(status_code=404, detail="Schedule not found")
-    await app.state.host_scheduler.notify_pending()
+    await app.state.server_scheduler.notify_pending()
     return {"cancelled": schedule_id}

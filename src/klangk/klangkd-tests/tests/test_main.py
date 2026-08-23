@@ -897,13 +897,13 @@ class TestLifespan:
 
         app.state.auth = auth_mod.Auth(app)
         app.state.lifecycle = app_state.state.lifecycle
-        # #2661: stub the host scheduler so the lifespan wires + starts /
+        # #2661: stub the server scheduler so the lifespan wires + starts /
         # stops it (guarded — minimal apps omit it; that branch is the
         # getattr default above).
         scheduler_stub = types.SimpleNamespace(
             start=MagicMock(), stop=AsyncMock()
         )
-        app.state.host_scheduler = scheduler_stub
+        app.state.server_scheduler = scheduler_stub
         registry = app_state.state.container_registry
         with (
             patch.object(

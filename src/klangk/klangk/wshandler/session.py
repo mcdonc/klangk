@@ -942,7 +942,7 @@ class WebSocketState:
 
         Generic fan-out counterpart to the typed ``notify_host_*``
         methods, used by the host scheduler (#2661) for
-        ``host_schedule`` / ``host_schedule_fired`` frames. Dead sockets
+        ``server_schedule`` / ``server_schedule_fired`` frames. Dead sockets
         are dropped (dispatch.py owns cleanup on disconnect).
         """
         dead = []

@@ -1,20 +1,21 @@
-"""Tests for scheduled host shutdown/restart (#2661).
+"""Tests for scheduled server stop/recycle (#2661).
 
 Covers the model (persistence + validation), the ``resolve_fire_at``
-payload parser, the :class:`HostScheduler` loop (broadcast cadence, due
-firing, teardown, dry-run vs configured command), the
+payload parser, the :class:`ServerScheduler` loop (broadcast cadence,
+due firing, handoff to the graceful stop/recycle paths), the
 ``broadcast_to_all`` fan-out, and the admin API endpoints.
 """
 
 import asyncio
+import signal
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from klangk.host_schedule import (
-    HostScheduler,
+from klangk.server_schedule import (
+    ServerScheduler,
     resolve_fire_at,
     _parse_fire_at,
 )
@@ -40,47 +41,58 @@ async def sched_app(app_state):
     return app_state, sent
 
 
-class TestHostSchedulesModel:
+class TestServerSchedulesModel:
     async def test_create_and_pending_orders_soonest_first(self, sched_app):
         app, _ = sched_app
-        model = app.state.model.host_schedules
+        model = app.state.model.server_schedules
         later = await model.create_schedule(
-            "shutdown",
+            "stop",
             datetime.now(timezone.utc) + timedelta(hours=2),
             created_by="u1",
         )
         sooner = await model.create_schedule(
-            "restart",
+            "recycle",
             datetime.now(timezone.utc) + timedelta(minutes=5),
             created_by="u1",
         )
         pending = await model.pending_schedules()
         assert [s["id"] for s in pending] == [sooner["id"], later["id"]]
-        assert pending[0]["action"] == "restart"
+        assert pending[0]["action"] == "recycle"
 
     async def test_create_rejects_bad_action(self, sched_app):
         app, _ = sched_app
         with pytest.raises(ValueError, match="action must be one of"):
-            await app.state.model.host_schedules.create_schedule(
+            await app.state.model.server_schedules.create_schedule(
                 "explode",
                 datetime.now(timezone.utc) + timedelta(hours=1),
                 created_by="u1",
             )
 
+    async def test_create_rejects_old_action_names(self, sched_app):
+        """#2661 scope change: shutdown/restart are gone, not aliases."""
+        app, _ = sched_app
+        for old in ("shutdown", "restart"):
+            with pytest.raises(ValueError, match="action must be one of"):
+                await app.state.model.server_schedules.create_schedule(
+                    old,
+                    datetime.now(timezone.utc) + timedelta(hours=1),
+                    created_by="u1",
+                )
+
     async def test_create_rejects_naive_datetime(self, sched_app):
         app, _ = sched_app
         with pytest.raises(ValueError, match="timezone-aware"):
-            await app.state.model.host_schedules.create_schedule(
-                "shutdown",
+            await app.state.model.server_schedules.create_schedule(
+                "stop",
                 datetime(2030, 1, 1, 12, 0, 0),
                 created_by="u1",
             )
 
     async def test_cancel(self, sched_app):
         app, _ = sched_app
-        model = app.state.model.host_schedules
+        model = app.state.model.server_schedules
         schedule = await model.create_schedule(
-            "shutdown",
+            "stop",
             datetime.now(timezone.utc) + timedelta(hours=1),
             created_by="u1",
         )
@@ -91,9 +103,9 @@ class TestHostSchedulesModel:
 
     async def test_delete_schedule(self, sched_app):
         app, _ = sched_app
-        model = app.state.model.host_schedules
+        model = app.state.model.server_schedules
         schedule = await model.create_schedule(
-            "restart",
+            "recycle",
             datetime.now(timezone.utc) + timedelta(hours=1),
             created_by="u1",
         )
@@ -139,7 +151,36 @@ class TestResolveFireAt:
 
 
 def test_migration_registered():
-    assert any(m.name == "0006_host_schedules" for m in MIGRATIONS)
+    assert any(m.name == "0006_server_schedules" for m in MIGRATIONS)
+
+
+async def test_migration_drops_pre_rename_table(app_state):
+    """A dev DB carrying the unreleased `host_schedules` name is migrated:
+    the old table is dropped and the new one created."""
+    app = app_state
+    await app.state.model.init_db()
+    # Simulate the pre-rename schema (never shipped in a release).
+    async with app.state.db.transaction() as db:
+        await db.execute("DROP TABLE IF EXISTS server_schedules")
+        await db.execute(
+            "CREATE TABLE host_schedules (id TEXT PRIMARY KEY,"
+            " action TEXT NOT NULL, fire_at TEXT NOT NULL,"
+            " created_by TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+    from klangk.model.migrations.m0006_server_schedules import (
+        apply_with_rename,
+    )
+
+    async with app.state.db.transaction() as db:
+        await apply_with_rename(db)
+    names = {
+        r["name"]
+        for r in await app.state.db.fetchall(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert "server_schedules" in names
+    assert "host_schedules" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -147,42 +188,31 @@ def test_migration_registered():
 # ---------------------------------------------------------------------------
 
 
-def _scheduler_app(sched_app, *, shutdown_cmd="", restart_cmd=""):
-    """A scheduler wired to stub sockets/registry/settings records."""
+def _scheduler_app(sched_app, *, shutting_down=False):
+    """A scheduler wired to stub sockets/lifecycle records."""
     app, sent = sched_app
-    registry = SimpleNamespace(
-        draining=False,
-        drain_all_containers=AsyncMock(return_value=3),
+    lifecycle = SimpleNamespace(
+        shutting_down=shutting_down,
+        request_recycle=MagicMock(),
     )
-    inflight = SimpleNamespace(
-        count=0,
-        wait_for_idle=AsyncMock(return_value=True),
-    )
-    scheduler = HostScheduler(app)
-    # Point the scheduler's collaborators at the stubs.
-    app.state.container_registry = registry
-    app.state.inflight_requests = inflight
-    app.state.settings = SimpleNamespace(
-        quiesce_timeout=0.0,
-        host_shutdown_command=shutdown_cmd,
-        host_restart_command=restart_cmd,
-    )
-    return scheduler, sent, registry
+    scheduler = ServerScheduler(app)
+    app.state.lifecycle = lifecycle
+    return scheduler, sent, lifecycle
 
 
-class TestHostScheduler:
+class TestServerScheduler:
     async def test_notify_pending_broadcasts_snapshot(self, sched_app):
         app, sent = sched_app
         scheduler, sent, _ = _scheduler_app(sched_app)
-        await app.state.model.host_schedules.create_schedule(
-            "shutdown",
+        await app.state.model.server_schedules.create_schedule(
+            "stop",
             datetime.now(timezone.utc) + timedelta(hours=1),
             created_by="u1",
         )
         await scheduler.notify_pending()
-        assert sent and sent[-1]["type"] == "host_schedule"
+        assert sent and sent[-1]["type"] == "server_schedule"
         assert len(sent[-1]["schedules"]) == 1
-        assert sent[-1]["schedules"][0]["action"] == "shutdown"
+        assert sent[-1]["schedules"][0]["action"] == "stop"
 
     async def test_send_snapshot_to_dead_socket_is_swallowed(self, sched_app):
         scheduler, _, _ = _scheduler_app(sched_app)
@@ -193,88 +223,81 @@ class TestHostScheduler:
 
         await scheduler.send_snapshot_to(Dead())  # must not raise
 
-    async def test_tick_fires_due_schedule_dry_run(self, sched_app):
+    async def test_tick_fires_due_stop_with_sigterm(self, sched_app):
+        """A due stop hands off to the #2527 graceful-shutdown path by
+        SIGTERMing the process — the scheduler owns no teardown itself."""
         app, sent = sched_app
-        scheduler, sent, registry = _scheduler_app(sched_app)
-        # Due immediately.
-        await app.state.model.host_schedules.create_schedule(
-            "shutdown",
+        scheduler, sent, lifecycle = _scheduler_app(sched_app)
+        await app.state.model.server_schedules.create_schedule(
+            "stop",
+            datetime.now(timezone.utc) - timedelta(seconds=1),
+            created_by="u1",
+        )
+        with patch("klangk.server_schedule.os.kill") as mock_kill:
+            await scheduler._tick()
+        mock_kill.assert_called_once()
+        args = mock_kill.call_args[0]
+        assert args[1] is signal.SIGTERM
+        # Row deleted and fired event broadcast before the handoff.
+        assert await app.state.model.server_schedules.pending_schedules() == []
+        fired = [m for m in sent if m["type"] == "server_schedule_fired"]
+        assert fired and fired[0]["action"] == "stop"
+
+    async def test_tick_fires_due_recycle_via_request(self, sched_app):
+        """A due recycle requests the SIGHUP graceful path (in-process,
+        never exits)."""
+        app, sent = sched_app
+        scheduler, sent, lifecycle = _scheduler_app(sched_app)
+        await app.state.model.server_schedules.create_schedule(
+            "recycle",
             datetime.now(timezone.utc) - timedelta(seconds=1),
             created_by="u1",
         )
         await scheduler._tick()
-        # Row deleted, fired event broadcast, workspaces drained, dry run
-        # (no command configured -> no OS call, no crash).
-        assert await app.state.model.host_schedules.pending_schedules() == []
-        types = [m["type"] for m in sent]
-        assert "host_schedule_fired" in types
-        assert registry.drain_all_containers.await_count == 1
-        assert registry.draining is True
-
-    async def test_tick_fires_with_command(self, sched_app):
-        app, sent = sched_app
-        scheduler, sent, registry = _scheduler_app(
-            sched_app, restart_cmd="/bin/true"
+        lifecycle.request_recycle.assert_called_once_with(
+            source="scheduled recycle"
         )
-        await app.state.model.host_schedules.create_schedule(
-            "restart",
+        assert await app.state.model.server_schedules.pending_schedules() == []
+        fired = [m for m in sent if m["type"] == "server_schedule_fired"]
+        assert fired and fired[0]["action"] == "recycle"
+
+    async def test_recycle_skipped_when_shutting_down(self, sched_app):
+        """A recycle firing during a shutdown is a no-op (the exit owns
+        the process)."""
+        app, sent = sched_app
+        scheduler, sent, lifecycle = _scheduler_app(
+            sched_app, shutting_down=True
+        )
+        await app.state.model.server_schedules.create_schedule(
+            "recycle",
             datetime.now(timezone.utc) - timedelta(seconds=1),
             created_by="u1",
         )
-        proc = SimpleNamespace(returncode=0)
-        with patch(
-            "klangk.host_schedule.asyncio.create_subprocess_shell",
-            new=AsyncMock(return_value=proc),
-        ) as mock_exec:
-            await scheduler._tick()
-        mock_exec.assert_awaited_once_with(
-            "/bin/true",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        fired = [m for m in sent if m["type"] == "host_schedule_fired"]
-        assert fired and fired[0]["action"] == "restart"
-
-    async def test_tick_teardown_failure_still_runs_command(self, sched_app):
-        app, sent = sched_app
-        scheduler, sent, registry = _scheduler_app(
-            sched_app, shutdown_cmd="/bin/true"
-        )
-        registry.drain_all_containers = AsyncMock(
-            side_effect=RuntimeError("podman down")
-        )
-        await app.state.model.host_schedules.create_schedule(
-            "shutdown",
-            datetime.now(timezone.utc) - timedelta(seconds=1),
-            created_by="u1",
-        )
-        proc = SimpleNamespace(returncode=0)
-        with patch(
-            "klangk.host_schedule.asyncio.create_subprocess_shell",
-            new=AsyncMock(return_value=proc),
-        ) as mock_exec:
-            await scheduler._tick()  # must not raise
-        mock_exec.assert_awaited_once()
+        await scheduler._tick()
+        lifecycle.request_recycle.assert_not_called()
+        # The row was still consumed — it must not re-fire on a restart.
+        assert await app.state.model.server_schedules.pending_schedules() == []
 
     async def test_tick_future_schedule_only_broadcasts(self, sched_app):
         app, sent = sched_app
-        scheduler, sent, registry = _scheduler_app(sched_app)
-        await app.state.model.host_schedules.create_schedule(
-            "shutdown",
-            datetime.now(timezone.utc) + timedelta(hours=1),
-            created_by="u1",
-        )
-        await scheduler._tick()
-        assert registry.drain_all_containers.await_count == 0
-        assert "host_schedule_fired" not in [m["type"] for m in sent]
-        assert sent and sent[-1]["type"] == "host_schedule"
+        scheduler, sent, _ = _scheduler_app(sched_app)
+        with patch("klangk.server_schedule.os.kill") as mock_kill:
+            await app.state.model.server_schedules.create_schedule(
+                "stop",
+                datetime.now(timezone.utc) + timedelta(hours=1),
+                created_by="u1",
+            )
+            await scheduler._tick()
+        mock_kill.assert_not_called()
+        assert "server_schedule_fired" not in [m["type"] for m in sent]
+        assert sent and sent[-1]["type"] == "server_schedule"
 
     async def test_broadcast_periodicity_resets(self, sched_app):
         """Same pending set re-broadcasts only after the cadence window."""
         app, sent = sched_app
         scheduler, sent, _ = _scheduler_app(sched_app)
-        await app.state.model.host_schedules.create_schedule(
-            "shutdown",
+        await app.state.model.server_schedules.create_schedule(
+            "stop",
             datetime.now(timezone.utc) + timedelta(hours=1),
             created_by="u1",
         )
@@ -315,7 +338,7 @@ class TestLoop:
             asyncio.current_task().cancel()
 
         scheduler._tick = flaky_tick
-        with patch("klangk.host_schedule._POLL_INTERVAL_SECONDS", 0.01):
+        with patch("klangk.server_schedule._POLL_INTERVAL_SECONDS", 0.01):
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(scheduler._run(), timeout=5)
         assert calls["n"] >= 2
@@ -359,7 +382,7 @@ class TestBroadcastToAll:
         }
         ws_state.broadcast_to_all({"type": "x"})
         assert dead not in ws_state.connections
-        live.send_json.assert_called_once()
+        live.send_json.assert_called_once_with({"type": "x"})
 
 
 class TestSchedulerCoverageDetails:
@@ -384,20 +407,3 @@ class TestSchedulerCoverageDetails:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-
-    async def test_fire_quiesce_stragglers_logged(self, sched_app):
-        """In-flight requests past the quiesce window proceed with a
-        warning, and the schedule still fires."""
-        app, sent = sched_app
-        scheduler, sent, registry = _scheduler_app(sched_app)
-        app.state.inflight_requests = SimpleNamespace(
-            count=2,
-            wait_for_idle=AsyncMock(return_value=False),
-        )
-        await app.state.model.host_schedules.create_schedule(
-            "shutdown",
-            datetime.now(timezone.utc) - timedelta(seconds=1),
-            created_by="u1",
-        )
-        await scheduler._tick()
-        registry.drain_all_containers.assert_awaited_once()

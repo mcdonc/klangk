@@ -42,9 +42,9 @@ No request body.
 
 ---
 
-### DELETE `/api/v1/admin/host/schedule/{schedule_id}`
+### DELETE `/api/v1/admin/server/schedule/{schedule_id}`
 
-Cancel a pending host shutdown/restart schedule (#2661). All connected clients' countdowns update immediately.
+Cancel a pending server stop/recycle schedule (#2661). All connected clients' countdowns update immediately.
 
 **Auth:** JWT required. User must have `admin` permission on `/`.
 
@@ -56,7 +56,7 @@ No request body.
 
 `404` if no pending schedule has that id (already fired or cancelled).
 
-See [Host Scheduling](../features/host-scheduling.md).
+See [Server Scheduling](../features/server-scheduling.md).
 
 ---
 
@@ -253,9 +253,9 @@ No request body.
 
 ---
 
-### GET `/api/v1/admin/host/schedule`
+### GET `/api/v1/admin/server/schedule`
 
-List pending host shutdown/restart schedules (#2661). Rows exist only while pending — fired or cancelled schedules are deleted.
+List pending server stop/recycle schedules (#2661). Rows exist only while pending — fired or cancelled schedules are deleted.
 
 **Auth:** JWT required. User must have `admin` permission on `/`.
 
@@ -266,7 +266,7 @@ No request body.
   "schedules": [
     {
       "id": "uuid",
-      "action": "restart",
+      "action": "recycle",
       "fire_at": "2026-08-24T21:00:00+00:00",
       "created_by": "uuid",
       "created_at": "2026-08-24T18:12:00+00:00"
@@ -275,7 +275,7 @@ No request body.
 }
 ```
 
-See [Host Scheduling](../features/host-scheduling.md).
+See [Server Scheduling](../features/server-scheduling.md).
 
 ---
 
@@ -896,14 +896,14 @@ Add a user to a group (admin).
 
 ---
 
-### POST `/api/v1/admin/host/schedule`
+### POST `/api/v1/admin/server/schedule`
 
-Schedule a host shutdown or restart for a future time (#2661). Provide `at` (absolute ISO-8601; a naive timestamp is interpreted as UTC) or `in_seconds` (positive relative delay; ignored when `at` is given); `action` is `shutdown` or `restart`. The schedule persists in the DB across `klangkd` restarts; when it fires, workspaces are drained gracefully and the configured `KLANGKD_HOST_SHUTDOWN_COMMAND` / `KLANGKD_HOST_RESTART_COMMAND` runs (empty = dry run). Every connected client sees a live countdown.
+Schedule a server stop or recycle for a future time (#2661). Provide `at` (absolute ISO-8601; a naive timestamp is interpreted as UTC) or `in_seconds` (positive relative delay; ignored when `at` is given); `action` is `stop` or `recycle`. The schedule persists in the DB across `klangkd` restarts; when it fires: a **stop** runs the graceful TERM/INT path and the process exits (code 0) — the service manager owns what happens next; a **recycle** runs the SIGHUP graceful restart in-process (listener and DB stay up) and never exits. In both, workspaces are drained gracefully and every connected client sees a live countdown.
 
 **Auth:** JWT required. User must have `admin` permission on `/`.
 
 ```json
-{ "action": "restart", "at": "2026-08-24T23:00:00+02:00" }
+{ "action": "recycle", "at": "2026-08-24T23:00:00+02:00" }
 ```
 
 Returns the created schedule:
@@ -911,7 +911,7 @@ Returns the created schedule:
 ```json
 {
   "id": "uuid",
-  "action": "restart",
+  "action": "recycle",
   "fire_at": "2026-08-24T21:00:00+00:00",
   "created_by": "uuid",
   "created_at": "2026-08-24T18:12:00+00:00"
@@ -920,7 +920,7 @@ Returns the created schedule:
 
 `422` if `action` is invalid, `at` does not parse as ISO-8601, `in_seconds` is not a positive number, or neither `at` nor `in_seconds` is provided.
 
-See [Host Scheduling](../features/host-scheduling.md).
+See [Server Scheduling](../features/server-scheduling.md).
 
 ---
 

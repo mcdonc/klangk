@@ -112,18 +112,18 @@ class WsClient extends ChangeNotifier implements ChatServices {
   Stream<String> get hostNotices => _hostNoticeController.stream;
   String? _hostNotice;
 
-  // #2661: pending host shutdown/restart schedules (the `host_schedule`
+  // #2661: pending server stop/recycle schedules (the `server_schedule`
   // snapshot). Listenable + broadcast stream; the banner widget renders a
   // live countdown locally from each schedule's `fire_at`, so the server
   // only needs to push this on change + periodically.
-  final _hostScheduleController =
+  final _serverScheduleController =
       StreamController<List<Map<String, dynamic>>>.broadcast();
-  Stream<List<Map<String, dynamic>>> get hostSchedules =>
-      _hostScheduleController.stream;
-  List<Map<String, dynamic>>? _hostSchedules;
+  Stream<List<Map<String, dynamic>>> get serverSchedules =>
+      _serverScheduleController.stream;
+  List<Map<String, dynamic>>? _serverSchedules;
 
-  /// Pending host schedules, if any (`[{id, action, fire_at, ...}]`).
-  List<Map<String, dynamic>>? get hostSchedulesNow => _hostSchedules;
+  /// Pending server schedules, if any (`[{id, action, fire_at, ...}]`).
+  List<Map<String, dynamic>>? get serverSchedulesNow => _serverSchedules;
 
   /// The current host lifecycle notice, if any ('Server restarting…',
   /// 'Server shutting down'). Non-blocking: the UI surfaces it in a
@@ -392,20 +392,21 @@ class WsClient extends ChangeNotifier implements ChatServices {
     'event': _customEventController.add,
     'host_shutdown': (json) => _onHostNotice('Server shutting down'),
     'host_started': (json) => _onHostNotice(null),
-    'host_schedule': (json) {
+    'server_schedule': (json) {
       final raw = json['schedules'];
-      _hostSchedules = (raw is List)
+      _serverSchedules = (raw is List)
           ? raw
               .whereType<Map<String, dynamic>>()
               .map((s) => Map<String, dynamic>.from(s))
               .toList()
           : <Map<String, dynamic>>[];
-      _hostScheduleController.add(_hostSchedules!);
+      _serverScheduleController.add(_serverSchedules!);
       notifyListeners();
     },
-    'host_schedule_fired': (json) {
+    'server_schedule_fired': (json) {
       final action = json['action'] as String? ?? 'action';
-      _onHostNotice('Scheduled host $action is running…');
+      final what = action == 'recycle' ? 'recycle' : 'stop';
+      _onHostNotice('Scheduled server $what is running…');
     },
     'host_restart': (json) {
       final phase = json['phase'] as String? ?? '';

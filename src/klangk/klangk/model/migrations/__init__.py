@@ -53,7 +53,7 @@ from klangk.model.migrations import m0002_last_login_at
 from klangk.model.migrations import m0003_user_sessions
 from klangk.model.migrations import m0004_user_sessions_workstation
 from klangk.model.migrations import m0005_user_inactivity
-from klangk.model.migrations import m0006_host_schedules
+from klangk.model.migrations import m0006_server_schedules
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -67,7 +67,7 @@ MIGRATIONS: list[Migration] = [
     m0003_user_sessions.migration,
     m0004_user_sessions_workstation.migration,
     m0005_user_inactivity.migration,
-    m0006_host_schedules.migration,
+    m0006_server_schedules.migration,
 ]
 
 

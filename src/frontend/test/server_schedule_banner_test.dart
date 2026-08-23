@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:klangk_frontend/workspace/host_schedule_banner.dart';
+import 'package:klangk_frontend/workspace/server_schedule_banner.dart';
 import 'package:klangk_frontend/ws/ws_client.dart';
 import 'package:provider/provider.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -38,7 +38,7 @@ WsClient _clientWithSchedules(List<Map<String, dynamic>>? schedules) {
   client.connectForTest(channel);
   if (schedules != null) {
     channel.serverSend({
-      'type': 'host_schedule',
+      'type': 'server_schedule',
       'schedules': schedules,
     });
   }
@@ -48,19 +48,19 @@ WsClient _clientWithSchedules(List<Map<String, dynamic>>? schedules) {
 Widget _wrap(WsClient client) => ChangeNotifierProvider<WsClient>.value(
       value: client,
       child: MaterialApp(
-        home: Scaffold(body: HostScheduleBanner()),
+        home: Scaffold(body: ServerScheduleBanner()),
       ),
     );
 
 void main() {
-  // #2661: the scheduled-host-action banner renders the next pending
-  // schedule with a live countdown, driven by the `host_schedule` WS
+  // #2661: the scheduled-server-action banner renders the next pending
+  // schedule with a live countdown, driven by the `server_schedule` WS
   // frame through WsClient.
 
   testWidgets('renders nothing when no schedule is pending', (tester) async {
     await tester.pumpWidget(_wrap(_clientWithSchedules(null)));
     await tester.pump();
-    expect(find.byType(HostScheduleBanner), findsOneWidget);
+    expect(find.byType(ServerScheduleBanner), findsOneWidget);
     expect(find.byType(Text), findsNothing);
   });
 
@@ -76,13 +76,13 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         _clientWithSchedules([
-          {'action': 'shutdown', 'fire_at': fireAt.toIso8601String()},
+          {'action': 'stop', 'fire_at': fireAt.toIso8601String()},
         ]),
       ),
     );
     await tester.pump();
     final text = tester.widget<Text>(find.byType(Text).first).data!;
-    expect(text, contains('host shutdown in'));
+    expect(text, contains('Server stops at'));
     expect(RegExp(r'\b1h \d+m\b').hasMatch(text), isTrue);
   });
 
@@ -92,14 +92,14 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         _clientWithSchedules([
-          {'action': 'restart', 'fire_at': later.toIso8601String()},
-          {'action': 'shutdown', 'fire_at': sooner.toIso8601String()},
+          {'action': 'recycle', 'fire_at': later.toIso8601String()},
+          {'action': 'stop', 'fire_at': sooner.toIso8601String()},
         ]),
       ),
     );
     await tester.pump();
     final text = tester.widget<Text>(find.byType(Text).first).data!;
-    expect(text, contains('host shutdown'));
+    expect(text, contains('Server stops'));
     expect(RegExp(r'\b(9|10)m\b').hasMatch(text), isTrue);
   });
 
@@ -108,13 +108,13 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         _clientWithSchedules([
-          {'action': 'restart', 'fire_at': 'not-a-date'},
+          {'action': 'recycle', 'fire_at': 'not-a-date'},
         ]),
       ),
     );
     await tester.pump();
     final text = tester.widget<Text>(find.byType(Text).first).data!;
-    expect(text, contains('Scheduled host restart'));
+    expect(text, contains('Scheduled server recycle'));
   });
 
   testWidgets('counts down in seconds under a minute', (tester) async {
@@ -122,7 +122,7 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         _clientWithSchedules([
-          {'action': 'shutdown', 'fire_at': fireAt.toIso8601String()},
+          {'action': 'stop', 'fire_at': fireAt.toIso8601String()},
         ]),
       ),
     );
@@ -137,7 +137,7 @@ void main() {
     await tester.pumpWidget(
       _wrap(
         _clientWithSchedules([
-          {'action': 'shutdown', 'fire_at': fireAt.toIso8601String()},
+          {'action': 'stop', 'fire_at': fireAt.toIso8601String()},
         ]),
       ),
     );
@@ -158,10 +158,10 @@ void main() {
     final client = WsClient();
     client.connectForTest(channel);
     channel.serverSend({
-      'type': 'host_schedule',
+      'type': 'server_schedule',
       'schedules': [
         {
-          'action': 'shutdown',
+          'action': 'stop',
           'fire_at': DateTime.now()
               .toUtc()
               .add(const Duration(minutes: 5))
@@ -173,31 +173,31 @@ void main() {
     await tester.pump();
     expect(find.byType(Text), findsOneWidget);
     // Non-list snapshot (protocol drift / partial write) → empty list,
-    // hostSchedulesNow resets, and the banner's next ticker rebuild
+    // serverSchedulesNow resets, and the banner's next ticker rebuild
     // (it reads, not watches, the client) renders nothing.
-    channel.serverSend({'type': 'host_schedule', 'schedules': 'garbage'});
+    channel.serverSend({'type': 'server_schedule', 'schedules': 'garbage'});
     await tester.pump(const Duration(seconds: 1));
-    expect(client.hostSchedulesNow, isEmpty);
+    expect(client.serverSchedulesNow, isEmpty);
     expect(find.byType(Text), findsNothing);
   });
 
-  testWidgets('hostSchedules stream emits each snapshot', (tester) async {
+  testWidgets('serverSchedules stream emits each snapshot', (tester) async {
     final channel = _FakeChannel();
     final client = WsClient();
     client.connectForTest(channel);
     final received = <List<Map<String, dynamic>>>[];
-    client.hostSchedules.listen(received.add);
+    client.serverSchedules.listen(received.add);
     final fireAt = DateTime.now().toUtc().add(const Duration(minutes: 5));
     channel.serverSend({
-      'type': 'host_schedule',
+      'type': 'server_schedule',
       'schedules': [
-        {'action': 'restart', 'fire_at': fireAt.toIso8601String()},
+        {'action': 'recycle', 'fire_at': fireAt.toIso8601String()},
       ],
     });
     await tester.pump();
     expect(received, hasLength(1));
-    expect(received.single.single['action'], 'restart');
-    expect(client.hostSchedulesNow, hasLength(1));
+    expect(received.single.single['action'], 'recycle');
+    expect(client.serverSchedulesNow, hasLength(1));
   });
 
   testWidgets('firing surfaces as a host notice', (tester) async {
@@ -206,9 +206,9 @@ void main() {
     client.connectForTest(channel);
     var noticed = false;
     client.hostNotices.listen((_) => noticed = true);
-    channel.serverSend({'type': 'host_schedule_fired', 'action': 'shutdown'});
+    channel.serverSend({'type': 'server_schedule_fired', 'action': 'stop'});
     await tester.pump();
     expect(noticed, isTrue);
-    expect(client.hostNotice, contains('shutdown'));
+    expect(client.hostNotice, contains('stop'));
   });
 }

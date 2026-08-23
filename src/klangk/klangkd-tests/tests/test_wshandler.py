@@ -11697,7 +11697,7 @@ class TestNotifyHostRestart:
         sockets.connections.clear()
 
 
-class TestHostScheduleSnapshotOnConnect:
+class TestServerScheduleSnapshotOnConnect:
     """#2661: a just-connected socket receives the pending-schedule
     snapshot immediately (not only on the scheduler's next tick)."""
 
@@ -11708,7 +11708,7 @@ class TestHostScheduleSnapshotOnConnect:
         scheduler = SimpleNamespace(
             send_snapshot_to=AsyncMock(),
         )
-        app_state.state.host_scheduler = scheduler
+        app_state.state.server_scheduler = scheduler
 
         token = _auth().create_token(user["id"], user["email"])
         websocket = _mock_raw_sock(query_params={"token": token})

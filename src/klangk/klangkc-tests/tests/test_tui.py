@@ -12045,8 +12045,8 @@ async def test_edit_screen_prepopulates_settings(monkeypatch):
         assert es.query_one("#pids_limit", Input).value == ""
 
 
-async def test_main_screen_host_schedule_events(monkeypatch):
-    """#2661: pending host schedules render as a status line with fire
+async def test_main_screen_server_schedule_events(monkeypatch):
+    """#2661: pending server schedules render as a status line with fire
     time + remaining; an empty snapshot clears it; firing notifies."""
 
     async def noop(*a, **k):
@@ -12061,64 +12061,64 @@ async def test_main_screen_host_schedule_events(monkeypatch):
         ).isoformat()
         screen._on_status_event(
             {
-                "type": "host_schedule",
-                "schedules": [{"action": "shutdown", "fire_at": fire_at}],
+                "type": "server_schedule",
+                "schedules": [{"action": "stop", "fire_at": fire_at}],
             }
         )
         await pilot.pause()
-        assert app.live_extra.startswith("host: shutdown at ")
+        assert app.live_extra.startswith("server: stop at ")
         assert re.search(r"\(in 1h \d+m\)", app.live_extra)
-        # Empty snapshot clears the host: line only.
-        screen._on_status_event({"type": "host_schedule", "schedules": []})
+        # Empty snapshot clears the server: line only.
+        screen._on_status_event({"type": "server_schedule", "schedules": []})
         await pilot.pause()
         assert app.live_extra == ""
-        # A non-host line is never clobbered by an empty snapshot.
+        # A non-server line is never clobbered by an empty snapshot.
         app.live_extra = "live: other"
-        screen._on_status_event({"type": "host_schedule", "schedules": []})
+        screen._on_status_event({"type": "server_schedule", "schedules": []})
         await pilot.pause()
         assert app.live_extra == "live: other"
         # Firing warns.
         screen._on_status_event(
-            {"type": "host_schedule_fired", "action": "shutdown"}
+            {"type": "server_schedule_fired", "action": "stop"}
         )
         await pilot.pause()
-        assert app.live_extra == "host: scheduled shutdown firing"
+        assert app.live_extra == "server: scheduled stop running"
 
 
-def test_host_schedule_line_formats():
+def test_server_schedule_line_formats():
     soon = (
         datetime.now(timezone.utc) + timedelta(minutes=2, seconds=30)
     ).isoformat()
-    line = scr_main._host_schedule_line({"action": "restart", "fire_at": soon})
-    assert line.startswith("host: restart at ")
+    line = scr_main._server_schedule_line(
+        {"action": "recycle", "fire_at": soon}
+    )
+    assert line.startswith("server: recycle at ")
     assert "(in 2m)" in line
     hours = (
         datetime.now(timezone.utc) + timedelta(hours=2, minutes=3, seconds=45)
     ).isoformat()
-    assert "(in 2h 3m)" in scr_main._host_schedule_line(
-        {"action": "shutdown", "fire_at": hours}
+    assert "(in 2h 3m)" in scr_main._server_schedule_line(
+        {"action": "stop", "fire_at": hours}
     )
     # Bad/absent fire_at degrades to a static line, never raises.
     assert (
-        scr_main._host_schedule_line({"action": "shutdown", "fire_at": "x"})
-        == "host: shutdown scheduled"
+        scr_main._server_schedule_line({"action": "stop", "fire_at": "x"})
+        == "server: stop scheduled"
     )
     assert (
-        scr_main._host_schedule_line({"action": "shutdown"})
-        == "host: shutdown scheduled"
+        scr_main._server_schedule_line({"action": "recycle"})
+        == "server: recycle scheduled"
     )
     # Naive (no-tz) fire_at is treated as local time, not rejected.
     naive = (datetime.now() + timedelta(minutes=2, seconds=30)).isoformat()
-    assert "(in 2m)" in scr_main._host_schedule_line(
-        {"action": "shutdown", "fire_at": naive}
+    assert "(in 2m)" in scr_main._server_schedule_line(
+        {"action": "stop", "fire_at": naive}
     )
     # Sub-minute remaining renders seconds.
     seconds = (datetime.now(timezone.utc) + timedelta(seconds=45)).isoformat()
     assert re.search(
         r"\(in 4\ds\)",
-        scr_main._host_schedule_line(
-            {"action": "shutdown", "fire_at": seconds}
-        ),
+        scr_main._server_schedule_line({"action": "stop", "fire_at": seconds}),
     )
 
 

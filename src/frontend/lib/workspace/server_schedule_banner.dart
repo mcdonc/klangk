@@ -1,11 +1,11 @@
-/// Scheduled host shutdown/restart banner (#2661).
+/// Scheduled server stop/recycle banner (#2661).
 ///
 /// A persistent banner shown above the workspace body while the server
-/// has a pending host shutdown or restart schedule. It renders the next
+/// has a pending server stop or recycle schedule. It renders the next
 /// (soonest) action with a **live countdown** (a 1s `Timer` — the server
-/// pushes the `host_schedule` snapshot only on change and periodically;
+/// pushes the `server_schedule` snapshot only on change and periodically;
 /// the countdown ticks locally from the schedule's `fire_at`), so every
-/// connected user knows the host is going down and can save work.
+/// connected user knows the server is going down and can save work.
 ///
 /// Non-blocking, like the #2527 host notices: it never gates the
 /// reconnect machinery.
@@ -35,19 +35,19 @@ String _remainingLabel(Duration d) {
 }
 
 /// Banner widget: listens to [WsClient] and shows the next scheduled
-/// host action with a live countdown. Renders nothing when no schedule
-/// is pending.
-class HostScheduleBanner extends StatefulWidget {
+/// server action (stop / recycle) with a live countdown. Renders
+/// nothing when no schedule is pending.
+class ServerScheduleBanner extends StatefulWidget {
   // Non-const on purpose: a const constructor's declaration line never
   // executes (canonical const instance), which makes the 100% coverage
   // gate flag it nondeterministically across toolchains.
-  HostScheduleBanner({super.key});
+  ServerScheduleBanner({super.key});
 
   @override
-  State<HostScheduleBanner> createState() => _HostScheduleBannerState();
+  State<ServerScheduleBanner> createState() => _ServerScheduleBannerState();
 }
 
-class _HostScheduleBannerState extends State<HostScheduleBanner> {
+class _ServerScheduleBannerState extends State<ServerScheduleBanner> {
   Timer? _ticker;
 
   @override
@@ -66,7 +66,7 @@ class _HostScheduleBannerState extends State<HostScheduleBanner> {
 
   @override
   Widget build(BuildContext context) {
-    final schedules = context.read<WsClient>().hostSchedulesNow;
+    final schedules = context.read<WsClient>().serverSchedulesNow;
     if (schedules == null || schedules.isEmpty) return const SizedBox.shrink();
 
     // Soonest fire_at first (the server sends them ordered, but be safe).
@@ -77,15 +77,16 @@ class _HostScheduleBannerState extends State<HostScheduleBanner> {
     ]..sort((a, b) => a.$2.compareTo(b.$2));
     if (parsed.isEmpty) {
       final action = schedules.first['action'] as String? ?? 'action';
-      return _row('⏻ Scheduled host $action');
+      return _row('⏻ Scheduled server $action');
     }
 
     final (action, fireAt) = parsed.first;
     final remaining = fireAt.difference(DateTime.now());
+    final verb = action == 'recycle' ? 'recycles' : 'stops';
     final label = remaining.isNegative
-        ? 'scheduled host $action happening now'
-        : 'host $action in ${_remainingLabel(remaining)} '
-            '(${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(fireAt))})';
+        ? 'server $action happening now'
+        : 'Server $verb at ${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(fireAt))} '
+            '(in ${_remainingLabel(remaining)} — workspaces stop)';
     return _row('⏻ $label');
   }
 

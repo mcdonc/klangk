@@ -108,6 +108,20 @@ operators or integrators to act when upgrading.
   `[exited]` line reads as a normal exit instead of a crash. The
   consent-popup wrapper's cleanup no longer sprays
   `no server running on …sock` into the terminal after the shell ends.
+- **Scheduled server stop/recycle (#2661).** Admins can schedule a
+  server stop or recycle at an absolute time or after a delay
+  (`POST /api/v1/admin/server/schedule` with
+  `{action: "stop" | "recycle", at | in_seconds}`; list/cancel via
+  `GET`/`DELETE` on the same resource). Schedules persist in the DB
+  across `klangkd` restarts and fire without anyone connected. A
+  **stop** runs the graceful TERM/INT path and the process exits
+  (code 0) — the service manager owns what happens next; a **recycle**
+  runs the SIGHUP graceful restart in-process (listener and DB stay
+  up) and never exits. In both, workspaces are drained gracefully and
+  every connected client sees a live-countdown notification: a banner
+  in the Flutter UI (`Server stops at 23:00 (in 1h 12m — workspaces
+stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
+  TUI. See [Server Scheduling](features/server-scheduling.md).
 - **`EX_CONFIG` exit status 78 for deterministic config errors (#2666).**
   When `klangkd` refuses to boot over bad configuration — e.g. a
   `KLANGKD_DEFAULT_PASSWORD` that violates the password policy, password
@@ -1164,7 +1178,6 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
-<<<<<<< HEAD
 - **Idempotent `POST /auth/logout` (#2687).** Logout now returns 200 even
   when the presented token is already expired, revoked, or absent — the
   token being dead is logout's desired end state, not an auth failure.
@@ -1190,15 +1203,12 @@ containers-registries.conf(5) was found`.
   admin previously logged out now lands on `/workspaces`, not the admin
   page the previous session was viewing.
 
-=======
 - **TUI live status events stopped working entirely (#2612 regression).**
   The mount-time "last login" fetch ran as an exclusive worker in the
   default worker group, which cancelled the just-started status-WS and
   token-refresh loops on every startup — the TUI received no live
   events at all (reachability signals, workspace status changes, and
-  the host-shutdown countdown). It now runs in its own worker group.
->>>>>>> 01fc559d (fix(tui): last-login worker no longer cancels the status-WS loop)
-- **TUI status line was invisible on the workspaces screen (#2661).**
+  the host-shutdown countdown). It now runs in its own worker group.- **TUI status line was invisible on the workspaces screen (#2661).**
   The status bar (server, user, live state) has been painted underneath
   the keybind footer since the screens refactor (#1875) — two
   bottom-docked Textual widgets fully overlap, and the later-mounted
