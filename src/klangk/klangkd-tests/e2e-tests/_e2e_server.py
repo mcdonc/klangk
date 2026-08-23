@@ -198,6 +198,7 @@ def _wait_ready(
 def start_server(
     *,
     uds: bool = True,
+    wait_ready: bool = True,
     data_dir: str | None = None,
     state_dir: str | None = None,
     config: str | None = None,
@@ -213,6 +214,11 @@ def start_server(
         ``<state_dir>/klangk.sock``, return a UDS-configured ``client``. Use
         this for in-process Python clients.
         ``False`` → TCP via the proxy: the proxy on a free ``KLANGKD_PORT``, return a
+    wait_ready:
+        When ``False``, skip the ``/health`` readiness wait and return
+        immediately after spawn — for tests whose server is EXPECTED to
+        exit during startup (e.g. a past-due scheduled stop firing on
+        boot); the default ``True`` treats that as a failure.
         ``url`` and a TCP ``client``. Use this for CLI / browser suites.
     data_dir, state_dir:
         Optional explicit dirs (created otherwise as tempdirs).
@@ -317,7 +323,8 @@ def start_server(
     # Keep a reference so stop_server can close it; mirror the prior CLI
     # suite's ``proc._log_file`` convention.
     proc._log_file = log_file  # type: ignore[attr-defined]
-    _wait_ready(proc, uds_path=uds_path, url=url, log_path=log_path)
+    if wait_ready:
+        _wait_ready(proc, uds_path=uds_path, url=url, log_path=log_path)
 
     client = httpx_client({"uds_path": uds_path, "url": url})
     if log_file is not None:

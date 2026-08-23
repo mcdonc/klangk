@@ -3613,3 +3613,15 @@ class TestRemountFrontend:
         with patch.object(lc, "_remount_frontend") as mock_remount:
             await lc._apply_reloaded_settings(new_settings)
         mock_remount.assert_not_called()
+
+
+async def test_request_recycle_ignored_when_shutting_down(app_state, caplog):
+    """#2661: a scheduled recycle (or SIGHUP) arriving after a shutdown
+    began must not spawn a recycle task — the exit owns the process."""
+    app_state = _make_app_state()
+    lc = app_state.state.lifecycle
+    lc.shutting_down = True
+    with caplog.at_level("INFO"):
+        lc.request_recycle(source="scheduled recycle")
+    assert not lc._recycle_tasks
+    assert any("recycle ignored" in r.message for r in caplog.records)

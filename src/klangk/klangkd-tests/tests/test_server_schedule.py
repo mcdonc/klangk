@@ -142,6 +142,19 @@ class TestResolveFireAt:
         with pytest.raises(ValueError, match="positive"):
             resolve_fire_at({"in_seconds": 0})
 
+    def test_in_seconds_must_be_finite(self):
+        for bad in (float("inf"), float("-inf"), float("nan"), "Infinity"):
+            with pytest.raises(ValueError, match="finite"):
+                resolve_fire_at({"in_seconds": bad})
+
+    def test_in_seconds_bounded(self):
+        # Beyond ~1000 years timedelta would OverflowError (a 500 from
+        # the API); reject with a clean 422 instead.
+        with pytest.raises(ValueError, match="at most"):
+            resolve_fire_at({"in_seconds": 9e18})
+        with pytest.raises(ValueError, match="at most"):
+            resolve_fire_at({"in_seconds": 1e11})
+
     def test_neither(self):
         with pytest.raises(ValueError, match="'at' or 'in_seconds'"):
             resolve_fire_at({})
@@ -270,6 +283,79 @@ class TestServerScheduler:
         assert await app.state.model.server_schedules.pending_schedules() == []
         fired = [m for m in sent if m["type"] == "server_schedule_fired"]
         assert fired and fired[0]["action"] == "recycle"
+
+    async def test_stop_skipped_when_shutting_down(self, sched_app):
+        """A stop firing during a shutdown-in-progress must NOT send a
+        second SIGTERM — the launcher's force-exit branch would abort
+        the first drain mid-flight (#2661 review)."""
+        app, sent = sched_app
+        scheduler, sent, lifecycle = _scheduler_app(
+            sched_app, shutting_down=True
+        )
+        await app.state.model.server_schedules.create_schedule(
+            "stop",
+            datetime.now(timezone.utc) - timedelta(seconds=1),
+            created_by="u1",
+        )
+        with patch("klangk.server_schedule.os.kill") as mock_kill:
+            await scheduler._tick()
+        mock_kill.assert_not_called()
+        # The row was still consumed — it must not re-fire on a restart.
+        assert await app.state.model.server_schedules.pending_schedules() == []
+
+    async def test_fire_skipped_when_cancelled_first(self, sched_app):
+        """A cancel that removes the row between the tick's snapshot and
+        the fire wins: the action must not run (#2661 review)."""
+        app, sent = sched_app
+        scheduler, sent, _ = _scheduler_app(sched_app)
+        schedule = await app.state.model.server_schedules.create_schedule(
+            "stop",
+            datetime.now(timezone.utc) - timedelta(seconds=1),
+            created_by="u1",
+        )
+        # The row is gone (the admin's cancel won the race) — _fire's
+        # claim finds nothing and must not run the action. Call _fire
+        # directly with the stale in-memory dict: that is exactly the
+        # state a cancel landing between the tick's snapshot and the
+        # fire leaves behind.
+        await app.state.model.server_schedules.cancel_schedule(schedule["id"])
+        with patch("klangk.server_schedule.os.kill") as mock_kill:
+            await scheduler._fire(schedule)
+        mock_kill.assert_not_called()
+        assert "server_schedule_fired" not in [m["type"] for m in sent]
+
+    async def test_malformed_fire_at_row_skipped_not_fatal(self, sched_app):
+        """A hand-edited row with a bad fire_at is skipped + logged; the
+        healthy rows keep broadcasting and firing (#2661 review)."""
+        app, sent = sched_app
+        scheduler, sent, _ = _scheduler_app(sched_app)
+        good = await app.state.model.server_schedules.create_schedule(
+            "stop",
+            datetime.now(timezone.utc) + timedelta(hours=1),
+            created_by="u1",
+        )
+        async with app.state.db.transaction() as db:
+            await db.execute(
+                "INSERT INTO server_schedules"
+                " (id, action, fire_at, created_by, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    "bad-row",
+                    "stop",
+                    "not-a-date",
+                    "u1",
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        with patch("klangk.server_schedule.os.kill"):
+            await scheduler._tick()  # must not raise
+        # The healthy row still broadcasts; the bad one is carried in the
+        # pending list (never fired) so clients see it exists.
+        snapshot = [m for m in sent if m["type"] == "server_schedule"]
+        assert snapshot and snapshot[-1]["schedules"], "no broadcast"
+        ids = [s["id"] for s in snapshot[-1]["schedules"]]
+        assert good["id"] in ids and "bad-row" in ids
+        assert "server_schedule_fired" not in [m["type"] for m in sent]
 
     async def test_recycle_skipped_when_shutting_down(self, sched_app):
         """A recycle firing during a shutdown is a no-op (the exit owns

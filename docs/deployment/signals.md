@@ -172,8 +172,8 @@ boot), notifies clients (`server_schedule_fired`), and hands off to
 the paths documented above:
 
 - **`stop`** → SIGTERM to self: the SIGINT/SIGTERM graceful-stop path
-  (refuse starts, quiesce, drain, exit 0) runs verbatim. What happens
-  next is the service manager's decision.
+  (refuse starts, quiesce, drain, exit with SIGTERM's status) runs
+  verbatim. What happens next is the service manager's decision.
 - **`recycle`** → the SIGHUP graceful recycle, verbatim (quiesce,
   drain, recycle the runtime in-process, `host_started`); the process
   never exits. A recycle firing during a shutdown-in-progress is

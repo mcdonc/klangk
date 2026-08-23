@@ -127,7 +127,7 @@ def test_http_listener_stays_up_across_sighup(server):
 async def test_websocket_closed_with_1012_and_reconnects(server, auth):
     """#2: SIGHUP closes WS clients with code 1012; they can reconnect.
 
-    The graceful restart first sends ``server_recycle`` events with a
+    The graceful recycle first sends ``server_recycle`` events with a
     ``phase`` field ("draining" at refuse-starts, "restarting" just
     before the recycle); those arrive as ordinary frames before the
     1012 close, so receive until the close and assert both (#2527)."""

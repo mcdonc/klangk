@@ -105,3 +105,16 @@ class ServerSchedulesModel:
             await db.execute(
                 "DELETE FROM server_schedules WHERE id = ?", (schedule_id,)
             )
+
+    async def claim_schedule(self, schedule_id: str) -> bool:
+        """Atomically delete a row, reporting whether it existed.
+
+        Used by the scheduler at fire time: a row that vanished (an
+        admin cancel racing the tick) returns ``False`` and the action
+        must not run.
+        """
+        async with self.app.state.db.transaction() as db:
+            cursor = await db.execute(
+                "DELETE FROM server_schedules WHERE id = ?", (schedule_id,)
+            )
+            return bool(cursor.rowcount)

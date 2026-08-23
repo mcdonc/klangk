@@ -672,6 +672,7 @@ class Lifecycle:
             "email",
             "util",
             "lifecycle",
+            "server_scheduler",
         ]
         for name in subsystems:
             try:
@@ -850,7 +851,7 @@ class Lifecycle:
         failure recovery (#2527 review).
         """
         if self.shutting_down:
-            logger.info("%s: restart ignored; shutdown in progress", source)
+            logger.info("%s: recycle ignored; shutdown in progress", source)
             return
         try:
             loop = asyncio.get_running_loop()
