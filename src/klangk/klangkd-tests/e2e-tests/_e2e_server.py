@@ -88,9 +88,14 @@ _UDS_HOST = "http://klangkd"
 _UDS_WS_HOST = "ws://klangkd"
 
 # How long to wait for the server to answer /health at startup. Container-less
-# readiness is ~1-2s; the headroom absorbs a loaded runner / first-boot seeding
-# and concurrent VM resource contention on the JIT CI pool.
-_READINESS_TIMEOUT = 120
+# readiness is ~1-2s, but klangkd's startup includes the Podman pre-warm
+# (a throwaway create+rm that initializes storage/userns), which can take
+# 100s+ when the runner VM is contended — e.g. concurrent E2E suites each
+# pre-warming the same podman session, or other load on the shared host.
+# The server itself stays correct; it just crosses the line late, so give
+# it room to finish (observed: pre-warm 105-110s + seed ~2s vs a 120s
+# deadline that killed the server 2s before it came up).
+_READINESS_TIMEOUT = 240
 
 # File-streamed server logs from live ``start_server`` handles (#2623).
 # Servers launched with ``log_path`` write their combined output to that
