@@ -38,13 +38,22 @@ if [ "${FIPS_HOST_IMAGE}" = "${HOST_IMAGE}" ]; then
   exit 2
 fi
 
-for img in "${HOST_IMAGE}" "${FIPS_WORKSPACE_IMAGE}"; do
-  if ! "$PODMAN" image exists "$img" 2>/dev/null; then
-    echo "Required image '${img}' not found — build it first" >&2
-    echo "(klangk:build-host-image, klangk:build-fips-image)." >&2
-    exit 2
-  fi
-done
+# Prerequisite checks must use the engine that actually built each
+# image (#2714): klangk-host is a docker-build product of
+# build-host-image.sh, while klangk-workspace-fips comes from podman
+# (build-fips-image.sh). On hosts where docker is the podman wrapper the
+# stores coincide, but on the CI runner they are distinct — probing the
+# docker-built image with podman fails even though the build succeeded.
+if ! docker image inspect "${HOST_IMAGE}:latest" >/dev/null 2>&1; then
+  echo "Required image '${HOST_IMAGE}' not found in the docker store" >&2
+  echo "— build it first (klangk:build-host-image)." >&2
+  exit 2
+fi
+if ! "$PODMAN" image exists "${FIPS_WORKSPACE_IMAGE}" 2>/dev/null; then
+  echo "Required image '${FIPS_WORKSPACE_IMAGE}' not found in the podman store" >&2
+  echo "— build it first (klangk:build-fips-image)." >&2
+  exit 2
+fi
 
 VERSION="$(jq -r .version "$KLANGKD_VERSION_FILE")"
 
