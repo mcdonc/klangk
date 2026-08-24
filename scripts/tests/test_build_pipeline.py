@@ -99,12 +99,12 @@ EXPECTED_DART_FEATURE_NAMES = EXPECTED_DART_PACKAGE_FEATURES
 # alone keeps feature keys from colliding with server secrets/paths/infra.
 # Soliplex's KLANGKWS_FEATURE_SOLIPLEX_URL was renamed from SOLIPLEX_URL when it
 # was vendored (#1686) — the build guard from #1662 requires the prefix.
-# Chat's three agent keys (scope "both") sort before git-credential's
-# (features are iterated sorted by name: chat < git-credential).
+# Chat's agent keys (scope "both") sort before git-credential's
+# (features are iterated sorted by name: chat < git-credential). The
+# identity keys were removed (#2718 — fixed handle/email); only the
+# agent on-switch remains.
 EXPECTED_CONTAINER_ENV_KEYS = [
     "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED",
-    "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL",
-    "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE",
     "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID",
 ]
 
@@ -385,13 +385,11 @@ class TestManifestContract:
                     f"{spec['scope']!r}"
                 )
                 all_keys[key] = spec["scope"]
-        # Spot-check the keys declared today (chat's three agent keys are
-        # scope "both", #1976).
+        # Spot-check the keys declared today (chat's agent on-switch is
+        # scope "both", #1976; the identity keys are gone, #2718).
         assert all_keys == {
             "KLANGKWS_FEATURE_BOING_SPEED": "frontend",
             "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED": "both",
-            "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": "both",
-            "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": "both",
             "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
             "KLANGKWS_FEATURE_SOLIPLEX_URL": "frontend",
         }
