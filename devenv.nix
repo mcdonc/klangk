@@ -425,6 +425,15 @@ in
       -v -n auto --no-cov --testmon "$@"
   '';
 
+  # Fast local pre-push gate (#2727): diff the working tree against the
+  # merge-base with origin/main and run only the suites whose area
+  # changed (testmon for the klangk package, scripts/tests for the build
+  # path, sidecar unit, flutter unit). CI stays authoritative — the full
+  # test-backend / test-frontend runs are the pre-merge check, not the
+  # pre-push one. Logic lives in scripts/test-push.sh (TEST_PUSH_BASE
+  # overrides the base ref).
+  scripts.test-push.exec = ''exec bash "$DEVENV_ROOT/scripts/test-push.sh"'';
+
   # CLI E2E tests: start real server, run klangk commands.
   # Free-allocated ports + instance-scoped cleanup (#1393) make xdist
   # safe with --dist=loadscope. Capped at 2 workers to limit podman
