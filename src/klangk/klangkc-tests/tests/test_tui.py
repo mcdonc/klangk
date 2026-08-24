@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -12843,3 +12845,127 @@ def test_oidc_login_keeps_credentials_after_successful_save(
     st.oidc_login("google")
     assert st.token() == "real-token"
     assert st.email() == "real@x"
+
+
+# ---------------------------------------------------------------------------
+# #2029 review round 2: stamp-cache serialization, save-failure drop,
+# guarded dismiss/pop
+# ---------------------------------------------------------------------------
+
+
+def test_state_cache_serializes_concurrent_writers(monkeypatch, redirect_xdg):
+    """#2029 r2: mutators run on worker threads while the UI thread reads,
+    and an interleaved load->mutate->save->sync could pair one writer's
+    stale object with another writer's fresh stamp — served forever. The
+    whole mutator sequence is atomic under _state_lock, so writer C cannot
+    complete (or even start its mutation) while writer B is parked mid-save;
+    final cache and disk both reflect B-then-C."""
+    b_in_save = threading.Event()
+    release_b = threading.Event()
+    real_save = CLIState.save
+
+    def gated_save(self):
+        if self.active_server == "https://b.example":
+            b_in_save.set()
+            assert release_b.wait(timeout=5)
+        return real_save(self)
+
+    monkeypatch.setattr(CLIState, "save", gated_save)
+    st = TuiState()
+    tb = threading.Thread(target=lambda: st.switch_server("https://b.example"))
+    tb.start()
+    assert b_in_save.wait(timeout=5)  # B holds the lock, parked in save()
+    tc = threading.Thread(target=lambda: st.switch_server("https://c.example"))
+    tc.start()
+    time.sleep(0.2)  # give C every chance to (wrongly) get in
+    release_b.set()  # let B finish; C must follow it
+    tb.join(timeout=5)
+    tc.join(timeout=5)
+    assert not tb.is_alive() and not tc.is_alive()
+    # Both serialized in order: disk and cache are v_C, consistent.
+    assert CLIState.load().active_server == "https://c.example"
+    assert st.state().active_server == "https://c.example"
+
+
+def test_mutator_save_failure_drops_cache(monkeypatch, redirect_xdg):
+    """#2029 r2: a failed save() in ANY mutator must drop the cache — the
+    in-memory mutation exists nowhere on disk and must not be served as
+    phantom state (the oidc_login rule, generalized)."""
+
+    def boom(self):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(CLIState, "save", boom)
+    st = TuiState("https://x.example")
+    with pytest.raises(OSError):
+        st.switch_server("https://y.example")
+    # Cache dropped: state() reloads from disk — no phantom active server.
+    assert st.state().active_server is None
+    assert st.current_url() is None or st.current_url() != "https://y.example"
+
+
+async def test_edit_save_dismiss_guarded_when_screen_already_popped(
+    monkeypatch,
+):
+    """#2029 r2: Screen.dismiss unconditionally pops the top screen. If the
+    edit form was popped underneath an in-flight save worker (workspace
+    deleted + status reload), the unguarded dismiss ate the MainScreen and
+    left a blank base. _safe_dismiss no-ops instead."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", image="base", running=False)
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test(size=(140, 40)) as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        assert isinstance(es, EditWorkspaceScreen)
+        # Form still on the stack: the guarded dismiss runs for real.
+        es._safe_dismiss(True)
+        await pilot.pause()
+        assert es not in app.screen_stack
+        # Form already popped: the guarded dismiss is a no-op — the
+        # MainScreen underneath survives.
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es2 = app.screen
+        app.pop_screen()  # external actor pops it first
+        await pilot.pause()
+        es2._safe_dismiss(True)
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+
+
+async def test_detail_delete_pop_guarded_when_screen_already_popped(
+    monkeypatch,
+):
+    """#2029 r2: the delete worker's own workspaces_changed broadcast can
+    pop the detail screen before the worker resumes; the guarded pop must
+    no-op instead of eating the MainScreen below."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.delete_workspace = lambda n: None
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        assert isinstance(d, WorkspaceDetailScreen)
+        app.pop_screen()  # external actor pops it first
+        await pilot.pause()
+        before = list(app.screen_stack)
+        await d._do_delete()  # guarded pop no-ops
+        await pilot.pause()
+        assert list(app.screen_stack) == before
+        assert isinstance(app.screen, MainScreen)

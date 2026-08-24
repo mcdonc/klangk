@@ -1383,6 +1383,18 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             exit_on_error=False,
         )
 
+    def _safe_dismiss(self, result) -> None:
+        """Dismiss this form only when it is still on the screen stack.
+
+        ``Screen.dismiss`` unconditionally pops the top screen, so an
+        unguarded dismiss from an in-flight save worker whose form was
+        already popped underneath it (the workspace was deleted and the
+        status reload popped it, #2029 review round 2) would eat the
+        MainScreen below and leave a blank base screen. No-op instead.
+        """
+        if self in self.app.screen_stack:
+            self.dismiss(result)
+
     async def _do_save(self, name, body, ws, restart_needed) -> None:
         try:
             await asyncio.to_thread(
@@ -1410,7 +1422,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         exit_on_error=False,
                     )
                 else:
-                    self.dismiss(name)
+                    self._safe_dismiss(name)
 
             self.app.push_screen(
                 ConfirmScreen(
@@ -1423,7 +1435,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                 _after,
             )
         else:
-            self.dismiss(name)
+            self._safe_dismiss(name)
 
     async def _do_restart_after_save(self, ws_name, dismiss_name) -> None:
         try:
@@ -1433,7 +1445,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         except Exception as exc:
             self._msg(f"Saved, but restart failed: {exc}", error=True)
             return
-        self.dismiss(dismiss_name)
+        self._safe_dismiss(dismiss_name)
 
     # --- event handlers ---
 

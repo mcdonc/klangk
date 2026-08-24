@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -95,6 +96,16 @@ class TuiState:
         # (mtime_ns, size) stamp comparison drives reloads.
         self._state_cache: CLIState | None = None
         self._state_stamp: tuple[int, int] | None = None
+        # Guards the stamp cache AND every load→mutate→save→sync sequence
+        # (#2029 review round 2): mutators run on textual worker threads
+        # while the UI thread calls state() constantly, and a torn
+        # two-field update (one writer's object paired with another
+        # writer's stamp) pinned a stale object forever — the exact
+        # wrong-server symptom this class exists to prevent. Reentrant so
+        # state()/_save_state can nest inside a mutator's single hold;
+        # NEVER held across network I/O (the HTTP calls finish before the
+        # mutators acquire it).
+        self._state_lock = threading.RLock()
 
     # --- fresh config / state each call ---
 
@@ -111,18 +122,43 @@ class TuiState:
         every save in this class syncs the cache — but documented so the
         tradeoff is a decision, not an accident (#2029 review).
         """
-        stamp = _file_stamp(cli_config._STATE_PATH)
-        if self._state_cache is None or stamp != self._state_stamp:
-            self._state_cache = CLIState.load()
-            self._state_stamp = stamp
-        return self._state_cache
+        with self._state_lock:
+            stamp = _file_stamp(cli_config._STATE_PATH)
+            if self._state_cache is None or stamp != self._state_stamp:
+                self._state_cache = CLIState.load()
+                self._state_stamp = stamp
+            return self._state_cache
+
+    def _save_state(self, state: CLIState) -> None:
+        """Save *state* and sync the stamp cache; drop the cache on failure.
+
+        Must be called with ``_state_lock`` held so a mutator's whole
+        load→mutate→save→sync sequence is atomic — two writers interleaving
+        inside that sequence produced a torn (stale object, fresh stamp)
+        pair that state() served forever (#2029 review round 2). A failed
+        save drops the cache: the in-memory mutation exists nowhere on
+        disk and must not be served as phantom credentials/state (the
+        same rule oidc_login's unconditional drop follows).
+        """
+        try:
+            state.save()
+        except Exception:
+            self._drop_state_cache()
+            raise
+        self._sync_state_cache(state)
+
+    def _drop_state_cache(self) -> None:
+        """Invalidate the stamp cache; the next ``state()`` reloads disk."""
+        with self._state_lock:
+            self._state_cache = None
+            self._state_stamp = None
 
     def _sync_state_cache(self, state: CLIState) -> None:
         """Write a just-saved CLIState back into the stamp cache.
 
-        Called right after every ``state.save()`` in this class: the save
-        changed the file (and our mutation changed the object), so adopt
-        both without waiting for the next stamp mismatch.
+        Called only from :meth:`_save_state` with ``_state_lock`` held (the
+        save changed the file and our mutation changed the object, so adopt
+        both without waiting for the next stamp mismatch).
         """
         self._state_cache = state
         self._state_stamp = _file_stamp(cli_config._STATE_PATH)
@@ -414,10 +450,10 @@ class TuiState:
         token = resp.json().get("access_token")
         if not token:
             raise LoginError("server returned no access token")
-        state = self.state()
-        state.set_credentials(url, identifier, token)
-        state.save()
-        self._sync_state_cache(state)
+        with self._state_lock:
+            state = self.state()
+            state.set_credentials(url, identifier, token)
+            self._save_state(state)
         return identifier
 
     def login_none(self) -> str:
@@ -428,10 +464,10 @@ class TuiState:
             email, token = local_login(url)
         except SystemExit as exc:
             raise LoginError("no-auth login failed") from exc
-        state = self.state()
-        state.set_credentials(url, email, token)
-        state.save()
-        self._sync_state_cache(state)
+        with self._state_lock:
+            state = self.state()
+            state.set_credentials(url, email, token)
+            self._save_state(state)
         return email
 
     def oidc_login(self, provider_id: str) -> None:
@@ -449,16 +485,15 @@ class TuiState:
             # file never changed, but the mutated object IS our cached one
             # — phantom credentials served forever. Drop the cache either
             # way; the next state() reloads exactly what is on disk.
-            self._state_cache = None
-            self._state_stamp = None
+            self._drop_state_cache()
 
     def logout(self) -> None:
         url = self.current_url()
-        state = self.state()
-        if url is not None:
-            state.clear_credentials(url)
-            state.save()
-            self._sync_state_cache(state)
+        with self._state_lock:
+            state = self.state()
+            if url is not None:
+                state.clear_credentials(url)
+                self._save_state(state)
         # Drop the cached /auth/me profile so a re-login as a different
         # identity on the same server isn't served the previous user's
         # profile (#2164 review: the cache is keyed by URL, not identity).
@@ -498,19 +533,19 @@ class TuiState:
         return "ok"
 
     def switch_server(self, url: str) -> None:
-        state = self.state()
-        state.active_server = url
-        state.save()
-        self._sync_state_cache(state)
+        with self._state_lock:
+            state = self.state()
+            state.active_server = url
+            self._save_state(state)
 
     def add_server(
         self, alias: str, url: str, user: str | None = None
     ) -> None:
         add_server_to_config(alias, url, user)
-        state = self.state()
-        state.active_server = url
-        state.save()
-        self._sync_state_cache(state)
+        with self._state_lock:
+            state = self.state()
+            state.active_server = url
+            self._save_state(state)
 
     def update_server(
         self,
@@ -529,11 +564,11 @@ class TuiState:
         old_url = old_entry.url if old_entry else None
         if not update_server_in_config(old_alias, new_alias, url, user):
             return False
-        state = self.state()
-        if old_url and state.active_server == old_url:
-            state.active_server = url
-            state.save()
-            self._sync_state_cache(state)
+        with self._state_lock:
+            state = self.state()
+            if old_url and state.active_server == old_url:
+                state.active_server = url
+                self._save_state(state)
         return True
 
     def delete_server(self, url: str) -> bool:
@@ -549,9 +584,9 @@ class TuiState:
             return False
         for a in aliases:
             remove_server_from_config(a)
-        state = self.state()
-        if state.active_server == url:
-            state.active_server = None
-            state.save()
-            self._sync_state_cache(state)
+        with self._state_lock:
+            state = self.state()
+            if state.active_server == url:
+                state.active_server = None
+                self._save_state(state)
         return True

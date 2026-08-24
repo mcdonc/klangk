@@ -1134,7 +1134,11 @@ class WorkspaceDetailScreen(StatusScreen):
         except Exception as exc:
             self._msg(f"Delete failed: {exc}", error=True)
             return
-        self.app.pop_screen()  # back to the list
+        # Guarded: the delete's own workspaces_changed broadcast can pop
+        # this screen before the worker resumes (#2029 review round 2) —
+        # an unguarded pop would eat the MainScreen below.
+        if self in self.app.screen_stack:
+            self.app.pop_screen()  # back to the list
         self.app.refresh_workspaces()
 
     def action_duplicate(self) -> None:
