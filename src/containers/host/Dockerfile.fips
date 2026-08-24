@@ -60,6 +60,11 @@ RUN ./Configure enable-fips --prefix=/opt/ossl-fips --libdir=lib && \
 # --- Stage 2: host image + FIPS activation ----------------------------------
 FROM $HOST_IMAGE
 
+# The stock host image ends at USER klangk; every layer below writes
+# to system paths (apt lists, /usr/lib, /etc/ssl), so switch back to
+# root for the FIPS layers and restore klangk at the end.
+USER root
+
 # amd64-only today: the module path and OPENSSL_MODULES below hardcode
 # the x86_64 multiarch dir. On other architectures OPENSSL_MODULES would
 # shadow the distro base.so in the arch dir — fail the build loudly
@@ -117,6 +122,12 @@ ENV OPENSSL_CONF=/etc/ssl/openssl.cnf \
 # `podman load` picks this one up identically.
 COPY --from=fips-workspace-image --chown=klangk:klangk workspace-fips.tar \
      /home/klangk/workspace.tar
+
+# Restore the stock image's runtime posture — same user and workdir
+# the base ends with, so the inherited ENTRYPOINT/CMD behave
+# identically to the stock host image.
+USER klangk
+WORKDIR /home/klangk
 
 # Build-time proof that the provider actually activates — the same
 # probes klangkd runs at runtime (klangk/fips.py), so a green build
