@@ -17,9 +17,12 @@ polling. The server side is lowered to match (``launcher.py``).
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 
 from ..transport import ws_connect
+
+logger = logging.getLogger(__name__)
 
 # Protocol-level liveness for the TUI's status WS (#2052). The client pings
 # the server every ``_WS_PING_INTERVAL`` seconds and expects a pong within
@@ -46,7 +49,12 @@ async def listen_for_status(
     unreachable overlay and refresh the workspace list on (re)connect (#2052).
 
     Non-JSON and non-object frames are skipped (the server occasionally
-    sends control/ack frames).
+    sends control/ack frames). Callback exceptions are isolated: a bug in
+    ``on_event``/``on_connect`` is logged and swallowed rather than tearing
+    down the connection — an exception escaping this listener reads as a
+    connection loss to ``_status_loop``, which would churn reconnects and
+    replay the failure forever (#2029 audit, same isolation rule as the
+    consent decider's pump).
     """
     async with ws_connect(
         server_url,
@@ -56,7 +64,10 @@ async def listen_for_status(
         ping_timeout=_WS_PING_TIMEOUT,
     ) as ws:
         if on_connect is not None:
-            on_connect()
+            try:
+                on_connect()
+            except Exception:  # noqa: BLE001
+                logger.exception("status WS on_connect callback failed")
         async for raw in ws:
             try:
                 event = json.loads(raw)
@@ -64,4 +75,7 @@ async def listen_for_status(
                 continue
             if not isinstance(event, dict):
                 continue
-            on_event(event)
+            try:
+                on_event(event)
+            except Exception:  # noqa: BLE001
+                logger.exception("status WS event callback failed")

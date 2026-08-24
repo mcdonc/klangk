@@ -39,20 +39,40 @@ from ._base import (
 
 
 def _collect_settings(screen: Screen) -> dict | None:
-    """Read the resource-limit inputs and return a settings dict, or None."""
+    """Read the resource-limit inputs and return a settings dict, or None.
+
+    Raises ``ValueError`` (field-named) on non-numeric input so the form can
+    show an inline error instead of crashing the app — ``int(raw)``/``float(raw)``
+    used to propagate out of the button handler (#2029 audit).
+    """
     settings: dict = {}
     raw = screen.query_one("#idle_timeout", Input).value.strip()
     if raw:
-        settings["idle_timeout"] = int(raw)
+        try:
+            settings["idle_timeout"] = int(raw)
+        except ValueError:
+            raise ValueError(
+                f"Idle timeout must be a whole number of seconds: {raw!r}"
+            ) from None
     raw = screen.query_one("#cpu_limit", Input).value.strip()
     if raw:
-        settings["cpu_limit"] = float(raw)
+        try:
+            settings["cpu_limit"] = float(raw)
+        except ValueError:
+            raise ValueError(
+                f"CPU limit must be a number (e.g. 2.0): {raw!r}"
+            ) from None
     raw = screen.query_one("#memory_limit", Input).value.strip()
     if raw:
         settings["memory_limit"] = raw
     raw = screen.query_one("#pids_limit", Input).value.strip()
     if raw:
-        settings["pids_limit"] = int(raw)
+        try:
+            settings["pids_limit"] = int(raw)
+        except ValueError:
+            raise ValueError(
+                f"PIDs limit must be a whole number: {raw!r}"
+            ) from None
     raw = screen.query_one("#tmp_size", Input).value.strip()
     if raw:
         settings["tmp_size"] = raw
@@ -557,7 +577,11 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         allowed_domains = list(self._allowed_domains) or None
         rejected_domains = list(self._rejected_domains) or None
         egress_mode = self.query_one("#egress_mode", Select).value
-        settings = _collect_settings(self)
+        try:
+            settings = _collect_settings(self)
+        except ValueError as exc:
+            self._msg(str(exc), error=True)
+            return
         if self._nix_available and self.query_one("#nix", Checkbox).value:
             settings = {**(settings or {}), "nix": True}
         self.run_worker(
@@ -1290,7 +1314,11 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         allowed_domains = list(self._allowed_domains) or None
         rejected_domains = list(self._rejected_domains) or None
         egress_mode = self.query_one("#egress_mode", Select).value
-        settings = _collect_settings(self)
+        try:
+            settings = _collect_settings(self)
+        except ValueError as exc:
+            self._msg(str(exc), error=True)
+            return
         # #2233: emit an explicit nix value (True/False) whenever the
         # toggle is shown. PUT settings is a full-replace bag, so we must
         # carry the checkbox state — including False — to actually turn

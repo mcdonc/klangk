@@ -11,11 +11,13 @@ deps, and sibling ``cli`` modules.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 
+from .. import config as cli_config
 from ..auth import (
     _UNREACHABLE,
     _oidc_browser_login,
@@ -36,6 +38,20 @@ from ..transport import http_request
 logger = logging.getLogger(__name__)
 
 
+def _file_stamp(path: Path) -> tuple[int, int] | None:
+    """Cheap change-detection stamp (mtime_ns, size) for a state file.
+
+    None when the file is absent (a missing state file is CLIState.load's
+    default-instance case). Read at call time off the ``config`` module
+    attribute so tests (and a future env change) can retarget the path.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
 class LoginError(Exception):
     """Raised when an in-TUI login attempt fails."""
 
@@ -51,9 +67,18 @@ class ServerInfo:
 class TuiState:
     """Live bridge to CLIConfig / CLIState / KlangkClient.
 
-    Config and state are re-loaded on every call rather than cached at
-    construction, so the TUI never acts on a stale snapshot after a
-    server switch, an external login, or a token refresh.
+    Config and state are re-checked on every call rather than cached at
+    construction, so the TUI never acts on a stale snapshot after a server
+    switch, an external login, or a token refresh. The state YAML is
+    served from an mtime+size stamp cache: a StatusBar refresh reads it
+    3+ times per event on the UI thread, and an unconditional
+    read+parse per call made every push/pop and every status WS event pay
+    three full file loads (#2029 audit). The stamp check keeps the
+    freshness contract — any write (ours via save(), an external
+    ``klangk login``, an editor) changes the stamp — while repeated reads
+    between changes are free. Callers may mutate the returned CLIState
+    (the load→mutate→save pattern); every save() in this class writes the
+    new object straight back into the cache.
     """
 
     def __init__(self, server_url: str | None = None) -> None:
@@ -65,6 +90,11 @@ class TuiState:
         # without a /me hit on every render. Refetched on server switch.
         self._me: dict | None = None
         self._me_url: str | None = None
+        # Stamp cache for CLIState (#2029 audit; see class docstring).
+        # ``_state_cache is None`` forces the first load; afterwards the
+        # (mtime_ns, size) stamp comparison drives reloads.
+        self._state_cache: CLIState | None = None
+        self._state_stamp: tuple[int, int] | None = None
 
     # --- fresh config / state each call ---
 
@@ -72,7 +102,21 @@ class TuiState:
         return CLIConfig.load()
 
     def state(self) -> CLIState:
-        return CLIState.load()
+        stamp = _file_stamp(cli_config._STATE_PATH)
+        if self._state_cache is None or stamp != self._state_stamp:
+            self._state_cache = CLIState.load()
+            self._state_stamp = stamp
+        return self._state_cache
+
+    def _sync_state_cache(self, state: CLIState) -> None:
+        """Write a just-saved CLIState back into the stamp cache.
+
+        Called right after every ``state.save()`` in this class: the save
+        changed the file (and our mutation changed the object), so adopt
+        both without waiting for the next stamp mismatch.
+        """
+        self._state_cache = state
+        self._state_stamp = _file_stamp(cli_config._STATE_PATH)
 
     def current_url(self) -> str | None:
         if self._server_override is not None:
@@ -364,6 +408,7 @@ class TuiState:
         state = self.state()
         state.set_credentials(url, identifier, token)
         state.save()
+        self._sync_state_cache(state)
         return identifier
 
     def login_none(self) -> str:
@@ -377,6 +422,7 @@ class TuiState:
         state = self.state()
         state.set_credentials(url, email, token)
         state.save()
+        self._sync_state_cache(state)
         return email
 
     def oidc_login(self, provider_id: str) -> None:
@@ -395,6 +441,7 @@ class TuiState:
         if url is not None:
             state.clear_credentials(url)
             state.save()
+            self._sync_state_cache(state)
         # Drop the cached /auth/me profile so a re-login as a different
         # identity on the same server isn't served the previous user's
         # profile (#2164 review: the cache is keyed by URL, not identity).
@@ -437,6 +484,7 @@ class TuiState:
         state = self.state()
         state.active_server = url
         state.save()
+        self._sync_state_cache(state)
 
     def add_server(
         self, alias: str, url: str, user: str | None = None
@@ -445,6 +493,7 @@ class TuiState:
         state = self.state()
         state.active_server = url
         state.save()
+        self._sync_state_cache(state)
 
     def update_server(
         self,
@@ -467,6 +516,7 @@ class TuiState:
         if old_url and state.active_server == old_url:
             state.active_server = url
             state.save()
+            self._sync_state_cache(state)
         return True
 
     def delete_server(self, url: str) -> bool:
@@ -486,4 +536,5 @@ class TuiState:
         if state.active_server == url:
             state.active_server = None
             state.save()
+            self._sync_state_cache(state)
         return True
