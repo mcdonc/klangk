@@ -345,13 +345,16 @@ class LoginScreen(SpatialNavScreen, StatusScreen):
     async def _do_login_oidc(self) -> None:
         providers = await asyncio.to_thread(self.app.tui_state.oidc_providers)
         # Pick the first well-formed provider entry; a malformed payload
-        # (non-dict entry, missing/non-string id) degrades to the "no
-        # provider" message instead of a KeyError crash (#2029 audit).
+        # (non-dict entry, missing/non-string/empty id) degrades to the "no
+        # provider" message instead of a KeyError crash (#2029 audit). An
+        # empty string would dial /auth/oidc//login -> 404 (#2029 review).
         provider_id = next(
             (
                 p["id"]
                 for p in providers
-                if isinstance(p, dict) and isinstance(p.get("id"), str)
+                if isinstance(p, dict)
+                and isinstance(p.get("id"), str)
+                and p["id"]
             ),
             None,
         )

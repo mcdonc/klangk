@@ -102,6 +102,15 @@ class TuiState:
         return CLIConfig.load()
 
     def state(self) -> CLIState:
+        """The CLI's state, served from the stamp cache (see class docstring).
+
+        Accepted staleness window: a write that lands within the same
+        mtime tick AND keeps the file size identical to the loaded version
+        is missed (same strategy CPython uses for ``.pyc`` validity). Not
+        realistic for this file — a credential swap changes its size, and
+        every save in this class syncs the cache — but documented so the
+        tradeoff is a decision, not an accident (#2029 review).
+        """
         stamp = _file_stamp(cli_config._STATE_PATH)
         if self._state_cache is None or stamp != self._state_stamp:
             self._state_cache = CLIState.load()
@@ -434,6 +443,14 @@ class TuiState:
             _oidc_browser_login(url, provider_id, self.state())
         except SystemExit as exc:
             raise LoginError("OIDC login failed") from exc
+        finally:
+            # The browser flow mutates + saves the state object itself
+            # (#2029 review): if its save() failed (disk full, quota) the
+            # file never changed, but the mutated object IS our cached one
+            # — phantom credentials served forever. Drop the cache either
+            # way; the next state() reloads exactly what is on disk.
+            self._state_cache = None
+            self._state_stamp = None
 
     def logout(self) -> None:
         url = self.current_url()

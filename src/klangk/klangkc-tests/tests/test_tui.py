@@ -12682,9 +12682,10 @@ async def test_listen_for_status_isolates_callback_errors(monkeypatch):
 
 
 async def test_login_oidc_malformed_provider_degrades(monkeypatch):
-    """#2029: a malformed provider payload (non-dict entry, missing or
-    non-string id) degrades to the "no provider" message instead of a
-    KeyError crash; a well-formed one is still handed through."""
+    """#2029: a malformed provider payload (non-dict entry, missing,
+    non-string, or empty id) degrades to the "no provider" message instead
+    of a KeyError crash or a bogus dial. (The well-formed handoff is covered
+    by test_login_oidc_flow.)"""
 
     async def noop(*a, **k):
         return None
@@ -12697,7 +12698,12 @@ async def test_login_oidc_malformed_provider_degrades(monkeypatch):
         current_url=lambda: "https://x.example",
         email=lambda: None,
         token=lambda: None,
-        oidc_providers=lambda: ["garbage", {"no_id": True}, {"id": 42}],
+        oidc_providers=lambda: [
+            "garbage",
+            {"no_id": True},
+            {"id": 42},
+            {"id": ""},
+        ],
         oidc_login=lambda pid: called.append(pid),
     )
     app = KlangkApp(st)
@@ -12755,3 +12761,85 @@ def test_state_stamp_cache_reload_when_file_removed(redirect_xdg):
     st.switch_server("https://a.example")
     spath.unlink()
     assert st.state().active_server is None
+
+
+async def test_create_screen_rejects_nonfinite_cpu(monkeypatch):
+    """#2029 review: NaN/Inf pass float() AND the server's positive check
+    (NaN <= 0 is False), then podman rejects --cpus nan at container
+    start — a cryptic failure long after submit. The form rejects them
+    inline with a field-named error."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    created: list = []
+
+    def create(*a, **k):
+        created.append((a, k))
+        return _wsobj("made")
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name", Input).value = "valid-name"
+        for bad in ("nan", "inf", "-inf", "NaN"):
+            cs.query_one("#cpu_limit", Input).value = bad
+            cs._create()
+            await pilot.pause()
+            assert created == []  # never submitted
+            assert "CPU limit" in str(
+                cs.query_one("#create_msg", Static).render()
+            ), f"{bad} was not rejected inline"
+        # A finite value still passes through to the request.
+        cs.query_one("#cpu_limit", Input).value = "2.0"
+        cs._create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(created) == 1
+        assert created[0][1]["settings"] == {"cpu_limit": 2.0}
+
+
+def test_oidc_login_drops_stamp_cache_on_save_failure(
+    monkeypatch, redirect_xdg
+):
+    """#2029 review: the browser flow mutates + saves the state object
+    itself. If its save() fails the file never changed, but the mutated
+    object IS the cached one — phantom credentials served forever.
+    oidc_login must drop the cache either way so state() reloads exactly
+    what is on disk."""
+
+    def fake_flow(url, provider_id, state):
+        # Mutate the shared object but do NOT save (simulates a failed
+        # save: the file on disk is unchanged).
+        state.set_credentials(url, "ghost@x", "ghost-token")
+        return None
+
+    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_flow)
+    st = TuiState("https://x.example")
+    st.oidc_login("google")
+    # Cache dropped: state() reloaded from disk and does NOT serve the
+    # phantom credentials.
+    assert st.token() is None
+    assert st.email() is None
+
+
+def test_oidc_login_keeps_credentials_after_successful_save(
+    monkeypatch, redirect_xdg
+):
+    """The cache drop must not lose a genuinely saved login: after a
+    successful browser flow (mutate + save), state() reloads the same
+    credentials from disk."""
+
+    def fake_flow(url, provider_id, state):
+        state.set_credentials(url, "real@x", "real-token")
+        state.save()
+
+    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_flow)
+    st = TuiState("https://x.example")
+    st.oidc_login("google")
+    assert st.token() == "real-token"
+    assert st.email() == "real@x"

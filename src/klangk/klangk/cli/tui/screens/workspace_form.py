@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 
 import httpx
 
@@ -41,9 +42,12 @@ from ._base import (
 def _collect_settings(screen: Screen) -> dict | None:
     """Read the resource-limit inputs and return a settings dict, or None.
 
-    Raises ``ValueError`` (field-named) on non-numeric input so the form can
+    Raises ``ValueError`` (field-named) on invalid input so the form can
     show an inline error instead of crashing the app — ``int(raw)``/``float(raw)``
-    used to propagate out of the button handler (#2029 audit).
+    used to propagate out of the button handler (#2029 audit). The ``float``
+    field also rejects NaN/Inf: the server's positive-number check
+    (``f <= 0``) passes NaN, and podman later rejects ``--cpus nan`` at
+    container start with a cryptic error long after submit (#2029 review).
     """
     settings: dict = {}
     raw = screen.query_one("#idle_timeout", Input).value.strip()
@@ -57,11 +61,16 @@ def _collect_settings(screen: Screen) -> dict | None:
     raw = screen.query_one("#cpu_limit", Input).value.strip()
     if raw:
         try:
-            settings["cpu_limit"] = float(raw)
+            cpu = float(raw)
         except ValueError:
             raise ValueError(
                 f"CPU limit must be a number (e.g. 2.0): {raw!r}"
             ) from None
+        if not math.isfinite(cpu):
+            raise ValueError(
+                f"CPU limit must be a finite number (e.g. 2.0): {raw!r}"
+            )
+        settings["cpu_limit"] = cpu
     raw = screen.query_one("#memory_limit", Input).value.strip()
     if raw:
         settings["memory_limit"] = raw
