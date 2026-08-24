@@ -1203,13 +1203,19 @@ class MainScreen(StatusScreen):
         list refresh catches a REST-only degradation lazily.
         """
         state = self.app.tui_state
-        url = state.current_url()
-        token = state.token()
-        if not url or not token:
+        if not state.current_url() or not state.token():
             return
         while True:
+            # Re-read BOTH url and token every iteration: a server switch
+            # reuses this screen (App.server_changed -> refresh_lists, no
+            # re-mount), so a url captured once at mount kept dialing the
+            # previous server with the new server's token -- guaranteed
+            # auth rejection, 25 reconnect attempts, and a false "server
+            # down" overlay while REST on the new server worked fine
+            # (#2029 audit).
+            url = state.current_url()
             token = state.token()
-            if not token:
+            if not url or not token:
                 self.app.session_expired()
                 return
             # Screen popped (logout / server switch) — stop reconnecting.

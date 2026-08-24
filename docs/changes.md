@@ -1207,6 +1207,25 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Status WebSocket follows a server switch (#2029).** The TUI's live
+  status connection kept dialing the previous server after switching
+  servers, producing a false "server down" overlay. It now re-reads the
+  active server each cycle.
+- **Workspace forms validate numeric resource fields (#2029).**
+  Non-numeric or non-finite (NaN/Inf) values in the Idle timeout, CPU
+  limit, or PIDs limit fields now show an inline field-named error
+  instead of crashing the app or failing later at container start.
+- **TUI no longer strands a deleted workspace's page behind a dialog
+  (#2029).** Deleting a workspace while a dialog is open over its detail
+  page now closes both the dialog and the dead page, returning to the
+  workspace list.
+- **TUI tolerates malformed server payloads (#2029).** A malformed
+  `container_status` timestamp or OIDC provider entry degrades
+  gracefully instead of crashing, and errors in status-event handling no
+  longer masquerade as a lost connection.
+- **TUI status-bar refresh is cheaper (#2029).** Refreshing the status
+  bar no longer re-reads and re-parses the CLI state file several times
+  per event on the UI thread.
 - **No stale `live: …` segment in the TUI status bar after a server
   stop/recycle (#2690).** Routine broadcasts (`container_status`,
   `workspaces_changed`, `terminals_changed`, `service_health`) no

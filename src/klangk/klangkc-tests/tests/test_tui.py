@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -12464,3 +12466,506 @@ async def test_mount_does_not_cancel_status_ws_worker(monkeypatch):
         )
         running = [w.name for w in app.workers if w.is_running]
         assert "status-ws" in running
+
+
+# ---------------------------------------------------------------------------
+# #2029 audit: async blocking / correctness / robustness / performance
+# ---------------------------------------------------------------------------
+
+
+async def test_status_loop_rereads_url_after_server_switch(monkeypatch):
+    """#2029: a server switch reuses the MainScreen (no re-mount), so the
+    status-WS loop must re-read the url every iteration. A url pinned at
+    mount kept dialing the OLD server with the NEW server's token — a
+    guaranteed auth reject, 25 reconnect attempts, and a false "server
+    down" overlay while REST on the new server worked fine."""
+    await _fast_reconnect(monkeypatch)
+    box = {"url": "https://a.example", "token": "tok"}
+    dialed: list[str] = []
+
+    async def capture(url, token, **k):
+        dialed.append(url)
+        if len(dialed) == 1:
+            # A server switch lands mid-run (App.server_changed reuses this
+            # screen; on_mount does not re-fire).
+            box["url"] = "https://b.example"
+        if len(dialed) >= 3:
+            box["token"] = None  # end the loop on the next iteration
+        return None  # clean close
+
+    monkeypatch.setattr(scr_main, "listen_for_status", capture)
+    app = KlangkApp(
+        _authed_state(
+            current_url=lambda: box["url"],
+            token=lambda: box["token"],
+        )
+    )
+    expired: list = []
+    monkeypatch.setattr(app, "session_expired", lambda: expired.append(1))
+    async with app.run_test() as pilot:
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        await _real_status_loop(main)
+        await pilot.pause()
+    assert dialed[0] == "https://a.example"
+    # Every dial after the switch targets the NEW server.
+    assert dialed[1:] == ["https://b.example", "https://b.example"]
+    assert expired  # loop exited via the token-drop guard
+
+
+async def test_detail_reload_on_status_pops_modal_above(monkeypatch):
+    """#2029: when the workspace is deleted out from under an open detail
+    screen, the reload must pop any modal ABOVE it first — a bare
+    pop_screen() dismissed only the modal and left the dead detail page
+    mounted underneath."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        assert isinstance(d, WorkspaceDetailScreen)
+        app.push_screen(ConfirmScreen("Really?"))
+        await pilot.pause()
+
+        def gone(n):
+            raise WorkspaceNotFoundError("gone")
+
+        st.find_workspace = gone
+        d.apply_status_event({"type": "workspaces_changed"})
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        # Both the modal AND the detail screen are gone; list on top.
+        assert not any(
+            isinstance(s, WorkspaceDetailScreen) for s in app.screen_stack
+        )
+        assert not any(isinstance(s, ConfirmScreen) for s in app.screen_stack)
+        assert isinstance(app.screen, MainScreen)
+
+
+async def test_detail_status_event_ignores_string_started_at(monkeypatch):
+    """#2029: a malformed (string) service_started_at payload must not be
+    adopted — it would crash the uptime math (int(time.time() - str))."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        # Malformed string stamp: not adopted, no crash on _display().
+        d.apply_status_event(
+            {
+                "type": "container_status",
+                "running": True,
+                "service_started_at": "2026-01-01T00:00:00",
+            }
+        )
+        await pilot.pause()
+        assert d._ws.service_started_at is None
+        # A well-formed numeric stamp still adopts.
+        d.apply_status_event(
+            {
+                "type": "container_status",
+                "running": True,
+                "service_started_at": 1234.5,
+            }
+        )
+        await pilot.pause()
+        assert d._ws.service_started_at == 1234.5
+
+
+async def test_create_screen_settings_validation_inline_error(monkeypatch):
+    """#2029: non-numeric resource inputs show an inline error instead of
+    crashing the app out of the button handler."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    created: list = []
+
+    def create(*a, **k):
+        created.append((a, k))
+        return _wsobj("made")
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name", Input).value = "valid-name"
+        # Cycle each numeric field through garbage: each names its field.
+        for field, label in (
+            ("#idle_timeout", "Idle timeout"),
+            ("#cpu_limit", "CPU limit"),
+            ("#pids_limit", "PIDs limit"),
+        ):
+            cs.query_one(field, Input).value = "garbage"
+            cs._create()
+            await pilot.pause()
+            assert created == []  # never submitted
+            assert label in str(
+                cs.query_one("#create_msg", Static).render()
+            ), f"{field} error did not name its field"
+            cs.query_one(field, Input).value = ""
+
+
+async def test_edit_screen_settings_validation_inline_error(monkeypatch):
+    """#2029: same validation on the edit form's _save path."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    updated: dict = {}
+
+    def update(wid, **f):
+        updated["id"] = wid
+        updated.update(f)
+
+    ws = _wsobj("alpha", image="base", running=False)
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test(size=(140, 40)) as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#cpu_limit", Input).value = "fast"
+        es._save()
+        await app.workers.wait_for_complete()
+        assert updated == {}  # never submitted
+        assert "CPU limit" in str(es.query_one("#edit_msg", Static).render())
+
+
+async def test_listen_for_status_isolates_callback_errors(monkeypatch):
+    """#2029: a bug in the UI's on_event/on_connect must not tear down the
+    status WS — an exception escaping the listener reads as a connection
+    loss to _status_loop and would churn reconnects forever."""
+    got: list[str] = []
+    frames = [
+        '{"type": "a"}',
+        '{"type": "b"}',
+        '{"type": "c"}',
+    ]
+    monkeypatch.setattr(
+        ws_mod, "ws_connect", lambda *a, **k: FakeCM(FakeWS(frames))
+    )
+
+    def bad_connect():
+        raise RuntimeError("connect bug")
+
+    def on_event(ev):
+        got.append(ev["type"])
+        if ev["type"] == "a":
+            raise RuntimeError("ui bug")
+
+    await listen_for_status(
+        "/sock", "tok", on_event=on_event, on_connect=bad_connect
+    )
+    # The failing callback was isolated; later frames still delivered.
+    assert got == ["a", "b", "c"]
+
+
+async def test_login_oidc_malformed_provider_degrades(monkeypatch):
+    """#2029: a malformed provider payload (non-dict entry, missing,
+    non-string, or empty id) degrades to the "no provider" message instead
+    of a KeyError crash or a bogus dial. (The well-formed handoff is covered
+    by test_login_oidc_flow.)"""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    called: list = []
+    st = _st(
+        is_authenticated=lambda: False,
+        auth_mode=lambda: "password",
+        current_url=lambda: "https://x.example",
+        email=lambda: None,
+        token=lambda: None,
+        oidc_providers=lambda: [
+            "garbage",
+            {"no_id": True},
+            {"id": 42},
+            {"id": ""},
+        ],
+        oidc_login=lambda pid: called.append(pid),
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, LoginScreen)
+        await screen._do_login_oidc()
+        await pilot.pause()
+        assert "No SSO provider configured." in str(
+            screen.query_one("#message", Static).render()
+        )
+        assert called == []  # never handed a bogus provider id
+
+
+def test_state_stamp_cache_serves_same_object(redirect_xdg):
+    """#2029: repeated state() calls between writes hit the stamp cache —
+    the StatusBar refresh path reads it 3+ times per event on the UI
+    thread, and each used to be a full read+parse of the state YAML."""
+    st = TuiState()
+    s1 = st.state()
+    s2 = st.state()
+    assert s1 is s2
+
+
+def test_state_stamp_cache_reloads_on_external_write(redirect_xdg):
+    """#2029: an external write (a concurrent `klangk login`) changes the
+    stamp, so the next state() reloads — the freshness contract holds."""
+    cpath, spath = redirect_xdg
+    st = TuiState()
+    s1 = st.state()
+    ext = CLIState()
+    ext.set_credentials("https://x.example", "u@x", "tok2")
+    ext.save()
+    s2 = st.state()
+    assert s2 is not s1
+    assert st.token() == "tok2"
+
+
+def test_state_stamp_cache_sync_after_own_save(redirect_xdg):
+    """#2029: our own save() writes straight back into the cache, so
+    load->mutate->save->load yields the same object with new content."""
+    st = TuiState()
+    st.switch_server("https://a.example")
+    s = st.state()
+    assert s.active_server == "https://a.example"
+    assert st.state() is s
+
+
+def test_state_stamp_cache_reload_when_file_removed(redirect_xdg):
+    """#2029: the file vanishing (stamp -> None) forces a reload that
+    yields the default instance, not a stale cached copy."""
+    cpath, spath = redirect_xdg
+    st = TuiState()
+    st.switch_server("https://a.example")
+    spath.unlink()
+    assert st.state().active_server is None
+
+
+async def test_create_screen_rejects_nonfinite_cpu(monkeypatch):
+    """#2029 review: NaN/Inf pass float() AND the server's positive check
+    (NaN <= 0 is False), then podman rejects --cpus nan at container
+    start — a cryptic failure long after submit. The form rejects them
+    inline with a field-named error."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    created: list = []
+
+    def create(*a, **k):
+        created.append((a, k))
+        return _wsobj("made")
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name", Input).value = "valid-name"
+        for bad in ("nan", "inf", "-inf", "NaN"):
+            cs.query_one("#cpu_limit", Input).value = bad
+            cs._create()
+            await pilot.pause()
+            assert created == []  # never submitted
+            assert "CPU limit" in str(
+                cs.query_one("#create_msg", Static).render()
+            ), f"{bad} was not rejected inline"
+        # A finite value still passes through to the request.
+        cs.query_one("#cpu_limit", Input).value = "2.0"
+        cs._create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(created) == 1
+        assert created[0][1]["settings"] == {"cpu_limit": 2.0}
+
+
+def test_oidc_login_drops_stamp_cache_on_save_failure(
+    monkeypatch, redirect_xdg
+):
+    """#2029 review: the browser flow mutates + saves the state object
+    itself. If its save() fails the file never changed, but the mutated
+    object IS the cached one — phantom credentials served forever.
+    oidc_login must drop the cache either way so state() reloads exactly
+    what is on disk."""
+
+    def fake_flow(url, provider_id, state):
+        # Mutate the shared object but do NOT save (simulates a failed
+        # save: the file on disk is unchanged).
+        state.set_credentials(url, "ghost@x", "ghost-token")
+        return None
+
+    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_flow)
+    st = TuiState("https://x.example")
+    st.oidc_login("google")
+    # Cache dropped: state() reloaded from disk and does NOT serve the
+    # phantom credentials.
+    assert st.token() is None
+    assert st.email() is None
+
+
+def test_oidc_login_keeps_credentials_after_successful_save(
+    monkeypatch, redirect_xdg
+):
+    """The cache drop must not lose a genuinely saved login: after a
+    successful browser flow (mutate + save), state() reloads the same
+    credentials from disk."""
+
+    def fake_flow(url, provider_id, state):
+        state.set_credentials(url, "real@x", "real-token")
+        state.save()
+
+    monkeypatch.setattr(tui_state_mod, "_oidc_browser_login", fake_flow)
+    st = TuiState("https://x.example")
+    st.oidc_login("google")
+    assert st.token() == "real-token"
+    assert st.email() == "real@x"
+
+
+# ---------------------------------------------------------------------------
+# #2029 review round 2: stamp-cache serialization, save-failure drop,
+# guarded dismiss/pop
+# ---------------------------------------------------------------------------
+
+
+def test_state_cache_serializes_concurrent_writers(monkeypatch, redirect_xdg):
+    """#2029 r2: mutators run on worker threads while the UI thread reads,
+    and an interleaved load->mutate->save->sync could pair one writer's
+    stale object with another writer's fresh stamp — served forever. The
+    whole mutator sequence is atomic under _state_lock, so writer C cannot
+    complete (or even start its mutation) while writer B is parked mid-save;
+    final cache and disk both reflect B-then-C."""
+    b_in_save = threading.Event()
+    release_b = threading.Event()
+    real_save = CLIState.save
+
+    def gated_save(self):
+        if self.active_server == "https://b.example":
+            b_in_save.set()
+            assert release_b.wait(timeout=5)
+        return real_save(self)
+
+    monkeypatch.setattr(CLIState, "save", gated_save)
+    st = TuiState()
+    tb = threading.Thread(target=lambda: st.switch_server("https://b.example"))
+    tb.start()
+    assert b_in_save.wait(timeout=5)  # B holds the lock, parked in save()
+    tc = threading.Thread(target=lambda: st.switch_server("https://c.example"))
+    tc.start()
+    time.sleep(0.2)  # give C every chance to (wrongly) get in
+    release_b.set()  # let B finish; C must follow it
+    tb.join(timeout=5)
+    tc.join(timeout=5)
+    assert not tb.is_alive() and not tc.is_alive()
+    # Both serialized in order: disk and cache are v_C, consistent.
+    assert CLIState.load().active_server == "https://c.example"
+    assert st.state().active_server == "https://c.example"
+
+
+def test_mutator_save_failure_drops_cache(monkeypatch, redirect_xdg):
+    """#2029 r2: a failed save() in ANY mutator must drop the cache — the
+    in-memory mutation exists nowhere on disk and must not be served as
+    phantom state (the oidc_login rule, generalized)."""
+
+    def boom(self):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(CLIState, "save", boom)
+    st = TuiState("https://x.example")
+    with pytest.raises(OSError):
+        st.switch_server("https://y.example")
+    # Cache dropped: state() reloads from disk — no phantom active server.
+    assert st.state().active_server is None
+    assert st.current_url() is None or st.current_url() != "https://y.example"
+
+
+async def test_edit_save_dismiss_guarded_when_screen_already_popped(
+    monkeypatch,
+):
+    """#2029 r2: Screen.dismiss unconditionally pops the top screen. If the
+    edit form was popped underneath an in-flight save worker (workspace
+    deleted + status reload), the unguarded dismiss ate the MainScreen and
+    left a blank base. _safe_dismiss no-ops instead."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    ws = _wsobj("alpha", image="base", running=False)
+    app = KlangkApp(_edit_state(ws))
+    async with app.run_test(size=(140, 40)) as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        assert isinstance(es, EditWorkspaceScreen)
+        # Form still on the stack: the guarded dismiss runs for real.
+        es._safe_dismiss(True)
+        await pilot.pause()
+        assert es not in app.screen_stack
+        # Form already popped: the guarded dismiss is a no-op — the
+        # MainScreen underneath survives.
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es2 = app.screen
+        app.pop_screen()  # external actor pops it first
+        await pilot.pause()
+        es2._safe_dismiss(True)
+        await pilot.pause()
+        assert isinstance(app.screen, MainScreen)
+
+
+async def test_detail_delete_pop_guarded_when_screen_already_popped(
+    monkeypatch,
+):
+    """#2029 r2: the delete worker's own workspaces_changed broadcast can
+    pop the detail screen before the worker resumes; the guarded pop must
+    no-op instead of eating the MainScreen below."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", running=True)
+    st = _ws(owned=[a])
+    st.find_workspace = lambda n: a
+    st.delete_workspace = lambda n: None
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        d = app.screen
+        assert isinstance(d, WorkspaceDetailScreen)
+        app.pop_screen()  # external actor pops it first
+        await pilot.pause()
+        before = list(app.screen_stack)
+        await d._do_delete()  # guarded pop no-ops
+        await pilot.pause()
+        assert list(app.screen_stack) == before
+        assert isinstance(app.screen, MainScreen)

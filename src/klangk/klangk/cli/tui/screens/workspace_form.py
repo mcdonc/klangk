@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 
 import httpx
 
@@ -39,20 +40,48 @@ from ._base import (
 
 
 def _collect_settings(screen: Screen) -> dict | None:
-    """Read the resource-limit inputs and return a settings dict, or None."""
+    """Read the resource-limit inputs and return a settings dict, or None.
+
+    Raises ``ValueError`` (field-named) on invalid input so the form can
+    show an inline error instead of crashing the app — ``int(raw)``/``float(raw)``
+    used to propagate out of the button handler (#2029 audit). The ``float``
+    field also rejects NaN/Inf: the server's positive-number check
+    (``f <= 0``) passes NaN, and podman later rejects ``--cpus nan`` at
+    container start with a cryptic error long after submit (#2029 review).
+    """
     settings: dict = {}
     raw = screen.query_one("#idle_timeout", Input).value.strip()
     if raw:
-        settings["idle_timeout"] = int(raw)
+        try:
+            settings["idle_timeout"] = int(raw)
+        except ValueError:
+            raise ValueError(
+                f"Idle timeout must be a whole number of seconds: {raw!r}"
+            ) from None
     raw = screen.query_one("#cpu_limit", Input).value.strip()
     if raw:
-        settings["cpu_limit"] = float(raw)
+        try:
+            cpu = float(raw)
+        except ValueError:
+            raise ValueError(
+                f"CPU limit must be a number (e.g. 2.0): {raw!r}"
+            ) from None
+        if not math.isfinite(cpu):
+            raise ValueError(
+                f"CPU limit must be a finite number (e.g. 2.0): {raw!r}"
+            )
+        settings["cpu_limit"] = cpu
     raw = screen.query_one("#memory_limit", Input).value.strip()
     if raw:
         settings["memory_limit"] = raw
     raw = screen.query_one("#pids_limit", Input).value.strip()
     if raw:
-        settings["pids_limit"] = int(raw)
+        try:
+            settings["pids_limit"] = int(raw)
+        except ValueError:
+            raise ValueError(
+                f"PIDs limit must be a whole number: {raw!r}"
+            ) from None
     raw = screen.query_one("#tmp_size", Input).value.strip()
     if raw:
         settings["tmp_size"] = raw
@@ -557,7 +586,11 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         allowed_domains = list(self._allowed_domains) or None
         rejected_domains = list(self._rejected_domains) or None
         egress_mode = self.query_one("#egress_mode", Select).value
-        settings = _collect_settings(self)
+        try:
+            settings = _collect_settings(self)
+        except ValueError as exc:
+            self._msg(str(exc), error=True)
+            return
         if self._nix_available and self.query_one("#nix", Checkbox).value:
             settings = {**(settings or {}), "nix": True}
         self.run_worker(
@@ -1290,7 +1323,11 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         allowed_domains = list(self._allowed_domains) or None
         rejected_domains = list(self._rejected_domains) or None
         egress_mode = self.query_one("#egress_mode", Select).value
-        settings = _collect_settings(self)
+        try:
+            settings = _collect_settings(self)
+        except ValueError as exc:
+            self._msg(str(exc), error=True)
+            return
         # #2233: emit an explicit nix value (True/False) whenever the
         # toggle is shown. PUT settings is a full-replace bag, so we must
         # carry the checkbox state — including False — to actually turn
@@ -1346,6 +1383,18 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             exit_on_error=False,
         )
 
+    def _safe_dismiss(self, result) -> None:
+        """Dismiss this form only when it is still on the screen stack.
+
+        ``Screen.dismiss`` unconditionally pops the top screen, so an
+        unguarded dismiss from an in-flight save worker whose form was
+        already popped underneath it (the workspace was deleted and the
+        status reload popped it, #2029 review round 2) would eat the
+        MainScreen below and leave a blank base screen. No-op instead.
+        """
+        if self in self.app.screen_stack:
+            self.dismiss(result)
+
     async def _do_save(self, name, body, ws, restart_needed) -> None:
         try:
             await asyncio.to_thread(
@@ -1373,7 +1422,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         exit_on_error=False,
                     )
                 else:
-                    self.dismiss(name)
+                    self._safe_dismiss(name)
 
             self.app.push_screen(
                 ConfirmScreen(
@@ -1386,7 +1435,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                 _after,
             )
         else:
-            self.dismiss(name)
+            self._safe_dismiss(name)
 
     async def _do_restart_after_save(self, ws_name, dismiss_name) -> None:
         try:
@@ -1396,7 +1445,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         except Exception as exc:
             self._msg(f"Saved, but restart failed: {exc}", error=True)
             return
-        self.dismiss(dismiss_name)
+        self._safe_dismiss(dismiss_name)
 
     # --- event handlers ---
 

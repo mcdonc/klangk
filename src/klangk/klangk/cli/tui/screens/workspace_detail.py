@@ -538,8 +538,14 @@ class WorkspaceDetailScreen(StatusScreen):
             was_running = self._ws.running
             old_started = self._ws.service_started_at
             self._ws.running = bool(event.get("running"))
-            if "service_started_at" in event:
-                self._ws.service_started_at = event["service_started_at"]
+            # Type-check before adopting: a malformed payload (string stamp)
+            # would crash _tick_uptime's ``time.time() - started`` math
+            # later (#2029 audit).
+            started = event.get("service_started_at")
+            if isinstance(started, (int, float)) and not isinstance(
+                started, bool
+            ):
+                self._ws.service_started_at = started
             # A container start or restart invalidates everything — uptime
             # resets, health resets, terminal sessions are gone. Do a full
             # reload so all detail-screen items reflect the new state (#1924).
@@ -562,7 +568,14 @@ class WorkspaceDetailScreen(StatusScreen):
     async def _reload_on_status(self) -> None:
         await self._load()
         if self._missing:
-            self.app.pop_screen()
+            # The workspace was deleted out from under this screen. Pop any
+            # modal sitting on top first (edit form / confirm dialog), then
+            # self -- a bare pop_screen() would dismiss only the TOP screen,
+            # silently closing the user's dialog while leaving the dead
+            # detail page mounted (#2029 audit).
+            self.app._pop_above(self)
+            if self.app.screen is self:
+                self.app.pop_screen()
 
     async def _reload_on_restart(self) -> None:
         """Full reload after a container start/restart (#1924).
@@ -1121,7 +1134,11 @@ class WorkspaceDetailScreen(StatusScreen):
         except Exception as exc:
             self._msg(f"Delete failed: {exc}", error=True)
             return
-        self.app.pop_screen()  # back to the list
+        # Guarded: the delete's own workspaces_changed broadcast can pop
+        # this screen before the worker resumes (#2029 review round 2) —
+        # an unguarded pop would eat the MainScreen below.
+        if self in self.app.screen_stack:
+            self.app.pop_screen()  # back to the list
         self.app.refresh_workspaces()
 
     def action_duplicate(self) -> None:
