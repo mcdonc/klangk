@@ -13,8 +13,8 @@
 #
 # This is a fast-fail gate, not a replacement for CI: CI still runs the
 # full suites with the coverage gates (backend-tests.yml,
-# frontend-tests.yml). Before merging — not before every push — run
-# `test-backend` and `test-frontend` for CI parity.
+# frontend-tests.yml). The merge gate is CI green against the latest
+# push; a local full-suite run is optional, not required.
 #
 # Override the base ref with TEST_PUSH_BASE=<ref> (default origin/main).
 # The ref is used as-is, without a network fetch; rebase onto the latest
@@ -107,8 +107,7 @@ fi
 
 echo
 if [ "${#infra_notes[@]}" -gt 0 ]; then
-  echo "note: infra files changed (${infra_notes[*]}); these gate on CI only —"
-  echo "run the full test-backend + test-frontend before merging."
+  echo "note: infra files changed (${infra_notes[*]}); these gate on CI only."
 fi
 if [ "$status" = 0 ]; then
   echo "test-push: selected areas green. CI runs the authoritative full suites."

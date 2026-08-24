@@ -92,16 +92,16 @@ runs only the suites whose area changed (`testmon` for `src/klangk/`,
 `scripts/tests` for `scripts/` + `src/containers/`, sidecar unit, flutter
 unit). Skipped areas are safe to skip because CI re-runs everything.
 
-### Before merge: the full unit-test suite, always
+### Before merge: CI green against the latest push
 
-testmon (and `test-push` generally) is a **local accelerator only**. CI
-always runs the full suite with `-n auto` and coverage, so before merging
-— and before trusting any "passing" or "coverage" signal from a scoped
-run — re-run the CI suite:
-
-```bash
-devenv --quiet -O dotenv.enable:bool false shell -- test-backend
-```
+The merge gate is CI passing on the latest pushed commit (after the
+rebase), not a local re-run of the full suite. testmon (and `test-push`
+generally) is a **local accelerator only** — CI runs the authoritative
+full suite with `-n auto` and coverage, the same hardware, moments
+later. A local `test-backend` / `test-frontend` run is optional: use it
+when you want a coverage signal locally or don't trust a scoped run's
+"passing", not as a required pre-merge step
+(`devenv --quiet -O dotenv.enable:bool false shell -- test-backend`).
 
 Operational notes: `.testmondata` is per-worktree (rootdir-relative) and
 gitignored; concurrent `testmon` runs in the same worktree serialize on
