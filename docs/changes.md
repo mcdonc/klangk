@@ -30,6 +30,18 @@ operators or integrators to act when upgrading.
 
 ## [Unreleased]
 
+### Breaking
+
+- **The agent user is `klangk` (#2718).** The agent's identity is fixed
+  (handle `klangk`, email `klangk@example.com`) and matches the container
+  UNIX user / shared home. `klangk` is a reserved handle and the agent
+  row's handle/email can no longer be changed. The
+  `KLANGKWS_FEATURE_CHAT_AGENT_HANDLE`/`EMAIL` feature-config keys are
+  removed (stale settings are ignored). Migration `m0008` rewrites the
+  agent row and relocates a human user who already held the `klangk`
+  handle to a unique alternative. Deployments that customized the agent's
+  name lose that customization.
+
 ### Security
 
 - **Workspace creation restricted to administrators (#2569).** `POST

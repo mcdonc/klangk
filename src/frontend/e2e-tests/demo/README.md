@@ -31,7 +31,7 @@ demo-helpers.ts        # Flutter-coordinate primitives + pacing + auth + WS
 demo-seed.ts           # one-time: seed users + Potemkin workspaces
 scenes/
   scene-04-web-ui.ts                  # Sc 4: workspaces + terminal + hosted apps
-  scene-05-clanker.ts                 # Sc 5: live @clanker chat
+  scene-05-agent.ts                 # Sc 5: live @klangk chat
   scene-05b-pi-debug.ts               # Sc 5b: pi debug cycle
   scene-06-files.ts                   # Sc 6: file browser + PDF inline render
   scene-07-collaboration.ts           # Sc 7: collaboration (owner's view)
@@ -64,7 +64,7 @@ would otherwise skip them). Run them via the `playwright` command defined in
 2. **Auto-start enabled** (for scene 4, later): `.env` has
    `KLANGKD_ALLOW_AUTOSTART=1` — confirmed.
 
-3. **A working LLM key.** Scenes 6 + 8 invoke clanker live; if the proxy 401s,
+3. **A working LLM key.** Scenes 6 + 8 invoke klangk live; if the proxy 401s,
    those takes die. Test the key first.
 
 4. **`.env` copied here** (done once): the server reads it; the scripts read
@@ -92,7 +92,7 @@ and records video. Run from the **worktree root** (devenv needs `devenv.nix`):
 ```bash
 # one scene, by grep on its title
 devenv shell -- playwright test \
-  --config=src/frontend/e2e-tests/demo/playwright.demo.config.ts -g clanker
+  --config=src/frontend/e2e-tests/demo/playwright.demo.config.ts -g klangk
 
 # all scenes, in order
 devenv shell -- playwright test \
@@ -116,7 +116,7 @@ Knobs (env vars):
 | `KLANGKBUILD_TEST_URL`            | `http://localhost:8996` | the demo server to point at                                      |
 | `KLANGKBUILD_DEMO_HEADLESS`       | unset                   | set `=1` for a quick headless dry check                          |
 | `KLANGKBUILD_DEMO_SLOWMO`         | `50`                    | ms slowMo between actions (bump for slower, readable clicks)     |
-| `KLANGKBUILD_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for clanker's live reply before the scene ends  |
+| `KLANGKBUILD_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for klangk's live reply before the scene ends  |
 | `KLANGKBUILD_DEMO_PASSWORD`       | `demopass123`           | password for freshly-registered demo accounts                    |
 | `KLANGKBUILD_DEMO_ADMIN_PASSWORD` | `adminpass`             | the hero admin's password (admin@example.com; seed + all scenes) |
 | `KLANGKBUILD_DEMO_TEAMMATE_EMAIL` | `teammate@example.com`  | the collaborator account                                         |
@@ -174,15 +174,15 @@ browser scenes inherit):
 # CLI scenes 2 → 3 → 3b (establishes hero login + demo workspace + terminal2 tab)
 devenv shell -- src/frontend/e2e-tests/demo/record-cli.sh all
 
-# Browser scenes 4 (web UI + scratch tab), 5 (clanker chat), 5b (pi debug)
-devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g "web ui tour|clanker chat|pi debug"
+# Browser scenes 4 (web UI + scratch tab), 5 (agent chat), 5b (pi debug)
+devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g "web ui tour|agent chat|pi debug"
 ```
 
 ## Re-take workflow
 
 Each browser scene creates a **fresh workspace** with a stable name, so a re-take
 starts clean while the on-screen name stays the same. The **live-agent scenes
-(6, 8)** are nondeterministic — re-run until you like what clanker produced, keep
+(6, 8)** are nondeterministic — re-run until you like what klangk produced, keep
 that recording, and trim dead air in DaVinci (or narrate over it).
 
 ## CLI terminal scenes (`record-terminal.sh` + `cli_demo.py`)
@@ -302,10 +302,10 @@ and `ws` resolve without a separate install.)
 - [x] scaffolding: config, helpers, seed (users + Potemkin workspaces)
 - [x] CLI recorder: `record-terminal.sh` + `cli_demo.py` (landed via #1204)
 - [x] CLI scenes 02, 03, 03b (Web UI tour, sandbox, services) — recorded + QA'd
-- [x] web-UI scenes 05, 06, 07, 08, 10 (Web UI, clanker, Files, Collab, Admin)
+- [x] web-UI scenes 05, 06, 07, 08, 10 (Web UI, agent, Files, Collab, Admin)
 - [x] **continuity refactor** — all web-UI scenes share one hero
       (`admin@example.com`) operating one accumulating `demo` workspace
-      (find-or-create via `ensureSharedWorkspace`, never wiped), so clanker's
+      (find-or-create via `ensureSharedWorkspace`, never wiped), so klangk's
       Sc-5 output survives into Sc 6's Files tab, the Sc-7 collaboration, etc.
       Scene 7's collaborators are the seeded cast (teammate/designer/reviewer),
       not throwaway users.

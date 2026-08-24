@@ -569,7 +569,7 @@ def scene_3b(t: Term) -> None:
     Scene 3 now running. **CLI only** (no browser).
 
     Two-pane beat: split the terminal, join the service command
-    (``clanker:service-cmd``) in the bottom pane to see the gateway's logs,
+    (``klangk:service-cmd``) in the bottom pane to see the gateway's logs,
     then watch live ``service_health`` events in the top pane. Ctrl+C the
     gateway to trigger an ``unhealthy`` event, then recover via
     ``klangk restart openclaw`` (the service command re-fires on the fresh
@@ -608,7 +608,7 @@ def scene_3b(t: Term) -> None:
     top = t.pane_id()
     bottom = t.split()
     t.pause(HOLD)
-    t.type("klangk shell openclaw clanker:service-cmd", per_char=0.03)
+    t.type("klangk shell openclaw klangk:service-cmd", per_char=0.03)
     t.enter()
     t.expect("Escape: Enter", timeout=20)  # the "~." hint = joined
     t.pause(HOLD)  # let the gateway logs stream

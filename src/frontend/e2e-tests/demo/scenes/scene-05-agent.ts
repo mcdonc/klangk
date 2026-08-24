@@ -1,14 +1,14 @@
 /**
- * Scene 5 — AI Agent — clanker (~1.5 min)
+ * Scene 5 — AI Agent — klangk (~1.5 min)
  *
  * CONTINUITY: still in the hero's `demo` workspace (from Sc 2/4). This is a
- * pure Q&A beat — clanker answers a question in chat; it creates NO files. The
+ * pure Q&A beat — klangk answers a question in chat; it creates NO files. The
  * Flask app that Sc 5b/6 depend on is built by pi in Sc 5b, not here, so we
  * leave `demo` untouched.
  *
- * Opens the Chat tab, types an @clanker prompt ON SCREEN (so the viewer sees
+ * Opens the Chat tab, types an @klangk prompt ON SCREEN (so the viewer sees
  * the mention being composed), and lets the live agent respond. This is a
- * nondeterministic / live take — re-run until you like what clanker produced,
+ * nondeterministic / live take — re-run until you like what klangk produced,
  * then keep that recording and trim in DaVinci.
  *
  * Autocomplete gotcha (from chat_input_bar.dart): while the @-mention dropdown
@@ -35,7 +35,7 @@ import {
   terminalTabCenterPx,
 } from "../demo-helpers";
 
-const PROMPT = '@clanker "what is my hostname"';
+const PROMPT = '@klangk "what is my hostname"';
 // Bash sub-tab center (leftmost, index 0) — clicked before the `env` beat so the
 // command lands in the clean bash shell, not whichever sub-tab was left active.
 // NB: this scene MUST be recorded BEFORE Sc 5b (viewing order 4→5→5b). Sc 5b
@@ -43,7 +43,7 @@ const PROMPT = '@clanker "what is my hostname"';
 // alive, so `env` here would be typed into pi (which tries to "answer" it)
 // instead of a plain shell.
 
-test("clanker chat", async ({ page, request }) => {
+test("agent chat", async ({ page, request }) => {
   test.setTimeout(300_000);
 
   // 1. Ensure the shared `demo` workspace exists (continuity). No wipe —
@@ -66,7 +66,7 @@ test("clanker chat", async ({ page, request }) => {
 
   // 4. Focus the input bar (bottom of screen, ~y=695 at 720p) and compose the
   //    prompt slowly so the viewer reads it as it's typed. The trailing space
-  //    after "@clanker" closes the mention autocomplete so Enter sends.
+  //    after "@klangk" closes the mention autocomplete so Enter sends.
   const { width, height } = vp(page);
   await mouseClick(page, width / 2, height - 25);
   await pace(500);
@@ -77,7 +77,7 @@ test("clanker chat", async ({ page, request }) => {
   await page.keyboard.press("Enter");
   await pace(2000);
 
-  // 6. Hold for clanker to work. The agent is live and nondeterministic; this
+  // 6. Hold for klangk to work. The agent is live and nondeterministic; this
   //    pause just keeps the recording rolling so the response lands on tape.
   //    You'll trim the dead air (or narrate over it) in DaVinci. Bump
   //    KLANGKBUILD_DEMO_AGENT_WAIT to give it longer.

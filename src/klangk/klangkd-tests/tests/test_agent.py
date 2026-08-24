@@ -50,7 +50,7 @@ async def _seed_agent_db(app_state):
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (AGENT_USER_ID, "clanker@example.com", "clanker"),
+            (AGENT_USER_ID, "klangk@example.com", "klangk"),
         )
     app_state.state.model.users.clear_agent_cache()
 
@@ -79,14 +79,14 @@ def _make_app_state(cid="cid"):
     state.features.is_enabled.return_value = True
     state.features.frontend_config.return_value = {
         "chat_agent_enabled": "true",
-        "chat_agent_email": "clanker@example.com",
-        "chat_agent_handle": "clanker",
+        "chat_agent_email": "klangk@example.com",
+        "chat_agent_handle": "klangk",
     }
     # #1573: agent.py reaches app.state.model.users.agent_{handle,email}.
     state.model = MagicMock()
-    state.model.users.agent_handle = AsyncMock(return_value="clanker")
+    state.model.users.agent_handle = AsyncMock(return_value="klangk")
     state.model.users.agent_email = AsyncMock(
-        return_value="clanker@example.com"
+        return_value="klangk@example.com"
     )
     # #1575: agent.py reaches app.state.model.workspaces.get_workspace_by_id.
     state.model.workspaces.get_workspace_by_id = AsyncMock(return_value=None)
@@ -886,7 +886,7 @@ class TestEnsureAgentHome:
         ws = MagicMock()
         ws.home_path.return_value = fake_home
         ws.ensure_home_symlink = AsyncMock(
-            return_value=("/home/clanker", True)
+            return_value=("/home/klangk", True)
         )
         ws.populate_home_skel = AsyncMock()
 
@@ -907,7 +907,7 @@ class TestEnsureAgentHome:
         ):
             result = await agents.ensure_agent_home("ws1", "cid")
 
-        assert result == "/home/clanker"
+        assert result == "/home/klangk"
         ws.ensure_home_symlink.assert_awaited_once()
         # Skeleton files only on first creation (created=True).
         ws.populate_home_skel.assert_awaited_once_with(
@@ -939,7 +939,7 @@ class TestEnsureAgentHome:
         ws = MagicMock()
         ws.home_path.return_value = fake_home
         ws.ensure_home_symlink = AsyncMock(
-            return_value=("/home/clanker", True)
+            return_value=("/home/klangk", True)
         )
         ws.populate_home_skel = AsyncMock()
 
@@ -958,7 +958,7 @@ class TestEnsureAgentHome:
             # Must NOT raise -- provisioning is best-effort.
             result = await agents.ensure_agent_home("ws1", "cid")
 
-        assert result == "/home/clanker"
+        assert result == "/home/klangk"
 
     async def test_skips_skel_when_home_already_exists(
         self, tmp_path, app_state
@@ -970,7 +970,7 @@ class TestEnsureAgentHome:
         ws.home_path.return_value = fake_home
         # created=False means the user dir already exists -> no skel
         ws.ensure_home_symlink = AsyncMock(
-            return_value=("/home/clanker", False)
+            return_value=("/home/klangk", False)
         )
         ws.populate_home_skel = AsyncMock()
 
@@ -987,7 +987,7 @@ class TestEnsureAgentHome:
         ):
             result = await agents.ensure_agent_home("ws1", "cid")
 
-        assert result == "/home/clanker"
+        assert result == "/home/klangk"
         # created=False -> skel should NOT be called
         ws.populate_home_skel.assert_not_awaited()
 
@@ -1022,7 +1022,7 @@ class TestEnsureHome:
         ws = MagicMock()
         ws.home_path.return_value = fake_home
         ws.ensure_home_symlink = AsyncMock(
-            return_value=("/home/clanker", True)
+            return_value=("/home/klangk", True)
         )
         ws.populate_home_skel = AsyncMock()
         session.app.state.workspaces = ws
@@ -1040,7 +1040,7 @@ class TestEnsureHome:
         ):
             result = await session._ensure_home("cid")
 
-        assert result == "/home/clanker"
+        assert result == "/home/klangk"
         assert session._home_ready is True
         ws.ensure_home_symlink.assert_awaited_once()
         ws.populate_home_skel.assert_awaited_once_with(
@@ -1053,7 +1053,7 @@ class TestEnsureHome:
         session = AgentSession("ws-id", agents=agents)
         session._home_ready = True
         result = await session._ensure_home("cid")
-        assert result == "/home/clanker"
+        assert result == "/home/klangk"
 
     async def test_ensure_home_workspace_not_in_db(self, app_state):
         from klangk.agent import AgentSetupError
@@ -1155,7 +1155,7 @@ class TestSpawnSerialization:
         # ``self._proc is None``.  On unfixed code both then spawn.
         async def slow_ensure_home(container_id):
             await asyncio.sleep(0.05)
-            return "/home/clanker"
+            return "/home/klangk"
 
         session._ensure_home = slow_ensure_home  # type: ignore[assignment]
 

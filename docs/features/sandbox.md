@@ -277,7 +277,7 @@ in the server's `.env` file.
 A `service-command` does **not** run in the workspace owner's shell.
 It runs as the workspace's **agent** identity, in a dedicated
 `service` tmux session whose `$HOME` is the agent's home
-(`/home/clanker` by default, exposed as `$KLANGKWS_AGENT_HOME`) — not
+(`/home/klangk` — the fixed agent identity, #2718 — exposed as `$KLANGKWS_AGENT_HOME`) — not
 the owner's. The owner interacts with it through the **Service**
 terminal tab in the web UI.
 
@@ -302,7 +302,7 @@ set -euo pipefail
 # Run the rest of setup as the agent identity: the service command
 # runs in the agent's service session ($KLANGKWS_AGENT_HOME), so install
 # everything the service command depends on into THAT home.
-export HOME="${KLANGKWS_AGENT_HOME:-/home/clanker}"
+export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 
 # Now ~/.profile, ~/.local/bin, etc. resolve into the agent's home.
 ```
@@ -411,7 +411,7 @@ set -euo pipefail
 # runs in the agent's service session ($KLANGKWS_AGENT_HOME), so install
 # everything it depends on into THAT home. See
 # "Where the service command runs" in sandbox.md.
-export HOME="${KLANGKWS_AGENT_HOME:-/home/clanker}"
+export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 
 # Install nix (single-user, no daemon needed in containers).
 if ! nix --version &>/dev/null; then

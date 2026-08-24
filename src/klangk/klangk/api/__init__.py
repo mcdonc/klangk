@@ -244,9 +244,9 @@ async def get_config(
         )
         config["netfilter_enabled"] = app.state.netfilter.enabled()
     config.update(app.state.features.frontend_config())
-    # Whether the clanker agent is on for this deploy (#1977): the chat
+    # Whether the chat agent is on for this deploy (#1977): the chat
     # feature active AND KLANGKWS_FEATURE_CHAT_AGENT_ENABLED set. A bool so
-    # the frontend can hide @clanker from mention autocomplete + the agent UI
+    # the frontend can hide the agent from mention autocomplete + the agent UI
     # when the agent is off.
     config["chat_agent_enabled"] = not app.state.agents.is_disabled()
     # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,

@@ -9,10 +9,18 @@ from datetime import datetime, timedelta, timezone
 # Agent identity
 AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
 # Unseeded fallback handle/email (before seed_agent_user runs). Single
-# source of truth for the default agent identity used by get_agent_user
-# and the migration-safe handle resolver in unique_handle (#1160).
-_DEFAULT_AGENT_HANDLE = "clanker"
-_DEFAULT_AGENT_EMAIL = "clanker@example.com"
+# source of truth for the agent identity used by get_agent_user and the
+# migration-safe handle resolver in unique_handle (#1160). The agent
+# *is* the klangk user (#2718): its handle matches the container's UNIX
+# username, and the identity is fixed — not configurable, not editable.
+_DEFAULT_AGENT_HANDLE = "klangk"
+_DEFAULT_AGENT_EMAIL = "klangk@example.com"
+
+# Public aliases (#2718): the fixed agent identity is API surface now
+# (seeded by Lifecycle, referenced by docs/tests) — import these, not
+# the underscore-prefixed names above.
+AGENT_HANDLE = _DEFAULT_AGENT_HANDLE
+AGENT_EMAIL = _DEFAULT_AGENT_EMAIL
 
 
 class AgentPrincipalError(ValueError):
@@ -40,7 +48,10 @@ def clear_agent_cache() -> None:
 
 
 HANDLE_RE = re.compile(r"^[a-z0-9._-]+$")
-RESERVED_HANDLES = frozenset({"work", ".users"})
+# `klangk` is the agent's fixed handle (#2718) — and it doubles as the
+# container UNIX user / shared home name under #2169/#2717, so a human
+# claiming it would collide with /home/klangk. Statically reserved.
+RESERVED_HANDLES = frozenset({"work", ".users", "klangk"})
 MAX_HANDLE_LEN = 32
 
 
@@ -57,9 +68,7 @@ def validate_handle(handle: str) -> str | None:
     """Return an error message if the handle is invalid, else None.
 
     Note: this only checks *static* rules (length, charset, the fixed
-    reserved set). The *dynamic* reserved handle — the live agent's
-    handle — is checked async in :func:`_assert_handle_not_agent` (it
-    can't be in ``RESERVED_HANDLES`` because it's configurable).
+    reserved set — which includes the agent's handle `klangk`, #2718).
     """
     if not handle:
         return "Handle cannot be empty"
@@ -242,11 +251,6 @@ class UsersModel:
         global agent_user_cache
         agent_user_cache = None
 
-    async def _assert_handle_not_agent(self, handle: str) -> None:
-        """Raise ``ValueError`` if *handle* is the live agent's handle."""
-        if handle == await self.agent_handle():
-            raise ValueError(f"'{handle}' is reserved for the workspace agent")
-
     async def unique_handle(self, db, base: str) -> str:
         """Return a unique handle on the passed connection.
 
@@ -349,11 +353,20 @@ class UsersModel:
         return row["handle"] if row else None
 
     async def set_user_handle(self, user_id: str, handle: str) -> None:
-        """Update a user's handle. Raises ValueError on invalid or conflict."""
+        """Update a user's handle. Raises ValueError on invalid or conflict.
+
+        The agent row is immutable (#2718): its handle is the fixed
+        `klangk` identity — renaming it would break the constant
+        `/home/klangk` service-session HOME (#2717).
+        """
+        if user_id == AGENT_USER_ID:
+            raise AgentPrincipalError(
+                "The system agent's handle cannot be changed"
+                " (fixed identity 'klangk', #2718)"
+            )
         error = validate_handle(handle)
         if error:
             raise ValueError(error)
-        await self._assert_handle_not_agent(handle)
         async with self.app.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT id FROM users WHERE handle = ? AND id != ?",

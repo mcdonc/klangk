@@ -1364,7 +1364,7 @@ class TestKlangkClient:
         shared = [
             {
                 "user_id": "agent",
-                "handle": "clanker",
+                "handle": "klangk",
                 "window_name": "service-cmd",
                 "window_id": "@0",
                 "is_service": True,
@@ -3076,7 +3076,7 @@ class TestRunShell:
                 "terminals": [
                     {
                         "user_id": "agent-uid",
-                        "handle": "clanker",
+                        "handle": "klangk",
                         "window_name": "service-cmd",
                         "window_id": "win-1",
                         "is_service": True,
@@ -3130,7 +3130,7 @@ class TestRunShell:
                     "token",
                     "ws1",
                     raw_mode=False,
-                    window="clanker:service-cmd",
+                    window="klangk:service-cmd",
                 )
 
         # The join command was sent with the resolved ids.
@@ -3187,7 +3187,7 @@ class TestRunShell:
                     "token",
                     "ws1",
                     raw_mode=False,
-                    window="clanker:service-cmd",
+                    window="klangk:service-cmd",
                 )
             assert "not found" in str(exc_info.value)
 

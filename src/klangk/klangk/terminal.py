@@ -467,7 +467,7 @@ class Terminal:
         lifecycle -- it survives the agent subprocess dying/restarting
         because it is just a tmux session (#1133 D6).
 
-        *agent_home* (e.g. ``/home/clanker``) is the session's HOME. The
+        *agent_home* (the fixed ``/home/klangk``, #2718) is the session's HOME. The
         service command fires iff the predicate holds (configured AND setup
         complete) AND the ``service-cmd`` window doesn't already exist
         (exactly-once-per-container). Idempotent: safe to call from every

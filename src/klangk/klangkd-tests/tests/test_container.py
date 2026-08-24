@@ -3118,7 +3118,8 @@ class TestStartContainer:
         )
         # The agent's home is injected at container start so every exec
         # process (terminals, service command, health check) inherits it.
-        assert env_dict["KLANGKWS_AGENT_HOME"] == "/home/clanker"
+        # Fixed identity: the agent is 'klangk' (#2718).
+        assert env_dict["KLANGKWS_AGENT_HOME"] == "/home/klangk"
         assert (
             env_dict["KLANGKWS_BRIDGE_URL"]
             == "http://host.containers.internal:8995"

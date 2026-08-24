@@ -86,7 +86,7 @@ DEMO_BOOTSTRAP_EMAIL="${KLANGKD_DEFAULT_USER:-admin@plope.com}"
 # Must satisfy the boot-time password-policy gate (#2581, #2604);
 # keep in sync with demo-seed.ts BOOTSTRAP_PASSWORD.
 DEMO_BOOTSTRAP_PASSWORD="${KLANGKD_DEFAULT_PASSWORD:-Admin123!}"
-# LLM provider the live-agent scenes (pi -p in scene 2, clanker in 6/8) call
+# LLM provider the live-agent scenes (pi -p in scene 2, the agent in 6/8) call
 # via the /llm-proxy. Override with KLANGKBUILD_DEMO_LLM_* if you want a different
 # provider for the demo. Defaults to z.ai (glm-5.2); the API key uses the
 # cmd: indirection so the secret is read at boot, not stored in .demo-env.
@@ -148,7 +148,7 @@ _ensure_env() {
     # BOOTSTRAP_EMAIL/BOOTSTRAP_PASSWORD defaults.
     echo "KLANGKD_DEFAULT_USER=$DEMO_BOOTSTRAP_EMAIL"
     echo "KLANGKD_DEFAULT_PASSWORD=$DEMO_BOOTSTRAP_PASSWORD"
-    # LLM provider for the live-agent scenes (pi -p, clanker). The API key
+    # LLM provider for the live-agent scenes (pi -p, the agent). The API key
     # uses cmd: indirection so klangkd resolves the secret at boot — it's
     # not stored literally in .demo-env. Override via KLANGKBUILD_DEMO_LLM_* if needed.
     # Values are single-quoted: .demo-env is `source`d by bash, and unquoted

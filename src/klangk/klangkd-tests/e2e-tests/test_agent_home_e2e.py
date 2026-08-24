@@ -40,7 +40,7 @@ from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 # imported from the backend to keep the e2e test decoupled from the
 # server's internals -- the test asserts against observable container
 # state, not the Python API.
-AGENT_HANDLE = "clanker"
+AGENT_HANDLE = "klangk"
 AGENT_HOME = f"/home/{AGENT_HANDLE}"
 
 

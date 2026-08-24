@@ -145,7 +145,7 @@ test.describe("chat documentation screenshots", () => {
         await sendChatAndWait(
           user.token,
           workspaceId,
-          "@clanker what files are in the home directory?",
+          "@klangk what files are in the home directory?",
           true, // wait for agent response
         );
       } catch {
@@ -161,7 +161,7 @@ test.describe("chat documentation screenshots", () => {
         await sendChatAndWait(
           user.token,
           workspaceId,
-          "@clanker create a file called hello.py that prints hello world",
+          "@klangk create a file called hello.py that prints hello world",
           true,
         );
       } catch {

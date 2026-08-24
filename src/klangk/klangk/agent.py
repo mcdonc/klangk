@@ -127,7 +127,7 @@ class Agents:
 
         Creates ``/home/.users/{AGENT_USER_ID}`` on the host bind-mount and
         populates it via ``klangk-setup-pi`` (the same path real users
-        take).  Returns the container path, e.g. ``/home/clanker``.
+        take).  Returns the container path, e.g. ``/home/klangk``.
 
         Idempotent: ``ensure_home_symlink`` is a no-op when the symlink
         already exists (skeleton files only on first creation), and
@@ -360,7 +360,7 @@ class AgentSession:
 
         Thin per-instance cache over ``Agents.ensure_agent_home``.  The
         actual provisioning — and the eager bring-up call site — live
-        there.  Returns the container path, e.g. ``/home/clanker``.
+        there.  Returns the container path, e.g. ``/home/klangk``.
         """
         if self._home_ready:
             handle = await self.app.state.model.users.agent_handle()

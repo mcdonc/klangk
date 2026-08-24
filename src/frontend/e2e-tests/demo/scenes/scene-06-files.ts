@@ -1,7 +1,7 @@
 /**
  * Scene 6 — File Browser (~30s)
  *
- * CONTINUITY: the same hero `demo` workspace — clanker's app.py /
+ * CONTINUITY: the same hero `demo` workspace — klangk's app.py /
  * requirements.txt from Sc 5b are still here, AND the Pyramid PDF seeded right
  * after the demo container was created (Scene 2) by seed-demo-pdf.ts.
  *
