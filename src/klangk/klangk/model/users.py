@@ -16,6 +16,12 @@ AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
 _DEFAULT_AGENT_HANDLE = "klangk"
 _DEFAULT_AGENT_EMAIL = "klangk@example.com"
 
+# Public aliases (#2718): the fixed agent identity is API surface now
+# (seeded by Lifecycle, referenced by docs/tests) — import these, not
+# the underscore-prefixed names above.
+AGENT_HANDLE = _DEFAULT_AGENT_HANDLE
+AGENT_EMAIL = _DEFAULT_AGENT_EMAIL
+
 
 class AgentPrincipalError(ValueError):
     """Raised when an operation would make the agent an ACL principal.

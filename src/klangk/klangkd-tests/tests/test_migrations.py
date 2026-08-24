@@ -125,7 +125,11 @@ class TestRunner:
         self, temp_data_dir, app_state
     ):
         """m0008 rewrites a clanker-era agent row to the fixed identity and
-        bumps a human holding 'klangk' to a unique alternative (#2718)."""
+        bumps a human holding 'klangk' to a unique alternative (#2718).
+
+        Runs through the real runner: the pre-state is built, m0008's
+        record row is deleted, and init_db re-runs it with BEGIN IMMEDIATE
+        + schema_migrations interplay — the actual boot sequence."""
 
         await app_state.state.model.init_db()
         async with app_state.state.db.transaction() as db:
@@ -141,26 +145,31 @@ class TestRunner:
                 " VALUES (?, ?, ?, 1, 'system')",
                 (AGENT_USER_ID, "clanker@example.com", "clanker"),
             )
+            # Forget m0008 ran, so init_db re-applies it via the runner.
+            await db.execute(
+                "DELETE FROM schema_migrations WHERE id = 8"
+            )
         app_state.state.model.users.clear_agent_cache()
 
-        # Re-run just m0008 against this state (through the app's DB so
-        # the transaction semantics match the runner's).
-        from klangk.model.migrations import m0008_agent_user_klangk
-
-        async with app_state.state.db.transaction() as db:
-            await m0008_agent_user_klangk.apply(db)
+        await app_state.state.model.init_db()
 
         async with app_state.state.db.transaction() as db:
             rows = {}
             cursor = await db.execute("SELECT id, handle FROM users")
             for row in await cursor.fetchall():
                 rows[row[0]] = row[1]
+            # m0008 re-applied and re-recorded.
+            cursor = await db.execute(
+                "SELECT name FROM schema_migrations WHERE id = 8"
+            )
+            rec = await cursor.fetchone()
+            assert rec is not None and rec[0] == "0008_agent_user_klangk"
         assert rows["human-1"] == "klangk-2"
         assert rows[AGENT_USER_ID] == "klangk"
 
-        # Idempotent: a second apply changes nothing.
-        async with app_state.state.db.transaction() as db:
-            await m0008_agent_user_klangk.apply(db)
+        # Idempotent: a re-run with the record present changes nothing
+        # (the runner skips it; apply itself is also idempotent).
+        await app_state.state.model.init_db()
         async with app_state.state.db.transaction() as db:
             cursor = await db.execute(
                 "SELECT handle FROM users WHERE id = 'human-1'"

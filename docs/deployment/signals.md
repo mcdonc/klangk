@@ -95,8 +95,8 @@ authenticated WebSocket clients receive a `server_recycle` event with a
    swapped onto `app.state.settings`; all subsystems read it live. The
    OIDC discovery/JWKS caches are cleared and providers re-initialized,
    features are re-scanned, SSL trust is re-applied, and the agent user
-   is re-seeded (so `KLANGKWS_FEATURE_CHAT_AGENT_EMAIL`/`_HANDLE`
-   changes — set in the `features_config:` block — take effect in the DB). CORS origins (`KLANGKD_CORS_ORIGINS`) are picked up
+   is re-seeded (reconciled to the fixed identity, #2718 — the identity
+   config keys are gone). CORS origins (`KLANGKD_CORS_ORIGINS`) are picked up
    automatically by the live CORS middleware; `KLANGKD_FRONTEND_DIR` is
    remounted if it changed (#1610).
 6. **Recycle the runtime** — close every WebSocket client with close

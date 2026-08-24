@@ -733,13 +733,13 @@ class TestSeedAgentUser:
         assert user["handle"] == "klangk"
 
     async def test_upserts_existing(self, db, app_state):
-        # Seed, then re-seed — the agent row is reconciled to the fixed
-        # identity (a pre-#2718 'klangk' row is renamed to 'klangk').
+        # Seed, then re-seed — a pre-#2718 'clanker' row is reconciled
+        # to the fixed identity.
         await _lifecycle(make_settings({})).seed_agent_user()
         async with app_state.state.db.transaction() as db_conn:
             await db_conn.execute(
                 "UPDATE users SET handle = ?, email = ? WHERE id = ?",
-                ("klangk", "klangk@example.com", model.AGENT_USER_ID),
+                ("clanker", "clanker@example.com", model.AGENT_USER_ID),
             )
         await _lifecycle(make_settings({})).seed_agent_user()
         user = await app_state.state.model.users.get_user_by_id(
@@ -818,7 +818,7 @@ class TestSeedAgentUser:
         async with app_state.state.db.transaction() as db_conn:
             await db_conn.execute(
                 "UPDATE users SET handle = ?, email = ? WHERE id = ?",
-                ("klangk", "klangk@example.com", model.AGENT_USER_ID),
+                ("clanker", "clanker@example.com", model.AGENT_USER_ID),
             )
         app_state.state.model.users.clear_agent_cache()
         await _lifecycle(make_settings({})).seed_agent_user()
@@ -2382,7 +2382,7 @@ class TestStartupShutdownRestart:
         async with app_state.state.db.transaction() as db_conn:
             await db_conn.execute(
                 "UPDATE users SET handle = ?, email = ? WHERE id = ?",
-                ("klangk", "klangk@example.com", model.AGENT_USER_ID),
+                ("clanker", "clanker@example.com", model.AGENT_USER_ID),
             )
         app_state.state.model.users.clear_agent_cache()
         app_state.state.settings.features_config = {

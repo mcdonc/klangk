@@ -133,7 +133,7 @@ enabling `chat` shows the tab but does **not** spawn the chat agent. The
 `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED` is set (`1`/`true`/`yes`; default off).
 So _tab on + agent off_ is a valid state — the chat surface is visible, but
 `@klangk` mentions are ignored until the agent is enabled. See [Chat](chat.md)
-for the agent identity keys (`_HANDLE`/`_EMAIL`) and the LLM backend the agent
+for the fixed agent identity (#2718) and the LLM backend the agent
 needs. The agent became opt-in (off by default) in #1977; previously it was on
 by default.
 

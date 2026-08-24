@@ -54,10 +54,7 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
-from .model.users import (
-    _DEFAULT_AGENT_EMAIL as _AGENT_EMAIL,
-    _DEFAULT_AGENT_HANDLE as _AGENT_HANDLE,
-)
+from .model.users import AGENT_EMAIL as _AGENT_EMAIL, AGENT_HANDLE as _AGENT_HANDLE
 from .wshandler import (
     handle_consent_decider,
     handle_egress_sidecar,

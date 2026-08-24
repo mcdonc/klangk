@@ -435,7 +435,7 @@ export async function runConversation(
     );
 
     if (beat.actor === "klangk") {
-      await waitForClanker(ctx, beat);
+      await waitForAgentReply(ctx, beat);
       continue;
     }
 
@@ -471,7 +471,7 @@ export async function runConversation(
 /** The klangk reply is a live LLM call, never sidechanneled. In FAST mode we
  *  skip the wait (mechanics only). Otherwise poll the chat for a new agent
  *  message and leave dead air for VO. */
-async function waitForClanker(ctx: CollabCtx, beat: Beat): Promise<void> {
+async function waitForAgentReply(ctx: CollabCtx, beat: Beat): Promise<void> {
   if (ctx.fast) {
     console.log(`[beat] SKIP ${beat.id} (FAST: no live agent)`);
     return;
