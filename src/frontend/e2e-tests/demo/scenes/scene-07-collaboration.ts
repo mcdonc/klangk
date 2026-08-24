@@ -11,7 +11,7 @@
  * CONVERSATION (collab-choreography.ts). This file is a thin wrapper: set up,
  * reset, run, teardown.
  *
- * Iterate the mechanics in FAST mode (headless, ~10s, no live clanker):
+ * Iterate the mechanics in FAST mode (headless, ~10s, no live agent):
  *   KLANGKBUILD_DEMO_FAST=1 KLANGKBUILD_DEMO_HEADLESS=1 \
  *     devenv shell -- npx playwright test --config=...demo.config.ts \
  *       -g "collaboration owner"

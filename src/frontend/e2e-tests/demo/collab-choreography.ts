@@ -20,7 +20,7 @@
  *   - runConversation(ctx, p) — walk CONVERSATION; visible vs sidechannel by p
  *   - teardownCollab(ctx)     — close WS clients
  *
- * FAST mode (KLANGKBUILD_DEMO_FAST=1): pace × 0.15, skip the live clanker wait, run
+ * FAST mode (KLANGKBUILD_DEMO_FAST=1): pace × 0.15, skip the live agent wait, run
  * headless. Verifies every beat (visible + sidechannel) so you can iterate the
  * collaboration mechanics in ~10s without the LLM or a recording.
  */
@@ -57,7 +57,7 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-export type Actor = "owner" | "teammate" | "designer" | "reviewer" | "clanker";
+export type Actor = "owner" | "teammate" | "designer" | "reviewer" | "klangk";
 export type Medium = "system" | "terminal" | "chat";
 
 /** One spoken/typed moment in the conversation. `text` and `afterPrevMs` are
@@ -81,7 +81,7 @@ export type Beat = {
   type?: { cps?: number; trailing?: string };
   submit?: "enter" | "none";
 
-  /** For the clanker beat: how long to wait for the live reply (skipped in
+  /** For the klangk beat: how long to wait for the live reply (skipped in
    *  FAST). */
   waitMs?: number;
 };
@@ -190,10 +190,10 @@ export const CONVERSATION: Beat[] = [
     afterPrevMs: 2500,
   },
   {
-    id: "owner-clanker",
+    id: "owner-klangk",
     actor: "owner",
     medium: "chat",
-    text: "@clanker scaffold a simple Flask landing page with a headline and a button",
+    text: "@klangk scaffold a simple Flask landing page with a headline and a button",
     afterPrevMs: 2500,
     type: { cps: 14 },
     // Visible chat beats are submitted with a mouse click on Send (see scene),
@@ -201,10 +201,10 @@ export const CONVERSATION: Beat[] = [
     submit: "none",
   },
 
-  // --- the clanker reply is special: live LLM, never sidechanneled ---
+  // --- the klangk reply is special: live LLM, never sidechanneled ---
   {
-    id: "clanker-reply",
-    actor: "clanker",
+    id: "klangk-reply",
+    actor: "klangk",
     medium: "chat",
     text: "",
     afterPrevMs: 1000,
@@ -434,7 +434,7 @@ export async function runConversation(
       `[beat] start ${beat.id} (actor=${beat.actor}, medium=${beat.medium})`,
     );
 
-    if (beat.actor === "clanker") {
+    if (beat.actor === "klangk") {
       await waitForClanker(ctx, beat);
       continue;
     }
@@ -468,15 +468,15 @@ export async function runConversation(
 
 // --- special beats ---------------------------------------------------------
 
-/** The clanker reply is a live LLM call, never sidechanneled. In FAST mode we
+/** The klangk reply is a live LLM call, never sidechanneled. In FAST mode we
  *  skip the wait (mechanics only). Otherwise poll the chat for a new agent
  *  message and leave dead air for VO. */
 async function waitForClanker(ctx: CollabCtx, beat: Beat): Promise<void> {
   if (ctx.fast) {
-    console.log(`[beat] SKIP ${beat.id} (FAST: no live clanker)`);
+    console.log(`[beat] SKIP ${beat.id} (FAST: no live agent)`);
     return;
   }
-  console.log(`[beat] WAIT ${beat.id} (live clanker, up to ${beat.waitMs}ms)`);
+  console.log(`[beat] WAIT ${beat.id} (live agent, up to ${beat.waitMs}ms)`);
   // The agent's reply arrives as a chat_message from the agent user over the
   // owner WS (and broadcasts). Poll any connection; we don't assert content
   // (nondeterministic), just that a new agent message lands within the window.
@@ -487,12 +487,12 @@ async function waitForClanker(ctx: CollabCtx, beat: Beat): Promise<void> {
     await ctx.ws.designer.recvUntil(
       (m) =>
         m.type === "chat_message" &&
-        Boolean((m as { user_email?: string }).user_email?.includes("clanker")),
+        Boolean((m as { user_email?: string }).user_email?.includes("klangk")),
       Math.max(2_000, deadline - Date.now()),
     );
-    console.log(`[beat] PASS ${beat.id} (clanker replied)`);
+    console.log(`[beat] PASS ${beat.id} (agent replied)`);
   } catch {
-    console.log(`[beat] WARN ${beat.id} (no clanker reply within window)`);
+    console.log(`[beat] WARN ${beat.id} (no klangk reply within window)`);
   }
 }
 

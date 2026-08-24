@@ -5,7 +5,7 @@
  * clicks the **admin icon** in the app bar (the manage-accounts person-gear,
  * visible only for admins) → lands on the admin panel — a SEPARATE page
  * (`/admin/users`), not a workspace's Settings tab. The Users list already
- * shows the seeded cast (admin, reviewer, teammate, designer, clanker,
+ * shows the seeded cast (admin, reviewer, teammate, designer, klangk,
  * bootstrap) so it looks lived-in without on-camera setup.
  *
  * BEAT ORDER (per videoscript — nothing extra):

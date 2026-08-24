@@ -223,12 +223,13 @@ async def test_agent_user_unseeded_fallback(users):
     users.clear_agent_cache()
 
 
-async def test_assert_handle_not_agent(users, agent_user):
+async def test_agent_handle_reserved(users, agent_user):
+    """The agent's handle is statically reserved (#2718): no human can
+    take it, seeded or not."""
     users.clear_agent_cache()
-    handle = await users.agent_handle()
     u = await users.create_user("ag@x.com", "hash")
-    with pytest.raises(ValueError):
-        await users.set_user_handle(u["id"], handle)
+    with pytest.raises(ValueError, match="is reserved"):
+        await users.set_user_handle(u["id"], "klangk")
     users.clear_agent_cache()
 
 

@@ -62,7 +62,7 @@ export const DEMO_HERO_PASSWORD = DEMO_ADMIN_PASSWORD;
 
 /** The single shared workspace every web-UI scene accumulates into. Created
  *  on-camera by CLI Scene 2 (`klangk create demo`) and carried forward: the
- *  web-UI scenes operate this SAME workspace so clanker's app.py (Sc 5)
+ *  web-UI scenes operate this SAME workspace so klangk's app.py (Sc 5)
  *  survives into the Files tab (Sc 6), the collaboration (Sc 7), etc. */
 export const SHARED_WORKSPACE = "demo";
 /** The service workspace from CLI Scenes 3/3b (openclaw + gateway). Scene 4
@@ -366,7 +366,7 @@ export async function ensureFreshWorkspace(
 /** Continuity helper: find-or-create a workspace by STABLE name, WITHOUT
  *  deleting any existing one. This is the accumulating-workspace model the web-
  *  UI scenes share: one hero `demo` workspace carries state forward across
- *  sequentially-recorded scenes (clanker's app.py from Sc 5 is still there in
+ *  sequentially-recorded scenes (klangk's app.py from Sc 5 is still there in
  *  Sc 6's Files tab, etc.). Re-running a single scene is safe (it reuses the
  *  existing workspace); a full clean re-take needs a manual reset (see the
  *  videoscript's per-scene production notes), as the narrative intends. */

@@ -508,7 +508,7 @@ void main() {
         {
           'user_id': 'agent-user',
           'window_id': '@0',
-          'handle': 'clanker',
+          'handle': 'klangk',
           'window_name': 'service-cmd',
           'is_service': true,
           'viewers': <Map<String, dynamic>>[],
@@ -521,7 +521,7 @@ void main() {
 
       // Distinct "Service" label, not the opaque handle:win form.
       expect(find.text('Service'), findsOneWidget);
-      expect(find.textContaining('clanker'), findsNothing);
+      expect(find.textContaining('klangk'), findsNothing);
     });
 
     testWidgets('service tab join fires onJoinShared with agent ids',
@@ -533,7 +533,7 @@ void main() {
         {
           'user_id': 'agent-user',
           'window_id': '@0',
-          'handle': 'clanker',
+          'handle': 'klangk',
           'window_name': 'service-cmd',
           'is_service': true,
           'viewers': <Map<String, dynamic>>[],
@@ -564,7 +564,7 @@ void main() {
         {
           'user_id': 'agent-user',
           'window_id': '@0',
-          'handle': 'clanker',
+          'handle': 'klangk',
           'window_name': 'service-cmd',
           'is_service': true,
           'viewers': <Map<String, dynamic>>[],
@@ -590,7 +590,7 @@ void main() {
         {
           'user_id': 'agent-user',
           'window_id': '@0',
-          'handle': 'clanker',
+          'handle': 'klangk',
           'window_name': 'service-cmd',
           'is_service': true,
           'viewers': <Map<String, dynamic>>[],
@@ -615,7 +615,7 @@ void main() {
         {
           'user_id': 'agent-user',
           'window_id': '@0',
-          'handle': 'clanker',
+          'handle': 'klangk',
           'window_name': 'service-cmd',
           'is_service': true,
           'viewers': <Map<String, dynamic>>[],
@@ -647,7 +647,7 @@ void main() {
         {
           'user_id': 'agent-user',
           'window_id': '@0',
-          'handle': 'clanker',
+          'handle': 'klangk',
           'window_name': 'service-cmd',
           'is_service': true,
           'viewers': <Map<String, dynamic>>[],

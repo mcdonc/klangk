@@ -18,7 +18,7 @@ _app_state = MagicMock()
 _app_state.state.terminal.ensure_service_session = AsyncMock()
 _app_state.state.agents = MagicMock(spec=Agents)
 _app_state.state.agents.ensure_agent_home = AsyncMock(
-    return_value="/home/clanker"
+    return_value="/home/klangk"
 )
 
 
@@ -40,7 +40,7 @@ class TestBringup:
         _app_state.state.terminal.ensure_service_session.reset_mock()
         _app_state.state.agents.ensure_agent_home.reset_mock()
         _app_state.state.agents.ensure_agent_home.return_value = (
-            "/home/clanker"
+            "/home/klangk"
         )
 
     async def test_provisions_home_and_fires_service_command(self):
@@ -56,7 +56,7 @@ class TestBringup:
         )
         _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
-            "/home/clanker",
+            "/home/klangk",
             "openclaw gateway",
             setup_state="complete",
         )
@@ -89,7 +89,7 @@ class TestBringup:
         )
         _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
-            "/home/clanker",
+            "/home/klangk",
             "openclaw gateway",
             setup_state="pending",
         )
@@ -104,7 +104,7 @@ class TestBringup:
         )
         _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
-            "/home/clanker",
+            "/home/klangk",
             "openclaw gateway",
             setup_state=None,
         )

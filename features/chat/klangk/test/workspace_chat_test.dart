@@ -188,12 +188,12 @@ void main() {
       expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
       await tester.runAsync(() async {
         chat.serverSend(
-            {'type': 'agent_thinking', 'thinking': true, 'name': 'clanker'});
+            {'type': 'agent_thinking', 'thinking': true, 'name': 'klangk'});
         await Future.delayed(Duration.zero);
         await Future.delayed(Duration.zero);
       });
       await tester.pump();
-      expect(find.text('clanker is thinking...'), findsOneWidget);
+      expect(find.text('klangk is thinking...'), findsOneWidget);
       final abort = find.byIcon(Icons.stop_circle_outlined);
       expect(abort, findsOneWidget);
       await tester.tap(abort);

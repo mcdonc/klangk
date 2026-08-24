@@ -468,13 +468,11 @@ class TestHandles:
         user = await app_state.state.model.users.create_user(
             "someone@example.com", "hash"
         )
-        with pytest.raises(
-            ValueError, match="reserved for the workspace agent"
-        ):
+        with pytest.raises(ValueError, match="is reserved"):
             await app_state.state.model.users.set_user_handle(
                 user["id"], await app_state.state.model.users.agent_handle()
             )
-        # The rejection is the agent handle specifically (clanker), not a
+        # The rejection is the agent handle specifically (klangk), not a
         # generic conflict — a different handle still works.
         await app_state.state.model.users.set_user_handle(
             user["id"], "someone-else"
@@ -483,33 +481,44 @@ class TestHandles:
     async def test_set_user_handle_rejects_agent_handle_unseeded(
         self, db, app_state
     ):
-        # The fallback agent handle (clanker) is rejected even when the
-        # agent row has NOT been seeded — the gap DB-uniqueness leaves.
+        # The fallback agent handle (klangk) is rejected even when the
+        # agent row has NOT been seeded — statically reserved (#2718).
 
         app_state.state.model.users.clear_agent_cache()
         user = await app_state.state.model.users.create_user(
             "someone@example.com", "hash"
         )
+        with pytest.raises(ValueError, match="'klangk' is reserved"):
+            await app_state.state.model.users.set_user_handle(
+                user["id"], "klangk"
+            )
+
+    async def test_set_user_handle_agent_row_immutable(self, db, app_state):
+        """#2718: the agent row's handle cannot be changed — the identity
+        is fixed (the service-session HOME /home/klangk is a constant,
+        #2717)."""
+        app_state.state.model.users.clear_agent_cache()
         with pytest.raises(
-            ValueError, match="reserved for the workspace agent"
+            ValueError, match="cannot be changed"
         ):
             await app_state.state.model.users.set_user_handle(
-                user["id"], "clanker"
+                model.AGENT_USER_ID, "renamed"
             )
 
     async def test_create_user_agent_email_gets_suffixed(self, db, app_state):
         # A derived handle colliding with the agent handle is suffixed,
         # not refused (registration derives, doesn't choose) — but the
-        # user must never end up WITH the agent handle (#1160).
+        # user must never end up WITH the agent handle (#1160). With the
+        # fixed identity the collision is on 'klangk' (#2718).
 
         app_state.state.model.users.clear_agent_cache()
         user = await app_state.state.model.users.create_user(
-            "clanker@example.com", "hash"
+            "klangk@example.com", "hash"
         )
         assert (
             user["handle"] != await app_state.state.model.users.agent_handle()
         )
-        assert user["handle"] == "clanker-2"
+        assert user["handle"] == "klangk-2"
 
     async def test_set_user_handle_invalid(self, user, app_state):
         with pytest.raises(ValueError, match="empty"):

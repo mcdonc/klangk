@@ -12,6 +12,7 @@ import pytest
 
 from klangk.model import migrations as migrations_mod
 from klangk.model.migrations import Migration, run_migrations
+from klangk.model.users import AGENT_USER_ID
 
 
 async def _recorded(db) -> list[tuple[int, str]]:
@@ -51,6 +52,7 @@ class TestRunner:
             (5, "0005_user_inactivity"),
             (6, "0006_host_schedules"),
             (7, "0007_server_schedules"),
+            (8, "0008_agent_user_klangk"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -74,6 +76,9 @@ class TestRunner:
             info = await db.execute("PRAGMA table_info(users)")
             cols = {r[1] for r in await info.fetchall()}
             assert {"disabled", "last_activity_at"} <= cols
+
+            # Migration 0008: no agent row exists on a fresh DB before
+            # seeding (UPDATE is a no-op); recorded above.
 
             # Re-run: nothing new applied, still exactly five records.
             await app_state.state.model.init_db()
@@ -113,7 +118,55 @@ class TestRunner:
                 (5, "0005_user_inactivity"),
                 (6, "0006_host_schedules"),
                 (7, "0007_server_schedules"),
+                (8, "0008_agent_user_klangk"),
             ]
+
+    async def test_m0008_agent_identity_and_human_collision(
+        self, temp_data_dir, app_state
+    ):
+        """m0008 rewrites a clanker-era agent row to the fixed identity and
+        bumps a human holding 'klangk' to a unique alternative (#2718)."""
+
+        await app_state.state.model.init_db()
+        async with app_state.state.db.transaction() as db:
+            # A human who claimed 'klangk' before it was reserved, and a
+            # clanker-era agent row (init_db does not seed the agent —
+            # Lifecycle.seed_agent_user does, so both rows are ours).
+            await db.execute(
+                "INSERT INTO users (id, email, handle) VALUES"
+                " ('human-1', 'human@x.com', 'klangk')"
+            )
+            await db.execute(
+                "INSERT INTO users (id, email, handle, verified, provider)"
+                " VALUES (?, ?, ?, 1, 'system')",
+                (AGENT_USER_ID, "clanker@example.com", "clanker"),
+            )
+        app_state.state.model.users.clear_agent_cache()
+
+        # Re-run just m0008 against this state (through the app's DB so
+        # the transaction semantics match the runner's).
+        from klangk.model.migrations import m0008_agent_user_klangk
+
+        async with app_state.state.db.transaction() as db:
+            await m0008_agent_user_klangk.apply(db)
+
+        async with app_state.state.db.transaction() as db:
+            rows = {}
+            cursor = await db.execute("SELECT id, handle FROM users")
+            for row in await cursor.fetchall():
+                rows[row[0]] = row[1]
+        assert rows["human-1"] == "klangk-2"
+        assert rows[AGENT_USER_ID] == "klangk"
+
+        # Idempotent: a second apply changes nothing.
+        async with app_state.state.db.transaction() as db:
+            await m0008_agent_user_klangk.apply(db)
+        async with app_state.state.db.transaction() as db:
+            cursor = await db.execute(
+                "SELECT handle FROM users WHERE id = 'human-1'"
+            )
+            row = await cursor.fetchone()
+            assert row is not None and row[0] == "klangk-2"
 
     async def test_pending_only(self, tmp_path):
         """Only unrecorded migrations run; recorded ones are skipped."""

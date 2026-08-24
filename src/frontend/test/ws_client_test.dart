@@ -1782,16 +1782,16 @@ void main() {
       channel.serverSend({
         'type': 'presence_join',
         'user_id': 'agent-uid',
-        'user_email': 'clanker@klangk.local',
-        'user_handle': 'clanker',
+        'user_email': 'klangk@klangk.local',
+        'user_handle': 'klangk',
       });
       await Future.delayed(Duration.zero);
       final agent = client.mentionCandidates.firstWhere(
         (m) => m['id'] == 'agent-uid',
         orElse: () => {},
       );
-      expect(agent['email'], 'clanker@klangk.local');
-      expect(agent['handle'], 'clanker');
+      expect(agent['email'], 'klangk@klangk.local');
+      expect(agent['handle'], 'klangk');
     });
 
     test('mentionCandidates drops agent when presence_leave arrives', () async {
@@ -1809,8 +1809,8 @@ void main() {
       channel.serverSend({
         'type': 'presence_join',
         'user_id': 'agent-uid',
-        'user_email': 'clanker@klangk.local',
-        'user_handle': 'clanker',
+        'user_email': 'klangk@klangk.local',
+        'user_handle': 'klangk',
       });
       await Future.delayed(Duration.zero);
       expect(

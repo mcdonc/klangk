@@ -11,10 +11,10 @@
 # and prints the .mp4 path + its real dimensions.
 #
 # Usage (from the worktree root, wrapped in devenv):
-#   devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g clanker
+#   devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g klangk
 #   devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh          # all scenes
 #   KLANGKBUILD_DEMO_WIDTH=1920 KLANGKBUILD_DEMO_HEIGHT=1080 \
-#     devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g clanker
+#     devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g klangk
 #
 # Extra args (after the script name) are forwarded to `playwright test`.
 # Requires: Xvfb + ffmpeg (both on the system PATH via NixOS).

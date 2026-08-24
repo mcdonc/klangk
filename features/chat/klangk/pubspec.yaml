@@ -1,5 +1,5 @@
 name: klangk_feature_chat
-description: Workspace chat feature (chat tab + clanker agent UI) for Klangk
+description: Workspace chat feature (chat tab + chat agent UI) for Klangk
 publish_to: none
 version: 0.1.0
 

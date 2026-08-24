@@ -278,7 +278,7 @@ void main() {
         {
           'id': 'msg-hosted',
           'user_email': 'alice@test.com',
-          // Emits by clanker's klangk-hosted-url: a relative /hosted/... URL.
+          // Emits by klangk's klangk-hosted-url: a relative /hosted/... URL.
           'message': 'app ready: https://klangk.dev/hosted/ws-1/8080/',
           'created_at': '2026-01-01 00:00:00',
         },

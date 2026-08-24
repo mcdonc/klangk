@@ -113,16 +113,6 @@ def _lifecycle(settings):
     return main.Lifecycle(app)
 
 
-def _lifecycle_with_agent_handle(handle, email="clanker@example.com"):
-    """A Lifecycle whose chat feature resolves a custom agent handle/email
-    (KLANGKWS_FEATURE_CHAT_AGENT_HANDLE/EMAIL) — for seed-collision tests
-    where the agent handle must collide with a human's (#1977)."""
-    lc = _lifecycle(make_settings({}))
-    lc.app.state.features.frontend_config.return_value = {
-        "chat_agent_handle": handle,
-        "chat_agent_email": email,
-    }
-    return lc
 
 
 # --- Seed default user ---
@@ -722,12 +712,13 @@ class TestSeedAgentUser:
             model.AGENT_USER_ID
         )
         assert user is not None
-        assert user["email"] == "clanker@example.com"
-        assert user["handle"] == "clanker"
+        assert user["email"] == "klangk@example.com"
+        assert user["handle"] == "klangk"
 
-    async def test_custom_identity_from_feature_config(self, db, app_state):
-        # Custom agent email/handle come from the chat feature's config keys
-        # (KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE), not server settings (#1977).
+    async def test_identity_is_fixed_ignores_feature_config(self, db, app_state):
+        """The agent identity is constant (#2718): the former chat feature
+        config keys (KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE) are gone;
+        stale entries in a resolver's output are ignored."""
         lc = _lifecycle(make_settings({}))
         lc.app.state.features.frontend_config.return_value = {
             "chat_agent_email": "bot@test.com",
@@ -738,24 +729,24 @@ class TestSeedAgentUser:
             model.AGENT_USER_ID
         )
         assert user is not None
-        assert user["email"] == "bot@test.com"
-        assert user["handle"] == "TestBot"
+        assert user["email"] == "klangk@example.com"
+        assert user["handle"] == "klangk"
 
     async def test_upserts_existing(self, db, app_state):
-        # Seed with defaults, then re-seed with a new identity (via the
-        # feature config) — the agent row is updated.
+        # Seed, then re-seed — the agent row is reconciled to the fixed
+        # identity (a pre-#2718 'klangk' row is renamed to 'klangk').
         await _lifecycle(make_settings({})).seed_agent_user()
-        lc = _lifecycle(make_settings({}))
-        lc.app.state.features.frontend_config.return_value = {
-            "chat_agent_email": "new@test.com",
-            "chat_agent_handle": "NewBot",
-        }
-        await lc.seed_agent_user()
+        async with app_state.state.db.transaction() as db_conn:
+            await db_conn.execute(
+                "UPDATE users SET handle = ?, email = ? WHERE id = ?",
+                ("klangk", "klangk@example.com", model.AGENT_USER_ID),
+            )
+        await _lifecycle(make_settings({})).seed_agent_user()
         user = await app_state.state.model.users.get_user_by_id(
             model.AGENT_USER_ID
         )
-        assert user["email"] == "new@test.com"
-        assert user["handle"] == "NewBot"
+        assert user["email"] == "klangk@example.com"
+        assert user["handle"] == "klangk"
 
     async def test_clears_cache(self, db, app_state):
         # Prime cache with fallback
@@ -763,7 +754,7 @@ class TestSeedAgentUser:
         await _lifecycle(make_settings({})).seed_agent_user()
         # Cache should now reflect DB values
         agent = await app_state.state.model.users.get_agent_user()
-        assert agent["email"] == "clanker@example.com"
+        assert agent["email"] == "klangk@example.com"
 
     async def test_users_handle_has_unique_constraint(self, db, app_state):
         """The users.handle UNIQUE constraint is the structural backstop.
@@ -797,13 +788,21 @@ class TestSeedAgentUser:
             "alice@example.com", "hash", verified=True
         )
         assert human["handle"] == "alice"
-        with pytest.raises(RuntimeError, match="alice"):
-            await _lifecycle_with_agent_handle("alice").seed_agent_user()
+        # Simulate the pre-migration state: a human already holding the
+        # fixed 'klangk' handle (possible because it was never reserved
+        # before #2718).
+        async with app_state.state.db.transaction() as db_conn:
+            await db_conn.execute(
+                "UPDATE users SET handle = 'klangk' WHERE id = ?",
+                (human["id"],),
+            )
+        with pytest.raises(RuntimeError, match="klangk"):
+            await _lifecycle(make_settings({})).seed_agent_user()
         # Human user is untouched.
         refreshed = await app_state.state.model.users.get_user_by_id(
             human["id"]
         )
-        assert refreshed["handle"] == "alice"
+        assert refreshed["handle"] == "klangk"
         # Agent was not created with the colliding handle.
         assert (
             await app_state.state.model.users.get_user_by_id(
@@ -812,25 +811,22 @@ class TestSeedAgentUser:
             is None
         )
 
-    async def test_seed_rename_to_human_handle_refuses(self, db, app_state):
-        """Re-seeding the agent onto a human's handle fails, leaves agent as-is."""
-        await _lifecycle(
-            make_settings({})
-        ).seed_agent_user()  # agent handle = clanker
-        human = await app_state.state.model.users.create_user(
-            "alice@example.com", "hash", verified=True
-        )
-        with pytest.raises(RuntimeError, match="already used by another user"):
-            await _lifecycle_with_agent_handle("alice").seed_agent_user()
-        # Agent keeps its original handle; human untouched.
+    async def test_seed_renames_clanker_era_row_to_klangk(self, db, app_state):
+        """Re-seeding reconciles a pre-#2718 'klangk' row to the fixed
+        identity (the boot-time counterpart of the m0008 migration)."""
+        await _lifecycle(make_settings({})).seed_agent_user()
+        async with app_state.state.db.transaction() as db_conn:
+            await db_conn.execute(
+                "UPDATE users SET handle = ?, email = ? WHERE id = ?",
+                ("klangk", "klangk@example.com", model.AGENT_USER_ID),
+            )
+        app_state.state.model.users.clear_agent_cache()
+        await _lifecycle(make_settings({})).seed_agent_user()
         agent = await app_state.state.model.users.get_user_by_id(
             model.AGENT_USER_ID
         )
-        assert agent["handle"] == "clanker"
-        refreshed = await app_state.state.model.users.get_user_by_id(
-            human["id"]
-        )
-        assert refreshed["handle"] == "alice"
+        assert agent["handle"] == "klangk"
+        assert agent["email"] == "klangk@example.com"
 
     async def test_collision_leaves_human_files_untouched(
         self, db, tmp_path, app_state
@@ -845,6 +841,14 @@ class TestSeedAgentUser:
         human = await app_state.state.model.users.create_user(
             "alice@example.com", "hash", verified=True
         )
+        # The human claims the fixed 'klangk' handle (possible pre-#2718;
+        # the m0008 migration would have bumped them, this tests the
+        # un-migrated edge).
+        async with app_state.state.db.transaction() as db_conn:
+            await db_conn.execute(
+                "UPDATE users SET handle = 'klangk' WHERE id = ?",
+                (human["id"],),
+            )
         # Stand up the destructive-branch precondition directly on disk.
         home = tmp_path / "home"
         users_dir = home / ".users"
@@ -852,14 +856,14 @@ class TestSeedAgentUser:
         human_dir = users_dir / human["id"]
         human_dir.mkdir()
         (human_dir / "secret.txt").write_text("alice's secrets")
-        (home / "alice").symlink_to(f".users/{human['id']}")
+        (home / "klangk").symlink_to(f".users/{human['id']}")
 
         with pytest.raises(RuntimeError):
-            await _lifecycle_with_agent_handle("alice").seed_agent_user()
+            await _lifecycle(make_settings({})).seed_agent_user()
 
         # Human's files are exactly where they were — nothing migrated.
         assert (human_dir / "secret.txt").read_text() == "alice's secrets"
-        assert os.readlink(home / "alice") == f".users/{human['id']}"
+        assert os.readlink(home / "klangk") == f".users/{human['id']}"
         # No agent user directory was created.
         assert not (users_dir / model.AGENT_USER_ID).exists()
 
@@ -2319,12 +2323,13 @@ class TestStartupShutdownRestart:
             lc._warn_non_reloadable(old, new)
         assert "full process restart" not in caplog.text
 
-    async def test_agent_handle_change_takes_effect_after_restart(
+    async def test_sighup_reseed_reconciles_to_fixed_identity(
         self, db, app_state, tmp_path
     ):
-        """Acceptance test: editing KLANGKWS_FEATURE_CHAT_AGENT_HANDLE in the
-        features_config: block + SIGHUP re-resolves the feature config and
-        re-seeds, so the new handle is live without a process restart (#1977).
+        """Acceptance test: SIGHUP re-seeds the agent to the FIXED identity
+        (#2718) — a stale KLANGKWS_FEATURE_CHAT_AGENT_HANDLE setting in
+        features_config: is ignored, and a pre-#2718 'klangk' row is
+        renamed to 'klangk' without a process restart.
 
         Uses a REAL Features resolver (with a chat manifest) — not a mock —
         so it exercises the actual frontend_config() resolution from
@@ -2338,8 +2343,9 @@ class TestStartupShutdownRestart:
         app_state.state.db = get_test_db()
         app_state.state.model = model.Model(app_state)
 
-        # Stand up a chat manifest so the resolver knows chat + the
-        # agent-identity keys (defaults: clanker / clanker@example.com).
+        # Stand up a chat manifest so the resolver knows the chat feature
+        # (the identity keys are gone from the manifest; a stale one below
+        # simulates an operator's un-pruned features_config).
         frontend_dir = tmp_path / "frontend"
         frontend_dir.mkdir()
         (frontend_dir / "features.json").write_text(
@@ -2355,17 +2361,7 @@ class TestStartupShutdownRestart:
                                     "description": "",
                                     "default": "",
                                     "scope": "both",
-                                },
-                                "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": {
-                                    "description": "",
-                                    "default": "clanker",
-                                    "scope": "both",
-                                },
-                                "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": {
-                                    "description": "",
-                                    "default": "clanker@example.com",
-                                    "scope": "both",
-                                },
+                                }
                             },
                         }
                     ],
@@ -2380,19 +2376,29 @@ class TestStartupShutdownRestart:
         )
 
         await lc.seed_agent_user()
-        assert await app_state.state.model.users.agent_handle() == "clanker"
+        assert await app_state.state.model.users.agent_handle() == "klangk"
 
-        # Operator edits features_config: + SIGHUP: the reloaded settings
-        # carry the new handle, and apply_pending_reseed (the SIGHUP re-seed)
-        # picks it up via the live resolver (frontend_config re-reads
-        # settings.features_config each call).
+        # A pre-#2718 row (clanker era) + stale config keys.
+        async with app_state.state.db.transaction() as db_conn:
+            await db_conn.execute(
+                "UPDATE users SET handle = ?, email = ? WHERE id = ?",
+                ("klangk", "klangk@example.com", model.AGENT_USER_ID),
+            )
+        app_state.state.model.users.clear_agent_cache()
         app_state.state.settings.features_config = {
             "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": "newbot",
             "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": "newbot@example.com",
         }
         lc.reconfigure(app_state)  # SIGHUP flags the re-seed
         await lc.apply_pending_reseed()
-        assert await app_state.state.model.users.agent_handle() == "newbot"
+        # The fixed identity wins; the stale keys are ignored.
+        assert (
+            await app_state.state.model.users.agent_handle() == "klangk"
+        )
+        assert (
+            await app_state.state.model.users.agent_email()
+            == "klangk@example.com"
+        )
 
     async def test_on_sighup_schedules_restart(self, app_state):
         """on_sighup creates a task that runs recycle_runtime."""

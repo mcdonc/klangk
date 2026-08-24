@@ -437,7 +437,7 @@ class TestConfig:
         assert "login_banner_title" in data
         assert "login_banner" in data
         assert "instance_id" in data
-        # #1977: the clanker-agent enabled flag is surfaced as a bool. Chat is
+        # #1977: the chat-agent enabled flag is surfaced as a bool. Chat is
         # dormant by default (not in DEFAULT_FEATURES), so the agent is off.
         assert data["chat_agent_enabled"] is False
 
@@ -556,12 +556,12 @@ class TestConfig:
                                 },
                                 "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": {
                                     "description": "",
-                                    "default": "clanker",
+                                    "default": "klangk",
                                     "scope": "both",
                                 },
                                 "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": {
                                     "description": "",
-                                    "default": "clanker@example.com",
+                                    "default": "klangk@example.com",
                                     "scope": "both",
                                 },
                             },
@@ -11150,7 +11150,7 @@ class TestOIDCCallbackAgentGuard:
         )
         default_claims = {
             "sub": "agent-oidc-sub",
-            "email": "clanker@example.com",
+            "email": "klangk@example.com",
             "email_verified": True,
         }
         if claims:

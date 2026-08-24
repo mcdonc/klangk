@@ -1526,7 +1526,7 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/clanker",
+                "/home/klangk",
                 "openclaw gateway",
             )
         cmds = [c.args[1] for c in mock_exec.call_args_list]
@@ -1561,11 +1561,11 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/clanker",
+                "/home/klangk",
                 "openclaw gateway",
             )
         mock_ensure.assert_awaited_once_with(
-            "cid", SERVICE_SESSION, "/home/clanker"
+            "cid", SERVICE_SESSION, "/home/klangk"
         )
 
     async def test_skips_when_window_already_exists(self):
@@ -1590,7 +1590,7 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/clanker",
+                "/home/klangk",
                 "openclaw gateway",
             )
         cmds = [c.args[1] for c in mock_exec.call_args_list]
@@ -1619,7 +1619,7 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/clanker",
+                "/home/klangk",
                 "openclaw gateway",
                 setup_state="pending",
             )
@@ -1649,7 +1649,7 @@ class TestEnsureServiceSession:
             patch("klangk.terminal.logger") as mock_logger,
         ):
             await _terminal.ensure_service_session(
-                "cid", "/home/clanker", "cmd"
+                "cid", "/home/klangk", "cmd"
             )
         mock_logger.warning.assert_called()
 
@@ -1681,7 +1681,7 @@ class TestEnsureServiceSession:
             patch("klangk.terminal.logger") as mock_logger,
         ):
             await _terminal.ensure_service_session(
-                "cid", "/home/clanker", "cmd"
+                "cid", "/home/klangk", "cmd"
             )
         mock_logger.warning.assert_called()
 
@@ -1708,7 +1708,7 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/clanker",
+                "/home/klangk",
                 "openclaw gateway",
             )
         _mock_registry.mark_service_started.assert_called_once_with("cid")
@@ -1740,7 +1740,7 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/clanker",
+                "/home/klangk",
                 "openclaw gateway",
             )
         mock_registry.mark_service_started.assert_not_called()
@@ -1778,7 +1778,7 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/clanker",
+                "/home/klangk",
                 "cmd",
             )
         mock_registry.mark_service_started.assert_not_called()
@@ -1845,12 +1845,12 @@ class TestEnsureServiceSession:
             await asyncio.gather(
                 _terminal.ensure_service_session(
                     "cid",
-                    "/home/clanker",
+                    "/home/klangk",
                     "openclaw gateway",
                 ),
                 _terminal.ensure_service_session(
                     "cid",
-                    "/home/clanker",
+                    "/home/klangk",
                     "openclaw gateway",
                 ),
             )
@@ -1902,12 +1902,12 @@ class TestEnsureServiceSession:
             await asyncio.gather(
                 _terminal.ensure_service_session(
                     "cid-a",
-                    "/home/clanker",
+                    "/home/klangk",
                     "cmd-a",
                 ),
                 _terminal.ensure_service_session(
                     "cid-b",
-                    "/home/clanker",
+                    "/home/klangk",
                     "cmd-b",
                 ),
             )
@@ -1947,7 +1947,7 @@ class TestEnsureServiceSession:
             patch("klangk.terminal.logger"),
         ):
             await _terminal.ensure_service_session(
-                "cid", "/home/clanker", "cmd"
+                "cid", "/home/klangk", "cmd"
             )
 
         # The third exec call must be the kill-window cleanup targeting
@@ -1987,7 +1987,7 @@ class TestEnsureServiceSession:
             patch("klangk.terminal.logger") as mock_logger,
         ):
             await _terminal.ensure_service_session(
-                "cid", "/home/clanker", "cmd"
+                "cid", "/home/klangk", "cmd"
             )
         # Both the send-keys failure and the cleanup failure are warned.
         assert mock_logger.warning.call_count == 2

@@ -103,7 +103,7 @@ async def agent_user(app_state):
             "INSERT OR REPLACE INTO users"
             " (id, email, password_hash, verified, provider, handle)"
             " VALUES (?, ?, NULL, 1, 'system', ?)",
-            (AGENT_USER_ID, "clanker@example.com", "clanker"),
+            (AGENT_USER_ID, "klangk@example.com", "klangk"),
         )
     app_state.state.model.users.clear_agent_cache()
 

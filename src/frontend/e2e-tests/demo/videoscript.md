@@ -14,7 +14,7 @@ accumulates shot to shot:
 
 | Workspace  | Born in                                   | Owner               | Role in the video                                                                                                                                                                                                                                                   |
 | ---------- | ----------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`demo`** | Scene 2 (`klangk create demo`, on camera) | `admin@example.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → clanker's Flask app `app.py`/`requirements.txt` (Sc 5) → debugged, running app (Sc 5b) → browsed files + Pyramid PDF (Sc 6) → shared with the team (Sc 7/7b). |
+| **`demo`** | Scene 2 (`klangk create demo`, on camera) | `admin@example.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → klangk's Flask app `app.py`/`requirements.txt` (Sc 5) → debugged, running app (Sc 5b) → browsed files + Pyramid PDF (Sc 6) → shared with the team (Sc 7/7b). |
 | `openclaw` | Scene 3 (`klangk sandbox openclaw`)       | `admin@example.com` | Self-contained sandbox + service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 3b/4.                                                                                                                            |
 | Potemkin   | Pre-seeded (see Accounts below)           | various             | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                                |
 
@@ -25,7 +25,7 @@ accumulates shot to shot:
   scene. `rm` is mentioned verbally in Sc 2 as the eventual cleanup, not
   executed on `demo`.
 - Record the browser arc (Sc 4→5→5b→6→7→7b) **in order**, against the same live
-  `demo` container, so clanker's files / chat history / running app carry
+  `demo` container, so klangk's files / chat history / running app carry
   forward.
 - **Code note:** the Playwright scenes currently each spin up their _own_ fresh
   workspace + user. To realize continuity they must be refactored to share
@@ -38,7 +38,7 @@ accumulates shot to shot:
 - [ ] Klangk server running locally; reach it at `http://localhost:8995`.
 - [ ] `KLANGKD_ALLOW_AUTOSTART=1` set on the server (required for the
       Sc 3/3b service scene).
-- [ ] **Real LLM key configured** for the proxy. The clanker chat scene AND the
+- [ ] **Real LLM key configured** for the proxy. The klangk chat scene AND the
       openclaw scene both depend on the LLM proxy actually working. Test it.
 - [ ] `jq` installed locally (for the `klangk monitor | jq .` beat).
 - [ ] For Sc 3b's unhealthy beat: `KLANGKD_HEALTH_CHECK_INTERVAL=10` set (snappier
@@ -282,7 +282,7 @@ The Status column shows `openclaw` as **healthy** — the service command is run
 
 I can even attach to the service command itself — here's the gateway running live.
 
-_[Split the terminal horizontally. In the new pane: klangk shell openclaw clanker:service-cmd — joins the service command's session; gateway logs stream]_
+_[Split the terminal horizontally. In the new pane: klangk shell openclaw klangk:service-cmd — joins the service command's session; gateway logs stream]_
 
 Now here's what turns this from "a process I left running" into an actual service. First, **health checks**. A running container only proves the container is alive — it says nothing about the process inside it. So Klangk runs my health-check command inside the container every ten seconds: exit zero means healthy, anything else is unhealthy — and that status is the very thing lighting up the Status column. Because it's all surfaced as events, I can watch it live from the command line with `klangk monitor`:
 
@@ -311,7 +311,7 @@ So the same sandbox idea — one config file, one command — scales from "my de
 > `jq` + LLM proxy working); **`KLANGKD_HEALTH_CHECK_INTERVAL=10`** set (snappier
 > unhealthy flip; product default 30s; needs a **full** backend restart, off
 > camera). _mechanic (the unhealthy beat):_ two-pane split (horizontal
-> divider) — bottom pane `klangk shell openclaw clanker:service-cmd` (joins the
+> divider) — bottom pane `klangk shell openclaw klangk:service-cmd` (joins the
 > service command; gateway logs stream), top pane `klangk monitor --type
 service_health | jq .` (shows a healthy frame immediately via
 > snapshot-on-connect). Ctrl+C the **bottom** pane kills the gateway; the
@@ -370,19 +370,19 @@ But the web UI has features beyond the terminal — files, chat, and collaborati
 > triple-click-select-all in the field → type "scratch" → click OK (all mouse;
 > no `Ctrl+A`, no `Enter`).
 
-## Scene 5 — AI Agent — clanker (1.5 minutes)
+## Scene 5 — AI Agent — klangk (1.5 minutes)
 
 Still in the `demo` workspace, I'll click over to the Chat tab.
 
 _[Click the Chat tab in the left rail]_
 
-Every workspace comes with a built-in AI agent. By default it's called clanker, and it's available **only through chat** — you talk to it by @mentioning it, not by running it in a terminal yourself.
+Every workspace comes with a built-in AI agent. By default it's called klangk, and it's available **only through chat** — you talk to it by @mentioning it, not by running it in a terminal yourself.
 
-_[Type: @clanker what is my hostname]_
+_[Type: @klangk what is my hostname]_
 
 The agent runs Pi inside the container. It can read and write files, run shell commands, and answer questions — all confined to this workspace's sandbox.
 
-_[Wait ~30s. clanker's reply appears]_
+_[Wait ~30s. klangk's reply appears]_
 
 There it is. Now here's something important about the security model. My LLM API key — the key that talks to the AI provider — never enters the container. Klangk runs a reverse proxy (nginx) on the host that injects the key into requests. Inside the container, Pi just talks to a local proxy URL. So even if the container were compromised, the API key isn't there.
 
@@ -390,15 +390,15 @@ _[Click the Terminal tab in the left rail, then type: env, wait for 10 seconds]_
 
 And I can prove it. Here's the full environment of the container — no API keys, no secrets, nothing to steal. The key only exists on the host, in the proxy.
 
-One thing worth being clear about: clanker is a **chat agent**, not a coding-agent harness. It does no tool calling, and you can't add skills or prompts to it — it's a fixed, built-in assistant scoped to the workspace. If what you want is a full harness you can extend and drive yourself, that's the next section.
+One thing worth being clear about: klangk is a **chat agent**, not a coding-agent harness. It does no tool calling, and you can't add skills or prompts to it — it's a fixed, built-in assistant scoped to the workspace. If what you want is a full harness you can extend and drive yourself, that's the next section.
 
 > **Production —** _on screen:_ browser → Chat tab, still in `demo` (Sc 4).
 > _pre-roll:_ agent functional (LLM key working); test the exact prompt
-> off-camera. This is a read-only Q&A — clanker answers in chat, creates no
+> off-camera. This is a read-only Q&A — klangk answers in chat, creates no
 > files, so `demo` is left untouched (the Flask app for Sc 5b/6 is built by pi
 > in Sc 5b). _reset:_ none — re-run freely. _gotchas:_ **live/nondeterministic**
 > — one long take, leave dead air; needs a working key (proxy 401 kills the
-> scene); clanker is a chat-only agent (no tool calling), so an uptime-style
+> scene); klangk is a chat-only agent (no tool calling), so an uptime-style
 > question is answered from its training data, not by running a command —
 > verify the response is acceptable before keeping the take.
 
@@ -428,7 +428,7 @@ _[Open the "scratch" terminal tab by mousing to it and clicking it, then type "p
 
 `ModuleNotFoundError: No module named 'flask'`. A classic agent mistake — the code is there, but the dependency was never installed. I could fix this by hand, but there's a faster way that shows off something important about Klangk.
 
-This container has Pi as an agent — the same engine that powers clanker — but I can run it right here in the terminal, where I can watch it work and step in alongside it.
+This container has Pi as an agent — the same engine that powers klangk — but I can run it right here in the terminal, where I can watch it work and step in alongside it.
 
 _[Navigate back to the bash tab where pi is still running]_
 
@@ -478,7 +478,7 @@ open in my browser, all without leaving the sandbox.
 
 _[Click the Files tab in the left rail]_
 
-The Files tab gives me a visual file browser. I can see the files clanker created a moment ago — `app.py`, `requirements.txt` — click one for a syntax-highlighted preview, drag and drop to upload, or right-click to download, rename, or delete.
+The Files tab gives me a visual file browser. I can see the files klangk created a moment ago — `app.py`, `requirements.txt` — click one for a syntax-highlighted preview, drag and drop to upload, or right-click to download, rename, or delete.
 
 And it previews more than just code. I dropped a PDF in here earlier — the Pyramid web framework documentation — let me open it.
 
@@ -504,7 +504,7 @@ Klangk renders common formats right in the browser — PDFs, images, spreadsheet
 > the shared terminal; chat messages sent as the other user), so each recording
 > shows a coherent solo view. The two clips are then **intercut in the edit**
 > (DaVinci) — owner shares → cut to teammate seeing the shared tab appear;
-> owner types → cut to teammate watching it land; owner @mentions clanker → cut
+> owner types → cut to teammate watching it land; owner @mentions klangk → cut
 > to teammate's reaction. Combined edited length ~1.5–2 min (the two overlap,
 > they don't add).
 >
@@ -548,9 +548,9 @@ _[A message from designer@example.com appears: "hey, can we add a simple landing
 
 _[A message from reviewer@example.com appears: "yeah — minimal, just a headline and a button"]_
 
-_[Type into the chat box: @clanker scaffold a simple Flask landing page with a headline and a button, then click Send]_
+_[Type into the chat box: @klangk scaffold a simple Flask landing page with a headline and a button, then click Send]_
 
-_[Wait up to ~120s for clanker's reply — leave dead air, narrate over later]_
+_[Wait up to ~120s for klangk's reply — leave dead air, narrate over later]_
 
 _[A message from teammate@example.com appears: "nice — let's wire that button up next"]_
 
@@ -566,13 +566,13 @@ So you can collaborate with both humans and AI in the same space.
 >   shared) → send `terminal_input` `echo 'teammate typing back'\r` (writes to
 >   the shared pty; appears in the owner's shared terminal) timed ~2s after the
 >   owner's line echoes; later send `chat_send` "nice — let's wire that button up
->   next" ~3s after clanker's reply lands.
+>   next" ~3s after klangk's reply lands.
 > - **designer** WS: `chat_send` "hey, can we add a simple landing page?".
 > - **reviewer** WS: `chat_send` "yeah — minimal, just a headline and a button".
 >
 > _visible (owner, real mouse + keyboard):_ Sharing tab tour; right-click the
 > scratch tab → Share (badge appears); type `echo 'owner typing here'`; open
-> Chat; type the `@clanker` prompt + click Send. _timing:_ the sidechannel beats must land at
+> Chat; type the `@klangk` prompt + click Send. _timing:_ the sidechannel beats must land at
 > the _same cadence_ as Scene 7b's mirrored beats so the two clips intercut
 > cleanly — keep a shared beat sheet with offsets. _reset:_ unshare / re-share.
 > _gotchas:_ share the **scratch** tab (a plain shell), never the `bash` tab
@@ -608,11 +608,11 @@ _[Click the Chat tab]_
 
 _[designer@example.com: "hey, can we add a simple landing page?"]_
 _[reviewer@example.com: "yeah — minimal, just a headline and a button"]_
-_[owner@example.com: "@clanker scaffold a simple Flask landing page with a headline and a button"]_
+_[owner@example.com: "@klangk scaffold a simple Flask landing page with a headline and a button"]_
 
 The whole team's in the chat — including the owner asking the AI to build something.
 
-_[Wait for clanker's reply]_
+_[Wait for klangk's reply]_
 
 _[Type into the chat box: nice — let's wire that button up next, then click Send]_
 
@@ -625,7 +625,7 @@ So I'm pair-programming with the owner and talking to the team and the AI — al
 >
 > - **owner** WS: `share_window` (scratch) before the teammate's view loads;
 >   send `terminal_input` `echo 'owner typing here'\r` ~2s after the teammate
->   joins the shared terminal; send `chat_send` "@clanker scaffold a simple Flask
+>   joins the shared terminal; send `chat_send` "@klangk scaffold a simple Flask
 >   landing page with a headline and a button" timed with the beat.
 > - **designer** + **reviewer** WS: their `chat_send` lines, at the same cadence
 >   as Sc 7.
@@ -634,8 +634,8 @@ So I'm pair-programming with the owner and talking to the team and the AI — al
 > shared tab to join; type `echo 'teammate typing back'`; open Chat; type the
 > reaction + click Send. _gotchas:_ the teammate is a **Collaborator** — 3 nav
 > tabs only (Terminal / Files / Chat; no Sharing, no Settings) — that is
-> correct, not a bug; clanker fires once per recording (each take triggers its
-> own reply — fine, you only keep one side's clanker beat in the cut); keep the
+> correct, not a bug; klangk fires once per recording (each take triggers its
+> own reply — fine, you only keep one side's klangk beat in the cut); keep the
 > conversation text and cadence identical to Sc 7 so the intercut lines up.
 
 ## Scene 8 — Features (45 seconds)

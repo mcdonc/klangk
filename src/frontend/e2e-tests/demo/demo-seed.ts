@@ -314,7 +314,7 @@ async function seed() {
 
   console.log("\nSeed complete. Next, record a scene, e.g.:");
   console.log(
-    "  devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g clanker",
+    "  devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g klangk",
   );
 }
 

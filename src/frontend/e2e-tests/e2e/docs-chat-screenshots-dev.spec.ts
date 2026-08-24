@@ -179,7 +179,7 @@ test.describe("chat dev server screenshots", () => {
       force: true,
     });
     await page.waitForTimeout(300);
-    await page.keyboard.type("@clanker what files are in the home directory?");
+    await page.keyboard.type("@klangk what files are in the home directory?");
     await page.keyboard.press("Enter");
 
     // Wait for agent response
@@ -200,7 +200,7 @@ test.describe("chat dev server screenshots", () => {
     });
     await page.waitForTimeout(300);
     await page.keyboard.type(
-      "@clanker create a file called hello.py with a hello world program",
+      "@klangk create a file called hello.py with a hello world program",
     );
     await page.keyboard.press("Enter");
 

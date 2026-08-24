@@ -41,7 +41,7 @@ populated automatically at first login by klangk itself.
 Mention the agent handle in the [Chat](chat.md) panel:
 
 ```text
-@clanker create a Python Flask app on port 8000
+@klangk create a Python Flask app on port 8000
 ```
 
 The agent is **opt-in** (#1977): the `pi --mode rpc` subprocess spawns only
@@ -53,8 +53,8 @@ the DB.
 | Key                                   | Default               |
 | ------------------------------------- | --------------------- |
 | `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED` | (unset = off)         |
-| `KLANGKWS_FEATURE_CHAT_AGENT_HANDLE`  | `clanker`             |
-| `KLANGKWS_FEATURE_CHAT_AGENT_EMAIL`   | `clanker@example.com` |
+
+(The agent identity is fixed as `klangk` / `klangk@example.com`, #2718.)
 
 See [Chat](chat.md) for full config resolution (env → `features_config:` →
 default).
@@ -63,7 +63,7 @@ The agent user cannot have a password and cannot log in via credentials.
 
 When invoked from chat, Pi runs in RPC mode — the backend manages
 the subprocess and streams responses back to the chat panel. See
-[Chat - AI Agent](chat.md#ai-agent-clanker) for details on
+[Chat - AI Agent](chat.md#ai-agent-klangk) for details on
 follow-up conversations and interjections.
 
 ### Pi extensions

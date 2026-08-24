@@ -1031,7 +1031,7 @@ class TestIsEnabled:
     """is_enabled(name) resolves the active-feature set server-side (#1974),
     mirroring _resolveActiveFeatures in main.dart so the server gates on the
     same set the UI shows. Prerequisite for feature-gating backend subsystems
-    (the clanker agent, #1685) instead of bespoke env vars."""
+    (the chat agent, #1685) instead of bespoke env vars."""
 
     def test_unset_uses_defaults_membership(self, tmp_path):
         # Unset → manifest defaults: a default feature is active; a compiled-in

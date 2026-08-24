@@ -54,6 +54,10 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
+from .model.users import (
+    _DEFAULT_AGENT_EMAIL as _AGENT_EMAIL,
+    _DEFAULT_AGENT_HANDLE as _AGENT_HANDLE,
+)
 from .wshandler import (
     handle_consent_decider,
     handle_egress_sidecar,
@@ -369,13 +373,18 @@ class Lifecycle:
         )
 
     async def seed_agent_user(self) -> None:
-        """Ensure the chat agent user exists in the DB.
+        """Ensure the agent user exists in the DB with the fixed identity.
 
-        Reads email/handle from env vars (with defaults) and upserts the
-        agent row.  This is the ONLY place the env vars are consulted.
+        The agent *is* the klangk user (#2718): handle `klangk`, email
+        `klangk@example.com` — constant, not configurable (the former
+        ``KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE`` keys are gone).
+        Upsert is idempotent and reconciles pre-#2718 rows (e.g. a
+        `clanker`-era (pre-#2718) deployment) back to the fixed identity on every
+        boot, so the migration only has to handle the colliding-human
+        edge case once.
 
-        Refuses to seed the agent with a handle already owned by another
-        user.  A colliding agent handle is destructive:
+        Refuses to seed while a *human* user holds the `klangk` handle.
+        A colliding agent handle is destructive:
         ``ensure_home_symlink`` would later migrate that user's home files
         into the agent's tree via its workspace-import adoption branch.
         The ``users.handle`` UNIQUE constraint is the structural backstop,
@@ -383,26 +392,23 @@ class Lifecycle:
         letting a bare ``IntegrityError`` abort startup mid-sequence.
         See #1137.
         """
-        # Agent identity comes from the chat feature's config keys
-        # (KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE), resolved via the
-        # features resolver (env → features_config → feature default) — not
-        # server settings (#1977). Read live so a SIGHUP reload propagates.
-        agent_cfg = self.app.state.features.frontend_config()
-        email = agent_cfg.get("chat_agent_email") or "clanker@example.com"
-        handle = agent_cfg.get("chat_agent_handle") or "clanker"
+        handle = _AGENT_HANDLE
+        email = _AGENT_EMAIL
         async with self.app.state.db.transaction() as db:
-            # Pre-check: refuse a handle already claimed by a non-agent user.
-            # Runs in the same transaction as the upsert so there is no
-            # check-then-act window.
+            # Pre-check: refuse the fixed handle while claimed by a
+            # non-agent user. The m0008 migration bumps such users to a
+            # unique alternative, so this fires only if the migration
+            # was skipped (e.g. a hand-built DB).
             cursor = await db.execute(
                 "SELECT id FROM users WHERE handle = ? AND id != ?",
                 (handle, AGENT_USER_ID),
             )
             if await cursor.fetchone() is not None:
                 raise RuntimeError(
-                    f"Cannot seed chat agent: handle {handle!r} is already"
-                    " used by another user. Set "
-                    "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE to a unique value."
+                    f"Cannot seed agent user: handle {handle!r} is already"
+                    " used by another user. The m0008 migration should have"
+                    " relocated it — re-run migrations or rename the user"
+                    " manually."
                 )
             await db.execute(
                 "INSERT INTO users (id, email, password_hash, verified,"

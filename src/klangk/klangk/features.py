@@ -163,7 +163,7 @@ class Features:
 
         Server-side activation resolver (#1974): the backend can now ask
         "is feature X on?" the same way the frontend does — the prerequisite
-        for feature-gating server-side subsystems (e.g. the clanker agent
+        for feature-gating server-side subsystems (e.g. the chat agent
         subprocess, #1685/#1977) instead of bespoke settings.
 
         Canonical semantics — mirrors ``_resolveActiveFeatures`` in

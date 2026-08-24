@@ -6812,7 +6812,7 @@ async def _async_shared(*a, **k):
     return [
         {
             "user_id": "agent",
-            "handle": "clanker",
+            "handle": "klangk",
             "window_name": "service-cmd",
             "window_id": "@0",
             "is_service": True,
