@@ -77,15 +77,31 @@ Fall back to the full suite (or re-baseline) when testmon can under-select:
 `--no-cov` in the task is intentional: a scoped run exercises only a
 fraction of the package, so the 100% gate does not apply to it.
 
-### Before commit: the full unit-test suite, always
+### Before push: the scoped `test-push` gate
 
-testmon is a **local accelerator only**. CI always runs the full suite
-with `-n auto` and coverage, so before committing (and before trusting any
-"passing" or "coverage" signal from a scoped run) re-run the CI suite:
+For a routine push at the end of a focused session (a workon branch,
+say), `testmon`-style selection is enough — CI runs the authoritative
+full suite on the same hardware moments later. Use the scoped gate:
 
 ```bash
-devenv --quiet -O dotenv.enable:bool false shell -- test-backend
+devenv --quiet -O dotenv.enable:bool false shell -- test-push
 ```
+
+It diffs the working tree against the merge-base with `origin/main` and
+runs only the suites whose area changed (`testmon` for `src/klangk/`,
+`scripts/tests` for `scripts/` + `src/containers/`, sidecar unit, flutter
+unit). Skipped areas are safe to skip because CI re-runs everything.
+
+### Before merge: CI green against the latest push
+
+The merge gate is CI passing on the latest pushed commit (after the
+rebase), not a local re-run of the full suite. testmon (and `test-push`
+generally) is a **local accelerator only** — CI runs the authoritative
+full suite with `-n auto` and coverage, the same hardware, moments
+later. A local `test-backend` / `test-frontend` run is optional: use it
+when you want a coverage signal locally or don't trust a scoped run's
+"passing", not as a required pre-merge step
+(`devenv --quiet -O dotenv.enable:bool false shell -- test-backend`).
 
 Operational notes: `.testmondata` is per-worktree (rootdir-relative) and
 gitignored; concurrent `testmon` runs in the same worktree serialize on
