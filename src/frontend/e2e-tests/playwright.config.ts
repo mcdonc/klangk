@@ -122,8 +122,6 @@ export default defineConfig({
       name: "docs-screenshots",
       testMatch: [
         "docs-screenshots.spec.ts",
-        "docs-chat-screenshots.spec.ts",
-        "docs-chat-screenshots-dev.spec.ts",
         "docs-invitations-screenshots-dev.spec.ts",
         "docs-files-screenshots-dev.spec.ts",
       ],

@@ -1179,12 +1179,12 @@ async def add_workspace_member(
         raise HTTPException(
             status_code=400, detail="Cannot share with yourself"
         )
-    # Add ACL entries granting the target user view+terminal+files+chat
+    # Add ACL entries granting the target user view+terminal+files
     # on this workspace, packed at the next available positions.
     resource = f"/workspaces/{workspace_id}"
     existing = await app.state.model.acl.get_acl_entries(resource)
     next_pos = max((e["position"] for e in existing), default=-1) + 1
-    for perm in ("view", "terminal", "files", "chat"):
+    for perm in ("view", "terminal", "files"):
         await app.state.model.acl.add_acl_entry(
             resource,
             next_pos,
@@ -1399,14 +1399,14 @@ async def add_workspace_group(
     user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
     app=Depends(get_app_dep),
 ):
-    """Share a workspace with a group (view/terminal/files/chat)."""
+    """Share a workspace with a group (view/terminal/files)."""
     group = await app.state.model.users.get_group_by_id(body.group_id)
     if group is None:
         raise HTTPException(status_code=404, detail="Group not found")
     resource = f"/workspaces/{workspace_id}"
     existing = await app.state.model.acl.get_acl_entries(resource)
     max_pos = max((e["position"] for e in existing), default=-1)
-    for i, perm in enumerate(["view", "terminal", "files", "chat"]):
+    for i, perm in enumerate(["view", "terminal", "files"]):
         await app.state.model.acl.add_acl_entry(
             resource,
             max_pos + 1 + i,

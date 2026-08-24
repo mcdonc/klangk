@@ -377,18 +377,6 @@ port: "8997"
 | `login_banner_every_visit` | `false`   | `KLANGKD_LOGIN_BANNER_EVERY_VISIT` |
 | `terminal_banner`          |           | `KLANGKD_TERMINAL_BANNER`          |
 
-### Agent
-
-Agent identity + enable flag moved to the `chat` feature's config keys
-(`KLANGKWS_FEATURE_CHAT_AGENT_*`) — see [Chat](../features/chat.md).
-
-**Migration (#1977):** the agent is now opt-in (off by default). Deploys that
-relied on the agent being on must set `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED=1`;
-the old `KLANGKD_AGENT_DISABLED=1` polarity is gone (do nothing if you wanted
-the agent off). Rename `KLANGKD_AGENT_HANDLE` / `KLANGKD_AGENT_EMAIL` to the
-`KLANGKWS_FEATURE_CHAT_AGENT_*` form. See [Changelog](../changes.md) for the
-full note.
-
 ### SSL / certs
 
 Custom CA certificates are not a config key — drop `.pem`/`.crt` files

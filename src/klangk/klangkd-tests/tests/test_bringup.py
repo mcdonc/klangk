@@ -1,34 +1,29 @@
 """Tests for the create choke-point orchestrator (#1244).
 
 ``ContainerRegistry._bringup`` runs inside ``start_container`` for every
-fresh container. It provisions the agent home and fires the service
-command. The underlying primitives (``Agents.ensure_agent_home``,
-``Terminal.ensure_service_session``) have their own coverage; these
-tests pin the orchestration: that both are called in the right order
-with the right args, and that the service-command half is skipped when
-no command is configured.
+fresh container. It fires the service command in the agent identity's
+home. The underlying primitive (``Terminal.ensure_service_session``) has
+its own coverage; these tests pin the orchestration: that it is called
+with the right args, and that it is skipped when no command is
+configured.
 """
 
 from unittest.mock import AsyncMock, MagicMock
 
-from klangk.agent import Agents
 from klangk.container import ContainerRegistry
 
 _app_state = MagicMock()
 _app_state.state.terminal.ensure_service_session = AsyncMock()
-_app_state.state.agents = MagicMock(spec=Agents)
-_app_state.state.agents.ensure_agent_home = AsyncMock(
-    return_value="/home/klangk"
-)
+_app_state.state.model.users.agent_handle = AsyncMock(return_value="klangk")
 
 
 def _registry():
     """A ContainerRegistry bound to the mock app_state.
 
-    ``_bringup`` reads only ``self.app_state`` (the agent-home and
-    service-session siblings), so we skip the heavy ``__init__`` (which
-    parses settings + builds collaborators that these tests don't
-    exercise) and attach the mock app_state directly.
+    ``_bringup`` reads only ``self.app_state`` (the terminal and model
+    siblings), so we skip the heavy ``__init__`` (which parses settings +
+    builds collaborators that these tests don't exercise) and attach the
+    mock app_state directly.
     """
     reg = object.__new__(ContainerRegistry)
     reg.app = _app_state
@@ -38,21 +33,16 @@ def _registry():
 class TestBringup:
     def setup_method(self):
         _app_state.state.terminal.ensure_service_session.reset_mock()
-        _app_state.state.agents.ensure_agent_home.reset_mock()
-        _app_state.state.agents.ensure_agent_home.return_value = (
-            "/home/klangk"
-        )
+        _app_state.state.model.users.agent_handle.reset_mock()
+        _app_state.state.model.users.agent_handle.return_value = "klangk"
 
-    async def test_provisions_home_and_fires_service_command(self):
-        """A configured service command fires after the home is ready."""
+    async def test_fires_service_command_in_agent_home(self):
+        """A configured service command fires in the agent identity's home."""
         await _registry()._bringup(
             "ws-id",
             "cid",
             "openclaw gateway",
             setup_state="complete",
-        )
-        _app_state.state.agents.ensure_agent_home.assert_awaited_once_with(
-            "ws-id", "cid"
         )
         _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
@@ -62,11 +52,9 @@ class TestBringup:
         )
 
     async def test_skips_service_command_when_none(self):
-        """No service_command -> only the agent home is provisioned."""
+        """No service_command -> nothing is fired (and no handle lookup)."""
         await _registry()._bringup("ws-id", "cid", None, "complete")
-        _app_state.state.agents.ensure_agent_home.assert_awaited_once_with(
-            "ws-id", "cid"
-        )
+        _app_state.state.model.users.agent_handle.assert_not_awaited()
         _app_state.state.terminal.ensure_service_session.assert_not_awaited()
 
     async def test_skips_service_command_when_empty(self):

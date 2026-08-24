@@ -2,7 +2,6 @@
 
 import logging
 
-from .. import model
 from ..container import _workspace_container_name, _workspace_name_slug
 from .safe_websocket import SafeWebSocket
 from .constants import log_ws_msg
@@ -12,40 +11,6 @@ from .session import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-async def get_presence_list(
-    workspace_id: str, sockets: WebSocketState
-) -> list[dict]:
-    """Return deduplicated list of users connected to a workspace."""
-    session = sockets.get_session(workspace_id)
-    if not session:
-        return []
-    seen: set[str] = set()
-    users: list[dict] = []
-    for sock in session.subscribers:
-        conn = sockets.connections.get(sock)
-        if conn and conn.user["id"] not in seen:
-            seen.add(conn.user["id"])
-            users.append(
-                {
-                    "user_id": conn.user["id"],
-                    "user_email": conn.user["email"],
-                    "user_handle": conn.user.get("handle", ""),
-                }
-            )
-    # Include agent only if its RPC process is alive in this workspace.
-
-    if sockets.app.state.agents.is_running(workspace_id):
-        agent_user = await sockets.app.state.model.users.get_agent_user()
-        users.append(
-            {
-                "user_id": model.AGENT_USER_ID,
-                "user_email": agent_user["email"],
-                "user_handle": agent_user.get("handle", ""),
-            }
-        )
-    return users
 
 
 async def reset_workspace_state(
@@ -85,33 +50,16 @@ async def disconnect_user(
 async def refresh_user_handle(
     sockets: WebSocketState, user_id: str, new_handle: str
 ) -> None:
-    """Update the cached handle on all active connections for a user,
-    re-broadcast presence, and post a system chat message to each
-    affected workspace."""
-    old_handle: str | None = None
-    affected_workspaces: set[str] = set()
-    user_email: str = ""
+    """Update the cached handle on all active connections for a user.
+
+    The per-connection ``user`` dict carries the handle read at
+    connect time; a rename must propagate to every live connection so
+    subsequent frames (terminal window labels, shared-terminal
+    attribution) show the new handle.
+    """
     for conn in list(sockets.connections.values()):
         if conn.user["id"] == user_id:
-            if old_handle is None:
-                old_handle = conn.user.get("handle", "")
-                user_email = conn.user.get("email", "")
             conn.user["handle"] = new_handle
-            if conn.workspace_id:
-                affected_workspaces.add(conn.workspace_id)
-    for ws_id in affected_workspaces:
-        session = sockets.get_session(ws_id)
-        if session:
-            presence = await get_presence_list(ws_id, sockets)
-            session.broadcast({"type": "presence_list", "users": presence})
-            sys_msg = await sockets.app.state.model.chat.add_chat_message(
-                ws_id,
-                user_id,
-                user_email,
-                f"{old_handle} is now known as {new_handle}",
-                message_type=model.MSG_SYSTEM,
-            )
-            session.broadcast({"type": "chat_message", **sys_msg})
 
 
 def send_event(

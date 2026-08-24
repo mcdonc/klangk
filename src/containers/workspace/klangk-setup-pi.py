@@ -128,8 +128,7 @@ def build_agent_context():
     regardless of cwd (its always-loaded global slot). The prior behavior wrote
     ``$HOME/AGENTS.md`` (home root) to interop with Claude, which is no longer
     shipped in the base image; Pi reads the global context file from
-    ``~/.pi/agent/`` instead. This serves both the chat agent (``pi --mode rpc``)
-    and any human running ``pi`` directly.
+    ``~/.pi/agent/`` instead. This serves any human running ``pi`` directly.
     """
     agent = _agent_dir()
     agent.mkdir(parents=True, exist_ok=True)

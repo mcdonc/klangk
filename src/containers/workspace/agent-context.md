@@ -186,18 +186,11 @@ history and finish it" or "explain this error" — what they mean is their
 
 ### Whose session is "mine"?
 
-This context serves two readers, and "my" resolves differently for each:
-
-- **A human running `pi` directly in their terminal** is themselves. Their own
-  tmux session is named after their user id, which is in the `$KLANGKWS_USER_ID`
-  env var in their shell (and their handle in `$KLANGKWS_USER_HANDLE`). "My
-  history" is `tmux capture-pane -t $KLANGKWS_USER_ID:…`.
-- **The chat agent** has no user identity of its own — it runs as the `klangk`
-  service user, and its process env has no `KLANGKWS_USER_ID`. When a user pings
-  it in chat, the asking user's identity (handle, id, home, and tmux session)
-  is injected into the prompt for that request. "My history" = the asking
-  user's session, taken from that injection. (If no identity was provided, ask
-  rather than guessing which session is meant.)
+This context serves a human running `pi` directly in their terminal. You are
+yourself. Your own tmux session is named after your user id, which is in the
+`$KLANGKWS_USER_ID` env var in your shell (and your handle in
+`$KLANGKWS_USER_HANDLE`). "My history" is
+`tmux capture-pane -t $KLANGKWS_USER_ID:…`.
 
 ## The LLM proxy
 

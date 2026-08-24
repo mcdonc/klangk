@@ -29,7 +29,6 @@ nav = [
     { "Server Scheduling" = "features/server-scheduling.md" },
     { "Egress Filtering" = "features/egress-filtering.md" },
     { "Sandbox" = "features/sandbox.md" },
-    { "Chat" = "features/chat.md" },
     { "File Viewer" = "features/file-viewer.md" },
     { "AI Coding Harnesses" = "features/ai-coding-harnesses.md" },
     { "Feature Activation" = "features/features.md" },

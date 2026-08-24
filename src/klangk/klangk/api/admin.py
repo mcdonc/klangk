@@ -811,7 +811,6 @@ ALL_PERMISSIONS = [
     "code-in-shared-terminals",
     "share-terminals",
     "files",
-    "chat",
     "share",
     "manage_members",
     "admin",

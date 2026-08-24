@@ -513,16 +513,6 @@ class CaddyRenderer:
             "		}\n"
             "	}\n"
         )
-        # nginx uses ``location =`` (exact) for this endpoint; mirror
-        # it with a ``path`` matcher (exact by default) so e.g.
-        # /api/v1/workspaces/post-chat-message/other does not match.
-        post_chat = (
-            "	@postchat path /api/v1/workspaces/post-chat-message\n"
-            "	handle @postchat {\n"
-            f"{guard}"
-            f"		reverse_proxy {upstream}\n"
-            "	}\n"
-        )
         # #2319: the sidecar's egress-sidecar WebSocket (held-egress verdicts).
         # The site-level forward_auth validates the sidecar's workspace JWT,
         # then this handle proxies the WS upgrade to the app. The sidecar sends
@@ -538,7 +528,7 @@ class CaddyRenderer:
             "		}\n"
             "	}\n"
         )
-        return not_src_matcher + egress_ws + llm + delegate + post_chat
+        return not_src_matcher + egress_ws + llm + delegate
 
     def _egress_site(self, upstream: str, container_srcs: str) -> str:
         """The full container-egress site block (headless + full both render it)."""
@@ -586,7 +576,9 @@ class CaddyRenderer:
         # default, 0 disables hosted ports. Compare against None so a
         # legitimate 0 is not swallowed by an `or`.
         _ports = self.app.state.settings.hosted_ports_per_workspace
-        if (_ports if _ports is not None else DEFAULT_PORTS_PER_WORKSPACE) == 0:
+        if (
+            _ports if _ports is not None else DEFAULT_PORTS_PER_WORKSPACE
+        ) == 0:
             return "	handle /hosted/* {\n		respond 404\n	}\n"
         return (
             "	@hostedSlashless path_regexp hostedsl ^/hosted/[^/]+/([0-9]+)$\n"

@@ -268,7 +268,7 @@ class MemoryPressureEvictor:
 
     One workspace per poll while pressure persists (each stop frees
     memory asynchronously — podman removal is slow), least-recently-
-    active first, and never a workspace with live terminal/browser/chat
+    active first, and never a workspace with live terminal/browser
     subscribers while an idle one exists. Recovery above the hysteresis
     threshold ends the episode.
     """
@@ -348,11 +348,10 @@ class MemoryPressureEvictor:
         as an LRU). Workspaces with any live terminal/browser subscriber
         are never candidates while an idle one exists, and workspaces
         already in a stop path (``registry.stopping``) are skipped so a
-        concurrent stop/idle-stop is not double-processed. Chat needs
-        no separate check: a chat participant holds the same workspace
-        WebSocket as a terminal user (``session.subscribers``) — the
-        subscriber set covers terminal, browser, and chat clients
-        alike (#2627 review).
+        concurrent stop/idle-stop is not double-processed. Every
+        workspace client holds the same workspace WebSocket
+        (``session.subscribers``) — the subscriber set covers
+        terminal and browser clients alike (#2627 review).
         Workspaces pinned "never stop" — per-workspace ``idle_timeout``
         of 0, the pin auto-started boot services use so the idle monitor
         leaves them alone (#1244) — are also skipped: a pin must mean

@@ -789,8 +789,8 @@ class KlangkSettings(BaseSettings):
     # mode (browser UI + API + hosted apps on ``listen {listen}:{port};``).
     port: str | None = None
     # egress_port: the container-egress port the proxy listens on for
-    # container→backend traffic (``/llm-proxy``, ``/api/v1/browser-delegate``,
-    # ``/api/v1/workspaces/post-chat-message``). Serves both headless and full
+    # container→backend traffic (``/llm-proxy``, ``/api/v1/browser-delegate``).
+    # Serves both headless and full
     # modes. Default ``8995``. Must differ from ``port`` so ingress vs egress
     # can be firewalled separately (#1542). ``None`` here is a sentinel —
     # ``_resolve_socket_and_ports`` resolves it to ``"8995"`` (or folds the
@@ -963,7 +963,7 @@ class KlangkSettings(BaseSettings):
     # one per poll — until availability recovers to
     # memory_eviction_recovery_percent (hysteresis, so availability
     # hovering at the threshold cannot flap-evict). Workspaces with
-    # live terminal/browser/chat clients are never chosen while an idle
+    # live terminal/browser clients are never chosen while an idle
     # one exists; evictions use the normal idle-stop path (state
     # preserved, next connect restarts) and emit a distinct
     # ``workspace_evicted`` WS event. Protects the host — and klangkd

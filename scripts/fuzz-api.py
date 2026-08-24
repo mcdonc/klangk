@@ -557,13 +557,6 @@ ENDPOINTS: list[tuple[str, str, dict | None, dict | None]] = [
         {"action": "string", "data": "value"},
         None,
     ),
-    # Chat
-    (
-        "POST",
-        f"{P}/workspaces/post-chat-message",
-        {"workspace_id": "uuid", "message": "string"},
-        None,
-    ),
     # LLM proxy (#2072)
     ("GET", "/llm-proxy/models", None, None),
     (

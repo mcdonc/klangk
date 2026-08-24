@@ -197,8 +197,8 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     # Position counter is global across all groups (no collisions).
     positions = sorted(e["position"] for e in entries)
     assert positions == list(range(len(entries)))
-    # 1 owner ACE + 1 + 5 + 7 + 2 group ACEs.
-    assert len(entries) == 1 + 1 + 5 + 7 + 2
+    # 1 owner ACE + 1 + 4 + 6 + 2 group ACEs.
+    assert len(entries) == 1 + 1 + 4 + 6 + 2
 
 
 async def test_create_workspace_with_acl_rollback_on_seeding_failure(

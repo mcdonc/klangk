@@ -6,7 +6,6 @@ without creating a cycle.  Objects that would otherwise create circular
 dependencies between sibling modules are placed here.
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -46,54 +45,3 @@ def log_ws_msg(direction: str, msg: dict, user: dict | None = None) -> None:
     else:
         who = f" [{user['email']}]" if user else ""
         logger.debug("WS %s%s: %s", direction, who, json.dumps(msg)[:200])
-
-
-# ---------------------------------------------------------------------------
-# Agent-task state lives here (not in agent_mention) to break the
-# session → agent_mention → session cycle.
-# ---------------------------------------------------------------------------
-
-# Per-workspace agent conversation state.
-# user_id: who started the conversation
-# time: monotonic timestamp of the last agent exchange
-# interjected: True after a different human spoke
-agent_conversations: dict[str, dict] = {}
-
-# Active agent tasks per workspace, for abort support.
-agent_tasks: dict[str, asyncio.Task] = {}
-
-
-def cancel_agent_task(workspace_id: str) -> None:
-    """Cancel and drop any in-flight agent run for a workspace.
-
-    There is a single agent-run slot per workspace, so a new run must
-    supersede (cancel) any still-running one — otherwise the earlier
-    task is orphaned and can no longer be reached by an abort.
-    """
-    task = agent_tasks.pop(workspace_id, None)
-    if task is not None and not task.done():
-        task.cancel()
-
-
-def drop_agent_task_if_current(workspace_id: str) -> None:
-    """Remove the workspace's agent-task entry only if it is *this* run.
-
-    A superseding mention cancels the prior run and installs a newer
-    task, so a finishing (or cancelled) run must not pop an entry that
-    now belongs to its replacement.
-    """
-    if agent_tasks.get(workspace_id) is asyncio.current_task():
-        agent_tasks.pop(workspace_id, None)
-
-
-def clear_agent_mention_state() -> None:
-    """Cancel all in-flight agent runs and drop conversation context.
-
-    Used by the SIGHUP runtime-restart path to avoid orphaned LLM
-    requests and stale conversation state outliving their containers.
-    Mirrors the per-workspace cleanup in ``reset_workspace`` but across
-    every workspace at once.
-    """
-    for ws_id in list(agent_tasks):
-        cancel_agent_task(ws_id)
-    agent_conversations.clear()

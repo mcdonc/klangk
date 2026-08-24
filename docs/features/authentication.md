@@ -75,7 +75,7 @@ password change requires your current password. Validation is enforced the
 same way on every surface (and again, authoritatively, on the server):
 
 - **handle** — lowercase, `[a-z0-9._-]+`, at most 32 characters. Changing
-  it affects your terminal home directory and how others see you in chat,
+  it affects your terminal home directory and how others see you,
   so the TUI and CLI confirm before applying it.
 - **email** — must be a well-formed address. The account is marked
   unverified and a verification email is sent to the new address; verify it

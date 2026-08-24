@@ -23,7 +23,6 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "code-in-isolation",
         "spectate-on-shared-terminals",
         "files",
-        "chat",
     ],
     "collaborators": [
         "terminal",
@@ -32,7 +31,6 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "spectate-on-shared-terminals",
         "share-terminals",
         "files",
-        "chat",
     ],
     "spectators": [
         "terminal",
@@ -657,11 +655,6 @@ class WorkspacesModel:
             # Clean up port allocations
             await db.execute(
                 "DELETE FROM port_allocations WHERE workspace_id = ?",
-                (workspace_id,),
-            )
-            # Clean up chat messages
-            await db.execute(
-                "DELETE FROM chat_messages WHERE workspace_id = ?",
                 (workspace_id,),
             )
             return True

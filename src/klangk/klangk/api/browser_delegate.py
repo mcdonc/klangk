@@ -120,6 +120,3 @@ async def browser_delegate_stream(
         ),
         media_type="application/x-ndjson",
     )
-
-
-# --- Container-to-chat API (workspace JWT auth) ---

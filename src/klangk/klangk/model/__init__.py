@@ -1,10 +1,10 @@
 """Data-access layer.
 
-Historically all database access — users, workspaces, ACL, chat, ports,
+Historically all database access — users, workspaces, ACL, ports,
 login attempts, and the schema — lived in a single ~2000-line
 ``model.py``.  That module has been split into per-domain submodules
 (``db``, ``schema``, ``users``, ``acl``, ``workspaces``, ``ports``,
-``chat``, ``login_attempts``, ``tokens``, ``invitations``), and each
+``login_attempts``, ``tokens``, ``invitations``), and each
 domain is exposed as an ``XModel(app_state)`` method-bearing class
 composed under :class:`~klangk.model.model.Model`.
 
@@ -73,12 +73,6 @@ from .ports import (
     port_in_use,
     scan_free_ports,
 )
-from .chat import (
-    MSG_AGENT,
-    MSG_SYSTEM,
-    MSG_USER,
-    MENTION_RE,
-)
 from .egress_consent import (
     DECISION_ALLOWED,
     DECISION_DENIED,
@@ -140,11 +134,6 @@ __all__ = (
     "port_in_use",
     "free_port",
     "scan_free_ports",
-    # chat — message-type constants + mention regex
-    "MSG_AGENT",
-    "MSG_SYSTEM",
-    "MSG_USER",
-    "MENTION_RE",
     # egress consent — decision constants
     "DECISION_ALLOWED",
     "DECISION_DENIED",

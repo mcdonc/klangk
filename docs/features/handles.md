@@ -3,9 +3,7 @@
 Every Klangk user has a unique handle (e.g., `@alice`). Handles are
 used throughout the platform:
 
-- **Chat** — @mention other users in workspace chat messages
 - **Terminal** — your `$HOME` directory is `/home/<handle>/`
-- **Presence** — avatar tooltips show your handle in the workspace
 - **Shared terminals** — shared tabs are prefixed with the owner's
   handle (e.g., `alice:build`)
 

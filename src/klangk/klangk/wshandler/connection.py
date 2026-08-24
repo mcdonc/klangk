@@ -1,6 +1,5 @@
 """Connection: per-WebSocket connection state and command handlers."""
 
-import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -10,24 +9,13 @@ from .. import container, model
 from ..exceptions import NodeDrainingError
 from ..terminal import TerminalSession
 from ..podman import ExecSession, PodmanError
-from .constants import (
-    agent_conversations,
-    agent_tasks,
-    cancel_agent_task,
-)
 from .safe_websocket import SafeWebSocket, WS_ERRORS
 from .helpers import (
     send_error,
     send_event,
     format_idle_timeout,
     format_container_info,
-    get_presence_list,
     get_shared_terminals,
-)
-from .agent_mention import (
-    handle_agent_mention,
-    mentions_agent,
-    addresses_other_user,
 )
 from .session import WorkspaceSession
 from .controllers import (
@@ -350,65 +338,6 @@ class Connection:
 
         logger.info("Container ready for workspace %s", workspace_id)
 
-    async def _send_chat_history(self, workspace_id: str) -> None:
-        """Send chat history to the connecting user."""
-        # Read-path perm gate (#1976): a user without the ``chat`` perm gets no
-        # chat history on connect, mirroring the send-path gate on
-        # handle_chat_send. The frontend used to hide the chat panel for such
-        # users; now that chat is a feature tab, gate the data too so a
-        # no-perm user can't read history even with the tab visible.
-        if not await self._has_perm("chat"):
-            return
-        chat_history = await self.app.state.model.chat.get_chat_messages(
-            workspace_id
-        )
-        if chat_history:
-            self.sock.send_json(
-                {"type": "chat_history", "messages": chat_history}
-            )
-
-    async def _broadcast_join(
-        self, workspace_id: str, rejoining: bool
-    ) -> None:
-        """Send presence list and broadcast join to other subscribers."""
-        presence = await get_presence_list(
-            workspace_id, self.app.state.sockets
-        )
-        self.sock.send_json({"type": "presence_list", "users": presence})
-        session = self.app.state.sockets.get_session(workspace_id)
-        if session and not rejoining:
-            join_msg = {
-                "type": "presence_join",
-                "user_id": self.user["id"],
-                "user_email": self.user["email"],
-                "user_handle": self.user["handle"],
-            }
-            for sock in list(session.subscribers):
-                if sock is self.sock:
-                    continue
-                # A subscriber mid-teardown (its dispatch ``finally`` has
-                # already stopped the sender, but ``cleanup()`` — which does
-                # podman I/O before removing it from the set — has not
-                # finished) raises on send. That must not abort the
-                # *connecting* client's handler. Discard only stopped
-                # sockets: a queue-full error means a slow-but-live client
-                # whose own dispatch loop handles the drop — unsubscribing
-                # it here would silently zombie it (#2623).
-                try:
-                    sock.send_json(join_msg)
-                except WS_ERRORS:
-                    if sock.stopped:
-                        session.subscribers.discard(sock)
-
-            sys_msg = await self.app.state.model.chat.add_chat_message(
-                workspace_id,
-                self.user["id"],
-                self.user["email"],
-                f"{self.user.get('handle') or self.user['email']} joined",
-                message_type=model.MSG_SYSTEM,
-            )
-            session.broadcast({"type": "chat_message", **sys_msg})
-
     async def handle_workspace_connect(self, msg: dict) -> None:
 
         t_connect_start = time.monotonic()
@@ -487,19 +416,9 @@ class Connection:
             }
         )
 
-        await self._send_chat_history(workspace_id)
-
-        if self.container_id:
-            asyncio.create_task(self._start_agent_if_needed())
-
-        rejoining = self.app.state.sockets.cancel_pending_leave(
-            workspace_id, self.user["id"]
-        )
-        await self._broadcast_join(workspace_id, rejoining)
-
         logger.info(
-            "workspace-open: send chat history, members, and "
-            "presence to client: %.3fs",
+            "workspace-open: send members and shared terminals to "
+            "client: %.3fs",
             time.monotonic() - t_post,
         )
 
@@ -671,165 +590,6 @@ class Connection:
                 self.container_id
             )
 
-    async def handle_chat_send(self, msg: dict) -> None:
-        workspace_id = self.workspace_id
-        if not workspace_id:
-            send_error(self.sock, "Not connected to a workspace")
-            return
-        # Defense in depth: chat is reachable here by anyone connected,
-        # but it can drive the agent -- an @mention (or follow-up) routes to
-        # a subprocess that can make workspace changes -- so it is a
-        # privileged channel, not a passive one. Require the ``chat``
-        # permission at the send path rather than merely assuming it from
-        # role membership (#1136). Spectators no longer receive ``chat``
-        # (see _ROLE_GROUP_PERMISSIONS). NOTE: this reads the materialized
-        # ACL, so it does not by itself repair workspaces seeded before
-        # that change (their stale spectators ``chat`` ACE still passes);
-        # no migration is shipped -- no production deployments yet -- so
-        # the role change covers new workspaces and this gate enforces the
-        # model going forward.
-        if not await self._has_perm("chat"):
-            send_error(self.sock, "chat_send requires chat permission")
-            return
-        text = msg.get("message", "").strip()
-        if not text:
-            return
-        chat_msg = await self.app.state.model.chat.add_chat_message(
-            workspace_id, self.user["id"], self.user["email"], text
-        )
-        session = self.app.state.sockets.get_session(workspace_id)
-        if session:
-            session.broadcast({"type": "chat_message", **chat_msg})
-
-        # Route to agent on @mention or natural follow-up.
-        #
-        # After an @mention, the same user's messages route to the
-        # agent indefinitely until someone else speaks (interjection).
-        # After interjection, a 30s window applies — follow-ups from
-        # the original user still route within that window.  Messages
-        # starting with @someone-else always break the conversation.
-        should_route = False
-        user_id = self.user["id"]
-        conv = agent_conversations.get(workspace_id)
-
-        if await mentions_agent(text, self.app):
-            should_route = True
-            agent_conversations[workspace_id] = {
-                "user_id": user_id,
-                "time": time.monotonic(),
-                "interjected": False,
-            }
-        elif conv and not await addresses_other_user(text, self.app):
-            if user_id == conv["user_id"]:
-                if not conv["interjected"]:
-                    # No interjection — route indefinitely
-                    should_route = True
-                    conv["time"] = time.monotonic()
-                elif time.monotonic() - conv["time"] < 30:
-                    # Interjected but within 30s window
-                    should_route = True
-                    conv["time"] = time.monotonic()
-                else:
-                    # Window expired
-                    del agent_conversations[workspace_id]
-            else:
-                # Different human speaking — mark interjection
-                conv["interjected"] = True
-        elif conv:
-            # Addressed to someone else — break conversation
-            del agent_conversations[workspace_id]
-
-        if should_route and self.container_id:
-            # One agent-run slot per workspace: cancel any in-flight run
-            # so concurrent @mentions don't orphan the earlier task.
-            # Pass the asking user's identity so the agent can resolve
-            # "my" (its process has no user identity of its own).
-            cancel_agent_task(workspace_id)
-            agent_tasks[workspace_id] = asyncio.create_task(
-                handle_agent_mention(
-                    self.app.state.sockets,
-                    workspace_id,
-                    self.container_id,
-                    text,
-                    user_id=self.user.get("id"),
-                    user_handle=self.user.get("handle"),
-                    user_home=self._user_home,
-                )
-            )
-
-    async def handle_chat_delete(self, msg: dict) -> None:
-        workspace_id = self.workspace_id
-        if not workspace_id:
-            return
-        message_id = msg.get("message_id", "")
-        if not message_id:
-            return
-        deleted = await self.app.state.model.chat.delete_chat_message(
-            message_id, self.user["id"]
-        )
-        if deleted:
-            session = self.app.state.sockets.get_session(workspace_id)
-            if session:
-                session.broadcast(
-                    {
-                        "type": "chat_updated",
-                        "message_id": message_id,
-                        "message": "<message deleted by author>",
-                    }
-                )
-
-    async def handle_chat_load_more(self, msg: dict) -> None:
-        workspace_id = self.workspace_id
-        if not workspace_id:
-            return
-        # Read-path perm gate (#1976): no chat-history pagination without
-        # the ``chat`` perm (mirrors handle_chat_send).
-        if not await self._has_perm("chat"):
-            send_error(self.sock, "chat_load_more requires chat permission")
-            return
-        before_id = msg.get("before_id", "")
-        if not before_id:
-            return
-        limit = min(msg.get("limit", 50), 100)
-        messages = await self.app.state.model.chat.get_chat_messages_before(
-            workspace_id, before_id, limit
-        )
-        self.sock.send_json(
-            {
-                "type": "chat_history_page",
-                "messages": messages,
-                "has_more": len(messages) == limit,
-            }
-        )
-
-    async def _start_agent_if_needed(self) -> None:
-        """Start the Pi RPC agent so it shows in presence."""
-        try:
-            session = await self.app.state.agents.get_session(
-                self.workspace_id
-            )
-            await session.ensure_started()
-            # Broadcast updated presence now that agent is alive
-            if self.workspace_id:
-                ws_session = self.app.state.sockets.get_session(
-                    self.workspace_id
-                )
-                if ws_session:
-                    presence = await get_presence_list(
-                        self.workspace_id, self.app.state.sockets
-                    )
-                    ws_session.broadcast(
-                        {"type": "presence_list", "users": presence}
-                    )
-        except Exception:
-            logger.debug("Failed to start agent eagerly", exc_info=True)
-
-    async def handle_chat_agent_abort(self) -> None:
-        workspace_id = self.workspace_id
-        if not workspace_id:
-            return
-        cancel_agent_task(workspace_id)
-
     async def handle_ui_ready(self) -> None:
         if self.workspace_id:
             sess = self.app.state.sockets.get_session(self.workspace_id)
@@ -919,21 +679,7 @@ class Connection:
         )
         if session:
             empty = await session.remove_subscriber(self.sock)
-            if not empty:
-                # Schedule a debounced presence_leave if user has no
-                # other connections.  If they reconnect within the delay
-                # window the leave (and re-join) are suppressed.
-                still_connected = any(
-                    self.app.state.sockets.connections.get(s) is not None
-                    and self.app.state.sockets.connections[s].user["id"]
-                    == self.user["id"]
-                    for s in session.subscribers
-                )
-                if not still_connected:
-                    self.app.state.sockets.schedule_pending_leave(
-                        workspace_id, self.user, session
-                    )
-            else:
+            if empty:
                 # Lock is released by remove_subscriber, so use the
                 # lock-acquiring version.
                 await self.app.state.sockets.remove_session(workspace_id)

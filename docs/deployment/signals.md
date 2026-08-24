@@ -37,8 +37,7 @@ What happens, in order:
 5. Accept no new requests, close every WebSocket client (uvicorn's own
    exit sequence). A second Ctrl-C during the quiesce or drain skips the
    rest of the graceful work and forces the exit immediately.
-6. Tear down chat-agent subprocesses and cancel in-flight agent runs.
-7. Dispose the database engine and remove the PID file.
+6. Dispose the database engine and remove the PID file.
 
 Net effect: a _full_ stop with clean client-visible shutdown frames.
 Workspaces go away; on the next start, `auto_start` brings back any
@@ -100,9 +99,8 @@ authenticated WebSocket clients receive a `server_recycle` event with a
    automatically by the live CORS middleware; `KLANGKD_FRONTEND_DIR` is
    remounted if it changed (#1610).
 6. **Recycle the runtime** — close every WebSocket client with close
-   code `1012` ("service restarted"), tear down chat-agent subprocesses
-   and in-flight agent runs, stop the idle/health/crash background
-   loops, then re-run container-side startup: pre-warm podman,
+   code `1012` ("service restarted"), stop the idle/health/crash
+   background loops, then re-run container-side startup: pre-warm podman,
    adopt/reap leftover containers, restart the loops, and `auto_start`
    any workspaces configured for it.
 7. **Resume** — broadcast `host_started`. Both the web UI and

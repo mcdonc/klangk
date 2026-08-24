@@ -94,7 +94,7 @@ async def db(app_state):
 
 @pytest.fixture
 async def agent_user(app_state):
-    """Seed the chat agent user into the DB."""
+    """Seed the agent user into the DB."""
     from klangk.model import AGENT_USER_ID
 
     await app_state.state.model.init_db()

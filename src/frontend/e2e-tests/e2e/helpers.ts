@@ -319,11 +319,11 @@ export async function seedFile(
   }
 }
 
-/** Tap the Files tab in the workspace IDE (owner has 5 tabs: Terminal, Files,
- *  Chat, Sharing, Settings; the tab bar sits at y~76). */
+/** Tap the Files tab in the workspace IDE (owner has 4 tabs: Terminal, Files,
+ *  Sharing, Settings; the tab bar sits at y~76). */
 export async function openFilesTab(page: Page) {
   const { width } = vp(page);
-  const tabWidth = width / 5;
+  const tabWidth = width / 4;
   await flutterClick(page, tabWidth + tabWidth / 2, 76);
   await page.waitForTimeout(300);
 }

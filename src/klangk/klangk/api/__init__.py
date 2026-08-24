@@ -1,7 +1,7 @@
 """API route handlers for the Klangk backend.
 
 Historically every HTTP route — auth, workspaces, members, ACL, files,
-admin, images, OIDC, browser-delegate, chat, imports/exports — lived in a
+admin, images, OIDC, browser-delegate, imports/exports — lived in a
 single ~2800-line ``api.py``.  That module has been split into per-domain
 submodules, each mounting its own sub-router:
 
@@ -12,7 +12,6 @@ submodules, each mounting its own sub-router:
     files.py           file navigation / operations
     images.py          image + volume listing
     browser_delegate.py  browser bridge
-    chat.py            container-to-chat
     admin.py           users / groups / invitations / ACL admin
 
 This package builds the main ``router`` by including every sub-router
@@ -60,7 +59,6 @@ from . import (
     admin as _admin_routes,
     auth as _auth_routes,
     browser_delegate as _browser_routes,
-    chat as _chat_routes,
     files as _files_routes,
     images as _images_routes,
     llm_proxy as _llm_proxy_routes,
@@ -244,11 +242,6 @@ async def get_config(
         )
         config["netfilter_enabled"] = app.state.netfilter.enabled()
     config.update(app.state.features.frontend_config())
-    # Whether the chat agent is on for this deploy (#1977): the chat
-    # feature active AND KLANGKWS_FEATURE_CHAT_AGENT_ENABLED set. A bool so
-    # the frontend can hide the agent from mention autocomplete + the agent UI
-    # when the agent is off.
-    config["chat_agent_enabled"] = not app.state.agents.is_disabled()
     # KLANGKD_FEATURES_ENABLE: the deploy's chosen active-feature list,
     # forwarded verbatim so the frontend can resolve the active set against
     # its sibling features.json (canonical semantics — see #1655). None when
@@ -283,7 +276,6 @@ ALL_PERMISSIONS = [
     "code-in-shared-terminals",
     "share-terminals",
     "files",
-    "chat",
     "share",
     "manage_members",
     "admin",
@@ -338,7 +330,6 @@ router.include_router(_workspace_routes.router)
 router.include_router(_files_routes.router)
 router.include_router(_images_routes.router)
 router.include_router(_browser_routes.router)
-router.include_router(_chat_routes.router)
 router.include_router(_admin_routes.router)
 
 # LLM proxy routes live at /llm-proxy/ (outside /api/v1/) so they are

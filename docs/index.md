@@ -1,6 +1,6 @@
 # Klangk: Multi-User AI Sandboxing, Collaboration and Coding Platform
 
-[![Klangk workspace with terminal and chat](assets/screenshot.png)](assets/screenshot.png)
+[![Klangk workspace with terminal](assets/screenshot.png)](assets/screenshot.png)
 
 ## Why Klangk?
 
@@ -12,7 +12,7 @@ risking your host system or other projects.
 
 **For teams:** Klangk adds multi-user collaboration on top of
 sandboxing. Share workspaces with teammates, pair-program through
-shared terminals, chat alongside your AI agent, and control access
+shared terminals, and control access
 with per-user roles and permissions within the same isolated
 containers.
 
@@ -34,11 +34,9 @@ run agents, and tear it down when you're done.
 ### AI Agent Integration
 
 Harnesses like Pi can run inside workspace containers
-with full terminal access. The built-in chat agent ([the chat agent](features/chat.md)) can
-answer questions, run commands, and edit files, confined to the workspace.
+with full terminal access, confined to the workspace.
 
 - Any OpenAI-compatible LLM provider (Ollama, cloud APIs, self-hosted)
-- Agent responses stream into chat alongside human conversation
 - [Pi extensions](features/ai-coding-harnesses.md) for browser
   automation, MCP tools, and more
 
@@ -52,7 +50,6 @@ real time.
   collaborators, spectators
 - [Shared terminals](features/terminal.md) with live input for
   pair programming
-- [Chat](features/chat.md) with @mentions and message history
 - [File viewer](features/file-viewer.md) with drag-and-drop upload,
   preview for code, markdown, images, PDFs, video, and spreadsheets
 

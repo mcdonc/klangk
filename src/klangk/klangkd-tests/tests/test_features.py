@@ -1027,11 +1027,79 @@ class TestFeaturesEnable:
         assert p.features_enable() == "soliplex"
 
 
+class TestRemovedFeaturesWarning:
+    """A removed feature name in KLANGKD_FEATURES_ENABLE boots fine but logs a
+    tailored warning (#2716: the chat feature was removed; warn-and-ignore,
+    not fail-fast)."""
+
+    def _env(self, tmp_path, enable):
+        return {"KLANGKD_FEATURES_ENABLE": enable}
+
+    def test_removed_name_warns(self, tmp_path, caplog):
+        _write_manifest(
+            tmp_path,
+            {"features": [], "defaults": [], "container_env_keys": []},
+        )
+        with caplog.at_level("WARNING", logger="klangk.features"):
+            _features(tmp_path, self._env(tmp_path, "celebrate,chat"))
+        assert any(
+            "feature 'chat' was removed" in r.message for r in caplog.records
+        )
+        # Boots fine (no exception). Note: an explicit deploy list is honored
+        # verbatim by is_enabled, but nothing gates on the removed name
+        # server-side, and the frontend resolves it against the manifest —
+        # where the feature no longer exists — so it stays inert.
+
+    def test_active_names_do_not_warn(self, tmp_path, caplog):
+        _write_manifest(
+            tmp_path,
+            {
+                "features": [{"name": "celebrate"}],
+                "defaults": [],
+                "container_env_keys": [],
+            },
+        )
+        with caplog.at_level("WARNING", logger="klangk.features"):
+            _features(tmp_path, self._env(tmp_path, "celebrate"))
+        assert not any("was removed" in r.message for r in caplog.records)
+
+    def test_unset_does_not_warn(self, tmp_path, caplog):
+        _write_manifest(
+            tmp_path,
+            {"features": [], "defaults": [], "container_env_keys": []},
+        )
+        with caplog.at_level("WARNING", logger="klangk.features"):
+            _features(tmp_path)
+        assert not any("was removed" in r.message for r in caplog.records)
+
+    def test_reconfigure_warns_on_new_settings(self, tmp_path, caplog):
+        _write_manifest(
+            tmp_path,
+            {"features": [], "defaults": [], "container_env_keys": []},
+        )
+        p = _features(tmp_path)
+        with caplog.at_level("WARNING", logger="klangk.features"):
+            p.reconfigure(
+                types.SimpleNamespace(
+                    state=types.SimpleNamespace(
+                        settings=make_settings(
+                            {
+                                "KLANGKD_FRONTEND_DIR": str(tmp_path),
+                                "KLANGKD_FEATURES_ENABLE": "chat",
+                            }
+                        )
+                    )
+                )
+            )
+        assert any(
+            "feature 'chat' was removed" in r.message for r in caplog.records
+        )
+
+
 class TestIsEnabled:
     """is_enabled(name) resolves the active-feature set server-side (#1974),
     mirroring _resolveActiveFeatures in main.dart so the server gates on the
-    same set the UI shows. Prerequisite for feature-gating backend subsystems
-    (the chat agent, #1685) instead of bespoke env vars."""
+    same set the UI shows."""
 
     def test_unset_uses_defaults_membership(self, tmp_path):
         # Unset → manifest defaults: a default feature is active; a compiled-in

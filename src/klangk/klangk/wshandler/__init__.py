@@ -3,8 +3,7 @@
 Historically all WebSocket handling lived in a single ~3000-line
 ``wshandler.py``.  That module has been split into per-concern
 submodules (``constants``, ``safe_websocket``, ``session``,
-``controllers``, ``connection``, ``agent_mention``, ``dispatch``,
-``helpers``).
+``controllers``, ``connection``, ``dispatch``, ``helpers``).
 
 This package re-exports every public (and the few private) names from
 those submodules so existing call sites keep working unchanged, e.g.::
@@ -27,12 +26,7 @@ from .constants import (
     MAX_INPUT_SIZE as MAX_INPUT_SIZE,
     SEND_QUEUE_SIZE as SEND_QUEUE_SIZE,
     WS_DEBUG as WS_DEBUG,
-    agent_conversations as agent_conversations,
-    agent_tasks as agent_tasks,
-    cancel_agent_task as cancel_agent_task,
-    drop_agent_task_if_current as drop_agent_task_if_current,
     log_ws_msg as log_ws_msg,
-    clear_agent_mention_state as clear_agent_mention_state,
 )
 from .safe_websocket import (
     SafeWebSocket as SafeWebSocket,
@@ -51,13 +45,6 @@ from .controllers import (
     TerminalController as TerminalController,
 )
 from .connection import Connection as Connection
-from .agent_mention import (
-    _ANY_MENTION_RE as _ANY_MENTION_RE,
-    addresses_other_user as addresses_other_user,
-    get_agent_mention_re as get_agent_mention_re,
-    handle_agent_mention as handle_agent_mention,
-    mentions_agent as mentions_agent,
-)
 from .decider import handle_consent_decider as handle_consent_decider
 from .sidecar import handle_egress_sidecar as handle_egress_sidecar
 from .dispatch import (
@@ -68,7 +55,6 @@ from .dispatch import (
 from .helpers import (
     format_container_info as format_container_info,
     format_idle_timeout as format_idle_timeout,
-    get_presence_list as get_presence_list,
     get_shared_terminals as get_shared_terminals,
     send_event as send_event,
     disconnect_all_websockets as disconnect_all_websockets,

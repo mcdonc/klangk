@@ -12,11 +12,11 @@ One continuous story across a single evolving workspace, **`demo`**, created
 on camera in Scene 2 and kept alive through every scene after. State
 accumulates shot to shot:
 
-| Workspace  | Born in                                   | Owner               | Role in the video                                                                                                                                                                                                                                                   |
-| ---------- | ----------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace  | Born in                                   | Owner               | Role in the video                                                                                                                                                                                                                                                  |
+| ---------- | ----------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **`demo`** | Scene 2 (`klangk create demo`, on camera) | `admin@example.com` | **Hero.** Kept alive through every scene after. Accumulates: cloned klangk repo + Pi session (Sc 2) → klangk's Flask app `app.py`/`requirements.txt` (Sc 5) → debugged, running app (Sc 5b) → browsed files + Pyramid PDF (Sc 6) → shared with the team (Sc 7/7b). |
-| `openclaw` | Scene 3 (`klangk sandbox openclaw`)       | `admin@example.com` | Self-contained sandbox + service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 3b/4.                                                                                                                            |
-| Potemkin   | Pre-seeded (see Accounts below)           | various             | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                                |
+| `openclaw` | Scene 3 (`klangk sandbox openclaw`)       | `admin@example.com` | Self-contained sandbox + service feature demo. Stays in the list (green health icon); its Service tab + hosted app are shown in Sc 3b/4.                                                                                                                           |
+| Potemkin   | Pre-seeded (see Accounts below)           | various             | Decorative — fill every account's list so it looks lived-in. Never opened on camera.                                                                                                                                                                               |
 
 **Rules:**
 
@@ -24,8 +24,8 @@ accumulates shot to shot:
 - **Do not `klangk rm demo` during the run** — it must survive into the next
   scene. `rm` is mentioned verbally in Sc 2 as the eventual cleanup, not
   executed on `demo`.
-- Record the browser arc (Sc 4→5→5b→6→7→7b) **in order**, against the same live
-  `demo` container, so klangk's files / chat history / running app carry
+- Record the browser arc (Sc 4→5b→6→7→7b) **in order**, against the same live
+  `demo` container, so klangk's files / running app carry
   forward.
 - **Code note:** the Playwright scenes currently each spin up their _own_ fresh
   workspace + user. To realize continuity they must be refactored to share
@@ -38,8 +38,8 @@ accumulates shot to shot:
 - [ ] Klangk server running locally; reach it at `http://localhost:8995`.
 - [ ] `KLANGKD_ALLOW_AUTOSTART=1` set on the server (required for the
       Sc 3/3b service scene).
-- [ ] **Real LLM key configured** for the proxy. The klangk chat scene AND the
-      openclaw scene both depend on the LLM proxy actually working. Test it.
+- [ ] **Real LLM key configured** for the proxy. The openclaw scene depends
+      on the LLM proxy actually working. Test it.
 - [ ] `jq` installed locally (for the `klangk monitor | jq .` beat).
 - [ ] For Sc 3b's unhealthy beat: `KLANGKD_HEALTH_CHECK_INTERVAL=10` set (snappier
       flip on camera; product default is 30s). Needs a **full** backend restart
@@ -65,11 +65,10 @@ script firing synthetic events.
 - **Don't add beats the script doesn't call for.** A scene shows exactly what
   its narration describes — no extra clicking around to "fill time" or
   "tour" UI the narration hasn't introduced. In particular: **do not click
-  through the nav tabs (Files/Chat/Sharing/Settings) in Scene 4.** The line
-  "the web UI has features beyond the terminal — files, chat, and
-  collaboration. Let me show those" is a **hand-off to Scenes 5/6/7**, not an
-  instruction to click through them here. (Scene 5 opens by clicking the Chat
-  tab — touring it in Sc 4 spoils that reveal.)
+  through the nav tabs (Files/Sharing/Settings) in Scene 4.** The line
+  "the web UI has features beyond the terminal — files, and
+  collaboration. Let me show those" is a **hand-off to Scenes 6/7**, not an
+  instruction to click through them here.
 - **Don't type commands just to produce output.** Where the script's point is
   continuity (the terminal already shows prior state from the CLI), show the
   existing scrollback — don't type a fresh `echo`/`ls` that overwrites or
@@ -158,7 +157,7 @@ Klangk lets you quickly give every project its own isolated Linux container with
 
 If you're a solo developer, you'll probably interact with Klangk mostly via its CLI, which lets you create workspaces, login via an SSH-like interface, mount directories from your home system, copy files between your host system and the container, and use version control like GitHub.
 
-Meanwhile, if you're on a team, you can use Klangk to share workspaces, pair-program in shared terminals, and chat alongside your AI through a web browser.
+Meanwhile, if you're on a team, you can use Klangk to share workspaces and pair-program in shared terminals through a web browser.
 
 Klangk can be run as a Docker container or using raw hardware on MacOS or
 Linux.
@@ -353,7 +352,7 @@ _[Click the "+" next to the terminal tab bar to open a new tab, then double-clic
 
 I can create multiple interactive terminal tabs, rename them, close them. And these aren't trapped in the browser — any tab I create here can be connected to from the CLI too, with `klangk shell`. The web UI and the CLI are just two ways into the same sessions.
 
-But the web UI has features beyond the terminal — files, chat, and collaboration. Let me show those.
+But the web UI has features beyond the terminal — files, and collaboration. Let me show those.
 
 > **Production —** _on screen:_ browser — workspace list, then the `demo`
 > workspace. _pre-roll:_ `demo` from Sc 2 (cloned repo + Pi session in its tmux);
@@ -363,44 +362,12 @@ But the web UI has features beyond the terminal — files, chat, and collaborati
 > continuity lands hardest if the cloned repo / Pi scrollback are genuinely still
 > in `demo`'s terminal (record Sc 4 right after Sc 2's state is in place); wording
 > is "tabs created here **can be connected to from the CLI**", not "show up in the
-> CLI". **Do NOT tour the nav tabs** (Files/Chat/Sharing/Settings) here, and **do
+> CLI". **Do NOT tour the nav tabs** (Files/Sharing/Settings) here, and **do
 > NOT type `echo`/`ls` to manufacture output** — the terminal-continuity beat is
 > **showing the existing CLI scrollback**, not adding to it. (See "Interaction on
 > camera" above.) The rename beat is right-click the new tab → "Rename" →
 > triple-click-select-all in the field → type "scratch" → click OK (all mouse;
 > no `Ctrl+A`, no `Enter`).
-
-## Scene 5 — AI Agent — klangk (1.5 minutes)
-
-Still in the `demo` workspace, I'll click over to the Chat tab.
-
-_[Click the Chat tab in the left rail]_
-
-Every workspace comes with a built-in AI agent. By default it's called klangk, and it's available **only through chat** — you talk to it by @mentioning it, not by running it in a terminal yourself.
-
-_[Type: @klangk what is my hostname]_
-
-The agent runs Pi inside the container. It can read and write files, run shell commands, and answer questions — all confined to this workspace's sandbox.
-
-_[Wait ~30s. klangk's reply appears]_
-
-There it is. Now here's something important about the security model. My LLM API key — the key that talks to the AI provider — never enters the container. Klangk runs a reverse proxy (nginx) on the host that injects the key into requests. Inside the container, Pi just talks to a local proxy URL. So even if the container were compromised, the API key isn't there.
-
-_[Click the Terminal tab in the left rail, then type: env, wait for 10 seconds]_
-
-And I can prove it. Here's the full environment of the container — no API keys, no secrets, nothing to steal. The key only exists on the host, in the proxy.
-
-One thing worth being clear about: klangk is a **chat agent**, not a coding-agent harness. It does no tool calling, and you can't add skills or prompts to it — it's a fixed, built-in assistant scoped to the workspace. If what you want is a full harness you can extend and drive yourself, that's the next section.
-
-> **Production —** _on screen:_ browser → Chat tab, still in `demo` (Sc 4).
-> _pre-roll:_ agent functional (LLM key working); test the exact prompt
-> off-camera. This is a read-only Q&A — klangk answers in chat, creates no
-> files, so `demo` is left untouched (the Flask app for Sc 5b/6 is built by pi
-> in Sc 5b). _reset:_ none — re-run freely. _gotchas:_ **live/nondeterministic**
-> — one long take, leave dead air; needs a working key (proxy 401 kills the
-> scene); klangk is a chat-only agent (no tool calling), so an uptime-style
-> question is answered from its training data, not by running a command —
-> verify the response is acceptable before keeping the take.
 
 ## Scene 5b — Debugging with The Pi Harness (~2.5 minutes)
 
@@ -501,24 +468,24 @@ Klangk renders common formats right in the browser — PDFs, images, spreadsheet
 > `admin@example.com`) and **Scene 7b** (the teammate, `teammate@example.com`)
 > — that tell the **same conversation twice, each from one side**. The other
 > party's half is driven by a **WebSocket sidechannel** (terminal input into
-> the shared terminal; chat messages sent as the other user), so each recording
+> the shared terminal), so each recording
 > shows a coherent solo view. The two clips are then **intercut in the edit**
 > (DaVinci) — owner shares → cut to teammate seeing the shared tab appear;
-> owner types → cut to teammate watching it land; owner @mentions klangk → cut
-> to teammate's reaction. Combined edited length ~1.5–2 min (the two overlap,
+> owner types → cut to teammate watching it land; the team converges in the
+> shared terminal. Combined edited length ~1.5–2 min (the two overlap,
 > they don't add).
 >
 > Recording one window at a time sidesteps the prior approach's failure: two
 > browser windows fighting for the foreground under the matchbox/Xvfb recorder,
 > so the wrong window (the teammate's) was captured instead of the owner's.
 
-_[Screen: browser, the `demo` workspace, the owner's single window. The Flask app from Sc 5b and the chat history from Sc 5 are still here.]_
+_[Screen: browser, the `demo` workspace, the owner's single window. The Flask app from Sc 5b is still here.]_
 
 I've been working solo in the `demo` workspace. Now let me bring the team in.
 
 _[Click the Sharing tab in the left rail]_
 
-I can share this workspace with other users. Klangk has four roles: **Owners** have full control; **Coders** get their own terminal and file access but can only watch shared terminals; **Collaborators** can type in shared terminals alongside the owner; and **Spectators** are read-only — they can watch shared terminals, but can't type or send chat.
+I can share this workspace with other users. Klangk has four roles: **Owners** have full control; **Coders** get their own terminal and file access but can only watch shared terminals; **Collaborators** can type in shared terminals alongside the owner; and **Spectators** are read-only — they can watch shared terminals, but can't type.
 
 _[In the Sharing panel, the teammate is already listed as a Collaborator]_
 
@@ -540,44 +507,37 @@ _[Mouse over the shared-tab viewer count — shows 1 viewer]_
 
 The tab shows a viewer count so I know when someone's watching.
 
-Chat is shared too — everyone in the workspace sees messages in real time, including the AI agent's responses. Let me switch to the Chat tab.
+The whole team can jump into the same terminal — here the designer and the
+reviewer chime in without leaving their own workspaces.
 
-_[Click the Chat tab]_
+_[Lines appear in the same shared terminal: echo 'designer: can we add a simple landing page?' and echo 'reviewer: yeah - minimal, just a headline and a button']_
 
-_[A message from designer@example.com appears: "hey, can we add a simple landing page?"]_
+_[Type: echo 'nice - lets wire that button up next' as the teammate's line]_
 
-_[A message from reviewer@example.com appears: "yeah — minimal, just a headline and a button"]_
-
-_[Type into the chat box: @klangk scaffold a simple Flask landing page with a headline and a button, then click Send]_
-
-_[Wait up to ~120s for klangk's reply — leave dead air, narrate over later]_
-
-_[A message from teammate@example.com appears: "nice — let's wire that button up next"]_
-
-So you can collaborate with both humans and AI in the same space.
+So the shared terminal becomes the team's single place to work.
 
 > **Production —** _on screen:_ browser, **single window** — the owner's view of
 > `demo`. _pre-roll:_ `demo` shared with `teammate@` as Collaborator (seeded);
-> Flask app + chat history from Sc 5/5b present; `designer@`/`reviewer@` seeded.
+> Flask app from Sc 5b present; `designer@`/`reviewer@` seeded.
 > _sidechannels (the teammate + designer + reviewer halves of the conversation,
 > driven over WS so the owner's solo recording shows a live conversation):_
 >
 > - **teammate** WS: `join_shared_terminal` (the scratch window the owner
 >   shared) → send `terminal_input` `echo 'teammate typing back'\r` (writes to
 >   the shared pty; appears in the owner's shared terminal) timed ~2s after the
->   owner's line echoes; later send `chat_send` "nice — let's wire that button up
->   next" ~3s after klangk's reply lands.
-> - **designer** WS: `chat_send` "hey, can we add a simple landing page?".
-> - **reviewer** WS: `chat_send` "yeah — minimal, just a headline and a button".
+>   owner's line echoes; later `echo 'nice - lets wire that button up next'` in
+>   the shared terminal.
+> - **designer** WS: `terminal_input` `echo 'designer: can we add a simple landing page?'`.
+> - **reviewer** WS: `terminal_input` `echo 'reviewer: yeah - minimal, just a headline and a button'`.
 >
 > _visible (owner, real mouse + keyboard):_ Sharing tab tour; right-click the
-> scratch tab → Share (badge appears); type `echo 'owner typing here'`; open
-> Chat; type the `@klangk` prompt + click Send. _timing:_ the sidechannel beats must land at
+> scratch tab → Share (badge appears); type `echo 'owner typing here'`.
+> _timing:_ the sidechannel beats must land at
 > the _same cadence_ as Scene 7b's mirrored beats so the two clips intercut
 > cleanly — keep a shared beat sheet with offsets. _reset:_ unshare / re-share.
 > _gotchas:_ share the **scratch** tab (a plain shell), never the `bash` tab
 > where pi is still alive from Sc 5b — typing into pi pollutes its context ahead
-> of Sc 8; the @-autocomplete must close before Send (trailing space, then click
+> of Sc 8; (trailing space, then click
 > the Send button — no `Enter`); verify off-camera that the `terminal_input`
 > sidechannel actually lands in the shared pty (the joiner's session must be
 > non-read-only — Collaborators satisfy this).
@@ -604,19 +564,14 @@ _[Type: echo 'teammate typing back' — echoed back]_
 
 And I can type right back. Same terminal, same output, both of us writing.
 
-_[Click the Chat tab]_
+The whole team's here too — the designer and reviewer are chiming into the
+same shared terminal from their own workspaces.
 
-_[designer@example.com: "hey, can we add a simple landing page?"]_
-_[reviewer@example.com: "yeah — minimal, just a headline and a button"]_
-_[owner@example.com: "@klangk scaffold a simple Flask landing page with a headline and a button"]_
+_[Lines appear in the shared terminal: echo 'designer: can we add a simple landing page?' and echo 'reviewer: yeah - minimal, just a headline and a button']_
 
-The whole team's in the chat — including the owner asking the AI to build something.
+_[Type: echo 'nice - lets wire that button up next']_
 
-_[Wait for klangk's reply]_
-
-_[Type into the chat box: nice — let's wire that button up next, then click Send]_
-
-So I'm pair-programming with the owner and talking to the team and the AI — all in one shared workspace.
+So I'm pair-programming with the whole team — all in one shared workspace.
 
 > **Production —** _on screen:_ browser, **single window** — the teammate's view
 > of `demo`. _pre-roll:_ the owner has shared the workspace + shared the scratch
@@ -625,17 +580,15 @@ So I'm pair-programming with the owner and talking to the team and the AI — al
 >
 > - **owner** WS: `share_window` (scratch) before the teammate's view loads;
 >   send `terminal_input` `echo 'owner typing here'\r` ~2s after the teammate
->   joins the shared terminal; send `chat_send` "@klangk scaffold a simple Flask
->   landing page with a headline and a button" timed with the beat.
-> - **designer** + **reviewer** WS: their `chat_send` lines, at the same cadence
+>   joins the shared terminal.
+> - **designer** + **reviewer** WS: their `terminal_input` lines, at the same cadence
 >   as Sc 7.
 >
 > _visible (teammate, real mouse + keyboard):_ log in + open `demo`; click the
-> shared tab to join; type `echo 'teammate typing back'`; open Chat; type the
-> reaction + click Send. _gotchas:_ the teammate is a **Collaborator** — 3 nav
-> tabs only (Terminal / Files / Chat; no Sharing, no Settings) — that is
-> correct, not a bug; klangk fires once per recording (each take triggers its
-> own reply — fine, you only keep one side's klangk beat in the cut); keep the
+> shared tab to join; type `echo 'teammate typing back'`; type the reaction.
+> _gotchas:_ the teammate is a **Collaborator** — 2 nav
+> tabs only (Terminal / Files; no Sharing, no Settings) — that is
+> correct, not a bug; keep the
 > conversation text and cadence identical to Sc 7 so the intercut lines up.
 
 ## Scene 8 — Features (45 seconds)
@@ -671,7 +624,7 @@ The admin panel lets you manage users and groups, send email invitations, and co
 
 ## Scene 10 — Closing (30 seconds)
 
-So that's some of Klangk. For solo developers: sandboxed containers you manage from the CLI, one-command project setup with `klangk sandbox`, SSH agent forwarding so your keys just work, and workspaces that can run always-on services with auto-start and health checks. For teams: shared workspaces, pair programming through shared terminals, real-time chat with an AI agent, and role-based access control. All self-hosted, all open source.
+So that's some of Klangk. For solo developers: sandboxed containers you manage from the CLI, one-command project setup with `klangk sandbox`, SSH agent forwarding so your keys just work, and workspaces that can run always-on services with auto-start and health checks. For teams: shared workspaces, pair programming through shared terminals, and role-based access control. All self-hosted, all open source.
 
 Most containers auto-stop after an idle timeout to save resources, but your files persist. You can get started with a single Docker command or clone the repo and use devenv for development.
 

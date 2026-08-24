@@ -51,10 +51,6 @@ _WS_CONNECTION_COMMANDS: dict[str, tuple[str, bool]] = {
     "ssh_agent_data": ("handle_ssh_agent_data", True),
     "ssh_agent_stop": ("handle_ssh_agent_stop", False),
     "heartbeat": ("handle_heartbeat", False),
-    "chat_send": ("handle_chat_send", True),
-    "chat_delete": ("handle_chat_delete", True),
-    "chat_load_more": ("handle_chat_load_more", True),
-    "chat_agent_abort": ("handle_chat_agent_abort", False),
 }
 
 # Commands dispatched to the shared `state` object instead of a

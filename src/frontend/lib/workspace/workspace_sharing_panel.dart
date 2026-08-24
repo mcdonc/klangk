@@ -26,10 +26,9 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
 
   static const _roleDescriptions = {
     'owners': 'Full admin access',
-    'coders':
-        'Use isolated terminals, spectate on shared terminals, files, chat',
+    'coders': 'Use isolated terminals, spectate on shared terminals, files',
     'collaborators':
-        'Use isolated and shared terminals, share terminals, files, chat',
+        'Use isolated and shared terminals, share terminals, files',
     'spectators': 'Watch shared terminals',
   };
 
@@ -51,9 +50,10 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
     final order = {
       for (var i = 0; i < _roleOrder.length; i++) _roleOrder[i]: i,
     };
-    return List.of(_roles)..sort(
-      (a, b) => (order[a['role']] ?? 99).compareTo(order[b['role']] ?? 99),
-    );
+    return List.of(_roles)
+      ..sort(
+        (a, b) => (order[a['role']] ?? 99).compareTo(order[b['role']] ?? 99),
+      );
   }
 
   @override

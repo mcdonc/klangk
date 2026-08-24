@@ -93,7 +93,6 @@ bare install does not surface them. Opt in by adding them to
 
 | Feature      | What it does                                                                                                    | Activate                                      |
 | ------------ | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `chat`       | Workspace chat surface + opt-in chat agent ([#1976](https://github.com/mcdonc/klangk/issues/1976))           | add `chat` to `KLANGKD_FEATURES_ENABLE`       |
 | `word-count` | File-stats tool for Pi (lines, words, characters, size) ([#1700](https://github.com/mcdonc/klangk/issues/1700)) | add `word-count` to `KLANGKD_FEATURES_ENABLE` |
 | `soliplex`   | Soliplex knowledge-base tools (list/query/reply, multi-turn RAG)                                                | add `soliplex` to `KLANGKD_FEATURES_ENABLE`   |
 
@@ -118,24 +117,6 @@ directory unconditionally — so a workspace pi agent registers soliplex's
 no Soliplex server is reachable, so they are harmless on a non-Soliplex
 install, but they do appear in the tool list. Per-feature workspace-side gating
 is a follow-up, not part of the current model.
-
-### `chat`
-
-The workspace chat surface + chat AI agent, extracted into a compiled-in
-feature ([#1976](https://github.com/mcdonc/klangk/issues/1976)). It is dormant
-by default — a bare install shows no chat tab — because chat (and the agent it
-can host) is an opt-in surface, not core workspace plumbing. Add `chat` to
-`KLANGKD_FEATURES_ENABLE` to surface the chat tab.
-
-The agent is a **second, independent opt-in** layered on the feature:
-enabling `chat` shows the tab but does **not** spawn the chat agent. The
-`pi --mode rpc` agent subprocess starts only when `chat` is active **and**
-`KLANGKWS_FEATURE_CHAT_AGENT_ENABLED` is set (`1`/`true`/`yes`; default off).
-So _tab on + agent off_ is a valid state — the chat surface is visible, but
-`@klangk` mentions are ignored until the agent is enabled. See [Chat](chat.md)
-for the fixed agent identity (#2718) and the LLM backend the agent
-needs. The agent became opt-in (off by default) in #1977; previously it was on
-by default.
 
 ## Additional features (not compiled in by default)
 

@@ -6,7 +6,7 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 
 - **Resources**: paths in a tree that mirror the URL structure (`/`, `/workspaces`, `/workspaces/{id}`, `/admin`, `/admin/users`, etc.)
 - **Principals**: who the ACE applies to — a specific user, a group, or a system principal (`Everyone` or `Authenticated`)
-- **Permissions**: what action is allowed or denied (e.g., `view`, `create`, `edit`, `delete`, `terminal`, `files`, `chat`, `share`, `*`)
+- **Permissions**: what action is allowed or denied (e.g., `view`, `create`, `edit`, `delete`, `terminal`, `files`, `share`, `*`)
 - **ACEs**: `(Allow/Deny, principal, permission)` entries ordered by position on a resource
 - **ACL walk**: when checking permission, the system walks from the target resource up to `/`, checking each node's ACEs in order. First match wins. If no match after reaching root, access is denied.
 
@@ -73,11 +73,9 @@ Groups replace the old role system. A group is a named collection of users. Two 
 
 ## Workspace Permissions
 
-When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files, chat.
+When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files.
 
-**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, and `chat`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
-
-**Tab visibility**: workspace tabs (Terminal, Files, Chat, Sharing, Settings) are gated by per-resource permissions. A shared user without `chat` permission won't see the Chat tab.
+**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, and `files`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
 
 **Permissions checked on workspace resources**:
 
@@ -86,7 +84,6 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `view`     | Can see the workspace exists                                      |
 | `terminal` | Can open a terminal / exec commands                               |
 | `files`    | Can browse/upload/download files                                  |
-| `chat`     | Can see the Chat tab                                              |
 | `edit`     | Can change workspace settings (name, image, command, mounts, env) |
 | `share`    | Can manage who has access (Sharing tab)                           |
 | `delete`   | Can delete the workspace                                          |

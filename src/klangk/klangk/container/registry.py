@@ -589,7 +589,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         service_command: str | None,
         setup_state: str | None,
     ) -> None:
-        """Provision the agent home and fire the service command.
+        """Fire the service command for a freshly-created container.
 
         Called at the single choke point: every freshly-created container
         (the tail of :meth:`start_container`). Idempotent via
@@ -601,11 +601,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         ``"pending"`` at create, and the fire lands later once setup
         completes and the WS connect path runs.
         """
-        agent_home = await self.app.state.agents.ensure_agent_home(
-            workspace_id, container_id
-        )
         if not service_command:
             return
+        # The agent identity's home is materialized by the per-user-home
+        # population step (#2717) under both layouts; resolving the path
+        # is cheap -- no provisioning needed here anymore (the chat
+        # agent-home provisioning was removed with the chat feature).
+        agent_home = f"/home/{await self.app.state.model.users.agent_handle()}"
         await self.app.state.terminal.ensure_service_session(
             container_id,
             agent_home,
