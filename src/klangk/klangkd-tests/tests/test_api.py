@@ -2091,30 +2091,26 @@ class TestWorkspaceRoutes:
         assert by_name["home-off"]["per_handle_home"] is False
 
     async def test_create_per_handle_home_inherits_config_default(
-        self, client, user, app
+        self, client, user, app, monkeypatch
     ):
         # #2719: an unset field follows KLANGKD_PER_HANDLE_HOME (read live
         # off settings at create time).
-        monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(app.state.settings, "per_handle_home", False)
-        try:
-            headers = await _auth_headers(client)
-            resp = await client.post(
-                "/api/v1/workspaces",
-                headers=headers,
-                json={"name": "cfg-dflt"},
-            )
-            assert resp.status_code == 200
-            assert resp.json()["per_handle_home"] is False
-            # An explicit value still wins over the deploy default.
-            resp = await client.post(
-                "/api/v1/workspaces",
-                headers=headers,
-                json={"name": "cfg-over", "per_handle_home": True},
-            )
-            assert resp.json()["per_handle_home"] is True
-        finally:
-            monkeypatch.undo()
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "cfg-dflt"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["per_handle_home"] is False
+        # An explicit value still wins over the deploy default.
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "cfg-over", "per_handle_home": True},
+        )
+        assert resp.json()["per_handle_home"] is True
 
     async def test_create_duplicate(self, client, user):
         headers = await _auth_headers(client)
@@ -3689,6 +3685,25 @@ class TestWorkspaceRoutes:
         assert data["mounts"] == ["/tmp:/mnt/tmp"]
         assert data["env"] == {"FOO": "bar"}
         assert data["id"] != ws_id
+        assert data["per_handle_home"] is True  # copied from the source
+
+    async def test_duplicate_workspace_copies_shared_home(self, client, user):
+        # #2719: duplicate copies the source's per_handle_home, including
+        # an explicit False (a shared-home workspace duplicates as one).
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "shared-src", "per_handle_home": False},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/duplicate",
+            json={"name": "shared-dup"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["per_handle_home"] is False
 
     async def test_duplicate_workspace_no_permission(
         self, client, user, app_state
@@ -8341,6 +8356,36 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "from-archive"
+
+    async def test_import_follows_per_handle_home_deploy_default(
+        self, client, admin_user, user, app, monkeypatch
+    ):
+        # #2719: an import creates a NEW workspace, so per_handle_home
+        # follows KLANGKD_PER_HANDLE_HOME like a silent POST does (the
+        # archive does not carry the flag — that's #2722).
+        import io
+        import json
+        import tarfile
+
+        monkeypatch.setattr(app.state.settings, "per_handle_home", False)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(self._meta(name="imported-shared")).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["per_handle_home"] is False
 
     async def test_import_rejects_foreign_instance(self, client, user):
         import io

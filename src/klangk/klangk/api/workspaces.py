@@ -389,7 +389,9 @@ class UpdateWorkspaceRequest(BaseModel):
     # next start/restart, not on the live container (PR #2248 review N3).
     egress_mode: Literal["static", "interactive", "allow"] | None = None
     # Like egress_mode, per_handle_home takes effect on the next
-    # connect/start, never on a live session (#2719).
+    # connect/start, never on a live session (#2719). Note an explicit
+    # null stores 0 (shared) via the truthy coercion — same as
+    # auto_start; only POST's null means "inherit the deploy default".
     per_handle_home: bool | None = None
 
 
@@ -557,7 +559,7 @@ async def duplicate_workspace(
             rejected_domains=source.get("rejected_domains"),
             settings=source.get("settings"),
             egress_mode=source.get("egress_mode"),
-            per_handle_home=source.get("per_handle_home", True),
+            per_handle_home=source.get("per_handle_home"),
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -1127,6 +1129,11 @@ async def import_workspace(
                 rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=meta["egress_mode"],
+                # An import creates a NEW workspace, so it follows the
+                # deploy default (KLANGKD_PER_HANDLE_HOME) like a silent
+                # POST does. The archive does not carry the flag —
+                # export/import preservation is chunk 4 (#2722).
+                per_handle_home=app.state.settings.per_handle_home,
             )
         except SAIntegrityError:
             raise HTTPException(

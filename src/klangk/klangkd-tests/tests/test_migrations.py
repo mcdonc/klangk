@@ -86,7 +86,7 @@ class TestRunner:
             # Migration 0008: no agent row exists on a fresh DB before
             # seeding (UPDATE is a no-op); recorded above.
 
-            # Re-run: nothing new applied, still exactly five records.
+            # Re-run: nothing new applied, still exactly nine records.
             await app_state.state.model.init_db()
             assert await _recorded(db) == expected
 
@@ -356,7 +356,7 @@ class TestValidation:
         )
 
 
-class TestPerUserHome:
+class TestPerHandleHome:
     async def test_upgrade_adds_column_and_backfills_true(
         self, temp_data_dir, app_state
     ):

@@ -160,7 +160,8 @@ operators or integrators to act when upgrading.
   current behavior; `false` = a shared klangk home. Overridable per
   workspace via the new `per_handle_home` field on `POST /workspaces`
   (and editable later with `PUT /workspaces/{id}` — a flip applies from
-  the next connect/start); exposed in `GET /workspaces` payloads.
+  the next connect/start); exposed in `GET /workspaces` payloads;
+  duplicates copy it, imports follow the deploy default.
   Reloadable on SIGHUP. See
   [Environment variables](reference/environment.md).
 - **Admin page → Server tab (#2684).** Admins can now schedule a server
