@@ -41,8 +41,10 @@ operators or integrators to act when upgrading.
   workspace permission is removed from the known-permissions list and the
   sharing UI; the agent user identity (DB row, handle, inactivity-sweep
   exemption) and its ownership of the `service` tmux session are unchanged.
-  `KLANGKWS_AGENT_HOME` survives as the constant `/home/klangk`, and
-  `klangk-setup-pi` stays as the generic per-user Pi setup.
+  The agent home is still materialized at container create — now a plain
+  `/home/klangk` directory (no `.users/{uid}` symlink indirection; the
+  handle is fixed) populated from `/etc/skel`, without chat-agent Pi
+  config. `klangk-setup-pi` stays as the generic per-user Pi setup.
 
 - **The agent user is `klangk` (#2718).** The agent's identity is fixed
   (handle `klangk`, email `klangk@example.com`) and matches the container

@@ -751,9 +751,10 @@ class WebSocketState:
         Used when an account is disabled (admin action or the inactivity
         sweep): close code 4001 makes the client log out rather than
         reconnect-loop. Only the sockets are closed — each handler's own
-        ``finally`` block then runs the normal disconnect cleanup
-        (presence leave, session bookkeeping), the same as a natural
-        client disconnect. Returns how many connections were closed.
+        ``finally`` block then runs the normal disconnect cleanup, the same
+        as a natural
+        client disconnect (session bookkeeping, terminal teardown), the same
+        as a natural disconnect. Returns how many connections were closed.
         """
         socks = [
             sock

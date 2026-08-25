@@ -82,11 +82,11 @@ def _stub_bringup(monkeypatch):
     """Block every container-mechanics test from spawning real processes.
 
     ``start_container`` calls ``ContainerRegistry._bringup`` at the create
-    choke point (#1244), which otherwise reaches
-    ``agent.ensure_agent_home`` and spawns a real ``podman exec``
-    subprocess. These tests exercise port/sudo/reuse mechanics against a
-    fake ``new-cid`` — they must never touch real podman. Bring-up has its
-    own dedicated coverage (test_bringup.py).
+    choke point (#1244), which otherwise materializes the agent home and
+    spawns a real ``podman exec`` subprocess. These tests exercise
+    port/sudo/reuse mechanics against a fake ``new-cid`` — they must never
+    touch real podman. Bring-up has its own dedicated coverage
+    (test_bringup.py).
     """
     monkeypatch.setattr(container.ContainerRegistry, "_bringup", AsyncMock())
 

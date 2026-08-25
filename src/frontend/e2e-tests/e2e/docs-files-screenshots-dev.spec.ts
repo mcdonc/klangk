@@ -138,8 +138,8 @@ test.describe("files screenshots", () => {
     );
     await seedFile("/home/work/notes.txt", "TODO: add more features\n");
 
-    // Click Files tab (2nd of 5 tabs)
-    const tabWidth = width / 5;
+    // Click Files tab (2nd of 4 tabs)
+    const tabWidth = width / 4;
     await f.click({
       position: { x: tabWidth + tabWidth / 2, y: 76 },
       force: true,

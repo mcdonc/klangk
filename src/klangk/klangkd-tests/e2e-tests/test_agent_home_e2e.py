@@ -15,6 +15,8 @@ Run with: devenv shell -- test-backend-e2e
 import asyncio
 import base64
 import json
+import subprocess
+import time
 
 import httpx
 import pytest
@@ -29,6 +31,29 @@ from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 AGENT_HOME = "/home/klangk"
 
 
+def _container_id_for_workspace(workspace_id):
+    """Return the running workspace container id(s) for a workspace.
+
+    Looked up by the ``klangk.workspace`` correlation label + ``role=workspace``
+    (#2286) so we target the exact workspace, never a stale container from
+    another test/run (and never the network sidecar, which shares the label).
+    """
+    result = subprocess.run(
+        [
+            "podman",
+            "ps",
+            "--filter",
+            f"label=klangk.workspace={workspace_id}",
+            "--filter",
+            "label=klangk.role=workspace",
+            "-q",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return [c for c in result.stdout.strip().split() if c]
+
+
 @pytest.fixture(scope="module")
 def server():
     """Start a real Klangk server for the test module."""
@@ -39,6 +64,7 @@ def server():
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_ALLOW_AUTOSTART="1",
         LOGFIRE_TOKEN="",
     )
 
@@ -174,5 +200,55 @@ class TestAgentHomeE2E:
                 )
             finally:
                 await ws.close()
+        finally:
+            cleanup()
+
+    @pytest.mark.asyncio
+    async def test_agent_home_materialized_eagerly(self, server, auth):
+        """The agent home exists immediately after a container is brought
+        up via start_workspace — with NO WS connection preceding the check.
+
+        The agent identity never connects over the WebSocket, so the only
+        thing that materializes its home is the create choke point
+        (``_bringup`` → ``ensure_agent_home``): a plain ``/home/klangk``
+        directory populated with /etc/skel (so ``~/.profile`` exists for
+        the sandbox ``setup.sh`` contract and the ``service`` session).
+        auto_start=True routes creation through start_workspace, so the
+        container is up by the time the POST returned; we inspect the
+        filesystem directly via podman exec as root, independent of any
+        user's read permissions.
+        """
+        workspace_id, cleanup = create_workspace(
+            server, auth, auto_start=True, setup_state="complete"
+        )
+        try:
+            cids = []
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                cids = _container_id_for_workspace(workspace_id)
+                if cids:
+                    break
+                time.sleep(0.5)
+            assert cids, (
+                "eagerly-started container never appeared in podman ps"
+            )
+            cid = cids[0]
+
+            check = (
+                "test -d /home/klangk"
+                " && test -f /home/klangk/.profile"
+                " && echo ALL_PRESENT"
+            )
+            result = subprocess.run(
+                ["podman", "exec", "-u", "root", cid, "bash", "-c", check],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert "ALL_PRESENT" in result.stdout, (
+                f"agent home not materialized at /home/klangk"
+                f" (rc={result.returncode}):\n{result.stdout}\n"
+                f"--- stderr ---\n{result.stderr}"
+            )
         finally:
             cleanup()

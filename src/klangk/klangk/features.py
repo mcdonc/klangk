@@ -82,9 +82,10 @@ def warn_removed_features(raw: str | None) -> None:
     names = {part for part in (e.strip() for e in raw.split(",")) if part}
     for name in names & _REMOVED_FEATURES:
         logger.warning(
-            "feature 'chat' was removed from Klangk; ignoring it in "
+            "feature %r was removed from Klangk; ignoring it in "
             "KLANGKD_FEATURES_ENABLE (remove the entry to silence this "
-            "warning)"
+            "warning)",
+            name,
         )
 
 

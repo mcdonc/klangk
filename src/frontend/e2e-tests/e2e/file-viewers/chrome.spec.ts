@@ -104,7 +104,7 @@ test.describe("file-viewers/chrome", () => {
       await clickFileRow(page, 0);
 
       const { width } = vp(page);
-      const tabWidth = width / 5;
+      const tabWidth = width / 4;
       // Switch to Terminal (tab 0) and back to Files (tab 1).
       await flutterClick(page, tabWidth / 2, 76);
       await page.waitForTimeout(400);

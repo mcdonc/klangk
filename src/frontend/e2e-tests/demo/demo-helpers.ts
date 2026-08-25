@@ -645,16 +645,16 @@ export async function openWorkspaceDemo(
 // demoLogin. Measured by pixel analysis of the rendered workspace at each size:
 //   1080-tall: tab strip fracY ≈ 0.0704   (was the original, all-1080 value)
 //    540-tall: tab strip fracY ≈ 0.139    (tabs sit much lower proportionally)
-// Tabs are evenly spaced horizontally: fracX = (index + 0.5) / 5 (verified at
-// both sizes). The "+" (new-terminal) button sits at the far left of the tab
+// Tabs are evenly spaced horizontally: fracX = (index + 0.5) / tabCount
+// (verified at both sizes; 4 nav tabs since the chat feature was removed). The "+" (new-terminal) button sits at the far left of the tab
 // strip: fracX ≈ 0.05, fracY = the tab fracY.
 function tabFracY(height: number): number {
   return height <= 600 ? 0.139 : 0.0704;
 }
 
-/** Click a workspace nav tab by 0-based index (0=Terminal … 4=Settings) using
+/** Click a workspace nav tab by 0-based index (0=Terminal … 3=Settings) using
  *  the visible mouse cursor. */
-export async function openTab(page: Page, index: number, count = 5) {
+export async function openTab(page: Page, index: number, count = 4) {
   const { width, height } = vp(page);
   await mouseClick(
     page,

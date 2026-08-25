@@ -246,10 +246,10 @@ test.describe("Workspace export streaming (#700)", () => {
         )
         .toBeGreaterThan(0);
 
-      // --- 5. Open the Settings tab (5th of 5 owner tabs, at y~76).
+      // --- 5. Open the Settings tab (4th of 4 owner tabs, at y~76).
       const { width } = vp(page);
-      const tabWidth = width / 5;
-      await flutterClick(page, tabWidth * 4 + tabWidth / 2, 76);
+      const tabWidth = width / 4;
+      await flutterClick(page, tabWidth * 3 + tabWidth / 2, 76);
       await page.waitForTimeout(800);
 
       // --- 6. Click "Export Workspace" via its accessible role (it's left-

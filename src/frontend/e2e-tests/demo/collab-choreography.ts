@@ -42,7 +42,6 @@ import {
   ensureSharedWorkspace,
   openWorkspaceDemo,
   openTab,
-  openSharingTab,
   terminalTabCenterPx,
   connectWs,
   getMeId,
