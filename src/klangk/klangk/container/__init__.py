@@ -60,5 +60,6 @@ from .sidecar import NetworkSidecarMixin as NetworkSidecarMixin
 from .spec import (
     ContainerStartSpec as ContainerStartSpec,
     SHARED_HOME as SHARED_HOME,
+    SHARED_HOME_NAME as SHARED_HOME_NAME,
 )
 from .state import ContainerState as ContainerState

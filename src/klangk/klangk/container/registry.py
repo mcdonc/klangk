@@ -35,6 +35,7 @@ from .ports import (
 from .sidecar import NetworkSidecarMixin, container_ident
 from .spec import (
     ContainerStartSpec,
+    SHARED_HOME,
     _is_named_volume,
     _split_csv,
     build_create_kwargs,
@@ -1262,9 +1263,11 @@ class ContainerRegistry(NetworkSidecarMixin):
 
         # Build environment and mounts.
         t_env = time.monotonic()
-        # Resolve the agent home at this async seam (``build_env`` is
-        # sync) so every exec process inherits KLANGKWS_AGENT_HOME (#1157).
-        agent_home = f"/home/{await self.app.state.model.users.agent_handle()}"
+        # Every exec process inherits KLANGKWS_AGENT_HOME (#1157). The
+        # agent home is the constant shared home (#2720): the agent's
+        # handle is fixed (#2718), so this is no longer resolved from
+        # the DB at this seam.
+        agent_home = SHARED_HOME
         ssl_dir = self.app.state.ssl_trust.ssl_cert_dir()
         if ssl_dir:
             logger.info(
