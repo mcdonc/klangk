@@ -472,7 +472,10 @@ class Terminal:
         tmux ``-e HOME`` flag: the image's uid-1000 passwd home is
         ``/home`` (the mount point), so the podman-exec default is not
         the shared home. No ``per_handle_home`` branch exists on this
-        path.
+        path. The pin applies only at session creation; a ``service``
+        session that already exists (its container outliving a daemon
+        upgrade) keeps whatever HOME it was created with for the
+        remainder of that container's life.
 
         The service command fires iff the predicate holds (configured AND
         setup complete) AND the ``service-cmd`` window doesn't already

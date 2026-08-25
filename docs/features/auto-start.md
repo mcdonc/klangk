@@ -58,12 +58,13 @@ When the Klangk server starts, after initializing the database and
 cleaning up orphaned containers, it queries all workspaces with
 auto-start enabled and starts their containers. The shared home
 (`/home/klangk`) is created and populated from the image skeleton
-before anything else runs in the container, so a brand-new workspace
-boots correctly with no user ever having connected. If a workspace
-also has a [service command](service-command.md), the command runs in
-the workspace's `service-cmd` terminal window — so the service is
-already running by the time any user connects. Auto-started containers
-are pinned alive (they do not idle out between connections).
+before the service command's first login shell — and before any
+member's shell — so a brand-new workspace boots correctly with no user
+ever having connected. If a workspace also
+has a [service command](service-command.md), the command runs in the
+workspace's `service-cmd` terminal window — so the service is already
+running by the time any user connects. Auto-started containers are
+pinned alive (they do not idle out between connections).
 
 Users connect later with `klangk shell` and see the service output in
 the `service-cmd` tab. They can open another tab for a shell alongside

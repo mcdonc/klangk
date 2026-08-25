@@ -749,13 +749,43 @@ class TestEnsureSharedHome:
             assert shared_dir.is_dir()
             assert not shared_dir.is_symlink()
 
-            # Idempotent: second call does not re-populate (user
-            # customizations must never be clobbered by a recreate).
+            # Idempotent: once the home has content (the skel copy), a
+            # later create never re-populates (customizations must not
+            # be clobbered).
+            (shared_dir / ".profile").write_text("# populated\n")
             skel_mock.reset_mock()
             await app_state.state.workspaces.ensure_shared_home(
                 ws["id"], "cid"
             )
             skel_mock.assert_not_awaited()
+
+    async def test_failed_populate_retries_on_next_create(
+        self, user, app_state
+    ):
+        """The skel exec failure is swallowed, so a failed populate leaves
+        the home EMPTY — and emptiness is what gates the retry: the next
+        create re-populates instead of leaving the workspace profile-less
+        forever (the #2717 acceptance criterion is not best-effort)."""
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "shared-home-retry-ws"
+        )
+
+        with patch(
+            "klangk.workspaces.Workspaces.populate_home_skel",
+            new_callable=AsyncMock,
+        ) as skel_mock:
+            # First create: populate "fails" (mock does nothing) — the
+            # directory stays empty.
+            await app_state.state.workspaces.ensure_shared_home(
+                ws["id"], "cid"
+            )
+            assert skel_mock.await_count == 1
+            # Second create (container recreate): still empty → retried.
+            await app_state.state.workspaces.ensure_shared_home(
+                ws["id"], "cid-2"
+            )
+            assert skel_mock.await_count == 2
+            assert skel_mock.await_args.kwargs["home"] == "/home/klangk"
 
     async def test_populate_skel_home_override(self):
         """populate_home_skel(home=...) threads the override through; the
@@ -785,8 +815,9 @@ class TestEnsureSharedHome:
 
     async def test_adopts_legacy_chat_era_symlink(self, user, app_state):
         """A ``klangk`` symlink left by the chat-era provisioning (pointing
-        at ``.users/{AGENT_USER_ID}``) is adopted as-is — no removal, no
-        restructuring of existing volumes, and no skel re-population."""
+        at a non-empty ``.users/{AGENT_USER_ID}``) is adopted as-is — no
+        removal, no restructuring of existing volumes, and no skel
+        re-population."""
         from klangk.model import AGENT_USER_ID
 
         ws = await app_state.state.workspaces.create_workspace(
@@ -795,6 +826,7 @@ class TestEnsureSharedHome:
         home = app_state.state.workspaces.home_path(ws["id"])
         users = home / ".users" / AGENT_USER_ID
         users.mkdir(parents=True, exist_ok=True)
+        (users / ".profile").write_text("# legacy\n")  # non-empty target
         legacy = home / "klangk"
         legacy.symlink_to(f".users/{AGENT_USER_ID}")
 
@@ -805,7 +837,68 @@ class TestEnsureSharedHome:
             await app_state.state.workspaces.ensure_shared_home(
                 ws["id"], "cid"
             )
-        # A symlink already exists at the path: leave it be, no skel.
+        # A resolving symlink with content: leave it be, no skel.
         skel_mock.assert_not_awaited()
         assert legacy.is_symlink()
         assert os.readlink(legacy) == f".users/{AGENT_USER_ID}"
+
+    async def test_empty_adopted_symlink_target_gets_skel(
+        self, user, app_state
+    ):
+        """A legacy symlink onto an EMPTY target (the chat-era agent dir
+        never had content) is adopted but still populated through the
+        symlink — the service session's login shell needs a .profile
+        there."""
+        from klangk.model import AGENT_USER_ID
+
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "shared-home-empty-legacy-ws"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        (home / ".users" / AGENT_USER_ID).mkdir(parents=True, exist_ok=True)
+        legacy = home / "klangk"
+        legacy.symlink_to(f".users/{AGENT_USER_ID}")
+
+        with patch(
+            "klangk.workspaces.Workspaces.populate_home_skel",
+            new_callable=AsyncMock,
+        ) as skel_mock:
+            await app_state.state.workspaces.ensure_shared_home(
+                ws["id"], "cid"
+            )
+        skel_mock.assert_awaited_once_with(
+            "cid", model.AGENT_USER_ID, home="/home/klangk"
+        )
+        assert legacy.is_symlink()  # still adopted, not replaced
+
+    async def test_dangling_legacy_symlink_replaced_by_real_dir(
+        self, user, app_state
+    ):
+        """A DANGLING ``klangk`` symlink (chat-era target deleted) must not
+        crash create: ``mkdir(exist_ok=True)`` re-raises FileExistsError
+        on a dangling symlink, which would fail ``_bringup`` after the
+        container is already running (and it never runs again for that
+        container). The broken link is removed and a real directory
+        materialized instead (#2717)."""
+        from klangk.model import AGENT_USER_ID
+
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "shared-home-dangling-ws"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        dangling = home / "klangk"
+        dangling.symlink_to(f".users/{AGENT_USER_ID}")  # target absent
+
+        with patch(
+            "klangk.workspaces.Workspaces.populate_home_skel",
+            new_callable=AsyncMock,
+        ) as skel_mock:
+            # Must not raise.
+            await app_state.state.workspaces.ensure_shared_home(
+                ws["id"], "cid"
+            )
+        assert not dangling.is_symlink()
+        assert dangling.is_dir()
+        skel_mock.assert_awaited_once_with(
+            "cid", model.AGENT_USER_ID, home="/home/klangk"
+        )

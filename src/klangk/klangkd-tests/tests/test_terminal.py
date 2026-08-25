@@ -1567,6 +1567,40 @@ class TestEnsureServiceSession:
             "cid", SERVICE_SESSION, user_home="/home/klangk"
         )
 
+    async def test_service_session_argv_pins_home(self):
+        """The service session is created via a real tmux argv (not via a
+        mocked _ensure_tmux_session) whose ``-e HOME`` flag pins the
+        shared home — the argv-level contract, not just the kwarg
+        boundary (#2717)."""
+        with (
+            patch.object(
+                _terminal,
+                "has_tmux_session",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new=AsyncMock(
+                    side_effect=[
+                        (0, "", ""),  # tmux new-session -d -s service ...
+                        (0, "service-cmd\n", ""),  # window exists → noop
+                    ]
+                ),
+            ) as mock_exec,
+        ):
+            await _terminal.ensure_service_session("cid", "openclaw gateway")
+        new_session_argv = mock_exec.call_args_list[0].args[1]
+        assert "-s" in new_session_argv and "service" in new_session_argv
+        home_flags = [
+            a for a in new_session_argv if a == "-e" or a.startswith("HOME=")
+        ]
+        assert "-e" in new_session_argv
+        assert "HOME=/home/klangk" in new_session_argv
+        assert (
+            home_flags.index("-e") == home_flags.index("HOME=/home/klangk") - 1
+        )
+
     async def test_skips_when_window_already_exists(self):
         """Exactly-once: no new-window/send-keys if service-cmd exists."""
 

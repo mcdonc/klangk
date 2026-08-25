@@ -44,16 +44,28 @@ def _ensure_shared_home_dir_sync(
 ) -> bool:
     """Synchronous ``ensure_shared_home`` implementation (see #1262).
 
-    Creates ``workspace_home / name`` when missing and reports whether
-    it was created. A legacy ``klangk`` symlink (chat-era provisioning,
-    pointing at ``.users/{AGENT_USER_ID}``) or a pre-#2718 per-user
-    volume's absent directory are both handled: the symlink resolves and
-    is adopted as-is; the absent directory is materialized fresh.
+    Returns whether the shared home should be populated with /etc/skel:
+    True when it is empty — freshly created, left empty by a failed
+    populate on an earlier create, or a legacy symlink whose target
+    never had content. A non-empty home (user content present) is never
+    re-populated, so customizations survive container recreates.
+
+    Edge cases: a legacy ``klangk`` symlink (chat-era provisioning,
+    pointing at ``.users/{AGENT_USER_ID}``) that *resolves* is adopted
+    as-is; one that *dangles* (target deleted) is removed and replaced
+    with a real directory — the abandoned target stays orphaned
+    (#2717). ``Path.mkdir(exist_ok=True)`` alone would re-raise
+    ``FileExistsError`` on the dangling symlink (``exist_ok`` only
+    suppresses when the path is a directory), crashing container
+    create after the container is already running — and ``_bringup``
+    never runs again for that container.
     """
     shared_dir = workspace_home / name
+    if shared_dir.is_symlink() and not shared_dir.exists():
+        shared_dir.unlink()
     created = not shared_dir.exists()
     shared_dir.mkdir(exist_ok=True)
-    return created
+    return created or not any(shared_dir.iterdir())
 
 
 async def _async_rmtree(path: Path | str, label: str = "") -> None:
@@ -521,9 +533,11 @@ class Workspaces:
 
         Under both home layouts (#2169) the ``service`` tmux session and
         (shared layout) every login shell runs with ``HOME=/home/klangk``.
-        The home volume mounts at ``/home``, shadowing the image's
-        ``/home/klangk`` content, so a fresh workspace has no
-        ``.profile``/``.bashrc`` there until this writes them (#2717).
+        The image has no ``/home/klangk`` at all — uid 1000's passwd home
+        is ``/home`` itself (``useradd -d /home``, populated by ``-m``
+        from /etc/skel) — and the home volume mounts at ``/home``,
+        shadowing that image content. So nothing at ``/home/klangk``
+        exists on a fresh volume until this creates it (#2717).
         Called at the container-create choke point (``_bringup``) —
         before ``ensure_service_session`` and before any user's first
         shell — including the boot/autostart path where no user ever
@@ -531,20 +545,22 @@ class Workspaces:
         ``/home/klangk`` where it never existed; orphaned
         ``.users/{AGENT_USER_ID}`` agent dirs are simply abandoned.
 
-        One-time and idempotent: the ``/etc/skel`` copy runs only when
-        the directory is freshly created on the mount, so user
-        customizations are never clobbered by a later container
-        recreate. Restart-safe by the same exactly-once key.
+        Self-healing and idempotent: the /etc/skel copy runs whenever the
+        home is EMPTY — freshly created, left empty by a failed populate
+        on an earlier create (the exec failure is swallowed, so the
+        emptiness gate is what makes the next create retry), or a legacy
+        symlink adopted onto an empty target. A home with any content is
+        never re-populated, so user customizations are never clobbered.
 
         The blocking filesystem work runs in a worker thread via
         ``asyncio.to_thread`` so the container-create path does not stall
         the event loop on disk latency (#1262).
         """
         workspace_home = self.home_path(workspace_id)
-        created = await asyncio.to_thread(
+        needs_populate = await asyncio.to_thread(
             _ensure_shared_home_dir_sync, workspace_home, SHARED_HOME_NAME
         )
-        if created:
+        if needs_populate:
             await self.populate_home_skel(
                 container_id, model.AGENT_USER_ID, home=SHARED_HOME
             )

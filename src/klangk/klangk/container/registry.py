@@ -599,20 +599,22 @@ class ContainerRegistry(NetworkSidecarMixin):
         (the tail of :meth:`start_container`).
 
         The shared home (``/home/klangk``) is ensured + populated HERE,
-        under both layouts (#2717): the home volume mounts at ``/home``,
-        shadowing the image's ``/home/klangk`` content, so a fresh
-        workspace has no ``.profile``/``.bashrc`` there until this writes
-        them. Sequenced BEFORE ``ensure_service_session`` -- the service
-        session's login shell sources ``/home/klangk/.profile`` (#2169's
-        environment-parity motivation) -- and before any user's first
-        shell, including on the boot/autostart path where no user ever
-        connects first. For pre-#2718 per-user volumes this materializes
-        ``/home/klangk`` where it never existed; orphaned
-        ``.users/{AGENT_USER_ID}`` agent dirs are simply abandoned. No
-        layout provisions an agent-private home anymore. The sandbox
-        ``setup.sh`` contract (``KLANGKWS_AGENT_HOME``, baked as the same
-        constant in :meth:`.spec.build_env`) keeps working under both
-        layouts and is a no-op under shared.
+        under both layouts (#2717): the image has no ``/home/klangk``
+        (uid 1000's passwd home is ``/home`` itself), and the home volume
+        mounts at ``/home`` shadowing the image's own content — so a
+        fresh volume has nothing at ``/home/klangk`` (no
+        ``.profile``/``.bashrc``) until this writes it. Sequenced BEFORE
+        ``ensure_service_session`` -- the service session's login shell
+        sources ``/home/klangk/.profile`` (#2169's environment-parity
+        motivation) -- and before any user's first shell, including on
+        the boot/autostart path where no user ever connects first. For
+        pre-#2718 per-user volumes this materializes ``/home/klangk``
+        where it never existed; orphaned ``.users/{AGENT_USER_ID}``
+        agent dirs are simply abandoned. No layout provisions an
+        agent-private home anymore. The sandbox ``setup.sh`` contract
+        (``KLANGKWS_AGENT_HOME``, baked as the same constant in
+        :meth:`.spec.build_env`) keeps working under both layouts and is
+        a no-op under shared.
 
         The service command itself is idempotent via
         :meth:`terminal.ensure_service_session` (per-container lock +

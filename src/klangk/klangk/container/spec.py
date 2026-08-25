@@ -30,9 +30,10 @@ logger = logging.getLogger(__name__)
 # ``per_handle_home = false`` (#2169 chunk 2, #2720), and the HOME the
 # ``service`` tmux session is pinned to under BOTH layouts (#2717):
 # ``/home/klangk``, materialized + populated from /etc/skel at every
-# fresh container create by ``ensure_shared_home`` (the home volume
-# mounts at ``/home``, shadowing the image's own ``/home/klangk``,
-# which is why the skel copy is needed at all). Lives here — the container
+# fresh container create by ``ensure_shared_home`` (the image has no
+# ``/home/klangk`` — uid 1000's passwd home is ``/home`` itself, and the
+# home volume mounts at ``/home`` shadowing that image content, which
+# is why the skel copy is needed at all). Lives here — the container
 # filesystem-layout module — so ``workspaces``/``wshandler``/``health``
 # can import it without a cycle through the ``container`` package.
 #
