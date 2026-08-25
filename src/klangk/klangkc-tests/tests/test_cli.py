@@ -3056,7 +3056,7 @@ class TestRunShell:
         """A shared join must wait for shared_terminals, which the server
         sends AFTER terminal_windows (#1208).
 
-        Scripts the real on-the-wire order (chat, terminal_started,
+        Scripts the real on-the-wire order (terminal_started,
         terminal_output, terminal_windows, THEN shared_terminals) and
         asserts the join resolves the match and sends
         join_shared_terminal rather than raising "not found".

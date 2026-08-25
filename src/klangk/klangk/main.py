@@ -15,7 +15,6 @@ from fastapi.staticfiles import StaticFiles
 
 from . import (
     acl,
-    agent,
     auth,
     container,
     consent,
@@ -54,7 +53,10 @@ from .model import (
     SYSTEM_EVERYONE,
 )
 from .model import AGENT_USER_ID
-from .model.users import AGENT_EMAIL as _AGENT_EMAIL, AGENT_HANDLE as _AGENT_HANDLE
+from .model.users import (
+    AGENT_EMAIL as _AGENT_EMAIL,
+    AGENT_HANDLE as _AGENT_HANDLE,
+)
 from .wshandler import (
     handle_consent_decider,
     handle_egress_sidecar,
@@ -458,16 +460,14 @@ class Lifecycle:
     async def runtime_shutdown(self) -> None:
         """Stop the runtime, keeping the HTTP listener and DB alive.
 
-        Drops every WebSocket client (code 1012 = "reconnect"), tears down
-        agent subprocesses and in-flight agent runs, then stops all
-        containers and cancels the idle/health loops.  Used by both the
-        normal process-shutdown path and the SIGHUP restart path -- the
-        difference is only whether ``startup()`` runs again afterwards.
+        Drops every WebSocket client (code 1012 = "reconnect"), then
+        stops all containers and cancels the idle/health loops.  Used by
+        both the normal process-shutdown path and the SIGHUP restart
+        path -- the difference is only whether ``startup()`` runs again
+        afterwards.
         """
         state = self.app.state
         await wshandler.disconnect_all_websockets(state.sockets)
-        await state.agents.stop_all_sessions()
-        wshandler.clear_agent_mention_state()
         await state.container_registry.shutdown()
 
     async def process_shutdown(self) -> None:
@@ -1414,13 +1414,12 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     app.state.db = model.db.DB(app)
     # #1563 / #1572: Model(app_state) composes the per-domain data-access
     # sub-objects (tokens, login_attempts, invitations, ports here; users,
-    # acl, workspaces, chat arrive in follow-up issues). Each reaches the
+    # acl, workspaces follow). Each reaches the
     # DB via self.app.state.db — the single instance wired just above — so
     # every code path resolves the same DB (the #1551 divergence class is
     # structurally impossible for these domains). The not-yet-converted
     # domains still go through the _current_db ContextVar backstop.
     app.state.model = model.Model(app)
-    app.state.agents = agent.Agents(app)
     # #1577: ACL(app_state) owns the FastAPI permission layer — the
     # resource-tree walk / principal resolution that the ``has_permission``
     # dependency (resolved per-request from ``request.app.state.acl``) and

@@ -256,10 +256,6 @@ void main() {
       client.sendHeartbeat();
       client.sendBrowserResponse('req-1', {'status': 'ok'});
       client.sendBrowserChunk('req-1', 'delta');
-      client.sendChatLoadMore('msg-1');
-
-      // Reading the chat-history-pages stream exercises the getter.
-      expect(client.chatHistoryPages, isA<Stream<Map<String, dynamic>>>());
 
       expect(client.connected, isFalse);
       client.dispose();
@@ -1440,14 +1436,8 @@ void main() {
       expect(client.currentWorkspaceId, isNull);
     });
 
-    test('server close clears stale presence and terminal data', () async {
+    test('server close clears stale terminal data', () async {
       // Populate data first
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {'user_id': 'u1', 'email': 'a@test.com'},
-        ],
-      });
       channel.serverSend({
         'type': 'terminal_windows',
         'windows': [
@@ -1464,7 +1454,6 @@ void main() {
         ],
       });
       await Future.delayed(Duration.zero);
-      expect(client.presenceUsers, isNotEmpty);
       expect(client.terminalWindows, isNotEmpty);
       expect(client.sharedTerminals, isNotEmpty);
 
@@ -1472,19 +1461,12 @@ void main() {
       channel.serverClose();
       await Future.delayed(Duration.zero);
 
-      expect(client.presenceUsers, isEmpty);
       expect(client.terminalWindows, isEmpty);
       expect(client.sharedTerminals, isEmpty);
     });
 
-    test('server error clears stale presence and terminal data', () async {
+    test('server error clears stale terminal data', () async {
       // Populate data first
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {'user_id': 'u1', 'email': 'a@test.com'},
-        ],
-      });
       channel.serverSend({
         'type': 'terminal_windows',
         'windows': [
@@ -1501,7 +1483,6 @@ void main() {
         ],
       });
       await Future.delayed(Duration.zero);
-      expect(client.presenceUsers, isNotEmpty);
       expect(client.terminalWindows, isNotEmpty);
       expect(client.sharedTerminals, isNotEmpty);
 
@@ -1509,7 +1490,6 @@ void main() {
       channel.serverError(Exception('boom'));
       await Future.delayed(Duration.zero);
 
-      expect(client.presenceUsers, isEmpty);
       expect(client.terminalWindows, isEmpty);
       expect(client.sharedTerminals, isEmpty);
     });
@@ -1524,307 +1504,6 @@ void main() {
       expect(errors.length, 1);
       expect(errors[0], contains('WebSocket error'));
       expect(client.connected, isFalse);
-    });
-
-    test('chat_message routed to chatMessages stream', () async {
-      final messages = <Map<String, dynamic>>[];
-      client.chatMessages.listen(messages.add);
-
-      channel.serverSend({
-        'type': 'chat_message',
-        'id': 'msg-1',
-        'user_email': 'alice@test.com',
-        'message': 'hello',
-        'created_at': '2026-01-01 00:00:00',
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(messages.length, 1);
-      expect(messages[0]['message'], 'hello');
-      expect(messages[0]['user_email'], 'alice@test.com');
-    });
-
-    test('chat_history emits single replacement event', () async {
-      final messages = <Map<String, dynamic>>[];
-      client.chatMessages.listen(messages.add);
-
-      channel.serverSend({
-        'type': 'chat_history',
-        'messages': [
-          {
-            'id': 'msg-1',
-            'user_email': 'a@test.com',
-            'message': 'first',
-            'created_at': '2026-01-01 00:00:00',
-          },
-          {
-            'id': 'msg-2',
-            'user_email': 'b@test.com',
-            'message': 'second',
-            'created_at': '2026-01-01 00:01:00',
-          },
-        ],
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(messages.length, 1);
-      expect(messages[0]['type'], 'chat_history_replace');
-      final inner = messages[0]['messages'] as List<Map<String, dynamic>>;
-      expect(inner.length, 2);
-      expect(inner[0]['message'], 'first');
-      expect(inner[1]['message'], 'second');
-    });
-
-    test('chat_history clears existing messages before appending', () async {
-      // Regression: after reconnect, chat_history appended to the old list,
-      // causing duplicate messages in the UI.
-      channel.serverSend({
-        'type': 'chat_history',
-        'messages': [
-          {'id': 'msg-1', 'message': 'old', 'created_at': '2026-01-01'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-      expect(client.chatHistory.length, 1);
-
-      // Second chat_history (as sent on reconnect) must replace, not append.
-      channel.serverSend({
-        'type': 'chat_history',
-        'messages': [
-          {'id': 'msg-1', 'message': 'old', 'created_at': '2026-01-01'},
-          {'id': 'msg-2', 'message': 'new', 'created_at': '2026-01-02'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-      expect(
-        client.chatHistory.length,
-        2,
-        reason: 'chat_history must clear before appending',
-      );
-      expect(client.chatHistory[0]['id'], 'msg-1');
-      expect(client.chatHistory[1]['id'], 'msg-2');
-    });
-
-    test('chat_updated routed to chatMessages stream', () async {
-      final messages = <Map<String, dynamic>>[];
-      client.chatMessages.listen(messages.add);
-
-      channel.serverSend({
-        'type': 'chat_updated',
-        'message_id': 'msg-1',
-        'message': '<message deleted by author>',
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(messages.length, 1);
-      expect(messages[0]['type'], 'chat_updated');
-      expect(messages[0]['message_id'], 'msg-1');
-    });
-
-    test('sendChatMessage sends correct command', () {
-      client.sendChatMessage('hello world');
-      final msg = jsonDecode(channel.sentMessages.last as String);
-      expect(msg, {'cmd': 'chat_send', 'message': 'hello world'});
-    });
-
-    test('sendChatDelete sends correct command', () {
-      client.sendChatDelete('msg-42');
-      final msg = jsonDecode(channel.sentMessages.last as String);
-      expect(msg, {'cmd': 'chat_delete', 'message_id': 'msg-42'});
-    });
-
-    test('sendChatAgentAbort sends correct command', () {
-      client.sendChatAgentAbort();
-      final msg = jsonDecode(channel.sentMessages.last as String);
-      expect(msg, {'cmd': 'chat_agent_abort'});
-    });
-
-    test('chatMessages stream is broadcast', () {
-      expect(client.chatMessages.isBroadcast, isTrue);
-    });
-
-    test('presence_list populates presenceUsers', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {'user_id': 'u1', 'user_email': 'alice@test.com'},
-          {'user_id': 'u2', 'user_email': 'bob@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(client.presenceUsers.length, 2);
-      expect(client.presenceUsers[0]['user_email'], 'alice@test.com');
-    });
-
-    test('presenceUsers is an eager list, not a lazy cast', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {'user_id': 'u1', 'user_email': 'alice@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-      expect(client.presenceUsers, isA<List<Map<String, dynamic>>>());
-      client.presenceUsers.add({'user_id': 'u2', 'user_email': 'bob@test.com'});
-      expect(client.presenceUsers.length, 2);
-    });
-
-    test('presence_join adds user', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {'user_id': 'u1', 'user_email': 'alice@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-
-      channel.serverSend({
-        'type': 'presence_join',
-        'user_id': 'u2',
-        'user_email': 'bob@test.com',
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(client.presenceUsers.length, 2);
-      expect(client.presenceUsers.any((u) => u['user_id'] == 'u2'), isTrue);
-    });
-
-    test('presence_join ignores duplicate', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {'user_id': 'u1', 'user_email': 'alice@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-
-      channel.serverSend({
-        'type': 'presence_join',
-        'user_id': 'u1',
-        'user_email': 'alice@test.com',
-      });
-      await Future.delayed(Duration.zero);
-
-      expect(client.presenceUsers.length, 1);
-    });
-
-    test('presence_leave removes user', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {'user_id': 'u1', 'user_email': 'alice@test.com'},
-          {'user_id': 'u2', 'user_email': 'bob@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-
-      channel.serverSend({'type': 'presence_leave', 'user_id': 'u1'});
-      await Future.delayed(Duration.zero);
-
-      expect(client.presenceUsers.length, 1);
-      expect(client.presenceUsers[0]['user_id'], 'u2');
-    });
-
-    test('disconnectWorkspace clears presenceUsers', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {'user_id': 'u1', 'user_email': 'alice@test.com'},
-        ],
-      });
-      await Future.delayed(Duration.zero);
-      expect(client.presenceUsers.length, 1);
-
-      client.disconnectWorkspace();
-      expect(client.presenceUsers, isEmpty);
-    });
-
-    test('mentionCandidates reflects presence (normalized keys)', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {
-            'user_id': 'u1',
-            'user_email': 'alice@test.com',
-            'user_handle': 'alice',
-          },
-        ],
-      });
-      await Future.delayed(Duration.zero);
-
-      final candidates = client.mentionCandidates;
-      expect(candidates.map((m) => m['id']).toSet(), {'u1'});
-      // presence rows (user_* keys) normalized to {id,email,handle}.
-      final alice = candidates.firstWhere((m) => m['id'] == 'u1');
-      expect(alice['email'], 'alice@test.com');
-      expect(alice['handle'], 'alice');
-    });
-
-    test('agent is not mentionable until it joins presence', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {
-            'user_id': 'u1',
-            'user_email': 'alice@test.com',
-            'user_handle': 'alice',
-          },
-        ],
-      });
-      await Future.delayed(Duration.zero);
-      // Agent subprocess not alive -> not present -> not a candidate.
-      expect(
-        client.mentionCandidates.any((m) => m['id'] == 'agent-uid'),
-        isFalse,
-      );
-
-      channel.serverSend({
-        'type': 'presence_join',
-        'user_id': 'agent-uid',
-        'user_email': 'klangk@klangk.local',
-        'user_handle': 'klangk',
-      });
-      await Future.delayed(Duration.zero);
-      final agent = client.mentionCandidates.firstWhere(
-        (m) => m['id'] == 'agent-uid',
-        orElse: () => {},
-      );
-      expect(agent['email'], 'klangk@klangk.local');
-      expect(agent['handle'], 'klangk');
-    });
-
-    test('mentionCandidates drops agent when presence_leave arrives', () async {
-      channel.serverSend({
-        'type': 'presence_list',
-        'users': [
-          {
-            'user_id': 'u1',
-            'user_email': 'alice@test.com',
-            'user_handle': 'alice',
-          },
-        ],
-      });
-      await Future.delayed(Duration.zero);
-      channel.serverSend({
-        'type': 'presence_join',
-        'user_id': 'agent-uid',
-        'user_email': 'klangk@klangk.local',
-        'user_handle': 'klangk',
-      });
-      await Future.delayed(Duration.zero);
-      expect(
-        client.mentionCandidates.any((m) => m['id'] == 'agent-uid'),
-        isTrue,
-      );
-
-      // Agent subprocess dies -> presence_leave.
-      channel.serverSend({'type': 'presence_leave', 'user_id': 'agent-uid'});
-      await Future.delayed(Duration.zero);
-      expect(
-        client.mentionCandidates.any((m) => m['id'] == 'agent-uid'),
-        isFalse,
-      );
     });
   });
 }

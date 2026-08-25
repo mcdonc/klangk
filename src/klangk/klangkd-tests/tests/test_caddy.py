@@ -632,15 +632,6 @@ class TestRenderConfig:
         cf = _renderer(s).render_config("unix//s", self.ADMIN)
         assert "@notContainerSrc not remote_ip 10.89.0.0/24" in cf
 
-    def test_post_chat_message_is_exact_match(self):
-        """nginx uses ``location =`` (exact) for post-chat-message; Caddy
-        mirrors with a path matcher so sub-paths don't match."""
-        s = make_settings(env={"KLANGKD_EGRESS_PORT": "8995"})
-        cf = _renderer(s).render_config("unix//s", self.ADMIN)
-        assert "@postchat path /api/v1/workspaces/post-chat-message" in cf
-        assert "handle @postchat {" in cf
-        assert "path /api/v1/workspaces/post-chat-message/*" not in cf
-
     def test_egress_fail_closed_when_no_container_sources(self, monkeypatch):
         """Whitespace-only KLANGKD_CONTAINER_SUBNETS → no sources → egress
         fails closed (deny all), matching nginx's bare ``deny all;``."""

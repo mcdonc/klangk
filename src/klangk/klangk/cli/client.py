@@ -94,9 +94,9 @@ async def wait_container_ready(
 ) -> dict:
     """Send workspace_connect and wait for container_ready, skipping broadcasts.
 
-    The server may send broadcast messages (e.g. presence_list from eager
-    agent startup) before container_ready.  This drains them rather than
-    treating the first non-ready message as an error.
+    The server may send broadcast messages before container_ready.
+    This drains them rather than treating the first non-ready message
+    as an error.
 
     Returns the container_ready payload.
     """

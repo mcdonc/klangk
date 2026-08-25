@@ -126,7 +126,7 @@ class GhosttyTerminalState extends State<GhosttyTerminal> {
     _focusNode.addListener(_onFocusChange);
     // Paste arrives via the browser's native `paste` event (works on Firefox
     // too, unlike Clipboard.getData). Only consume it when the terminal is
-    // focused, so pastes into other inputs (e.g. chat) are left untouched.
+    // focused, so pastes into other inputs are left untouched.
     _removePasteListener = installPasteListener(routeNativePaste);
     // Prevent Firefox from intercepting PageUp/PageDown for native page
     // scrolling when the terminal is focused. See web_helpers_web.dart.

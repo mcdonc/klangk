@@ -30,12 +30,12 @@ tab lets you view and edit the raw ACL entries directly.
 When you share a workspace, you assign a role that determines what
 the person can do:
 
-| Role             | Terminal | Files | Chat | Share terminals | Type in shared | Create shared |
-| ---------------- | -------- | ----- | ---- | --------------- | -------------- | ------------- |
-| **Owner**        | yes      | yes   | yes  | yes             | yes            | yes           |
-| **Coder**        | yes      | yes   | yes  | watch only      |                |               |
-| **Collaborator** | yes      | yes   | yes  | watch + type    | yes            |               |
-| **Spectator**    |          |       |      | watch only      |                |               |
+| Role             | Terminal | Files | Share terminals | Type in shared | Create shared |
+| ---------------- | -------- | ----- | --------------- | -------------- | ------------- |
+| **Owner**        | yes      | yes   | yes             | yes            | yes           |
+| **Coder**        | yes      | yes   | watch only      |                |               |
+| **Collaborator** | yes      | yes   | watch + type    | yes            |               |
+| **Spectator**    |          |       | watch only      |                |               |
 
 See [Terminal - Role Permissions](terminal.md#role-permissions) for
 the full permission breakdown.

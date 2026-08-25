@@ -319,37 +319,6 @@ async def init_db(db) -> None:
                 "ALTER TABLE token_blocklist ADD COLUMN new_token TEXT"
             )
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                id TEXT PRIMARY KEY,
-                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-                user_id TEXT NOT NULL,
-                user_email TEXT NOT NULL,
-                message TEXT NOT NULL,
-                message_type INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-        # Migration: add message_type column to existing chat_messages tables
-        cursor = await db.execute("PRAGMA table_info(chat_messages)")
-        chat_cols = {row[1] for row in await cursor.fetchall()}
-        if "message_type" not in chat_cols:
-            await db.execute(
-                "ALTER TABLE chat_messages"
-                " ADD COLUMN message_type INTEGER NOT NULL DEFAULT 0"
-            )
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS chat_mentions (
-                id TEXT PRIMARY KEY,
-                message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
-                user_id TEXT NOT NULL,
-                workspace_id TEXT NOT NULL
-            )
-        """)
-        await db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_chat_mentions_user
-            ON chat_mentions(user_id, workspace_id)
-        """)
-        await db.execute("""
             CREATE TABLE IF NOT EXISTS login_attempts (
                 email TEXT PRIMARY KEY,
                 attempt_count INTEGER NOT NULL DEFAULT 0,

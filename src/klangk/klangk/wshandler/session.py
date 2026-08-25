@@ -14,11 +14,7 @@ from .. import model
 from ..terminal import SERVICE_CMD_WINDOW
 from ..window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
-from .constants import (
-    agent_conversations,
-    cancel_agent_task,
-    log_ws_msg,
-)
+from .constants import log_ws_msg
 
 if TYPE_CHECKING:
     from .connection import Connection
@@ -646,12 +642,6 @@ class WorkspaceSession:
 class WebSocketState:
     """Module-level singleton holding mutable WebSocket handler state."""
 
-    # Delay before broadcasting presence_leave after a user disconnects.
-    # If the same user reconnects within this window the leave (and the
-    # subsequent re-join) are suppressed, avoiding flicker during
-    # WebSocket reconnection with backoff.
-    PRESENCE_LEAVE_DELAY = 10.0  # seconds
-
     def __init__(self, app=None) -> None:
         self.app = app
         # Active connections: SafeWebSocket -> Connection
@@ -670,10 +660,6 @@ class WebSocketState:
         self.streaming_browser_requests: dict[
             str, tuple[asyncio.Queue, SafeWebSocket | None]
         ] = {}
-        # Pending presence leave tasks: (workspace_id, user_id) → Task.
-        # When a user's last connection drops we schedule a delayed
-        # broadcast; if they reconnect before it fires we cancel it.
-        self._pending_leaves: dict[tuple[str, str], asyncio.Task] = {}
 
     def reconfigure(self, app) -> None:
         self.app = app
@@ -735,12 +721,8 @@ class WebSocketState:
         socks = list(self.connections.keys())
         self.connections.clear()
 
-        # Cancel pending presence-leave broadcasts and abandoned
-        # browser-delegate requests so they don't fire against state
-        # we're about to drop.
-        for task in self._pending_leaves.values():
-            task.cancel()
-        self._pending_leaves.clear()
+        # Cancel abandoned browser-delegate requests so they don't fire
+        # against state we're about to drop.
         for fut, _sock in self.pending_browser_requests.values():
             if not fut.done():
                 fut.cancel()
@@ -769,9 +751,10 @@ class WebSocketState:
         Used when an account is disabled (admin action or the inactivity
         sweep): close code 4001 makes the client log out rather than
         reconnect-loop. Only the sockets are closed — each handler's own
-        ``finally`` block then runs the normal disconnect cleanup
-        (presence leave, session bookkeeping), the same as a natural
-        client disconnect. Returns how many connections were closed.
+        ``finally`` block then runs the normal disconnect cleanup, the same
+        as a natural
+        client disconnect (session bookkeeping, terminal teardown), the same
+        as a natural disconnect. Returns how many connections were closed.
         """
         socks = [
             sock
@@ -784,79 +767,6 @@ class WebSocketState:
             except Exception:  # noqa: BLE001
                 logger.debug("Error closing socket for user %s", user_id)
         return len(socks)
-
-    def cancel_pending_leave(self, workspace_id: str, user_id: str) -> bool:
-        """Cancel a pending presence_leave for *user_id* in *workspace_id*.
-
-        Returns True if a pending leave was cancelled (meaning the
-        subsequent join broadcast should also be suppressed).
-        """
-        key = (workspace_id, user_id)
-        task = self._pending_leaves.pop(key, None)
-        if task and not task.done():
-            task.cancel()
-            logger.info(
-                "Cancelled pending presence_leave for user %s in %s",
-                user_id,
-                workspace_id,
-            )
-            return True
-        return False
-
-    def schedule_pending_leave(
-        self,
-        workspace_id: str,
-        user: dict,
-        session: "WorkspaceSession",
-    ) -> None:
-        """Schedule a delayed presence_leave broadcast.
-
-        If the user reconnects before the delay expires the task is
-        cancelled via ``cancel_pending_leave``.
-        """
-        user_id = user["id"]
-        key = (workspace_id, user_id)
-        # Cancel any already-pending leave (shouldn't happen, but be safe).
-        old = self._pending_leaves.pop(key, None)
-        if old and not old.done():  # pragma: no cover
-            old.cancel()
-
-        async def _fire() -> None:
-            try:
-                await asyncio.sleep(self.PRESENCE_LEAVE_DELAY)
-            except asyncio.CancelledError:
-                return
-            finally:
-                self._pending_leaves.pop(key, None)
-
-            # Still no connection for this user in the workspace?
-            cur_session = self.get_session(workspace_id)
-            if cur_session:
-                still_connected = any(
-                    self.connections.get(s) is not None
-                    and self.connections[s].user["id"] == user_id
-                    for s in cur_session.subscribers
-                )
-                if still_connected:  # pragma: no cover
-                    return
-
-                sys_msg = await self.app.state.model.chat.add_chat_message(
-                    workspace_id,
-                    user_id,
-                    user["email"],
-                    f"{user.get('handle') or user['email']} left",
-                    message_type=model.MSG_SYSTEM,
-                )
-                cur_session.broadcast({"type": "chat_message", **sys_msg})
-                cur_session.broadcast(
-                    {
-                        "type": "presence_leave",
-                        "user_id": user_id,
-                        "user_email": user["email"],
-                    }
-                )
-
-        self._pending_leaves[key] = asyncio.create_task(_fire())
 
     async def reset_workspace(self, workspace_id: str) -> None:
         """Clean up shared state for a workspace.
@@ -871,12 +781,6 @@ class WebSocketState:
         else:
             await self.app.state.container_registry.remove_state(workspace_id)
             logger.info("Reset workspace state for %s", workspace_id)
-
-        # Clean up module-level agent state for this workspace.
-        agent_conversations.pop(workspace_id, None)
-        cancel_agent_task(workspace_id)
-        # Stop the Pi RPC subprocess so it doesn't outlive the container.
-        await self.app.state.agents.stop_session(workspace_id)
 
     def notify_container_status(
         self,

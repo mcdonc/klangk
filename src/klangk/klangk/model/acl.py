@@ -3,8 +3,7 @@
 ``ACLModel`` is the ``app_state``-owned form, reached via
 ``app_state.model.acl`` (#1563 / #1574). The principal/action constants
 and the pure ``row_to_acl_entry`` helper stay module-level — they are
-imported as literal values by ``chat.py``, ``workspaces.py``, and
-``schema.py``.
+imported as literal values by ``workspaces.py`` and ``schema.py``.
 """
 
 from .users import AGENT_USER_ID, AgentPrincipalError

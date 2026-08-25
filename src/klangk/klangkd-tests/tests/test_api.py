@@ -13,7 +13,6 @@ import httpx
 from httpx import AsyncClient, ASGITransport
 
 from klangk import (
-    agent,
     api,
     auth as auth_mod,
     files as files_mod,
@@ -79,7 +78,6 @@ async def app(db, temp_data_dir):
     app.state.features = features_mod.Features(app)
     app.state.workspaces = ws_mod.Workspaces(app)
     app.state.files = files_mod.Files(app)
-    app.state.agents = agent.Agents(app)
     app.state.email = emailsvc_mod.EmailService(app)
     app.state.util = util_mod.Util(app)
     # #1365: create/update workspace validation reaches the netfilter
@@ -232,83 +230,6 @@ class TestVerifyWorkspaceToken:
         assert resp.json()["detail"] == "Invalid workspace token"
 
 
-class TestWorkspaceChat:
-    async def test_post_agent_message(self, client, user, app_state):
-        workspace = await app_state.state.model.workspaces.create_workspace(
-            user["id"], "chat-ws"
-        )
-        token = _auth().create_workspace_token(workspace["id"])
-        resp = await client.post(
-            "/api/v1/workspaces/post-chat-message",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"message": "hello from agent"},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["message"] == "hello from agent"
-        assert data["message_type"] == model.MSG_AGENT
-        assert data["workspace_id"] == workspace["id"]
-
-    async def test_broadcasts_to_websocket(
-        self, client, user, sockets, app_state
-    ):
-        workspace = await app_state.state.model.workspaces.create_workspace(
-            user["id"], "bcast-ws"
-        )
-        token = _auth().create_workspace_token(workspace["id"])
-        session = sockets.get_or_create_session(workspace["id"])
-        mock_sock = MagicMock()
-        session.subscribers.add(mock_sock)
-
-        await client.post(
-            "/api/v1/workspaces/post-chat-message",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"message": "broadcast test"},
-        )
-
-        mock_sock.send_json.assert_called_once()
-        sent = mock_sock.send_json.call_args[0][0]
-        assert sent["type"] == "chat_message"
-        assert sent["message"] == "broadcast test"
-
-        sockets.sessions.pop(workspace["id"], None)
-
-    async def test_missing_auth(self, client):
-        resp = await client.post(
-            "/api/v1/workspaces/post-chat-message", json={"message": "hi"}
-        )
-        assert resp.status_code == 401
-
-    async def test_invalid_token(self, client):
-        resp = await client.post(
-            "/api/v1/workspaces/post-chat-message",
-            headers={"Authorization": "Bearer garbage"},
-            json={"message": "hi"},
-        )
-        assert resp.status_code == 401
-
-    async def test_workspace_not_found(self, client):
-        token = _auth().create_workspace_token("nonexistent-ws")
-        resp = await client.post(
-            "/api/v1/workspaces/post-chat-message",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"message": "hi"},
-        )
-        assert resp.status_code == 404
-
-    async def test_empty_message_rejected(self, client, user, app_state):
-        workspace = await app_state.state.model.workspaces.create_workspace(
-            user["id"], "empty-ws"
-        )
-        token = _auth().create_workspace_token(workspace["id"])
-        resp = await client.post(
-            "/api/v1/workspaces/post-chat-message",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"message": "   "},
-        )
-        assert resp.status_code == 400
-
-
 class TestVersion:
     async def test_version_from_file(self, client, app, tmp_path, monkeypatch):
         version_file = tmp_path / "version.json"
@@ -437,9 +358,6 @@ class TestConfig:
         assert "login_banner_title" in data
         assert "login_banner" in data
         assert "instance_id" in data
-        # #1977: the chat-agent enabled flag is surfaced as a bool. Chat is
-        # dormant by default (not in DEFAULT_FEATURES), so the agent is off.
-        assert data["chat_agent_enabled"] is False
 
     async def test_get_config_omits_netfilter_fields_when_unauthenticated(
         self, client, app
@@ -528,65 +446,6 @@ class TestConfig:
         # KLANGKWS_FEATURE_MY_FEATURE_VAR → lowercased suffix `my_feature_var`
         # (#1662: strip prefix + lowercase suffix for /api/config keys).
         assert data["my_feature_var"] == "test-value"
-
-    async def test_get_config_chat_agent_enabled_when_active_and_on(
-        self, client, app, tmp_path, monkeypatch
-    ):
-        # #1977: chat_agent_enabled is True only when the chat feature is
-        # active AND KLANGKWS_FEATURE_CHAT_AGENT_ENABLED is truthy — the
-        # positive counterpart to the default-off assertion in test_get_config.
-        import json as json_mod
-        import types as types_mod
-
-        frontend_dir = tmp_path / "frontend"
-        frontend_dir.mkdir()
-        (frontend_dir / "features.json").write_text(
-            json_mod.dumps(
-                {
-                    "features": [
-                        {
-                            "name": "chat",
-                            "version": "1.0.0",
-                            "description": "",
-                            "config": {
-                                "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED": {
-                                    "description": "",
-                                    "default": "",
-                                    "scope": "both",
-                                },
-                                "KLANGKWS_FEATURE_CHAT_AGENT_HANDLE": {
-                                    "description": "",
-                                    "default": "klangk",
-                                    "scope": "both",
-                                },
-                                "KLANGKWS_FEATURE_CHAT_AGENT_EMAIL": {
-                                    "description": "",
-                                    "default": "klangk@example.com",
-                                    "scope": "both",
-                                },
-                            },
-                        }
-                    ],
-                    "defaults": [],
-                    "container_env_keys": [],
-                }
-            )
-        )
-        app.state.features = app.state.features.__class__(
-            types_mod.SimpleNamespace(
-                state=types_mod.SimpleNamespace(
-                    settings=make_settings(
-                        env={
-                            "KLANGKD_FRONTEND_DIR": str(frontend_dir),
-                            "KLANGKD_FEATURES_ENABLE": "chat",
-                        }
-                    )
-                )
-            )
-        )
-        monkeypatch.setenv("KLANGKWS_FEATURE_CHAT_AGENT_ENABLED", "true")
-        resp = await client.get("/api/v1/config")
-        assert resp.json()["chat_agent_enabled"] is True
 
     async def test_get_config_includes_features_enable_when_set(
         self, client, app, monkeypatch
@@ -2595,23 +2454,15 @@ class TestWorkspaceRoutes:
             ws_id, "fake-container-id"
         )
 
-        with (
-            patch.object(
-                registry,
-                "stop_and_remove_container",
-                new_callable=AsyncMock,
-            ) as mock_rm,
-            patch.object(
-                app.state.agents,
-                "stop_session",
-                new_callable=AsyncMock,
-            ) as mock_stop_agent,
-        ):
+        with patch.object(
+            registry,
+            "stop_and_remove_container",
+            new_callable=AsyncMock,
+        ) as mock_rm:
             resp = await client.delete(
                 f"/api/v1/workspaces/{ws_id}", headers=headers
             )
         assert resp.status_code == 200
-        mock_stop_agent.assert_awaited_once_with(ws_id)
         mock_rm.assert_awaited_once_with(
             "fake-container-id", workspace_id=ws_id
         )
@@ -2815,11 +2666,6 @@ class TestWorkspaceRoutes:
                 new_callable=AsyncMock,
             ) as mock_killed,
             patch.object(
-                app.state.agents,
-                "stop_session",
-                new_callable=AsyncMock,
-            ) as mock_stop_session,
-            patch.object(
                 app.state.sockets, "get_session", return_value=mock_session
             ),
         ):
@@ -2830,9 +2676,6 @@ class TestWorkspaceRoutes:
         assert resp.json()["status"] == "stopped"
         mock_killed.assert_awaited_once_with(ws_id)
         mock_stop.assert_awaited_once_with("cid-stop", workspace_id=ws_id)
-        # REST /stop tears down the Pi RPC subprocess for the workspace
-        # (via reset_workspace_state -> reset_workspace); lock the contract.
-        mock_stop_session.assert_awaited_once_with(ws_id)
         # Re-homed from the retired WS shutdown_container handler: REST /stop
         # broadcasts container_stopped so live viewers show "stopped".
         mock_session.broadcast.assert_called_once()
@@ -2854,13 +2697,8 @@ class TestWorkspaceRoutes:
 
         mock_session = MagicMock()
         mock_session.full_reset = AsyncMock()
-        with (
-            patch.object(
-                app.state.agents, "stop_session", new_callable=AsyncMock
-            ),
-            patch.object(
-                app.state.sockets, "get_session", return_value=mock_session
-            ),
+        with patch.object(
+            app.state.sockets, "get_session", return_value=mock_session
         ):
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/stop", headers=headers
@@ -5460,6 +5298,15 @@ class TestBrowserBridge:
             json={"action": "fetch", "browser_id": "bad-id"},
         )
         assert resp.status_code == 401
+
+    async def test_invalid_token_returns_401(self, client, user):
+        resp = await client.post(
+            "/api/v1/browser-delegate",
+            json={"action": "fetch", "browser_id": "bad-id"},
+            headers={"Authorization": "Bearer garbage"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Invalid workspace token"
 
     async def test_unknown_browser_id_returns_403(self, client, user):
         resp = await client.post(

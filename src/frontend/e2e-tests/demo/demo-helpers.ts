@@ -11,7 +11,7 @@
  *   - API login / register / admin-create-user, so scenes can run against a
  *     REAL demo server (port 8996, real LLM key) via KLANGKBUILD_TEST_URL,
  *   - tab openers for the 5 workspace tabs,
- *   - a tiny WS client for reliable chat-send / terminal-share when on-screen
+ *   - a tiny WS client for reliable terminal-share when on-screen
  *     typing is flaky.
  *
  * Run against an already-running demo server (the README explains how).
@@ -645,16 +645,16 @@ export async function openWorkspaceDemo(
 // demoLogin. Measured by pixel analysis of the rendered workspace at each size:
 //   1080-tall: tab strip fracY ≈ 0.0704   (was the original, all-1080 value)
 //    540-tall: tab strip fracY ≈ 0.139    (tabs sit much lower proportionally)
-// Tabs are evenly spaced horizontally: fracX = (index + 0.5) / 5 (verified at
-// both sizes). The "+" (new-terminal) button sits at the far left of the tab
+// Tabs are evenly spaced horizontally: fracX = (index + 0.5) / tabCount
+// (verified at both sizes; 4 nav tabs since the chat feature was removed). The "+" (new-terminal) button sits at the far left of the tab
 // strip: fracX ≈ 0.05, fracY = the tab fracY.
 function tabFracY(height: number): number {
   return height <= 600 ? 0.139 : 0.0704;
 }
 
-/** Click a workspace nav tab by 0-based index (0=Terminal … 4=Settings) using
+/** Click a workspace nav tab by 0-based index (0=Terminal … 3=Settings) using
  *  the visible mouse cursor. */
-export async function openTab(page: Page, index: number, count = 5) {
+export async function openTab(page: Page, index: number, count = 4) {
   const { width, height } = vp(page);
   await mouseClick(
     page,
@@ -664,9 +664,8 @@ export async function openTab(page: Page, index: number, count = 5) {
   await pace(350);
 }
 
-export const openChatTab = (page: Page, count = 5) => openTab(page, 2, count);
-export const openSharingTab = (page: Page) => openTab(page, 3);
-export const openSettingsTab = (page: Page) => openTab(page, 4);
+export const openSharingTab = (page: Page) => openTab(page, 2);
+export const openSettingsTab = (page: Page) => openTab(page, 3);
 
 /** Seed a file into a workspace's home via the demo server's upload API.
  *  (The re-exported e2e `seedFile` hardcodes the e2e test port 18997, so this
@@ -891,7 +890,7 @@ export async function waitForPiIdle(
 }
 
 // ---------------------------------------------------------------------------
-// Tiny WS client (reliable fallback for chat-send / terminal-share when
+// Tiny WS client (reliable fallback for terminal-share when
 // on-screen typing/clicking is flaky). Mirrors docs-*-screenshots specs.
 // ---------------------------------------------------------------------------
 
@@ -984,20 +983,4 @@ export async function connectWs(
       reject(e);
     });
   });
-}
-
-/** Send a chat message over WS and return once it is broadcast back. */
-export async function sendChatViaWs(
-  token: string,
-  workspaceId: string,
-  message: string,
-) {
-  const ws = await connectWs(token, workspaceId);
-  ws.send({ cmd: "chat_send", message });
-  await ws.recvUntil(
-    (m) =>
-      m.type === "chat_message" &&
-      (m as { message?: string }).message === message,
-  );
-  return ws;
 }

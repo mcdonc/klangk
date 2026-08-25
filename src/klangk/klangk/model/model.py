@@ -10,16 +10,14 @@ built with (#1563, #1551).
 
 Foundation (#1572): only the four standalone domains are composed here
 (``tokens``, ``login_attempts``, ``invitations``, ``ports``). ``users``
-(#1573), ``acl`` (#1574), and ``workspaces`` (#1575) are added; the
-remaining domains (``chat``) are added in their own issues; until then
-they're still reached via the module-level free functions + the
+(#1573), ``acl`` (#1574), and ``workspaces`` (#1575) are added; they're
+reached via the module-level free functions + the
 ``_current_db`` ContextVar backstop in ``model/db.py``.
 """
 
 from contextlib import asynccontextmanager
 
 from .acl import ACLModel
-from .chat import ChatModel
 from .egress_consent import EgressConsentModel
 from .server_schedules import ServerSchedulesModel
 from .ports import PortsModel
@@ -51,7 +49,6 @@ class Model:
         self.users = UsersModel(app)
         self.acl = ACLModel(app)
         self.workspaces = WorkspacesModel(app)
-        self.chat = ChatModel(app)
         self.egress_consent = EgressConsentModel(app)
         self.server_schedules = ServerSchedulesModel(app)
 
@@ -66,7 +63,6 @@ class Model:
             self.users,
             self.acl,
             self.workspaces,
-            self.chat,
             self.egress_consent,
             self.server_schedules,
         ):

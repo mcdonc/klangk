@@ -51,14 +51,13 @@ EXPECTED_FEATURE_NAMES = {
     "browser-fetch",
     "boingball",
     "git-credential",
-    "chat",  # tab-only feature (#1976); dormant
     "soliplex",  # vendored local in #1686 (was a remote git: entry in #1664)
 }
 
 # Compiled-in Dart features that are NOT in DEFAULT_FEATURES — dormant unless
 # an operator opts in via KLANGKD_FEATURES_ENABLE. Soliplex (#1664, vendored
 # local in #1686) is the canonical "compiled-in ⊋ defaults" case.
-DORMANT_FEATURE_NAMES = {"soliplex", "chat"}
+DORMANT_FEATURE_NAMES = {"soliplex"}
 
 # Features with a klangk/ Dart package that declare a ToolPlugin → the tool
 # class emitted into createAllFeatures/createAllNamedFeatures. Features
@@ -74,11 +73,8 @@ EXPECTED_DART_FEATURES = {
 }
 
 # Dart features that declare ONLY a WorkspaceTabPlugin (no ToolPlugin) → the
-# tab class emitted into createAllNamedWorkspaceTabs (#1976). Chat is the
-# first tab-only feature.
-EXPECTED_DART_TAB_FEATURES = {
-    "chat": "ChatTab",
-}
+# tab class emitted into createAllNamedWorkspaceTabs (#1976).
+EXPECTED_DART_TAB_FEATURES: dict[str, str] = {}
 
 # All features with a klangk/ Dart package (tool or tab) — used to tell Dart
 # features from TS-only ones (word-count, browser-fetch have no klangk/).
@@ -99,12 +95,9 @@ EXPECTED_DART_FEATURE_NAMES = EXPECTED_DART_PACKAGE_FEATURES
 # alone keeps feature keys from colliding with server secrets/paths/infra.
 # Soliplex's KLANGKWS_FEATURE_SOLIPLEX_URL was renamed from SOLIPLEX_URL when it
 # was vendored (#1686) — the build guard from #1662 requires the prefix.
-# Chat's agent keys (scope "both") sort before git-credential's
-# (features are iterated sorted by name: chat < git-credential). The
-# identity keys were removed (#2718 — fixed handle/email); only the
-# agent on-switch remains.
+# The chat feature (and its agent keys) was removed (#2716); git-credential's
+# key is now the only container-scope declaration.
 EXPECTED_CONTAINER_ENV_KEYS = [
-    "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED",
     "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID",
 ]
 
@@ -385,11 +378,10 @@ class TestManifestContract:
                     f"{spec['scope']!r}"
                 )
                 all_keys[key] = spec["scope"]
-        # Spot-check the keys declared today (chat's agent on-switch is
-        # scope "both", #1976; the identity keys are gone, #2718).
+        # Spot-check the keys declared today (the chat feature's agent
+        # on-switch was removed with the chat feature, #2716).
         assert all_keys == {
             "KLANGKWS_FEATURE_BOING_SPEED": "frontend",
-            "KLANGKWS_FEATURE_CHAT_AGENT_ENABLED": "both",
             "KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID": "container",
             "KLANGKWS_FEATURE_SOLIPLEX_URL": "frontend",
         }

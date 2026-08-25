@@ -37,6 +37,17 @@ def rmtree(path: Path | str, label: str = "") -> None:
     shutil.rmtree(path, onexc=_on_error)
 
 
+def _ensure_agent_home_dir_sync(
+    workspace_home: Path,
+    handle: str,
+) -> tuple[str, bool]:
+    """Synchronous ``ensure_agent_home`` implementation (see #1262)."""
+    agent_dir = workspace_home / handle
+    created = not agent_dir.exists()
+    agent_dir.mkdir(exist_ok=True)
+    return f"/home/{handle}", created
+
+
 async def _async_rmtree(path: Path | str, label: str = "") -> None:
     """Remove a directory tree in a thread, logging errors."""
     await asyncio.to_thread(rmtree, path, label)
@@ -96,16 +107,19 @@ async def populate_home_skel(
     container_id: str,
     user_id: str,
     podman=None,
+    home: str | None = None,
 ) -> None:
-    """Copy /etc/skel into a new user's home directory inside the container.
+    """Copy /etc/skel into a user's home directory inside the container.
 
     This gives the user the standard skeleton files (.profile, .bashrc,
     etc.) so login shells source ~/.bashrc as users expect.  /etc/skel
     is part of the shadow-utils/login package and is present on most
     Linux distributions (notable exception: NixOS).  The workspace
-    container runs Ubuntu, which always has it.
+    container runs Ubuntu, which always has it.  *home* overrides the
+    default ``/home/.users/{user_id}`` path.
     """
-    home = f"/home/.users/{user_id}"
+    if home is None:
+        home = f"/home/.users/{user_id}"
     try:
         await podman.exec_container(
             container_id,
@@ -490,13 +504,49 @@ class Workspaces:
             _ensure_home_symlink_sync, workspace_home, handle, user_id
         )
 
+    async def ensure_agent_home(self, workspace_id: str) -> tuple[str, bool]:
+        """Ensure the agent identity's home directory exists on the mount.
+
+        Unlike human users (whose handle can change, hence the
+        ``.users/{user_id}`` dir + handle symlink indirection), the agent
+        identity is fixed (#2718: handle ``klangk``, reserved name), so its
+        home is a plain real directory on the workspace home mount — no
+        symlink, no indirection. A legacy ``klangk`` symlink left by the
+        old chat-era provisioning still resolves and is adopted as-is.
+
+        The blocking filesystem work runs in a worker thread via
+        ``asyncio.to_thread`` so the container-create path does not stall
+        the event loop on disk latency (#1262).
+
+        Returns ``(container_home_path, created)`` where *created* is True
+        when a new directory was created (caller should populate it with
+        skeleton files).
+        """
+        handle = await self.app.state.model.users.agent_handle()
+        workspace_home = self.home_path(workspace_id)
+        return await asyncio.to_thread(
+            _ensure_agent_home_dir_sync, workspace_home, handle
+        )
+
     async def populate_home_skel(
         self,
         container_id: str,
         user_id: str,
+        home: str | None = None,
     ) -> None:
-        """Copy /etc/skel into a new user's home directory inside the container."""
-        await populate_home_skel(container_id, user_id, self.app.state.podman)
+        """Copy /etc/skel into a user's home directory inside the container.
+
+        *home* overrides the default ``/home/.users/{user_id}`` path (the
+        agent's plain home dir passes its own).
+        """
+        if home is None:
+            await populate_home_skel(
+                container_id, user_id, self.app.state.podman
+            )
+        else:
+            await populate_home_skel(
+                container_id, user_id, self.app.state.podman, home=home
+            )
 
     # --- lifecycle ---
 

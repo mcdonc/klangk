@@ -18,7 +18,7 @@
  *   5. Return to the workspace list → click the **demo** card (Owned by Me).
  *   6. Terminal continuity — just SHOW the existing CLI scrollback (the cloned
  *      repo + Pi session are already there). No new commands, no nav-tab tour:
- *      "files, chat, collaboration" is a hand-off to Sc 5/6/7, not a click-through.
+ *      "files, collaboration" is a hand-off to Sc 6/7, not a click-through.
  *   7. Add two terminal tabs via "+" → rename: "terminal2" then "scratch".
  *
  * Interaction rule (see videoscript "Interaction on camera"): every UI action

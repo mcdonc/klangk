@@ -62,6 +62,32 @@ _CONTAINER_ENV_KEY_PREFIX = "KLANGKWS_FEATURE_"
 # pathological growth.
 _MAX_MANIFEST_BYTES = 1024 * 1024
 
+# Feature names that were removed from the product. A deploy that still
+# lists one in ``KLANGKD_FEATURES_ENABLE`` boots fine — the name simply
+# never matches anything in the manifest, so ``is_enabled`` is False —
+# but the resolver logs a tailored line so the operator knows the knob
+# entry is dead rather than silently swallowing the typo-looking setting.
+_REMOVED_FEATURES = {"chat"}
+
+
+def warn_removed_features(raw: str | None) -> None:
+    """Log a tailored warning for removed feature names in *raw*.
+
+    Called once at Features construction / reconfigure, not per
+    ``is_enabled`` call, so the warning appears exactly once per
+    settings load.
+    """
+    if not raw:
+        return
+    names = {part for part in (e.strip() for e in raw.split(",")) if part}
+    for name in names & _REMOVED_FEATURES:
+        logger.warning(
+            "feature %r was removed from Klangk; ignoring it in "
+            "KLANGKD_FEATURES_ENABLE (remove the entry to silence this "
+            "warning)",
+            name,
+        )
+
 
 def is_valid_container_env_key(key: str) -> bool:
     """True if *key* is a safe container-env declaration.
@@ -98,11 +124,13 @@ class Features:
         # (pre-build source deploy, missing frontend_dir) — every method
         # degrades cleanly to "no features, no env bridge."
         self._manifest = self._read_manifest()
+        warn_removed_features(self.app.state.settings.features_enable)
 
     def reconfigure(self, app) -> None:
         # Re-read on a SIGHUP settings reload (frontend_dir may have changed).
         self.app = app
         self._manifest = self._read_manifest()
+        warn_removed_features(self.app.state.settings.features_enable)
 
     @property
     def _features_path(self) -> str:
@@ -162,9 +190,8 @@ class Features:
         """True if feature *name* is active for this deploy.
 
         Server-side activation resolver (#1974): the backend can now ask
-        "is feature X on?" the same way the frontend does — the prerequisite
-        for feature-gating server-side subsystems (e.g. the chat agent
-        subprocess, #1685/#1977) instead of bespoke settings.
+        "is feature X on?" the same way the frontend does — feature-gating
+        server-side subsystems instead of bespoke settings.
 
         Canonical semantics — mirrors ``_resolveActiveFeatures`` in
         ``src/frontend/lib/main.dart`` so the server gates on the **same**

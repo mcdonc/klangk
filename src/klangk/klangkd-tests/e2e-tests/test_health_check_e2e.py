@@ -36,6 +36,7 @@ def server():
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
         KLANGKD_HEALTH_CHECK_INTERVAL="2",
+        KLANGKD_HEALTH_CHECK_STARTUP_GRACE="0.1",
         LOGFIRE_TOKEN="",
     )
     yield server
@@ -129,7 +130,7 @@ async def ws_connect(server, auth, workspace_id):
     return ws, received, reader_task
 
 
-async def wait_for_received(received, predicate, timeout=45):
+async def wait_for_received(received, predicate, timeout=90):
     """Poll the shared *received* buffer until predicate matches."""
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout
@@ -141,7 +142,7 @@ async def wait_for_received(received, predicate, timeout=45):
     return False
 
 
-def _wait_for_status(server, auth, workspace_id, predicate, timeout=45):
+def _wait_for_status(server, auth, workspace_id, predicate, timeout=90):
     """Poll the status endpoint until predicate(state) is true."""
     client = server["client"]
     deadline = time.time() + timeout

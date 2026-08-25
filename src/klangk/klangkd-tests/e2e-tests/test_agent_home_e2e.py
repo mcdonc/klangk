@@ -1,24 +1,11 @@
-"""End-to-end tests for the agent-home behaviors added in #1157.
+"""E2E lock for the ``KLANGKWS_AGENT_HOME`` container env var (#1157).
 
-#1157 shipped two container-bringup behaviors that the unit suite can
-only *mock*:
-
-1. ``KLANGKWS_AGENT_HOME=/home/<agent_handle>`` is baked into the
-   container env at creation (``_build_env``), so **every** exec
-   process inside the container inherits it.  The unit test only proves
-   ``_build_env`` emits the string; here we prove podman actually
-   inherits it across a real ``exec``.
-
-2. The agent home (``/home/<agent_handle>`` + a populated
-   ``~/.pi/agent/``) is provisioned **eagerly at bring-up** via
-   ``ensure_agent_home`` -- not lazily at the first chat mention.
-
-   Crucially, eager provisioning lives only in ``start_workspace``
-   (triggered by ``auto_start=True`` on workspace creation), *not* the
-   normal WS connect path.  So the eager test creates a workspace with
-   ``auto_start=True`` and inspects the filesystem via ``podman exec``
-   **without ever connecting or chatting** -- the behavioral lock that
-   the home exists at start, before any mention.
+The chat feature (and with it the agent-home provisioning) was removed,
+but the constant survives: ``KLANGKWS_AGENT_HOME=/home/klangk`` is baked
+into every container's env under both home layouts, and the sandbox
+``setup.sh`` contract reads it.  The unit suite only proves ``build_env``
+emits the string; here we prove podman actually inherits it across a
+real ``exec``.
 
 Requires: podman available, klangk image built.
 
@@ -36,70 +23,20 @@ import pytest
 
 from _e2e_server import start_server, stop_server, ws_connect as _ws_dial
 
-# Default agent handle (see model/users.py: _DEFAULT_AGENT_HANDLE).  Not
-# imported from the backend to keep the e2e test decoupled from the
+# Fixed agent-identity home (#2718): the agent user *is* the ``klangk``
+# user, so its home is the constant ``/home/klangk`` under both layouts.
+# Not imported from the backend to keep the e2e test decoupled from the
 # server's internals -- the test asserts against observable container
 # state, not the Python API.
-AGENT_HANDLE = "klangk"
-AGENT_HOME = f"/home/{AGENT_HANDLE}"
-
-
-@pytest.fixture(scope="module")
-def server():
-    """Start a real Klangk server for the test module.
-
-    KLANGKD_ALLOW_AUTOSTART=1 is required so the eager-provisioning test
-    can create a workspace with auto_start=True (which routes through
-    start_workspace -> ensure_agent_home).
-    """
-    server = start_server(
-        KLANGKD_JWT_SECRET="agent-home-e2e-secret",
-        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
-        KLANGKD_DEFAULT_USER="test@example.com",
-        KLANGKD_DEFAULT_PASSWORD="testpass",
-        KLANGKD_TEST_MODE="1",
-        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
-        KLANGKD_ALLOW_AUTOSTART="1",
-        LOGFIRE_TOKEN="",
-    )
-
-    yield server
-
-    stop_server(server)
-
-
-def _rm_containers(instance_id):
-    """Remove any containers labeled with our instance id."""
-    if not instance_id:
-        return
-    result = subprocess.run(
-        [
-            "podman",
-            "ps",
-            "-a",
-            "--filter",
-            f"label=klangk.instance={instance_id}",
-            "-q",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.stdout.strip():
-        subprocess.run(
-            ["podman", "rm", "-f", *result.stdout.strip().split()],
-            capture_output=True,
-        )
+AGENT_HOME = "/home/klangk"
 
 
 def _container_id_for_workspace(workspace_id):
-    """Return the running workspace container id for a workspace.
+    """Return the running workspace container id(s) for a workspace.
 
     Looked up by the ``klangk.workspace`` correlation label + ``role=workspace``
-    (#2286) rather than the container name: the name now carries the slugified
-    workspace name and uses ``id[:8]``, so reconstructing it is fragile, and
-    ``role=workspace`` excludes the network sidecar (which shares the label).
-    Targets the exact workspace -- never a stale container from another
-    test/run.
+    (#2286) so we target the exact workspace, never a stale container from
+    another test/run (and never the network sidecar, which shares the label).
     """
     result = subprocess.run(
         [
@@ -115,6 +52,25 @@ def _container_id_for_workspace(workspace_id):
         text=True,
     )
     return [c for c in result.stdout.strip().split() if c]
+
+
+@pytest.fixture(scope="module")
+def server():
+    """Start a real Klangk server for the test module."""
+    server = start_server(
+        KLANGKD_JWT_SECRET="agent-home-e2e-secret",
+        KLANGKD_PREVENT_INSECURE_JWT_SECRET="",
+        KLANGKD_DEFAULT_USER="test@example.com",
+        KLANGKD_DEFAULT_PASSWORD="testpass",
+        KLANGKD_TEST_MODE="1",
+        KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_ALLOW_AUTOSTART="1",
+        LOGFIRE_TOKEN="",
+    )
+
+    yield server
+
+    stop_server(server)
 
 
 @pytest.fixture(scope="module")
@@ -237,7 +193,7 @@ class TestAgentHomeE2E:
                     ws,
                     ["bash", "-c", 'echo "$KLANGKWS_AGENT_HOME"'],
                 )
-                # Exact value: the default agent handle's home.
+                # Exact value: the fixed agent-identity home.
                 assert output.strip() == AGENT_HOME, (
                     f"expected KLANGKWS_AGENT_HOME={AGENT_HOME!r}, "
                     f"got {output!r}"
@@ -248,30 +204,24 @@ class TestAgentHomeE2E:
             cleanup()
 
     @pytest.mark.asyncio
-    async def test_agent_home_provisioned_eagerly(self, server, auth):
+    async def test_agent_home_materialized_eagerly(self, server, auth):
         """The agent home exists immediately after a container is brought
-        up via start_workspace -- with NO chat mention and NO WS
-        connection preceding the check (#1157).
+        up via start_workspace — with NO WS connection preceding the check.
 
-        auto_start=True routes creation through start_workspace,
-        which calls ensure_agent_home on a freshly-created container
-        (status == "created").  We then inspect the filesystem directly
-        via podman exec, as root, so the check is independent of any
+        The agent identity never connects over the WebSocket, so the only
+        thing that materializes its home is the create choke point
+        (``_bringup`` → ``ensure_agent_home``): a plain ``/home/klangk``
+        directory populated with /etc/skel (so ``~/.profile`` exists for
+        the sandbox ``setup.sh`` contract and the ``service`` session).
+        auto_start=True routes creation through start_workspace, so the
+        container is up by the time the POST returned; we inspect the
+        filesystem directly via podman exec as root, independent of any
         user's read permissions.
         """
-        # auto_start triggers start_workspace. The service command fires
-        # at the create choke point (bringup), but only once setup_state
-        # is complete; agent-home provisioning always runs at create.
         workspace_id, cleanup = create_workspace(
             server, auth, auto_start=True, setup_state="complete"
         )
         try:
-            # Wait for the eagerly-started container to be running.
-            # create_workspace awaits start_workspace, so the
-            # container is up by the time the POST returned; poll as a
-            # belt-and-suspenders against scheduling latency.  Filter by the
-            # klangk.workspace label so we target THIS workspace's container,
-            # never a stale one.
             cids = []
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
@@ -284,15 +234,11 @@ class TestAgentHomeE2E:
             )
             cid = cids[0]
 
-            # Verify the agent home dir + populated ~/.pi/agent/ exist.
-            # Run as root so the existence check is independent of
-            # per-user read permissions on the agent's home.
             check = (
-                "test -d {home}"
-                " && test -f {home}/.pi/agent/settings.json"
-                " && test -f {home}/.pi/agent/models.json"
+                "test -d /home/klangk"
+                " && test -f /home/klangk/.profile"
                 " && echo ALL_PRESENT"
-            ).format(home=AGENT_HOME)
+            )
             result = subprocess.run(
                 ["podman", "exec", "-u", "root", cid, "bash", "-c", check],
                 capture_output=True,
@@ -300,7 +246,7 @@ class TestAgentHomeE2E:
                 timeout=30,
             )
             assert "ALL_PRESENT" in result.stdout, (
-                f"agent home not fully provisioned at {AGENT_HOME}"
+                f"agent home not materialized at /home/klangk"
                 f" (rc={result.returncode}):\n{result.stdout}\n"
                 f"--- stderr ---\n{result.stderr}"
             )

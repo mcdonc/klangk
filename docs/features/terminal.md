@@ -166,7 +166,6 @@ handles of all current viewers.
 | `code-in-shared-terminals`     | \*     |        | yes           |            |
 | `spectate-on-shared-terminals` | \*     | yes    | yes           | yes        |
 | `files`                        | \*     | yes    | yes           |            |
-| `chat`                         | \*     | yes    | yes           |            |
 
 \* Owners have the wildcard (`*`) permission which implies all permissions.
 
@@ -177,5 +176,4 @@ handles of all current viewers.
 - **Collaborators** can type in shared terminals but cannot share their own tabs.
   They have full isolated terminal and file access.
 - **Spectators** can watch shared terminals in read-only mode. They cannot start
-  isolated terminals, access files, or send chat (chat is a privileged channel
-  -- it can drive the agent via @mention).
+  isolated terminals or access files.

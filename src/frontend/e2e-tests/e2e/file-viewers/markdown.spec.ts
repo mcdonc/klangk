@@ -120,7 +120,7 @@ test.describe("file-viewers/markdown", () => {
       // Re-open, switch to Terminal tab and back to Files.
       await clickFileRow(page, 0);
       const { width } = vp(page);
-      const tabWidth = width / 5;
+      const tabWidth = width / 4;
       await flutterClick(page, tabWidth / 2, 76);
       await page.waitForTimeout(400);
       await openFilesTab(page);

@@ -8,19 +8,18 @@
  * IDENTICAL across both. So it lives here, once, as a single `CONVERSATION`
  * array. Both scene files call `runConversation(ctx, perspective)`; the driver
  * performs each beat visibly (mouse + slowType on camera) when the beat's actor
- * is the recorded perspective, and as a sidechannel (WS terminal_input /
- * chat_send) otherwise.
+ * is the recorded perspective, and as a sidechannel (WS terminal_input)
+ * otherwise.
  *
  * Public surface:
  *   - CONVERSATION            — the single source of truth (read/edit this)
  *   - setupCollab(opts)       — connect all 4 actor WS clients, open the
  *                               recorded browser page, resolve geometry
- *   - resetCollabState(ctx)   — unshare prior takes' terminals; leave chat
- *                               (lived-in); idempotent
+ *   - resetCollabState(ctx)   — unshare prior takes' terminals; idempotent
  *   - runConversation(ctx, p) — walk CONVERSATION; visible vs sidechannel by p
  *   - teardownCollab(ctx)     — close WS clients
  *
- * FAST mode (KLANGKBUILD_DEMO_FAST=1): pace × 0.15, skip the live agent wait, run
+ * FAST mode (KLANGKBUILD_DEMO_FAST=1): pace × 0.15, run
  * headless. Verifies every beat (visible + sidechannel) so you can iterate the
  * collaboration mechanics in ~10s without the LLM or a recording.
  */
@@ -43,8 +42,6 @@ import {
   ensureSharedWorkspace,
   openWorkspaceDemo,
   openTab,
-  openChatTab,
-  openSharingTab,
   terminalTabCenterPx,
   connectWs,
   getMeId,
@@ -57,8 +54,8 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-export type Actor = "owner" | "teammate" | "designer" | "reviewer" | "klangk";
-export type Medium = "system" | "terminal" | "chat";
+export type Actor = "owner" | "teammate" | "designer" | "reviewer";
+export type Medium = "system" | "terminal";
 
 /** One spoken/typed moment in the conversation. `text` and `afterPrevMs` are
  *  shared across BOTH perspectives (cadence/text can't drift). */
@@ -75,15 +72,9 @@ export type Beat = {
   /** For the OWNER-only "share" system beat: which terminal tab to share. */
   shareTab?: "scratch" | "bash" | "terminal2";
 
-  /** For chat beats typed visibly: slowType options. `submit:"enter"` presses
-   *  Enter after typing (terminal beats always submit; chat beats that need a
-   *  Send-button click use submit:"none" and the scene clicks Send). */
+  /** slowType options for beats typed visibly. */
   type?: { cps?: number; trailing?: string };
   submit?: "enter" | "none";
-
-  /** For the klangk beat: how long to wait for the live reply (skipped in
-   *  FAST). */
-  waitMs?: number;
 };
 
 /** A terminal tab's click target (focus coords) keyed by human name. */
@@ -120,7 +111,6 @@ export type CollabCtx = {
     terminal2: TabTarget;
     shared: TabTarget; // where a joined shared terminal tab sits for the teammate
   };
-  chatBox: { x: number; y: number };
   /** Names of the owning terminal windows, for capture/verify. */
   scratchWindowName: string;
 };
@@ -134,7 +124,7 @@ export const CONVERSATION: Beat[] = [
   //     describes the four roles (Owners / Coders / Collaborators /
   //     Spectators). The teammate is already listed as a Collaborator
   //     (setupCollab granted the role pre-roll). Teammate perspective: no-op
-  //     (collaborators have no Sharing tab — only Terminal/Files/Chat). ---
+  //     (collaborators have no Sharing tab — only Terminal/Files). ---
   {
     id: "sharing-tour",
     actor: "owner",
@@ -174,49 +164,32 @@ export const CONVERSATION: Beat[] = [
     submit: "enter",
   },
 
-  // --- move to chat ---
+  // --- everyone converges on the shared terminal (the chat surface was
+  //     removed with the chat feature; the team talks in the shared
+  //     terminal itself) ---
   {
     id: "designer-1",
     actor: "designer",
-    medium: "chat",
-    text: "hey, can we add a simple landing page?",
+    medium: "terminal",
+    text: "echo 'designer: can we add a simple landing page?'",
     afterPrevMs: 2000,
+    submit: "enter",
   },
   {
     id: "reviewer-1",
     actor: "reviewer",
-    medium: "chat",
-    text: "yeah — minimal, just a headline and a button",
+    medium: "terminal",
+    text: "echo 'reviewer: yeah - minimal, just a headline and a button'",
     afterPrevMs: 2500,
+    submit: "enter",
   },
-  {
-    id: "owner-klangk",
-    actor: "owner",
-    medium: "chat",
-    text: "@klangk scaffold a simple Flask landing page with a headline and a button",
-    afterPrevMs: 2500,
-    type: { cps: 14 },
-    // Visible chat beats are submitted with a mouse click on Send (see scene),
-    // so the driver does not press Enter; the scene/performVisible handles it.
-    submit: "none",
-  },
-
-  // --- the klangk reply is special: live LLM, never sidechanneled ---
-  {
-    id: "klangk-reply",
-    actor: "klangk",
-    medium: "chat",
-    text: "",
-    afterPrevMs: 1000,
-    waitMs: Number(process.env.KLANGKBUILD_DEMO_AGENT_WAIT || 120_000),
-  },
-
   {
     id: "tm-react",
     actor: "teammate",
-    medium: "chat",
-    text: "nice — let's wire that button up next",
+    medium: "terminal",
+    text: "echo 'nice - lets wire that button up next'",
     afterPrevMs: 3000,
+    submit: "enter",
   },
 ];
 
@@ -327,7 +300,7 @@ export async function setupCollab({
   }
 
   // --- geometry from the recorded viewport ---
-  const { width, height } = vp(page);
+  const { height } = vp(page);
   const tabY = height * 0.2; // terminal sub-tab strip vertical center
   const ctx: CollabCtx = {
     workspaceId: ws.id,
@@ -355,7 +328,6 @@ export async function setupCollab({
       // at use time; default to index 1.
       shared: { x: terminalTabCenterPx(1), y: tabY },
     },
-    chatBox: { x: width / 2, y: height - 25 },
     scratchWindowName,
   };
   return ctx;
@@ -367,9 +339,7 @@ export async function setupCollab({
 
 /** Reset collaboration state between takes. Unshares any prior terminal shares
  *  (queried live), and clears the scratch pane so the echo lines don't pile
- *  up. Chat history is LEFT ACCUMULATED — it reads as "lived-in" (prior
- *  designer/reviewer discussion) and there's no bulk-clear API; per-message
- *  author-only soft-delete isn't worth the bookkeeping. */
+ *  up. */
 export async function resetCollabState(ctx: CollabCtx): Promise<void> {
   const { ws, page, perspective, scale } = ctx;
 
@@ -434,11 +404,6 @@ export async function runConversation(
       `[beat] start ${beat.id} (actor=${beat.actor}, medium=${beat.medium})`,
     );
 
-    if (beat.actor === "klangk") {
-      await waitForAgentReply(ctx, beat);
-      continue;
-    }
-
     if (beat.id === "sharing-tour") {
       await performSharingTour(ctx, perspective);
       continue;
@@ -468,40 +433,12 @@ export async function runConversation(
 
 // --- special beats ---------------------------------------------------------
 
-/** The klangk reply is a live LLM call, never sidechanneled. In FAST mode we
- *  skip the wait (mechanics only). Otherwise poll the chat for a new agent
- *  message and leave dead air for VO. */
-async function waitForAgentReply(ctx: CollabCtx, beat: Beat): Promise<void> {
-  if (ctx.fast) {
-    console.log(`[beat] SKIP ${beat.id} (FAST: no live agent)`);
-    return;
-  }
-  console.log(`[beat] WAIT ${beat.id} (live agent, up to ${beat.waitMs}ms)`);
-  // The agent's reply arrives as a chat_message from the agent user over the
-  // owner WS (and broadcasts). Poll any connection; we don't assert content
-  // (nondeterministic), just that a new agent message lands within the window.
-  const deadline = Date.now() + (beat.waitMs ?? 60_000);
-  // Drain sidechannel clients so they don't buffer; the agent message will
-  // appear on whichever WS we read. Use the designer WS (a passive listener).
-  try {
-    await ctx.ws.designer.recvUntil(
-      (m) =>
-        m.type === "chat_message" &&
-        Boolean((m as { user_email?: string }).user_email?.includes("klangk")),
-      Math.max(2_000, deadline - Date.now()),
-    );
-    console.log(`[beat] PASS ${beat.id} (agent replied)`);
-  } catch {
-    console.log(`[beat] WARN ${beat.id} (no klangk reply within window)`);
-  }
-}
-
 /** The "sharing-tour" system beat. Owner perspective: click the Sharing nav
- *  tab (index 3 of 5) and hold while the VO describes the four roles and notes
+ *  tab (index 2 of 4) and hold while the VO describes the four roles and notes
  *  the teammate is already a Collaborator. Then click back to the Terminal nav
  *  tab so the subsequent share beat's scratch-tab click lands in the terminal
  *  area. Teammate perspective: no-op (collaborators have no Sharing tab — only
- *  Terminal/Files/Chat). */
+ *  Terminal/Files). */
 async function performSharingTour(
   ctx: CollabCtx,
   perspective: Actor,
@@ -511,8 +448,8 @@ async function performSharingTour(
     return;
   }
   const { page, scale } = ctx;
-  // Sharing nav tab = index 3 of 5 (Terminal/Files/Chat/Sharing/Settings).
-  await openTab(page, 3, 5);
+  // Sharing nav tab = index 2 of 4 (Terminal/Files/Sharing/Settings).
+  await openTab(page, 2, 4);
   await pace(8000 * scale); // VO: describe roles, note teammate is a Collaborator
   // Return to the Terminal nav tab. Clicking a nav tab swaps the shown pane;
   // on returning to Terminal the pane re-mounts and may default to the bash
@@ -520,7 +457,7 @@ async function performSharingTour(
   // terminal before the share beat runs (the share beat clicks scratch's
   // share toggle and the owner types there). The settle lets the remount
   // settle so the sub-tab click lands on the terminal strip, not Sharing UI.
-  await openTab(page, 0, 5);
+  await openTab(page, 0, 4);
   await pace(1500 * scale);
   await mouseClick(page, ctx.tab.scratch.x, ctx.tab.scratch.y);
   await pace(1000 * scale);
@@ -659,30 +596,6 @@ async function performVisible(ctx: CollabCtx, beat: Beat): Promise<void> {
     await pace(500 * scale);
     return;
   }
-  if (beat.medium === "chat") {
-    // Ensure the Chat tab is open. Tab count is permission-gated: owner has
-    // 5 nav tabs, teammate (collaborator role) has 3 (Terminal/Files/Chat).
-    const navTabCount = ctx.perspective === "owner" ? 5 : 3;
-    await openChatTab(page, navTabCount);
-    await pace(600 * scale);
-    // Focus the chat input box.
-    await mouseClick(page, ctx.chatBox.x, ctx.chatBox.y);
-    await pace(400 * scale);
-    // Triple-click to clear any prior draft, then type.
-    await page.mouse.click(ctx.chatBox.x, ctx.chatBox.y, { clickCount: 3 });
-    await pace(150 * scale);
-    const text = beat.type?.trailing
-      ? `${beat.text}${beat.type.trailing}`
-      : beat.text;
-    await slowType(page, text, beat.type ?? {});
-    // For chat, submit by clicking the Send button (NOT Enter) per the
-    // interaction rules. The Send button sits just right of the input box.
-    await pace(400 * scale);
-    const { width } = vp(page);
-    await mouseClick(page, width * 0.95, ctx.chatBox.y);
-    await pace(500 * scale);
-    return;
-  }
 }
 
 // --- sidechannel performance (every actor but the recorded perspective) ----
@@ -714,16 +627,12 @@ async function performSidechannel(ctx: CollabCtx, beat: Beat): Promise<void> {
     }
     return;
   }
-  if (beat.medium === "chat") {
-    conn.send({ cmd: "chat_send", message: beat.text });
-    return;
-  }
 }
 
 // --- verification ----------------------------------------------------------
 
 /** Verify the beat's effect landed. Perspective-independent: checks the
- *  EFFECT (text in the shared pane, chat message echoed), so a FAST owner
+ *  EFFECT (text in the shared pane), so a FAST owner
  *  dry-run also exercises the teammate sidechannel write. */
 async function verifyBeat(ctx: CollabCtx, beat: Beat): Promise<void> {
   if (beat.medium === "terminal" && beat.text) {
@@ -736,22 +645,6 @@ async function verifyBeat(ctx: CollabCtx, beat: Beat): Promise<void> {
       return;
     } catch {
       return fail(ctx, beat, "terminal text not seen in shared pane");
-    }
-  }
-  if (beat.medium === "chat" && beat.text) {
-    // The chat message echoes back as chat_message on all WS clients. Wait for
-    // it on a passive listener (designer).
-    try {
-      await ctx.ws.designer.recvUntil(
-        (m) =>
-          m.type === "chat_message" &&
-          (m as { message?: string }).message === beat.text,
-        8_000,
-      );
-      console.log(`[beat] PASS ${beat.id} (chat echoed)`);
-      return;
-    } catch {
-      return fail(ctx, beat, "chat message not echoed");
     }
   }
 }

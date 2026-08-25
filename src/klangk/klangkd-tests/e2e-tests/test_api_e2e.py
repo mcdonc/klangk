@@ -519,7 +519,6 @@ class TestACLIntrospection:
         assert "view" in perms
         assert "terminal" in perms
         assert "files" in perms
-        assert "chat" in perms
         assert "*" not in perms
         assert "share" not in perms
 
@@ -889,7 +888,6 @@ class TestSharedWorkspaceAccess:
         perms = resp.json()["permissions"].get(f"/workspaces/{ws_id}", [])
         assert "terminal" not in perms
         assert "files" not in perms
-        assert "chat" not in perms
         assert "*" not in perms
 
     def test_add_self_as_member_rejected(self, api, user_a):

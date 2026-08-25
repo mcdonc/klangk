@@ -6,7 +6,7 @@
  * WebSocket sidechannels. Same CONVERSATION (collab-choreography.ts) as Sc 7,
  * performed from the teammate's perspective. Intercut against Sc 7 in the edit.
  *
- * The teammate is a Collaborator → 3 nav tabs (Terminal/Files/Chat; no
+ * The teammate is a Collaborator → 2 nav tabs (Terminal/Files; no
  * Sharing, no Settings). That is correct, not a bug.
  *
  * Iterate in FAST mode:

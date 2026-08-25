@@ -40,10 +40,10 @@
   <rect x="200" y="78" width="500" height="80" rx="10" fill="url(#browserGrad)" filter="url(#shadow)"/>
   <text x="450" y="104" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">Browser — Flutter Web App</text>
   <text x="260" y="126" fill="#D4E4F7" font-size="11">Terminal</text>
-  <text x="350" y="126" fill="#D4E4F7" font-size="11">File Viewer</text>
-  <text x="455" y="126" fill="#D4E4F7" font-size="11">Chat</text>
-  <text x="530" y="126" fill="#D4E4F7" font-size="11">Presence</text>
-  <text x="625" y="126" fill="#D4E4F7" font-size="11">Debug Panel</text>
+  <text x="360" y="126" fill="#D4E4F7" font-size="11">File Viewer</text>
+  <text x="480" y="126" fill="#D4E4F7" font-size="11">Sharing</text>
+  <text x="585" y="126" fill="#D4E4F7" font-size="11">Settings</text>
+  <text x="695" y="126" fill="#D4E4F7" font-size="11">Debug Panel</text>
   <!-- User icons -->
   <text x="220" y="108" fill="#fff" font-size="18">👤</text>
   <text x="244" y="146" fill="#B8D4F0" font-size="10">WebSocket + REST</text>
@@ -79,17 +79,16 @@
   <!-- Sub-items in 2 columns -->
   <text x="195" y="346" fill="#D6D0F7" font-size="11">🔐 Auth (JWT + ACL)</text>
   <text x="195" y="366" fill="#D6D0F7" font-size="11">📦 Workspace Manager</text>
-  <text x="195" y="386" fill="#D6D0F7" font-size="11">💬 Chat + @Mentions</text>
   <text x="410" y="346" fill="#D6D0F7" font-size="11">🖥️ Terminal Sessions</text>
   <text x="410" y="366" fill="#D6D0F7" font-size="11">🌉 Browser Bridge</text>
-  <text x="410" y="386" fill="#D6D0F7" font-size="11">👥 Presence</text>
+  <text x="410" y="386" fill="#D6D0F7" font-size="11">🧠 LLM Proxy</text>
 
   <!-- ════════ SQLITE (right of backend) ════════ -->
   <rect x="660" y="310" width="100" height="82" rx="8" fill="url(#storageGrad)" filter="url(#shadow)"/>
   <text x="710" y="340" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">SQLite</text>
   <text x="710" y="358" text-anchor="middle" fill="#B2BEC3" font-size="10">Users</text>
   <text x="710" y="372" text-anchor="middle" fill="#B2BEC3" font-size="10">Workspaces</text>
-  <text x="710" y="386" text-anchor="middle" fill="#B2BEC3" font-size="10">ACL · Chat</text>
+  <text x="710" y="386" text-anchor="middle" fill="#B2BEC3" font-size="10">ACL · Invitations</text>
   <!-- Arrow: backend → sqlite -->
   <line x1="610" y1="351" x2="656" y2="351" stroke="#8B949E" stroke-width="2" marker-end="url(#arrowGrey)"/>
 
@@ -137,14 +136,13 @@
   <text x="770" y="636" fill="#58A6FF" font-size="11">🔌 Features</text>
   <text x="120" y="654" fill="#8B949E" font-size="9">Per-resource access control</text>
   <text x="275" y="654" fill="#8B949E" font-size="9">Pi agent with tool calling</text>
-  <text x="430" y="654" fill="#8B949E" font-size="9">Chat, presence, sharing</text>
+  <text x="430" y="654" fill="#8B949E" font-size="9">Sharing, terminals</text>
   <text x="600" y="654" fill="#8B949E" font-size="9">Podman, shareable workspaces</text>
   <text x="770" y="654" fill="#8B949E" font-size="9">Extensible tools</text>
 
 
-  <!-- Container → Caddy arrow (LLM proxy + chat API) -->
+  <!-- Container → Caddy arrow (LLM proxy API) -->
   <path d="M 130,448 L 130,224 L 146,224" stroke="#FDCB6E" stroke-width="1.5" stroke-dasharray="5,3" fill="none" marker-end="url(#arrowYellow)"/>
-  <text x="68" y="340" fill="#FDCB6E" font-size="9">LLM proxy</text>
-  <text x="68" y="353" fill="#FDCB6E" font-size="9">+ chat API</text>
-  <text x="68" y="366" fill="#FDCB6E" font-size="9">(JWT auth)</text>
+  <text x="68" y="346" fill="#FDCB6E" font-size="9">LLM proxy</text>
+  <text x="68" y="359" fill="#FDCB6E" font-size="9">(JWT auth)</text>
 </svg>

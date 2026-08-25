@@ -1,34 +1,36 @@
 """Tests for the create choke-point orchestrator (#1244).
 
 ``ContainerRegistry._bringup`` runs inside ``start_container`` for every
-fresh container. It provisions the agent home and fires the service
-command. The underlying primitives (``Agents.ensure_agent_home``,
-``Terminal.ensure_service_session``) have their own coverage; these
-tests pin the orchestration: that both are called in the right order
-with the right args, and that the service-command half is skipped when
-no command is configured.
+fresh container. It materializes the agent identity's home (the agent
+never connects over the WebSocket, so nothing else would — yet the sandbox
+``setup.sh`` contract and the ``service`` tmux session both need
+``/home/klangk`` to exist) and fires the service command. The underlying
+primitives (``Workspaces.ensure_agent_home`` / ``populate_home_skel``,
+``Terminal.ensure_service_session``) have their own coverage; these tests
+pin the orchestration: that each is called with the right args, in the
+right cases.
 """
 
 from unittest.mock import AsyncMock, MagicMock
 
-from klangk.agent import Agents
 from klangk.container import ContainerRegistry
+from klangk.model import AGENT_USER_ID
 
 _app_state = MagicMock()
 _app_state.state.terminal.ensure_service_session = AsyncMock()
-_app_state.state.agents = MagicMock(spec=Agents)
-_app_state.state.agents.ensure_agent_home = AsyncMock(
-    return_value="/home/klangk"
+_app_state.state.workspaces.ensure_agent_home = AsyncMock(
+    return_value=("/home/klangk", False)
 )
+_app_state.state.workspaces.populate_home_skel = AsyncMock()
 
 
 def _registry():
     """A ContainerRegistry bound to the mock app_state.
 
-    ``_bringup`` reads only ``self.app_state`` (the agent-home and
-    service-session siblings), so we skip the heavy ``__init__`` (which
-    parses settings + builds collaborators that these tests don't
-    exercise) and attach the mock app_state directly.
+    ``_bringup`` reads only ``self.app_state`` (the workspaces and
+    terminal siblings), so we skip the heavy ``__init__`` (which parses
+    settings + builds collaborators that these tests don't exercise) and
+    attach the mock app_state directly.
     """
     reg = object.__new__(ContainerRegistry)
     reg.app = _app_state
@@ -38,21 +40,23 @@ def _registry():
 class TestBringup:
     def setup_method(self):
         _app_state.state.terminal.ensure_service_session.reset_mock()
-        _app_state.state.agents.ensure_agent_home.reset_mock()
-        _app_state.state.agents.ensure_agent_home.return_value = (
-            "/home/klangk"
+        _app_state.state.workspaces.ensure_agent_home.reset_mock()
+        _app_state.state.workspaces.ensure_agent_home.return_value = (
+            "/home/klangk",
+            False,
         )
+        _app_state.state.workspaces.populate_home_skel.reset_mock()
 
-    async def test_provisions_home_and_fires_service_command(self):
-        """A configured service command fires after the home is ready."""
+    async def test_ensures_agent_home_then_fires_service_command(self):
+        """A configured service command fires with the resolved agent home."""
         await _registry()._bringup(
             "ws-id",
             "cid",
             "openclaw gateway",
             setup_state="complete",
         )
-        _app_state.state.agents.ensure_agent_home.assert_awaited_once_with(
-            "ws-id", "cid"
+        _app_state.state.workspaces.ensure_agent_home.assert_awaited_once_with(
+            "ws-id"
         )
         _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
@@ -61,11 +65,33 @@ class TestBringup:
             setup_state="complete",
         )
 
-    async def test_skips_service_command_when_none(self):
-        """No service_command -> only the agent home is provisioned."""
+    async def test_populates_skel_only_on_first_creation(self):
+        """``created=True`` from ensure_agent_home triggers the skel copy
+        into the agent's own home path; an already-existing home does not."""
+        _app_state.state.workspaces.ensure_agent_home.return_value = (
+            "/home/klangk",
+            True,
+        )
         await _registry()._bringup("ws-id", "cid", None, "complete")
-        _app_state.state.agents.ensure_agent_home.assert_awaited_once_with(
-            "ws-id", "cid"
+        _app_state.state.workspaces.populate_home_skel.assert_awaited_once_with(
+            "cid", AGENT_USER_ID, home="/home/klangk"
+        )
+
+        # Second bringup: home exists → no skel copy.
+        _app_state.state.workspaces.ensure_agent_home.return_value = (
+            "/home/klangk",
+            False,
+        )
+        _app_state.state.workspaces.populate_home_skel.reset_mock()
+        await _registry()._bringup("ws-id", "cid", None, "complete")
+        _app_state.state.workspaces.populate_home_skel.assert_not_awaited()
+
+    async def test_ensures_home_even_without_service_command(self):
+        """No service_command → the home is still ensured (the sandbox
+        setup.sh contract needs it), but nothing is fired."""
+        await _registry()._bringup("ws-id", "cid", None, "complete")
+        _app_state.state.workspaces.ensure_agent_home.assert_awaited_once_with(
+            "ws-id"
         )
         _app_state.state.terminal.ensure_service_session.assert_not_awaited()
 

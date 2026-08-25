@@ -4,10 +4,10 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:klangk_plugin_api/klangk_plugin_api.dart' show baseUrl;
 import '../auth/auth_service.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
-import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 
 /// A single WebSocket debug log entry.
 class WsDebugEntry {
@@ -22,7 +22,7 @@ class WsDebugEntry {
 
 /// Manages WebSocket connection to the Klangk backend, sending commands
 /// and streaming terminal output and browser bridge requests.
-class WsClient extends ChangeNotifier implements ChatServices {
+class WsClient extends ChangeNotifier {
   // coverage:ignore-start
   static String get _wsBaseUrl {
     final loc = Uri.base;
@@ -133,7 +133,6 @@ class WsClient extends ChangeNotifier implements ChatServices {
       StreamController<Map<String, dynamic>>.broadcast();
   final _customEventController =
       StreamController<Map<String, dynamic>>.broadcast();
-  final _chatController = StreamController<Map<String, dynamic>>.broadcast();
   final _sharedTerminalDeletedController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _workspacesChangedController = StreamController<void>.broadcast();
@@ -148,47 +147,11 @@ class WsClient extends ChangeNotifier implements ChatServices {
   Stream<Map<String, dynamic>> get browserRequests =>
       _browserRequestController.stream;
 
-  /// Buffered chat history — populated from chat_history and chat_message.
-  final List<Map<String, dynamic>> chatHistory = [];
-
-  /// Users currently connected to the workspace.
-  List<Map<String, dynamic>> presenceUsers = [];
-
-  /// Users mentionable via @autocomplete: whoever is currently present.
-  ///
-  /// A @mention is a synchronous act — it renders bold text delivered only
-  /// to currently-connected sockets; there is no async delivery or
-  /// notification for offline members. So autocomplete suggests exactly the
-  /// users who will actually receive it: present humans plus, iff its
-  /// subprocess is alive, the chat agent. A stopped or admin-disabled agent
-  /// therefore disappears from autocomplete with no special-case gate —
-  /// presence is "physical", keyed off the running process. Normalized to
-  /// {id, email, handle} (the shape [ChatInputBar] reads); presence rows
-  /// arrive with user_* keys.
-  List<Map<String, dynamic>> get mentionCandidates => presenceUsers
-      .map(
-        (u) => {
-          'id': u['user_id'] ?? '',
-          'email': u['user_email'] ?? '',
-          'handle': u['user_handle'] ?? '',
-        },
-      )
-      .toList();
-
   /// Terminal windows in the current tmux session.
   List<Map<String, dynamic>> terminalWindows = [];
 
   /// Shared terminals available in the workspace.
   List<Map<String, dynamic>> sharedTerminals = [];
-
-  /// Chat messages (individual and history) from the backend.
-  Stream<Map<String, dynamic>> get chatMessages => _chatController.stream;
-
-  /// Older chat history pages loaded on demand.
-  final _chatHistoryPageController =
-      StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get chatHistoryPages =>
-      _chatHistoryPageController.stream;
 
   /// Custom events from the backend (container_ready, container_stopped, etc.)
   Stream<Map<String, dynamic>> get customEvents =>
@@ -372,17 +335,6 @@ class WsClient extends ChangeNotifier implements ChatServices {
     'error': (json) =>
         _errorController.add(json['message'] as String? ?? 'Unknown error'),
     'browser_request': _browserRequestController.add,
-    'chat_message': (json) {
-      chatHistory.add(json);
-      _chatController.add(json);
-    },
-    'chat_history': _onChatHistory,
-    'chat_history_page': _chatHistoryPageController.add,
-    'chat_updated': _chatController.add,
-    'agent_thinking': _chatController.add,
-    'presence_list': _onPresenceList,
-    'presence_join': _onPresenceJoin,
-    'presence_leave': _onPresenceLeave,
     'terminal_windows': _onTerminalWindows,
     'shared_terminals': _onSharedTerminals,
     'shared_terminal_deleted': _onSharedTerminalDeleted,
@@ -458,7 +410,6 @@ class WsClient extends ChangeNotifier implements ChatServices {
         _currentWorkspaceId = null;
         _serviceCommand = null;
         _userHome = null;
-        presenceUsers = [];
         terminalWindows = [];
         sharedTerminals = [];
         // #2661/#2684: a stale schedule snapshot must not survive the
@@ -490,7 +441,6 @@ class WsClient extends ChangeNotifier implements ChatServices {
         _connected = false;
         _pendingWorkspaceId ??= _currentWorkspaceId;
         _currentWorkspaceId = null;
-        presenceUsers = [];
         terminalWindows = [];
         sharedTerminals = [];
         _serverSchedules = null;
@@ -527,49 +477,6 @@ class WsClient extends ChangeNotifier implements ChatServices {
     _hostNotice = null;
     _startHeartbeat();
     notifyListeners();
-  }
-
-  void _onChatHistory(Map<String, dynamic> json) {
-    chatHistory.clear();
-    final messages = json['messages'] as List? ?? [];
-    final typed = <Map<String, dynamic>>[];
-    for (final m in messages) {
-      final msg = m as Map<String, dynamic>;
-      chatHistory.add(msg);
-      typed.add(msg);
-    }
-    // Emit a single replacement event so listeners can clear-and-replace
-    // instead of appending (which would duplicate buffered messages).
-    _chatController.add({'type': 'chat_history_replace', 'messages': typed});
-  }
-
-  void _onPresenceList(Map<String, dynamic> json) {
-    final users = json['users'] as List? ?? [];
-    presenceUsers = List<Map<String, dynamic>>.from(users);
-    notifyListeners();
-  }
-
-  void _onPresenceJoin(Map<String, dynamic> json) {
-    final uid = json['user_id'] as String?;
-    if (uid != null && !presenceUsers.any((u) => u['user_id'] == uid)) {
-      presenceUsers = [
-        ...presenceUsers,
-        {
-          'user_id': uid,
-          'user_email': json['user_email'],
-          'user_handle': json['user_handle'] ?? '',
-        },
-      ];
-      notifyListeners();
-    }
-  }
-
-  void _onPresenceLeave(Map<String, dynamic> json) {
-    final uid = json['user_id'] as String?;
-    if (uid != null) {
-      presenceUsers = presenceUsers.where((u) => u['user_id'] != uid).toList();
-      notifyListeners();
-    }
   }
 
   void _onTerminalWindows(Map<String, dynamic> json) {
@@ -637,8 +544,6 @@ class WsClient extends ChangeNotifier implements ChatServices {
     _stopHeartbeat();
     _send({'cmd': 'workspace_disconnect'});
     _currentWorkspaceId = null;
-    chatHistory.clear();
-    presenceUsers = [];
     notifyListeners();
   }
 
@@ -742,22 +647,6 @@ class WsClient extends ChangeNotifier implements ChatServices {
     _send({'cmd': 'heartbeat'});
   }
 
-  void sendChatMessage(String text) {
-    _send({'cmd': 'chat_send', 'message': text});
-  }
-
-  void sendChatLoadMore(String beforeId, {int limit = 50}) {
-    _send({'cmd': 'chat_load_more', 'before_id': beforeId, 'limit': limit});
-  }
-
-  void sendChatDelete(String messageId) {
-    _send({'cmd': 'chat_delete', 'message_id': messageId});
-  }
-
-  void sendChatAgentAbort() {
-    _send({'cmd': 'chat_agent_abort'});
-  }
-
   void sendBrowserResponse(String id, Map<String, dynamic> result) {
     _send({'cmd': 'browser_response', 'id': id, ...result});
   }
@@ -841,8 +730,6 @@ class WsClient extends ChangeNotifier implements ChatServices {
     _hostNoticeController.close();
     _terminalOutputController.close();
     _browserRequestController.close();
-    _chatController.close();
-    _chatHistoryPageController.close();
     _customEventController.close();
     _sharedTerminalDeletedController.close();
     _workspacesChangedController.close();

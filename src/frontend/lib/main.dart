@@ -76,7 +76,6 @@ Future<void> main() async {
         // notifyListeners (#1976 review nit).
         Provider<WorkspaceServices>(
           create: (ctx) => HostWorkspaceServices(
-            ctx.read<WsClient>(),
             ctx.read<AuthService>(),
           ),
         ),

@@ -32,6 +32,20 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **The chat feature is removed (#2716).** The per-workspace chat panel, the
+  `@klangk` agent interaction, the `pi --mode rpc` chat-agent runtime, and the
+  `chat` feature flag are gone. `KLANGKD_FEATURES_ENABLE=chat` on an existing
+  config is ignored with a startup warning — no operator action required.
+  Existing `chat_messages`/`chat_mentions` tables and stale `chat` ACL rows
+  remain in the DB as inert leftovers (no destructive migration). The `chat`
+  workspace permission is removed from the known-permissions list and the
+  sharing UI; the agent user identity (DB row, handle, inactivity-sweep
+  exemption) and its ownership of the `service` tmux session are unchanged.
+  The agent home is still materialized at container create — now a plain
+  `/home/klangk` directory (no `.users/{uid}` symlink indirection; the
+  handle is fixed) populated from `/etc/skel`, without chat-agent Pi
+  config. `klangk-setup-pi` stays as the generic per-user Pi setup.
+
 - **The agent user is `klangk` (#2718).** The agent's identity is fixed
   (handle `klangk`, email `klangk@example.com`) and matches the container
   UNIX user / shared home. `klangk` is a reserved handle and the agent
@@ -41,6 +55,43 @@ operators or integrators to act when upgrading.
   agent row and relocates a human user who already held the `klangk`
   handle to a unique alternative. Deployments that customized the agent's
   name lose that customization.
+
+- **Interactive workspaces now require the network sidecar (#2325).** Every
+  `egress_mode=interactive` workspace (the default) spawns a network sidecar
+  and holds each new outbound host for a consent decision. On upgrade, an
+  existing interactive workspace's next start requires a configured
+  `network_sidecar_image` and a non-empty `KLANGKD_USERNS`; if either is
+  missing it **fails closed** (refuses to start) instead of egressing
+  unrestricted. An interactive workspace with `allow_sudo` also has `net_raw`
+  dropped (defense-in-depth against the SO_MARK bypass), disabling setuid
+  `ping` for it. Static workspaces with no allow/reject lists are unaffected.
+
+- **(#1653)** Environment variables renamed to `KLANGKD_*` / `KLANGKBUILD_*` /
+  `KLANGKWS_*` / `KLANGK_*`. Old `KLANGK_*` names are not accepted. Update
+  deploy manifests.
+
+- **"Plugin" → "feature" rename (#1658).** `plugins.yaml` → `features.yaml`,
+  `plugins/` → `features/`, `update-plugins` → `update-features`, etc.
+
+- **Feature config keys must start with `KLANGKWS_FEATURE_` (#1662).** Rename
+  `KLANGKD_GITHUB_OAUTH_CLIENT_ID` → `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID`,
+  `KLANGKBUILD_BOING_SPEED` → `KLANGKWS_FEATURE_BOING_SPEED`, etc.
+
+- **`KLANGKD_CUSTOMIZE_DIR` moved to `<config_dir>/custom` (#1644).** Move
+  contents from `<state_dir>/custom` or set `KLANGKD_CUSTOMIZE_DIR` explicitly.
+
+- **One `klangk` distribution (#1606).** `pip install klangk` yields both
+  `klangkd` (server) and `klangk` (client). `import klangk_backend` →
+  `import klangkd`. The `klangkc` PyPI distribution is retired.
+
+- **Default auth mode is `none` (#1374).** Set `KLANGKD_AUTH_MODES=password`
+  explicitly if you relied on the old default. `none` is loopback-bound and
+  safe by construction.
+
+- **OIDC settings no longer change the auth mode (#1419).** Set
+  `KLANGKD_AUTH_MODES=oidc` (or `both`) explicitly.
+
+- **`klangk invite` → `klangk admin invitations send` (#1374).**
 
 ### Security
 
@@ -1177,45 +1228,6 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 - **`claude-code` and `herdr` features (#1658).** Removed. Drop them from
   custom `features.yaml` if present.
-
-### Breaking
-
-- **Interactive workspaces now require the network sidecar (#2325).** Every
-  `egress_mode=interactive` workspace (the default) spawns a network sidecar
-  and holds each new outbound host for a consent decision. On upgrade, an
-  existing interactive workspace's next start requires a configured
-  `network_sidecar_image` and a non-empty `KLANGKD_USERNS`; if either is
-  missing it **fails closed** (refuses to start) instead of egressing
-  unrestricted. An interactive workspace with `allow_sudo` also has `net_raw`
-  dropped (defense-in-depth against the SO_MARK bypass), disabling setuid
-  `ping` for it. Static workspaces with no allow/reject lists are unaffected.
-
-- **(#1653)** Environment variables renamed to `KLANGKD_*` / `KLANGKBUILD_*` /
-  `KLANGKWS_*` / `KLANGK_*`. Old `KLANGK_*` names are not accepted. Update
-  deploy manifests.
-
-- **"Plugin" → "feature" rename (#1658).** `plugins.yaml` → `features.yaml`,
-  `plugins/` → `features/`, `update-plugins` → `update-features`, etc.
-
-- **Feature config keys must start with `KLANGKWS_FEATURE_` (#1662).** Rename
-  `KLANGKD_GITHUB_OAUTH_CLIENT_ID` → `KLANGKWS_FEATURE_GITHUB_OAUTH_CLIENT_ID`,
-  `KLANGKBUILD_BOING_SPEED` → `KLANGKWS_FEATURE_BOING_SPEED`, etc.
-
-- **`KLANGKD_CUSTOMIZE_DIR` moved to `<config_dir>/custom` (#1644).** Move
-  contents from `<state_dir>/custom` or set `KLANGKD_CUSTOMIZE_DIR` explicitly.
-
-- **One `klangk` distribution (#1606).** `pip install klangk` yields both
-  `klangkd` (server) and `klangk` (client). `import klangk_backend` →
-  `import klangkd`. The `klangkc` PyPI distribution is retired.
-
-- **Default auth mode is `none` (#1374).** Set `KLANGKD_AUTH_MODES=password`
-  explicitly if you relied on the old default. `none` is loopback-bound and
-  safe by construction.
-
-- **OIDC settings no longer change the auth mode (#1419).** Set
-  `KLANGKD_AUTH_MODES=oidc` (or `both`) explicitly.
-
-- **`klangk invite` → `klangk admin invitations send` (#1374).**
 
 ### Fixed
 

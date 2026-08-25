@@ -339,7 +339,7 @@ class _HandleSectionState extends State<_HandleSection> {
         title: const Text('Change Handle?'),
         content: Text(
           'Change your handle from @${widget.currentHandle ?? ''} to @$newHandle?\n\n'
-          'This will affect your terminal home directory and how others see you in chat.',
+          'This will affect your terminal home directory and how others see you.',
         ),
         actions: [
           TextButton(

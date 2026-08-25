@@ -8,7 +8,7 @@
  * deterministic order and don't fight over containers.
  *
  * Run:  devenv shell -- npx playwright test --config=src/frontend/e2e-tests/demo/playwright.demo.config.ts
- * One:  ... -g "agent chat"          (grep a scene title)
+ * One:  ... -g "pi debug"            (grep a scene title)
  *
  * Pre-reqs: demo backend up on $KLANGKBUILD_TEST_URL (default :8996 via
  * run-demo-backend.sh), KLANGKD_ALLOW_AUTOSTART=1, and the demo seed

@@ -35,11 +35,11 @@ api_auth = sys.modules["klangk.api.auth"]
 
 # Total HTTP route operations the monolith exposed (per the issue).  The
 # split must preserve this exactly — no dropped or duplicated handlers.
-EXPECTED_ROUTE_COUNT = 97
+EXPECTED_ROUTE_COUNT = 96
 
-# Per-domain submodules and the number of routes each owns.  92 sub-routes
+# Per-domain submodules and the number of routes each owns.  91 sub-routes
 # + 3 routes defined directly on the main router (version, config,
-# my-permissions) + 2 on the root router (health, empty) == 97.
+# my-permissions) + 2 on the root router (health, empty) == 96.
 SUBMODULE_ROUTES = {
     "auth": 15,
     "oidc_auth": 2,
@@ -47,7 +47,6 @@ SUBMODULE_ROUTES = {
     "files": 6,
     "images": 4,
     "browser_delegate": 2,
-    "chat": 1,
     "admin": 33,
     "llm_proxy": 2,
 }
@@ -87,8 +86,6 @@ REPRESENTATIVE_PATHS = [
     # browser bridge
     f"{API_PREFIX}/browser-delegate",
     f"{API_PREFIX}/browser-delegate/stream",
-    # chat
-    f"{API_PREFIX}/workspaces/post-chat-message",
     # admin (users / groups / invitations / acl)
     f"{API_PREFIX}/admin/users",
     f"{API_PREFIX}/admin/invitations",
@@ -254,8 +251,8 @@ class TestSubmoduleStructure:
         total = 0
         for submod in SUBMODULE_ROUTES:
             total += len(import_module(f"klangk.api.{submod}").router.routes)
-        # 92 sub-routes + 3 direct (version/config/my-permissions) + 2
-        # root (health/empty) == 97.
+        # 91 sub-routes + 3 direct (version/config/my-permissions) + 2
+        # root (health/empty) == 96.
         assert total == EXPECTED_ROUTE_COUNT - 3 - 2
 
     def test_common_module_has_no_router(self):

@@ -13,7 +13,7 @@ to enable AI features:
 | -------------------- | ------- | ---------------------------------------------------------- |
 | `KLANGKD_LLM_MODELS` |         | Model list (see [LLM proxy](../architecture/llm-proxy.md)) |
 
-Without these, Pi and the Pi agent via the chat are non-functional. See
+Without these, Pi is non-functional. See
 [Environment Variables](../reference/environment.md) for the full
 list.
 
@@ -35,36 +35,6 @@ By default Pi uses the LLM proxy with the provider and model
 configured via `KLANGKD_LLM_MODELS` and
 `KLANGKD_LLM_API_KEY`. Its config is stored in `~/.pi/agent/` and
 populated automatically at first login by klangk itself.
-
-### Using Pi from chat
-
-Mention the agent handle in the [Chat](chat.md) panel:
-
-```text
-@klangk create a Python Flask app on port 8000
-```
-
-The agent is **opt-in** (#1977): the `pi --mode rpc` subprocess spawns only
-when the `chat` feature is active **and** `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED`
-is set. The agent's handle/email are chat-feature config keys, seeded into the
-database on startup (and re-seeded on SIGHUP); after seeding they're read from
-the DB.
-
-| Key                                   | Default               |
-| ------------------------------------- | --------------------- |
-| `KLANGKWS_FEATURE_CHAT_AGENT_ENABLED` | (unset = off)         |
-
-(The agent identity is fixed as `klangk` / `klangk@example.com`, #2718.)
-
-See [Chat](chat.md) for full config resolution (env → `features_config:` →
-default).
-
-The agent user cannot have a password and cannot log in via credentials.
-
-When invoked from chat, Pi runs in RPC mode — the backend manages
-the subprocess and streams responses back to the chat panel. See
-[Chat - AI Agent](chat.md#ai-agent-klangk) for details on
-follow-up conversations and interjections.
 
 ### Pi extensions
 

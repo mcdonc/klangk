@@ -31,7 +31,6 @@ demo-helpers.ts        # Flutter-coordinate primitives + pacing + auth + WS
 demo-seed.ts           # one-time: seed users + Potemkin workspaces
 scenes/
   scene-04-web-ui.ts                  # Sc 4: workspaces + terminal + hosted apps
-  scene-05-agent.ts                 # Sc 5: live @klangk chat
   scene-05b-pi-debug.ts               # Sc 5b: pi debug cycle
   scene-06-files.ts                   # Sc 6: file browser + PDF inline render
   scene-07-collaboration.ts           # Sc 7: collaboration (owner's view)
@@ -116,7 +115,7 @@ Knobs (env vars):
 | `KLANGKBUILD_TEST_URL`            | `http://localhost:8996` | the demo server to point at                                      |
 | `KLANGKBUILD_DEMO_HEADLESS`       | unset                   | set `=1` for a quick headless dry check                          |
 | `KLANGKBUILD_DEMO_SLOWMO`         | `50`                    | ms slowMo between actions (bump for slower, readable clicks)     |
-| `KLANGKBUILD_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for klangk's live reply before the scene ends  |
+| `KLANGKBUILD_DEMO_AGENT_WAIT`     | `60000`                 | how long to hold for klangk's live reply before the scene ends   |
 | `KLANGKBUILD_DEMO_PASSWORD`       | `demopass123`           | password for freshly-registered demo accounts                    |
 | `KLANGKBUILD_DEMO_ADMIN_PASSWORD` | `adminpass`             | the hero admin's password (admin@example.com; seed + all scenes) |
 | `KLANGKBUILD_DEMO_TEAMMATE_EMAIL` | `teammate@example.com`  | the collaborator account                                         |
@@ -139,11 +138,11 @@ so **CSS selectors don't work.** Every interaction is a **coordinate click on
 `demo-helpers.ts` reuses the proven primitives from `../e2e/helpers.ts`
 (`flutterClick`, tab coordinates, `terminalType`) and adds demo pacing + auth.
 
-For the flaky bits (right-click → Share popup, chat mention autocomplete),
+For the flaky bits (right-click → Share popup),
 scenes drive state via **WebSocket commands** instead of pixel clicks — the same
 reliable approach the existing `docs-*-screenshots.spec.ts` suite uses.
 
-## Full recording pass (2 → 5b)
+## Full recording pass
 
 Before **every** full recording run — whether the whole arc (CLI + browser) or
 just re-running the browser half — you MUST first destroy the hero account so
@@ -174,8 +173,8 @@ browser scenes inherit):
 # CLI scenes 2 → 3 → 3b (establishes hero login + demo workspace + terminal2 tab)
 devenv shell -- src/frontend/e2e-tests/demo/record-cli.sh all
 
-# Browser scenes 4 (web UI + scratch tab), 5 (agent chat), 5b (pi debug)
-devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g "web ui tour|agent chat|pi debug"
+# Browser scenes 4 (web UI + scratch tab), 5b (pi debug)
+devenv shell -- src/frontend/e2e-tests/demo/record-demo.sh -g "web ui tour|pi debug"
 ```
 
 ## Re-take workflow

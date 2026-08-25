@@ -496,7 +496,7 @@ No request body.
   "email": "user@example.com",
   "groups": [],
   "permissions": {
-    "/workspaces/uuid": ["view", "terminal", "files", "chat"]
+    "/workspaces/uuid": ["view", "terminal", "files"]
   }
 }
 ```
@@ -1362,30 +1362,6 @@ optional `name` form field.
 
 ---
 
-### POST `/api/v1/workspaces/post-chat-message`
-
-Post a chat message from a workspace container to the workspace's chat
-channel. Used by Pi extensions and tools running inside the container.
-
-**Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
-
-```json
-{ "message": "text of message" }
-```
-
-```json
-{
-  "id": "uuid",
-  "workspace_id": "uuid",
-  "sender": "agent",
-  "sender_id": "agent",
-  "text": "text of message",
-  "message_type": 2
-}
-```
-
----
-
 ### POST `/api/v1/workspaces/{id}/duplicate`
 
 Clone an existing workspace's configuration into a new workspace.
@@ -1465,7 +1441,7 @@ Grant a group access to a workspace.
 ### POST `/api/v1/workspaces/{id}/members`
 
 Grant a user access to a workspace. The user receives view, terminal,
-files, and chat permissions.
+and files permissions.
 
 **Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
 
@@ -1849,7 +1825,7 @@ No request body.
 ### WebSocket `/ws`
 
 Primary WebSocket connection for real-time communication. Handles
-terminal I/O, chat messages, workspace status updates, and browser
+terminal I/O, workspace status updates, and browser
 delegate events.
 
 **Auth:** JWT required via `?token=` query param.

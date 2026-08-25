@@ -137,7 +137,7 @@ class IdeLayoutState extends State<IdeLayout> {
 
   /// Notify feature tabs of visibility on select/deselect (#1976): the tab
   /// being left gets setVisible(false), the tab being shown gets
-  /// setVisible(true) (so e.g. the chat marks messages read + focuses input).
+  /// setVisible(true).
   void _notifyFeatureTabVisibility(int oldIndex, int newIndex) {
     final start = _featureTabStart;
     if (start < 0) return;
@@ -195,7 +195,7 @@ class IdeLayoutState extends State<IdeLayout> {
       _notifyFeatureTabVisibility(oldIndex, index);
     }
     // Always (re)focus the tab's input — even when re-clicking the already
-    // active tab — so clicking Terminal/Chat returns focus to its input.
+    // active tab — so clicking a tab returns focus to its input.
     _focusPane(index);
   }
 

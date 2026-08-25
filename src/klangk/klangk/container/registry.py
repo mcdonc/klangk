@@ -18,6 +18,7 @@ import time
 from .. import podman
 from .. import fips as fips_mod
 from ..exceptions import NodeDrainingError
+from ..model import AGENT_USER_ID
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
@@ -589,10 +590,24 @@ class ContainerRegistry(NetworkSidecarMixin):
         service_command: str | None,
         setup_state: str | None,
     ) -> None:
-        """Provision the agent home and fire the service command.
+        """Materialize the agent home and fire the service command.
 
         Called at the single choke point: every freshly-created container
-        (the tail of :meth:`start_container`). Idempotent via
+        (the tail of :meth:`start_container`).
+
+        The agent identity never connects over the WebSocket, so nothing
+        else would materialize its home (``/home/klangk``) — yet the sandbox
+        ``setup.sh`` contract repoints ``HOME`` at ``$KLANGKWS_AGENT_HOME``
+        and appends to ``~/.profile`` under ``set -euo pipefail``, and the
+        ``service`` tmux session runs with that same ``HOME``. So the home
+        is ensured here on every fresh create: a plain real directory on
+        the workspace home mount (no ``.users/{uid}`` indirection — the
+        agent's handle is fixed, #2718), populated with /etc/skel on first
+        creation so it has a ``.profile``. Only the chat-agent Pi-config
+        provisioning (``klangk-setup-pi --force``) died with the chat
+        feature (#2716).
+
+        The service command itself is idempotent via
         :meth:`terminal.ensure_service_session` (per-container lock +
         window-exists check), so calling this on every fresh create is safe:
         after the first fire it is a no-op. The create-time deferral for
@@ -601,9 +616,14 @@ class ContainerRegistry(NetworkSidecarMixin):
         ``"pending"`` at create, and the fire lands later once setup
         completes and the WS connect path runs.
         """
-        agent_home = await self.app.state.agents.ensure_agent_home(
-            workspace_id, container_id
-        )
+        (
+            agent_home,
+            created,
+        ) = await self.app.state.workspaces.ensure_agent_home(workspace_id)
+        if created:
+            await self.app.state.workspaces.populate_home_skel(
+                container_id, AGENT_USER_ID, home=agent_home
+            )
         if not service_command:
             return
         await self.app.state.terminal.ensure_service_session(

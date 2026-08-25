@@ -16,7 +16,6 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 
 from klangk import (
-    agent as agent_mod,
     auth as auth_mod,
     caddy as caddy_mod,
     container,
@@ -57,7 +56,7 @@ def _make_app_state(settings=None):
     app_state.state.container_registry = registry
     # #2527: the SIGHUP quiesce phase waits on this counter.
     app_state.state.inflight_requests = main.InFlightRequests()
-    # #1468: container.py / agent.py reach the CLI wrappers via self.podman.
+    # #1468: container.py reaches the CLI wrappers via self.podman.
     from klangk.podman import Podman
 
     app_state.state.podman = Podman(app_state)
@@ -74,7 +73,6 @@ def _make_app_state(settings=None):
     from klangk.model import Model
 
     app_state.state.model = Model(app_state)
-    app_state.state.agents = agent_mod.Agents(app_state)
     app_state.state.email = emailsvc_mod.EmailService(app_state)
     app_state.state.util = util_mod.Util(app_state)
     # #1567: the lifespan calls app.state.ssl_trust.apply_backend_ssl_trust().
@@ -111,8 +109,6 @@ def _lifecycle(settings):
     app = types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
     wire_db_and_model(app)
     return main.Lifecycle(app)
-
-
 
 
 # --- Seed default user ---
@@ -715,7 +711,9 @@ class TestSeedAgentUser:
         assert user["email"] == "klangk@example.com"
         assert user["handle"] == "klangk"
 
-    async def test_identity_is_fixed_ignores_feature_config(self, db, app_state):
+    async def test_identity_is_fixed_ignores_feature_config(
+        self, db, app_state
+    ):
         """The agent identity is constant (#2718): the former chat feature
         config keys (KLANGKWS_FEATURE_CHAT_AGENT_EMAIL/HANDLE) are gone;
         stale entries in a resolver's output are ignored."""
@@ -895,7 +893,6 @@ class TestLifespan:
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
-        app.state.agents = agent_mod.Agents(app)
         app.state.email = emailsvc_mod.EmailService(app)
         app.state.util = util_mod.Util(app)
 
@@ -969,7 +966,6 @@ class TestLifespan:
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
-        app.state.agents = agent_mod.Agents(app)
         app.state.email = emailsvc_mod.EmailService(app)
         app.state.util = util_mod.Util(app)
 
@@ -1617,21 +1613,11 @@ class TestStartupShutdownRestart:
                 new_callable=AsyncMock,
             ) as mock_disc,
             patch.object(
-                app_state.state.agents,
-                "stop_all_sessions",
-                new_callable=AsyncMock,
-            ) as mock_stop_agents,
-            patch(
-                "klangk.main.wshandler.clear_agent_mention_state"
-            ) as mock_clear,
-            patch.object(
                 registry, "shutdown", new_callable=AsyncMock
             ) as mock_shutdown,
         ):
             await app_state.state.lifecycle.runtime_shutdown()
         mock_disc.assert_awaited_once()
-        mock_stop_agents.assert_awaited_once()
-        mock_clear.assert_called_once()
         mock_shutdown.assert_awaited_once()
 
     async def test_process_shutdown_disposes(self, app_state):
@@ -2182,7 +2168,6 @@ class TestStartupShutdownRestart:
             "files",
             "db",
             "model",
-            "agents",
             "acl",
             "email",
             "util",
@@ -2208,7 +2193,7 @@ class TestStartupShutdownRestart:
         assert "ssl_trust" in called
         assert "oidc" in called
         assert "features" in called
-        assert len(called) == 18
+        assert len(called) == 17
         mock_reseed.assert_awaited_once()
 
     async def test_apply_reloaded_settings_calls_caddy_reload(self, app_state):
@@ -2392,9 +2377,7 @@ class TestStartupShutdownRestart:
         lc.reconfigure(app_state)  # SIGHUP flags the re-seed
         await lc.apply_pending_reseed()
         # The fixed identity wins; the stale keys are ignored.
-        assert (
-            await app_state.state.model.users.agent_handle() == "klangk"
-        )
+        assert await app_state.state.model.users.agent_handle() == "klangk"
         assert (
             await app_state.state.model.users.agent_email()
             == "klangk@example.com"
@@ -2523,7 +2506,6 @@ class TestStartupShutdownRestart:
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
         app.state.workspaces = workspaces.Workspaces(app)
-        app.state.agents = agent_mod.Agents(app)
         app.state.email = emailsvc_mod.EmailService(app)
         app.state.util = util_mod.Util(app)
 

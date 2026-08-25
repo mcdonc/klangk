@@ -67,8 +67,8 @@ def find_features(features_dir):
     A feature compiles in if its ``feature.dart`` declares at least one
     component — a ``ToolPlugin`` (tool handlers / app-bar action / overlay)
     and/or a ``WorkspaceTabPlugin`` (a workspace tab, #1975). Most features
-    declare a single ``ToolPlugin``; a feature may declare both (e.g. a
-    ``chat`` feature contributes both a chat tab and agent tool handlers), or
+    declare a single ``ToolPlugin``; a feature may declare both (contributing
+    both tool handlers and a tab), or
     only a tab. Each entry records the tool and tab class names so
     :func:`generate_dart` can emit separate aggregators and
     :func:`collect_feature_metadata` can surface the feature in
