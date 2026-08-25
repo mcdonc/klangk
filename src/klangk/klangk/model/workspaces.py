@@ -95,7 +95,8 @@ def sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
 _WORKSPACE_FULL_COLUMNS = (
     "SELECT id, user_id, name, container_id, num_ports, image,"
     " service_command, auto_start, setup_state, health_check,"
-    " mounts, env, allowed_domains, rejected_domains, settings, egress_mode"
+    " mounts, env, allowed_domains, rejected_domains, settings,"
+    " egress_mode, per_handle_home"
 )
 
 
@@ -121,6 +122,7 @@ def _workspace_row_to_dict(row, *, auto_start=True) -> dict:
         else None,
         "settings": json.loads(row["settings"]) if row["settings"] else None,
         "egress_mode": row["egress_mode"],
+        "per_handle_home": bool(row["per_handle_home"]),
     }
 
 
@@ -161,6 +163,7 @@ class WorkspacesModel:
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
+        per_handle_home: bool = True,
     ) -> dict:
         """INSERT a workspace row on ``db`` and return the new workspace dict.
 
@@ -182,8 +185,9 @@ class WorkspacesModel:
             "INSERT INTO workspaces"
             " (id, user_id, name, image, service_command, auto_start,"
             " setup_state, health_check, mounts, env, allowed_domains,"
-            " rejected_domains, settings, egress_mode, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " rejected_domains, settings, egress_mode, per_handle_home,"
+            " created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 workspace_id,
                 user_id,
@@ -199,6 +203,7 @@ class WorkspacesModel:
                 rejected_domains_json,
                 settings_json,
                 egress_mode,
+                1 if per_handle_home else 0,
                 created_at,
             ),
         )
@@ -217,6 +222,7 @@ class WorkspacesModel:
             "rejected_domains": rejected_domains,
             "settings": settings,
             "egress_mode": egress_mode,
+            "per_handle_home": per_handle_home,
             "num_ports": DEFAULT_PORTS_PER_WORKSPACE,
             "created_at": created_at,
         }
@@ -300,6 +306,7 @@ class WorkspacesModel:
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
+        per_handle_home: bool = True,
     ) -> dict:
         """Create a workspace row AND seed its owner ACE + role groups.
 
@@ -321,6 +328,8 @@ class WorkspacesModel:
             raise ValueError(f"Invalid setup_state: {setup_state!r}")
         if egress_mode not in EGRESS_MODES:
             raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
+        if not isinstance(per_handle_home, bool):
+            raise ValueError(f"Invalid per_handle_home: {per_handle_home!r}")
         async with self.app.state.db.transaction() as db:
             ws = await self._insert_workspace_row(
                 db,
@@ -337,6 +346,7 @@ class WorkspacesModel:
                 rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=egress_mode,
+                per_handle_home=per_handle_home,
             )
             await self._seed_workspace_acl(db, ws, user_id)
             return ws
@@ -356,6 +366,7 @@ class WorkspacesModel:
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
+        per_handle_home: bool = True,
     ) -> dict:
         """Insert a workspace row only (no ACL seeding).
 
@@ -368,6 +379,8 @@ class WorkspacesModel:
             raise ValueError(f"Invalid setup_state: {setup_state!r}")
         if egress_mode not in EGRESS_MODES:
             raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
+        if not isinstance(per_handle_home, bool):
+            raise ValueError(f"Invalid per_handle_home: {per_handle_home!r}")
         async with self.app.state.db.transaction() as db:
             return await self._insert_workspace_row(
                 db,
@@ -384,6 +397,7 @@ class WorkspacesModel:
                 rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=egress_mode,
+                per_handle_home=per_handle_home,
             )
 
     async def list_workspaces(
@@ -413,7 +427,8 @@ class WorkspacesModel:
         rows = await self.app.state.db.fetchall(
             "SELECT id, name, container_id, image, service_command,"
             " auto_start, setup_state, health_check, mounts, env,"
-            " allowed_domains, rejected_domains, settings, egress_mode, created_at"
+            " allowed_domains, rejected_domains, settings, egress_mode,"
+            " per_handle_home, created_at"
             " FROM workspaces"
             f" {where} {order_by} LIMIT ? OFFSET ?",
             tuple(params),
@@ -440,6 +455,7 @@ class WorkspacesModel:
                 if row["settings"]
                 else None,
                 "egress_mode": row["egress_mode"],
+                "per_handle_home": bool(row["per_handle_home"]),
                 "created_at": row["created_at"],
             }
             for row in rows
@@ -487,7 +503,7 @@ class WorkspacesModel:
             "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
             " w.service_command, w.auto_start, w.setup_state,"
             " w.health_check, w.mounts, w.env, w.allowed_domains, w.rejected_domains,"
-            " w.settings, w.egress_mode, w.created_at,"
+            " w.settings, w.egress_mode, w.per_handle_home, w.created_at,"
             " u.email AS owner_email"
             " FROM workspaces w"
             " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
@@ -531,6 +547,7 @@ class WorkspacesModel:
                 if row["settings"]
                 else None,
                 "egress_mode": row["egress_mode"],
+                "per_handle_home": bool(row["per_handle_home"]),
                 "created_at": row["created_at"],
                 "owner_email": row["owner_email"],
             }
@@ -746,6 +763,7 @@ class WorkspacesModel:
             "rejected_domains",
             "settings",
             "egress_mode",
+            "per_handle_home",
         }
         to_set = {}
         for k, v in fields.items():
@@ -767,7 +785,7 @@ class WorkspacesModel:
                 "settings",
             ):
                 to_set[k] = json.dumps(v) if v is not None else None
-            elif k == "auto_start":
+            elif k in ("auto_start", "per_handle_home"):
                 to_set[k] = 1 if v else 0
             else:
                 to_set[k] = v

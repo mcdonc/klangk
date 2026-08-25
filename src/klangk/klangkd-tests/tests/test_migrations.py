@@ -3,8 +3,9 @@
 Covers the runner contract (fresh DB, replay no-op, failure semantics,
 validation), migration 0001's shape (password_history + cascade),
 0002's (users.last_login_at), 0003's (user_sessions + cascade,
-#2585), 0004's (workstation columns on user_sessions, #2586), and
-0005's (users.disabled + users.last_activity_at, #2588).
+#2585), 0004's (workstation columns on user_sessions, #2586),
+0005's (users.disabled + users.last_activity_at, #2588), and
+0009's (workspaces.per_handle_home backfill, #2719).
 """
 
 import aiosqlite
@@ -53,6 +54,7 @@ class TestRunner:
             (6, "0006_host_schedules"),
             (7, "0007_server_schedules"),
             (8, "0008_agent_user_klangk"),
+            (9, "0009_per_handle_home"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -76,11 +78,15 @@ class TestRunner:
             info = await db.execute("PRAGMA table_info(users)")
             cols = {r[1] for r in await info.fetchall()}
             assert {"disabled", "last_activity_at"} <= cols
+            # Migration 0009 added the home-layout column (#2719).
+            info = await db.execute("PRAGMA table_info(workspaces)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert "per_handle_home" in cols
 
             # Migration 0008: no agent row exists on a fresh DB before
             # seeding (UPDATE is a no-op); recorded above.
 
-            # Re-run: nothing new applied, still exactly five records.
+            # Re-run: nothing new applied, still exactly nine records.
             await app_state.state.model.init_db()
             assert await _recorded(db) == expected
 
@@ -119,6 +125,7 @@ class TestRunner:
                 (6, "0006_host_schedules"),
                 (7, "0007_server_schedules"),
                 (8, "0008_agent_user_klangk"),
+                (9, "0009_per_handle_home"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -146,9 +153,7 @@ class TestRunner:
                 (AGENT_USER_ID, "clanker@example.com", "clanker"),
             )
             # Forget m0008 ran, so init_db re-applies it via the runner.
-            await db.execute(
-                "DELETE FROM schema_migrations WHERE id = 8"
-            )
+            await db.execute("DELETE FROM schema_migrations WHERE id = 8")
         app_state.state.model.users.clear_agent_cache()
 
         await app_state.state.model.init_db()
@@ -349,6 +354,49 @@ class TestValidation:
         migrations_mod._validate_migrations(
             [Migration(1, "a", None), Migration(2, "b", None)]  # noqa: ARG005
         )
+
+
+class TestPerHandleHome:
+    async def test_upgrade_adds_column_and_backfills_true(
+        self, temp_data_dir, app_state
+    ):
+        """A database last booted before #2719 (workspaces table without
+        per_handle_home) gets the column from migration 0009, and every
+        pre-existing row reads back as 1: every pre-feature workspace
+        was per-handle by construction (#2719).
+        """
+        from _helpers import get_test_db
+
+        db_path = get_test_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        async with aiosqlite.connect(str(db_path)) as db:
+            await db.execute("""
+                CREATE TABLE workspaces (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    container_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT INTO workspaces (id, user_id, name)"
+                " VALUES ('ws-old', 'user-x', 'legacy')"
+            )
+            await db.commit()
+
+        await app_state.state.model.init_db()
+        rows = await app_state.state.db.fetchall(
+            "SELECT per_handle_home FROM workspaces WHERE id = 'ws-old'"
+        )
+        assert rows[0][0] == 1
+        # Idempotent: re-running init_db skips the recorded migration and
+        # leaves the row untouched.
+        await app_state.state.model.init_db()
+        rows = await app_state.state.db.fetchall(
+            "SELECT per_handle_home FROM workspaces WHERE id = 'ws-old'"
+        )
+        assert rows[0][0] == 1
 
 
 class TestUserSessionsWorkstation:

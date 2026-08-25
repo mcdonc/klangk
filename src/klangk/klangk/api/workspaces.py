@@ -273,6 +273,10 @@ class CreateWorkspaceRequest(BaseModel):
     egress_mode: Literal["static", "interactive", "allow"] = (
         EGRESS_MODE_DEFAULT
     )
+    # None = inherit the deploy default (KLANGKD_PER_HANDLE_HOME); the
+    # handler resolves it before the create. Editable afterwards via PUT
+    # (a flip applies to the layout realized on the next connect/start).
+    per_handle_home: bool | None = None
 
 
 @router.post("/workspaces")
@@ -308,6 +312,11 @@ async def create_workspace(
         settings = validate_settings(body.settings)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    per_handle_home = (
+        body.per_handle_home
+        if body.per_handle_home is not None
+        else app.state.settings.per_handle_home
+    )
     try:
         ws = await app.state.workspaces.create_workspace(
             user["id"],
@@ -323,6 +332,7 @@ async def create_workspace(
             rejected_domains=rejected_domains,
             settings=settings,
             egress_mode=body.egress_mode,
+            per_handle_home=per_handle_home,
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -378,6 +388,11 @@ class UpdateWorkspaceRequest(BaseModel):
     # sidecar at container start, so a change here takes effect on the
     # next start/restart, not on the live container (PR #2248 review N3).
     egress_mode: Literal["static", "interactive", "allow"] | None = None
+    # Like egress_mode, per_handle_home takes effect on the next
+    # connect/start, never on a live session (#2719). Note an explicit
+    # null stores 0 (shared) via the truthy coercion — same as
+    # auto_start; only POST's null means "inherit the deploy default".
+    per_handle_home: bool | None = None
 
 
 @router.put("/workspaces/{workspace_id}")
@@ -544,6 +559,7 @@ async def duplicate_workspace(
             rejected_domains=source.get("rejected_domains"),
             settings=source.get("settings"),
             egress_mode=source.get("egress_mode"),
+            per_handle_home=source.get("per_handle_home"),
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -1113,6 +1129,11 @@ async def import_workspace(
                 rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=meta["egress_mode"],
+                # An import creates a NEW workspace, so it follows the
+                # deploy default (KLANGKD_PER_HANDLE_HOME) like a silent
+                # POST does. The archive does not carry the flag —
+                # export/import preservation is chunk 4 (#2722).
+                per_handle_home=app.state.settings.per_handle_home,
             )
         except SAIntegrityError:
             raise HTTPException(

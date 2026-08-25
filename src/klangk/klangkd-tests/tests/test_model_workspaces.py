@@ -102,6 +102,48 @@ async def test_create_invalid_setup_state(ws, user):
         await ws.create_workspace(user["id"], "bad", setup_state="bogus")
 
 
+async def test_per_handle_home_roundtrip(ws, user):
+    # #2719: default is per-handle (today's layout); an explicit False
+    # persists and round-trips through every full-row read.
+    default = await ws.create_workspace_with_acl(user["id"], "default-home")
+    assert default["per_handle_home"] is True
+    shared = await ws.create_workspace(
+        user["id"], "shared-home", per_handle_home=False
+    )
+    assert shared["per_handle_home"] is False
+    got = await ws.get_workspace_by_id(shared["id"])
+    assert got["per_handle_home"] is False
+    listed = await ws.list_workspaces(user["id"], q="shared-home")
+    assert listed["items"][0]["per_handle_home"] is False
+
+
+async def test_create_rejects_non_bool_per_handle_home(ws, user):
+    with pytest.raises(ValueError):
+        await ws.create_workspace_with_acl(
+            user["id"], "bad", per_handle_home=1
+        )
+    with pytest.raises(ValueError):
+        await ws.create_workspace(user["id"], "bad", per_handle_home=0)
+
+
+async def test_update_workspace_flips_per_handle_home(ws, user):
+    # Editable after create (#2719): a PUT of only this field updates
+    # the row and the new value round-trips.
+    created = await ws.create_workspace(
+        user["id"], "flippable", per_handle_home=False
+    )
+    updated = await ws.update_workspace(
+        created["id"], user["id"], per_handle_home=True
+    )
+    assert updated is True
+    got = await ws.get_workspace_by_id(created["id"])
+    assert got["per_handle_home"] is True
+    # And back.
+    await ws.update_workspace(created["id"], user["id"], per_handle_home=False)
+    got = await ws.get_workspace_by_id(created["id"])
+    assert got["per_handle_home"] is False
+
+
 async def test_list_workspaces_with_query(ws, user):
     await ws.create_workspace(user["id"], "alpha")
     await ws.create_workspace(user["id"], "beta")
