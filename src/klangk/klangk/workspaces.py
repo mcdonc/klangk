@@ -595,6 +595,7 @@ class Workspaces:
                 egress_mode=ws.get(
                     "egress_mode", model.EGRESS_MODE_INTERACTIVE
                 ),
+                per_handle_home=ws.get("per_handle_home", True),
             )
         )
         return cid, status

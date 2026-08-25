@@ -253,6 +253,19 @@ class TestActivityTracking:
         self.registry.track_activity("cid-1", "ws-1")
         assert self.registry.states["ws-1"].container_id == "cid-1"
 
+    def test_track_activity_threads_per_handle_home(self):
+        # The home-layout flag rides track_activity onto ContainerState
+        # (#2720) the same way health_check/owner_id/setup_state do, so
+        # the health monitor can branch without a DB lookup per tick.
+        self.registry.track_activity("cid-1", "ws-1")
+        assert self.registry.states["ws-1"].per_handle_home is True  # default
+        self.registry.track_activity("cid-1", "ws-1", per_handle_home=False)
+        assert self.registry.states["ws-1"].per_handle_home is False
+        # Untouched when not passed (e.g. test harness call sites) — the
+        # previous value survives, mirroring owner_id/setup_state.
+        self.registry.track_activity("cid-1", "ws-1")
+        assert self.registry.states["ws-1"].per_handle_home is False
+
     def test_track_activity_fires_status_changed_on_new(self):
         calls = []
         self.registry.set_on_container_status_changed(
@@ -310,6 +323,9 @@ class TestActivityTracking:
         assert state.health_check == ("curl -sf http://localhost:8080/health")
         assert state.owner_id == "uid-owner"
         assert state.setup_state == "complete"
+        # The home layout rides along too (#2720); default True (the
+        # pre-#2720 layout) when a caller doesn't pass it.
+        assert state.per_handle_home is True
 
 
 def _noop_callback(ws):
@@ -652,6 +668,28 @@ class TestStartContainer:
         assert status == "created"
         p.start_container.assert_awaited_once_with("new-cid", hooks_dir=None)
         assert workspace["id"] in self.registry.states
+
+    async def test_spec_threads_per_handle_home_onto_state(self, workspace):
+        # #2720: the layout rides the spec through every start path
+        # (create / reuse / adopt) onto ContainerState, so the health
+        # monitor can branch without a DB lookup per poll. Default True.
+        with patch_podman(self.registry):
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"], "/tmp/ws", "/tmp/home"
+                )
+            )
+        assert self.registry.states[workspace["id"]].per_handle_home is True
+        with patch_podman(self.registry):
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/ws",
+                    "/tmp/home",
+                    per_handle_home=False,
+                )
+            )
+        assert self.registry.states[workspace["id"]].per_handle_home is False
 
     async def test_egress_filter_no_domains_is_noop(self, workspace):
         # No allowed_domains -> no annotation or hooks-dir; the container
@@ -5966,6 +6004,36 @@ class TestHealthMonitorRunOne:
         assert status == "unhealthy"
         assert "handle" in message
         exec_mock.assert_not_called()
+
+    async def test_shared_layout_probes_shared_home(self, app_state):
+        # per_handle_home=False (#2720): the check probes the workspace's
+        # single shared /home/klangk — no owner handle lookup, no
+        # per-user symlink — and runs with that HOME.
+        monitor = _health_registry().health
+        st = _health_state()
+        st.per_handle_home = False
+        exec_mock = AsyncMock(return_value=(0, "", ""))
+        with (
+            patch.object(
+                monitor.app.state.podman, "exec_container", exec_mock
+            ),
+            patch.object(
+                monitor.app.state.model.users,
+                "get_user_handle",
+                AsyncMock(),
+            ) as handle_mock,
+            patch.object(
+                monitor.app.state.workspaces,
+                "ensure_home_symlink",
+                new_callable=AsyncMock,
+            ) as symlink_mock,
+        ):
+            assert await monitor._run_one(st) == ("healthy", "")
+        handle_mock.assert_not_awaited()
+        symlink_mock.assert_not_awaited()
+        assert exec_mock.call_args.kwargs["extra_env"] == {
+            "HOME": container.SHARED_HOME
+        }
 
 
 class TestHealthMonitorCheckWorkspace:
