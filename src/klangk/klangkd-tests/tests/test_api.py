@@ -359,6 +359,20 @@ class TestConfig:
         assert "login_banner" in data
         assert "instance_id" in data
 
+    async def test_get_config_advertises_per_handle_home_default(
+        self, client, app
+    ):
+        # #2721: the create surfaces pre-reflect the deploy's home-layout
+        # default (KLANGKD_PER_HANDLE_HOME) so an untouched form submits
+        # exactly what a silent POST would get. Present pre-auth (the TUI
+        # reads /config before login, like allow_autostart).
+        app.state.settings.per_handle_home = False
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["default_per_handle_home"] is False
+        app.state.settings.per_handle_home = True
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["default_per_handle_home"] is True
+
     async def test_get_config_omits_netfilter_fields_when_unauthenticated(
         self, client, app
     ):

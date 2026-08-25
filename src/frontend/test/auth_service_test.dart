@@ -93,6 +93,7 @@ void main() {
       String? productName,
       List<String>? netfilterDefaultDomains,
       bool? netfilterEnabled,
+      bool? defaultPerHandleHome,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -112,6 +113,8 @@ void main() {
                 'netfilter_default_domains': netfilterDefaultDomains,
               if (netfilterEnabled != null)
                 'netfilter_enabled': netfilterEnabled,
+              if (defaultPerHandleHome != null)
+                'default_per_handle_home': defaultPerHandleHome,
             }),
             200,
           );
@@ -156,6 +159,21 @@ void main() {
       final service2 = AuthService();
       await Future.delayed(Duration.zero);
       expect(service2.allowAutostart, isTrue);
+    });
+
+    test('loads default_per_handle_home from /api/config', () async {
+      // #2721: defaults to true (per-handle, the server default) when the
+      // field is absent — a config-fetch hiccup can't silently flip
+      // layouts — and parses the advertised deploy default when present.
+      testAuthHttpClientOverride = _bannerClient();
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.perHandleHomeDefault, isTrue);
+
+      testAuthHttpClientOverride = _bannerClient(defaultPerHandleHome: false);
+      final service2 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service2.perHandleHomeDefault, isFalse);
     });
 
     test('loads netfilter default domains + enabled from /api/config',

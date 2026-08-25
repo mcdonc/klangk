@@ -205,6 +205,12 @@ async def get_config(
         # boot) is permitted. The web UI gates its "Auto start" checkbox on
         # this so users can't toggle a setting the server will reject (#1115).
         "allow_autostart": autostart_allowed(app),
+        # Home-layout default for NEW workspaces (KLANGKD_PER_HANDLE_HOME,
+        # #2169 chunk 3 / #2721). The create surfaces (web dialog, TUI form,
+        # `klangk create`) pre-reflect this so an untouched form submits the
+        # server's default. Not sensitive — the pre-auth payload carries it
+        # (the TUI reads /config before login like it does allow_autostart).
+        "default_per_handle_home": s.per_handle_home,
         # Surfaced so the UI can validate password length inline (matches
         # the rule enforced server-side by auth.validate_password).
         "min_password_length": app.state.auth.min_password_length,

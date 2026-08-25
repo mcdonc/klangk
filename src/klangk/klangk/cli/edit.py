@@ -28,6 +28,15 @@ def edit(
         "--auto-start/--no-auto-start",
         help="Start container automatically on server boot",
     ),
+    per_handle_home: bool | None = typer.Option(
+        None,
+        "--per-handle-home/--shared-home",
+        help=(
+            "Home layout (applies from the next connect/start): "
+            "per-handle gives each member a private /home/<handle>; "
+            "shared puts everyone in /home/klangk"
+        ),
+    ),
     health_check: str | None = typer.Option(
         None,
         "--health-check",
@@ -88,6 +97,7 @@ def edit(
         or image is not None
         or command is not None
         or auto_start is not None
+        or per_handle_home is not None
         or health_check is not None
         or isinstance(mount, list)
         or isinstance(env, list)
@@ -307,6 +317,11 @@ def edit(
             body["service_command"] = command or None
         if auto_start is not None:
             body["auto_start"] = auto_start
+        if per_handle_home is not None:
+            # Mutable (#2719); takes effect on the next connect/start —
+            # never a restart-prompt field (existing sessions keep their
+            # layout until they end).
+            body["per_handle_home"] = per_handle_home
         if health_check is not None:
             body["health_check"] = health_check or None
         if isinstance(mount, list):

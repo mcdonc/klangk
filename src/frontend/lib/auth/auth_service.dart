@@ -27,6 +27,12 @@ class AuthService extends ChangeNotifier {
   PasswordPolicy _passwordPolicy = const PasswordPolicy();
   String _instanceId = 'default';
   bool _allowAutostart = false;
+  // #2721: deploy default home layout for new workspaces
+  // (KLANGKD_PER_HANDLE_HOME via /config's default_per_handle_home). The
+  // create dialog pre-reflects it so an untouched form submits the
+  // server's default. Per-handle (true) is the fallback — the server's
+  // own default — so a config-fetch hiccup can't silently flip layouts.
+  bool _perHandleHomeDefault = true;
   // #1365: deploy-wide netfilter default allow-list + whether the feature
   // is armed. Surfaced via /api/v1/config so the create-workspace UI can
   // pre-fill its allowed-domains editor from the default (a workspace
@@ -63,6 +69,10 @@ class AuthService extends ChangeNotifier {
   /// on this — setting auto_start on a server that rejects it would
   /// 400 (#1115).
   bool get allowAutostart => _allowAutostart;
+
+  /// #2721: the deploy default home layout for new workspaces (true =
+  /// per-handle private homes, false = shared /home/klangk).
+  bool get perHandleHomeDefault => _perHandleHomeDefault;
 
   /// #1365: the deploy-wide netfilter default allow-list
   /// (KLANGKD_NETFILTER_DEFAULT_DOMAINS). The create-workspace dialog
@@ -141,6 +151,8 @@ class AuthService extends ChangeNotifier {
             (data['login_banner_every_visit'] as bool?) ?? false;
         _instanceId = (data['instance_id'] as String?) ?? 'default';
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
+        _perHandleHomeDefault =
+            (data['default_per_handle_home'] as bool?) ?? true;
         _netfilterDefaultDomains =
             (data['netfilter_default_domains'] as List?)?.cast<String>() ??
                 const [];

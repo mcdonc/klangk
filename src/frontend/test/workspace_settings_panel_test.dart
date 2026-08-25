@@ -591,6 +591,10 @@ void main() {
       // Close icons: [mount-remove, mount-copy, env-remove, env-copy].
       // The env-remove is the close icon after the mounts section.
       final closes = find.byIcon(Icons.close);
+      // The General pane grew (Per-handle home tile, #2721), pushing the
+      // env editor below the fold — scroll it in before tapping.
+      await tester.ensureVisible(closes.last);
+      await tester.pumpAndSettle();
       await tester.tap(closes.last);
       await tester.pump();
 
@@ -1163,6 +1167,10 @@ void main() {
       await tester.pumpAndSettle();
 
       // Remove the existing env var (FOO=bar) — the last close icon.
+      // The General pane grew (Per-handle home tile, #2721), pushing the
+      // env editor below the fold — scroll it in before tapping.
+      await tester.ensureVisible(find.byIcon(Icons.close).last);
+      await tester.pumpAndSettle();
       await tester.tap(find.byIcon(Icons.close).last);
       await tester.pump();
 
@@ -1317,7 +1325,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Auto start'), findsNothing);
-      expect(find.byType(Checkbox), findsNothing);
+      // The Per-handle home checkbox (#2721) is always shown in the
+      // settings form — it is the only checkbox when auto-start is not
+      // allowed.
+      expect(find.text('Per-handle home'), findsOneWidget);
+      expect(find.byType(Checkbox), findsOneWidget);
     });
 
     testWidgets('shows the checkbox and round-trips auto_start when allowed',
@@ -1361,7 +1373,12 @@ void main() {
       await tester.pumpAndSettle();
 
       // Checkbox present + checked (workspace had auto_start: true).
-      final checkbox = find.byType(Checkbox);
+      // Scoped to the Auto start tile — the Per-handle home checkbox
+      // (#2721) is always present too.
+      final checkbox = find.descendant(
+        of: find.widgetWithText(CheckboxListTile, 'Auto start'),
+        matching: find.byType(Checkbox),
+      );
       expect(checkbox, findsOneWidget);
       expect(tester.widget<Checkbox>(checkbox).value, isTrue);
 
@@ -1375,6 +1392,71 @@ void main() {
 
       expect(savedBody, isNotNull);
       expect(savedBody!['auto_start'], false);
+      // Drain the 2s auto-clear timer (see save-success test).
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+        'per_handle_home seeds from the workspace and saves a flip (#2721)',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') {
+          return http.Response(jsonEncode({}), 200);
+        }
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                ..._workspace,
+                'egress_mode': 'interactive',
+                'per_handle_home': true,
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('nf', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Seeded from the workspace (per-handle).
+      final checkbox = find.descendant(
+        of: find.widgetWithText(CheckboxListTile, 'Per-handle home'),
+        matching: find.byType(Checkbox),
+      );
+      expect(checkbox, findsOneWidget);
+      expect(tester.widget<Checkbox>(checkbox).value, isTrue);
+
+      // Toggle to shared and save; the flip reaches the PUT body.
+      await tester.ensureVisible(checkbox);
+      await tester.tap(checkbox);
+      await tester.pump();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['per_handle_home'], false);
       // Drain the 2s auto-clear timer (see save-success test).
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();

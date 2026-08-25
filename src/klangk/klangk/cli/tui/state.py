@@ -329,6 +329,7 @@ class TuiState:
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str | None = None,
+        per_handle_home: bool | None = None,
     ) -> Workspace:
         return self.client().create_workspace(
             name,
@@ -342,6 +343,7 @@ class TuiState:
             rejected_domains=rejected_domains,
             settings=settings,
             egress_mode=egress_mode,
+            per_handle_home=per_handle_home,
         )
 
     def update_workspace(self, workspace_id: str, **fields) -> None:
@@ -423,6 +425,24 @@ class TuiState:
         # Strict: the server serializes a Python bool, so require True exactly
         # (a string like "false" must not coerce to True).
         return config.get("allow_autostart") is True
+
+    def default_per_handle_home(self) -> bool:
+        """Deploy default home layout for NEW workspaces (#2721).
+
+        ``default_per_handle_home`` in ``/api/v1/config``
+        (KLANGKD_PER_HANDLE_HOME). The create form's checkbox pre-reflects
+        this so an untouched form submits the server's default. Defaults
+        to True (per-handle) on any failure — the server's own default, so
+        a config-fetch hiccup cannot silently flip the layout.
+        """
+        url = self.current_url()
+        if url is None:
+            return True
+        config = fetch_config(url)
+        if not isinstance(config, dict):
+            return True
+        val = config.get("default_per_handle_home")
+        return True if val is None else bool(val)
 
     # --- login arms ---
 

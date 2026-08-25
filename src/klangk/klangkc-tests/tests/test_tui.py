@@ -837,6 +837,30 @@ def test_allow_autostart(monkeypatch, redirect_xdg):
     assert TuiState().allow_autostart() is False
 
 
+def test_default_per_handle_home(monkeypatch, redirect_xdg):
+    # #2721: the create form pre-reflects the deploy default; the safe
+    # fallback on any fetch failure is True (per-handle, the server's own
+    # default) — a config hiccup can't silently flip the layout.
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"default_per_handle_home": False},
+    )
+    assert TuiState("https://x.example").default_per_handle_home() is False
+    monkeypatch.setattr(
+        tui_state_mod,
+        "fetch_config",
+        lambda url: {"default_per_handle_home": True},
+    )
+    assert TuiState("https://x.example").default_per_handle_home() is True
+    # missing field / non-dict / no server -> safe default True
+    monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: {})
+    assert TuiState("https://x.example").default_per_handle_home() is True
+    monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: None)
+    assert TuiState("https://x.example").default_per_handle_home() is True
+    assert TuiState().default_per_handle_home() is True
+
+
 def test_default_allowed_domains(monkeypatch, redirect_xdg):
     # netfilter_default_domains is auth-gated on /api/v1/config (absent from
     # the pre-auth payload), so default_allowed_domains() reads it via the
@@ -2274,6 +2298,7 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
         rejected_domains=None,
         settings=None,
         egress_mode=None,
+        per_handle_home=None,
     )
     fake.list_images.assert_called_once_with()
 
@@ -8050,6 +8075,7 @@ def _create_state(create=None, **extra):
         },
         allow_autostart=lambda: True,
         default_allowed_domains=lambda: [],
+        default_per_handle_home=lambda: True,
         # The create flow opens the new workspace's detail screen, whose
         # _mount_async calls find_workspace — stub it so the flow test
         # doesn't make a real (timing-out) HTTP call (#1989).
@@ -8294,6 +8320,42 @@ async def test_create_screen_submit_omits_default_image(monkeypatch):
         assert captured["k"]["env"] is None
 
 
+async def test_create_screen_per_handle_home_default_and_toggle(monkeypatch):
+    """#2721: the create form's Per-handle home checkbox pre-reflects the
+    deploy default (KLANGKD_PER_HANDLE_HOME) and the toggle reaches the
+    create request — an untouched form submits the server default."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(
+        _create_state(create=create, default_per_handle_home=lambda: False)
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        # Pre-reflects the deploy default (shared here).
+        assert cs.query_one("#per_handle_home", Checkbox).value is False
+        cs.query_one("#name").value = "ws"
+        cs._create()
+        await app.workers.wait_for_complete()
+        assert captured["k"]["per_handle_home"] is False
+        # Toggle to per-handle; the flip reaches the request.
+        cs.query_one("#per_handle_home", Checkbox).value = True
+        cs._create()
+        await app.workers.wait_for_complete()
+        assert captured["k"]["per_handle_home"] is True
+
+
 async def test_create_screen_submit_custom_fields(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -8403,6 +8465,7 @@ async def test_create_screen_images_unavailable(monkeypatch):
             list_images=boom,
             allow_autostart=boom,
             default_allowed_domains=boom,
+            default_per_handle_home=boom,
         )
     )
     async with app.run_test(size=(140, 40)) as pilot:
@@ -8914,6 +8977,40 @@ async def test_edit_screen_egress_mode_pre_populates_and_saves(monkeypatch):
         await app.workers.wait_for_complete()
         assert captured["egress_mode"] == "allow"
         # Not running => no restart offer.
+        assert not isinstance(app.screen, ConfirmScreen)
+
+
+async def test_edit_screen_per_handle_home_pre_populates_and_saves(
+    monkeypatch,
+):
+    """#2721: the edit form seeds the checkbox from the workspace's home
+    layout and sends a flip through the update body — without a restart
+    offer (a flip applies from the next connect/start, #2719)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj("alpha", image="base", per_handle_home=True, running=True)
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # Seeded from the workspace (per-handle).
+        assert es.query_one("#per_handle_home", Checkbox).value is True
+        es.query_one("#per_handle_home", Checkbox).value = False
+        es._save()
+        await app.workers.wait_for_complete()
+        assert captured["per_handle_home"] is False
+        # Running workspace, but a layout flip applies from the next
+        # connect — never a restart-needed field.
         assert not isinstance(app.screen, ConfirmScreen)
 
 

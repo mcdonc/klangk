@@ -38,6 +38,11 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// image-only (the user picks the nix image themselves).
   final bool nixAvailable;
 
+  /// #2721: deploy default home layout (KLANGKD_PER_HANDLE_HOME). The
+  /// Per-handle home checkbox starts on this, so an untouched form
+  /// submits exactly what a silent POST would get.
+  final bool defaultPerHandleHome;
+
   const CreateWorkspaceDialog({
     super.key,
     required this.auth,
@@ -47,6 +52,7 @@ class CreateWorkspaceDialog extends StatefulWidget {
     this.defaultAllowedDomains = const [],
     this.netfilterEnabled = false,
     this.nixAvailable = false,
+    this.defaultPerHandleHome = true,
   });
 
   @override
@@ -73,6 +79,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _rejectedDomains = <String>[];
   bool _autoStart = false;
   bool _nixEnabled = false;
+  // #2721: home layout. Starts on the deploy default; always submitted.
+  bool _perHandleHome = true;
   // #2409: per-workspace egress mode. 'interactive' is the server default for
   // new workspaces (consent-gated egress on out of the box).
   String _egressMode = 'interactive';
@@ -101,6 +109,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   void initState() {
     super.initState();
     _selectedImage = widget.defaultImage;
+    _perHandleHome = widget.defaultPerHandleHome;
     // #1365: pre-fill the editor with the deploy-wide default so a new
     // workspace inherits it; the creator's edits replace (not merge with)
     // the default and are submitted as the workspace's allowed_domains.
@@ -231,6 +240,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
       body['rejected_domains'] = List<String>.from(_rejectedDomains);
     }
     body['egress_mode'] = _egressMode;
+    body['per_handle_home'] = _perHandleHome;
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
     }
@@ -354,6 +364,25 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             ),
                           ),
                         ],
+                        const SizedBox(height: 8),
+                        // #2721: home layout. Pre-reflects the deploy
+                        // default; always sent (so the checkbox's initial
+                        // state equals a silent POST's outcome).
+                        Material(
+                          type: MaterialType.transparency,
+                          child: CheckboxListTile(
+                            value: _perHandleHome,
+                            onChanged: (v) =>
+                                setState(() => _perHandleHome = v ?? true),
+                            title: const Text('Per-handle home'),
+                            subtitle: const Text(
+                              'Each member gets a private /home/<handle>; '
+                              'off = everyone shares /home/klangk',
+                            ),
+                            controlAffinity: ListTileControlAffinity.leading,
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 16),

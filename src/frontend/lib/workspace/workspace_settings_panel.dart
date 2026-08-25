@@ -327,6 +327,9 @@ class _SettingsFormState extends State<_SettingsForm> {
   // #2233: per-workspace nix toggle (Mount /nix dir). Only meaningful
   // when the server has a nix backend (widget.nixAvailable).
   bool _nixEnabled = false;
+  // #2721: home layout, seeded from the workspace. Mutable (#2719): a
+  // flip applies from the next connect/start.
+  bool _perHandleHome = true;
   String? _mountError;
   String? _envError;
   String? _allowedDomainsError;
@@ -386,6 +389,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     );
     _egressMode = (widget.workspace['egress_mode'] as String?) ?? 'interactive';
     _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
+    _perHandleHome = (widget.workspace['per_handle_home'] as bool?) ?? true;
     final settings =
         (widget.workspace['settings'] as Map<String, dynamic>?) ?? {};
     _idleTimeoutCtrl = TextEditingController(
@@ -426,6 +430,11 @@ class _SettingsFormState extends State<_SettingsForm> {
     if (old.workspace['auto_start'] != widget.workspace['auto_start']) {
       // coverage:ignore-start
       _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
+    } // coverage:ignore-end
+    if (old.workspace['per_handle_home'] !=
+        widget.workspace['per_handle_home']) {
+      // coverage:ignore-start
+      _perHandleHome = (widget.workspace['per_handle_home'] as bool?) ?? true;
     } // coverage:ignore-end
     final oldSettings = (old.workspace['settings'] as Map<String, dynamic>?) ??
         const <String, dynamic>{};
@@ -538,6 +547,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       'allowed_domains': _allowedDomains.isNotEmpty ? _allowedDomains : null,
       'rejected_domains': _rejectedDomains.isNotEmpty ? _rejectedDomains : null,
       'egress_mode': _egressMode,
+      'per_handle_home': _perHandleHome,
       if (widget.allowAutostart) 'auto_start': _autoStart,
       if (settings.isNotEmpty) 'settings': settings,
     });
@@ -785,6 +795,25 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
           ),
         ],
+        // #2721: home layout. Mutable (#2719) — a flip applies from the
+        // next connect/start, never to open sessions, so it is NOT a
+        // restart-needed field.
+        const SizedBox(height: 8),
+        Material(
+          type: MaterialType.transparency,
+          child: CheckboxListTile(
+            value: _perHandleHome,
+            onChanged: (v) => setState(() => _perHandleHome = v ?? true),
+            title: const Text('Per-handle home'),
+            subtitle: const Text(
+              'Each member gets a private /home/<handle>; '
+              'off = everyone shares /home/klangk (applies from the next '
+              'connect)',
+            ),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
         // #2233: per-workspace nix toggle. Gated on the server having a
         // nix backend (nix_seed), matching the create dialog. The /nix
         // mount is set up at container create time, so toggling it on a

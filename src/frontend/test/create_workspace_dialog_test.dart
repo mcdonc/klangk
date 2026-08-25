@@ -66,6 +66,7 @@ void main() {
     List<String> defaultAllowedDomains = const [],
     bool netfilterEnabled = false,
     bool nixAvailable = false,
+    bool defaultPerHandleHome = true,
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -84,6 +85,7 @@ void main() {
                   defaultAllowedDomains: defaultAllowedDomains,
                   netfilterEnabled: netfilterEnabled,
                   nixAvailable: nixAvailable,
+                  defaultPerHandleHome: defaultPerHandleHome,
                 ),
               );
             });
@@ -852,7 +854,10 @@ void main() {
       await tester.pump(); // dialog renders
 
       expect(find.text('Auto start'), findsNothing);
-      expect(find.byType(Checkbox), findsNothing);
+      // The Per-handle home checkbox (#2721) is always shown — it is the
+      // only checkbox when auto-start is not allowed.
+      expect(find.text('Per-handle home'), findsOneWidget);
+      expect(find.byType(Checkbox), findsOneWidget);
     });
 
     testWidgets('shows auto-start checkbox and sends auto_start when allowed',
@@ -875,8 +880,13 @@ void main() {
 
       expect(find.text('Auto start'), findsOneWidget);
       // Toggle the checkbox on, then submit (checkbox is at the bottom of
-      // the dialog, so ensure it's visible before tapping).
-      final checkbox = find.byType(Checkbox);
+      // the dialog, so ensure it's visible before tapping). Scoped to the
+      // Auto start tile — the Per-handle home checkbox (#2721) is always
+      // present too.
+      final checkbox = find.descendant(
+        of: find.widgetWithText(CheckboxListTile, 'Auto start'),
+        matching: find.byType(Checkbox),
+      );
       await tester.ensureVisible(checkbox);
       await tester.tap(checkbox);
       await tester.pump();
@@ -907,8 +917,9 @@ void main() {
       await tester.pump(); // post-frame callback
       await tester.pump(); // dialog renders
 
-      // Checkbox is present but unchecked.
-      expect(find.byType(Checkbox), findsOneWidget);
+      // Both checkboxes are present (Auto start off, Per-handle home on
+      // by default); auto_start stays unsent while the box is unchecked.
+      expect(find.byType(Checkbox), findsNWidgets(2));
       await tester.enterText(_nameField(), 'Auto');
       await tester.tap(find.text('Create'));
       await tester.pump();
@@ -917,6 +928,53 @@ void main() {
       expect(postedBody, isNotNull);
       expect(postedBody!.containsKey('auto_start'), isFalse);
     });
+
+    testWidgets(
+      'per-handle home checkbox pre-reflects the deploy default and always sends (#2721)',
+      (tester) async {
+        Map<String, dynamic>? postedBody;
+        testAuthHttpClientOverride = mockClient((request) async {
+          if (request.method == 'POST') {
+            postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+            return http.Response(
+              jsonEncode({'id': 'ws-1', 'name': 'x', 'created_at': ''}),
+              200,
+            );
+          }
+          return http.Response('Not found', 404);
+        });
+        // Deploy default is shared (default_per_handle_home: false).
+        await tester.pumpWidget(buildDialog(defaultPerHandleHome: false));
+        await tester.pump(); // post-frame callback
+        await tester.pump(); // dialog renders
+
+        final checkbox = find.descendant(
+          of: find.widgetWithText(CheckboxListTile, 'Per-handle home'),
+          matching: find.byType(Checkbox),
+        );
+        expect(checkbox, findsOneWidget);
+        expect(tester.widget<Checkbox>(checkbox).value, isFalse);
+
+        // Untouched form submits the deploy default (shared).
+        await tester.enterText(_nameField(), 'Shared');
+        await tester.tap(find.text('Create'));
+        await tester.pump();
+        await tester.pump();
+        expect(postedBody!['per_handle_home'], false);
+
+        // Default dialog (per-handle): submitted as true even untouched —
+        // an untouched form equals a silent POST against the default deploy.
+        postedBody = null;
+        await tester.pumpWidget(buildDialog());
+        await tester.pump();
+        await tester.pump();
+        await tester.enterText(_nameField(), 'PerHandle');
+        await tester.tap(find.text('Create'));
+        await tester.pump();
+        await tester.pump();
+        expect(postedBody!['per_handle_home'], true);
+      },
+    );
 
     testWidgets('submits settings via resource field Enter key',
         (tester) async {

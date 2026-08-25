@@ -1250,6 +1250,51 @@ class TestKlangkClient:
             client.create_workspace("n2")
             assert "egress_mode" not in client.post.call_args.kwargs["json"]
 
+    def test_create_workspace_includes_per_handle_home(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "id": "ws-1",
+            "name": "n",
+            "created_at": "x",
+        }
+        with patch.object(client, "post", return_value=mock_resp):
+            # Explicit choice is sent either way (#2721).
+            client.create_workspace("n", per_handle_home=False)
+            assert (
+                client.post.call_args.kwargs["json"]["per_handle_home"]
+                is False
+            )
+            client.create_workspace("n2", per_handle_home=True)
+            assert (
+                client.post.call_args.kwargs["json"]["per_handle_home"] is True
+            )
+            # Omitted when not provided (server applies the deploy default).
+            client.create_workspace("n3")
+            assert (
+                "per_handle_home" not in client.post.call_args.kwargs["json"]
+            )
+
+    def test_workspace_from_json_parses_per_handle_home(self):
+        # The layout is editable (#2719) and seeded into edit surfaces, so
+        # list/get responses must carry it through (#2721). Absent key =
+        # per-handle (the server default) for older servers.
+        w = KlangkClient._workspace_from_json(
+            {
+                "id": "ws-1",
+                "name": "n",
+                "created_at": "x",
+                "per_handle_home": False,
+            },
+            shared=False,
+        )
+        assert w.per_handle_home is False
+        w2 = KlangkClient._workspace_from_json(
+            {"id": "ws-1", "name": "n", "created_at": "x"},
+            shared=False,
+        )
+        assert w2.per_handle_home is True
+
     def test_create_workspace_includes_allowed_domains(self):
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock(status_code=200)
