@@ -26,6 +26,23 @@ from .ports import CONTAINER_PORT_START, DEFAULT_PORTS_PER_WORKSPACE
 
 logger = logging.getLogger(__name__)
 
+# The single home every connection shares when a workspace has
+# ``per_handle_home = false`` (#2169 chunk 2, #2720): the container
+# user's own home (the image's ``-d /home/klangk``), which under the
+# shared layout is also where the ``service`` tmux session runs
+# (``ensure_agent_home`` materializes + populates it at every fresh
+# container create, under both layouts). Lives here — the container
+# filesystem-layout module — so ``workspaces``/``wshandler``/``health``
+# can import it without a cycle through the ``container`` package.
+#
+# The agent identity's handle is fixed to this name (#2718, immutable),
+# so every site that used to recompute ``/home/{agent_handle()}`` from
+# the DB reads these constants instead — one source of truth for both
+# the shared-layout home and the agent/service-session home (#2720
+# review: "make them both the same").
+SHARED_HOME_NAME = "klangk"
+SHARED_HOME = f"/home/{SHARED_HOME_NAME}"
+
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
 
@@ -79,6 +96,11 @@ class ContainerStartSpec:
     rejected_domains: list[str] | None = None
     workspace_settings: dict | None = None
     egress_mode: str = "static"
+    # Home layout (#2169 chunk 2, #2720): True -> per-handle
+    # /home/{handle} symlinks; False -> the single shared /home/klangk.
+    # Traveled on the spec so ContainerState carries it for the health
+    # monitor (same pattern as health_check/owner_id/setup_state).
+    per_handle_home: bool = True
 
 
 def image_pull_policy(app) -> str:

@@ -155,6 +155,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`per_handle_home` now selects the home layout at runtime (#2720).**
+  A workspace created with `per_handle_home=false` (see
+  `KLANGKD_PER_HANDLE_HOME`, #2719) now actually serves the shared
+  layout: every connection — and exec sessions, the health-check probe,
+  and the `service` tmux session — uses the single shared `/home/klangk`
+  (the container user's own home), with no `/home/{handle}` →
+  `.users/{user_id}` symlinks and no per-user skeleton population.
+  Changing your handle no longer re-links a home on this layout. The
+  default (`true`, per-handle homes) is unchanged.
 - **`KLANGKD_PER_HANDLE_HOME` (#2719).** Deploy-wide default for the home
   layout of **new** workspaces: `true` (default) = per-handle homes, the
   current behavior; `false` = a shared klangk home. Overridable per

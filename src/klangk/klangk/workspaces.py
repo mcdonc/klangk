@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from . import container, model
+from .container.spec import SHARED_HOME_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -516,6 +517,11 @@ class Workspaces:
         symlink, no indirection. A legacy ``klangk`` symlink left by the
         old chat-era provisioning still resolves and is adopted as-is.
 
+        The directory name is the :data:`SHARED_HOME_NAME` constant (not a
+        DB ``agent_handle()`` lookup): the handle is immutable, and the
+        agent home *is* the shared home under both layouts (#2720) — one
+        constant keeps them provably the same path.
+
         The blocking filesystem work runs in a worker thread via
         ``asyncio.to_thread`` so the container-create path does not stall
         the event loop on disk latency (#1262).
@@ -524,10 +530,9 @@ class Workspaces:
         when a new directory was created (caller should populate it with
         skeleton files).
         """
-        handle = await self.app.state.model.users.agent_handle()
         workspace_home = self.home_path(workspace_id)
         return await asyncio.to_thread(
-            _ensure_agent_home_dir_sync, workspace_home, handle
+            _ensure_agent_home_dir_sync, workspace_home, SHARED_HOME_NAME
         )
 
     async def populate_home_skel(
@@ -595,6 +600,7 @@ class Workspaces:
                 egress_mode=ws.get(
                     "egress_mode", model.EGRESS_MODE_INTERACTIVE
                 ),
+                per_handle_home=ws.get("per_handle_home", True),
             )
         )
         return cid, status

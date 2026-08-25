@@ -35,6 +35,7 @@ from .ports import (
 from .sidecar import NetworkSidecarMixin, container_ident
 from .spec import (
     ContainerStartSpec,
+    SHARED_HOME,
     _is_named_volume,
     _split_csv,
     build_create_kwargs,
@@ -419,6 +420,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         health_check: str | None = None,
         owner_id: str | None = None,
         setup_state: str | None = None,
+        per_handle_home: bool | None = None,
     ) -> None:
         state = self.states.get(workspace_id)
         was_new = state is None
@@ -439,6 +441,8 @@ class ContainerRegistry(NetworkSidecarMixin):
             state.owner_id = owner_id
         if setup_state is not None:
             state.setup_state = setup_state
+        if per_handle_home is not None:
+            state.per_handle_home = per_handle_home
         if was_new:
             self._notify_status_changed(workspace_id, True)
 
@@ -686,6 +690,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         health_check: str | None = None,
         owner_id: str | None = None,
         setup_state: str | None = None,
+        per_handle_home: bool = True,
     ) -> tuple[str, str] | None:
         """Check an existing container and reuse/remove it.
 
@@ -722,6 +727,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 health_check=health_check,
                 owner_id=owner_id,
                 setup_state=setup_state,
+                per_handle_home=per_handle_home,
             )
             if adopted is not None:
                 return adopted
@@ -743,6 +749,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 health_check=health_check,
                 owner_id=owner_id,
                 setup_state=setup_state,
+                per_handle_home=per_handle_home,
             )
             logger.info(
                 "workspace-open: DONE — container was already running, "
@@ -770,6 +777,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         health_check: str | None = None,
         owner_id: str | None = None,
         setup_state: str | None = None,
+        per_handle_home: bool = True,
     ) -> tuple[str, str] | None:
         """Adopt a live workspace container found by label (#2676).
 
@@ -829,6 +837,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 health_check=health_check,
                 owner_id=owner_id,
                 setup_state=setup_state,
+                per_handle_home=per_handle_home,
             )
             logger.info(
                 "workspace-open: DONE — adopted running labeled container "
@@ -885,6 +894,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         health_check: str | None = None,
         owner_id: str | None = None,
         setup_state: str | None = None,
+        per_handle_home: bool = True,
     ) -> str:
         """Create the container, persist it, start it, and configure it.
 
@@ -908,6 +918,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             health_check=health_check,
             owner_id=owner_id,
             setup_state=setup_state,
+            per_handle_home=per_handle_home,
         )
         # --hooks-dir is a podman global flag that must be present on the
         # start invocation — podman does not persist it from create. No
@@ -1206,6 +1217,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 health_check=health_check,
                 owner_id=user_id,
                 setup_state=setup_state,
+                per_handle_home=spec.per_handle_home,
             )
             if result is not None:
                 # Re-track a sidecar'd workspace's network sidecar on reconnect.
@@ -1251,9 +1263,11 @@ class ContainerRegistry(NetworkSidecarMixin):
 
         # Build environment and mounts.
         t_env = time.monotonic()
-        # Resolve the agent home at this async seam (``build_env`` is
-        # sync) so every exec process inherits KLANGKWS_AGENT_HOME (#1157).
-        agent_home = f"/home/{await self.app.state.model.users.agent_handle()}"
+        # Every exec process inherits KLANGKWS_AGENT_HOME (#1157). The
+        # agent home is the constant shared home (#2720): the agent's
+        # handle is fixed (#2718), so this is no longer resolved from
+        # the DB at this seam.
+        agent_home = SHARED_HOME
         ssl_dir = self.app.state.ssl_trust.ssl_cert_dir()
         if ssl_dir:
             logger.info(
@@ -1487,6 +1501,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                     health_check=health_check,
                     owner_id=user_id,
                     setup_state=setup_state,
+                    per_handle_home=spec.per_handle_home,
                 )
             )
         except BaseException:

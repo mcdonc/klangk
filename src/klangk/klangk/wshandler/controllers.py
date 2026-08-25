@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from fastapi import WebSocketDisconnect
 
 from .. import model
+from ..container.spec import SHARED_HOME
 from ..exceptions import ContainerGoneError, TerminalError
 from ..podman import ExecSession
 from ..terminal import (
@@ -612,11 +613,10 @@ class TerminalController:
         # holds 'complete' (#1033).
         setup_state = await self._setup_state_for_workspace()
         # The agent home is eagerly provisioned at container create
-        # (#1157) and persists in the bind-mount volume, so resolving the
-        # path here is cheap and correct -- no provisioning needed.
-        agent_home = (
-            f"/home/{await self._conn.app.state.model.users.agent_handle()}"
-        )
+        # (#1157) and persists in the bind-mount volume; it is the
+        # constant shared home (#2720 — the agent's handle is fixed,
+        # #2718), so no DB resolution is needed here.
+        agent_home = SHARED_HOME
         await self._conn.app.state.terminal.ensure_service_session(
             self._conn.container_id,
             agent_home,

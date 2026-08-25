@@ -2132,6 +2132,170 @@ class TestStartWorkspaceContainer:
         registry.states.pop(workspace["id"], None)
 
 
+# --- home layout (per_handle_home gate, #2169 chunk 2 / #2720) ---
+
+
+class TestSharedHomeLayout:
+    """Both layouts through the WS connect / handle-set / exec seams.
+
+    per_handle_home=False workspaces serve the single shared
+    /home/klangk for every connection; per-handle workspaces keep the
+    symlink machinery byte-identical (the default path above).
+    """
+
+    async def test_connect_shared_layout_skips_symlink(self, user, app_state):
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        workspace = await app_state.state.workspaces.create_workspace(
+            user["id"], "shared-ws", per_handle_home=False
+        )
+        captured = {}
+
+        async def fake_start(spec):
+            captured["spec"] = spec
+            registry.track_activity("cid-sh", workspace["id"])
+            return ("cid-sh", "created")
+
+        with (
+            patch.object(registry, "start_container", side_effect=fake_start),
+            patch("glob.glob", return_value=[]),
+            patch.object(
+                app_state.state.workspaces,
+                "ensure_home_symlink",
+                new_callable=AsyncMock,
+            ) as symlink_mock,
+            patch.object(
+                app_state.state.model.users,
+                "get_user_handle",
+                new_callable=AsyncMock,
+            ) as handle_mock,
+        ):
+            await conn.start_workspace_container(workspace["id"], workspace)
+
+        # No per-user machinery on the shared path: no handle lookup,
+        # no /home/{handle} -> .users/{uid} symlink, no per-user skel.
+        handle_mock.assert_not_awaited()
+        symlink_mock.assert_not_awaited()
+        assert conn._user_home == container.SHARED_HOME
+        assert conn._home_created is False
+        # The layout rides the start spec (health-monitor branch, same
+        # pattern as health_check/owner_id; the spec→ContainerState
+        # threading is covered in TestStartContainer).
+        assert captured["spec"].per_handle_home is False
+
+        sockets.sessions.pop(workspace["id"], None)
+        registry.states.pop(workspace["id"], None)
+
+    async def test_connect_per_handle_layout_keeps_symlink(
+        self, user, app_state
+    ):
+        # Explicit counterpart: the default layout is unchanged.
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        workspace = await app_state.state.workspaces.create_workspace(
+            user["id"], "per-handle-ws"
+        )
+        captured = {}
+
+        async def fake_start(spec):
+            captured["spec"] = spec
+            registry.track_activity("cid-ph", workspace["id"])
+            return ("cid-ph", "created")
+
+        with (
+            patch.object(registry, "start_container", side_effect=fake_start),
+            patch("glob.glob", return_value=[]),
+        ):
+            await conn.start_workspace_container(workspace["id"], workspace)
+
+        assert conn._user_home == f"/home/{user['handle']}"
+        assert conn._home_created is True  # fresh user dir → skel populate
+        assert captured["spec"].per_handle_home is True
+
+        sockets.sessions.pop(workspace["id"], None)
+        registry.states.pop(workspace["id"], None)
+
+    async def test_set_handle_shared_layout_skips_symlink(
+        self, user, app_state
+    ):
+        sock = _mock_sock()
+        conn = _base_conn(
+            user={"id": user["id"], "email": user["email"]}, ws=sock
+        )
+        conn.workspace_id = "ws-shared"
+        conn.workspace = {"user_id": user["id"], "per_handle_home": False}
+        conn.container_id = "cid"
+        conn._user_home = container.SHARED_HOME
+
+        with (
+            patch.object(
+                conn.app.state.workspaces,
+                "ensure_home_symlink",
+                new_callable=AsyncMock,
+            ) as symlink_mock,
+            patch(
+                "klangk.workspaces.populate_home_skel",
+                new_callable=AsyncMock,
+            ) as skel_mock,
+        ):
+            await conn.handle_set_handle({"handle": "alice"})
+        symlink_mock.assert_not_awaited()
+        skel_mock.assert_not_awaited()
+        # The handle still updates in the DB and the reply reports the
+        # (constant) shared home — nothing per-handle to refresh.
+        sent = sock.send_json.call_args_list
+        assert any(
+            call.args[0].get("type") == "handle_set"
+            and call.args[0].get("handle") == "alice"
+            and call.args[0].get("home") == container.SHARED_HOME
+            for call in sent
+        )
+        assert conn._user_home == container.SHARED_HOME
+
+    async def test_exec_shared_home_sets_env_and_work_dir(self, app_state):
+        # The exec path reads the connection's home; under the shared
+        # layout that is /home/klangk, so HOME and the cwd both point
+        # there (#2169 decision: exec cwd is /home/klangk, not
+        # /home/work).
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn._user_home = container.SHARED_HOME
+        mock_session = AsyncMock()
+
+        async def empty_output():
+            return
+            yield  # pragma: no cover
+
+        mock_session.output = empty_output
+        mock_session.returncode = 0
+        with (
+            patch(
+                "klangk.wshandler.controllers.ExecSession",
+                return_value=mock_session,
+            ) as session_cls,
+            patch.object(registry, "record_activity"),
+            patch.object(conn, "_has_perm", new=AsyncMock(return_value=True)),
+        ):
+            await conn.handle_exec_start({"command": ["ls"]})
+        kwargs = session_cls.call_args.kwargs
+        assert f"HOME={container.SHARED_HOME}" in kwargs["env"]
+        assert kwargs["work_dir"] == container.SHARED_HOME
+        conn.exec_task.cancel()
+        try:
+            await conn.exec_task
+        except asyncio.CancelledError:
+            pass
+
+
 # --- handle_websocket dispatch branches ---
 
 
