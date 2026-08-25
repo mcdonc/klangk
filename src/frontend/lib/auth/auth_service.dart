@@ -30,9 +30,11 @@ class AuthService extends ChangeNotifier {
   // #2721: deploy default home layout for new workspaces
   // (KLANGKD_PER_HANDLE_HOME via /config's default_per_handle_home). The
   // create dialog pre-reflects it so an untouched form submits the
-  // server's default. Per-handle (true) is the fallback — the server's
-  // own default — so a config-fetch hiccup can't silently flip layouts.
-  bool _perHandleHomeDefault = true;
+  // server's default. Null = unknown (old server / fetch failure): the
+  // dialog hides the toggle and omits the field, so the server applies
+  // its own default — a hiccup can never silently force a layout
+  // (#2737 review).
+  bool? _perHandleHomeDefault;
   // #1365: deploy-wide netfilter default allow-list + whether the feature
   // is armed. Surfaced via /api/v1/config so the create-workspace UI can
   // pre-fill its allowed-domains editor from the default (a workspace
@@ -71,8 +73,10 @@ class AuthService extends ChangeNotifier {
   bool get allowAutostart => _allowAutostart;
 
   /// #2721: the deploy default home layout for new workspaces (true =
-  /// per-handle private homes, false = shared /home/klangk).
-  bool get perHandleHomeDefault => _perHandleHomeDefault;
+  /// per-handle private homes, false = shared /home/klangk). Null when
+  /// unknown — the create dialog then hides the toggle and omits the
+  /// field so the server default applies.
+  bool? get perHandleHomeDefault => _perHandleHomeDefault;
 
   /// #1365: the deploy-wide netfilter default allow-list
   /// (KLANGKD_NETFILTER_DEFAULT_DOMAINS). The create-workspace dialog
@@ -151,8 +155,7 @@ class AuthService extends ChangeNotifier {
             (data['login_banner_every_visit'] as bool?) ?? false;
         _instanceId = (data['instance_id'] as String?) ?? 'default';
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
-        _perHandleHomeDefault =
-            (data['default_per_handle_home'] as bool?) ?? true;
+        _perHandleHomeDefault = data['default_per_handle_home'] as bool?;
         _netfilterDefaultDomains =
             (data['netfilter_default_domains'] as List?)?.cast<String>() ??
                 const [];

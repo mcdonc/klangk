@@ -66,7 +66,7 @@ void main() {
     List<String> defaultAllowedDomains = const [],
     bool netfilterEnabled = false,
     bool nixAvailable = false,
-    bool defaultPerHandleHome = true,
+    bool? defaultPerHandleHome = true,
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -930,7 +930,7 @@ void main() {
     });
 
     testWidgets(
-      'per-handle home checkbox pre-reflects the deploy default and always sends (#2721)',
+      'per-handle home checkbox pre-reflects the deploy default, toggles, and omits when unknown (#2721, #2737)',
       (tester) async {
         Map<String, dynamic>? postedBody;
         testAuthHttpClientOverride = mockClient((request) async {
@@ -962,10 +962,26 @@ void main() {
         await tester.pump();
         expect(postedBody!['per_handle_home'], false);
 
-        // Default dialog (per-handle): submitted as true even untouched —
-        // an untouched form equals a silent POST against the default deploy.
+        // Toggle the checkbox ON (exercises the onChanged handler) and
+        // submit — the flipped value reaches the POST body.
         postedBody = null;
-        await tester.pumpWidget(buildDialog());
+        await tester.pumpWidget(buildDialog(defaultPerHandleHome: false));
+        await tester.pump();
+        await tester.pump();
+        await tester.ensureVisible(checkbox);
+        await tester.tap(checkbox);
+        await tester.pump();
+        expect(tester.widget<Checkbox>(checkbox).value, isTrue);
+        await tester.enterText(_nameField(), 'Toggled');
+        await tester.tap(find.text('Create'));
+        await tester.pump();
+        await tester.pump();
+        expect(postedBody!['per_handle_home'], true);
+
+        // Per-handle-default dialog: submitted as true even untouched —
+        // an untouched form equals a silent POST against that deploy.
+        postedBody = null;
+        await tester.pumpWidget(buildDialog(defaultPerHandleHome: true));
         await tester.pump();
         await tester.pump();
         await tester.enterText(_nameField(), 'PerHandle');
@@ -973,6 +989,19 @@ void main() {
         await tester.pump();
         await tester.pump();
         expect(postedBody!['per_handle_home'], true);
+
+        // Unknown default (fetch failed / old server): no tile, and the
+        // field is omitted so the server applies its own default.
+        postedBody = null;
+        await tester.pumpWidget(buildDialog(defaultPerHandleHome: null));
+        await tester.pump();
+        await tester.pump();
+        expect(find.text('Per-handle home'), findsNothing);
+        await tester.enterText(_nameField(), 'Unknown');
+        await tester.tap(find.text('Create'));
+        await tester.pump();
+        await tester.pump();
+        expect(postedBody!.containsKey('per_handle_home'), isFalse);
       },
     );
 

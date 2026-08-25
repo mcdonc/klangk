@@ -35,8 +35,9 @@ optionally configure:
 - **Per-handle home** — the home-directory layout. On: every member
   gets a private `/home/<handle>` (dotfiles, shell history, and agent
   configs are per-user). Off: everyone shares `/home/klangk`. The
-  checkbox starts on the server default (`KLANGKD_PER_HANDLE_HOME`).
-  See [The Shell](the-shell.md).
+  checkbox starts on the server default (`KLANGKD_PER_HANDLE_HOME`);
+  if that default can't be fetched, the choice is left out and the
+  server default applies. See [The Shell](the-shell.md).
 
 You can change all of these later from the workspace **Settings** tab.
 

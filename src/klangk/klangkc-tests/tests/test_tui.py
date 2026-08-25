@@ -838,9 +838,11 @@ def test_allow_autostart(monkeypatch, redirect_xdg):
 
 
 def test_default_per_handle_home(monkeypatch, redirect_xdg):
-    # #2721: the create form pre-reflects the deploy default; the safe
-    # fallback on any fetch failure is True (per-handle, the server's own
-    # default) — a config hiccup can't silently flip the layout.
+    # #2721: the create form pre-reflects the deploy default. Unknown
+    # (fetch failure / no server) is None — the caller then hides the
+    # checkbox and omits the field so the server applies its own default
+    # (#2737 review). A fetched config that merely lacks the key is an
+    # OLD server, whose behavior is per-handle (True).
     monkeypatch.setattr(
         tui_state_mod,
         "fetch_config",
@@ -853,12 +855,13 @@ def test_default_per_handle_home(monkeypatch, redirect_xdg):
         lambda url: {"default_per_handle_home": True},
     )
     assert TuiState("https://x.example").default_per_handle_home() is True
-    # missing field / non-dict / no server -> safe default True
+    # missing field (old server) -> per-handle
     monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: {})
     assert TuiState("https://x.example").default_per_handle_home() is True
+    # non-dict / no server -> unknown (None)
     monkeypatch.setattr(tui_state_mod, "fetch_config", lambda url: None)
-    assert TuiState("https://x.example").default_per_handle_home() is True
-    assert TuiState().default_per_handle_home() is True
+    assert TuiState("https://x.example").default_per_handle_home() is None
+    assert TuiState().default_per_handle_home() is None
 
 
 def test_default_allowed_domains(monkeypatch, redirect_xdg):
@@ -8349,11 +8352,53 @@ async def test_create_screen_per_handle_home_default_and_toggle(monkeypatch):
         cs._create()
         await app.workers.wait_for_complete()
         assert captured["k"]["per_handle_home"] is False
-        # Toggle to per-handle; the flip reaches the request.
-        cs.query_one("#per_handle_home", Checkbox).value = True
+
+    # Fresh app for the toggle case (the first form dismissed on create).
+    app2 = KlangkApp(_create_state(create=create))
+    async with app2.run_test(size=(140, 40)) as pilot:
+        app2.screen.action_create()
+        await app2.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app2.screen
+        assert cs.query_one("#per_handle_home", Checkbox).value is True
+        cs.query_one("#per_handle_home", Checkbox).value = False
+        cs.query_one("#name").value = "ws2"
+        cs._create()
+        await app2.workers.wait_for_complete()
+        assert captured["k"]["per_handle_home"] is False
+
+
+async def test_create_screen_per_handle_home_unknown_omits(monkeypatch):
+    """#2737 review: when the deploy default is UNKNOWN (fetch failure),
+    the checkbox is hidden and the field omitted — the server applies
+    its own default instead of a possibly-wrong forced value."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(
+        _create_state(create=create, default_per_handle_home=lambda: None)
+    )
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        cb = cs.query_one("#per_handle_home", Checkbox)
+        assert cb.display is False  # unknown default -> hidden
+        cs.query_one("#name").value = "ws"
         cs._create()
         await app.workers.wait_for_complete()
-        assert captured["k"]["per_handle_home"] is True
+        # None = omit: the client drops the key so the server default
+        # applies (asserted at the client level in test_cli.py).
+        assert captured["k"]["per_handle_home"] is None
 
 
 async def test_create_screen_submit_custom_fields(monkeypatch):
@@ -8476,10 +8521,14 @@ async def test_create_screen_images_unavailable(monkeypatch):
         assert cs._allowed == []
         assert cs._allowed_domains == []  # fetch failed -> empty seed
         assert cs.query_one("#auto_start", Checkbox).display is False
+        # Fetch failed -> layout default unknown -> checkbox hidden and
+        # the field omitted (#2737 review).
+        assert cs.query_one("#per_handle_home", Checkbox).display is False
         cs.query_one("#name").value = "ws"
         cs._create()
         await app.workers.wait_for_complete()
         assert captured["k"]["image"] is None  # omitted
+        assert captured["k"]["per_handle_home"] is None  # omitted too
 
 
 async def test_create_screen_cancel_button(monkeypatch):

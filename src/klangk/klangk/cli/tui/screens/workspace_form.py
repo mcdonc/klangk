@@ -174,7 +174,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         default_allowed_domains: list[str] | None = None,
         default_rejected_domains: list[str] | None = None,
         nix_available: bool = False,
-        default_per_handle_home: bool = True,
+        default_per_handle_home: bool | None = None,
     ) -> None:
         super().__init__()
         self._allowed = list(allowed)
@@ -197,8 +197,10 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         # #2721: home-layout default (KLANGKD_PER_HANDLE_HOME) fetched by
         # the caller from /config, so the checkbox starts on the server's
         # default — an untouched form submits exactly what a silent POST
-        # would get.
-        self._default_per_handle_home = bool(default_per_handle_home)
+        # would get. None = unknown (fetch failed): the checkbox is hidden
+        # and the field omitted, so the server applies its own default —
+        # never a silently forced layout (#2737 review).
+        self._default_per_handle_home = default_per_handle_home
         if self._allowed:
             # Select tuples are (prompt, value). Prompts are rich Text so an
             # image name containing brackets can't trigger markup parsing.
@@ -241,10 +243,8 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                     )
                     yield Checkbox("Auto start", id="auto_start")
                     yield Checkbox(
-                        "Per-handle home"
-                        "  (private /home/<handle> per member;"
-                        " off = shared /home/klangk)",
-                        value=self._default_per_handle_home,
+                        "Per-handle home (off = shared /home/klangk)",
+                        value=bool(self._default_per_handle_home),
                         id="per_handle_home",
                     )
                     yield Checkbox("Mount /nix dir", id="nix")
@@ -365,6 +365,13 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         nix_cb = self.query_one("#nix", Checkbox)
         nix_cb.display = self._nix_available
         nix_cb.disabled = not self._nix_available
+        # The home-layout toggle is hidden when the deploy default is
+        # unknown (fetch failure): an offered choice we can't pre-reflect
+        # would pin a possibly-wrong value, so the field is omitted and
+        # the server applies its own default (#2737 review).
+        phh_cb = self.query_one("#per_handle_home", Checkbox)
+        phh_cb.display = self._default_per_handle_home is not None
+        phh_cb.disabled = self._default_per_handle_home is None
         self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
@@ -595,9 +602,12 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
             self._allow_autostart
             and self.query_one("#auto_start", Checkbox).value
         )
-        # #2721: always sent — the checkbox's initial state IS the
-        # server default, so an untouched form submits it unchanged.
-        per_handle_home = self.query_one("#per_handle_home", Checkbox).value
+        # #2721: sent whenever the deploy default was known — the
+        # checkbox's initial state IS the server default, so an untouched
+        # form submits it unchanged. Unknown default (hidden checkbox):
+        # omitted, and the server applies its own.
+        phh_cb = self.query_one("#per_handle_home", Checkbox)
+        per_handle_home = phh_cb.value if phh_cb.display else None
         mounts = list(self._mounts) or None
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
@@ -878,9 +888,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         id="auto_start",
                     )
                     yield Checkbox(
-                        "Per-handle home"
-                        "  (private /home/<handle> per member;"
-                        " off = shared /home/klangk)",
+                        "Per-handle home (off = shared /home/klangk)",
                         value=self._per_handle_home,
                         id="per_handle_home",
                     )

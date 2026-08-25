@@ -162,18 +162,23 @@ void main() {
     });
 
     test('loads default_per_handle_home from /api/config', () async {
-      // #2721: defaults to true (per-handle, the server default) when the
-      // field is absent — a config-fetch hiccup can't silently flip
-      // layouts — and parses the advertised deploy default when present.
+      // #2721 / #2737 review: null (unknown) when the field is absent or
+      // the fetch fails — the create dialog then hides the toggle and
+      // omits the field so the server default applies.
       testAuthHttpClientOverride = _bannerClient();
       final service = AuthService();
       await Future.delayed(Duration.zero);
-      expect(service.perHandleHomeDefault, isTrue);
+      expect(service.perHandleHomeDefault, isNull);
 
       testAuthHttpClientOverride = _bannerClient(defaultPerHandleHome: false);
       final service2 = AuthService();
       await Future.delayed(Duration.zero);
       expect(service2.perHandleHomeDefault, isFalse);
+
+      testAuthHttpClientOverride = _bannerClient(defaultPerHandleHome: true);
+      final service3 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service3.perHandleHomeDefault, isTrue);
     });
 
     test('loads netfilter default domains + enabled from /api/config',
