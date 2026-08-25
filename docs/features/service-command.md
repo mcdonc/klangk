@@ -12,10 +12,27 @@ running whenever the workspace is in use.
 
 The service command runs as a **per-workspace singleton** — like a
 global service. It starts exactly once, in a dedicated `service-cmd`
-tmux window that lives in the **workspace owner's** terminal session,
-and is **never** re-run for other users who open the workspace.
+window that lives in a standalone `service` tmux session owned by the
+workspace's agent identity (not any user's session), and is **never**
+re-run for other users who open the workspace.
 
-The command is sent as keystrokes into a bash login shell, so:
+The session's `$HOME` is **always `/home/klangk`** — the shared home,
+under both home layouts — and its shell is a bash login shell, so it
+sources `/home/klangk/.profile`. That directory is populated from the
+image skeleton before the session is created, on every fresh container
+(including server boot for auto-start workspaces, before any user
+connects). Environment setup a member writes to `/home/klangk/.profile`
+therefore reaches the service — but note that under the default
+per-handle layout a member's interactive shell reads _their own_
+home's `.profile`, not the shared one; see
+[The Shell](the-shell.md) for the distinction.
+
+Because the service session and (under the shared home layout) every
+member share one `/home/klangk`, they also share its mutable state: a
+command typed into the service tab lands in the shared `.bash_history`,
+and shell state (environment, cwd history) is visible across sessions.
+
+The command is sent as keystrokes into the bash login shell, so:
 
 - **Ctrl+C** stops the process and returns to the bash prompt
 - **Up-arrow + Enter** restarts it
@@ -28,15 +45,16 @@ If no service command is set, no `service-cmd` window is created.
 
 Because the command is a shared workspace service:
 
-- The **owner** sees `service-cmd` as one of their own terminal tabs.
-- Other users granted a workspace role (**coders** / **collaborators**)
-  see it as a **shared terminal** they can open and join.
+- Every member sees `service-cmd` in the shared terminal list (the
+  owner and users granted a workspace role alike — **coders** /
+  **collaborators**).
   [Read-only spectators](terminal.md#shared-terminals) can view it.
-- The window is **shared by definition**: the owner never has to reshare
-  it manually, and it remains visible even after the owner disconnects.
+- The window is **shared by definition**: nobody has to reshare
+  it manually, and it remains visible even after every member
+  disconnects.
 
-Anyone who can write to the shared window (the owner, plus users with
-the `code-in-shared-terminals` permission) can stop or restart the
+Anyone who can write to the shared window (members with the
+`code-in-shared-terminals` permission) can stop or restart the
 service via Ctrl+C / up-arrow / Enter — everyone joined sees the same
 output.
 

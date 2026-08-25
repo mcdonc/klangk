@@ -56,7 +56,11 @@ workspace:
 
 When the Klangk server starts, after initializing the database and
 cleaning up orphaned containers, it queries all workspaces with
-auto-start enabled and starts their containers. If a workspace also
+auto-start enabled and starts their containers. The shared home
+(`/home/klangk`) is created and populated from the image skeleton
+before the service command's first login shell — and before any
+member's shell — so a brand-new workspace boots correctly with no user
+ever having connected. If a workspace also
 has a [service command](service-command.md), the command runs in the
 workspace's `service-cmd` terminal window — so the service is already
 running by the time any user connects. Auto-started containers are

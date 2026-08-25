@@ -46,6 +46,16 @@ This means:
 - Your AI agent config (`.pi/agent/`, `.claude/`) is per-user
 - The shared project directory at `/home/work/` is accessible to everyone
 
+A separate directory, `/home/klangk`, is the **shared home**. It is
+created and populated from the image skeleton when the container is
+first created (on every start path, including server boot). The
+[service command](service-command.md) session always runs with
+`HOME=/home/klangk` — under both layouts — so environment setup that
+must reach the service goes in `/home/klangk/.profile`. Workspaces
+created with `per_handle_home=false` use the shared home for
+_everything_: every member's shell, exec sessions, and the service all
+share the one `/home/klangk` (and its `.bash_history`).
+
 See [Handles](handles.md) for how handles are assigned and how they
 relate to your home directory path.
 
@@ -112,8 +122,8 @@ health check is not a `~/.profile` consumer — see
 
 | In-container command                         | How Klangk runs it                            | Sources `~/.profile`?                                                                      |
 | -------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Interactive terminal                         | `tmux new-session` (login shell) or `bash -l` | yes                                                                                        |
-| `service_command` (the `service-cmd` window) | login shell (tmux window 0)                   | yes                                                                                        |
+| Interactive terminal                         | `tmux new-session` (login shell) or `bash -l` | yes — your own home's, or `/home/klangk/.profile` under the shared layout                  |
+| `service_command` (the `service-cmd` window) | login shell (tmux window 0)                   | yes — always `/home/klangk/.profile` (the shared home), under both layouts                 |
 | Workspace health check                       | `bash -c` (a **non-login** shell)             | no — the probe is deterministic; uses absolute paths (see [Health Check](health-check.md)) |
 | `klangk exec` (default)                      | `bash -lc` (a login shell)                    | yes                                                                                        |
 | `klangk exec --raw` / `klangk sync`          | raw command (no shell)                        | no — programmatic transports (rsync) must not source startup files                         |

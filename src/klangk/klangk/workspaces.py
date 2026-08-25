@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from . import container, model
-from .container.spec import SHARED_HOME_NAME
+from .container.spec import SHARED_HOME, SHARED_HOME_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +38,34 @@ def rmtree(path: Path | str, label: str = "") -> None:
     shutil.rmtree(path, onexc=_on_error)
 
 
-def _ensure_agent_home_dir_sync(
+def _ensure_shared_home_dir_sync(
     workspace_home: Path,
-    handle: str,
-) -> tuple[str, bool]:
-    """Synchronous ``ensure_agent_home`` implementation (see #1262)."""
-    agent_dir = workspace_home / handle
-    created = not agent_dir.exists()
-    agent_dir.mkdir(exist_ok=True)
-    return f"/home/{handle}", created
+    name: str,
+) -> bool:
+    """Synchronous ``ensure_shared_home`` implementation (see #1262).
+
+    Returns whether the shared home should be populated with /etc/skel:
+    True when it is empty — freshly created, left empty by a failed
+    populate on an earlier create, or a legacy symlink whose target
+    never had content. A non-empty home (user content present) is never
+    re-populated, so customizations survive container recreates.
+
+    Edge cases: a legacy ``klangk`` symlink (chat-era provisioning,
+    pointing at ``.users/{AGENT_USER_ID}``) that *resolves* is adopted
+    as-is; one that *dangles* (target deleted) is removed and replaced
+    with a real directory — the abandoned target stays orphaned
+    (#2717). ``Path.mkdir(exist_ok=True)`` alone would re-raise
+    ``FileExistsError`` on the dangling symlink (``exist_ok`` only
+    suppresses when the path is a directory), crashing container
+    create after the container is already running — and ``_bringup``
+    never runs again for that container.
+    """
+    shared_dir = workspace_home / name
+    if shared_dir.is_symlink() and not shared_dir.exists():
+        shared_dir.unlink()
+    created = not shared_dir.exists()
+    shared_dir.mkdir(exist_ok=True)
+    return created or not any(shared_dir.iterdir())
 
 
 async def _async_rmtree(path: Path | str, label: str = "") -> None:
@@ -507,33 +526,44 @@ class Workspaces:
             _ensure_home_symlink_sync, workspace_home, handle, user_id
         )
 
-    async def ensure_agent_home(self, workspace_id: str) -> tuple[str, bool]:
-        """Ensure the agent identity's home directory exists on the mount.
+    async def ensure_shared_home(
+        self, workspace_id: str, container_id: str
+    ) -> None:
+        """Ensure the shared home ``/home/klangk`` exists and is populated.
 
-        Unlike human users (whose handle can change, hence the
-        ``.users/{user_id}`` dir + handle symlink indirection), the agent
-        identity is fixed (#2718: handle ``klangk``, reserved name), so its
-        home is a plain real directory on the workspace home mount — no
-        symlink, no indirection. A legacy ``klangk`` symlink left by the
-        old chat-era provisioning still resolves and is adopted as-is.
+        Under both home layouts (#2169) the ``service`` tmux session and
+        (shared layout) every login shell runs with ``HOME=/home/klangk``.
+        The image has no ``/home/klangk`` at all — uid 1000's passwd home
+        is ``/home`` itself (``useradd -d /home``, populated by ``-m``
+        from /etc/skel) — and the home volume mounts at ``/home``,
+        shadowing that image content. So nothing at ``/home/klangk``
+        exists on a fresh volume until this creates it (#2717).
+        Called at the container-create choke point (``_bringup``) —
+        before ``ensure_service_session`` and before any user's first
+        shell — including the boot/autostart path where no user ever
+        connects first. For pre-#2718 per-user volumes this materializes
+        ``/home/klangk`` where it never existed; orphaned
+        ``.users/{AGENT_USER_ID}`` agent dirs are simply abandoned.
 
-        The directory name is the :data:`SHARED_HOME_NAME` constant (not a
-        DB ``agent_handle()`` lookup): the handle is immutable, and the
-        agent home *is* the shared home under both layouts (#2720) — one
-        constant keeps them provably the same path.
+        Self-healing and idempotent: the /etc/skel copy runs whenever the
+        home is EMPTY — freshly created, left empty by a failed populate
+        on an earlier create (the exec failure is swallowed, so the
+        emptiness gate is what makes the next create retry), or a legacy
+        symlink adopted onto an empty target. A home with any content is
+        never re-populated, so user customizations are never clobbered.
 
         The blocking filesystem work runs in a worker thread via
         ``asyncio.to_thread`` so the container-create path does not stall
         the event loop on disk latency (#1262).
-
-        Returns ``(container_home_path, created)`` where *created* is True
-        when a new directory was created (caller should populate it with
-        skeleton files).
         """
         workspace_home = self.home_path(workspace_id)
-        return await asyncio.to_thread(
-            _ensure_agent_home_dir_sync, workspace_home, SHARED_HOME_NAME
+        needs_populate = await asyncio.to_thread(
+            _ensure_shared_home_dir_sync, workspace_home, SHARED_HOME_NAME
         )
+        if needs_populate:
+            await self.populate_home_skel(
+                container_id, model.AGENT_USER_ID, home=SHARED_HOME
+            )
 
     async def populate_home_skel(
         self,

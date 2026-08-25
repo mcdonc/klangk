@@ -155,6 +155,19 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Service session HOME is always the shared home (#2717).** The
+  `service` tmux session now runs with `HOME=/home/klangk` pinned as a
+  constant under both home layouts, and `/home/klangk` is created and
+  populated from the image skeleton before the session's first login
+  shell — including on the server-boot auto-start path, where no user
+  ever connects first. This gives the service environment parity with
+  member setup: exports written to `/home/klangk/.profile` reach the
+  service (with the shared-mutable-state consequence that typed
+  commands land in the shared `.bash_history`). The agent-private home
+  provisioning is gone; `KLANGKWS_AGENT_HOME` remains baked as the
+  constant `/home/klangk`, so sandbox `setup.sh` scripts using
+  `export HOME="${KLANGKWS_AGENT_HOME}"` keep working (a no-op on
+  shared-home workspaces).
 - **`per_handle_home` now selects the home layout at runtime (#2720).**
   A workspace created with `per_handle_home=false` (see
   `KLANGKD_PER_HANDLE_HOME`, #2719) now actually serves the shared

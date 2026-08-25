@@ -275,43 +275,45 @@ in the server's `.env` file.
 ### Where the service command runs (and how to install for it)
 
 A `service-command` does **not** run in the workspace owner's shell.
-It runs as the workspace's **agent** identity, in a dedicated
-`service` tmux session whose `$HOME` is the agent's home
-(`/home/klangk` — the fixed agent identity, #2718 — exposed as `$KLANGKWS_AGENT_HOME`) — not
-the owner's. The owner interacts with it through the **Service**
+It runs in a dedicated `service` tmux session whose `$HOME` is
+**always `/home/klangk`** — the shared home, under both home layouts
+(exposed as the constant `$KLANGKWS_AGENT_HOME`) — not the owner's
+per-handle home. The owner interacts with it through the **Service**
 terminal tab in the web UI.
 
 This matters for setup scripts: anything the service command needs at
 runtime — env exports in `~/.profile`, binaries installed under
-`~/.local/bin`, config it reads from `$HOME` — must land in the
-**agent's** home, because that's the home whose `~/.profile` the
-service session sources. If you write to `~/.profile` while `$HOME`
-is still the owner's home (the default when the setup script starts),
-the service command will never see those exports.
+`~/.local/bin`, config it reads from `$HOME` — must land in
+`/home/klangk`, because that's the home whose `~/.profile` the service
+session sources. If you write to `~/.profile` while `$HOME` is still
+the owner's home (the default when the setup script starts under the
+per-handle layout), the service command will never see those exports.
 
-The simplest fix is to repoint `HOME` at the agent home at the top of
+The simplest fix is to repoint `HOME` at the shared home at the top of
 your setup script. After that, every home-relative write in the
 script — `~/.profile` appends, `~/.local/bin` links, `~/.pi` config —
-lands in the agent's home, which is exactly where the service command
-will look:
+lands in `/home/klangk`, which is exactly where the service command
+will look. (On a shared-home workspace — `per_handle_home=false` — the
+export is a no-op: `$HOME` already is `/home/klangk`.)
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
-# Run the rest of setup as the agent identity: the service command
-# runs in the agent's service session ($KLANGKWS_AGENT_HOME), so install
-# everything the service command depends on into THAT home.
+# Run the rest of setup against the shared home: the service command
+# runs in the service session with HOME=/home/klangk ($KLANGKWS_AGENT_HOME),
+# so install everything the service command depends on into THAT home.
 export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 
-# Now ~/.profile, ~/.local/bin, etc. resolve into the agent's home.
+# Now ~/.profile, ~/.local/bin, etc. resolve into the shared home.
 ```
 
-> The owner does **not** get tools installed by a sandbox on their own
-> PATH. Sandbox-installed services are owned and operated by the agent
-> through the Service tab — that is the supported way to manage them
-> (e.g. `openclaw onboard`, restarting a gateway). Don't also write
-> the same exports to the owner's `~/.profile`; it's not a consumer.
+> Under the default per-handle layout the owner does **not** get tools
+> installed by a sandbox on their own PATH. Sandbox-installed services
+> are operated through the Service tab — that is the supported way to
+> manage them (e.g. `openclaw onboard`, restarting a gateway). Don't
+> also write the same exports to the owner's `~/.profile`; it's not a
+> consumer.
 
 ### Example: install nix and devenv
 
@@ -407,10 +409,10 @@ And a setup script:
 # setup.sh
 set -euo pipefail
 
-# Run the rest of setup as the agent identity: the service command
-# runs in the agent's service session ($KLANGKWS_AGENT_HOME), so install
-# everything it depends on into THAT home. See
-# "Where the service command runs" in sandbox.md.
+# Run the rest of setup against the shared home: the service command
+# runs in the service session with HOME=/home/klangk
+# ($KLANGKWS_AGENT_HOME), so install everything it depends on into
+# THAT home. See "Where the service command runs" in sandbox.md.
 export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 
 # Install nix (single-user, no daemon needed in containers).
@@ -426,12 +428,12 @@ mkdir -p ~/.config/nix
 grep -q experimental-features ~/.config/nix/nix.conf 2>/dev/null \
   || echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
 
-# Source nix in every login shell of the agent -- the service command
-# (running in the service session) sources the agent's ~/.profile.
-# Writing this to ~/.bashrc instead would hide it from non-interactive
-# login shells (its interactivity guard returns early). (The health
-# check is NOT a ~/.profile consumer -- it runs as a non-login bash -c;
-# see health-check.md.) See the-shell.md#startup-files.
+# Source nix in every login shell of the shared home -- the service
+# command (running in the service session) sources /home/klangk's
+# ~/.profile. Writing this to ~/.bashrc instead would hide it from
+# non-interactive login shells (its interactivity guard returns early).
+# (The health check is NOT a ~/.profile consumer -- it runs as a
+# non-login bash -c; see health-check.md.) See the-shell.md#startup-files.
 # shellcheck disable=SC2016
 grep -q nix-profile ~/.profile 2>/dev/null \
   || echo '. "$HOME/.nix-profile/etc/profile.d/nix.sh"' >> ~/.profile

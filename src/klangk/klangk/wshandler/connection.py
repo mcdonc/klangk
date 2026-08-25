@@ -250,7 +250,7 @@ class Connection:
         # auto-create a real dir. Shared: every connection (and the
         # ``service`` session) uses the one shared /home/klangk — no
         # per-user symlink, no .users/{uid} dirs, no per-user skel
-        # (``ensure_agent_home`` populates /home/klangk at every fresh
+        # (``ensure_shared_home`` populates /home/klangk at every fresh
         # container create, under both layouts), and no handle lookup
         # (the handle is irrelevant on this path).
         if workspace.get("per_handle_home", True):

@@ -1,27 +1,23 @@
 """Tests for the create choke-point orchestrator (#1244).
 
 ``ContainerRegistry._bringup`` runs inside ``start_container`` for every
-fresh container. It materializes the agent identity's home (the agent
-never connects over the WebSocket, so nothing else would — yet the sandbox
-``setup.sh`` contract and the ``service`` tmux session both need
-``/home/klangk`` to exist) and fires the service command. The underlying
-primitives (``Workspaces.ensure_agent_home`` / ``populate_home_skel``,
+fresh container. It ensures the shared home (``/home/klangk`` — needed
+under both layouts by the ``service`` tmux session and, under the shared
+layout, every login shell) and fires the service command. The underlying
+primitives (``Workspaces.ensure_shared_home`` /
 ``Terminal.ensure_service_session``) have their own coverage; these tests
 pin the orchestration: that each is called with the right args, in the
-right cases.
+right cases, in the right order (#2717: shared-home population before
+the service session).
 """
 
 from unittest.mock import AsyncMock, MagicMock
 
 from klangk.container import ContainerRegistry
-from klangk.model import AGENT_USER_ID
 
 _app_state = MagicMock()
 _app_state.state.terminal.ensure_service_session = AsyncMock()
-_app_state.state.workspaces.ensure_agent_home = AsyncMock(
-    return_value=("/home/klangk", False)
-)
-_app_state.state.workspaces.populate_home_skel = AsyncMock()
+_app_state.state.workspaces.ensure_shared_home = AsyncMock()
 
 
 def _registry():
@@ -40,58 +36,57 @@ def _registry():
 class TestBringup:
     def setup_method(self):
         _app_state.state.terminal.ensure_service_session.reset_mock()
-        _app_state.state.workspaces.ensure_agent_home.reset_mock()
-        _app_state.state.workspaces.ensure_agent_home.return_value = (
-            "/home/klangk",
-            False,
-        )
-        _app_state.state.workspaces.populate_home_skel.reset_mock()
+        _app_state.state.workspaces.ensure_shared_home.reset_mock()
 
-    async def test_ensures_agent_home_then_fires_service_command(self):
-        """A configured service command fires with the resolved agent home."""
-        await _registry()._bringup(
-            "ws-id",
-            "cid",
-            "openclaw gateway",
-            setup_state="complete",
+    async def test_populates_shared_home_then_fires_service_command(self):
+        """A configured service command fires after the shared home is
+        ensured; the service session itself carries no home parameter
+        (HOME is pinned to the constant inside it, #2717)."""
+        calls: list[str] = []
+
+        async def shared_home(workspace_id, container_id):
+            calls.append("shared_home")
+
+        async def service_session(
+            container_id, service_command, setup_state=None
+        ):
+            calls.append("service_session")
+
+        _app_state.state.workspaces.ensure_shared_home.side_effect = (
+            shared_home
         )
-        _app_state.state.workspaces.ensure_agent_home.assert_awaited_once_with(
-            "ws-id"
+        _app_state.state.terminal.ensure_service_session.side_effect = (
+            service_session
+        )
+        try:
+            await _registry()._bringup(
+                "ws-id",
+                "cid",
+                "openclaw gateway",
+                setup_state="complete",
+            )
+        finally:
+            _app_state.state.workspaces.ensure_shared_home.side_effect = None
+            _app_state.state.terminal.ensure_service_session.side_effect = None
+        _app_state.state.workspaces.ensure_shared_home.assert_awaited_once_with(
+            "ws-id", "cid"
         )
         _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
-            "/home/klangk",
             "openclaw gateway",
             setup_state="complete",
         )
+        # Sequencing: the shared home is populated BEFORE the service
+        # session is ensured, so the session's login shell finds a
+        # populated /home/klangk/.profile (#2717).
+        assert calls == ["shared_home", "service_session"]
 
-    async def test_populates_skel_only_on_first_creation(self):
-        """``created=True`` from ensure_agent_home triggers the skel copy
-        into the agent's own home path; an already-existing home does not."""
-        _app_state.state.workspaces.ensure_agent_home.return_value = (
-            "/home/klangk",
-            True,
-        )
+    async def test_ensures_shared_home_even_without_service_command(self):
+        """No service_command → the shared home is still ensured (login
+        shells under the shared layout need it), but nothing is fired."""
         await _registry()._bringup("ws-id", "cid", None, "complete")
-        _app_state.state.workspaces.populate_home_skel.assert_awaited_once_with(
-            "cid", AGENT_USER_ID, home="/home/klangk"
-        )
-
-        # Second bringup: home exists → no skel copy.
-        _app_state.state.workspaces.ensure_agent_home.return_value = (
-            "/home/klangk",
-            False,
-        )
-        _app_state.state.workspaces.populate_home_skel.reset_mock()
-        await _registry()._bringup("ws-id", "cid", None, "complete")
-        _app_state.state.workspaces.populate_home_skel.assert_not_awaited()
-
-    async def test_ensures_home_even_without_service_command(self):
-        """No service_command → the home is still ensured (the sandbox
-        setup.sh contract needs it), but nothing is fired."""
-        await _registry()._bringup("ws-id", "cid", None, "complete")
-        _app_state.state.workspaces.ensure_agent_home.assert_awaited_once_with(
-            "ws-id"
+        _app_state.state.workspaces.ensure_shared_home.assert_awaited_once_with(
+            "ws-id", "cid"
         )
         _app_state.state.terminal.ensure_service_session.assert_not_awaited()
 
@@ -115,7 +110,6 @@ class TestBringup:
         )
         _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
-            "/home/klangk",
             "openclaw gateway",
             setup_state="pending",
         )
@@ -130,7 +124,6 @@ class TestBringup:
         )
         _app_state.state.terminal.ensure_service_session.assert_awaited_once_with(
             "cid",
-            "/home/klangk",
             "openclaw gateway",
             setup_state=None,
         )
