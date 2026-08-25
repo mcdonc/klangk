@@ -9,6 +9,7 @@ import logging
 import time
 
 from .. import podman
+from .spec import SHARED_HOME
 from .state import ContainerState
 
 logger = logging.getLogger(__name__)
@@ -123,17 +124,23 @@ class HealthMonitor:
         owner_id = state.owner_id
         if owner_id is None:
             return "unhealthy", "no owner recorded for workspace"
-        handle = await self.app.state.model.users.get_user_handle(owner_id)
-        if not handle:
-            return "unhealthy", f"owner {owner_id} has no handle"
-        # Resolve the owner's container home the same way
-        # start_workspace does, so the check runs in the right
-        # HOME rather than as root in /.
-        ws = self.app.state.workspaces
-        ws_home = ws.home_path(state.workspace_id)
-        user_home, _created = await ws.ensure_home_symlink(
-            ws_home, handle, owner_id
-        )
+        if state.per_handle_home:
+            handle = await self.app.state.model.users.get_user_handle(owner_id)
+            if not handle:
+                return "unhealthy", f"owner {owner_id} has no handle"
+            # Resolve the owner's container home the same way
+            # start_workspace does, so the check runs in the right
+            # HOME rather than as root in /.
+            ws = self.app.state.workspaces
+            ws_home = ws.home_path(state.workspace_id)
+            user_home, _created = await ws.ensure_home_symlink(
+                ws_home, handle, owner_id
+            )
+        else:
+            # Shared layout (#2169 chunk 2, #2720): one home for every
+            # connection — the check probes the workspace's shared
+            # /home/klangk; no per-owner symlink to resolve.
+            user_home = SHARED_HOME
         cid_short = state.container_id[:12]
         logger.debug(
             "Health check: container %s (workspace %s) running %r",

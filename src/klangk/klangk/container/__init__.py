@@ -57,5 +57,8 @@ from .registry import (
     _reap_sort_key as _reap_sort_key,
 )
 from .sidecar import NetworkSidecarMixin as NetworkSidecarMixin
-from .spec import ContainerStartSpec as ContainerStartSpec
+from .spec import (
+    ContainerStartSpec as ContainerStartSpec,
+    SHARED_HOME as SHARED_HOME,
+)
 from .state import ContainerState as ContainerState

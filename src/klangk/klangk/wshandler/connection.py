@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 
 from .. import container, model
+from ..container.spec import SHARED_HOME
 from ..exceptions import NodeDrainingError
 from ..terminal import TerminalSession
 from ..podman import ExecSession, PodmanError
@@ -242,19 +243,30 @@ class Connection:
             self.app.state.workspaces.get_config_host_path(workspace_id)
         )
 
-        # Ensure the per-user home symlink exists BEFORE starting the
-        # container, because mounts under /home/{handle}/ need the
-        # symlink in place so podman doesn't auto-create a real dir.
-        handle = await self.app.state.model.users.get_user_handle(
-            self.user["id"]
-        )
-        workspace_home = self.app.state.workspaces.home_path(workspace_id)
-        (
-            self._user_home,
-            self._home_created,
-        ) = await self.app.state.workspaces.ensure_home_symlink(
-            workspace_home, handle, self.user["id"]
-        )
+        # Home layout (#2169 chunk 2, #2720). Per-handle (the default):
+        # ensure the /home/{handle} -> .users/{user_id} symlink exists
+        # BEFORE starting the container, because mounts under
+        # /home/{handle}/ need the symlink in place so podman doesn't
+        # auto-create a real dir. Shared: every connection (and the
+        # ``service`` session) uses the one shared /home/klangk — no
+        # per-user symlink, no .users/{uid} dirs, no per-user skel
+        # (``ensure_agent_home`` populates /home/klangk at every fresh
+        # container create, under both layouts), and no handle lookup
+        # (the handle is irrelevant on this path).
+        if workspace.get("per_handle_home", True):
+            handle = await self.app.state.model.users.get_user_handle(
+                self.user["id"]
+            )
+            workspace_home = self.app.state.workspaces.home_path(workspace_id)
+            (
+                self._user_home,
+                self._home_created,
+            ) = await self.app.state.workspaces.ensure_home_symlink(
+                workspace_home, handle, self.user["id"]
+            )
+        else:
+            self._user_home = SHARED_HOME
+            self._home_created = False
 
         hosting_hostname, hosting_proto, hosting_base_path = (
             self.app.state.util.derive_hosting_info(
@@ -291,6 +303,7 @@ class Connection:
                 egress_mode=workspace.get(
                     "egress_mode", model.EGRESS_MODE_INTERACTIVE
                 ),
+                per_handle_home=workspace.get("per_handle_home", True),
             )
         )
         self.container_status = container_status
@@ -618,9 +631,11 @@ class Connection:
             await self.app.state.model.users.set_user_handle(
                 self.user["id"], handle
             )
-            # Update the per-workspace symlink.
+            # Update the per-workspace symlink (per-handle layout only;
+            # the shared layout has no per-user symlink and its home is
+            # the constant SHARED_HOME — nothing to refresh, #2720).
             workspace = self.workspace
-            if workspace:
+            if workspace and workspace.get("per_handle_home", True):
                 workspace_home = self.app.state.workspaces.home_path(
                     self.workspace_id
                 )
