@@ -21,6 +21,7 @@ import termios
 import tty
 from collections.abc import AsyncGenerator
 
+from .container.spec import SHARED_HOME
 from .podman import Podman, classify, subprocess_env
 from .exceptions import ContainerGoneError, TerminalError
 from .model.workspaces import SETUP_STATE_COMPLETE
@@ -453,7 +454,6 @@ class Terminal:
     async def ensure_service_session(
         self,
         container_id: str,
-        agent_home: str,
         service_command: str,
         setup_state: str = SETUP_STATE_COMPLETE,
     ) -> None:
@@ -467,11 +467,17 @@ class Terminal:
         lifecycle -- it survives the agent subprocess dying/restarting
         because it is just a tmux session (#1133 D6).
 
-        *agent_home* (the fixed ``/home/klangk``, #2718) is the session's HOME. The
-        service command fires iff the predicate holds (configured AND setup
-        complete) AND the ``service-cmd`` window doesn't already exist
-        (exactly-once-per-container). Idempotent: safe to call from every
-        ``terminal_start`` (#1033) and the boot path alike -- the
+        The session's HOME is **always** ``/home/klangk`` -- the shared
+        home, under both layouts (#2717) -- pinned explicitly via the
+        tmux ``-e HOME`` flag: the image's uid-1000 passwd home is
+        ``/home`` (the mount point), so the podman-exec default is not
+        the shared home. No ``per_handle_home`` branch exists on this
+        path.
+
+        The service command fires iff the predicate holds (configured AND
+        setup complete) AND the ``service-cmd`` window doesn't already
+        exist (exactly-once-per-container). Idempotent: safe to call from
+        every ``terminal_start`` (#1033) and the boot path alike -- the
         window-exists check makes it a no-op after the first fire.
 
         The window-exists -> new-window -> send-keys sequence is serialized
@@ -488,7 +494,7 @@ class Terminal:
         # window from #1186.
         async with self.registry.get_service_session_lock(container_id):
             await self._ensure_tmux_session(
-                container_id, SERVICE_SESSION, agent_home
+                container_id, SERVICE_SESSION, user_home=SHARED_HOME
             )
             if not (
                 should_fire_service_command(service_command, setup_state)

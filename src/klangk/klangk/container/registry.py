@@ -18,7 +18,6 @@ import time
 from .. import podman
 from .. import fips as fips_mod
 from ..exceptions import NodeDrainingError
-from ..model import AGENT_USER_ID
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
@@ -594,22 +593,26 @@ class ContainerRegistry(NetworkSidecarMixin):
         service_command: str | None,
         setup_state: str | None,
     ) -> None:
-        """Materialize the agent home and fire the service command.
+        """Populate the shared home and fire the service command.
 
         Called at the single choke point: every freshly-created container
         (the tail of :meth:`start_container`).
 
-        The agent identity never connects over the WebSocket, so nothing
-        else would materialize its home (``/home/klangk``) — yet the sandbox
-        ``setup.sh`` contract repoints ``HOME`` at ``$KLANGKWS_AGENT_HOME``
-        and appends to ``~/.profile`` under ``set -euo pipefail``, and the
-        ``service`` tmux session runs with that same ``HOME``. So the home
-        is ensured here on every fresh create: a plain real directory on
-        the workspace home mount (no ``.users/{uid}`` indirection — the
-        agent's handle is fixed, #2718), populated with /etc/skel on first
-        creation so it has a ``.profile``. Only the chat-agent Pi-config
-        provisioning (``klangk-setup-pi --force``) died with the chat
-        feature (#2716).
+        The shared home (``/home/klangk``) is ensured + populated HERE,
+        under both layouts (#2717): the home volume mounts at ``/home``,
+        shadowing the image's ``/home/klangk`` content, so a fresh
+        workspace has no ``.profile``/``.bashrc`` there until this writes
+        them. Sequenced BEFORE ``ensure_service_session`` -- the service
+        session's login shell sources ``/home/klangk/.profile`` (#2169's
+        environment-parity motivation) -- and before any user's first
+        shell, including on the boot/autostart path where no user ever
+        connects first. For pre-#2718 per-user volumes this materializes
+        ``/home/klangk`` where it never existed; orphaned
+        ``.users/{AGENT_USER_ID}`` agent dirs are simply abandoned. No
+        layout provisions an agent-private home anymore. The sandbox
+        ``setup.sh`` contract (``KLANGKWS_AGENT_HOME``, baked as the same
+        constant in :meth:`.spec.build_env`) keeps working under both
+        layouts and is a no-op under shared.
 
         The service command itself is idempotent via
         :meth:`terminal.ensure_service_session` (per-container lock +
@@ -620,19 +623,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         ``"pending"`` at create, and the fire lands later once setup
         completes and the WS connect path runs.
         """
-        (
-            agent_home,
-            created,
-        ) = await self.app.state.workspaces.ensure_agent_home(workspace_id)
-        if created:
-            await self.app.state.workspaces.populate_home_skel(
-                container_id, AGENT_USER_ID, home=agent_home
-            )
+        await self.app.state.workspaces.ensure_shared_home(
+            workspace_id, container_id
+        )
         if not service_command:
             return
         await self.app.state.terminal.ensure_service_session(
             container_id,
-            agent_home,
             service_command,
             setup_state=setup_state,
         )

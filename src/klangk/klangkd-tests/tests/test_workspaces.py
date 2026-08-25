@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from klangk import container
+from klangk import model
 from klangk import workspaces as ws_mod
 
 
@@ -718,32 +719,43 @@ async def test_idle_timeout_zero_pins_alive(user, app_state):
         registry.states.pop("ws-zero", None)
 
 
-class TestEnsureAgentHome:
-    """The agent identity's home: a plain real directory (#2716), no
-    ``.users/{uid}`` symlink indirection (the handle is fixed, #2718)."""
+class TestEnsureSharedHome:
+    """The shared home ``/home/klangk``: a plain real directory on the
+    home mount (#2717), no ``.users/{uid}`` symlink indirection, ensured
+    + populated under both layouts before the first login shell."""
 
-    async def test_creates_plain_dir_and_reports_created(
-        self, user, agent_user, app_state
+    async def test_creates_plain_dir_and_populates_skel_once(
+        self, user, app_state
     ):
         ws = await app_state.state.workspaces.create_workspace(
-            user["id"], "agent-home-ws"
+            user["id"], "shared-home-ws"
         )
         home = app_state.state.workspaces.home_path(ws["id"])
 
-        result, created = await app_state.state.workspaces.ensure_agent_home(
-            ws["id"]
-        )
-        assert result == "/home/klangk"
-        assert created is True
-        agent_dir = home / "klangk"
-        assert agent_dir.is_dir()
-        assert not agent_dir.is_symlink()
-        # Idempotent: second call does not report creation.
-        result2, created2 = await app_state.state.workspaces.ensure_agent_home(
-            ws["id"]
-        )
-        assert result2 == "/home/klangk"
-        assert created2 is False
+        with patch(
+            "klangk.workspaces.Workspaces.populate_home_skel",
+            new_callable=AsyncMock,
+        ) as skel_mock:
+            await app_state.state.workspaces.ensure_shared_home(
+                ws["id"], "cid"
+            )
+            # Freshly created → exactly-one skel copy into the shared
+            # home path.
+            skel_mock.assert_awaited_once_with(
+                "cid", model.AGENT_USER_ID, home="/home/klangk"
+            )
+
+            shared_dir = home / "klangk"
+            assert shared_dir.is_dir()
+            assert not shared_dir.is_symlink()
+
+            # Idempotent: second call does not re-populate (user
+            # customizations must never be clobbered by a recreate).
+            skel_mock.reset_mock()
+            await app_state.state.workspaces.ensure_shared_home(
+                ws["id"], "cid"
+            )
+            skel_mock.assert_not_awaited()
 
     async def test_populate_skel_home_override(self):
         """populate_home_skel(home=...) threads the override through; the
@@ -771,16 +783,14 @@ class TestEnsureAgentHome:
                 "cid", "uid-9", podman, home="/home/klangk"
             )
 
-    async def test_adopts_legacy_chat_era_symlink(
-        self, user, agent_user, app_state
-    ):
+    async def test_adopts_legacy_chat_era_symlink(self, user, app_state):
         """A ``klangk`` symlink left by the chat-era provisioning (pointing
         at ``.users/{AGENT_USER_ID}``) is adopted as-is — no removal, no
-        restructuring of existing volumes."""
+        restructuring of existing volumes, and no skel re-population."""
         from klangk.model import AGENT_USER_ID
 
         ws = await app_state.state.workspaces.create_workspace(
-            user["id"], "agent-home-legacy-ws"
+            user["id"], "shared-home-legacy-ws"
         )
         home = app_state.state.workspaces.home_path(ws["id"])
         users = home / ".users" / AGENT_USER_ID
@@ -788,11 +798,14 @@ class TestEnsureAgentHome:
         legacy = home / "klangk"
         legacy.symlink_to(f".users/{AGENT_USER_ID}")
 
-        result, created = await app_state.state.workspaces.ensure_agent_home(
-            ws["id"]
-        )
-        assert result == "/home/klangk"
-        # A symlink already exists at the path: leave it be.
-        assert created is False
+        with patch(
+            "klangk.workspaces.Workspaces.populate_home_skel",
+            new_callable=AsyncMock,
+        ) as skel_mock:
+            await app_state.state.workspaces.ensure_shared_home(
+                ws["id"], "cid"
+            )
+        # A symlink already exists at the path: leave it be, no skel.
+        skel_mock.assert_not_awaited()
         assert legacy.is_symlink()
         assert os.readlink(legacy) == f".users/{AGENT_USER_ID}"

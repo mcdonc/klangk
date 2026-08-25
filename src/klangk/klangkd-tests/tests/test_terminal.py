@@ -1526,7 +1526,6 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/klangk",
                 "openclaw gateway",
             )
         cmds = [c.args[1] for c in mock_exec.call_args_list]
@@ -1543,9 +1542,10 @@ class TestEnsureServiceSession:
             for c in cmds
         )
 
-    async def test_ensures_service_session_with_agent_home(self):
-        """The service session is ensured with the constant name and the
-        agent home as its HOME."""
+    async def test_ensures_service_session_with_pinned_home(self):
+        """The service session is ensured with the constant name and HOME
+        pinned to the shared home (/home/klangk) under both layouts
+        (#2717) — no caller-threaded home parameter."""
 
         with (
             patch.object(
@@ -1561,11 +1561,10 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/klangk",
                 "openclaw gateway",
             )
         mock_ensure.assert_awaited_once_with(
-            "cid", SERVICE_SESSION, "/home/klangk"
+            "cid", SERVICE_SESSION, user_home="/home/klangk"
         )
 
     async def test_skips_when_window_already_exists(self):
@@ -1590,7 +1589,6 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/klangk",
                 "openclaw gateway",
             )
         cmds = [c.args[1] for c in mock_exec.call_args_list]
@@ -1619,7 +1617,6 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/klangk",
                 "openclaw gateway",
                 setup_state="pending",
             )
@@ -1648,9 +1645,7 @@ class TestEnsureServiceSession:
             ),
             patch("klangk.terminal.logger") as mock_logger,
         ):
-            await _terminal.ensure_service_session(
-                "cid", "/home/klangk", "cmd"
-            )
+            await _terminal.ensure_service_session("cid", "cmd")
         mock_logger.warning.assert_called()
 
     async def test_send_keys_failure_logs_warning(self):
@@ -1680,9 +1675,7 @@ class TestEnsureServiceSession:
             ),
             patch("klangk.terminal.logger") as mock_logger,
         ):
-            await _terminal.ensure_service_session(
-                "cid", "/home/klangk", "cmd"
-            )
+            await _terminal.ensure_service_session("cid", "cmd")
         mock_logger.warning.assert_called()
 
     async def test_firing_resets_health_grace_anchor(self):
@@ -1708,7 +1701,6 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/klangk",
                 "openclaw gateway",
             )
         _mock_registry.mark_service_started.assert_called_once_with("cid")
@@ -1740,7 +1732,6 @@ class TestEnsureServiceSession:
         ):
             await _terminal.ensure_service_session(
                 "cid",
-                "/home/klangk",
                 "openclaw gateway",
             )
         mock_registry.mark_service_started.assert_not_called()
@@ -1776,11 +1767,7 @@ class TestEnsureServiceSession:
                 ),
             ),
         ):
-            await _terminal.ensure_service_session(
-                "cid",
-                "/home/klangk",
-                "cmd",
-            )
+            await _terminal.ensure_service_session("cid", "cmd")
         mock_registry.mark_service_started.assert_not_called()
 
     async def test_concurrent_fires_create_window_exactly_once(self):
@@ -1845,12 +1832,10 @@ class TestEnsureServiceSession:
             await asyncio.gather(
                 _terminal.ensure_service_session(
                     "cid",
-                    "/home/klangk",
                     "openclaw gateway",
                 ),
                 _terminal.ensure_service_session(
                     "cid",
-                    "/home/klangk",
                     "openclaw gateway",
                 ),
             )
@@ -1900,16 +1885,8 @@ class TestEnsureServiceSession:
             patch("klangk.terminal.asyncio.sleep", new=AsyncMock()),
         ):
             await asyncio.gather(
-                _terminal.ensure_service_session(
-                    "cid-a",
-                    "/home/klangk",
-                    "cmd-a",
-                ),
-                _terminal.ensure_service_session(
-                    "cid-b",
-                    "/home/klangk",
-                    "cmd-b",
-                ),
+                _terminal.ensure_service_session("cid-a", "cmd-a"),
+                _terminal.ensure_service_session("cid-b", "cmd-b"),
             )
 
         # Each container fired exactly once -- the per-container lock did not
@@ -1946,9 +1923,7 @@ class TestEnsureServiceSession:
             ) as mock_exec,
             patch("klangk.terminal.logger"),
         ):
-            await _terminal.ensure_service_session(
-                "cid", "/home/klangk", "cmd"
-            )
+            await _terminal.ensure_service_session("cid", "cmd")
 
         # The third exec call must be the kill-window cleanup targeting
         # the service-cmd window we just created.
@@ -1986,9 +1961,7 @@ class TestEnsureServiceSession:
             ),
             patch("klangk.terminal.logger") as mock_logger,
         ):
-            await _terminal.ensure_service_session(
-                "cid", "/home/klangk", "cmd"
-            )
+            await _terminal.ensure_service_session("cid", "cmd")
         # Both the send-keys failure and the cleanup failure are warned.
         assert mock_logger.warning.call_count == 2
 

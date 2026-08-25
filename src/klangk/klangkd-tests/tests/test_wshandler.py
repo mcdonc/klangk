@@ -840,11 +840,11 @@ class TestHandleTerminalStart:
             await conn.handle_terminal_start({"cols": 80, "rows": 24})
             await asyncio.sleep(0)
 
-        # Fired in the service session with the agent home, not threaded
-        # into the user's TerminalSession (no service_command kwarg).
+        # Fired in the service session (HOME pinned inside it, #2717),
+        # not threaded into the user's TerminalSession (no
+        # service_command kwarg).
         mock_ess.assert_awaited_once_with(
             "cid",
-            "/home/klangk",
             "./serve",
             setup_state="complete",
         )
@@ -1389,7 +1389,6 @@ class TestHandleTerminalStart:
         )
         mock_ess.assert_awaited_once_with(
             "cid",
-            "/home/klangk",
             "pi",
             setup_state="complete",
         )
@@ -6945,8 +6944,9 @@ class TestTerminalController:
     async def test_fire_service_command_invokes_ensure_service_session(
         self, app_state
     ):
-        """_fire_service_command reads fresh setup_state from the DB,
-        resolves the agent home, and targets the service session (#1133)."""
+        """_fire_service_command reads fresh setup_state from the DB and
+        targets the service session (#1133); the session HOME is pinned
+        inside ensure_service_session, so no home argument (#2717)."""
         ctrl, _, conn = self._controller()
         conn._service_command = "./run.sh"
         with (
@@ -6969,7 +6969,6 @@ class TestTerminalController:
             await ctrl._fire_service_command()
         mock_ess.assert_awaited_once_with(
             "cid",
-            "/home/klangk",
             "./run.sh",
             setup_state="complete",
         )

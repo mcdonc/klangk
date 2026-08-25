@@ -135,8 +135,9 @@ stale the instant it was written.
 
 - Discover the workspace's environment with `env | grep KLANGKWS_`. Notable vars:
   `KLANGKWS_LLM_PROXY_URL`, `KLANGKWS_PORT_MAPPINGS`,
-  `KLANGKWS_WORKSPACE_ID`, and `KLANGKWS_AGENT_HOME` (your own home directory,
-  `/home/<agent_handle>`, injected at container start). (Do not treat this
+  `KLANGKWS_WORKSPACE_ID`, and `KLANGKWS_AGENT_HOME` (the shared home,
+  `/home/klangk`, injected at container start — also the `$HOME` of the
+  `service` session). (Do not treat this
   list as exhaustive — re-run the command to see what is actually set.)
 - Decide **your own mechanism** for a task based on what you observe. For
   example, to restart a service you might send Ctrl-C to a foreground process,

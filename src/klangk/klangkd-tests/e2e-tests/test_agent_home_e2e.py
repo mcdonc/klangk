@@ -205,14 +205,15 @@ class TestAgentHomeE2E:
 
     @pytest.mark.asyncio
     async def test_agent_home_materialized_eagerly(self, server, auth):
-        """The agent home exists immediately after a container is brought
+        """The shared home exists immediately after a container is brought
         up via start_workspace — with NO WS connection preceding the check.
 
-        The agent identity never connects over the WebSocket, so the only
-        thing that materializes its home is the create choke point
-        (``_bringup`` → ``ensure_agent_home``): a plain ``/home/klangk``
-        directory populated with /etc/skel (so ``~/.profile`` exists for
-        the sandbox ``setup.sh`` contract and the ``service`` session).
+        Nothing but the create choke point (``_bringup`` →
+        ``ensure_shared_home``) materializes ``/home/klangk`` — the home
+        volume mounts at ``/home`` and shadows the image's own content —
+        so a populated ``/home/klangk`` (with ``.profile``) must be there
+        before the ``service`` session's first login shell, including on
+        the boot path where no user ever connects (#2717).
         auto_start=True routes creation through start_workspace, so the
         container is up by the time the POST returned; we inspect the
         filesystem directly via podman exec as root, independent of any

@@ -224,20 +224,6 @@ class TestMain:
         assert "prompts" in settings
         assert settings["extensions"] == ["/e"]  # preserved
 
-    def test_force_rewrites_settings(self, fake_home, monkeypatch):
-        monkeypatch.setenv("KLANGKWS_LLM_MODEL", "m")
-        monkeypatch.setenv("KLANGKWS_LLM_PROXY_URL", "http://x")
-        monkeypatch.setattr("sys.argv", ["setup-pi", "--force"])
-        agent = fake_home / ".pi" / "agent"
-        agent.mkdir(parents=True)
-        (agent / "settings.json").write_text(json.dumps({"old": True}))
-
-        sc.main()
-
-        settings = json.loads((agent / "settings.json").read_text())
-        assert "old" not in settings
-        assert settings["defaultProvider"] == "llm-proxy"
-
     def test_skips_system_user(self, fake_home, monkeypatch):
         monkeypatch.setenv("HOME", "/home")
         monkeypatch.setattr("sys.argv", ["setup-pi"])

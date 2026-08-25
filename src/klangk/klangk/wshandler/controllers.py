@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 from fastapi import WebSocketDisconnect
 
 from .. import model
-from ..container.spec import SHARED_HOME
 from ..exceptions import ContainerGoneError, TerminalError
 from ..podman import ExecSession
 from ..terminal import (
@@ -612,14 +611,11 @@ class TerminalController:
         # time, but by terminal_start (after setup.sh returns) the DB
         # holds 'complete' (#1033).
         setup_state = await self._setup_state_for_workspace()
-        # The agent home is eagerly provisioned at container create
-        # (#1157) and persists in the bind-mount volume; it is the
-        # constant shared home (#2720 — the agent's handle is fixed,
-        # #2718), so no DB resolution is needed here.
-        agent_home = SHARED_HOME
+        # The service session's HOME is pinned to the constant shared
+        # home (/home/klangk, under both layouts) inside
+        # ensure_service_session (#2717) -- nothing to resolve here.
         await self._conn.app.state.terminal.ensure_service_session(
             self._conn.container_id,
-            agent_home,
             service_command,
             setup_state=setup_state,
         )
