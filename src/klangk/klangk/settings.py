@@ -920,6 +920,17 @@ class KlangkSettings(BaseSettings):
     allowed_mount_roots: str | None = None
     allow_autostart: str = ""
     allow_sudo: str = ""
+    # per_handle_home: home-layout default for NEW workspaces (#2169 chunk 1,
+    # #2719). True = per-handle homes (each connecting user gets a private
+    # /home/.users/{id} dir + /home/{handle} symlink) — today's behavior;
+    # False = a shared klangk home. The API exposes a per-workspace
+    # override at create time (POST /workspaces ``per_handle_home``),
+    # editable afterwards via PUT. The deploy
+    # default is planned to flip to shared in a later #2169 chunk — until
+    # then True keeps every deploy on today's layout. Read off live
+    # settings at create time: reloadable on SIGHUP (applies to
+    # workspaces created after the reload).
+    per_handle_home: bool = True
     container_subnets: str | None = None
     # Nix workspace feature (#2198, #2201, #2220): per-workspace /nix from a
     # shared seed. ``nix_seed`` groups the seed path + the backend that

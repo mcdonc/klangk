@@ -155,6 +155,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`KLANGKD_PER_HANDLE_HOME` (#2719).** Deploy-wide default for the home
+  layout of **new** workspaces: `true` (default) = per-handle homes, the
+  current behavior; `false` = a shared klangk home. Overridable per
+  workspace via the new `per_handle_home` field on `POST /workspaces`
+  (and editable later with `PUT /workspaces/{id}` — a flip applies from
+  the next connect/start); exposed in `GET /workspaces` payloads.
+  Reloadable on SIGHUP. See
+  [Environment variables](reference/environment.md).
 - **Admin page → Server tab (#2684).** Admins can now schedule a server
   stop or recycle from the Admin page: pick an action and either an
   absolute time (date/time pickers) or a delay (`2h`, `90m`, `45s`, or a

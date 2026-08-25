@@ -2069,6 +2069,53 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 422
 
+    async def test_create_per_handle_home_defaults_true(self, client, user):
+        # #2719: silent create inherits the deploy default (True today);
+        # an explicit value wins; both are exposed in payloads.
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "home-dflt"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["per_handle_home"] is True
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "home-off", "per_handle_home": False},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["per_handle_home"] is False
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        by_name = {w["name"]: w for w in resp.json()}
+        assert by_name["home-dflt"]["per_handle_home"] is True
+        assert by_name["home-off"]["per_handle_home"] is False
+
+    async def test_create_per_handle_home_inherits_config_default(
+        self, client, user, app
+    ):
+        # #2719: an unset field follows KLANGKD_PER_HANDLE_HOME (read live
+        # off settings at create time).
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(app.state.settings, "per_handle_home", False)
+        try:
+            headers = await _auth_headers(client)
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "cfg-dflt"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["per_handle_home"] is False
+            # An explicit value still wins over the deploy default.
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "cfg-over", "per_handle_home": True},
+            )
+            assert resp.json()["per_handle_home"] is True
+        finally:
+            monkeypatch.undo()
+
     async def test_create_duplicate(self, client, user):
         headers = await _auth_headers(client)
         await client.post(
@@ -2970,6 +3017,39 @@ class TestWorkspaceRoutes:
         resp = await client.get("/api/v1/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["egress_mode"] == "static"
+
+    async def test_update_workspace_per_handle_home_editable(
+        self, client, user
+    ):
+        # #2719: the flag is mutable — a PUT flips it and the new value
+        # shows in list payloads. The flip applies to the next
+        # connect/start (nothing reads it yet — chunk 1).
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "home-edit"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        assert resp.json()["per_handle_home"] is True
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"per_handle_home": False},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["per_handle_home"] is False
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"per_handle_home": True},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["per_handle_home"] is True
 
     async def test_update_workspace_allowed_domains(self, client, user):
         headers = await _auth_headers(client)

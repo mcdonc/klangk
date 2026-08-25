@@ -394,6 +394,7 @@ class Workspaces:
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str = model.EGRESS_MODE_DEFAULT,
+        per_handle_home: bool = True,
     ) -> dict:
         workspace = (
             await self.app.state.model.workspaces.create_workspace_with_acl(
@@ -410,6 +411,7 @@ class Workspaces:
                 rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=egress_mode,
+                per_handle_home=per_handle_home,
             )
         )
         home = self.home_path(workspace["id"])
