@@ -272,12 +272,14 @@ The setup script runs inside the container as the `klangk` user. It
 has access to everything that's been mounted and copied. The working
 directory is the sandbox root (the `mount-at` path).
 
-**Important:** The `klangk` user does not have sudo access by
-default. Without it, setup scripts are limited to user-space
-operations (installing to `~`, downloading binaries, etc.). To
-install system packages with `apt`, install nix, or modify system
-files, the server administrator must set `KLANGKD_ALLOW_SUDO=true`
-in the server's `.env` file.
+**Important:** The `klangk` user has passwordless sudo by default (the
+deploy-wide `KLANGKD_ALLOW_SUDO` defaults to on). When sudo is disabled
+deploy-wide, or the workspace is individually locked down
+(`allow_sudo: false`), setup scripts are limited to user-space operations
+(installing to `~`, downloading binaries, etc.). To install system
+packages with `apt`, install nix, or modify system files, the server
+administrator must leave `KLANGKD_ALLOW_SUDO` enabled (the default) in
+the server's `.env` file.
 
 ### Where the service command runs (and how to install for it)
 
@@ -329,7 +331,7 @@ export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 # setup.sh
 set -euo pipefail
 
-# Install nix (requires KLANGKD_ALLOW_SUDO=true on the server)
+# Install nix (requires sudo — KLANGKD_ALLOW_SUDO, on by default)
 if ! command -v nix &>/dev/null; then
   curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
 fi

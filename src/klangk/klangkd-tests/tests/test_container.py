@@ -2683,14 +2683,17 @@ class TestStartContainer:
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["cpus"] == 1.5
 
-    async def test_sudo_disabled_by_default(self, workspace):
+    async def test_sudo_enabled_by_default(self, workspace):
+        # #2017 follow-up: allow_sudo defaults to "true" — a fresh deploy
+        # grants passwordless sudo. The opt-outs (deploy-wide "0"/"false",
+        # per-workspace lock-down) are pinned by the tests below.
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         call = _sudo_call(p)
         assert call.kwargs.get("user") == "root"
-        assert "!ALL" in str(call.args[1])
+        assert "NOPASSWD:ALL" in str(call.args[1])
 
     async def test_sudo_enabled(self, workspace, monkeypatch):
         monkeypatch.setattr(
