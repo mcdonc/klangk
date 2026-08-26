@@ -433,7 +433,7 @@ class TestDrain:
         self._stub_sweep(app_state)
         killed = []
 
-        async def on_killed(ws_id):
+        async def on_killed(ws_id, container_id=None):
             killed.append(ws_id)
 
         registry.on_workspace_killed = on_killed

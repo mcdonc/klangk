@@ -696,7 +696,7 @@ async def stop_workspace(
     )
     if cid:
         await app.state.container_registry.notify_workspace_killed(
-            workspace_id
+            workspace_id, container_id=cid
         )
         await app.state.container_registry.stop_and_remove_container(
             cid, workspace_id=workspace_id

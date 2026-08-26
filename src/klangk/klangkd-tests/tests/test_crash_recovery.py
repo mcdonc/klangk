@@ -502,6 +502,142 @@ class TestHandleDeathEntryGuards:
         pm.remove_container.assert_not_awaited()
         assert monitor.pending == {}
 
+    @pytest.mark.parametrize(
+        "interleave",
+        ["rebind_in_place", "state_replaced", "stop_in_flight", "epoch"],
+    )
+    async def test_race_reconnect_during_memory_limit_read(
+        self, crash_env, interleave
+    ):
+        """#331: a user-driven reconnect completing between death
+        handling's entry guards and its memory-limit read must win.
+
+        Choreography: the container was stopped externally; the sweep's
+        handle_death passes its entry guards and parks inside
+        ``_effective_memory_limit`` (its first await). Meanwhile the
+        user's ``klangk exec`` reconnect runs ``start_container`` —
+        ``_handle_existing_container`` removes the dead container with a
+        direct podman rm (never marking ``stopping`` nor bumping the
+        epoch) and ``track_activity`` re-binds the SAME state object to a
+        fresh container (in-place mutation). Death handling resumes: the
+        re-validation must bail before any teardown — the old code tore
+        down the fresh container's registry state, killed its network
+        sidecar via ``stop_and_remove``'s untracked branch, and scheduled
+        a spurious restart.
+        """
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        monitor = reg.crash
+        dead_state(reg)
+        epoch0 = reg.stop_epoch.get("ws-crash", 0)
+        limit_read_started = asyncio.Event()
+        reconnect_done = asyncio.Event()
+
+        async def parked_limit_read(ws_id):
+            limit_read_started.set()
+            await reconnect_done.wait()
+            return None
+
+        killed_cb = AsyncMock()
+        reg.set_on_workspace_killed(killed_cb)
+        start_mock = AsyncMock(return_value=("new-cid", "created"))
+        with patch_podman_methods(app_state, inspect_dead()) as pm:
+            with patch.object(
+                monitor, "_effective_memory_limit", parked_limit_read
+            ):
+                with patch.object(
+                    app_state.state.workspaces,
+                    "start_workspace",
+                    start_mock,
+                ):
+                    death = asyncio.create_task(
+                        monitor.handle_death(
+                            "ws-crash",
+                            "cid-crash",
+                            inspect_dead(),
+                            epoch=epoch0,
+                        )
+                    )
+                    await limit_read_started.wait()
+                    # The user action completes while death handling is
+                    # parked (all four interleave shapes the re-validation
+                    # guards must catch):
+                    if interleave == "rebind_in_place":
+                        # The reconnect's _handle_existing_container rm +
+                        # track_activity re-bind (state mutated in place).
+                        await pm.remove_container("cid-crash")
+                        reg.track_activity("cid-fresh", "ws-crash")
+                    elif interleave == "state_replaced":
+                        # The state object was swapped outright (state
+                        # removal followed by a fresh track).
+                        reg.states.pop("ws-crash", None)
+                        reg._cid_to_wsid.pop("cid-crash", None)
+                        dead_state(reg, cid="cid-fresh")
+                    elif interleave == "stop_in_flight":
+                        # An expected /stop began and is still running.
+                        reg.stopping.add("ws-crash")
+                    else:  # epoch
+                        # An expected stop began AND completed (epoch bump
+                        # without the marker lingering).
+                        reg.stop_epoch["ws-crash"] = epoch0 + 1
+                    reconnect_done.set()
+                    await death
+        # Death handling bailed at the re-validation: no killed callback,
+        # no teardown remove, no restart.
+        killed_cb.assert_not_awaited()
+        # No post-resume teardown remove (the rebind_in_place shape made
+        # one explicit rm for the dead container; others made none).
+        assert pm.remove_container.await_count <= 1
+        if interleave == "rebind_in_place":
+            assert reg.states["ws-crash"].container_id == "cid-fresh"
+        elif interleave == "state_replaced":
+            assert reg.states["ws-crash"].container_id == "cid-fresh"
+        elif interleave == "stop_in_flight":
+            reg.stopping.discard("ws-crash")
+        start_mock.assert_not_awaited()
+        assert monitor.pending == {}
+        assert monitor.status("ws-crash") is None
+
+    async def test_notify_killed_skips_rebound_workspace(self, crash_env):
+        """#331: notify_workspace_killed names the dead container; a
+        workspace re-bound to a fresh one gets no death teardown."""
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        dead_state(reg, cid="cid-dead")
+        reg.track_activity("cid-fresh", "ws-crash")  # re-bind in place
+        killed_cb = AsyncMock()
+        reg.set_on_workspace_killed(killed_cb)
+        with patch_podman_methods(app_state, inspect_dead()) as pm:
+            await reg.notify_workspace_killed(
+                "ws-crash", container_id="cid-dead"
+            )
+        killed_cb.assert_not_awaited()
+        pm.remove_container.assert_not_awaited()
+        assert reg.states["ws-crash"].container_id == "cid-fresh"
+
+    async def test_notify_killed_matching_container_proceeds(self, crash_env):
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        dead_state(reg, cid="cid-dead")
+        killed_cb = AsyncMock()
+        reg.set_on_workspace_killed(killed_cb)
+        await reg.notify_workspace_killed("ws-crash", container_id="cid-dead")
+        killed_cb.assert_awaited_once_with("ws-crash", "cid-dead")
+
+    async def test_remove_state_expect_container_guard(self, crash_env):
+        """#331: remove_state pops only the named container's state."""
+        app_state = make_app_state(crash_env)
+        reg = app_state.state.container_registry
+        dead_state(reg, cid="cid-a")
+        await reg.remove_state("ws-crash", expect_container_id="cid-b")
+        assert "ws-crash" in reg.states  # re-bound: fresh state survives
+        await reg.remove_state("ws-crash", expect_container_id="cid-a")
+        assert "ws-crash" not in reg.states
+        # No-kwarg (legacy) form still pops unconditionally.
+        reg.track_activity("cid-c", "ws-crash")
+        await reg.remove_state("ws-crash")
+        assert "ws-crash" not in reg.states
+
 
 class TestHandleDeathDisabled:
     """With restart off: classify + events + teardown, no restart task."""
@@ -513,7 +649,7 @@ class TestHandleDeathDisabled:
         dead_state(reg, health_check="true")
         notified = []
 
-        async def fake_notify(ws_id, *, cause=None):
+        async def fake_notify(ws_id, *, cause=None, container_id=None):
             notified.append((ws_id, cause))
 
         session = MagicMock()

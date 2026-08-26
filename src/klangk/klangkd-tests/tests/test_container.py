@@ -4670,7 +4670,7 @@ class TestStopUserContainers:
         with patch_podman(self.registry):
             await self.registry.stop_user_containers(user["id"])
 
-        killed_cb.assert_awaited_once_with(workspace["id"])
+        killed_cb.assert_awaited_once_with(workspace["id"], "cid")
         self.registry.on_workspace_killed = old_cb
 
     async def test_stop_user_no_containers(self, user):
@@ -4808,7 +4808,7 @@ class TestCleanupIdleContainers:
             except asyncio.CancelledError:
                 pass
 
-        killed_cb.assert_awaited_once_with("ws-killed")
+        killed_cb.assert_awaited_once_with("ws-killed", "cid")
         self.registry.on_workspace_killed = old_cb
 
     async def test_idle_workspace_killed_callback_error(self):
@@ -6299,7 +6299,7 @@ class TestHealthMonitorDeath:
         reg.states[st.workspace_id] = st
         seen_state_present = []
 
-        async def on_killed(wid):
+        async def on_killed(wid, container_id=None):
             # The state must still be present when the callback runs --
             # death emission happens first, before removal.
             seen_state_present.append(wid in reg.states)

@@ -1055,8 +1055,10 @@ async def lifespan(app: FastAPI):
         raise
     registry = app.state.container_registry
 
-    async def _on_workspace_killed(ws_id):
-        await wshandler.reset_workspace_state(app.state.sockets, ws_id)
+    async def _on_workspace_killed(ws_id, container_id=None):
+        await wshandler.reset_workspace_state(
+            app.state.sockets, ws_id, expected_container_id=container_id
+        )
 
     registry.set_on_workspace_killed(_on_workspace_killed)
     registry.set_on_container_status_changed(

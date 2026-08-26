@@ -14,10 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 async def reset_workspace_state(
-    sockets: WebSocketState, workspace_id: str
+    sockets: WebSocketState,
+    workspace_id: str,
+    expected_container_id: str | None = None,
 ) -> None:
-    """Thin wrapper for backward compatibility with external callers."""
-    await sockets.reset_workspace(workspace_id)
+    """Thin wrapper for backward compatibility with external callers.
+
+    *expected_container_id* (#331) is the dead container id threading
+    through to ``remove_state``'s re-bind guard: a racing user-driven
+    start that re-bound the workspace keeps its fresh registry state.
+    """
+    await sockets.reset_workspace(
+        workspace_id, expected_container_id=expected_container_id
+    )
 
 
 async def disconnect_all_websockets(sockets: WebSocketState) -> None:

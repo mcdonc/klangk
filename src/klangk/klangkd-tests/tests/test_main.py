@@ -998,7 +998,9 @@ class TestLifespan:
                 # into reset_workspace_state: (sockets, workspace_id).
                 assert registry.on_workspace_killed is not None
                 await registry.on_workspace_killed("ws-killed")
-        mock_reset.assert_awaited_once_with(app.state.sockets, "ws-killed")
+        mock_reset.assert_awaited_once_with(
+            app.state.sockets, "ws-killed", expected_container_id=None
+        )
 
     async def test_lifespan_refuses_if_pid_alive(self, db, app_state):
 

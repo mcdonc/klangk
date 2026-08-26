@@ -1747,9 +1747,6 @@ class TestTerminalSharing:
 class TestContainerReplace:
     """Verify podman --replace handles stale/crashed containers."""
 
-    @pytest.mark.skip(
-        reason="Flaky: Server disconnected race condition (#331)"
-    )
     def test_exec_after_external_stop(self, cli_config):
         """Kill a workspace container externally, then exec again.
 

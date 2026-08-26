@@ -482,7 +482,9 @@ class ContainerRegistry(NetworkSidecarMixin):
             started_at = state.service_started_at if state else None
             self.on_container_status_changed(workspace_id, running, started_at)
 
-    async def remove_state(self, workspace_id: str) -> None:
+    async def remove_state(
+        self, workspace_id: str, *, expect_container_id: str | None = None
+    ) -> None:
         """Remove tracked state for a workspace.
 
         Serialized under the per-workspace lock (the same one
@@ -490,8 +492,32 @@ class ContainerRegistry(NetworkSidecarMixin):
         half-cleaned registry (#1258). The per-workspace lock entry is
         deliberately *not* removed here -- see :meth:`stop_and_remove_container`
         for why popping it would reopen the race.
+
+        *expect_container_id* is the re-bind guard (#331): when the caller
+        names the container whose state it believes it is removing (a
+        death/stop teardown keyed to a specific dead container), the state
+        is popped only if it still belongs to that container. A racing
+        user-driven start may have removed the dead container and
+        re-bound the workspace to a fresh one (``start_container`` ->
+        ``_handle_existing_container`` removes a stopped container with a
+        direct ``podman rm`` -- never marking ``stopping`` or bumping the
+        stop epoch -- then ``track_activity`` re-binds the state) while
+        this teardown was between its guard checks and the lock; popping
+        the fresh state would orphan a RUNNING container. The check runs
+        under the workspace lock, so it is authoritative against
+        ``start_container``'s re-track: whichever side acquires the lock
+        first completes atomically.
         """
         async with self._get_workspace_lock(workspace_id):
+            state = self.states.get(workspace_id)
+            if (
+                expect_container_id is not None
+                and state is not None
+                and state.container_id != expect_container_id
+            ):
+                # Re-bound to a fresh container by a racing start: the
+                # live state is not ours to remove.
+                return
             state = self.states.pop(workspace_id, None)
             if state:
                 self._cid_to_wsid.pop(state.container_id, None)
@@ -1667,7 +1693,11 @@ class ContainerRegistry(NetworkSidecarMixin):
                 self.crash.on_expected_stop(ws_id)
 
     async def notify_workspace_killed(
-        self, workspace_id: str, *, cause: str | None = None
+        self,
+        workspace_id: str,
+        *,
+        cause: str | None = None,
+        container_id: str | None = None,
     ) -> None:
         """Call the on_workspace_killed callback, logging any errors.
 
@@ -1678,18 +1708,44 @@ class ContainerRegistry(NetworkSidecarMixin):
         limit"); it rides the death frame's ``message`` field so
         consumers can tell an OOM kill from a crash from external
         removal.
+
+        *container_id* (#331) is the re-bind guard: the id of the
+        container the caller believes died. When the workspace is now
+        tracked under a DIFFERENT container (a racing user-driven start
+        removed the dead one and re-bound the workspace), this death is
+        not ours to act on -- no terminal death frame for the live
+        container, no spurious ``running=False`` status, and the reset
+        chain carries the expected id down to :meth:`remove_state`, which
+        re-checks authoritatively under the workspace lock. Callers that
+        know the dead container (crash monitor, idle stop, eviction,
+        /stop, drain, logout) always have it at hand.
         """
+        state = self.states.get(workspace_id)
+        if (
+            container_id is not None
+            and state is not None
+            and state.container_id != container_id
+        ):
+            # Re-bound to a fresh container by a racing start: the
+            # workspace is live; a death teardown would corrupt it.
+            logger.info(
+                "Workspace %s: killed-container teardown skipped — "
+                "re-bound to %s (dead was %s)",
+                workspace_id,
+                state.container_id[:12],
+                container_id[:12],
+            )
+            return
         self._notify_status_changed(workspace_id, False)
         # Close the container-death hole (#1175 item 2): emit a terminal
         # ``running=False`` frame so consumers watching only service_health
         # learn the service is down.  Only health-checked workspaces ever
         # appeared on the stream, so only those get a terminal frame.
-        state = self.states.get(workspace_id)
         if state is not None and state.health_check is not None:
             self.health.broadcast_death(state, message=cause)
         if self.on_workspace_killed:
             try:
-                await self.on_workspace_killed(workspace_id)
+                await self.on_workspace_killed(workspace_id, container_id)
             except Exception as e:
                 logger.error(
                     "Workspace killed callback error for %s: %s",
@@ -1704,7 +1760,9 @@ class ContainerRegistry(NetworkSidecarMixin):
         )
         for ws in workspaces:
             if ws["container_id"]:
-                await self.notify_workspace_killed(ws["id"])
+                await self.notify_workspace_killed(
+                    ws["id"], container_id=ws["container_id"]
+                )
                 await self.stop_and_remove_container(
                     ws["container_id"], workspace_id=ws["id"]
                 )
@@ -1757,7 +1815,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         """
 
         async def drain_one(ws_id: str, cid: str) -> bool:
-            await self.notify_workspace_killed(ws_id)
+            await self.notify_workspace_killed(ws_id, container_id=cid)
             ok = await self.stop_and_remove_container(cid, workspace_id=ws_id)
             if not ok:
                 logger.warning(

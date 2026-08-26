@@ -377,8 +377,9 @@ class TestEvictOne:
 
         assert await evictor.evict_one(0.03) is True
         # Victim is the idle-longest workspace; kill notification precedes
-        # the stop (the death frame needs live registry state).
-        killed.assert_awaited_once_with("ws-old")
+        # the stop (the death frame needs live registry state). The
+        # notification names the dead container (#331 re-bind guard).
+        killed.assert_awaited_once_with("ws-old", container_id="cid-old")
         stopped.assert_awaited_once_with("cid-old", workspace_id="ws-old")
         assert killed.await_count == stopped.await_count == 1
 

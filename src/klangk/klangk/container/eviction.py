@@ -456,7 +456,9 @@ class MemoryPressureEvictor:
             victim.workspace_id,
             reason="host memory pressure",
         )
-        await registry.notify_workspace_killed(victim.workspace_id)
+        await registry.notify_workspace_killed(
+            victim.workspace_id, container_id=victim.container_id
+        )
         await registry.stop_and_remove_container(
             victim.container_id, workspace_id=victim.workspace_id
         )

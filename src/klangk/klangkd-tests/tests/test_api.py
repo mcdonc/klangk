@@ -2732,7 +2732,7 @@ class TestWorkspaceRoutes:
             )
         assert resp.status_code == 200
         assert resp.json()["status"] == "stopped"
-        mock_killed.assert_awaited_once_with(ws_id)
+        mock_killed.assert_awaited_once_with(ws_id, container_id="cid-stop")
         mock_stop.assert_awaited_once_with("cid-stop", workspace_id=ws_id)
         # Re-homed from the retired WS shutdown_container handler: REST /stop
         # broadcasts container_stopped so live viewers show "stopped".
