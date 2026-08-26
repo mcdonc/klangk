@@ -672,6 +672,16 @@ class ContainerRegistry(NetworkSidecarMixin):
             # runs inside a pending task and is exempt (task identity —
             # resetting there would erase the counter it is counting on).
             self.crash.on_start(spec.workspace_id)
+            # Materialize <home>/klangk on the HOST before podman start:
+            # the image WORKDIR is /home/klangk (#2725) but the home volume
+            # mounts at /home, so a missing dir means podman either
+            # auto-creates it as container-root (unwritable) or — for a
+            # legacy dangling `klangk` symlink — refuses to start (chdir
+            # ENOENT). Idempotent; the skel populate itself stays in
+            # _bringup where a container already exists to run it in.
+            await self.app.state.workspaces.ensure_shared_home_dir(
+                spec.workspace_id
+            )
             result = await self._start_container_inner(spec)
             bag = spec.workspace_settings or {}
             if "idle_timeout" in bag:

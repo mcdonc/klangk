@@ -64,7 +64,10 @@ def _ensure_shared_home_dir_sync(
     if shared_dir.is_symlink() and not shared_dir.exists():
         shared_dir.unlink()
     created = not shared_dir.exists()
-    shared_dir.mkdir(exist_ok=True)
+    # parents=True: on the pre-start path (#2725) the home volume's
+    # top dir may not exist yet (no in-tree caller mkdir'd it), and
+    # unlike the old work/ helper this must not assume it does.
+    shared_dir.mkdir(parents=True, exist_ok=True)
     return created or not any(shared_dir.iterdir())
 
 
@@ -526,11 +529,13 @@ class Workspaces:
 
         Under both home layouts (#2169) the ``service`` tmux session and
         (shared layout) every login shell runs with ``HOME=/home/klangk``.
-        The image has no ``/home/klangk`` at all — uid 1000's passwd home
-        is ``/home`` itself (``useradd -d /home``, populated by ``-m``
-        from /etc/skel) — and the home volume mounts at ``/home``,
-        shadowing that image content. So nothing at ``/home/klangk``
-        exists on a fresh volume until this creates it (#2717).
+        The image's uid 1000 has no ``/home/klangk`` with content — its
+        passwd home is ``/home`` itself (``useradd -d /home``, populated
+        by ``-m`` from /etc/skel) — and the home volume mounts at
+        ``/home``, shadowing whatever the image has there (the WORKDIR
+        directory the build created is root-owned and empty). So nothing
+        usable at ``/home/klangk`` exists on a fresh volume until this
+        creates it (#2717).
         Called at the container-create choke point (``_bringup``) —
         before ``ensure_service_session`` and before any user's first
         shell — including the boot/autostart path where no user ever
@@ -549,14 +554,30 @@ class Workspaces:
         ``asyncio.to_thread`` so the container-create path does not stall
         the event loop on disk latency (#1262).
         """
-        workspace_home = self.home_path(workspace_id)
-        needs_populate = await asyncio.to_thread(
-            _ensure_shared_home_dir_sync, workspace_home, SHARED_HOME_NAME
-        )
+        needs_populate = await self.ensure_shared_home_dir(workspace_id)
         if needs_populate:
             await self.populate_home_skel(
                 container_id, model.AGENT_USER_ID, home=SHARED_HOME
             )
+
+    async def ensure_shared_home_dir(self, workspace_id: str) -> bool:
+        """Host-side mkdir of ``<home>/klangk``; True if skel populate is due.
+
+        Runs ``_ensure_shared_home_dir_sync`` in a worker thread and
+        returns its result; the caller decides whether to fire the
+        in-container /etc/skel copy. Split out of ``ensure_shared_home``
+        so ``ContainerRegistry.start_container`` can materialize the
+        dir **before** ``podman start``: the image WORKDIR is
+        ``/home/klangk`` (#2725) and the home volume mounts at ``/home``,
+        so without this the container's cwd would be missing at start —
+        podman would auto-create it as container-root (unwritable by
+        the klangk user) or, for a legacy dangling ``klangk`` symlink,
+        refuse to start at all (chdir ENOENT).
+        """
+        workspace_home = self.home_path(workspace_id)
+        return await asyncio.to_thread(
+            _ensure_shared_home_dir_sync, workspace_home, SHARED_HOME_NAME
+        )
 
     async def populate_home_skel(
         self,

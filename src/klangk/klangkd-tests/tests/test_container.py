@@ -668,6 +668,36 @@ class TestStartContainer:
         p.start_container.assert_awaited_once_with("new-cid", hooks_dir=None)
         assert workspace["id"] in self.registry.states
 
+    async def test_shared_home_dir_materialized_before_start(self, workspace):
+        """<home>/klangk exists on the HOST before ``podman start`` (#2725).
+
+        The image WORKDIR is /home/klangk but the home volume mounts at
+        /home — without a pre-start mkdir, podman either auto-creates
+        the cwd as container-root (unwritable by the klangk user) or,
+        for a legacy dangling `klangk` symlink, refuses to start
+        (chdir ENOENT). Order, not just occurrence, is the contract.
+        """
+        calls: list[str] = []
+        real_dir = self.registry.app.state.workspaces.ensure_shared_home_dir
+
+        async def spy_dir(ws_id):
+            calls.append("ensure_dir")
+            return await real_dir(ws_id)
+
+        self.registry.app.state.workspaces.ensure_shared_home_dir = spy_dir
+        with patch_podman(self.registry):
+
+            async def spy_start(*a, **k):
+                calls.append("podman_start")
+
+            self.registry.app.state.podman.start_container = AsyncMock(
+                side_effect=spy_start
+            )
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        assert calls == ["ensure_dir", "podman_start"]
+
     async def test_spec_threads_per_handle_home_onto_state(self, workspace):
         # #2720: the layout rides the spec through every start path
         # (create / reuse / adopt) onto ContainerState, so the health
