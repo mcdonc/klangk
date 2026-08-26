@@ -77,8 +77,14 @@ def _ws_name(prefix: str) -> str:
 
 @pytest.fixture(scope="module")
 def api(server):
-    """httpx client pointing at the test server (over its UDS)."""
-    with httpx_client(server, timeout=10.0) as client:
+    """httpx client pointing at the test server (over its UDS).
+
+    30s budget (#2740): register/login are PBKDF2-HMAC-SHA512 CPU work via
+    ``asyncio.to_thread``, so a runner starved by a concurrent xdist worker
+    (e.g. a local FIPS image build) stretches them well past 10s; a
+    fixture-level ReadTimeout then errors the whole module.
+    """
+    with httpx_client(server, timeout=30.0) as client:
         yield client
 
 

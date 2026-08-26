@@ -36,6 +36,11 @@ _mock_pod = MagicMock()
 _mock_registry = MagicMock()
 _mock_registry.get_service_session_lock.return_value = asyncio.Lock()
 _mock_registry.mark_service_started = MagicMock()
+# Default: no pending service-command fire. Tests exercising the #2740
+# pending-retry path override this per-test.
+_mock_registry.service_fire_pending.return_value = False
+_mock_registry.mark_service_fire_pending = MagicMock()
+_mock_registry.clear_service_fire_pending = MagicMock()
 
 # These are rebuilt per-test by the _fresh_terminal fixture so a value a
 # test writes onto settings (e.g. disable_tmux) can't leak into the next
@@ -1448,8 +1453,9 @@ class TestSetWorkspaceName:
 
 
 class TestServiceCmdWindowExists:
-    async def test_service_cmd_window_exists_exception_returns_false(self):
-        """service_cmd_window_exists returns False if list-windows raises."""
+    async def test_service_cmd_window_exists_exception_returns_none(self):
+        """service_cmd_window_exists returns None (unknown) if
+        list-windows raises (#2740)."""
 
         with patch.object(
             _mock_pod,
@@ -1460,10 +1466,11 @@ class TestServiceCmdWindowExists:
             result = await _terminal.service_cmd_window_exists(
                 "cid", "my-session"
             )
-        assert result is False
+        assert result is None
 
-    async def test_service_cmd_window_exists_rc_nonzero_returns_false(self):
-        """service_cmd_window_exists returns False if list-windows fails."""
+    async def test_service_cmd_window_exists_rc_nonzero_returns_none(self):
+        """service_cmd_window_exists returns None (unknown) if
+        list-windows fails or is killed under load (#2740)."""
 
         with patch.object(
             _mock_pod,
@@ -1474,7 +1481,7 @@ class TestServiceCmdWindowExists:
             result = await _terminal.service_cmd_window_exists(
                 "cid", "my-session"
             )
-        assert result is False
+        assert result is None
 
     async def test_has_tmux_session_exception_returns_false(self):
         """has_tmux_session returns False if has-session raises."""
@@ -1502,6 +1509,9 @@ class TestEnsureServiceSession:
         _mock_registry.reset_mock()
         _mock_registry.get_service_session_lock.return_value = asyncio.Lock()
         _mock_registry.mark_service_started = MagicMock()
+        _mock_registry.service_fire_pending.return_value = False
+        _mock_registry.mark_service_fire_pending = MagicMock()
+        _mock_registry.clear_service_fire_pending = MagicMock()
 
     async def test_creates_window_and_sends_command(self):
         """A fresh service session fires the service command in its
@@ -1999,6 +2009,260 @@ class TestEnsureServiceSession:
         # Both the send-keys failure and the cleanup failure are warned.
         assert mock_logger.warning.call_count == 2
 
+    async def test_send_keys_timeout_is_failure_not_success(self):
+        """#2740 core: a killed send-keys exec returns rc=-1 WITHOUT
+        raising (exec_container is check=False), and must NOT be mistaken
+        for a successful fire -- the old code called mark_service_started
+        on it, leaving a command-less window that suppressed every later
+        fire. Now: warning, cleanup kill-window, no grace reset."""
+        with (
+            patch.object(
+                _terminal,
+                "_ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                _terminal,
+                "service_cmd_window_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new=AsyncMock(
+                    side_effect=[
+                        (0, "", ""),  # new-window succeeds
+                        (-1, "", "podman exec timed out"),  # send-keys KILLED
+                        (0, "", ""),  # kill-window cleanup succeeds
+                    ]
+                ),
+            ) as mock_exec,
+            patch("klangk.terminal.logger") as mock_logger,
+        ):
+            await _terminal.ensure_service_session("cid", "cmd")
+        _mock_registry.mark_service_started.assert_not_called()
+        mock_logger.warning.assert_called()
+        # Cleanup ran and succeeded -> pending marked then cleared.
+        _mock_registry.mark_service_fire_pending.assert_called_with("cid")
+        _mock_registry.clear_service_fire_pending.assert_called_with("cid")
+        argv = mock_exec.call_args_list[2].args[1]
+        assert "kill-window" in argv and "service:service-cmd" in argv
+
+    async def test_send_keys_failure_cleanup_failure_keeps_pending(self):
+        """#2740: if the kill-window cleanup ALSO fails, the fire stays
+        pending so the next terminal_start retries the send into the
+        surviving window instead of suppressing forever."""
+        with (
+            patch.object(
+                _terminal,
+                "_ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                _terminal,
+                "service_cmd_window_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new=AsyncMock(
+                    side_effect=[
+                        (0, "", ""),  # new-window succeeds
+                        (-1, "", ""),  # send-keys killed
+                        (-1, "", ""),  # kill-window cleanup killed too
+                    ]
+                ),
+            ),
+            patch("klangk.terminal.logger"),
+        ):
+            await _terminal.ensure_service_session("cid", "cmd")
+        # The pending flag survived: it was marked AFTER the fresh-path
+        # pre-clear and never cleared again (cleanup failed).
+        _mock_registry.mark_service_fire_pending.assert_called_with("cid")
+        names = [
+            name
+            for name, _args, _kw in _mock_registry.mock_calls
+            if name
+            in ("mark_service_fire_pending", "clear_service_fire_pending")
+        ]
+        assert names == [
+            "clear_service_fire_pending",
+            "mark_service_fire_pending",
+        ]
+
+    async def test_pending_fire_retries_send_into_existing_window(self):
+        """#2740: window exists + pending flag -> retry ONLY the send-keys
+        (no new-window: recreating the window would lose the settled
+        shell), then clear pending and reset the grace anchor."""
+        _mock_registry.service_fire_pending.return_value = True
+        with (
+            patch.object(
+                _terminal,
+                "_ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                _terminal,
+                "service_cmd_window_exists",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new=AsyncMock(return_value=(0, "", "")),
+            ) as mock_exec,
+        ):
+            await _terminal.ensure_service_session("cid", "cmd")
+        cmds = [c.args[1] for c in mock_exec.call_args_list]
+        assert len(cmds) == 1  # exactly one exec: the send-keys retry
+        assert "send-keys" in cmds[0]
+        assert "service:service-cmd" in cmds[0]
+        assert "cmd" in cmds[0]
+        assert not any("new-window" in c for c in cmds)
+        _mock_registry.clear_service_fire_pending.assert_called_with("cid")
+        _mock_registry.mark_service_started.assert_called_once_with("cid")
+
+    async def test_pending_fire_retry_failure_keeps_pending(self):
+        """#2740: a failed retry logs a warning and keeps the pending flag
+        so the next terminal_start tries again."""
+        _mock_registry.service_fire_pending.return_value = True
+        with (
+            patch.object(
+                _terminal,
+                "_ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                _terminal,
+                "service_cmd_window_exists",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new=AsyncMock(return_value=(-1, "", "")),
+            ),
+            patch("klangk.terminal.logger") as mock_logger,
+        ):
+            await _terminal.ensure_service_session("cid", "cmd")
+        mock_logger.warning.assert_called()
+        _mock_registry.clear_service_fire_pending.assert_not_called()
+        _mock_registry.mark_service_started.assert_not_called()
+
+    async def test_new_window_timeout_cleans_up_half_created_window(self):
+        """#2740: a killed new-window exec may still have created the
+        window container-side -- clean it up so the next fire re-runs the
+        whole sequence instead of suppressing on a command-less window."""
+        with (
+            patch.object(
+                _terminal,
+                "_ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                _terminal,
+                "service_cmd_window_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new=AsyncMock(
+                    side_effect=[
+                        (-1, "", ""),  # new-window KILLED (may have landed)
+                        (0, "", ""),  # kill-window cleanup succeeds
+                    ]
+                ),
+            ) as mock_exec,
+            patch("klangk.terminal.logger") as mock_logger,
+        ):
+            await _terminal.ensure_service_session("cid", "cmd")
+        mock_logger.warning.assert_called()
+        _mock_registry.mark_service_started.assert_not_called()
+        _mock_registry.clear_service_fire_pending.assert_called_with("cid")
+        argv = mock_exec.call_args_list[1].args[1]
+        assert "kill-window" in argv and "service:service-cmd" in argv
+
+    async def test_unknown_window_state_defers_fire(self):
+        """#2740: a killed list-windows exec means the window state is
+        UNKNOWN. Firing blind could duplicate the window and re-send into
+        a running service, so the fire is deferred to the next
+        terminal_start."""
+        with (
+            patch.object(
+                _terminal,
+                "_ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                _terminal,
+                "service_cmd_window_exists",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                new=AsyncMock(),
+            ) as mock_exec,
+            patch("klangk.terminal.logger") as mock_logger,
+        ):
+            await _terminal.ensure_service_session("cid", "cmd")
+        cmds = [c.args[1] for c in mock_exec.call_args_list]
+        assert not any("new-window" in c or "send-keys" in c for c in cmds)
+        mock_logger.debug.assert_called()
+
+    async def test_cancellation_mid_fire_marks_pending_and_cleans_up(self):
+        """#2740: a WS drop cancelling the caller mid-sequence (the exact
+        CLI-E2E flake) must not leave a half-created window with no
+        recovery: the pending flag is marked synchronously BEFORE the
+        cleanup await, the kill-window cleanup runs, and the
+        CancelledError still propagates."""
+        send_started = asyncio.Event()
+        real_sleep = asyncio.sleep
+
+        async def fake_exec(cid, argv, **kwargs):
+            if "send-keys" in argv:
+                # Cancel the caller's task while the send await is in
+                # flight -- the flake's exact window.
+                send_started.set()
+                await real_sleep(3600)
+            return (0, "", "")
+
+        async def canceller(task: asyncio.Task):
+            await send_started.wait()
+            task.cancel()
+
+        with (
+            patch.object(
+                _terminal,
+                "_ensure_tmux_session",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                _terminal,
+                "service_cmd_window_exists",
+                new=AsyncMock(return_value=False),
+            ),
+            patch.object(
+                _mock_pod,
+                "exec_container",
+                side_effect=fake_exec,
+            ) as mock_exec,
+            patch("klangk.terminal.asyncio.sleep", new=AsyncMock()),
+        ):
+            fire = asyncio.create_task(
+                _terminal.ensure_service_session("cid", "cmd")
+            )
+            await asyncio.gather(canceller(fire), return_exceptions=True)
+            with pytest.raises(asyncio.CancelledError):
+                await fire
+
+        _mock_registry.mark_service_fire_pending.assert_called_with("cid")
+        cmds = [c.args[1] for c in mock_exec.call_args_list]
+        # The cancellation cleanup ran a kill-window.
+        assert any("kill-window" in c for c in cmds)
+
 
 class TestServiceSessionHelpers:
     """Direct coverage for the firing-predicate helpers used by
@@ -2028,6 +2292,33 @@ class TestServiceSessionHelpers:
             assert (
                 await _terminal.service_cmd_window_exists("cid", "service")
                 is False
+            )
+
+    async def test_service_cmd_window_exists_none_when_check_fails(self):
+        """#2740: a killed/non-zero list-windows exec means UNKNOWN
+        (None), not absent -- the caller must defer the fire rather than
+        risk a duplicate window."""
+        with patch.object(
+            _mock_pod,
+            "exec_container",
+            new_callable=AsyncMock,
+            return_value=(-1, "", "podman exec timed out"),
+        ):
+            assert (
+                await _terminal.service_cmd_window_exists("cid", "service")
+                is None
+            )
+
+    async def test_service_cmd_window_exists_none_on_exception(self):
+        with patch.object(
+            _mock_pod,
+            "exec_container",
+            new_callable=AsyncMock,
+            side_effect=OSError("boom"),
+        ):
+            assert (
+                await _terminal.service_cmd_window_exists("cid", "service")
+                is None
             )
 
     def test_should_fire_returns_false_without_service_command(self):

@@ -146,7 +146,9 @@ export async function loginViaUI(page: Page, email: string, password: string) {
   await waitForFlutter(page);
   await loginOnCurrentPage(page, email, password);
 
-  await expect(page).toHaveTitle(/Workspaces/i, { timeout: 10_000 });
+  // 30s: slow CI runners exceed 10s between click and the Workspaces
+  // title flip; the flake class is load, not logic (#485/#469, #2740).
+  await expect(page).toHaveTitle(/Workspaces/i, { timeout: 30_000 });
 }
 
 /** Like loginViaUI but does not wait for Workspaces — use when
