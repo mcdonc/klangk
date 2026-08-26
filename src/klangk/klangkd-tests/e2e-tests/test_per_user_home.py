@@ -27,6 +27,7 @@ def server():
         KLANGKD_DEFAULT_PASSWORD="testpass",
         KLANGKD_TEST_MODE="1",
         KLANGKD_IDLE_TIMEOUT_SECONDS="300",
+        KLANGKD_PER_HANDLE_HOME="true",
         LOGFIRE_TOKEN="",
     )
     yield server

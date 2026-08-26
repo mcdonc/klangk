@@ -360,6 +360,7 @@ export async function createWorkspace(
   request: APIRequestContext,
   headers: Record<string, string>,
   namePrefix: string,
+  body: Record<string, unknown> = {},
 ): Promise<{
   workspaceId: string;
   cleanup: () => Promise<void>;
@@ -368,7 +369,7 @@ export async function createWorkspace(
   const workspace = await postJsonWithRetry(
     request,
     `${API_BASE}/api/v1/workspaces`,
-    { name },
+    { name, ...body },
     "Workspace creation",
     { headers },
   );
@@ -449,7 +450,12 @@ export async function createAndOpenWorkspace(
   {
     waitForTerminal = false,
     containerTimeout,
-  }: { waitForTerminal?: boolean; containerTimeout?: number } = {},
+    body = {},
+  }: {
+    waitForTerminal?: boolean;
+    containerTimeout?: number;
+    body?: Record<string, unknown>;
+  } = {},
 ): Promise<{
   workspaceId: string;
   email: string;
@@ -463,6 +469,7 @@ export async function createAndOpenWorkspace(
     request,
     headers,
     namePrefix,
+    body,
   );
   await openWorkspace(page, email, workspaceId, {
     waitForTerminal,

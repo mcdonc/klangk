@@ -80,7 +80,9 @@ test.describe("per-user HOME directory", () => {
       page,
       request,
       "home-e2e",
-      { waitForTerminal: true },
+      // This spec exercises the per-handle layout; the deploy default
+      // flipped to shared homes (#2723), so opt each workspace in.
+      { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {
       // Run commands via a parallel WebSocket — no canvas interaction
@@ -114,7 +116,7 @@ test.describe("per-user HOME directory", () => {
       page,
       request,
       "cwd-e2e",
-      { waitForTerminal: true },
+      { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {
       // The exec session starts in $HOME (the user's handle dir)
@@ -136,7 +138,7 @@ test.describe("per-user HOME directory", () => {
       page,
       request,
       "work-e2e",
-      { waitForTerminal: true },
+      { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {
       const output = (
@@ -161,7 +163,7 @@ test.describe("per-user HOME directory", () => {
       page,
       request,
       "persist-e2e",
-      { waitForTerminal: true },
+      { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {
       // Write to $HOME, then read it back — proves the directory is real
