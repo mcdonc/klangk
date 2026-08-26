@@ -220,21 +220,35 @@ No request body.
 
 ### GET `/api/v1/admin/groups`
 
-List all groups in the system (admin).
+List groups (admin) with pagination, filtering, and the paged envelope.
 
 **Auth:** JWT required. User must have `admin` permission on `/`.
+
+Query parameters:
+
+- `page` (default 1), `page_size` (default 10, max 200)
+- `sort` (`name` | `created`), `order` (`asc` | `desc`)
+- `q` — substring filter on name
+- `source` — `manual` (hide the seeded per-workspace role groups, #2750) or
+  `workspace-role` (show only them); omitted shows all
 
 No request body.
 
 ```json
-[
-  {
-    "id": "uuid",
-    "name": "my-group",
-    "description": null,
-    "created_at": "2025-01-01 12:00:00"
-  }
-]
+{
+  "groups": [
+    {
+      "id": "uuid",
+      "name": "my-group",
+      "description": null,
+      "source": "manual",
+      "created_at": "2025-01-01 12:00:00"
+    }
+  ],
+  "page": 1,
+  "page_size": 10,
+  "total": 1
+}
 ```
 
 ---
@@ -432,22 +446,12 @@ see [Auth Modes](../features/auth-modes.md).
 
 ### GET `/api/v1/groups`
 
-List all groups visible to the current user.
+List groups visible to the current user, with the same paged envelope and
+query parameters as the admin endpoint (`page`, `page_size`, `sort`,
+`order`, `q`, and the `source` marker filter, #2750). Any authenticated
+caller. Previously returned a bare list hard-capped at 200 rows.
 
 **Auth:** JWT required.
-
-No request body.
-
-```json
-[
-  {
-    "id": "uuid",
-    "name": "my-group",
-    "description": null,
-    "created_at": "2025-01-01 12:00:00"
-  }
-]
-```
 
 ---
 

@@ -23,6 +23,7 @@ from ._common import get_app_dep
 from ..model import (
     ACTION_ALLOW,
     AgentPrincipalError,
+    GROUP_SOURCES,
     PRINCIPAL_GROUP,
     PRINCIPAL_SYSTEM,
     PRINCIPAL_USER,
@@ -458,16 +459,36 @@ async def _group_resource(request: Request, user: dict) -> str:  # noqa: ARG001
 
 @router.get("/groups")
 async def user_list_groups(
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "name",
+    order: str = "asc",
+    q: str | None = None,
+    source: str | None = None,
     user: dict = Depends(auth.get_current_user),
     app=Depends(get_app_dep),
 ):
-    """List all groups (any authenticated user can see groups).
+    """List groups (any authenticated user can see groups).
 
-    Returns a bare list for backward compatibility; the admin endpoint
-    exposes the paged envelope.
+    Returns the paged envelope ``{groups, page, page_size, total}`` —
+    the same shape as the admin endpoint (#2750; previously a bare list
+    hard-capped at 200 rows). ``source=manual`` hides the seeded
+    per-workspace role groups; ``source=workspace-role`` shows only
+    them; the default shows all.
     """
-    result = await app.state.model.users.list_groups(page_size=200)
-    return result["groups"]
+    if source is not None and source not in GROUP_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail="source must be one of: manual, workspace-role",
+        )
+    return await app.state.model.users.list_groups(
+        page=page,
+        page_size=page_size,
+        sort=sort,
+        order=order,
+        q=q,
+        source=source,
+    )
 
 
 @router.post("/groups")
@@ -594,11 +615,28 @@ async def list_groups(
     sort: str = "name",
     order: str = "asc",
     q: str | None = None,
+    source: str | None = None,
     admin: dict = Depends(acl.has_permission("admin")),
     app=Depends(get_app_dep),
 ):
+    """List groups with the paged envelope; rows carry ``source``.
+
+    ``source=manual`` hides the seeded per-workspace role groups;
+    ``source=workspace-role`` shows only them; the default shows all
+    (#2750).
+    """
+    if source is not None and source not in GROUP_SOURCES:
+        raise HTTPException(
+            status_code=422,
+            detail="source must be one of: manual, workspace-role",
+        )
     return await app.state.model.users.list_groups(
-        page=page, page_size=page_size, sort=sort, order=order, q=q
+        page=page,
+        page_size=page_size,
+        sort=sort,
+        order=order,
+        q=q,
+        source=source,
     )
 
 

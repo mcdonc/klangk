@@ -6,7 +6,11 @@ and the pure ``row_to_acl_entry`` helper stay module-level — they are
 imported as literal values by ``workspaces.py`` and ``schema.py``.
 """
 
-from .users import AGENT_USER_ID, AgentPrincipalError
+from .users import (
+    AGENT_USER_ID,
+    AgentPrincipalError,
+    GROUP_SOURCE_WORKSPACE_ROLE,
+)
 
 # ACL constants
 ACTION_DENY = 0
@@ -18,6 +22,18 @@ PRINCIPAL_GROUP = 2
 
 SYSTEM_EVERYONE = 0
 SYSTEM_AUTHENTICATED = 1
+
+
+class WorkspaceRoleScopeError(ValueError):
+    """Raised when an ACL write would grant a per-workspace role group
+    on anything other than its own workspace's resource (#2750).
+
+    Role groups carry their workspace id in their name
+    (``<role>-<workspace_id>``); they are grantable only on
+    ``/workspaces/<that id>``. Raised at the model choke points
+    (``add_acl_entry``, ``replace_acl_entries``) and translated to
+    HTTP 400 by a global handler, like ``AgentPrincipalError``.
+    """
 
 
 def row_to_acl_entry(row) -> dict:
@@ -51,6 +67,30 @@ class ACLModel:
     def reconfigure(self, app) -> None:
         self.app = app
 
+    async def _check_role_group_scope(
+        self, db, resource: str, group_id: str
+    ) -> None:
+        """Reject cross-workspace role-group grants (#2750).
+
+        A group seeded for workspace B (``source = 'workspace-role'``)
+        may only hold ACEs on ``/workspaces/B`` — never on another
+        workspace, a group resource, or a tree root. Manual groups are
+        unrestricted. Runs on the caller's connection inside the same
+        transaction as the write it guards.
+        """
+        cursor = await db.execute(
+            "SELECT source, name FROM groups WHERE id = ?", (group_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None or row["source"] != GROUP_SOURCE_WORKSPACE_ROLE:
+            return
+        parts = row["name"].split("-", 1)
+        if len(parts) != 2 or resource != f"/workspaces/{parts[1]}":
+            raise WorkspaceRoleScopeError(
+                f"Workspace role group {row['name']!r} is grantable only"
+                f" on its own workspace's resource, not {resource!r}"
+            )
+
     async def add_acl_entry(
         self,
         resource: str,
@@ -74,6 +114,8 @@ class ACLModel:
                 " blast radius)."
             )
         async with self.app.state.db.transaction() as db:
+            if principal_type == PRINCIPAL_GROUP and group_id is not None:
+                await self._check_role_group_scope(db, resource, group_id)
             cursor = await db.execute(
                 "INSERT INTO acl_entries"
                 " (resource, position, action, principal_type,"
@@ -196,6 +238,14 @@ class ACLModel:
                     " blast radius)."
                 )
         async with self.app.state.db.transaction() as db:
+            for entry in entries:
+                if (
+                    entry.get("principal_type") == PRINCIPAL_GROUP
+                    and entry.get("group_id") is not None
+                ):
+                    await self._check_role_group_scope(
+                        db, resource, entry["group_id"]
+                    )
             await db.execute(
                 "DELETE FROM acl_entries WHERE resource = ?", (resource,)
             )

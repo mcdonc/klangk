@@ -71,6 +71,21 @@ Groups replace the old role system. A group is a named collection of users. Two 
 - `POST /api/v1/admin/groups/{id}/members` — add user `{"user_id": "..."}`
 - `DELETE /api/v1/admin/groups/{id}/members/{user_id}` — remove user
 
+### Per-workspace role groups (#2750)
+
+Every workspace also seeds four **role groups** — `owners-<workspace_id>`,
+`coders-<workspace_id>`, `collaborators-<workspace_id>`, and
+`spectators-<workspace_id>` — that carry its sharing roles. They live in
+the same `groups` table but are marked with `source = "workspace-role"`
+(rows for human-managed groups carry `source = "manual"`). Both list
+endpoints accept a `source` query filter, so group pickers can ask for
+`?source=manual` and hide the machine-generated names; per-workspace
+roles remain available via `GET /api/v1/workspaces/{id}/roles`.
+
+A role group is grantable **only on its own workspace's resource**:
+APIs that would grant workspace B's role group on workspace A (or on any
+other resource) are rejected with a 400 error.
+
 ## Workspace Permissions
 
 When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files.

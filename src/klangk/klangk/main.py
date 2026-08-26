@@ -74,6 +74,18 @@ async def agent_principal_error_handler(request, exc):  # noqa: ARG001
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+async def role_scope_error_handler(request, exc):  # noqa: ARG001
+    """Reject cross-workspace role-group grants (#2750).
+
+    Raised at the model choke points (``add_acl_entry`` /
+    ``replace_acl_entries``) whenever an ACL write would grant a
+    per-workspace role group on anything other than its own workspace's
+    resource; translated to HTTP 400 here so route handlers carry no
+    per-endpoint guard code.
+    """
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
 def register_exception_handlers(application: FastAPI) -> None:
     """Register global exception handlers on a FastAPI application.
 
@@ -83,6 +95,9 @@ def register_exception_handlers(application: FastAPI) -> None:
     """
     application.add_exception_handler(
         model.AgentPrincipalError, agent_principal_error_handler
+    )
+    application.add_exception_handler(
+        model.WorkspaceRoleScopeError, role_scope_error_handler
     )
 
 
