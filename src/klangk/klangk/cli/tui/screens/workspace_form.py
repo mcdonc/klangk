@@ -132,6 +132,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         "image",
         "auto_start",
         "nix",
+        "allow_sudo",
         "mount_input",
         "env_input",
         "egress_mode",
@@ -175,6 +176,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         default_rejected_domains: list[str] | None = None,
         nix_available: bool = False,
         default_per_handle_home: bool | None = None,
+        sudo_available: bool = False,
     ) -> None:
         super().__init__()
         self._allowed = list(allowed)
@@ -183,6 +185,11 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         # #2233: per-workspace nix toggle (Mount /nix dir). Shown only when
         # the server has a nix backend, matching the create dialog.
         self._nix_available = bool(nix_available)
+        # #2017: per-workspace sudo lock-down toggle. The deploy-wide
+        # allow_sudo is a ceiling, so the toggle is only meaningful when
+        # the server allows sudo; hidden otherwise (sudo is off for every
+        # workspace regardless of the checkbox).
+        self._sudo_available = bool(sudo_available)
         self._mounts: list[str] = []
         self._env: dict[str, str] = {}
         # Seed the Netfilter list with the deploy default
@@ -243,6 +250,11 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                     )
                     yield Checkbox("Auto start", id="auto_start")
                     yield Checkbox("Mount /nix dir", id="nix")
+                    yield Checkbox(
+                        "Allow sudo (uncheck to lock down)",
+                        value=True,
+                        id="allow_sudo",
+                    )
                 with TabPane("Mounts", id="mounts_pane"):
                     yield Static(
                         "Mounts  (source:/container/path[:opts])",
@@ -369,6 +381,11 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         nix_cb = self.query_one("#nix", Checkbox)
         nix_cb.display = self._nix_available
         nix_cb.disabled = not self._nix_available
+        # #2017: the sudo toggle is shown only when the deploy allows sudo;
+        # hidden otherwise (the knob could only ever be a no-op).
+        sudo_cb = self.query_one("#allow_sudo", Checkbox)
+        sudo_cb.display = self._sudo_available
+        sudo_cb.disabled = not self._sudo_available
         # The home-layout toggle is hidden when the deploy default is
         # unknown (fetch failure): an offered choice we can't pre-reflect
         # would pin a possibly-wrong value, so the field is omitted and
@@ -624,6 +641,14 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
             return
         if self._nix_available and self.query_one("#nix", Checkbox).value:
             settings = {**(settings or {}), "nix": True}
+        # #2017: emit only the lock-down (unchecked) — a checked toggle is
+        # the default (follow the deploy posture), and the server setting
+        # is a ceiling, so an explicit True buys nothing over omitting it.
+        if (
+            self._sudo_available
+            and not self.query_one("#allow_sudo", Checkbox).value
+        ):
+            settings = {**(settings or {}), "allow_sudo": False}
         self.run_worker(
             self._do_create_workspace(
                 name,
@@ -766,6 +791,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         "image",
         "auto_start",
         "nix",
+        "allow_sudo",
         "mount_input",
         "env_input",
         "egress_mode",
@@ -814,6 +840,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         default: str,
         allow_autostart: bool,
         nix_available: bool = False,
+        sudo_available: bool = False,
     ) -> None:
         super().__init__()
         self._ws = workspace
@@ -822,6 +849,10 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         # #2233: per-workspace nix toggle (Mount /nix dir). Shown only when
         # the server has a nix backend, matching the edit panel / create dialog.
         self._nix_available = bool(nix_available)
+        # #2017: per-workspace sudo lock-down toggle, seeded from the bag
+        # (absent = True = follow the deploy posture). Hidden unless the
+        # deploy allows sudo (the knob can only lock down below that).
+        self._sudo_available = bool(sudo_available)
         self._mounts: list[str] = list(workspace.mounts or [])
         self._env: dict[str, str] = dict(workspace.env or {})
         self._allowed_domains: list[str] = list(
@@ -895,6 +926,13 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         "Mount /nix dir",
                         value=bool((self._ws.settings or {}).get("nix")),
                         id="nix",
+                    )
+                    yield Checkbox(
+                        "Allow sudo (uncheck to lock down)",
+                        value=bool(
+                            (self._ws.settings or {}).get("allow_sudo", True)
+                        ),
+                        id="allow_sudo",
                     )
                 with TabPane("Mounts", id="mounts_pane"):
                     yield Static(
@@ -1048,6 +1086,10 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         nix_cb = self.query_one("#nix", Checkbox)
         nix_cb.display = self._nix_available
         nix_cb.disabled = not self._nix_available
+        # #2017: the sudo toggle is shown only when the deploy allows sudo.
+        sudo_cb = self.query_one("#allow_sudo", Checkbox)
+        sudo_cb.display = self._sudo_available
+        sudo_cb.disabled = not self._sudo_available
         self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
@@ -1379,19 +1421,30 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         except ValueError as exc:
             self._msg(str(exc), error=True)
             return
-        # #2233: emit an explicit nix value (True/False) whenever the
-        # toggle is shown. PUT settings is a full-replace bag, so we must
-        # carry the checkbox state — including False — to actually turn
-        # the mount off (omitting the key leaves the stale bag untouched).
-        # Seed from the existing bag first so API-only keys the form does
-        # not represent (e.g. bridge_timeout) survive the full-replace
-        # instead of being silently wiped.
+        # PUT settings is a full-replace bag, so seed from the existing
+        # bag unconditionally — API-only keys the form does not represent
+        # (e.g. bridge_timeout) and toggle-gated keys (nix, allow_sudo)
+        # whose toggles are hidden on this deploy must survive the save
+        # instead of being silently wiped (#2017 review).
+        merged_settings = {
+            **(self._ws.settings or {}),
+            **(settings or {}),
+        }
+        # #2233: emit an explicit nix value whenever the toggle is shown —
+        # including False, to actually turn the mount off (omitting the
+        # key would leave the stale bag untouched).
         if self._nix_available:
-            settings = {
-                **(self._ws.settings or {}),
-                **(settings or {}),
-                "nix": bool(self.query_one("#nix", Checkbox).value),
-            }
+            merged_settings["nix"] = bool(
+                self.query_one("#nix", Checkbox).value
+            )
+        # #2017: same for the sudo posture — an explicit value whenever
+        # the toggle is shown, so an uncheck-to-revert actually clears a
+        # stored lock-down. True follows the deploy posture (the server
+        # setting stays the ceiling).
+        if self._sudo_available:
+            merged_settings["allow_sudo"] = bool(
+                self.query_one("#allow_sudo", Checkbox).value
+            )
         body = {
             "name": name,
             "image": image,
@@ -1405,8 +1458,8 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             "egress_mode": egress_mode,
             "per_handle_home": per_handle_home,
         }
-        if settings is not None:
-            body["settings"] = settings
+        if merged_settings:
+            body["settings"] = merged_settings
         ws = self._ws
         orig_mounts = list(ws.mounts or []) or None
         orig_env = dict(ws.env or {}) or None
@@ -1426,8 +1479,15 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             # time, so toggling it on a running workspace needs a restart.
             or (
                 self._nix_available
-                and (settings or {}).get("nix", False)
+                and merged_settings.get("nix", False)
                 != bool((ws.settings or {}).get("nix"))
+            )
+            # #2017: the sudoers rule is written at container-create time,
+            # so a posture flip needs a restart to take effect.
+            or (
+                self._sudo_available
+                and merged_settings.get("allow_sudo", True)
+                != bool((ws.settings or {}).get("allow_sudo", True))
             )
         )
         self.run_worker(

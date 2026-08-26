@@ -740,12 +740,14 @@ class MainScreen(StatusScreen):
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
             nix_available = data.get("nix_available") is True
+            sudo_available = data.get("sudo_available") is True
         except AuthError:
             self.app.session_expired()
             return
         except Exception:
             default, allowed = "", []
             nix_available = False
+            sudo_available = False
         try:
             allow_autostart = await asyncio.to_thread(state.allow_autostart)
         except AuthError:
@@ -760,6 +762,7 @@ class MainScreen(StatusScreen):
                 default=default,
                 allow_autostart=allow_autostart,
                 nix_available=nix_available,
+                sudo_available=sudo_available,
             ),
             self._on_edited,
         )
@@ -863,6 +866,7 @@ class MainScreen(StatusScreen):
             default = data.get("default", "") or ""
             allowed = list(data.get("allowed") or [])
             nix_available = data.get("nix_available") is True
+            sudo_available = data.get("sudo_available") is True
         except AuthError:
             self.app.session_expired()
             return
@@ -870,6 +874,7 @@ class MainScreen(StatusScreen):
             logger.debug("Could not fetch image list: %s", exc)
             default, allowed = "", []
             nix_available = False
+            sudo_available = False
         try:
             allow_autostart = await asyncio.to_thread(state.allow_autostart)
         except (httpx.HTTPError, OSError, ValueError) as exc:
@@ -901,6 +906,7 @@ class MainScreen(StatusScreen):
                 default_allowed_domains=default_domains,
                 nix_available=nix_available,
                 default_per_handle_home=default_per_handle_home,
+                sudo_available=sudo_available,
             ),
             self._on_created,
         )

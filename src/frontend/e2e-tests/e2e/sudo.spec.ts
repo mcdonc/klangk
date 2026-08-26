@@ -65,18 +65,46 @@ async function execInContainer(
   });
 }
 
-// The E2E server starts without KLANGKD_ALLOW_SUDO (defaults to disabled).
+// The E2E server starts without KLANGKD_ALLOW_SUDO, so the deploy
+// default applies — passwordless sudo is ON (#2017 follow-up flip).
 test.describe("sudo configuration", () => {
-  test("sudo is disabled by default", async ({ page, request }) => {
+  test("sudo is enabled by default", async ({ page, request }) => {
     const { workspaceId, token, cleanup } = await createAndOpenWorkspace(
       page,
       request,
-      "sudo-off-e2e",
+      "sudo-on-e2e",
       { waitForTerminal: true },
     );
     try {
-      // sudo -n = non-interactive; should fail with exit code 1 when
-      // the sudoers rule is absent.
+      // sudo -n = non-interactive; should succeed (exit 0) with the
+      // NOPASSWD sudoers rule.
+      const result = await execInContainer(token, workspaceId, [
+        "bash",
+        "-c",
+        "sudo -n true 2>&1; echo EXIT:$?",
+      ]);
+      expect(result.stdout).toContain("EXIT:0");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("per-workspace lock-down disables sudo below the deploy default", async ({
+    page,
+    request,
+  }) => {
+    // #2017: settings.allow_sudo=false opts this workspace out even on
+    // the (now sudo-enabled) deploy.
+    const { workspaceId, token, cleanup } = await createAndOpenWorkspace(
+      page,
+      request,
+      "sudo-locked-e2e",
+      {
+        waitForTerminal: true,
+        body: { settings: { allow_sudo: false } },
+      },
+    );
+    try {
       const result = await execInContainer(token, workspaceId, [
         "bash",
         "-c",

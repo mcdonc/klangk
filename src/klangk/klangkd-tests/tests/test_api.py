@@ -2455,6 +2455,19 @@ class TestWorkspaceRoutes:
         assert "allowed" in data
         assert data["default"] in data["allowed"]
 
+    async def test_list_images_sudo_available(
+        self, client, app, user, monkeypatch
+    ):
+        """#2017: sudo_available reports the deploy-wide allow_sudo posture
+        so create/edit UIs can gate the per-workspace lock-down toggle."""
+        headers = await _auth_headers(client)
+        monkeypatch.setattr(app.state.settings, "allow_sudo", "true")
+        resp = await client.get("/api/v1/images", headers=headers)
+        assert resp.json()["sudo_available"] is True
+        monkeypatch.setattr(app.state.settings, "allow_sudo", "")
+        resp = await client.get("/api/v1/images", headers=headers)
+        assert resp.json()["sudo_available"] is False
+
     async def test_delete_workspace(self, client, user, registry):
         headers = await _auth_headers(client)
         create_resp = await client.post(

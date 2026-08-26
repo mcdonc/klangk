@@ -32,6 +32,14 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`KLANGKD_ALLOW_SUDO` now defaults to on (#2017).** Passwordless sudo
+  inside workspace containers is granted by default; operators who want
+  the previous locked-down posture must set `KLANGKD_ALLOW_SUDO=0`
+  explicitly. The per-workspace lock-down (`allow_sudo: false` in the
+  workspace settings bag, `klangk create`/`edit --no-sudo`, or the UI
+  toggle) can still opt individual workspaces out. Applies to containers
+  started after the change.
+
 - **The `work/` subtree is removed from workspace homes (#2725).** The
   separate shared project directory `/home/work` no longer exists:
   project files live directly in the klangk user's home (`/home/klangk` —
@@ -171,6 +179,16 @@ operators or integrators to act when upgrading.
   the web flow.
 
 ### Added
+
+- **Per-workspace sudo lock-down (#2017).** `allow_sudo` in the workspace
+  settings bag (set with `klangk create`/`klangk edit`
+  `--no-sudo`/`--sudo`, the web and TUI _Allow sudo_ toggles, or
+  `PATCH /workspaces/{id}/settings`) locks a single workspace out of
+  passwordless sudo even on a deploy with `KLANGKD_ALLOW_SUDO` on.
+  `KLANGKD_ALLOW_SUDO` stays the ceiling: a workspace can never grant
+  itself sudo on a deploy that forbids it. The rule applies at the next
+  container start; the toggle is only shown when the deploy allows sudo
+  (`sudo_available` on `/api/v1/images`).
 
 - **Workspace export/import preserves the home layout (#2722).** `workspace.json`
   now carries `per_handle_home`, and import honors the archive's layout even

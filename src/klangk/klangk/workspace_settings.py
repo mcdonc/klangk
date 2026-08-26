@@ -211,6 +211,12 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     # (Nix.ensure_workspace_nix) when a backend is configured (``nix_seed``,
     # #2219/#2220).
     "nix": _coerce_bool,
+    # #2017: per-workspace sudo flag. The deploy-wide ``allow_sudo`` is a
+    # *ceiling*: the workspace value may only further restrict (see
+    # :func:`resolve_allow_sudo`). Defaults to True (follow the deploy
+    # posture); an explicit False locks the workspace down with ``!ALL``
+    # even on a deploy where sudo is on.
+    "allow_sudo": _coerce_bool,
 }
 
 # The known setting keys, exported for callers that want to enumerate the
@@ -388,3 +394,29 @@ def resolve_tmp_size(
     :func:`resolve_memory_limit`.
     """
     return resolve(workspace, "tmp_size", deploy_default)
+
+
+def parse_allow_sudo(value: str | None) -> bool:
+    """Parse the deploy-wide ``allow_sudo`` setting string (#2017).
+
+    The settings field is a free-form string; the truthy forms match the
+    deploy-wide check the container registry has always done
+    (``1`` / ``true`` / ``yes``, case-insensitive, whitespace-tolerant).
+    """
+    return (value or "").strip().lower() in ("1", "true", "yes")
+
+
+def resolve_allow_sudo(workspace: dict | None, deploy_default: bool) -> bool:
+    """Resolve the effective sudo posture for a workspace (#2017).
+
+    Unlike the other resolvers, the deploy-wide ``allow_sudo`` is a
+    **ceiling**, not a fallback the workspace may raise: the per-workspace
+    value defaults to ``True`` (follow the deploy posture) and may only
+    further restrict, so ``effective = workspace AND deploy``. A workspace
+    can lock itself down (``allow_sudo: false`` → ``!ALL`` sudoers rule) on
+    a sudo-enabled deploy, but can never grant itself sudo on a deploy that
+    forbids it.
+    """
+    return bool(resolve(workspace, "allow_sudo", True)) and bool(
+        deploy_default
+    )

@@ -75,21 +75,29 @@ so common development tasks work out of the box.
 
 ## Installing Additional Packages
 
-By default the `klangk` user does **not** have root access.
+By default the `klangk` user has passwordless `sudo` (the deploy-wide
+`KLANGKD_ALLOW_SUDO` defaults to on).
 
 ### With sudo enabled
 
-If the administrator sets `KLANGKD_ALLOW_SUDO=1` (see
-[Environment Variables](../reference/environment.md)), the `klangk`
-user gets passwordless `sudo`. You can then install packages normally:
+With sudo on (the default), the `klangk` user can install packages
+normally:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y <package>
 ```
 
+A workspace can also be locked down individually below the deploy
+default (sudo-disabled) even on a sudo-enabled server — the owner (or a
+member with edit permission on the workspace) sets `allow_sudo: false` in
+the workspace settings (`klangk edit --no-sudo`, or the _Allow sudo_
+toggle in the workspace settings UI). The lock-down applies at the next
+container start.
+
 ### Without sudo
 
-When sudo is disabled, you can still:
+When sudo is disabled — the administrator sets `KLANGKD_ALLOW_SUDO=0`, or
+the workspace is individually locked down (see below) — you can still:
 
 - Install **Node packages** globally or locally with `npm install`
 - Create a **Python virtual environment** and pip-install into it:

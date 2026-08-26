@@ -13,6 +13,7 @@ from .. import (
     auth,
 )
 from ..podman import PodmanError as PodmanError
+from ..workspace_settings import parse_allow_sudo
 from ._common import get_app_dep
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,12 @@ async def list_images(
         # is configured (btrfs snapshot or fuse-overlayfs, #2219); the flag is
         # inert otherwise (workspaces use the nix image's baked /nix).
         "nix_available": app.state.nix.configured,
+        # #2017: whether the deploy allows sudo at all (the per-workspace
+        # knob may only lock a workspace down below this). The create/edit
+        # UIs show the sudo toggle only when this is true — on a
+        # sudo-forbidding deploy the toggle is a no-op (sudo is off for
+        # every workspace regardless).
+        "sudo_available": parse_allow_sudo(app.state.settings.allow_sudo),
     }
 
 

@@ -67,6 +67,7 @@ http.Client _client({
   List<Map<String, dynamic>>? searchResults,
   bool netfilterEnabled = false,
   bool nixAvailable = false,
+  bool sudoAvailable = false,
   List<String>? stopRecorder,
   int stopStatus = 200,
   bool stopThrows = false,
@@ -93,6 +94,7 @@ http.Client _client({
           'default': 'klangk-pi',
           'allowed': ['klangk-pi', 'other:latest'],
           'nix_available': nixAvailable,
+          'sudo_available': sudoAvailable,
         }),
         200,
       );
@@ -428,6 +430,220 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });
+  });
+
+  group('sudo toggle', () {
+    // #2017: the per-workspace sudo lock-down toggle. The deploy-wide
+    // allow_sudo is a ceiling, so the toggle is shown only when the
+    // deploy allows sudo; it is pre-populated from settings.allow_sudo
+    // (absent = true = follow the deploy posture), always emits an
+    // explicit value (full-replace bag), and prompts a restart on a
+    // running workspace (the sudoers rule is written at create time).
+    testWidgets('hides the toggle when the deploy forbids sudo',
+        (tester) async {
+      testAuthHttpClientOverride = _client(); // sudoAvailable defaults false
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(find.text('Allow sudo'), findsNothing);
+    });
+
+    testWidgets('shows the toggle labeled "Allow sudo" when available',
+        (tester) async {
+      testAuthHttpClientOverride = _client(sudoAvailable: true);
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(CheckboxListTile, 'Allow sudo'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('pre-populates from settings.allow_sudo', (tester) async {
+      testAuthHttpClientOverride = _client(
+        sudoAvailable: true,
+        workspace: {
+          ..._workspace,
+          'settings': {'allow_sudo': false},
+        },
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final cb = tester.widget<CheckboxListTile>(
+        find.widgetWithText(CheckboxListTile, 'Allow sudo'),
+      );
+      expect(cb.value, isFalse);
+    });
+
+    testWidgets('sends allow_sudo=false when unchecked and restarts',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {..._workspace, 'running': true}
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+              'sudo_available': true,
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final sudo = find.widgetWithText(CheckboxListTile, 'Allow sudo');
+      await tester.ensureVisible(sudo);
+      await tester.tap(sudo); // starts checked — uncheck locks down
+      await tester.pump();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['settings']['allow_sudo'], isFalse);
+      // The sudoers rule is written at container-create time — the flip
+      // on a running workspace is a create-time change.
+      expect(find.textContaining('Restart the workspace to apply'),
+          findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('revert (check) clears a stored lock-down with allow_sudo=true',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {
+                ..._workspace,
+                'settings': {'allow_sudo': false},
+              }
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+              'sudo_available': true,
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final sudo = find.widgetWithText(CheckboxListTile, 'Allow sudo');
+      expect((tester.widget(sudo) as CheckboxListTile).value, isFalse);
+      await tester.ensureVisible(sudo);
+      await tester.tap(sudo); // check = revert to the deploy posture
+      await tester.pump();
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['settings']['allow_sudo'], isTrue);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
+  testWidgets(
+      'saving with both toggles hidden preserves the stored bag (#2017)',
+      (tester) async {
+    // Deploy sudo off + no nix backend → neither toggle shown. A plain
+    // resource edit must not full-replace-wipe a stored allow_sudo
+    // lock-down or API-only keys.
+    Map<String, dynamic>? savedBody;
+    testAuthHttpClientOverride = MockClient((request) async {
+      final p = request.url.path;
+      if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+      if (p == '/api/v1/workspaces') {
+        return http.Response(
+          jsonEncode([
+            {
+              ..._workspace,
+              'settings': {'allow_sudo': false, 'bridge_timeout': 60},
+            }
+          ]),
+          200,
+        );
+      }
+      if (p == '/api/v1/workspaces/shared') {
+        return http.Response(jsonEncode([]), 200);
+      }
+      if (p == '/api/v1/images') {
+        // Neither nix_available nor sudo_available.
+        return http.Response(
+          jsonEncode({
+            'default': 'klangk-pi',
+            'allowed': ['klangk-pi'],
+          }),
+          200,
+        );
+      }
+      if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+        savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(jsonEncode({'status': 'updated'}), 200);
+      }
+      return http.Response('not found', 404);
+    });
+    await tester.pumpWidget(_buildPanel());
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.widgetWithText(TextField, 'CPU Limit').first, '2.0');
+    await tester.pumpAndSettle();
+    await _scrollToAndTap(tester, find.text('Save'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(savedBody, isNotNull);
+    expect(savedBody!['settings'], {
+      'allow_sudo': false,
+      'bridge_timeout': 60,
+      'cpu_limit': 2.0,
+    });
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
   });
 
   group('nix toggle (settings preservation)', () {

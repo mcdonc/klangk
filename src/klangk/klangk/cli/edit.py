@@ -82,6 +82,16 @@ def edit(
     pids_limit: int | None = typer.Option(
         None, "--pids-limit", help="PIDs limit (e.g. 512)"
     ),
+    allow_sudo: bool | None = typer.Option(
+        None,
+        "--sudo/--no-sudo",
+        help=(
+            "Workspace sudo posture (server-permitting): --no-sudo locks "
+            "this workspace down (no passwordless sudo) even when the "
+            "server allows it; --sudo reverts to the server default. "
+            "Applies when the container is next created"
+        ),
+    ),
 ) -> None:
     """Edit workspace settings.
 
@@ -107,6 +117,7 @@ def edit(
         or cpu_limit is not None
         or memory_limit is not None
         or pids_limit is not None
+        or allow_sudo is not None
     )
     if not has_flags:
         # Interactive mode
@@ -349,7 +360,7 @@ def edit(
                     raise typer.Exit(code=1)
             body["rejected_domains"] = reject or None
         edit_settings = _build_settings(
-            idle_timeout, cpu_limit, memory_limit, pids_limit
+            idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
         )
         if edit_settings:
             # Merge with existing settings so unspecified keys are preserved.
@@ -371,6 +382,18 @@ def edit(
         "rejected_domains",
     }
     restart_needed = ws.running and bool(body.keys() & _CREATE_TIME_KEYS)
+    # Settings-bag keys that are baked into the container at create time:
+    # nix (the /nix mount, #2233) and allow_sudo (the sudoers rule, #2017).
+    # A flip on a running workspace needs a restart to take effect — the
+    # TUI and web panel detect the same pair.
+    if ws.running and "settings" in body:
+        _bag = body["settings"] or {}
+        _old = ws.settings or {}
+        _defaults = {"nix": False, "allow_sudo": True}
+        for _key, _default in _defaults.items():
+            if _bag.get(_key, _default) != _old.get(_key, _default):
+                restart_needed = True
+                break
 
     resp = client.put(f"/api/v1/workspaces/{ws.id}", json=body)
     if resp.status_code == 404:

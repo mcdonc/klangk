@@ -67,6 +67,7 @@ void main() {
     bool netfilterEnabled = false,
     bool nixAvailable = false,
     bool? defaultPerHandleHome = true,
+    bool sudoAvailable = false,
   }) {
     final a = auth ?? AuthService();
     return MaterialApp(
@@ -86,6 +87,7 @@ void main() {
                   netfilterEnabled: netfilterEnabled,
                   nixAvailable: nixAvailable,
                   defaultPerHandleHome: defaultPerHandleHome,
+                  sudoAvailable: sudoAvailable,
                 ),
               );
             });
@@ -1117,6 +1119,63 @@ void main() {
 
       expect(postedBody, isNotNull);
       expect(postedBody!['settings'], {'nix': true});
+    });
+
+    testWidgets('hides sudo checkbox when not available', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog()); // sudoAvailable defaults false
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      expect(find.text('Allow sudo'), findsNothing);
+    });
+
+    testWidgets('shows sudo checkbox when sudoAvailable', (tester) async {
+      testAuthHttpClientOverride = mockClient(
+        (_) async => http.Response('Not found', 404),
+      );
+      await tester.pumpWidget(buildDialog(sudoAvailable: true));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      expect(
+          find.widgetWithText(CheckboxListTile, 'Allow sudo'), findsOneWidget);
+    });
+
+    testWidgets('sends settings.allow_sudo=false when sudo unchecked (#2017)',
+        (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'Locked', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog(sudoAvailable: true));
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      final sudo = find.widgetWithText(CheckboxListTile, 'Allow sudo');
+      await tester.ensureVisible(sudo);
+      await tester.tap(sudo); // starts checked — uncheck locks down
+      await tester.pump();
+      await tester.enterText(_nameField(), 'Locked');
+      await tester.tap(find.text('Create'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      // Only the lock-down is emitted: a checked toggle is the bag's
+      // default (follow the deploy posture), and the deploy setting
+      // stays the ceiling (#2017).
+      expect(postedBody!['settings'], {'allow_sudo': false});
     });
   });
 }

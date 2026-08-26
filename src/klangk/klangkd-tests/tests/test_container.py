@@ -2241,6 +2241,51 @@ class TestStartContainer:
             for rec in caplog.records
         ), [rec.message for rec in caplog.records]
 
+    async def test_filtered_workspace_locked_down_keeps_net_raw(
+        self, workspace, tmp_path, monkeypatch, app_state
+    ):
+        """#2017 + #2276 (B): a filtered workspace locked out of sudo
+        (settings.allow_sudo false) has no sudo→root escalation vector,
+        so net_raw is NOT dropped — ping (setuid) keeps working."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings,
+            "network_sidecar_image",
+            "test-net",
+        )
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": False}
+        )
+        from klangk import netfilter as _nf_mod
+
+        monkeypatch.setattr(
+            _nf_mod, "_detect_host_resolvers", lambda: ["8.8.8.8"]
+        )
+
+        creates = []
+
+        async def _fake_create(name, image, **kw):
+            creates.append({"name": name, "image": image, **kw})
+            return "net-cid" if "klangk-net-" in name else "ws-cid"
+
+        with patch_podman(
+            self.registry, create_container=AsyncMock(side_effect=_fake_create)
+        ):
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
+                )
+            )
+        ws = creates[1]  # creates[0] is the network sidecar
+        # Effective sudo is off → no defense-in-depth drop; enable_ping's
+        # net_raw add goes through (podman rejects a cap in both sets).
+        assert "cap_drop" not in ws or ws["cap_drop"] != ["net_raw"]
+        assert ws.get("cap_add") == ["net_raw"]
+
     async def test_start_network_sidecar_raises_if_proxy_exits_before_ready(
         self, workspace, tmp_path, monkeypatch
     ):
@@ -2638,14 +2683,17 @@ class TestStartContainer:
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["cpus"] == 1.5
 
-    async def test_sudo_disabled_by_default(self, workspace):
+    async def test_sudo_enabled_by_default(self, workspace):
+        # #2017 follow-up: allow_sudo defaults to "true" — a fresh deploy
+        # grants passwordless sudo. The opt-outs (deploy-wide "0"/"false",
+        # per-workspace lock-down) are pinned by the tests below.
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         call = _sudo_call(p)
         assert call.kwargs.get("user") == "root"
-        assert "!ALL" in str(call.args[1])
+        assert "NOPASSWD:ALL" in str(call.args[1])
 
     async def test_sudo_enabled(self, workspace, monkeypatch):
         monkeypatch.setattr(
@@ -2658,6 +2706,55 @@ class TestStartContainer:
         call = _sudo_call(p)
         assert call.kwargs.get("user") == "root"
         assert "NOPASSWD:ALL" in str(call.args[1])
+
+    async def test_sudo_workspace_lockdown_overrides_deploy_on(
+        self, workspace, app_state, monkeypatch
+    ):
+        """#2017: settings.allow_sudo=false locks a single workspace down
+        even on a deploy where allow_sudo is on."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": False}
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        assert "!ALL" in str(_sudo_call(p).args[1])
+
+    async def test_sudo_workspace_true_cannot_raise_deploy_off(
+        self, workspace, app_state, monkeypatch
+    ):
+        """#2017: the deploy setting is a ceiling — a workspace
+        allow_sudo=true never grants sudo on a forbidding deploy."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "false"
+        )
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": True}
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        assert "!ALL" in str(_sudo_call(p).args[1])
+
+    async def test_sudo_workspace_absent_follows_deploy(
+        self, workspace, monkeypatch
+    ):
+        """#2017: no bag key = default True = follow the deploy posture
+        (deploy-on shown here; the off direction is pinned by
+        test_sudo_disabled and the ceiling tests above)."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
     async def test_sudo_disabled(self, workspace, monkeypatch):
         monkeypatch.setattr(

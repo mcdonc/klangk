@@ -38,6 +38,10 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
   // dialog reads the same /api/v1/images field). Gates the "Mount /nix
   // dir" toggle in the General pane.
   bool _nixAvailable = false;
+
+  // #2017: whether the deploy allows sudo at all (sudo_available on
+  // /api/v1/images) — gates the settings form's lock-down toggle.
+  bool _sudoAvailable = false;
   bool _loading = true;
   String? _error;
   String? _saveMessage;
@@ -114,6 +118,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
         _allowedImages =
             (imgData['allowed'] as List?)?.cast<String>() ?? [_defaultImage];
         _nixAvailable = imgData['nix_available'] == true;
+        _sudoAvailable = imgData['sudo_available'] == true;
       }
     } catch (e) {
       // coverage:ignore-start
@@ -179,6 +184,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       allowedImages: _allowedImages,
       defaultImage: _defaultImage,
       nixAvailable: _nixAvailable,
+      sudoAvailable: _sudoAvailable,
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
@@ -249,6 +255,15 @@ bool _hasCreateTimeFieldChanged(
     final newNix = (newSettings['nix'] as bool?) ?? false;
     if (prevNix != newNix) return true;
   }
+  // allow_sudo — the sudoers rule is written at container-create time,
+  // so a posture flip needs a restart to take effect (#2017). Same
+  // emit-gating as nix: only compare when this save emitted the key.
+  if (newSettings.containsKey('allow_sudo')) {
+    final prevSettings = (prev['settings'] as Map?) ?? const {};
+    final prevSudo = (prevSettings['allow_sudo'] as bool?) ?? true;
+    final newSudo = (newSettings['allow_sudo'] as bool?) ?? true;
+    if (prevSudo != newSudo) return true;
+  }
   return false;
 }
 
@@ -278,6 +293,11 @@ class _SettingsForm extends StatefulWidget {
   final List<String> allowedImages;
   final String defaultImage;
   final bool nixAvailable;
+
+  /// #2017: whether the deploy allows sudo at all. The per-workspace
+  /// toggle can only lock a workspace down below that ceiling, so it's
+  /// hidden when the deploy forbids sudo.
+  final bool sudoAvailable;
   final bool allowAutostart;
   final String? saveMessage;
   final bool pendingRestart;
@@ -291,6 +311,7 @@ class _SettingsForm extends StatefulWidget {
     required this.allowedImages,
     required this.defaultImage,
     required this.nixAvailable,
+    this.sudoAvailable = false,
     required this.allowAutostart,
     required this.saveMessage,
     required this.pendingRestart,
@@ -327,6 +348,10 @@ class _SettingsFormState extends State<_SettingsForm> {
   // #2233: per-workspace nix toggle (Mount /nix dir). Only meaningful
   // when the server has a nix backend (widget.nixAvailable).
   bool _nixEnabled = false;
+
+  // #2017: per-workspace sudo posture, seeded from the bag (absent =
+  // true = follow the deploy posture).
+  bool _sudoEnabled = true;
   // #2721: home layout, seeded from the workspace. Mutable (#2719): a
   // flip applies from the next connect/start.
   bool _perHandleHome = true;
@@ -396,6 +421,7 @@ class _SettingsFormState extends State<_SettingsForm> {
       text: settings['idle_timeout']?.toString() ?? '',
     );
     _nixEnabled = (settings['nix'] as bool?) ?? false;
+    _sudoEnabled = (settings['allow_sudo'] as bool?) ?? true;
     _cpuLimitCtrl = TextEditingController(
       text: settings['cpu_limit']?.toString() ?? '',
     );
@@ -444,6 +470,10 @@ class _SettingsFormState extends State<_SettingsForm> {
     if (oldSettings['nix'] != newSettings['nix']) {
       // coverage:ignore-start
       _nixEnabled = (newSettings['nix'] as bool?) ?? false;
+    } // coverage:ignore-end
+    if (oldSettings['allow_sudo'] != newSettings['allow_sudo']) {
+      // coverage:ignore-start
+      _sudoEnabled = (newSettings['allow_sudo'] as bool?) ?? true;
     } // coverage:ignore-end
     if (old.workspace['image'] != widget.workspace['image']) {
       _selectedImage =
@@ -519,21 +549,23 @@ class _SettingsFormState extends State<_SettingsForm> {
   Future<void> _save() async {
     setState(() => _saving = true);
     final formSettings = _collectSettings();
-    final Map<String, dynamic> settings;
+    // PUT settings is a full-replace bag, so seed from the existing bag
+    // unconditionally — API-only keys the form does not represent (e.g.
+    // bridge_timeout) and toggle-gated keys (nix, allow_sudo) whose
+    // toggles are hidden on this deploy must survive the save instead of
+    // being silently wiped (#2017 review).
+    final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
+    final Map<String, dynamic> settings = {...bag, ...formSettings};
     // #2233: emit an explicit nix value (true or false) whenever the
-    // toggle is shown. PUT settings is a full-replace bag, so we must
-    // carry the current checkbox state — including false — to actually
-    // turn the mount off (omitting the key leaves the stale bag
-    // untouched). Seed from the existing bag first so API-only keys the
-    // form does not represent (e.g. bridge_timeout) survive the
-    // full-replace instead of being silently wiped.
-    if (widget.nixAvailable) {
-      final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
-          const <String, dynamic>{};
-      settings = {...bag, ...formSettings, 'nix': _nixEnabled};
-    } else {
-      settings = formSettings;
-    }
+    // toggle is shown — including false, to actually turn the mount off
+    // (omitting the key leaves the stale bag untouched).
+    if (widget.nixAvailable) settings['nix'] = _nixEnabled;
+    // #2017: same for the sudo posture — an explicit value whenever the
+    // toggle is shown, so an uncheck-to-revert actually clears a stored
+    // lock-down. True follows the deploy posture (the server setting
+    // remains the ceiling).
+    if (widget.sudoAvailable) settings['allow_sudo'] = _sudoEnabled;
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
@@ -809,6 +841,28 @@ class _SettingsFormState extends State<_SettingsForm> {
               title: const Text('Mount /nix dir'),
               subtitle: const Text(
                 'Mount a shared, writable /nix into this workspace',
+              ),
+              controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+        // #2017: per-workspace sudo lock-down. Gated on the deploy
+        // allowing sudo (the setting is a ceiling); the sudoers rule is
+        // written at container-create time, so a flip on a running
+        // workspace fires the restart-needed notice.
+        if (widget.sudoAvailable) ...[
+          const SizedBox(height: 8),
+          Material(
+            type: MaterialType.transparency,
+            child: CheckboxListTile(
+              value: _sudoEnabled,
+              onChanged: (v) => setState(() => _sudoEnabled = v ?? true),
+              title: const Text('Allow sudo'),
+              subtitle: const Text(
+                'Uncheck to lock this workspace down (no passwordless '
+                'sudo) even when the server allows it; applies at the '
+                'next container start',
               ),
               controlAffinity: ListTileControlAffinity.leading,
               contentPadding: EdgeInsets.zero,

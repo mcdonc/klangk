@@ -38,6 +38,12 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// image-only (the user picks the nix image themselves).
   final bool nixAvailable;
 
+  /// #2017: whether the deploy allows sudo at all (KLANGKD_ALLOW_SUDO).
+  /// The per-workspace knob may only lock a workspace down below that
+  /// (the deploy setting is a ceiling), so the toggle is hidden when the
+  /// deploy forbids sudo — it could only ever be a no-op.
+  final bool sudoAvailable;
+
   /// #2721: deploy default home layout (KLANGKD_PER_HANDLE_HOME). The
   /// Per-handle home checkbox starts on this, so an untouched form
   /// submits exactly what a silent POST would get. Null = unknown (old
@@ -55,6 +61,7 @@ class CreateWorkspaceDialog extends StatefulWidget {
     this.netfilterEnabled = false,
     this.nixAvailable = false,
     this.defaultPerHandleHome,
+    this.sudoAvailable = false,
   });
 
   @override
@@ -81,6 +88,12 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _rejectedDomains = <String>[];
   bool _autoStart = false;
   bool _nixEnabled = false;
+
+  // #2017: per-workspace sudo posture. Starts checked = follow the deploy
+  // posture; unchecking locks this workspace down (no passwordless sudo
+  // even on a sudo-enabled deploy). Only sent when unchecked (True is the
+  // bag's default and the deploy setting stays the ceiling).
+  bool _sudoEnabled = true;
   // #2721: home layout. Starts on the deploy default when known; null
   // (unknown) hides the toggle and omits the field.
   bool? _perHandleHome;
@@ -252,6 +265,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     }
     final settings = _collectSettings();
     if (widget.nixAvailable && _nixEnabled) settings['nix'] = true;
+    if (widget.sudoAvailable && !_sudoEnabled) {
+      settings['allow_sudo'] = false;
+    }
     if (settings.isNotEmpty) body['settings'] = settings;
 
     try {
@@ -364,6 +380,29 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                               title: const Text('Auto start'),
                               subtitle: const Text(
                                 'Start this workspace when the server starts',
+                              ),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
+                        // #2017: per-workspace sudo lock-down (only when the
+                        // deploy allows sudo — it's a ceiling, so the toggle
+                        // can only opt this workspace out).
+                        if (widget.sudoAvailable) ...[
+                          const SizedBox(height: 16),
+                          Material(
+                            type: MaterialType.transparency,
+                            child: CheckboxListTile(
+                              value: _sudoEnabled,
+                              onChanged: (v) =>
+                                  setState(() => _sudoEnabled = v ?? true),
+                              title: const Text('Allow sudo'),
+                              subtitle: const Text(
+                                'Uncheck to lock this workspace down '
+                                '(no passwordless sudo) even when the server '
+                                'allows it; applies at the next container '
+                                'start',
                               ),
                               controlAffinity: ListTileControlAffinity.leading,
                               contentPadding: EdgeInsets.zero,

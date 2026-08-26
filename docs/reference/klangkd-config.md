@@ -296,7 +296,7 @@ port: "8997"
 | `allowed_images`                    |                                 | `KLANGKD_ALLOWED_IMAGES`                    |
 | `allowed_mount_roots`               |                                 | `KLANGKD_ALLOWED_MOUNT_ROOTS`               |
 | `allow_autostart`                   |                                 | `KLANGKD_ALLOW_AUTOSTART`                   |
-| `allow_sudo`                        |                                 | `KLANGKD_ALLOW_SUDO`                        |
+| `allow_sudo`                        | `true`                          | `KLANGKD_ALLOW_SUDO`                        |
 | `per_handle_home`                   | `false`                         | `KLANGKD_PER_HANDLE_HOME`                   |
 | `container_subnets`                 | _(auto-derived)_                | `KLANGKD_CONTAINER_SUBNETS`                 |
 | `userns`                            |                                 | `KLANGKD_USERNS`                            |

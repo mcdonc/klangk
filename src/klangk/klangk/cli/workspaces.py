@@ -243,6 +243,16 @@ def create(
     pids_limit: int | None = typer.Option(
         None, "--pids-limit", help="PIDs limit (e.g. 512)"
     ),
+    allow_sudo: bool | None = typer.Option(
+        None,
+        "--sudo/--no-sudo",
+        help=(
+            "Workspace sudo posture (server-permitting): --no-sudo locks "
+            "this workspace down (no passwordless sudo) even when the "
+            "server allows it; --sudo follows the server default. Applies "
+            "when the container is next created"
+        ),
+    ),
 ) -> None:
     """Create a new workspace."""
     context.require_auth()
@@ -267,7 +277,7 @@ def create(
                 raise typer.Exit(code=1)
     env_dict = _parse_env_list(env) if isinstance(env, list) else None
     settings = _build_settings(
-        idle_timeout, cpu_limit, memory_limit, pids_limit
+        idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
     )
     try:
         ws = context._client().create_workspace(
@@ -528,6 +538,7 @@ def _build_settings(
     cpu_limit: float | None,
     memory_limit: str | None,
     pids_limit: int | None,
+    allow_sudo: bool | None = None,
 ) -> dict | None:
     """Build a workspace settings dict from CLI flags, or None if all unset."""
     settings: dict = {}
@@ -539,6 +550,12 @@ def _build_settings(
         settings["memory_limit"] = memory_limit
     if pids_limit is not None:
         settings["pids_limit"] = pids_limit
+    # #2017: None (flag omitted) leaves the bag untouched — the workspace
+    # follows the deploy posture. False locks the workspace down; True is
+    # the explicit "follow the server" (the server setting is a ceiling,
+    # so True can never raise sudo above the deploy default).
+    if allow_sudo is not None:
+        settings["allow_sudo"] = allow_sudo
     return settings or None
 
 
