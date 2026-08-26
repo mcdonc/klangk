@@ -32,30 +32,35 @@ By running everything as a single UNIX user, Klangk sidesteps all of
 this. Every workspace member can read and write every file without
 fighting permissions. Collaboration just works.
 
-### Per-user home directories
+### Home directory layouts
 
-Even though everyone shares the same UNIX user, each workspace member
-gets their own `$HOME` directory. When you open a terminal, `$HOME` is
-set to `/home/<handle>/` — a symlink that points to
-`.users/<user-id>/` on the bind-mounted home volume.
+Even though everyone shares the same UNIX user, a workspace controls
+who sees whose files via its **home layout** — a setting chosen when
+the workspace is created (see
+[Workspaces](workspaces.md#home-directory-layout)):
 
-This means:
+- **Shared home** (the default) — every member's shell, exec session,
+  and the service share the single `/home/klangk` as `$HOME`, with one
+  `.bash_history` and one set of dotfiles. What one member installs or
+  configures (`.profile`, `~/.local/bin`, nix profiles) is immediately
+  on every member's `PATH` — the point of the default.
+- **Per-handle home** — each member gets a private `$HOME` at
+  `/home/<handle>/` — a symlink to `.users/<user-id>/` on the
+  bind-mounted home volume. This means:
+  - Your dotfiles (`.bashrc`, `.gitconfig`, `.vimrc`) are yours alone
+  - Your bash history is separate from other members'
+  - Your AI agent config (`.pi/agent/`, `.claude/`) is per-user
 
-- Your dotfiles (`.bashrc`, `.gitconfig`, `.vimrc`) are yours alone
-- Your bash history is separate from other members'
-- Your AI agent config (`.pi/agent/`, `.claude/`) is per-user
-- Your project files live directly in your home (`~`); there is no
-  separate shared project directory
+Under both layouts your project files live directly in your home
+(`~`) — there is no separate shared project directory — and `/home/klangk`
+(the shared home) is created and populated from the image skeleton
+when the container is first created, on every start path (including
+[auto-start](auto-start.md) on server boot).
 
-A separate directory, `/home/klangk`, is the **shared home**. It is
-created and populated from the image skeleton when the container is
-first created (on every start path, including server boot). The
-[service command](service-command.md) session always runs with
+The [service command](service-command.md) session always runs with
 `HOME=/home/klangk` — under both layouts — so environment setup that
-must reach the service goes in `/home/klangk/.profile`. Workspaces
-created with `per_handle_home=false` use the shared home for
-_everything_: every member's shell, exec sessions, and the service all
-share the one `/home/klangk` (and its `.bash_history`).
+must reach the service goes in `/home/klangk/.profile` (see
+[Sandbox setup](sandbox.md) for the recipe).
 
 See [Handles](handles.md) for how handles are assigned and how they
 relate to your home directory path.
@@ -107,11 +112,11 @@ See [Health Check](health-check.md).
 
 ### Convention
 
-| File                                        | Purpose                                                                                                          | Sourced by                                                                           |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `/etc/profile.d/klangk-*.sh`                | system-wide defaults (klangk `PATH`, `EDITOR`)                                                                   | every login shell                                                                    |
-| `~/.profile`                                | **per-user environment exports** (PATH additions, tool homes, nvm/asdf) — anything login-shell commands must see | login shells: interactive terminals, the service command, `klangk exec` (`bash -lc`) |
-| `~/.bashrc` (below the interactivity guard) | interactive niceties (aliases, prompt)                                                                           | interactive non-login bash shells; also chained from `~/.profile` for login shells   |
+| File                                        | Purpose                                                                                                 | Sourced by                                                                           |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `/etc/profile.d/klangk-*.sh`                | system-wide defaults (klangk `PATH`, `EDITOR`)                                                          | every login shell                                                                    |
+| `~/.profile`                                | **environment exports** (PATH additions, tool homes, nvm/asdf) — anything login-shell commands must see | login shells: interactive terminals, the service command, `klangk exec` (`bash -lc`) |
+| `~/.bashrc` (below the interactivity guard) | interactive niceties (aliases, prompt)                                                                  | interactive non-login bash shells; also chained from `~/.profile` for login shells   |
 
 **Rule of thumb:** if a login-shell command (`klangk exec`, a setup
 script, the service command) needs it, it goes in `~/.profile`. If it

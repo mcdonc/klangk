@@ -91,15 +91,18 @@ is already running by the time any user connects.
 
 Each workspace runs in its own container with:
 
-- A persistent home directory at `/home/<handle>/` (survives container
-  restarts)
-- A shared `work/` directory for project files
+- A persistent home directory (survives container restarts) — the
+  shared `/home/klangk` under the default layout, or your private
+  `/home/<handle>/` under per-handle (see
+  [Home directory layout](#home-directory-layout) above)
 - Pre-installed tools and AI agents (see
   [Container Packages](container-packages.md) and
   [AI Coding Harnesses](ai-coding-harnesses.md))
 
-Your dotfiles (`.bashrc`, `.gitconfig`, etc.), bash history, and Pi
-sessions all persist across container restarts.
+Project files live directly in the home directory — there is no
+separate project subdirectory. Your dotfiles (`.bashrc`, `.gitconfig`,
+etc.), bash history, and Pi sessions all persist across container
+restarts.
 
 ## Sharing workspaces
 

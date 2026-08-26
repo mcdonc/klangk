@@ -42,9 +42,9 @@ with full terminal access, confined to the workspace.
 
 ### Multi-User Collaboration
 
-Share workspaces with teammates. Everyone gets their own home directory
-inside the container, and shared terminals let you pair-program in
-real time.
+Share workspaces with teammates. Workspaces share one home directory
+by default (per-member homes are a creation-time option), and shared
+terminals let you pair-program in real time.
 
 - [Role-based access](features/authorization.md): owners, coders,
   collaborators, spectators
