@@ -436,8 +436,6 @@ class Workspaces:
         home.mkdir(parents=True, exist_ok=True)
         users_dir = home / ".users"
         users_dir.mkdir(exist_ok=True)
-        terminals_dir = home / ".terminals"
-        terminals_dir.mkdir(exist_ok=True)
         # Allocate ports at creation time so ranges are sequential
         try:
             await self.app.state.container_registry.allocate_ports(
