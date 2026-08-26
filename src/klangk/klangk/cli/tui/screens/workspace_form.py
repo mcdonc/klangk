@@ -337,16 +337,11 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                     yield Horizontal(
                         Static("Home layout"),
                         Checkbox(
-                            "",
+                            "per-handle (off = shared home)",
                             value=bool(self._default_per_handle_home),
                             id="per_handle_home",
                         ),
                         classes="field-row",
-                    )
-                    yield Static(
-                        "On = private /home/<handle> per member; "
-                        "off = shared /home/klangk",
-                        classes="editor-label",
                     )
                     yield Horizontal(
                         Static("Command"),
@@ -1016,16 +1011,11 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                     yield Horizontal(
                         Static("Home layout"),
                         Checkbox(
-                            "",
+                            "per-handle (off = shared home)",
                             value=self._per_handle_home,
                             id="per_handle_home",
                         ),
                         classes="field-row",
-                    )
-                    yield Static(
-                        "On = private /home/<handle> per member; "
-                        "off = shared /home/klangk",
-                        classes="editor-label",
                     )
                     yield Horizontal(
                         Static("Command"),
