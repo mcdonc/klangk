@@ -1026,6 +1026,19 @@ async def _extract_archive_metadata(
     if egress_mode not in EGRESS_MODES:
         egress_mode = EGRESS_MODE_DEFAULT
 
+    # Preserve the home layout across export -> import (#2722). Import IS
+    # a creation, and the archive's explicit layout wins over the deploy
+    # default (KLANGKD_PER_HANDLE_HOME) — a per-handle workspace must stay
+    # per-handle on the destination instance or members' /home/<handle>
+    # symlinks land in an unrelated shared home. Legacy archives without
+    # the field import as per-handle (True): every pre-#2169 workspace was
+    # per-user-homed. Only an explicit bool is honored — anything else
+    # (tampered, garbage) also falls back to True, matching the model's
+    # strict bool validation (it would reject non-bools anyway).
+    per_handle_home = metadata.get("per_handle_home")
+    if not isinstance(per_handle_home, bool):
+        per_handle_home = True
+
     return {
         "name": ws_name,
         "image": image,
@@ -1038,6 +1051,7 @@ async def _extract_archive_metadata(
         "rejected_domains": metadata.get("rejected_domains"),
         "settings": metadata.get("settings"),
         "egress_mode": egress_mode,
+        "per_handle_home": per_handle_home,
     }
 
 
@@ -1129,11 +1143,12 @@ async def import_workspace(
                 rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=meta["egress_mode"],
-                # An import creates a NEW workspace, so it follows the
-                # deploy default (KLANGKD_PER_HANDLE_HOME) like a silent
-                # POST does. The archive does not carry the flag —
-                # export/import preservation is chunk 4 (#2722).
-                per_handle_home=app.state.settings.per_handle_home,
+                # The archive's explicit layout wins over the deploy
+                # default (KLANGKD_PER_HANDLE_HOME): import is a creation,
+                # but the exported workspace's home tree is laid out for
+                # that layout (#2722). Legacy archives without the field
+                # already carried True from _extract_archive_metadata.
+                per_handle_home=meta["per_handle_home"],
             )
         except SAIntegrityError:
             raise HTTPException(

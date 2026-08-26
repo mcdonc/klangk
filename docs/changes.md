@@ -155,6 +155,11 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Workspace export/import preserves the home layout (#2722).** `workspace.json`
+  now carries `per_handle_home`, and import honors the archive's layout even
+  when the server's `KLANGKD_PER_HANDLE_HOME` default differs. Archives
+  exported before the feature import as per-handle homes.
+
 - **Per-handle home is choosable on every create and edit surface (#2721).**
   The web create dialog and Settings tab, the TUI create/edit screens, and
   `klangk create`/`klangk edit` (`--per-handle-home`/`--shared-home`) all
