@@ -47,6 +47,49 @@ def test_validate_settings_nix_boolean():
         ws.validate_settings({"nix": "maybe"})
 
 
+def test_validate_settings_allow_sudo_boolean():
+    # #2017: the per-workspace sudo knob uses the same bool coercion as
+    # nix (truthy / falsy forms, garbage rejected).
+    for v in (True, "true", 1, "yes"):
+        assert ws.validate_settings({"allow_sudo": v}) == {"allow_sudo": True}
+    for v in (False, "false", 0, "no", ""):
+        assert ws.validate_settings({"allow_sudo": v}) == {"allow_sudo": False}
+    with pytest.raises(ValueError, match="settings.allow_sudo="):
+        ws.validate_settings({"allow_sudo": "maybe"})
+
+
+def test_parse_allow_sudo():
+    # #2017: the deploy-wide setting string parses with the same truthy
+    # forms the container registry has always honored.
+    for v in ("1", "true", "True", "YES", " yes "):
+        assert ws.parse_allow_sudo(v) is True
+    for v in ("", "0", "false", "no", None):
+        assert ws.parse_allow_sudo(v) is False
+
+
+def test_resolve_allow_sudo_ceiling():
+    # #2017: deploy allow_sudo is a ceiling. Unset workspace value
+    # follows the deploy posture; an explicit workspace value may only
+    # further restrict (False), never enable sudo above the deploy.
+    assert ws.resolve_allow_sudo({"settings": {}}, True) is True
+    assert ws.resolve_allow_sudo({"settings": {}}, False) is False
+    assert ws.resolve_allow_sudo({"settings": None}, True) is True
+    assert ws.resolve_allow_sudo(None, True) is True
+    # Lock-down wins even on a sudo-enabled deploy.
+    assert (
+        ws.resolve_allow_sudo({"settings": {"allow_sudo": False}}, True)
+        is False
+    )
+    # A workspace "true" can never raise sudo past a forbidding deploy.
+    assert (
+        ws.resolve_allow_sudo({"settings": {"allow_sudo": True}}, False)
+        is False
+    )
+    assert (
+        ws.resolve_allow_sudo({"settings": {"allow_sudo": True}}, True) is True
+    )
+
+
 def test_validate_settings_preserves_memory_string():
     out = ws.validate_settings({"memory_limit": "2g"})
     assert out == {"memory_limit": "2g"}
@@ -273,6 +316,7 @@ def test_known_settings_has_all_documented_keys():
             "pids_limit",
             "tmp_size",
             "nix",
+            "allow_sudo",
         }
     )
 

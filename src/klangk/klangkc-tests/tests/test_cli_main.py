@@ -2654,6 +2654,57 @@ class TestMainCLI:
             per_handle_home=None,
         )
 
+    def test_create_with_no_sudo_flag(self, logged_in_cfg, monkeypatch):
+        """#2017: --no-sudo stores a per-workspace allow_sudo=false
+        lock-down in the settings bag."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client = MagicMock()
+        client.create_workspace.return_value = ws
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws", "--no-sudo"])
+        assert result.exit_code == 0
+        client.create_workspace.assert_called_once_with(
+            "ws",
+            image=None,
+            service_command=None,
+            auto_start=False,
+            mounts=None,
+            env=None,
+            health_check=None,
+            allowed_domains=None,
+            rejected_domains=None,
+            settings={"allow_sudo": False},
+            per_handle_home=None,
+        )
+
+    def test_create_with_sudo_flag_omitted_sends_nothing(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#2017: an omitted flag sends no settings key — the workspace
+        follows the deploy posture."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client = MagicMock()
+        client.create_workspace.return_value = ws
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws"])
+        assert result.exit_code == 0
+        kwargs = client.create_workspace.call_args.kwargs
+        assert kwargs["settings"] is None
+
     def test_create_with_reject_cidr_rejected(
         self, logged_in_cfg, monkeypatch
     ):
@@ -3335,6 +3386,64 @@ class TestMainCLI:
             "cpu_limit": 2.0,
             "pids_limit": 1024,
         }
+
+    def test_edit_with_no_sudo_flag(self, logged_in_cfg, monkeypatch):
+        """#2017: --no-sudo merges a per-workspace allow_sudo=false
+        lock-down into the settings bag, preserving existing keys."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            settings={"idle_timeout": 300, "allow_sudo": True},
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(context_mod, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--no-sudo"],
+            )
+            assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["settings"] == {
+            "idle_timeout": 300,
+            "allow_sudo": False,
+        }
+
+    def test_edit_with_sudo_flag_reverts_lockdown(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#2017: --sudo reverts a stored lock-down to the deploy posture
+        (explicit True in the bag)."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            settings={"allow_sudo": False},
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(context_mod, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(main.app, ["edit", "my-ws", "--sudo"])
+            assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["settings"] == {"allow_sudo": True}
 
     def test_edit_restart_needed_decline(self, logged_in_cfg, monkeypatch):
         """Running ws + create-time field → warn, user declines restart."""

@@ -21,6 +21,7 @@ from ..exceptions import NodeDrainingError
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
+from ..workspace_settings import parse_allow_sudo, resolve_allow_sudo
 from .browsers import BrowserRouter
 from .crash import CrashRecoveryMonitor
 from .health import HealthMonitor
@@ -1377,10 +1378,13 @@ class ContainerRegistry(NetworkSidecarMixin):
         )
         slug = _workspace_name_slug((ws_row or {}).get("name") or "")
         container_name = _workspace_container_name(iid, workspace_id, slug)
-        allow_sudo = self.app.state.settings.allow_sudo.strip().lower() in (
-            "1",
-            "true",
-            "yes",
+        # #2017: sudo posture. The deploy-wide allow_sudo is a ceiling; a
+        # per-workspace settings-bag override (allow_sudo: false) may only
+        # lock the workspace down further, never enable sudo on a deploy
+        # that forbids it. Read live off settings (the app-ownership rule);
+        # applies to newly-created containers.
+        allow_sudo = resolve_allow_sudo(
+            ws_row, parse_allow_sudo(self.app.state.settings.allow_sudo)
         )
         create_kwargs = build_create_kwargs(
             self.app,

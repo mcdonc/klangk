@@ -2659,6 +2659,54 @@ class TestStartContainer:
         assert call.kwargs.get("user") == "root"
         assert "NOPASSWD:ALL" in str(call.args[1])
 
+    async def test_sudo_workspace_lockdown_overrides_deploy_on(
+        self, workspace, app_state, monkeypatch
+    ):
+        """#2017: settings.allow_sudo=false locks a single workspace down
+        even on a deploy where allow_sudo is on."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": False}
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        assert "!ALL" in str(_sudo_call(p).args[1])
+
+    async def test_sudo_workspace_true_cannot_raise_deploy_off(
+        self, workspace, app_state, monkeypatch
+    ):
+        """#2017: the deploy setting is a ceiling — a workspace
+        allow_sudo=true never grants sudo on a forbidding deploy."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "false"
+        )
+        await app_state.state.model.workspaces.update_workspace_settings(
+            workspace["id"], workspace["user_id"], {"allow_sudo": True}
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        assert "!ALL" in str(_sudo_call(p).args[1])
+
+    async def test_sudo_workspace_absent_follows_deploy(
+        self, workspace, monkeypatch
+    ):
+        """#2017: no bag key = default True = follow the deploy posture
+        (both directions)."""
+        monkeypatch.setattr(
+            self.registry.app.state.settings, "allow_sudo", "true"
+        )
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
+
     async def test_sudo_disabled(self, workspace, monkeypatch):
         monkeypatch.setattr(
             self.registry.app.state.settings, "allow_sudo", "0"

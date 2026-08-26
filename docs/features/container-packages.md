@@ -87,6 +87,12 @@ user gets passwordless `sudo`. You can then install packages normally:
 sudo apt-get update && sudo apt-get install -y <package>
 ```
 
+A workspace can also be locked down individually below the deploy
+default (sudo-disabled) even on a sudo-enabled server — the owner sets
+`allow_sudo: false` in the workspace settings (`klangk edit --no-sudo`, or
+the _Allow sudo_ toggle in the workspace settings UI). The lock-down
+applies at the next container start.
+
 ### Without sudo
 
 When sudo is disabled, you can still:

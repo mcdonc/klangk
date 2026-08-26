@@ -172,6 +172,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Per-workspace sudo lock-down (#2017).** `allow_sudo` in the workspace
+  settings bag (set with `klangk create`/`klangk edit`
+  `--no-sudo`/`--sudo`, the web and TUI _Allow sudo_ toggles, or
+  `PATCH /workspaces/{id}/settings`) locks a single workspace out of
+  passwordless sudo even on a deploy with `KLANGKD_ALLOW_SUDO` on.
+  `KLANGKD_ALLOW_SUDO` stays the ceiling: a workspace can never grant
+  itself sudo on a deploy that forbids it. The rule applies at the next
+  container start; the toggle is only shown when the deploy allows sudo
+  (`sudo_available` on `/api/v1/images`).
+
 - **Workspace export/import preserves the home layout (#2722).** `workspace.json`
   now carries `per_handle_home`, and import honors the archive's layout even
   when the server's `KLANGKD_PER_HANDLE_HOME` default differs. Archives

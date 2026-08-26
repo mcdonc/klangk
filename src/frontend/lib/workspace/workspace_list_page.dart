@@ -444,6 +444,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     // has a zfs seed dataset configured (nix_available); otherwise nix is
     // image-only and the toggle would do nothing.
     final nixAvailable = imageData?['nix_available'] == true;
+    // #2017: the sudo lock-down toggle is only meaningful when the deploy
+    // allows sudo at all — the per-workspace knob may only opt a workspace
+    // out below that ceiling.
+    final sudoAvailable = imageData?['sudo_available'] == true;
 
     if (!mounted) return;
 
@@ -458,6 +462,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         netfilterEnabled: _auth.netfilterEnabled,
         nixAvailable: nixAvailable,
         defaultPerHandleHome: _auth.perHandleHomeDefault,
+        sudoAvailable: sudoAvailable,
       ),
     );
 
