@@ -377,6 +377,14 @@ class KlangkApp(App):
             self.push_screen(MainScreen())
             return
         self._pop_above(main)
+        # The status-WS loop is parked inside its listener against the old
+        # server — without this drop it stays there until that server drops
+        # the connection itself, so reachability and live updates keep
+        # tracking the previous server (#2704). Also restarts the loop if it
+        # had given up reconnecting: the give-up overlay promises "switch
+        # server … to reconnect".
+        main.drop_status_connection()
+        main.ensure_status_ws_worker()
         main.refresh_lists()
         # The reused screen still shows the previous server's last-login
         # stamp; drop it and re-fetch for the new identity (#2583).
@@ -384,6 +392,16 @@ class KlangkApp(App):
 
     def server_changed_needs_login(self) -> None:
         """Switch server then show LoginScreen (invalid/missing creds)."""
+        # Same WS teardown as ``server_changed`` (#2704): the popped
+        # MainScreen's loop exits via its stack guard only *between*
+        # connections, so without this drop the old server's WS would stay
+        # open until the server closed it. No restart here — the login flow
+        # pushes a fresh MainScreen that mounts its own workers.
+        main = next(
+            (s for s in self.screen_stack if isinstance(s, MainScreen)), None
+        )
+        if main is not None:
+            main.drop_status_connection()
         # Tear down every screen above the base, then push login. The
         # ``target not in stack`` early return in ``_pop_above`` is what
         # prevents the ScreenStackError the old pop-until-MainScreen loop hit

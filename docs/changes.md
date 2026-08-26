@@ -1292,6 +1292,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **TUI server switch now drops the old server's status WebSocket
+  (#2704).** Switching servers in the TUI (`c`) left the status WS
+  connected to the previous server until that server closed it, so live
+  updates and the unreachable/reachability indicator kept tracking a
+  server the user had already left. The switch now tears that connection
+  down promptly, re-dials the new server immediately (also interrupting a
+  pending reconnect backoff), and restarts the status loop when it had
+  given up reconnecting — making the give-up screen's "switch server to
+  reconnect" promise real.
 - **E2E container-readiness budget tolerates CI load (#245).**
   Frontend e2e tests running four Playwright workers on one runner
   could exceed the 120s container bring-up budget under contention;
