@@ -791,24 +791,24 @@ class TestKlangkdLauncher:
     """Tests for the klangkd launcher's --config resolution."""
 
     def test_resolve_config_path_existing(self, tmp_path):
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
 
         cfg = tmp_path / "config.yaml"
         cfg.write_text("product_name: test\n")
-        assert _resolve_config_path(str(cfg)) == str(cfg)
+        assert resolve_config_path(str(cfg)) == str(cfg)
 
     def test_resolve_config_path_none(self):
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
 
-        assert _resolve_config_path("none") == "none"
+        assert resolve_config_path("none") == "none"
 
     def test_resolve_config_path_missing(self):
         import pytest as _pytest
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
         import typer
 
         with _pytest.raises(typer.BadParameter):
-            _resolve_config_path("/nonexistent/path/to/config.yaml")
+            resolve_config_path("/nonexistent/path/to/config.yaml")
 
 
 class TestEnvConstructor:

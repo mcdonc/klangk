@@ -82,7 +82,7 @@ def _start_klangkd():
     )
 
     proc = subprocess.Popen(
-        ["python3", "-m", "klangk.launcher", "--config=none"],
+        ["python3", "-m", "klangk.main", "--config=none"],
         cwd=BACKEND_DIR,
         env=env,
         stdout=subprocess.PIPE,

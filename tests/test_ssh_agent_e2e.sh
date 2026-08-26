@@ -181,7 +181,7 @@ info_msg "Starting klangkd on $SERVER_URL ..."
 KLANGKD_PREVENT_INSECURE_JWT_SECRET="" \
   KLANGKD_TEST_MODE=1 \
   LOGFIRE_TOKEN="" \
-  python3 -m klangk.launcher --config="$SERVER_CONFIG" \
+  python3 -m klangk.main --config="$SERVER_CONFIG" \
   >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 

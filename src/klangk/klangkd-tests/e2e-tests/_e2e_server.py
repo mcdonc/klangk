@@ -1,6 +1,6 @@
 """Shared ``klangkd`` launcher + UDS/TCP clients for E2E suites (#1525).
 
-Launches the **real production entry point** — ``python3 -m klangk.launcher``
+Launches the **real production entry point** — ``python3 -m klangk.main``
 (``klangkd``) — instead of the test-only ``runtestserver.py``, and contacts
 the backend the way production does, closing the last gap between the test
 harness and the real server (#1454, #1426):
@@ -43,7 +43,7 @@ import websockets
 from _e2e_env import clean_env, close_popen_pipes
 from klangk.model import free_port
 
-# The launcher is invoked as a module (``python3 -m klangk.launcher``) from the
+# The launcher is invoked as a module (``python3 -m klangk.main``) from the
 # klangkd-tests dir — the same cwd the prior runtestserver launches used, so
 # the subprocess resolves the installed ``klangk`` package and any relative
 # test assets identically.
@@ -305,7 +305,7 @@ def start_server(
         url = f"http://localhost:{tcp_port}"
 
     env = clean_env(**overrides)
-    cmd = ["python3", "-m", "klangk.launcher"]
+    cmd = ["python3", "-m", "klangk.main"]
     if config is not None:
         cmd += ["--config", config]
     else:

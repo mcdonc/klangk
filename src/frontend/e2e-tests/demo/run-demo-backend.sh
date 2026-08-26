@@ -225,7 +225,7 @@ _cmdline_has_state_dir() {
 
 _demo_procs() {
   local p kids
-  for p in $(pgrep -f "klangkd.launcher|klangkd.main|nginx" 2>/dev/null || true); do
+  for p in $(pgrep -f "klangkd.main|nginx" 2>/dev/null || true); do
     if _cmdline_has_wt "$p" || _cmdline_has_state_dir "$p"; then
       echo "$p"
       kids=$(pgrep -P "$p" 2>/dev/null || true)
@@ -305,7 +305,7 @@ start)
   # to klangkd - there is no "elsewhere" for the UI.
   nohup devenv --quiet shell -- bash -c '
     set -a; . ./.demo-env; set +a
-    exec python3 -m klangk.launcher --config=none
+    exec python3 -m klangk.main --config=none
   ' >/tmp/klangk-video-processes.log 2>&1 &
 
   # Wait for nginx to bind (uvicorn binds a UDS, not TCP, so :$DEMO_PORT is

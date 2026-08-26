@@ -879,7 +879,7 @@ class WebSocketState:
     def notify_host_shutdown(self) -> None:
         """Broadcast host-shutdown to all connections (#2527).
 
-        Sent by the TERM/INT graceful-shutdown hook (launcher.py) and by a
+        Sent by the TERM/INT graceful-shutdown hook (main.py) and by a
         scheduled stop firing (#2661) before uvicorn closes the
         WebSockets, so clients can show "server went away" instead of a
         bare reconnect loop. A recycle (SIGHUP or scheduled) does NOT

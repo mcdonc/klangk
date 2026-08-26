@@ -11,7 +11,7 @@ let
   # (gitignored);
   # seeded from klangkd.yaml.devenv on first shell entry if missing.
   backendCmd = ''
-    python3 -m klangk.launcher --config="$DEVENV_ROOT/klangkd.yaml"
+    python3 -m klangk.main --config="$DEVENV_ROOT/klangkd.yaml"
   '';
   featuresDir = config.devenv.root + "/.devenv/state/klangk/features";
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";

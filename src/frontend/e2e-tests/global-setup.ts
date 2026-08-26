@@ -71,7 +71,7 @@ async function globalSetup() {
   // runtestserver.py TCP launcher.
   const backendProcess = spawn(
     "python3",
-    ["-m", "klangk.launcher", "--config=none"],
+    ["-m", "klangk.main", "--config=none"],
     {
       cwd: join(projectRoot, "src", "klangk", "klangkd-tests"),
       detached: true,
