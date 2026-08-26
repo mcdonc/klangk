@@ -35,10 +35,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
-from litellm import Router
+
+# ``litellm`` is imported lazily at first ``Router`` construction (in
+# ``LLMRouter._configure_from_settings``), not at module scope: its import
+# cost is ~5s, and ``klangk.main`` (the ``klangkd`` CLI) imports this
+# module — a module-scope import would tax every ``klangkd --help`` /
+# ``doctor`` invocation with the full litellm tree (#2757 review).
+if TYPE_CHECKING:
+    from litellm import Router
 
 from klangk.settings import _resolve_indirection
 
@@ -192,6 +199,8 @@ class LLMRouter:
         self._configure_from_settings(app.state.settings)
 
     def _configure_from_settings(self, settings) -> None:
+        from litellm import Router  # allow-deferred-import (see module top)
+
         models = settings.llm_models
         if not models:
             self._router = None

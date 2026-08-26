@@ -16,9 +16,9 @@ The names above are re-exported here so existing callers (tests,
 The process-level launcher (previously :mod:`klangk.launcher`, merged in
 #2753) lives in the second half of this module: it loads config (from a
 YAML file + env vars + built-in defaults, per the precedence rules in
-:mod:`klangk.settings`), binds uvicorn (to a UNIX domain socket when
-``KLANGKD_LISTEN`` is a path, or a TCP host otherwise), and owns the
-proxy child that fronts it.
+:mod:`klangk.settings`), binds uvicorn to the UDS at ``settings.socket``
+(default ``<state_dir>/klangk.sock``, overridable via ``KLANGKD_SOCKET``),
+and owns the proxy child (currently Caddy) that fronts it.
 
 Usage::
 
@@ -64,6 +64,15 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import JSONResponse
 from uvicorn.server import HANDLED_SIGNALS
 
+# ``klangk.logger`` is imported first — before every other klangk
+# submodule — so its module-level default logging configuration is
+# active before any of them (or any ``KlangkSettings(...)`` construction,
+# whose validators log) runs import-time or constructor-time logging
+# (#1467, #1993). A plain statement import: it binds no ``logger`` symbol
+# (klangk.logger exposes only configure/configure_defaults), keeping the
+# per-module ``logger`` below free.
+import klangk.logger  # noqa: F401
+
 from . import (
     acl,
     auth,
@@ -96,15 +105,9 @@ from .wshandler import (
 )
 from .settings import KlangkSettings
 from .exceptions import EX_CONFIG
-
-# klangk.logger must be imported (its module-level default configuration
-# runs) before any ``KlangkSettings(...)`` construction — validators log
-# before an app exists (#1467). ``build_app``'s ``configure(settings)``
-# below re-applies the level from ``KLANGKD_LOG_LEVEL`` once settings are
-# finalized. Importing ``configure`` here (module scope) satisfies that
-# ordering for the ``main()`` callback, which constructs settings long
-# after this module is loaded (#1993).
-from .logger import configure as configure_logging
+from .logger import (
+    configure as configure_logging,
+)  # ordering: see klangk.logger above
 from .api import root_router, router
 from .util import API_PREFIX
 from .lifecycle import Lifecycle, lifespan
@@ -665,7 +668,7 @@ def main(  # pragma: no cover
     # bind fail with EADDRINUSE — unlink first (the pidfile guard in the
     # lifespan refuses a concurrent klangkd). Ensure the parent dir is
     # private (0700) so only the klangk user can open the socket — the
-    # same-uid trust boundary _UDS_MODE relies on.
+    # same-uid trust boundary Util.set_uds_mode relies on.
     try:
         os.unlink(uds_path)
     except FileNotFoundError:
@@ -687,8 +690,8 @@ def main(  # pragma: no cover
             asgi_app,
             uds=uds_path,
             # proxy_headers=False: over a UDS request.client is None;
-            # our trust helpers handle header trust via _UDS_MODE.
-            # Letting uvicorn also rewrite client would double-resolve.
+            # our trust helpers handle header trust via Util's uds-mode
+            # flag. Letting uvicorn also rewrite client would double-resolve.
             proxy_headers=False,
             ws_max_size=ws_max_size,
             # Server stays at uvicorn's default (20/20). The TUI detects

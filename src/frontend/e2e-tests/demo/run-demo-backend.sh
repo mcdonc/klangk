@@ -225,7 +225,7 @@ _cmdline_has_state_dir() {
 
 _demo_procs() {
   local p kids
-  for p in $(pgrep -f "klangkd.main|nginx" 2>/dev/null || true); do
+  for p in $(pgrep -f "klangk.main|nginx" 2>/dev/null || true); do
     if _cmdline_has_wt "$p" || _cmdline_has_state_dir "$p"; then
       echo "$p"
       kids=$(pgrep -P "$p" 2>/dev/null || true)

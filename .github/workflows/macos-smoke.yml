@@ -10,7 +10,7 @@ name: "macOS: Backend Tests"
 #   - podman is fully mocked in the unit suite (test_podman/test_container
 #     "must never touch real podman"), so no real podman socket is needed;
 #   - the code discovers GNU coreutils/gnu-tar via Homebrew itself
-#     (launcher._prepend_gnubin_paths, #1947), so we only need `brew install`
+#     (main.prepend_gnubin_paths, #1947), so we only need `brew install`
 #     them — which is also what real macOS users hit (devenv's Nix tooling
 #     was less representative of production macOS than Homebrew is).
 # The 100% coverage gate runs automatically via pyproject addopts.

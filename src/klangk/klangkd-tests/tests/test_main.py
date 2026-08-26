@@ -2948,7 +2948,7 @@ class TestPidFile:
 
 
 class TestCheckPidPreflight:
-    """Tests for launcher.check_pid_preflight (#1837)."""
+    """Tests for main.check_pid_preflight (#1837)."""
 
     def test_no_instance_id_file(self, tmp_path):
         from klangk.main import check_pid_preflight
