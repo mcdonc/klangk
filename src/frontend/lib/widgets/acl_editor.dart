@@ -96,6 +96,72 @@ class AclEditorState extends State<AclEditor> {
     setState(() => _entries.removeAt(index));
   }
 
+  /// Fetch every page of a paged list endpoint (``{items, total}``
+  /// envelope), not just the first — the old single ``?page_size=200``
+  /// shot silently truncated at 200 rows (#2752). The server caps
+  /// ``page_size`` at 200, so this walks pages until ``total`` rows are
+  /// collected. ``_pickerMaxPages`` guards against a server that reports
+  /// a ``total`` that never shrinks.
+  static const _pickerPageSize = 200;
+  static const _pickerMaxPages = 50;
+
+  Future<List<Map<String, dynamic>>> _fetchEnvelopeAll(
+    AuthService auth,
+    String path,
+    String itemsKey, {
+    Map<String, String> query = const {},
+  }) async {
+    final rows = <Map<String, dynamic>>[];
+    for (var page = 1; page <= _pickerMaxPages; page++) {
+      final resp = await auth.authGet(
+        '$path?${Uri(queryParameters: {
+              ...query,
+              'page': '$page',
+              'page_size': '$_pickerPageSize',
+            }).query}',
+      );
+      if (resp.statusCode != 200) return rows;
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
+      final items = (body[itemsKey] as List? ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      rows.addAll(items);
+      final total = (body['total'] as num?)?.toInt() ?? 0;
+      if (items.isEmpty || rows.length >= total) return rows;
+    }
+    return rows;
+  }
+
+  /// Load the groups selectable in the add-entry picker: manual groups
+  /// (`source=manual`, all pages) unioned with the groups already
+  /// referenced by the loaded entries, deduped by id. Other workspaces'
+  /// seeded role groups are omitted (#2752); this resource's own role
+  /// groups stay selectable because they already hold ACEs (and remain
+  /// visible in the entries table, which is untouched by design).
+  Future<List<Map<String, dynamic>>> _loadPickerGroups(AuthService auth) async {
+    final groups = await _fetchEnvelopeAll(
+      auth,
+      '/api/v1/admin/groups',
+      'groups',
+      query: const {'source': 'manual'},
+    );
+    final seenIds = groups.map((g) => g['id']).toSet();
+    for (final entry in _entries) {
+      if (entry['principal_type'] != 2) continue;
+      final id = entry['group_id'] as String?;
+      if (id == null || id.isEmpty || seenIds.contains(id)) continue;
+      seenIds.add(id);
+      groups.add({
+        'id': id,
+        'name': entry['principal'] as String? ?? id,
+      });
+    }
+    groups.sort(
+      (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+    );
+    return groups;
+  }
+
   Future<void> _addEntry() async {
     final auth = context.read<AuthService>();
 
@@ -103,28 +169,12 @@ class AclEditorState extends State<AclEditor> {
     List<Map<String, dynamic>> users = [];
     List<Map<String, dynamic>> groups = [];
     try {
-      final uResp = await auth.authGet(
-        '/api/v1/admin/users?page_size=200',
-      );
-      if (uResp.statusCode == 200) {
-        final body = jsonDecode(uResp.body) as Map<String, dynamic>;
-        users = (body['users'] as List)
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-      }
+      users = await _fetchEnvelopeAll(auth, '/api/v1/admin/users', 'users');
     } catch (e) {
       debugPrint('[AclEditor] fetch users failed: $e');
     }
     try {
-      final gResp = await auth.authGet(
-        '/api/v1/admin/groups?page_size=200',
-      );
-      if (gResp.statusCode == 200) {
-        final body = jsonDecode(gResp.body) as Map<String, dynamic>;
-        groups = (body['groups'] as List)
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-      }
+      groups = await _loadPickerGroups(auth);
     } catch (e) {
       debugPrint('[AclEditor] fetch groups failed: $e');
     }
@@ -181,6 +231,7 @@ class AclEditorState extends State<AclEditor> {
                 const SizedBox(height: 12),
                 if (principalType == 1 && users.isNotEmpty)
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: selectedUserId,
                     decoration: const InputDecoration(
                       labelText: 'User',
@@ -189,12 +240,17 @@ class AclEditorState extends State<AclEditor> {
                     items: users
                         .map((u) => DropdownMenuItem(
                             value: u['id'] as String,
-                            child: Text(u['email'] as String)))
+                            child: Text(
+                              u['email'] as String,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            )))
                         .toList(),
                     onChanged: (v) => setDialogState(() => selectedUserId = v),
                   ),
                 if (principalType == 2 && groups.isNotEmpty)
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: selectedGroupId,
                     decoration: const InputDecoration(
                       labelText: 'Group',
@@ -203,7 +259,11 @@ class AclEditorState extends State<AclEditor> {
                     items: groups
                         .map((g) => DropdownMenuItem(
                             value: g['id'] as String,
-                            child: Text(g['name'] as String)))
+                            child: Text(
+                              g['name'] as String,
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            )))
                         .toList(),
                     onChanged: (v) => setDialogState(() => selectedGroupId = v),
                   ),
@@ -224,13 +284,20 @@ class AclEditorState extends State<AclEditor> {
                 ],
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: selectedPermission,
                   decoration: const InputDecoration(
                     labelText: 'Permission',
                     border: OutlineInputBorder(),
                   ),
                   items: _permissions
-                      .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                      .map((p) => DropdownMenuItem(
+                          value: p,
+                          child: Text(
+                            p,
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          )))
                       .toList(),
                   onChanged: (v) =>
                       setDialogState(() => selectedPermission = v ?? 'view'),

@@ -583,6 +583,85 @@ void main() {
       expect(inGroupsToolbar(find.text('Created ▲')), findsOneWidget);
     });
 
+    testWidgets('defaults the groups browser to manual-only', (tester) async {
+      String? capturedSource;
+      testAuthHttpClientOverride = _mockClient((request) async {
+        if (request.url.path == '/api/v1/admin/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        if (request.url.path == '/api/v1/admin/invitations') {
+          return http.Response(emptyInvitationsEnvelope(), 200);
+        }
+        if (request.url.path == '/api/v1/admin/groups') {
+          capturedSource = request.url.queryParameters['source'];
+          return http.Response(
+            _groupsEnvelope([_group('admins')], total: 1),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpGroupsTab(tester);
+
+      // The seeded workspace role groups are de-noised away by default
+      // (#2752); the chip is unselected.
+      expect(capturedSource, 'manual');
+      final chip = tester.widget<FilterChip>(
+        inGroupsToolbar(find.byType(FilterChip)),
+      );
+      expect(chip.selected, isFalse);
+      expect(
+          inGroupsToolbar(find.text('Workspace role groups')), findsOneWidget);
+    });
+
+    testWidgets('workspace-role chip includes the seeded role groups',
+        (tester) async {
+      final capturedSources = <String?>[];
+      testAuthHttpClientOverride = _mockClient((request) async {
+        if (request.url.path == '/api/v1/admin/users') {
+          return http.Response(_usersEnvelope([]), 200);
+        }
+        if (request.url.path == '/api/v1/admin/invitations') {
+          return http.Response(emptyInvitationsEnvelope(), 200);
+        }
+        if (request.url.path == '/api/v1/admin/groups') {
+          capturedSources.add(request.url.queryParameters['source']);
+          // No filter (show all): the manual group plus a seeded role
+          // group both come back.
+          final all = request.url.queryParameters['source'] == null;
+          return http.Response(
+            _groupsEnvelope(
+              all
+                  ? [_group('admins'), _group('owners-1f0c')]
+                  : [_group('admins')],
+              total: all ? 2 : 1,
+            ),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpGroupsTab(tester);
+
+      // Default load hides the role groups.
+      expect(capturedSources.single, 'manual');
+      expect(find.text('owners-1f0c', skipOffstage: false), findsNothing);
+
+      // Toggling the chip re-queries with no filter (show all) and the
+      // seeded role group becomes visible.
+      await tester.tap(inGroupsToolbar(find.text('Workspace role groups')));
+      await tester.pumpAndSettle();
+
+      expect(capturedSources, ['manual', null]);
+      expect(find.text('owners-1f0c', skipOffstage: false), findsOneWidget);
+      final chip = tester.widget<FilterChip>(
+        inGroupsToolbar(find.byType(FilterChip)),
+      );
+      expect(chip.selected, isTrue);
+    });
+
     testWidgets('sends name filter query live (debounced)', (tester) async {
       String? capturedQ;
       testAuthHttpClientOverride = _mockClient((request) async {
