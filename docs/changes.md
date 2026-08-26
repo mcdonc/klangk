@@ -1292,6 +1292,10 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **E2E container-readiness budget tolerates CI load (#245).**
+  Frontend e2e tests running four Playwright workers on one runner
+  could exceed the 120s container bring-up budget under contention;
+  the budget now doubles to 240s on CI (local runs keep 120s).
 - **Crash recovery no longer corrupts workspaces that reconnect
   mid-death-detection (#331).** When the crash monitor was handling a
   container's death while a user reconnect recreated the container, the
