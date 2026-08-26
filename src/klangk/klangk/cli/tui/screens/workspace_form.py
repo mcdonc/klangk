@@ -131,7 +131,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         "name",
         "image",
         "auto_start",
-        "per_handle_home",
         "nix",
         "mount_input",
         "env_input",
@@ -143,6 +142,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         "memory_limit",
         "pids_limit",
         "tmp_size",
+        "per_handle_home",
         "command",
         "health_check",
         "cancel",
@@ -242,11 +242,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                         Static("Image"), image_select, classes="field-row"
                     )
                     yield Checkbox("Auto start", id="auto_start")
-                    yield Checkbox(
-                        "Per-handle home (off = shared /home/klangk)",
-                        value=bool(self._default_per_handle_home),
-                        id="per_handle_home",
-                    )
                     yield Checkbox("Mount /nix dir", id="nix")
                 with TabPane("Mounts", id="mounts_pane"):
                     yield Static(
@@ -339,6 +334,11 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                         classes="field-row",
                     )
                 with TabPane("Advanced", id="advanced_pane"):
+                    yield Checkbox(
+                        "Per-handle home (off = shared /home/klangk)",
+                        value=bool(self._default_per_handle_home),
+                        id="per_handle_home",
+                    )
                     yield Horizontal(
                         Static("Command"),
                         Input(id="command"),
@@ -761,7 +761,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         "name",
         "image",
         "auto_start",
-        "per_handle_home",
         "nix",
         "mount_input",
         "env_input",
@@ -773,6 +772,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         "memory_limit",
         "pids_limit",
         "tmp_size",
+        "per_handle_home",
         "command",
         "health_check",
         "cancel",
@@ -886,11 +886,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         "Auto start",
                         value=self._ws.auto_start,
                         id="auto_start",
-                    )
-                    yield Checkbox(
-                        "Per-handle home (off = shared /home/klangk)",
-                        value=self._per_handle_home,
-                        id="per_handle_home",
                     )
                     yield Checkbox(
                         "Mount /nix dir",
@@ -1009,6 +1004,11 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         classes="field-row",
                     )
                 with TabPane("Advanced", id="advanced_pane"):
+                    yield Checkbox(
+                        "Per-handle home (off = shared /home/klangk)",
+                        value=self._per_handle_home,
+                        id="per_handle_home",
+                    )
                     yield Horizontal(
                         Static("Command"),
                         Input(

@@ -370,29 +370,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             ),
                           ),
                         ],
-                        const SizedBox(height: 8),
-                        // #2721: home layout. Pre-reflects the deploy
-                        // default when known; hidden (and the field
-                        // omitted) when it couldn't be fetched — an
-                        // offered choice we can't pre-reflect would pin a
-                        // possibly-wrong value.
-                        if (_perHandleHome != null)
-                          Material(
-                            type: MaterialType.transparency,
-                            child: CheckboxListTile(
-                              value: _perHandleHome,
-                              onChanged: (v) => setState(
-                                () => _perHandleHome = v ?? true,
-                              ),
-                              title: const Text('Per-handle home'),
-                              subtitle: const Text(
-                                'Each member gets a private /home/<handle>; '
-                                'off = everyone shares /home/klangk',
-                              ),
-                              controlAffinity: ListTileControlAffinity.leading,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -577,6 +554,30 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                           ),
                           onSubmitted: (_) => _submit(),
                         ),
+                        // #2721: home layout. Pre-reflects the deploy
+                        // default when known; hidden (and the field
+                        // omitted) when it couldn't be fetched — an
+                        // offered choice we can't pre-reflect would pin a
+                        // possibly-wrong value.
+                        if (_perHandleHome != null) ...[
+                          const SizedBox(height: 16),
+                          Material(
+                            type: MaterialType.transparency,
+                            child: CheckboxListTile(
+                              value: _perHandleHome,
+                              onChanged: (v) => setState(
+                                () => _perHandleHome = v ?? true,
+                              ),
+                              title: const Text('Per-handle home'),
+                              subtitle: const Text(
+                                'Each member gets a private /home/<handle>; '
+                                'off = everyone shares /home/klangk',
+                              ),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
                         // #2202: per-workspace nix flag (only when the
                         // server has a btrfs seed subvolume). Independent
                         // of the image choice — it mounts a shared /nix

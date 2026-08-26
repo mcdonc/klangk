@@ -795,25 +795,6 @@ class _SettingsFormState extends State<_SettingsForm> {
             ),
           ),
         ],
-        // #2721: home layout. Mutable (#2719) — a flip applies from the
-        // next connect/start, never to open sessions, so it is NOT a
-        // restart-needed field.
-        const SizedBox(height: 8),
-        Material(
-          type: MaterialType.transparency,
-          child: CheckboxListTile(
-            value: _perHandleHome,
-            onChanged: (v) => setState(() => _perHandleHome = v ?? true),
-            title: const Text('Per-handle home'),
-            subtitle: const Text(
-              'Each member gets a private /home/<handle>; '
-              'off = everyone shares /home/klangk (applies from the next '
-              'connect)',
-            ),
-            controlAffinity: ListTileControlAffinity.leading,
-            contentPadding: EdgeInsets.zero,
-          ),
-        ),
         // #2233: per-workspace nix toggle. Gated on the server having a
         // nix backend (nix_seed), matching the create dialog. The /nix
         // mount is set up at container create time, so toggling it on a
@@ -1010,6 +991,25 @@ class _SettingsFormState extends State<_SettingsForm> {
             floatingLabelBehavior: FloatingLabelBehavior.always,
             border: const OutlineInputBorder(),
             hintText: 'Optional — polled to gauge service health',
+          ),
+        ),
+        // #2721: home layout. Mutable (#2719) — a flip applies from the
+        // next connect/start, never to open sessions, so it is NOT a
+        // restart-needed field.
+        const SizedBox(height: 16),
+        Material(
+          type: MaterialType.transparency,
+          child: CheckboxListTile(
+            value: _perHandleHome,
+            onChanged: (v) => setState(() => _perHandleHome = v ?? true),
+            title: const Text('Per-handle home'),
+            subtitle: const Text(
+              'Each member gets a private /home/<handle>; '
+              'off = everyone shares /home/klangk (applies from the next '
+              'connect)',
+            ),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
           ),
         ),
       ],
