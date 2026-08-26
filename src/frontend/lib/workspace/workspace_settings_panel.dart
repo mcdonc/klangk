@@ -1008,7 +1008,7 @@ class _SettingsFormState extends State<_SettingsForm> {
               'off = everyone shares /home/klangk (applies from the next '
               'connect)',
             ),
-            controlAffinity: ListTileControlAffinity.leading,
+            controlAffinity: ListTileControlAffinity.trailing,
             contentPadding: EdgeInsets.zero,
           ),
         ),

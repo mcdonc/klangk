@@ -573,7 +573,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                                 'Each member gets a private /home/<handle>; '
                                 'off = everyone shares /home/klangk',
                               ),
-                              controlAffinity: ListTileControlAffinity.leading,
+                              controlAffinity: ListTileControlAffinity.trailing,
                               contentPadding: EdgeInsets.zero,
                             ),
                           ),

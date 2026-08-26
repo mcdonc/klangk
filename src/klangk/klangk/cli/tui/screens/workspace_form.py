@@ -334,10 +334,19 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                         classes="field-row",
                     )
                 with TabPane("Advanced", id="advanced_pane"):
-                    yield Checkbox(
-                        "Per-handle home (off = shared /home/klangk)",
-                        value=bool(self._default_per_handle_home),
-                        id="per_handle_home",
+                    yield Horizontal(
+                        Static("Home layout"),
+                        Checkbox(
+                            "",
+                            value=bool(self._default_per_handle_home),
+                            id="per_handle_home",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Static(
+                        "On = private /home/<handle> per member; "
+                        "off = shared /home/klangk",
+                        classes="editor-label",
                     )
                     yield Horizontal(
                         Static("Command"),
@@ -1004,10 +1013,19 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         classes="field-row",
                     )
                 with TabPane("Advanced", id="advanced_pane"):
-                    yield Checkbox(
-                        "Per-handle home (off = shared /home/klangk)",
-                        value=self._per_handle_home,
-                        id="per_handle_home",
+                    yield Horizontal(
+                        Static("Home layout"),
+                        Checkbox(
+                            "",
+                            value=self._per_handle_home,
+                            id="per_handle_home",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Static(
+                        "On = private /home/<handle> per member; "
+                        "off = shared /home/klangk",
+                        classes="editor-label",
                     )
                     yield Horizontal(
                         Static("Command"),
