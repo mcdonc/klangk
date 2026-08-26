@@ -262,13 +262,14 @@ class TestConfigFile:
         s = make_settings({"KLANGKD_ENABLE_PING": "false"})
         assert s.enable_ping is False
 
-    def test_per_handle_home_defaults_true(self):
-        # #2719: per-handle homes stay the default until the #2169 flip.
-        assert make_settings({}).per_handle_home is True
+    def test_per_handle_home_defaults_shared(self):
+        # #2723 (#2169 chunk 5, Breaking): shared is the deploy default
+        # for new workspaces; per-handle is opt-in (env or create flag).
+        assert make_settings({}).per_handle_home is False
 
     def test_per_handle_home_env_override(self):
-        s = make_settings({"KLANGKD_PER_HANDLE_HOME": "false"})
-        assert s.per_handle_home is False
+        s = make_settings({"KLANGKD_PER_HANDLE_HOME": "true"})
+        assert s.per_handle_home is True
 
     # --- Container resource limits (#34) ---
 

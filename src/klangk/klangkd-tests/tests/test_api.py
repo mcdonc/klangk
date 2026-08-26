@@ -2083,26 +2083,27 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 422
 
-    async def test_create_per_handle_home_defaults_true(self, client, user):
-        # #2719: silent create inherits the deploy default (True today);
-        # an explicit value wins; both are exposed in payloads.
+    async def test_create_per_handle_home_defaults_shared(self, client, user):
+        # #2723: silent create inherits the deploy default (shared since
+        # the chunk-5 flip); an explicit value wins; both are exposed in
+        # payloads.
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "home-dflt"}
         )
         assert resp.status_code == 200
-        assert resp.json()["per_handle_home"] is True
+        assert resp.json()["per_handle_home"] is False
         resp = await client.post(
             "/api/v1/workspaces",
             headers=headers,
-            json={"name": "home-off", "per_handle_home": False},
+            json={"name": "home-off", "per_handle_home": True},
         )
         assert resp.status_code == 200
-        assert resp.json()["per_handle_home"] is False
+        assert resp.json()["per_handle_home"] is True
         resp = await client.get("/api/v1/workspaces", headers=headers)
         by_name = {w["name"]: w for w in resp.json()}
-        assert by_name["home-dflt"]["per_handle_home"] is True
-        assert by_name["home-off"]["per_handle_home"] is False
+        assert by_name["home-dflt"]["per_handle_home"] is False
+        assert by_name["home-off"]["per_handle_home"] is True
 
     async def test_create_per_handle_home_inherits_config_default(
         self, client, user, app, monkeypatch
@@ -3041,16 +3042,7 @@ class TestWorkspaceRoutes:
             headers=headers,
         )
         ws_id = resp.json()["id"]
-        assert resp.json()["per_handle_home"] is True
-        resp = await client.put(
-            f"/api/v1/workspaces/{ws_id}",
-            json={"per_handle_home": False},
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        resp = await client.get("/api/v1/workspaces", headers=headers)
-        match = [w for w in resp.json() if w["id"] == ws_id]
-        assert match[0]["per_handle_home"] is False
+        assert resp.json()["per_handle_home"] is False  # deploy default
         resp = await client.put(
             f"/api/v1/workspaces/{ws_id}",
             json={"per_handle_home": True},
@@ -3060,6 +3052,15 @@ class TestWorkspaceRoutes:
         resp = await client.get("/api/v1/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["per_handle_home"] is True
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"per_handle_home": False},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["per_handle_home"] is False
 
     async def test_update_workspace_allowed_domains(self, client, user):
         headers = await _auth_headers(client)
@@ -3682,6 +3683,9 @@ class TestWorkspaceRoutes:
                 "service_command": "pi",
                 "mounts": ["/tmp:/mnt/tmp"],
                 "env": {"FOO": "bar"},
+                # Explicit so the copy assertion below tests duplication,
+                # not the (now-shared) deploy default (#2723).
+                "per_handle_home": True,
             },
             headers=headers,
         )
@@ -7991,11 +7995,22 @@ class TestWorkspaceMetadata:
             "settings": None,
             "num_ports": 3,
             "egress_mode": None,
+            "per_handle_home": True,
         }
 
     def test_defaults_num_ports(self):
         meta = self._ws().workspace_metadata({"name": "x"})
         assert meta["num_ports"] == 5
+
+    def test_defaults_per_handle_home(self):
+        # #2722: a ws dict without the key (legacy row shape) exports
+        # per_handle_home=True — every pre-#2169 workspace was per-user.
+        meta = self._ws().workspace_metadata({"name": "x"})
+        assert meta["per_handle_home"] is True
+        meta2 = self._ws().workspace_metadata(
+            {"name": "x", "per_handle_home": False}
+        )
+        assert meta2["per_handle_home"] is False
 
     def test_includes_instance_id(self, app_state):
         ws = self._ws()
@@ -8371,20 +8386,21 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         assert resp.json()["name"] == "from-archive"
 
-    async def test_import_follows_per_handle_home_deploy_default(
-        self, client, admin_user, user, app, monkeypatch
+    async def test_import_follows_deploy_default(
+        self, client, admin_user, user
     ):
-        # #2719: an import creates a NEW workspace, so per_handle_home
-        # follows KLANGKD_PER_HANDLE_HOME like a silent POST does (the
-        # archive does not carry the flag — that's #2722).
+        """#2722: the archive's explicit layout wins over the deploy default,
+        in BOTH directions — this shared-home archive lands shared even
+        against a per-handle deploy default."""
         import io
         import json
         import tarfile
 
-        monkeypatch.setattr(app.state.settings, "per_handle_home", False)
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            meta = json.dumps(self._meta(name="imported-shared")).encode()
+            meta = json.dumps(
+                self._meta(name="archive-shared", per_handle_home=False)
+            ).encode()
             info = tarfile.TarInfo(name="workspace.json")
             info.size = len(meta)
             tar.addfile(info, io.BytesIO(meta))
@@ -8400,6 +8416,120 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 200
         assert resp.json()["per_handle_home"] is False
+
+    async def test_import_round_trips_per_handle_layout(
+        self, client, admin_user, user, app, monkeypatch
+    ):
+        """#2722: a real export -> import round trip carries the layout in
+        workspace.json, both directions. Deploy default is flipped to the
+        OPPOSITE of the archive's layout to prove the archive wins."""
+        for layout in (True, False):
+            monkeypatch.setattr(
+                app.state.settings, "per_handle_home", not layout
+            )
+            headers = await self._user_headers(client)
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": f"rt-ws-{layout}", "per_handle_home": layout},
+            )
+            ws = resp.json()
+
+            admin_headers = await self._admin_headers(client)
+            export_resp = await client.get(
+                f"/api/v1/workspaces/{ws['id']}/export",
+                headers=admin_headers,
+            )
+            assert export_resp.status_code == 200
+
+            import json as json_mod
+            import tarfile as tarfile_mod
+            import io as io_mod
+
+            # workspace.json carries the exported layout.
+            buf = io_mod.BytesIO(export_resp.content)
+            with tarfile_mod.open(fileobj=buf, mode="r:gz") as tar:
+                metadata = json_mod.loads(
+                    tar.extractfile("workspace.json").read()
+                )
+            assert metadata["per_handle_home"] is layout
+
+            import_resp = await client.post(
+                "/api/v1/workspaces/import",
+                headers=headers,
+                params={"name": f"rt-imported-{layout}"},
+                files={
+                    "file": (
+                        "archive.tar.gz",
+                        export_resp.content,
+                        "application/gzip",
+                    )
+                },
+            )
+            assert import_resp.status_code == 200
+            # The archive's layout won over the deploy default.
+            assert import_resp.json()["per_handle_home"] is layout
+
+    async def test_import_legacy_archive_defaults_per_handle(
+        self, client, admin_user, user, app, monkeypatch
+    ):
+        """#2722: a legacy archive without per_handle_home imports as
+        per-handle (True) even when the deploy default is shared."""
+        import io
+        import json
+        import tarfile
+
+        monkeypatch.setattr(app.state.settings, "per_handle_home", False)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(self._meta(name="legacy-archive")).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["per_handle_home"] is True
+
+    async def test_import_tampered_layout_falls_back_per_handle(
+        self, client, admin_user, user, app, monkeypatch
+    ):
+        """#2722: a non-bool per_handle_home (tampered/garbage archive) is
+        not honored — imports as per-handle, matching the model's strict
+        bool validation instead of a 500."""
+        import io
+        import json
+        import tarfile
+
+        monkeypatch.setattr(app.state.settings, "per_handle_home", False)
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                self._meta(name="tampered-archive", per_handle_home="yes")
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["per_handle_home"] is True
 
     async def test_import_rejects_foreign_instance(self, client, user):
         import io

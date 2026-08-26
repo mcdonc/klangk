@@ -32,6 +32,13 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **The default home layout is now shared (#2723).** `KLANGKD_PER_HANDLE_HOME`
+  (and the `per_handle_home` setting) now defaults to `false`: new workspaces
+  share one `/home/klangk` instead of per-user homes. Existing workspaces are
+  unaffected (migration backfilled `true`). Set
+  `KLANGKD_PER_HANDLE_HOME=true` — or pass the per-workspace create flag — to
+  keep per-handle homes.
+
 - **The chat feature is removed (#2716).** The per-workspace chat panel, the
   `@klangk` agent interaction, the `pi --mode rpc` chat-agent runtime, and the
   `chat` feature flag are gone. `KLANGKD_FEATURES_ENABLE=chat` on an existing
@@ -154,6 +161,11 @@ operators or integrators to act when upgrading.
   the web flow.
 
 ### Added
+
+- **Workspace export/import preserves the home layout (#2722).** `workspace.json`
+  now carries `per_handle_home`, and import honors the archive's layout even
+  when the server's `KLANGKD_PER_HANDLE_HOME` default differs. Archives
+  exported before the feature import as per-handle homes.
 
 - **Per-handle home is choosable on every create and edit surface (#2721).**
   The web create dialog and Settings tab, the TUI create/edit screens, and
