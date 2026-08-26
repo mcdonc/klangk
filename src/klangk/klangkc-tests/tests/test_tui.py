@@ -1523,6 +1523,405 @@ async def test_status_loop_resets_backoff_after_success(monkeypatch):
     assert seen[2] == 1
 
 
+# ---------------------------------------------------------------------------
+# Server switch tears down the old status WS (#2704)
+# ---------------------------------------------------------------------------
+
+
+async def test_server_switch_drops_old_ws_and_redials(monkeypatch):
+    """A server switch (``App.server_changed``) cancels the parked listener
+    to the old server and re-dials the new one immediately — not counted as
+    an outage, so no reconnect backoff and no "server down" flash (#2704)."""
+    await _fast_reconnect(monkeypatch)
+
+    # Spy on the backoff: the drop path must never reach it (a loss that
+    # went through the outage accounting would call it, and on_connect
+    # resetting the counter afterwards would hide that from
+    # _reconnect_attempt alone).
+    seen: list[int] = []
+    monkeypatch.setattr(
+        scr_main,
+        "_reconnect_backoff",
+        lambda attempt: (seen.append(attempt), 0.0)[1],
+    )
+
+    dialed: list[str] = []
+    cancelled: list[bool] = []
+    release = asyncio.Event()
+
+    async def park(url, token, on_event=None, on_connect=None, **k):
+        # An established connection: fires on_connect, then parks reading
+        # frames until the server drops it (or the loop cancels it).
+        dialed.append(url)
+        on_connect()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(scr_main, "listen_for_status", park)
+
+    st = _authed_state()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        loop = asyncio.create_task(_real_status_loop(screen))
+        for _ in range(4):
+            await pilot.pause()
+        assert dialed == ["https://x.example"]  # parked on server A
+
+        # Switch the active server and fire the real App hook (the server
+        # screen's action does exactly this after updating state).
+        st.current_url = lambda: "https://y.example"
+        app.server_changed()
+        for _ in range(4):
+            await pilot.pause()
+
+        # The old connection was torn down promptly and the new server
+        # dialed — no outage accounting on the way (no backoff call).
+        assert cancelled == [True]
+        assert dialed[-1] == "https://y.example"
+        assert seen == []
+        assert screen._server_unreachable is False
+        assert not isinstance(app.screen, ServerDownScreen)
+
+        loop.cancel()  # end the driven loop; its finally cancels the parker
+        try:
+            await loop
+        except asyncio.CancelledError:
+            pass
+        await pilot.pause()
+
+
+async def test_server_switch_during_backoff_redials_immediately(monkeypatch):
+    """A switch that lands while the loop waits out a reconnect backoff
+    interrupts the delay and re-dials the new server at once (#2704)."""
+    # Deliberately NOT _fast_reconnect: the long backoff sleep is the thing
+    # that must get cut short.
+    monkeypatch.setattr(scr_main, "_reconnect_backoff", lambda attempt: 999.0)
+    _real_sleep = asyncio.sleep
+    sleep_cancelled: list[bool] = []
+
+    async def slow(t):
+        try:
+            await _real_sleep(999)
+        except asyncio.CancelledError:
+            sleep_cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(scr_main, "_reconnect_sleep", slow)
+
+    dialed: list[str] = []
+    release = asyncio.Event()
+
+    async def script(url, token, on_event=None, on_connect=None, **k):
+        dialed.append(url)
+        if url == "https://x.example":
+            raise RuntimeError("ws refused")  # old server down -> backoff
+        on_connect()  # new server: connect, then park
+        await release.wait()
+
+    monkeypatch.setattr(scr_main, "listen_for_status", script)
+
+    st = _authed_state()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        loop = asyncio.create_task(_real_status_loop(screen))
+        for _ in range(4):
+            await pilot.pause()
+        # Attempt 1 failed and the loop is parked in the 999 s backoff.
+        assert dialed == ["https://x.example"]
+        assert screen._reconnect_attempt == 1
+
+        st.current_url = lambda: "https://y.example"
+        app.server_changed()
+        for _ in range(4):
+            await pilot.pause()
+
+        # The backoff was cut short and the new server dialed immediately —
+        # not after the remaining ~999 s.
+        assert sleep_cancelled == [True]
+        assert dialed == ["https://x.example", "https://y.example"]
+        assert screen._ws_connected is True
+
+        loop.cancel()
+        try:
+            await loop
+        except asyncio.CancelledError:
+            pass
+        await pilot.pause()
+
+
+async def test_switch_lands_same_tick_as_listener_end(monkeypatch):
+    """A drop that arrives in the same tick the listener finished still
+    wins the race: the listener's outcome is discarded and the loop re-dials
+    the new server rather than accounting a loss (#2704)."""
+    await _fast_reconnect(monkeypatch)
+
+    seen: list[int] = []
+    monkeypatch.setattr(
+        scr_main,
+        "_reconnect_backoff",
+        lambda attempt: (seen.append(attempt), 0.0)[1],
+    )
+
+    dialed: list[str] = []
+    holder: dict = {}
+    release_a = asyncio.Event()
+
+    async def script(url, token, on_event=None, on_connect=None, **k):
+        dialed.append(url)
+        on_connect()
+        if url == "https://x.example":
+            await release_a.wait()  # park like an established connection
+            # Server A closes cleanly at the same moment the user switches:
+            # the drop is set from inside the listener, so both futures are
+            # done when the loop's race resumes.
+            holder["screen"].drop_status_connection()
+            return None
+        release = asyncio.Event()
+        await release.wait()  # new server: connect, then park
+
+    monkeypatch.setattr(scr_main, "listen_for_status", script)
+
+    st = _authed_state()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        holder["screen"] = screen
+        loop = asyncio.create_task(_real_status_loop(screen))
+        for _ in range(4):
+            await pilot.pause()
+        assert dialed == ["https://x.example"]
+
+        st.current_url = lambda: "https://y.example"
+        release_a.set()  # clean close + drop land on the same tick
+        for _ in range(4):
+            await pilot.pause()
+
+        # The clean close was NOT treated as a loss (no backoff / attempt
+        # accounting): the drop re-dialed the new server directly.
+        assert dialed == ["https://x.example", "https://y.example"]
+        assert seen == []
+        assert screen._server_unreachable is False
+
+        loop.cancel()
+        try:
+            await loop
+        except asyncio.CancelledError:
+            pass
+        await pilot.pause()
+
+
+async def test_server_changed_needs_login_drops_old_ws(monkeypatch):
+    """``server_changed_needs_login`` tears the old server's WS down too —
+    the popped screen's loop would otherwise linger parked on it until the
+    server closed the connection (#2704)."""
+    await _fast_reconnect(monkeypatch)
+
+    dialed: list[str] = []
+    cancelled: list[bool] = []
+    release = asyncio.Event()
+
+    async def park(url, token, on_event=None, on_connect=None, **k):
+        dialed.append(url)
+        on_connect()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(scr_main, "listen_for_status", park)
+
+    app = KlangkApp(_authed_state())
+    async with app.run_test() as pilot:
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        loop = asyncio.create_task(_real_status_loop(screen))
+        for _ in range(4):
+            await pilot.pause()
+        assert dialed == ["https://x.example"]
+
+        app.server_changed_needs_login()
+        # The loop exits on its own via the stack guard once the listener
+        # is dropped — bounded so a regression fails instead of hanging.
+        await asyncio.wait_for(loop, 2)
+        await pilot.pause()
+
+        assert cancelled == [True]
+        assert dialed == ["https://x.example"]  # never re-dialed after pop
+        assert isinstance(app.screen, LoginScreen)
+
+
+async def test_server_switch_restarts_loop_after_gave_up(monkeypatch):
+    """After the reconnect loop gave up (its overlay promises "switch
+    server … to reconnect"), a server switch restarts the status-WS worker
+    on the reused screen and live updates resume (#2704)."""
+    # Run the real loop (undo the autouse stub) so give-up and the restart
+    # exercise actual worker lifecycle.
+    monkeypatch.setattr(MainScreen, "_status_loop", _real_status_loop)
+    monkeypatch.setattr(scr_main, "_MAX_RECONNECT_ATTEMPTS", 2)
+    await _fast_reconnect(monkeypatch)
+
+    dialed: list[str] = []
+    release = asyncio.Event()
+
+    async def script(url, token, on_event=None, on_connect=None, **k):
+        dialed.append(url)
+        if url == "https://x.example":
+            raise RuntimeError("ws refused")
+        on_connect()  # the new server accepts: connect, then park
+        await release.wait()
+
+    monkeypatch.setattr(scr_main, "listen_for_status", script)
+
+    st = _ws(
+        owned=[_wsobj("beta")],
+        list_owned_workspaces=lambda: [_wsobj("beta")],
+        list_shared_workspaces=lambda: [],
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()  # mount workers run to give-up
+        await pilot.pause()
+        main = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        assert main._gave_up is True
+        assert main._status_worker.is_finished is True
+        assert dialed == ["https://x.example"] * 3
+
+        # Switch to the (reachable) new server through the real App hook.
+        st.current_url = lambda: "https://y.example"
+        app.server_changed()
+        for _ in range(8):
+            await pilot.pause()
+
+        # The restarted worker re-dialed the new server and its connection
+        # cleared the give-up state.
+        assert "https://y.example" in dialed
+        assert main._gave_up is False
+        assert main._ws_connected is True
+        assert not isinstance(app.screen, ServerDownScreen)
+
+
+async def test_do_logout_drops_old_ws(monkeypatch):
+    """Logout drops the parked status-WS listener after the token clears,
+    so the loop exits via the no-token branch and never re-dials — no
+    lingering old-server events, no second concurrent WS after a re-login
+    (#2704)."""
+    await _fast_reconnect(monkeypatch)
+
+    dialed: list[str] = []
+    cancelled: list[bool] = []
+    release = asyncio.Event()
+
+    async def park(url, token, on_event=None, on_connect=None, **k):
+        dialed.append(url)
+        on_connect()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(scr_main, "listen_for_status", park)
+
+    st = _authed_state()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        loop = asyncio.create_task(_real_status_loop(screen))
+        for _ in range(4):
+            await pilot.pause()
+        assert dialed == ["https://x.example"]
+
+        # Logout: token clears, then the real App hook runs. Reuse the
+        # app's worker (it is what production runs) and bound the wait so a
+        # regression fails instead of hanging.
+        def fake_logout():
+            st.token = lambda: None
+
+        st.logout = fake_logout
+        app.do_logout()
+        await asyncio.wait_for(asyncio.shield(asyncio.gather(loop)), 2)
+        await pilot.pause()
+
+        assert cancelled == [True]  # the parked listener was torn down
+        assert dialed == ["https://x.example"]  # never re-dialed
+        assert isinstance(app.screen, LoginScreen)
+
+
+async def test_confirm_session_expired_drops_old_ws(monkeypatch):
+    """Confirming the session-expired overlay drops the parked listener
+    too — same teardown as do_logout, on the expiry path (#2704)."""
+    await _fast_reconnect(monkeypatch)
+
+    dialed: list[str] = []
+    cancelled: list[bool] = []
+    release = asyncio.Event()
+
+    async def park(url, token, on_event=None, on_connect=None, **k):
+        dialed.append(url)
+        on_connect()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(scr_main, "listen_for_status", park)
+
+    st = _authed_state()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        loop = asyncio.create_task(_real_status_loop(screen))
+        for _ in range(4):
+            await pilot.pause()
+        assert dialed == ["https://x.example"]
+
+        # The expiry flow requires the overlay to be up first.
+        app.session_expired()
+        await pilot.pause()
+        assert app._session_expired_screen is not None
+
+        def fake_logout():
+            st.token = lambda: None
+
+        st.logout = fake_logout
+        app.confirm_session_expired()
+        await asyncio.wait_for(asyncio.shield(asyncio.gather(loop)), 2)
+        await pilot.pause()
+
+        assert cancelled == [True]
+        assert dialed == ["https://x.example"]
+        assert isinstance(app.screen, LoginScreen)
+
+
+async def test_ensure_status_ws_worker_starts_when_missing(monkeypatch):
+    """``ensure_status_ws_worker`` also covers a screen whose loop never
+    started (unauthenticated mount): ``_status_worker`` is None (#2704)."""
+    st = _st(
+        is_authenticated=lambda: False,
+        current_url=lambda: None,
+        token=lambda: None,
+    )
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(MainScreen())  # mounts without starting workers
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, MainScreen)
+        assert screen._status_worker is None
+
+        screen.ensure_status_ws_worker()
+        assert screen._status_worker is not None
+        await app.workers.wait_for_complete()  # the (stubbed) loop runs
+        await pilot.pause()
+
+
 async def test_login_password_flow_success(monkeypatch):
     async def noop(*a, **k):
         return None

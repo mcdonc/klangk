@@ -313,6 +313,20 @@ class KlangkApp(App):
     def do_logout(self) -> None:
         async def _logout() -> None:
             await asyncio.to_thread(self.tui_state.logout)
+            # Logout clears the token; drop the parked status-WS listener
+            # so the loop wakes, sees no token, and exits instead of
+            # lingering on the old server's connection — a parked WS would
+            # keep firing events (toasts, live_extra) after logout, and a
+            # later re-login would spawn a second concurrent status WS
+            # (#2704). Sequence: drop AFTER logout (so the loop exits via
+            # the no-token branch rather than re-dialing), BEFORE the pop
+            # (so the screen is still in the stack if the loop checks).
+            main = next(
+                (s for s in self.screen_stack if isinstance(s, MainScreen)),
+                None,
+            )
+            if main is not None:
+                main.drop_status_connection()
             self.pop_screen()  # MainScreen
             self.live_extra = ""
             self.last_login = None
@@ -377,6 +391,14 @@ class KlangkApp(App):
             self.push_screen(MainScreen())
             return
         self._pop_above(main)
+        # The status-WS loop is parked inside its listener against the old
+        # server — without this drop it stays there until that server drops
+        # the connection itself, so reachability and live updates keep
+        # tracking the previous server (#2704). Also restarts the loop if it
+        # had given up reconnecting: the give-up overlay promises "switch
+        # server … to reconnect".
+        main.drop_status_connection()
+        main.ensure_status_ws_worker()
         main.refresh_lists()
         # The reused screen still shows the previous server's last-login
         # stamp; drop it and re-fetch for the new identity (#2583).
@@ -384,6 +406,16 @@ class KlangkApp(App):
 
     def server_changed_needs_login(self) -> None:
         """Switch server then show LoginScreen (invalid/missing creds)."""
+        # Same WS teardown as ``server_changed`` (#2704): the popped
+        # MainScreen's loop exits via its stack guard only *between*
+        # connections, so without this drop the old server's WS would stay
+        # open until the server closed it. No restart here — the login flow
+        # pushes a fresh MainScreen that mounts its own workers.
+        main = next(
+            (s for s in self.screen_stack if isinstance(s, MainScreen)), None
+        )
+        if main is not None:
+            main.drop_status_connection()
         # Tear down every screen above the base, then push login. The
         # ``target not in stack`` early return in ``_pop_above`` is what
         # prevents the ScreenStackError the old pop-until-MainScreen loop hit
@@ -428,6 +460,19 @@ class KlangkApp(App):
         async def _expire() -> None:
             try:
                 await asyncio.to_thread(self.tui_state.logout)
+                # Same parked-listener teardown as ``do_logout`` (#2704):
+                # logout cleared the token, so the dropped loop exits via
+                # its no-token branch instead of re-dialing the old server.
+                main = next(
+                    (
+                        s
+                        for s in self.screen_stack
+                        if isinstance(s, MainScreen)
+                    ),
+                    None,
+                )
+                if main is not None:
+                    main.drop_status_connection()
                 # Clear every screen above the base, then show login.
                 # ``_pop_above`` pops a fixed snapshot, so the teardown is
                 # bounded regardless of what a concurrent worker does between

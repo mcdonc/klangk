@@ -286,6 +286,17 @@ class MainScreen(StatusScreen):
         self._server_unreachable = False
         self._reconnect_attempt = 0
         self._gave_up = False
+        # Server-switch teardown for the status WS (#2704): a switch sets
+        # this event so a parked status-loop iteration drops the old
+        # server's connection and re-dials the new one immediately. Sticky
+        # (stays set until the next loop iteration clears it), so a switch
+        # that lands between iterations is not lost.
+        self._ws_drop = asyncio.Event()
+        # The status-WS loop worker, or None when no loop is running (never
+        # started on an unauthenticated mount). Kept so
+        # ``ensure_status_ws_worker`` can restart the loop after it gave up
+        # and a server switch reuses this screen (#2704).
+        self._status_worker = None
         # True only while the status WS is actively connected (set in
         # ``_on_ws_connected``, cleared when the connection drops). Lets a
         # transport-failed REST list fetch distinguish a real outage (WS also
@@ -324,7 +335,9 @@ class MainScreen(StatusScreen):
         # broadcasts plus the WS reconnect keep the list fresh.
         self.refresh_lists()
         if self.app.tui_state.is_authenticated():
-            self.app.run_worker(self._status_loop, name="status-ws")
+            self._status_worker = self.app.run_worker(
+                self._status_loop, name="status-ws"
+            )
             self.app.run_worker(self._token_refresh_loop, name="token-refresh")
             self.app.run_worker(
                 self._load_last_login,
@@ -1203,6 +1216,66 @@ class MainScreen(StatusScreen):
         if name:
             self.app.push_screen(WorkspaceDetailScreen(name))
 
+    def drop_status_connection(self) -> None:
+        """Tear down the current status-WS connection promptly (#2704).
+
+        Called by ``App.server_changed`` / ``App.server_changed_needs_login``
+        after the active server changed: without this, the status loop stays
+        parked inside ``listen_for_status`` against the *old* server until
+        that server drops the connection on its own, so reachability and
+        live-update signaling (#2052) keep tracking a server the user has
+        already left. Setting the event makes the parked iteration cancel
+        its listener (closing the WS) and re-dial with the new URL/token.
+        """
+        self._ws_drop.set()
+
+    def ensure_status_ws_worker(self) -> None:
+        """(Re)start the status-WS loop worker (#2704).
+
+        The loop terminates itself once it exhausts
+        ``_MAX_RECONNECT_ATTEMPTS`` — the give-up overlay tells the user to
+        "switch server … to reconnect" — and a switch reuses this screen
+        (no re-mount, so ``on_mount`` doesn't run). Without a restart here
+        the switched-to server would get no live updates and no WS
+        reachability signal until the TUI is restarted.
+        """
+        if self._status_worker is None or self._status_worker.is_finished:
+            self._status_worker = self.app.run_worker(
+                self._status_loop, name="status-ws"
+            )
+
+    async def _wait_drop_or(self, awaiting: asyncio.Future) -> bool:
+        """Await ``awaiting`` unless a server-switch drop fires first.
+
+        Returns ``True`` when the drop won — ``awaiting`` is cancelled and
+        its outcome abandoned (the switch supersedes it) — and ``False``
+        when ``awaiting`` completed on its own (its outcome is then
+        inspected by the caller). Races both the listener task and the
+        reconnect backoff sleep, so a switch interrupts either (#2704).
+        """
+        waiter = asyncio.create_task(self._ws_drop.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {waiter, awaiting}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except BaseException:
+            # The loop itself was cancelled while parked in the race (app
+            # shutdown): reap the waiter so it doesn't outlive this frame.
+            if not waiter.done():
+                waiter.cancel()
+            raise
+        if waiter in done:
+            if not awaiting.done():
+                awaiting.cancel()
+            elif not awaiting.cancelled():
+                # Both finished on the same tick: retrieve (and discard)
+                # the outcome so asyncio doesn't warn it was never
+                # retrieved. The drop supersedes it either way.
+                awaiting.exception()
+            return True
+        waiter.cancel()
+        return False
+
     async def _status_loop(self) -> None:
         """Single reachability signal: maintain the status WS and drive the
         unreachable overlay from its lifecycle (#2052).
@@ -1213,6 +1286,10 @@ class MainScreen(StatusScreen):
         reachability poll — the WS protocol pings (lowered to 10 s / 10 s)
         detect a wedged / half-open connection, and a reconnect-triggered
         list refresh catches a REST-only degradation lazily.
+
+        A server switch interrupts the parked listener (and any backoff
+        sleep) via ``drop_status_connection`` so the next iteration re-dials
+        the new server immediately (#2704).
         """
         state = self.app.tui_state
         if not state.current_url() or not state.token():
@@ -1233,22 +1310,43 @@ class MainScreen(StatusScreen):
             # Screen popped (logout / server switch) — stop reconnecting.
             if self not in self.app.screen_stack:
                 return
-            try:
-                await listen_for_status(
+            # Consume any drop request still set from a previous iteration
+            # *after* the URL/token re-read above: a stale drop's only
+            # purpose was interruption, and the freshest config was just
+            # captured, so clearing it here keeps the new connection from
+            # being torn down the instant it is made.
+            self._ws_drop.clear()
+            listener = asyncio.create_task(
+                listen_for_status(
                     url,
                     token,
                     on_event=self._on_status_event,
                     on_connect=self._on_ws_connected,
                 )
-            except AuthError:
-                self.app.session_expired()
-                return
-            except Exception as exc:
-                logger.debug(
-                    "Status WS error (attempt %d): %s",
-                    self._reconnect_attempt + 1,
-                    exc,
-                )
+            )
+            try:
+                if await self._wait_drop_or(listener):
+                    # Server switch: the old connection is torn down
+                    # (#2704). Re-dial against the new server on the next
+                    # iteration — this is not an outage, so no attempt
+                    # accounting, no overlay, no backoff.
+                    self._ws_connected = False
+                    continue
+                exc = listener.exception()
+                if isinstance(exc, AuthError):
+                    self.app.session_expired()
+                    return
+                if exc is not None:
+                    logger.debug(
+                        "Status WS error (attempt %d): %s",
+                        self._reconnect_attempt + 1,
+                        exc,
+                    )
+            finally:
+                # Loop cancelled outright (app shutdown) with the listener
+                # still running: don't leave the WS dangling.
+                if not listener.done():
+                    listener.cancel()
             # The connection is over (clean close or error) — the backend is
             # no longer WS-reachable from this screen's point of view.
             self._ws_connected = False
@@ -1280,7 +1378,12 @@ class MainScreen(StatusScreen):
             else:
                 self._enter_unreachable()
                 self._refresh_unreachable_display()
-            await _reconnect_sleep(delay)
+            if await self._wait_drop_or(
+                asyncio.create_task(_reconnect_sleep(delay))
+            ):
+                # Switch during the backoff sleep: skip the rest of the
+                # delay and re-dial the new server now (#2704).
+                continue
 
     def _on_ws_connected(self) -> None:
         """The status WS (re)connected — the backend is reachable again.
