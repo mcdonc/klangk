@@ -386,6 +386,29 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             ),
                           ),
                         ],
+                        // #2017: per-workspace sudo lock-down (only when the
+                        // deploy allows sudo — it's a ceiling, so the toggle
+                        // can only opt this workspace out).
+                        if (widget.sudoAvailable) ...[
+                          const SizedBox(height: 16),
+                          Material(
+                            type: MaterialType.transparency,
+                            child: CheckboxListTile(
+                              value: _sudoEnabled,
+                              onChanged: (v) =>
+                                  setState(() => _sudoEnabled = v ?? true),
+                              title: const Text('Allow sudo'),
+                              subtitle: const Text(
+                                'Uncheck to lock this workspace down '
+                                '(no passwordless sudo) even when the server '
+                                'allows it; applies at the next container '
+                                'start',
+                              ),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -612,29 +635,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                               title: const Text('Mount /nix dir'),
                               subtitle: const Text(
                                 'Mount a shared, writable /nix into this workspace',
-                              ),
-                              controlAffinity: ListTileControlAffinity.leading,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
-                        ],
-                        // #2017: per-workspace sudo lock-down (only when the
-                        // deploy allows sudo — it's a ceiling, so the toggle
-                        // can only opt this workspace out).
-                        if (widget.sudoAvailable) ...[
-                          const SizedBox(height: 16),
-                          Material(
-                            type: MaterialType.transparency,
-                            child: CheckboxListTile(
-                              value: _sudoEnabled,
-                              onChanged: (v) =>
-                                  setState(() => _sudoEnabled = v ?? true),
-                              title: const Text('Allow sudo'),
-                              subtitle: const Text(
-                                'Uncheck to lock this workspace down '
-                                '(no passwordless sudo) even when the server '
-                                'allows it; applies at the next container '
-                                'start',
                               ),
                               controlAffinity: ListTileControlAffinity.leading,
                               contentPadding: EdgeInsets.zero,
