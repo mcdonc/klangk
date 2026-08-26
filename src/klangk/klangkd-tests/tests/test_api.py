@@ -2083,26 +2083,27 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 422
 
-    async def test_create_per_handle_home_defaults_true(self, client, user):
-        # #2719: silent create inherits the deploy default (True today);
-        # an explicit value wins; both are exposed in payloads.
+    async def test_create_per_handle_home_defaults_shared(self, client, user):
+        # #2723: silent create inherits the deploy default (shared since
+        # the chunk-5 flip); an explicit value wins; both are exposed in
+        # payloads.
         headers = await _auth_headers(client)
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "home-dflt"}
         )
         assert resp.status_code == 200
-        assert resp.json()["per_handle_home"] is True
+        assert resp.json()["per_handle_home"] is False
         resp = await client.post(
             "/api/v1/workspaces",
             headers=headers,
-            json={"name": "home-off", "per_handle_home": False},
+            json={"name": "home-off", "per_handle_home": True},
         )
         assert resp.status_code == 200
-        assert resp.json()["per_handle_home"] is False
+        assert resp.json()["per_handle_home"] is True
         resp = await client.get("/api/v1/workspaces", headers=headers)
         by_name = {w["name"]: w for w in resp.json()}
-        assert by_name["home-dflt"]["per_handle_home"] is True
-        assert by_name["home-off"]["per_handle_home"] is False
+        assert by_name["home-dflt"]["per_handle_home"] is False
+        assert by_name["home-off"]["per_handle_home"] is True
 
     async def test_create_per_handle_home_inherits_config_default(
         self, client, user, app, monkeypatch
@@ -3041,16 +3042,7 @@ class TestWorkspaceRoutes:
             headers=headers,
         )
         ws_id = resp.json()["id"]
-        assert resp.json()["per_handle_home"] is True
-        resp = await client.put(
-            f"/api/v1/workspaces/{ws_id}",
-            json={"per_handle_home": False},
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        resp = await client.get("/api/v1/workspaces", headers=headers)
-        match = [w for w in resp.json() if w["id"] == ws_id]
-        assert match[0]["per_handle_home"] is False
+        assert resp.json()["per_handle_home"] is False  # deploy default
         resp = await client.put(
             f"/api/v1/workspaces/{ws_id}",
             json={"per_handle_home": True},
@@ -3060,6 +3052,15 @@ class TestWorkspaceRoutes:
         resp = await client.get("/api/v1/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["per_handle_home"] is True
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"per_handle_home": False},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["per_handle_home"] is False
 
     async def test_update_workspace_allowed_domains(self, client, user):
         headers = await _auth_headers(client)
@@ -3682,6 +3683,9 @@ class TestWorkspaceRoutes:
                 "service_command": "pi",
                 "mounts": ["/tmp:/mnt/tmp"],
                 "env": {"FOO": "bar"},
+                # Explicit so the copy assertion below tests duplication,
+                # not the (now-shared) deploy default (#2723).
+                "per_handle_home": True,
             },
             headers=headers,
         )

@@ -45,9 +45,10 @@ You can change all of these later from the workspace **Settings** tab.
 
 Every workspace picks one of two home layouts:
 
-- **Per-handle home** (the default) — each member gets a private
-  `/home/<handle>` directory; see [The Shell](the-shell.md).
-- **Shared home** — all members share the single `/home/klangk`.
+- **Shared home** (the default) — all members share the single
+  `/home/klangk`.
+- **Per-handle home** — each member gets a private `/home/<handle>`
+  directory; see [The Shell](the-shell.md).
 
 The choice appears on the create form and the **Settings** tab (web),
 the create and edit screens (TUI), and the CLI:
