@@ -403,6 +403,22 @@ class CrashRecoveryMonitor:
         if epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch:
             return  # a stop began and completed during detection
         memory_limit = await self._effective_memory_limit(ws_id)
+        # Re-validate after the await (#331): a user-driven reconnect
+        # (start_container -> _handle_existing_container removes the dead
+        # container with a direct podman rm -- no ``stopping`` marker, no
+        # epoch bump -- then _create_and_start re-binds the state to a
+        # fresh container) can complete entirely while the limit read is
+        # in flight. The entry guards above ran before that await; acting
+        # on the post-await state would tear down the freshly-started
+        # container's registry state and network sidecar.
+        if registry.states.get(ws_id) is not state:
+            return  # state replaced/removed (a user start re-bound it)
+        if state.container_id != container_id:
+            return  # rebound to a fresh container — not our death
+        if ws_id in registry.stopping:
+            return  # an expected stop is now in flight
+        if epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch:
+            return  # a stop began and completed during the limit read
         cause, message = classify_death(info, memory_limit)
         tracker = self.trackers.get(ws_id) or RestartTracker()
         tracker.last_cause = message
@@ -416,7 +432,9 @@ class CrashRecoveryMonitor:
         )
         # The service_health death frame carries the cause so consumers
         # can tell an OOM kill from a crash from external removal.
-        await registry.notify_workspace_killed(ws_id, cause=message)
+        await registry.notify_workspace_killed(
+            ws_id, cause=message, container_id=container_id
+        )
         # Teardown under the expected-stop marker (this stop is on
         # purpose — the restart, if any, is scheduled after it).
         await registry.stop_and_remove_container(

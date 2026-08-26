@@ -1292,6 +1292,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Crash recovery no longer corrupts workspaces that reconnect
+  mid-death-detection (#331).** When the crash monitor was handling a
+  container's death while a user reconnect recreated the container, the
+  fresh container's registry state could be dropped and its network
+  sidecar torn down. Death teardown is now keyed to the dead container
+  id, so a workspace re-bound to a fresh container is left untouched.
 - **Status WebSocket follows a server switch (#2029).** The TUI's live
   status connection kept dialing the previous server after switching
   servers, producing a false "server down" overlay. It now re-reads the

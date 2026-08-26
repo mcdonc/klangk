@@ -628,14 +628,22 @@ class WorkspaceSession:
                 request_id, None
             )
 
-    async def full_reset(self) -> None:
+    async def full_reset(
+        self, expected_container_id: str | None = None
+    ) -> None:
         """Clean up all shared state for this workspace.
 
         Called when a container is killed externally (idle timeout,
         manual stop) so the next workspace_connect starts fresh.
+        *expected_container_id* (#331) threads the dead container id
+        down to :meth:`container_registry.remove_state`'s re-bind guard:
+        a racing user-driven start may have re-bound the workspace to a
+        fresh container, in which case the fresh registry state survives.
         """
         await self.app.state.sockets.remove_session(self.workspace_id)
-        await self.app.state.container_registry.remove_state(self.workspace_id)
+        await self.app.state.container_registry.remove_state(
+            self.workspace_id, expect_container_id=expected_container_id
+        )
         logger.info("Reset workspace state for %s", self.workspace_id)
 
 
@@ -768,18 +776,26 @@ class WebSocketState:
                 logger.debug("Error closing socket for user %s", user_id)
         return len(socks)
 
-    async def reset_workspace(self, workspace_id: str) -> None:
+    async def reset_workspace(
+        self, workspace_id: str, *, expected_container_id: str | None = None
+    ) -> None:
         """Clean up shared state for a workspace.
 
         Called when a container is killed externally (idle timeout,
         manual stop) so the next workspace_connect starts fresh.
         Delegates to WorkspaceSession.full_reset if a session exists.
+        *expected_container_id* (#331) is the dead container id; it
+        guards ``remove_state`` against a racing re-bind.
         """
         session = self.get_session(workspace_id)
         if session:
-            await session.full_reset()
+            await session.full_reset(
+                expected_container_id=expected_container_id
+            )
         else:
-            await self.app.state.container_registry.remove_state(workspace_id)
+            await self.app.state.container_registry.remove_state(
+                workspace_id, expect_container_id=expected_container_id
+            )
             logger.info("Reset workspace state for %s", workspace_id)
 
     def notify_container_status(

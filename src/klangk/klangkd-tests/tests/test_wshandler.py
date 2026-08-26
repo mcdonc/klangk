@@ -4403,6 +4403,37 @@ class TestResetWorkspaceState:
             sockets.sessions.pop("ws-reset-empty", None)
             registry.states.pop("ws-reset-empty", None)
 
+    async def test_expected_container_id_guards_state(self, app_state):
+        """#331: the reset chain threads the dead container id down to
+        remove_state's re-bind guard — a workspace whose state was
+        re-bound to a fresh container keeps it."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        sockets.get_or_create_session("ws-reset-guard", app_state)
+        registry.track_activity("cid-fresh", "ws-reset-guard")
+        try:
+            await reset_workspace_state(
+                sockets,
+                "ws-reset-guard",
+                expected_container_id="cid-dead",
+            )
+            # Re-bound: the fresh container's state survives; the session
+            # was still removed (a fresh workspace_connect recreates it).
+            assert registry.states["ws-reset-guard"].container_id == (
+                "cid-fresh"
+            )
+            # Matching id: the state is removed.
+            await reset_workspace_state(
+                sockets,
+                "ws-reset-guard",
+                expected_container_id="cid-fresh",
+            )
+            assert "ws-reset-guard" not in registry.states
+        finally:
+            sockets.sessions.pop("ws-reset-guard", None)
+            registry.states.pop("ws-reset-guard", None)
+
     async def test_remove_session_skips_if_subscribers_reappear(
         self, app_state
     ):

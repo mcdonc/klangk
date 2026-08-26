@@ -106,7 +106,7 @@ class IdleMonitor:
                             await cb(wid)
                         except Exception as e:
                             logger.error("Idle callback error: %s", e)
-                await registry.notify_workspace_killed(wid)
+                await registry.notify_workspace_killed(wid, container_id=cid)
                 await registry.stop_and_remove_container(cid)
 
             # Periodic orphan sidecar-token sweep (#2309): reclaim
