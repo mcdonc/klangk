@@ -24,6 +24,7 @@ import tempfile
 import time
 from collections.abc import AsyncGenerator
 
+from .container.spec import SHARED_HOME
 from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
@@ -633,7 +634,7 @@ class ExecSession:
         container_id: str,
         podman: Podman,
         env: list[str] | None = None,
-        work_dir: str = "/home/work",
+        work_dir: str = SHARED_HOME,
     ):
         self.container_id = container_id
         self._podman = podman

@@ -29,11 +29,13 @@ logger = logging.getLogger(__name__)
 # The single home every connection shares when a workspace has
 # ``per_handle_home = false`` (#2169 chunk 2, #2720), and the HOME the
 # ``service`` tmux session is pinned to under BOTH layouts (#2717):
-# ``/home/klangk``, materialized + populated from /etc/skel at every
-# fresh container create by ``ensure_shared_home`` (the image has no
-# ``/home/klangk`` — uid 1000's passwd home is ``/home`` itself, and the
-# home volume mounts at ``/home`` shadowing that image content, which
-# is why the skel copy is needed at all). Lives here — the container
+# ``/home/klangk``, materialized on the host before ``podman start``
+# (``ensure_shared_home_dir``) and populated from /etc/skel at every
+# fresh container create by ``ensure_shared_home`` — the image's uid
+# 1000 has no usable ``/home/klangk`` (its passwd home is ``/home``
+# itself, and the home volume mounts at ``/home`` shadowing whatever
+# the image built there), which is why the skel copy is needed at
+# all). Lives here — the container
 # filesystem-layout module — so ``workspaces``/``wshandler``/``health``
 # can import it without a cycle through the ``container`` package.
 #
@@ -74,12 +76,12 @@ class ContainerStartSpec:
     the public method takes (and forwards) this spec, the inner
     under-lock implementation unpacks it once, and adding a start
     parameter becomes a single field here instead of a two-signature
-    edit. Field order and defaults match the pre-spec positional
-    signature.
+    edit. (The pre-#2725 ``host_path`` field — the ``home/work``
+    subtree — is gone; mounts are driven by ``home_path`` /
+    ``config_path`` / ``extra_mounts``.)
     """
 
     workspace_id: str
-    host_path: str
     home_path: str
     existing_container_id: str | None = None
     num_ports: int = DEFAULT_PORTS_PER_WORKSPACE

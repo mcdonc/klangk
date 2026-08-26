@@ -296,7 +296,7 @@ export function vp(page: Page) {
 
 /** Seed a file into a workspace via the files API. `content` may be a string
  *  (text files) or a Buffer (binary — images, pdfs). `path` is workspace-
- *  absolute (e.g. "/home/work/readme.md"). The upload is synchronous, so the file is
+ *  absolute (e.g. "/home/klangk/readme.md"). The upload is synchronous, so the file is
  *  immediately listable/readable when this resolves. */
 export async function seedFile(
   request: APIRequestContext,
@@ -360,6 +360,7 @@ export async function createWorkspace(
   request: APIRequestContext,
   headers: Record<string, string>,
   namePrefix: string,
+  body: Record<string, unknown> = {},
 ): Promise<{
   workspaceId: string;
   cleanup: () => Promise<void>;
@@ -368,7 +369,7 @@ export async function createWorkspace(
   const workspace = await postJsonWithRetry(
     request,
     `${API_BASE}/api/v1/workspaces`,
-    { name },
+    { name, ...body },
     "Workspace creation",
     { headers },
   );
@@ -449,7 +450,12 @@ export async function createAndOpenWorkspace(
   {
     waitForTerminal = false,
     containerTimeout,
-  }: { waitForTerminal?: boolean; containerTimeout?: number } = {},
+    body = {},
+  }: {
+    waitForTerminal?: boolean;
+    containerTimeout?: number;
+    body?: Record<string, unknown>;
+  } = {},
 ): Promise<{
   workspaceId: string;
   email: string;
@@ -463,6 +469,7 @@ export async function createAndOpenWorkspace(
     request,
     headers,
     namePrefix,
+    body,
   );
   await openWorkspace(page, email, workspaceId, {
     waitForTerminal,

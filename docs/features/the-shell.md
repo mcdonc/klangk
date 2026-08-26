@@ -44,7 +44,8 @@ This means:
 - Your dotfiles (`.bashrc`, `.gitconfig`, `.vimrc`) are yours alone
 - Your bash history is separate from other members'
 - Your AI agent config (`.pi/agent/`, `.claude/`) is per-user
-- The shared project directory at `/home/work/` is accessible to everyone
+- Your project files live directly in your home (`~`); there is no
+  separate shared project directory
 
 A separate directory, `/home/klangk`, is the **shared home**. It is
 created and populated from the image skeleton when the container is

@@ -129,14 +129,14 @@ test.describe("files screenshots", () => {
     };
 
     await seedFile(
-      "/home/work/hello.py",
+      "/home/klangk/hello.py",
       'def greet(name):\n    return f"Hello, {name}!"\n\nif __name__ == "__main__":\n    print(greet("world"))\n',
     );
     await seedFile(
-      "/home/work/README.md",
+      "/home/klangk/README.md",
       "# My Project\n\nA demo workspace.\n",
     );
-    await seedFile("/home/work/notes.txt", "TODO: add more features\n");
+    await seedFile("/home/klangk/notes.txt", "TODO: add more features\n");
 
     // Click Files tab (2nd of 4 tabs)
     const tabWidth = width / 4;

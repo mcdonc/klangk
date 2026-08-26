@@ -32,6 +32,16 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **The `work/` subtree is removed from workspace homes (#2725).** The
+  separate shared project directory `/home/work` no longer exists:
+  project files live directly in the klangk user's home (`/home/klangk` —
+  or `/home/<handle>` under the per-handle layout), which is the working
+  directory for shells, exec sessions, and the image's `WORKDIR`. There
+  is **no data migration**: existing workspaces keep their files in
+  `~/work` — move them up manually (`mv ~/work/* ~`) if you want them at
+  the top of the home. Importing an old export archive (with `home/work/`)
+  preserves its layout as-is.
+
 - **The default home layout is now shared (#2723).** `KLANGKD_PER_HANDLE_HOME`
   (and the `per_handle_home` setting) now defaults to `false`: new workspaces
   share one `/home/klangk` instead of per-user homes. Existing workspaces are

@@ -19,7 +19,7 @@ class TestCreateWorkspace:
         assert ws["user_id"] == user["id"]
         assert "id" in ws
 
-        data_path = app_state.state.workspaces.workspace_path(ws["id"])
+        data_path = app_state.state.workspaces.home_path(ws["id"])
         assert data_path.exists()
         assert data_path.is_dir()
 
@@ -298,9 +298,9 @@ class TestDeleteWorkspace:
         ws = await app_state.state.workspaces.create_workspace(
             user["id"], "doomed"
         )
-        data_path = app_state.state.workspaces.workspace_path(ws["id"])
         home_dir = app_state.state.workspaces.home_path(ws["id"])
-        (data_path / "file.txt").write_text("hello")
+        (home_dir / "klangk" / "file.txt").parent.mkdir(parents=True)
+        (home_dir / "klangk" / "file.txt").write_text("hello")
         (home_dir / ".bashrc").write_text("# custom")
 
         deleted = await app_state.state.workspaces.delete_workspace(
@@ -313,7 +313,6 @@ class TestDeleteWorkspace:
             )
             is None
         )
-        assert not data_path.exists()
         assert not home_dir.exists()
 
     async def test_delete_nonexistent(self, user, app_state):
@@ -350,29 +349,17 @@ class TestDeleteWorkspace:
 
 
 class TestHostPaths:
-    def test_workspace_host_path_creates_dir(
-        self, user, temp_data_dir, app_state
-    ):
-        path = app_state.state.workspaces.get_workspace_host_path("ws-1")
-        assert path.exists()
-        assert path.is_dir()
-
     def test_home_host_path_creates_dir(self, user, temp_data_dir, app_state):
         path = app_state.state.workspaces.get_home_host_path("ws-1")
         assert path.exists()
         assert path.is_dir()
 
-    def test_workspace_host_path_idempotent(
-        self, user, temp_data_dir, app_state
-    ):
-        path1 = app_state.state.workspaces.get_workspace_host_path("ws-1")
-        path2 = app_state.state.workspaces.get_workspace_host_path("ws-1")
+    def test_home_host_path_idempotent(self, user, temp_data_dir, app_state):
+        path1 = app_state.state.workspaces.get_home_host_path("ws-1")
+        path2 = app_state.state.workspaces.get_home_host_path("ws-1")
         assert path1 == path2
 
     def test_paths_are_under_data_dir(self, user, temp_data_dir, app_state):
-        path = app_state.state.workspaces.get_workspace_host_path("ws-1")
-        assert str(path).startswith(str(temp_data_dir))
-
         home = app_state.state.workspaces.get_home_host_path("ws-1")
         assert str(home).startswith(str(temp_data_dir))
 
@@ -647,7 +634,6 @@ class TestStartWorkspace:
                 await registry.start_container(
                     container.ContainerStartSpec(
                         "ws-apply",
-                        "/host",
                         "/home",
                         workspace_settings={"idle_timeout": 600},
                     )
@@ -674,7 +660,6 @@ class TestStartWorkspace:
                 await registry.start_container(
                     container.ContainerStartSpec(
                         "ws-lazy",
-                        "/host",
                         "/home",
                         workspace_settings={"cpu_limit": 2.0},  # not idle
                     )
@@ -708,7 +693,6 @@ async def test_idle_timeout_zero_pins_alive(user, app_state):
             await registry.start_container(
                 container.ContainerStartSpec(
                     "ws-zero",
-                    "/host",
                     "/home",
                     workspace_settings={"idle_timeout": 0},
                 )

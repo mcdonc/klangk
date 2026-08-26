@@ -80,7 +80,9 @@ test.describe("per-user HOME directory", () => {
       page,
       request,
       "home-e2e",
-      { waitForTerminal: true },
+      // This spec exercises the per-handle layout; the deploy default
+      // flipped to shared homes (#2723), so opt each workspace in.
+      { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {
       // Run commands via a parallel WebSocket — no canvas interaction
@@ -114,7 +116,7 @@ test.describe("per-user HOME directory", () => {
       page,
       request,
       "cwd-e2e",
-      { waitForTerminal: true },
+      { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {
       // The exec session starts in $HOME (the user's handle dir)
@@ -122,13 +124,13 @@ test.describe("per-user HOME directory", () => {
 
       // pwd may resolve to the handle symlink or the underlying .users/UUID path
       expect(cwd).toMatch(/^\/home\/(\.users\/)?[a-z0-9._-]+$/);
-      expect(cwd).not.toBe("/home/work");
+      expect(cwd).not.toBe("/home/klangk");
     } finally {
       await cleanup();
     }
   });
 
-  test("shared /home/work is writable from the user home", async ({
+  test("shared /home/klangk is writable from the user home", async ({
     page,
     request,
   }) => {
@@ -136,14 +138,14 @@ test.describe("per-user HOME directory", () => {
       page,
       request,
       "work-e2e",
-      { waitForTerminal: true },
+      { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {
       const output = (
         await execInContainer(token, workspaceId, [
           "bash",
           "-c",
-          "echo ok > /home/work/.e2e-write-test && cat /home/work/.e2e-write-test",
+          "echo ok > /home/klangk/.e2e-write-test && cat /home/klangk/.e2e-write-test",
         ])
       ).trim();
 
@@ -161,7 +163,7 @@ test.describe("per-user HOME directory", () => {
       page,
       request,
       "persist-e2e",
-      { waitForTerminal: true },
+      { waitForTerminal: true, body: { per_handle_home: true } },
     );
     try {
       // Write to $HOME, then read it back — proves the directory is real

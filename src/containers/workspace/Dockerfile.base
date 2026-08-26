@@ -115,5 +115,5 @@ RUN EXISTING_USER=$(getent passwd 1000 | cut -d: -f1) \
     && groupadd -g 1000 klangk \
     && useradd -u 1000 -g 1000 -m -d /home -s /bin/bash klangk
 
-RUN mkdir -p /home/work && chown -R klangk:klangk /home
-WORKDIR /home/work
+RUN chown -R klangk:klangk /home
+WORKDIR /home/klangk

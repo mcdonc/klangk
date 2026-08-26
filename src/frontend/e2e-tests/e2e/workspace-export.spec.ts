@@ -189,7 +189,7 @@ test.describe("Workspace export streaming (#700)", () => {
     await connectContainer(workspaceId, adminToken);
 
     const marker = `streaming-export-marker-${Date.now()}\n`;
-    const markerPath = "/home/work/export_marker.txt";
+    const markerPath = "/home/klangk/export_marker.txt";
     await seedFile(request, workspaceId, markerPath, marker, adminHeaders);
 
     try {
@@ -334,7 +334,7 @@ test.describe("Workspace export streaming (#700)", () => {
       }
       const markerEntry = entries
         .split("\n")
-        .find((l) => l.endsWith("home/work/export_marker.txt"));
+        .find((l) => l.endsWith("home/klangk/export_marker.txt"));
       expect(
         markerEntry,
         "seeded marker file is present in the archive",

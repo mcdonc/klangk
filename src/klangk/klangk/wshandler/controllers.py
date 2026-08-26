@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from fastapi import WebSocketDisconnect
 
 from .. import model
+from ..container.spec import SHARED_HOME
 from ..exceptions import ContainerGoneError, TerminalError
 from ..podman import ExecSession
 from ..terminal import (
@@ -393,7 +394,7 @@ class ExecController:
             send_error(self._conn.sock, "exec_start requires a command list")
             return
         env: list[str] = []
-        work_dir = "/home/work"
+        work_dir = SHARED_HOME
         user_home = self._conn._user_home
         if user_home is not None:
             env.append(f"HOME={user_home}")

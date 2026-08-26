@@ -29,7 +29,8 @@ def files_inst():
 class TestValidatePath:
     def test_absolute_path(self):
         assert (
-            files.validate_path("/home/work/foo.txt") == "/home/work/foo.txt"
+            files.validate_path("/home/klangk/foo.txt")
+            == "/home/klangk/foo.txt"
         )
 
     def test_root(self):
@@ -44,13 +45,13 @@ class TestValidatePath:
             files.validate_path("/home/\x00evil")
 
     def test_normalizes_dotdot(self):
-        assert files.validate_path("/home/work/../foo") == "/home/foo"
+        assert files.validate_path("/home/klangk/../foo") == "/home/foo"
 
     def test_normalizes_double_slash(self):
-        assert files.validate_path("//home//work") == "/home/work"
+        assert files.validate_path("//home//klangk") == "/home/klangk"
 
     def test_normalizes_dot(self):
-        assert files.validate_path("/home/./work") == "/home/work"
+        assert files.validate_path("/home/./klangk") == "/home/klangk"
 
     def test_filename_too_long(self):
         long_name = "a" * 256
@@ -101,20 +102,20 @@ class TestListFiles:
             new_callable=AsyncMock,
             return_value=(0, find_output, ""),
         ) as mock:
-            entries = await files_inst.list_files(CID, "/home/work")
+            entries = await files_inst.list_files(CID, "/home/klangk")
 
         mock.assert_called_once()
         assert mock.call_args.kwargs["user"] == "klangk"
         # -L flag dereferences symlinks so symlinked dirs show as directories
         cmd = mock.call_args[0][1]
-        assert cmd[0:3] == ["find", "-L", "/home/work"]
+        assert cmd[0:3] == ["find", "-L", "/home/klangk"]
         assert len(entries) == 2
         assert entries[0]["name"] == "a.txt"
-        assert entries[0]["path"] == "/home/work/a.txt"
+        assert entries[0]["path"] == "/home/klangk/a.txt"
         assert entries[0]["is_dir"] is False
         assert entries[0]["size"] == 100
         assert entries[1]["name"] == "subdir"
-        assert entries[1]["path"] == "/home/work/subdir"
+        assert entries[1]["path"] == "/home/klangk/subdir"
         assert entries[1]["is_dir"] is True
         assert entries[1]["size"] is None
 
@@ -134,7 +135,7 @@ class TestListFiles:
         with patch.object(
             _mock_pod, EXEC, new_callable=AsyncMock, return_value=(0, "", "")
         ):
-            entries = await files_inst.list_files(CID, "/home/work")
+            entries = await files_inst.list_files(CID, "/home/klangk")
 
         assert entries == []
 
@@ -268,7 +269,7 @@ class TestStatPath:
             new_callable=AsyncMock,
             return_value=(0, "regular file\t12345", ""),
         ):
-            info = await files_inst.stat_path(CID, "/home/work/f.txt")
+            info = await files_inst.stat_path(CID, "/home/klangk/f.txt")
 
         assert info == {"is_dir": False, "size": 12345}
 
@@ -279,7 +280,7 @@ class TestStatPath:
             new_callable=AsyncMock,
             return_value=(0, "directory\t4096", ""),
         ):
-            info = await files_inst.stat_path(CID, "/home/work")
+            info = await files_inst.stat_path(CID, "/home/klangk")
 
         assert info == {"is_dir": True, "size": 4096}
 
@@ -322,7 +323,7 @@ class TestReadFile:
                 (0, "regular file\t100", ""),  # stat
                 (0, "hello world", ""),  # cat
             ]
-            content = await files_inst.read_file(CID, "/home/work/hello.txt")
+            content = await files_inst.read_file(CID, "/home/klangk/hello.txt")
 
         assert content == "hello world"
         # cat should use -- separator
@@ -358,7 +359,7 @@ class TestReadFile:
             new_callable=AsyncMock,
             return_value=(0, "directory\t4096", ""),
         ):
-            content = await files_inst.read_file(CID, "/home/work")
+            content = await files_inst.read_file(CID, "/home/klangk")
 
         assert content is None
 
@@ -384,7 +385,7 @@ class TestStreamFile:
         ) as mock:
             chunks = []
             async for chunk in files_inst.stream_file(
-                CID, "/home/work/image.png"
+                CID, "/home/klangk/image.png"
             ):
                 chunks.append(chunk)
 
@@ -412,7 +413,7 @@ class TestStreamDirTar:
         ) as mock:
             chunks = []
             async for chunk in files_inst.stream_dir_tar(
-                CID, "/home/work/mydir"
+                CID, "/home/klangk/mydir"
             ):
                 chunks.append(chunk)
 
@@ -435,9 +436,11 @@ class TestDeletePath:
                 (0, "", ""),  # test -e
                 (0, "", ""),  # rm -rf
             ]
-            result = await files_inst.delete_path(CID, "/home/work/doomed.txt")
+            result = await files_inst.delete_path(
+                CID, "/home/klangk/doomed.txt"
+            )
 
-        assert result == "/home/work/doomed.txt"
+        assert result == "/home/klangk/doomed.txt"
         rm_cmd = mock.call_args_list[1][0][1]
         assert "--" in rm_cmd
         assert mock.call_args_list[1].kwargs["user"] == "klangk"
@@ -470,11 +473,11 @@ class TestRenamePath:
             ]
             result = await files_inst.rename_path(
                 CID,
-                "/home/work/old.txt",
-                "/home/work/new.txt",
+                "/home/klangk/old.txt",
+                "/home/klangk/new.txt",
             )
 
-        assert result == "/home/work/new.txt"
+        assert result == "/home/klangk/new.txt"
         mv_cmd = mock.call_args_list[3][0][1]
         assert "--" in mv_cmd
 
@@ -512,18 +515,18 @@ class TestWriteFile:
             _mock_pod, EXEC, new_callable=AsyncMock, return_value=(0, "", "")
         ) as mock:
             result = await files_inst.write_file(
-                CID, "/home/work/out.txt", b"data"
+                CID, "/home/klangk/out.txt", b"data"
             )
 
-        assert result == "/home/work/out.txt"
+        assert result == "/home/klangk/out.txt"
         assert mock.call_args.kwargs["user"] == "klangk"
         assert mock.call_args.kwargs["stdin_data"] == b"data"
         # Path passed as $1 positional arg, not in the sh -c string
         cmd = mock.call_args[0][1]
         assert cmd[0] == "sh"
         assert cmd[1] == "-c"
-        assert "/home/work/out.txt" not in cmd[2]  # not in the script
-        assert cmd[-1] == "/home/work/out.txt"  # passed as positional arg
+        assert "/home/klangk/out.txt" not in cmd[2]  # not in the script
+        assert cmd[-1] == "/home/klangk/out.txt"  # passed as positional arg
 
     async def test_write_fails(self, files_inst):
         with patch.object(

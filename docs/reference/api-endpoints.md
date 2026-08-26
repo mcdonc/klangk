@@ -696,7 +696,7 @@ No request body.
 [
   {
     "name": "README.md",
-    "path": "/home/work/README.md",
+    "path": "/home/klangk/README.md",
     "is_dir": false,
     "size": 1024,
     "mtime": 1704067200.0,
@@ -1398,11 +1398,11 @@ Requires a running container (returns 409 if stopped).
 `/workspaces/{id}`.
 
 ```json
-{ "old_path": "/home/work/old.py", "new_path": "/home/work/new.py" }
+{ "old_path": "/home/klangk/old.py", "new_path": "/home/klangk/new.py" }
 ```
 
 ```json
-{ "path": "/home/work/new.py", "status": "renamed" }
+{ "path": "/home/klangk/new.py", "status": "renamed" }
 ```
 
 ---
@@ -1417,7 +1417,7 @@ Requires a running container (returns 409 if stopped).
 query param (absolute container path).
 
 ```json
-{ "path": "/home/work/uploads/file.txt", "status": "uploaded" }
+{ "path": "/home/klangk/uploads/file.txt", "status": "uploaded" }
 ```
 
 ---

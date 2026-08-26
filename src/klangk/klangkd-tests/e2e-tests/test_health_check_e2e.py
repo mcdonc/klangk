@@ -213,10 +213,20 @@ class TestHealthCheckFailureSurfacing:
             try:
 
                 def is_unhealthy(msg):
+                    # Require the marker, not just any unhealthy frame: the
+                    # health loop ticks on a fixed cadence and a tick can
+                    # land between container create and `podman start`
+                    # finishing — that poll execs against a not-yet-running
+                    # container ("container state improper") and, with this
+                    # module's 0.1s grace, legitimately broadcasts a
+                    # transient unhealthy frame first. Production grace
+                    # (30s default) covers that window; the marker-bearing
+                    # frame is the one the reason contract is about.
                     return (
                         msg.get("type") == "service_health"
                         and msg.get("workspace_id") == workspace_id
                         and msg.get("healthy") is False
+                        and marker in (msg.get("health_message") or "")
                     )
 
                 found = await wait_for_received(

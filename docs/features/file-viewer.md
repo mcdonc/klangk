@@ -10,14 +10,15 @@ Click the **Files** tab in the workspace to open.
 
 ## Browsing
 
-The file browser starts at `/home/work` but can navigate the entire
+The file browser starts at your home directory (`~` — `/home/<handle>`
+per-handle, `/home/klangk` shared) but can navigate the entire
 container filesystem. Click a directory to enter it, or click a file
 to preview its contents.
 
 - **Path bar** at the top shows the current absolute path with
   clickable breadcrumbs. Click any segment to navigate to that
   directory, or use the up-arrow button to go up one level.
-- **Home button** (house icon) returns to `/home/work`.
+- **Home button** (house icon) returns to your home directory.
 - **Navigate to root** — click the leading `/` in the breadcrumbs or
   use the up-arrow repeatedly to reach `/`. From there you can browse
   shared bind-mounted directories (e.g. `/mnt/data`), system

@@ -35,6 +35,5 @@ $KLANGKD_DATA_DIR/workspaces/<user-id>/home/<workspace-id>/
 
 - All data stored in `$KLANGKD_DATA_DIR` (defaults to `$DEVENV_STATE/klangk/data`)
 - SQLite database: `klangk.db` (users, workspaces, groups, ACL entries, port allocations, token blocklist, login attempts, invitations)
-- Workspace files: `workspaces/<user-id>/home/<workspace-id>/work/` (inside the `/home/klangk` bind mount)
-- Persistent home: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home/klangk` — dotfiles, bash history, Pi sessions)
+- Workspace home volume: `workspaces/<user-id>/home/<workspace-id>/` (mounted as `/home` — the shared home `klangk/` under the default shared layout, per-member `.users/<user-id>/` + `/home/<handle>` symlinks under per-handle)
 - Database persists across restarts and rebuilds

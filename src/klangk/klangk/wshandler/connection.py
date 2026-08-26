@@ -233,9 +233,6 @@ class Connection:
         self, workspace_id: str, workspace: dict
     ) -> None:
         """Start/restart container for a workspace."""
-        host_path = str(
-            self.app.state.workspaces.get_workspace_host_path(workspace_id)
-        )
         home_path = str(
             self.app.state.workspaces.get_home_host_path(workspace_id)
         )
@@ -280,7 +277,6 @@ class Connection:
         ) = await self.app.state.container_registry.start_container(
             container.ContainerStartSpec(
                 workspace_id=workspace_id,
-                host_path=host_path,
                 home_path=home_path,
                 existing_container_id=workspace.get("container_id"),
                 num_ports=workspace.get(

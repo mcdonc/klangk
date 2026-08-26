@@ -672,6 +672,16 @@ class ContainerRegistry(NetworkSidecarMixin):
             # runs inside a pending task and is exempt (task identity —
             # resetting there would erase the counter it is counting on).
             self.crash.on_start(spec.workspace_id)
+            # Materialize <home>/klangk on the HOST before podman start:
+            # the image WORKDIR is /home/klangk (#2725) but the home volume
+            # mounts at /home, so a missing dir means podman either
+            # auto-creates it as container-root (unwritable) or — for a
+            # legacy dangling `klangk` symlink — refuses to start (chdir
+            # ENOENT). Idempotent; the skel populate itself stays in
+            # _bringup where a container already exists to run it in.
+            await self.app.state.workspaces.ensure_shared_home_dir(
+                spec.workspace_id
+            )
             result = await self._start_container_inner(spec)
             bag = spec.workspace_settings or {}
             if "idle_timeout" in bag:
@@ -1149,9 +1159,9 @@ class ContainerRegistry(NetworkSidecarMixin):
         """Inner implementation of start_container (called under lock).
 
         Unpacks the spec once (#2566); the body reads plain locals, same
-        as the pre-spec signature. ``spec.host_path`` is accepted for
-        interface compatibility but unused here — mounts are driven by
-        ``home_path`` / ``config_path`` / ``extra_mounts``.
+        as the pre-spec signature. Mounts are driven by
+        ``home_path`` / ``config_path`` / ``extra_mounts`` — the
+        pre-#2725 ``host_path`` (the ``home/work`` subtree) is gone.
         """
         workspace_id = spec.workspace_id
         home_path = spec.home_path

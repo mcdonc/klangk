@@ -2261,7 +2261,7 @@ class TestSharedHomeLayout:
         # The exec path reads the connection's home; under the shared
         # layout that is /home/klangk, so HOME and the cwd both point
         # there (#2169 decision: exec cwd is /home/klangk, not
-        # /home/work).
+        # /home/klangk).
         app_state = _make_app_state()
         registry = app_state.state.container_registry
         sock = _mock_sock()
@@ -3000,7 +3000,7 @@ class TestExecController:
         assert kwargs["env"] == [
             "SSH_AUTH_SOCK=/tmp/klangk-ssh-agent-uid.sock"
         ]
-        assert kwargs["work_dir"] == "/home/work"
+        assert kwargs["work_dir"] == "/home/klangk"
 
     async def test_exec_start_sets_ssh_agent_socket_without_relay(
         self, app_state

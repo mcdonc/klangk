@@ -34,7 +34,7 @@ test.describe("file-viewers/deep-link", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/readme.md",
+        "/home/klangk/readme.md",
         MD,
         headers,
         "text/markdown",
@@ -42,7 +42,7 @@ test.describe("file-viewers/deep-link", () => {
 
       // Backing content exists via API.
       const api = await request.get(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/readme.md`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/klangk/readme.md`,
         { headers },
       );
       expect((await api.json()).content).toContain("# Deep Link Heading");

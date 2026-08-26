@@ -5834,7 +5834,7 @@ class TestFileRoutes:
                 return_value=(0, "f.txt\tf\t10\t0.0\t0.0\n", ""),
             ):
                 resp = await client.get(
-                    f"/api/v1/workspaces/{ws_id}/files?path=/home/work",
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home/klangk",
                     headers=headers,
                 )
             assert resp.status_code == 200
@@ -5874,7 +5874,7 @@ class TestFileRoutes:
                 # Upload: write_file calls exec once (sh -c)
                 mock_exec.return_value = (0, "", "")
                 resp = await client.post(
-                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/hello.txt",
+                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/klangk/hello.txt",
                     headers=headers,
                     files={
                         "file": ("hello.txt", b"hello world", "text/plain")
@@ -5889,7 +5889,7 @@ class TestFileRoutes:
                     (0, "hello world", ""),  # cat
                 ]
                 resp = await client.get(
-                    f"/api/v1/workspaces/{ws_id}/files/content?path=/home/work/hello.txt",
+                    f"/api/v1/workspaces/{ws_id}/files/content?path=/home/klangk/hello.txt",
                     headers=headers,
                 )
                 assert resp.status_code == 200
@@ -5909,7 +5909,7 @@ class TestFileRoutes:
                 return_value=(0, "", ""),
             ):
                 await client.post(
-                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/test.txt",
+                    f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/klangk/test.txt",
                     headers=headers,
                     files={"file": ("test.txt", b"data", "text/plain")},
                 )
@@ -5938,7 +5938,7 @@ class TestFileRoutes:
         try:
             monkeypatch.setattr(app.state.settings, "file_upload_size_max", 10)
             resp = await client.post(
-                f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/work/big.txt",
+                f"/api/v1/workspaces/{ws_id}/files/upload?path=/home/klangk/big.txt",
                 headers=headers,
                 files={"file": ("big.txt", b"x" * 100, "text/plain")},
             )
@@ -6009,7 +6009,7 @@ class TestFileRoutes:
                     (0, "", ""),  # rm -rf
                 ]
                 resp = await client.delete(
-                    f"/api/v1/workspaces/{ws_id}/files?path=/home/work/doomed.txt",
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home/klangk/doomed.txt",
                     headers=headers,
                 )
             assert resp.status_code == 200
@@ -6072,8 +6072,8 @@ class TestFileRoutes:
                     f"/api/v1/workspaces/{ws_id}/files/rename",
                     headers=headers,
                     json={
-                        "old_path": "/home/work/old.txt",
-                        "new_path": "/home/work/new.txt",
+                        "old_path": "/home/klangk/old.txt",
+                        "new_path": "/home/klangk/new.txt",
                     },
                 )
             assert resp.status_code == 200
@@ -6166,7 +6166,7 @@ class TestFileRoutes:
                 ),
             ):
                 resp = await client.get(
-                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/work/dl.txt",
+                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/klangk/dl.txt",
                     headers=headers,
                 )
             assert resp.status_code == 200
@@ -6198,7 +6198,7 @@ class TestFileRoutes:
                 ),
             ):
                 resp = await client.get(
-                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/work/f%22name.txt",
+                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/klangk/f%22name.txt",
                     headers=headers,
                 )
             assert resp.status_code == 200
@@ -6232,7 +6232,7 @@ class TestFileRoutes:
                 ),
             ):
                 resp = await client.get(
-                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/work/mydir",
+                    f"/api/v1/workspaces/{ws_id}/files/download?path=/home/klangk/mydir",
                     headers=headers,
                 )
             assert resp.status_code == 200
@@ -8249,8 +8249,8 @@ class TestWorkspaceExportImport:
 
         home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
-        (home / "work").mkdir(exist_ok=True)
-        (home / "work" / "hello.txt").write_text("hello world")
+        (home / "klangk").mkdir(exist_ok=True)
+        (home / "klangk" / "hello.txt").write_text("hello world")
 
         # Export as admin
         admin_headers = await self._admin_headers(client)
@@ -8330,8 +8330,8 @@ class TestWorkspaceExportImport:
 
         home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
-        (home / "work").mkdir(exist_ok=True)
-        (home / "work" / "data.txt").write_text("test data")
+        (home / "klangk").mkdir(exist_ok=True)
+        (home / "klangk" / "data.txt").write_text("test data")
 
         admin_headers = await self._admin_headers(client)
         export_resp = await client.get(
@@ -8358,8 +8358,8 @@ class TestWorkspaceExportImport:
 
         # Verify the home dir was extracted
         new_home = app.state.workspaces.home_path(imported["id"])
-        assert (new_home / "work" / "data.txt").exists()
-        assert (new_home / "work" / "data.txt").read_text() == "test data"
+        assert (new_home / "klangk" / "data.txt").exists()
+        assert (new_home / "klangk" / "data.txt").read_text() == "test data"
 
     async def test_import_uses_archive_name(self, client, admin_user, user):
         # Build a minimal archive with workspace.json
@@ -9084,8 +9084,8 @@ class TestWorkspaceExportImport:
 
         home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
-        (home / "work").mkdir(exist_ok=True)
-        (home / "work" / "file.txt").write_text("streamed content")
+        (home / "klangk").mkdir(exist_ok=True)
+        (home / "klangk" / "file.txt").write_text("streamed content")
 
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
@@ -9119,13 +9119,13 @@ class TestWorkspaceExportImport:
 
         home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
-        (home / "work").mkdir(exist_ok=True)
+        (home / "klangk").mkdir(exist_ok=True)
         # Write a large file with random data (incompressible, so gzip
         # passes it through in large writes that trigger buffer flushes)
         import random
 
         rng = random.Random(42)
-        (home / "work" / "big.bin").write_bytes(
+        (home / "klangk" / "big.bin").write_bytes(
             bytes(rng.getrandbits(8) for _ in range(512 * 1024))
         )
 
@@ -9153,8 +9153,8 @@ class TestWorkspaceExportImport:
 
         home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
-        (home / "work").mkdir(exist_ok=True)
-        (home / "work" / "f.txt").write_text("data")
+        (home / "klangk").mkdir(exist_ok=True)
+        (home / "klangk" / "f.txt").write_text("data")
 
         import subprocess as subprocess_mod
 
@@ -9248,10 +9248,10 @@ class TestWorkspaceExportImport:
 
         home = app.state.workspaces.home_path(ws["id"])
         home.mkdir(parents=True, exist_ok=True)
-        (home / "work").mkdir(exist_ok=True)
-        (home / "work" / "real.txt").write_text("real file")
-        (home / "work" / "relative_link").symlink_to("real.txt")
-        (home / "work" / "external_link").symlink_to("/etc/passwd")
+        (home / "klangk").mkdir(exist_ok=True)
+        (home / "klangk" / "real.txt").write_text("real file")
+        (home / "klangk" / "relative_link").symlink_to("real.txt")
+        (home / "klangk" / "external_link").symlink_to("/etc/passwd")
 
         admin_headers = await self._admin_headers(client)
         resp = await client.get(
@@ -9293,7 +9293,7 @@ class TestWorkspaceExportImport:
         rng = random.Random(42)
         expected_files = {}
         for depth in range(1, 8):
-            dir_path = home / "work"
+            dir_path = home / "klangk"
             for d in range(depth):
                 dir_path = dir_path / f"level{d}"
             dir_path.mkdir(parents=True, exist_ok=True)
@@ -9310,7 +9310,7 @@ class TestWorkspaceExportImport:
             (dir_path / "link.txt").symlink_to("file0.txt")
 
         # Also add some binary-ish content
-        bin_dir = home / "work" / "bin"
+        bin_dir = home / "klangk" / "bin"
         bin_dir.mkdir(exist_ok=True)
         bin_content = bytes(rng.getrandbits(8) for _ in range(4096))
         (bin_dir / "data.bin").write_bytes(bin_content)
@@ -9366,12 +9366,12 @@ class TestWorkspaceExportImport:
 
         # Verify binary file
         assert (
-            imported_home / "work" / "bin" / "data.bin"
+            imported_home / "klangk" / "bin" / "data.bin"
         ).read_bytes() == bin_content
 
         # Verify symlinks survived as symlinks
         for depth in range(1, 8):
-            link_path = imported_home / "work"
+            link_path = imported_home / "klangk"
             for d in range(depth):
                 link_path = link_path / f"level{d}"
             link_path = link_path / "link.txt"

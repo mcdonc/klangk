@@ -35,12 +35,12 @@ test.describe("file-viewers/code-view", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/main.dart",
+        "/home/klangk/main.dart",
         DART,
         headers,
       );
       const api = await request.get(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/main.dart`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/klangk/main.dart`,
         { headers },
       );
       expect((await api.json()).content).toContain("void main()");
@@ -68,7 +68,13 @@ test.describe("file-viewers/code-view", () => {
       "fv-code-download",
     );
     try {
-      await seedFile(request, workspaceId, "/home/work/dl.dart", DART, headers);
+      await seedFile(
+        request,
+        workspaceId,
+        "/home/klangk/dl.dart",
+        DART,
+        headers,
+      );
       await openFilesTab(page);
       await clickFileRow(page, 0);
 
@@ -77,7 +83,7 @@ test.describe("file-viewers/code-view", () => {
       // "download" event in CI).
       const dl = await request.get(
         `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
-          "/home/work/dl.dart",
+          "/home/klangk/dl.dart",
         )}`,
         { headers },
       );
@@ -101,7 +107,7 @@ test.describe("file-viewers/code-view", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/nav.py",
+        "/home/klangk/nav.py",
         "print('x')\n",
         headers,
       );
