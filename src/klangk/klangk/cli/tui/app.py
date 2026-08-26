@@ -313,6 +313,20 @@ class KlangkApp(App):
     def do_logout(self) -> None:
         async def _logout() -> None:
             await asyncio.to_thread(self.tui_state.logout)
+            # Logout clears the token; drop the parked status-WS listener
+            # so the loop wakes, sees no token, and exits instead of
+            # lingering on the old server's connection — a parked WS would
+            # keep firing events (toasts, live_extra) after logout, and a
+            # later re-login would spawn a second concurrent status WS
+            # (#2704). Sequence: drop AFTER logout (so the loop exits via
+            # the no-token branch rather than re-dialing), BEFORE the pop
+            # (so the screen is still in the stack if the loop checks).
+            main = next(
+                (s for s in self.screen_stack if isinstance(s, MainScreen)),
+                None,
+            )
+            if main is not None:
+                main.drop_status_connection()
             self.pop_screen()  # MainScreen
             self.live_extra = ""
             self.last_login = None
@@ -446,6 +460,19 @@ class KlangkApp(App):
         async def _expire() -> None:
             try:
                 await asyncio.to_thread(self.tui_state.logout)
+                # Same parked-listener teardown as ``do_logout`` (#2704):
+                # logout cleared the token, so the dropped loop exits via
+                # its no-token branch instead of re-dialing the old server.
+                main = next(
+                    (
+                        s
+                        for s in self.screen_stack
+                        if isinstance(s, MainScreen)
+                    ),
+                    None,
+                )
+                if main is not None:
+                    main.drop_status_connection()
                 # Clear every screen above the base, then show login.
                 # ``_pop_above`` pops a fixed snapshot, so the teardown is
                 # bounded regardless of what a concurrent worker does between

@@ -1254,9 +1254,16 @@ class MainScreen(StatusScreen):
         reconnect backoff sleep, so a switch interrupts either (#2704).
         """
         waiter = asyncio.create_task(self._ws_drop.wait())
-        done, _ = await asyncio.wait(
-            {waiter, awaiting}, return_when=asyncio.FIRST_COMPLETED
-        )
+        try:
+            done, _ = await asyncio.wait(
+                {waiter, awaiting}, return_when=asyncio.FIRST_COMPLETED
+            )
+        except BaseException:
+            # The loop itself was cancelled while parked in the race (app
+            # shutdown): reap the waiter so it doesn't outlive this frame.
+            if not waiter.done():
+                waiter.cancel()
+            raise
         if waiter in done:
             if not awaiting.done():
                 awaiting.cancel()

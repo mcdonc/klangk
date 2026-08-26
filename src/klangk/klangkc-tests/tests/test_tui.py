@@ -1806,6 +1806,100 @@ async def test_server_switch_restarts_loop_after_gave_up(monkeypatch):
         assert not isinstance(app.screen, ServerDownScreen)
 
 
+async def test_do_logout_drops_old_ws(monkeypatch):
+    """Logout drops the parked status-WS listener after the token clears,
+    so the loop exits via the no-token branch and never re-dials — no
+    lingering old-server events, no second concurrent WS after a re-login
+    (#2704)."""
+    await _fast_reconnect(monkeypatch)
+
+    dialed: list[str] = []
+    cancelled: list[bool] = []
+    release = asyncio.Event()
+
+    async def park(url, token, on_event=None, on_connect=None, **k):
+        dialed.append(url)
+        on_connect()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(scr_main, "listen_for_status", park)
+
+    st = _authed_state()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        loop = asyncio.create_task(_real_status_loop(screen))
+        for _ in range(4):
+            await pilot.pause()
+        assert dialed == ["https://x.example"]
+
+        # Logout: token clears, then the real App hook runs. Reuse the
+        # app's worker (it is what production runs) and bound the wait so a
+        # regression fails instead of hanging.
+        def fake_logout():
+            st.token = lambda: None
+
+        st.logout = fake_logout
+        app.do_logout()
+        await asyncio.wait_for(asyncio.shield(asyncio.gather(loop)), 2)
+        await pilot.pause()
+
+        assert cancelled == [True]  # the parked listener was torn down
+        assert dialed == ["https://x.example"]  # never re-dialed
+        assert isinstance(app.screen, LoginScreen)
+
+
+async def test_confirm_session_expired_drops_old_ws(monkeypatch):
+    """Confirming the session-expired overlay drops the parked listener
+    too — same teardown as do_logout, on the expiry path (#2704)."""
+    await _fast_reconnect(monkeypatch)
+
+    dialed: list[str] = []
+    cancelled: list[bool] = []
+    release = asyncio.Event()
+
+    async def park(url, token, on_event=None, on_connect=None, **k):
+        dialed.append(url)
+        on_connect()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+
+    monkeypatch.setattr(scr_main, "listen_for_status", park)
+
+    st = _authed_state()
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        screen = next(s for s in app.screen_stack if isinstance(s, MainScreen))
+        loop = asyncio.create_task(_real_status_loop(screen))
+        for _ in range(4):
+            await pilot.pause()
+        assert dialed == ["https://x.example"]
+
+        # The expiry flow requires the overlay to be up first.
+        app.session_expired()
+        await pilot.pause()
+        assert app._session_expired_screen is not None
+
+        def fake_logout():
+            st.token = lambda: None
+
+        st.logout = fake_logout
+        app.confirm_session_expired()
+        await asyncio.wait_for(asyncio.shield(asyncio.gather(loop)), 2)
+        await pilot.pause()
+
+        assert cancelled == [True]
+        assert dialed == ["https://x.example"]
+        assert isinstance(app.screen, LoginScreen)
+
+
 async def test_ensure_status_ws_worker_starts_when_missing(monkeypatch):
     """``ensure_status_ws_worker`` also covers a screen whose loop never
     started (unauthenticated mount): ``_status_worker`` is None (#2704)."""
