@@ -197,6 +197,59 @@ def scan_free_ports(start: int, count: int, used: set[int]) -> list[int]:
     return ports
 
 
+def authority_has_port(authority: str) -> bool:
+    """True if a ``host[:port]`` authority names an explicit port.
+
+    Used by :meth:`Util.browser_listener_hostname` (#2732) to tell a
+    port-less hostname (``localhost``, an outer proxy's standard-port
+    authority) from one that already carries its port. IPv6 literals
+    arrive bracketed per RFC 3986, so the colon inside ``[::1]`` is not
+    a port separator; ``[::1]:8997`` is. A bare (unbracketed) IPv6
+    literal is indistinguishable from ``host:port`` by suffix alone, so
+    it reports True — callers treat it as already-ported and leave it
+    alone, which is the safe outcome for a form no supported client
+    sends.
+    """
+    if authority.startswith("["):
+        return not authority.endswith("]")
+    _host, sep, port = authority.rpartition(":")
+    return bool(sep) and port.isdigit()
+
+
+def is_portless_loopback_host(authority: str) -> bool:
+    """True if *authority* is a port-less loopback hostname (#2732).
+
+    The synthetic local values :meth:`Util.browser_listener_hostname`
+    retargets at the browser listener: the no-request floor
+    ``localhost`` and the ``Host: localhost`` / ``Host: 127.x`` a CLI
+    handshake sends. Case-insensitive (Host is case-insensitive per RFC
+    7230) and covers 127.0.0.0/8 dotted-quad + bracketed ``::1``.
+    Port-bearing authorities and non-loopback hosts (remote intent;
+    never rewritten) are False. Any unbracketed colon-bearing form —
+    every bare IPv6 literal, including v4-mapped loopback like
+    ``::ffff:127.0.0.1`` — is left alone: appending ``:<port>`` to it
+    would emit an authority no URL parser accepts, and bracketing is
+    not this helper's job. Shorthand like ``127.1`` (rejected by
+    ``ipaddress``) and the FQDN dot form ``localhost.`` are also left
+    alone — value-noise edges no supported client sends.
+    """
+    if not authority or authority_has_port(authority):
+        return False
+    candidate = authority.lower()
+    if ":" in candidate:
+        # Bracketed form only; a bare IPv6 literal (``::1``, ``::ffff:..``)
+        # cannot take a bare :port append.
+        if not (candidate.startswith("[") and candidate.endswith("]")):
+            return False
+        candidate = candidate[1:-1]
+    if candidate == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return False
+
+
 # Loopback addresses used by ``Util.client_is_loopback`` (the none-mode
 # /auth/local self-defense). This is the *real* loopback range
 # (127.0.0.0/8 + ::1), not the three-string allowlist the startup bind
@@ -546,10 +599,20 @@ class Util:
         no request in hand (e.g. ``start_workspace`` at boot). With no
         headers the request branches are skipped and the env vars are the
         sole source, falling back to bare ``localhost`` / ``http`` / ``""``.
+
+        #2732: a loopback hostname that was NOT taken from the env pin or
+        a trusted ``X-Forwarded-Host`` is a synthetic local value (a UDS
+        CLI handshake sends ``Host: localhost``; the no-request floor is
+        bare ``localhost``). Every URL this resolver feeds is
+        browser-facing, and browsers reach the deployment through the
+        browser listener (``KLANGKD_PORT``), so the configured browser port
+        is appended — see :meth:`browser_listener_hostname`.
         """
         hostname = self.app.state.settings.hosting_hostname
         proto = self.app.state.settings.hosting_proto
         base_path = self.app.state.settings.hosting_base_path
+        pinned = bool(hostname)
+        forwarded = False
         trust = (
             (not self.reject_proxy_headers())
             and self.connection_peer_is_trusted(client_host)
@@ -560,10 +623,13 @@ class Util:
                 forwarded_host = headers.get("x-forwarded-host")
                 if forwarded_host:
                     hostname = forwarded_host
+                    forwarded = True
             if not hostname:
                 hostname = headers.get("host") or "localhost"
         if not hostname:
             hostname = "localhost"
+        if not pinned and not forwarded:
+            hostname = self.browser_listener_hostname(hostname)
         if not proto:
             if headers is not None and trust:
                 proto = headers.get("x-forwarded-proto") or "http"
@@ -576,11 +642,36 @@ class Util:
                 base_path = ""
         return hostname, proto, base_path
 
+    def browser_listener_hostname(self, hostname: str) -> str:
+        """Point a synthetic loopback hostname at the browser listener (#2732).
+
+        ``/hosted/`` and every other browser-facing surface live on the
+        browser listener (``KLANGKD_PORT``), never on the container-egress
+        listener or the backend UDS. The synthetic loopback values this
+        resolver produces when no operator intent is available (the
+        no-request floor ``localhost``, and the ``Host: localhost`` a CLI
+        sends over the backend UDS) name port 80 — a URL no deployment
+        serves. When a browser listener is configured, append its port.
+
+        No-op otherwise: a hostname that already carries a port (a direct
+        browser request to the browser listener), a non-loopback hostname
+        (carries remote intent; never rewritten), or headless mode
+        (``KLANGKD_PORT`` unset — no browser listener exists to point at).
+        The loopback test is :func:`is_portless_loopback_host` —
+        case-insensitive, whole 127.0.0.0/8 range, ``::1`` bracketed.
+        """
+        port = self.app.state.settings.port
+        if not port or not is_portless_loopback_host(hostname):
+            return hostname
+        return f"{hostname}:{port}"
+
     def cors_origins(self) -> list[str]:
         """Build the CORS allowed-origins list.
 
         Priority: KLANGKD_CORS_ORIGINS (comma-separated) > derived from the
-        hosting env vars > bare localhost.
+        hosting env vars > the derived localhost authority (bare in headless
+        mode, ``localhost:<KLANGKD_PORT>`` when a browser listener exists,
+        #2732).
 
         Consistent with hosted-app URL construction: the port comes from
         KLANGKD_HOSTING_HOSTNAME (which carries host[:port]); it is never

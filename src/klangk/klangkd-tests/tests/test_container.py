@@ -3304,7 +3304,8 @@ class TestStartContainer:
         binds = p.create_container.call_args.kwargs["binds"]
         assert "/tmp/home:/home" in binds
 
-    async def test_hosting_env_vars(self, workspace):
+    async def test_hosting_env_vars(self, workspace, monkeypatch):
+        monkeypatch.setattr(self.registry.app.state.settings, "port", "8997")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(
@@ -3320,17 +3321,21 @@ class TestStartContainer:
         assert "KLANGKWS_HOSTING_PROTO=https" in env
         assert "KLANGKWS_HOSTING_BASE_PATH=/klangk" in env
 
-    async def test_hosting_env_vars_default_is_bare_localhost(self, workspace):
-        """Omitted hosting_* resolves to bare localhost (#1240).
+    async def test_hosting_env_vars_default_gains_browser_port(
+        self, workspace, monkeypatch
+    ):
+        """Omitted hosting_* resolves through derive_hosting_info (#1240, #2732).
 
         This is the path ``eager_start_workspace`` takes (autostart /
-        workspace create have no request to derive from). Before the fix
-        the defaults were a bare ``localhost`` with no port anyway, but
-        *bypassed* ``derive_hosting_info`` entirely — so a deployer who set
-        ``KLANGKD_HOSTING_HOSTNAME`` saw it ignored on every eager start.
-        Now the choke point resolves it, and no port is synthesized from
-        ``KLANGKD_EGRESS_PORT`` (the port must live in HOSTING_HOSTNAME).
+        workspace create have no request to derive from). Before #1240 the
+        eager path bypassed ``derive_hosting_info`` entirely, so a deployer
+        who set ``KLANGKD_HOSTING_HOSTNAME`` saw it ignored. #2732: the
+        synthetic loopback floor now carries the browser-listener port, so
+        the hosted URL baked at setup names the listener that actually
+        serves ``/hosted/`` — never the egress port (#1240) and never bare
+        port-80 localhost.
         """
+        monkeypatch.setattr(self.registry.app.state.settings, "port", "8997")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(
@@ -3339,9 +3344,33 @@ class TestStartContainer:
                 )
             )
         env = p.create_container.call_args.kwargs["env"]
-        assert "KLANGKWS_HOSTING_HOSTNAME=localhost" in env
+        assert "KLANGKWS_HOSTING_HOSTNAME=localhost:8997" in env
         assert "KLANGKWS_HOSTING_PROTO=http" in env
         assert "KLANGKWS_HOSTING_BASE_PATH=" in env
+
+    async def test_headless_omits_hosting_env(self, workspace):
+        """Headless (KLANGKD_PORT unset) suppresses the hosting env (#2732).
+
+        ``/hosted/`` is served by the browser listener, which headless mode
+        does not render — any hosted URL baked now would be dead on arrival.
+        Same clean-error outcome as the cap-0 case: klangk-hosted-url /
+        get_hosted_url error out, non-hosting env is untouched.
+        """
+        # Fixture settings are headless by default (no KLANGKD_PORT).
+        assert self.registry.app.state.settings.port is None
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    num_ports=5,
+                )
+            )
+        env = p.create_container.call_args.kwargs["env"]
+        assert not any(e.startswith("KLANGKWS_PORT_MAPPINGS=") for e in env)
+        assert not any(e.startswith("KLANGKWS_HOSTING_") for e in env)
+        assert any(e.startswith("KLANGKWS_WORKSPACE_ID=") for e in env)
+        assert any(e.startswith("KLANGKWS_LLM_PROXY_URL=") for e in env)
 
     async def test_terminal_banner_default_empty(self, workspace):
         """Default terminal banner is empty, so env var is not passed."""
@@ -3539,8 +3568,11 @@ class TestStartContainer:
         await self.registry.allocate_ports(workspace["id"], 5)
         assert await self.registry.get_workspace_ports(workspace["id"]) == []
 
-    async def test_hosting_env_present_when_enabled(self, workspace):
-        """Sanity: with the default cap, hosting env is injected as before."""
+    async def test_hosting_env_present_when_enabled(
+        self, workspace, monkeypatch
+    ):
+        """Sanity: with the default cap and a browser listener, hosting env is injected."""
+        monkeypatch.setattr(self.registry.app.state.settings, "port", "8997")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(

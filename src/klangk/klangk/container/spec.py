@@ -220,12 +220,16 @@ def build_env(
     env_vars.append("PI_SKIP_VERSION_CHECK=1")
     logger.info("Container LLM proxy: %s", proxy_url)
 
-    # Hosted-app serving env. Omit entirely when the workspace has
+    # Hosted-app serving env. Omitted entirely when the workspace has
     # no host ports (KLANGKD_HOSTED_PORTS_PER_WORKSPACE=0, or a
     # per-workspace value of 0): KLANGKWS_PORT_MAPPINGS absent makes
     # klangk-hosted-url / get_hosted_url error out cleanly, and the
     # KLANGKWS_HOSTING_* vars are meaningless without hosting. #1237
-    if host_ports:
+    # Also omitted in headless deployments (KLANGKD_PORT unset, #2732):
+    # /hosted/ is served by the browser listener, which headless mode
+    # does not render, so any hosted URL baked now would be dead on
+    # arrival — the same clean-error outcome as the cap-0 case.
+    if host_ports and app.state.settings.port is not None:
         mappings = [
             f"{CONTAINER_PORT_START + i}:{hp}"
             for i, hp in enumerate(host_ports)
