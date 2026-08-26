@@ -179,6 +179,10 @@ class Workspace:
     allowed_domains: list[str] | None = None
     rejected_domains: list[str] | None = None
     egress_mode: str | None = None
+    # Home layout (#2169): True = each member gets a private
+    # /home/.users/{id} home (via a /home/{handle} symlink); False = all
+    # members share /home/klangk. Server default is True.
+    per_handle_home: bool = True
     owner_email: str | None = None
     running: bool = False
     health: str | None = None
@@ -488,6 +492,7 @@ class KlangkClient:
             allowed_domains=w.get("allowed_domains"),
             rejected_domains=w.get("rejected_domains"),
             egress_mode=w.get("egress_mode"),
+            per_handle_home=bool(w.get("per_handle_home", True)),
             service_started_at=w.get("service_started_at"),
             settings=w.get("settings"),
         )
@@ -506,6 +511,7 @@ class KlangkClient:
         egress_mode: str | None = None,
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
+        per_handle_home: bool | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
         if image:
@@ -530,6 +536,10 @@ class KlangkClient:
             body["rejected_domains"] = rejected_domains
         if settings:
             body["settings"] = settings
+        # None = not chosen: the server applies the deploy default
+        # (KLANGKD_PER_HANDLE_HOME) — same convention as egress_mode.
+        if per_handle_home is not None:
+            body["per_handle_home"] = per_handle_home
         resp = self.post("/api/v1/workspaces", json=body)
         self.check_auth(resp)
         self._raise_for_status(resp)

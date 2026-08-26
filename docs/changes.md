@@ -155,6 +155,14 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **Per-handle home is choosable on every create and edit surface (#2721).**
+  The web create dialog and Settings tab, the TUI create/edit screens, and
+  `klangk create`/`klangk edit` (`--per-handle-home`/`--shared-home`) all
+  send the workspace's home layout. Create forms pre-reflect the server
+  default (`KLANGKD_PER_HANDLE_HOME`, surfaced as `default_per_handle_home`
+  on `/config`); a flip on an existing workspace applies from the next
+  connect/start. See [Workspaces](features/workspaces.md).
+
 - **Service session HOME is always the shared home (#2717).** The
   `service` tmux session now runs with `HOME=/home/klangk` pinned as a
   constant under both home layouts, and `/home/klangk` is created and

@@ -32,8 +32,35 @@ optionally configure:
 - **Allowed egress domains** — restrict outbound network access to a
   list of hosts (e.g., `github.com:443`, `pypi.org`). See
   [Egress Filtering](egress-filtering.md).
+- **Per-handle home** — the home-directory layout. On: every member
+  gets a private `/home/<handle>` (dotfiles, shell history, and agent
+  configs are per-user). Off: everyone shares `/home/klangk`. The
+  checkbox starts on the server default (`KLANGKD_PER_HANDLE_HOME`);
+  if that default can't be fetched, the choice is left out and the
+  server default applies. See [The Shell](the-shell.md).
 
 You can change all of these later from the workspace **Settings** tab.
+
+## Home directory layout
+
+Every workspace picks one of two home layouts:
+
+- **Per-handle home** (the default) — each member gets a private
+  `/home/<handle>` directory; see [The Shell](the-shell.md).
+- **Shared home** — all members share the single `/home/klangk`.
+
+The choice appears on the create form and the **Settings** tab (web),
+the create and edit screens (TUI), and the CLI:
+
+```bash
+klangk create my-project --shared-home
+klangk edit my-project --per-handle-home
+```
+
+The deploy-wide default for new workspaces is
+`KLANGKD_PER_HANDLE_HOME`. Changing an existing workspace's layout
+applies from the next connect/start — open terminals keep their
+layout until they end.
 
 ## Auto-start
 

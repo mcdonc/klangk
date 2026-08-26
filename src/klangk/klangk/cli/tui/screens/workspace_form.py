@@ -142,6 +142,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         "memory_limit",
         "pids_limit",
         "tmp_size",
+        "per_handle_home",
         "command",
         "health_check",
         "cancel",
@@ -173,6 +174,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         default_allowed_domains: list[str] | None = None,
         default_rejected_domains: list[str] | None = None,
         nix_available: bool = False,
+        default_per_handle_home: bool | None = None,
     ) -> None:
         super().__init__()
         self._allowed = list(allowed)
@@ -192,6 +194,13 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         self._rejected_domains: list[str] = list(
             default_rejected_domains or []
         )
+        # #2721: home-layout default (KLANGKD_PER_HANDLE_HOME) fetched by
+        # the caller from /config, so the checkbox starts on the server's
+        # default — an untouched form submits exactly what a silent POST
+        # would get. None = unknown (fetch failed): the checkbox is hidden
+        # and the field omitted, so the server applies its own default —
+        # never a silently forced layout (#2737 review).
+        self._default_per_handle_home = default_per_handle_home
         if self._allowed:
             # Select tuples are (prompt, value). Prompts are rich Text so an
             # image name containing brackets can't trigger markup parsing.
@@ -326,6 +335,15 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                     )
                 with TabPane("Advanced", id="advanced_pane"):
                     yield Horizontal(
+                        Static("Home layout"),
+                        Checkbox(
+                            "per-handle (off = shared home)",
+                            value=bool(self._default_per_handle_home),
+                            id="per_handle_home",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
                         Static("Command"),
                         Input(id="command"),
                         classes="field-row",
@@ -351,6 +369,13 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         nix_cb = self.query_one("#nix", Checkbox)
         nix_cb.display = self._nix_available
         nix_cb.disabled = not self._nix_available
+        # The home-layout toggle is hidden when the deploy default is
+        # unknown (fetch failure): an offered choice we can't pre-reflect
+        # would pin a possibly-wrong value, so the field is omitted and
+        # the server applies its own default (#2737 review).
+        phh_cb = self.query_one("#per_handle_home", Checkbox)
+        phh_cb.display = self._default_per_handle_home is not None
+        phh_cb.disabled = self._default_per_handle_home is None
         self._skip_editors_on_tab()
         self._render_mounts()
         self._render_env()
@@ -581,6 +606,12 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
             self._allow_autostart
             and self.query_one("#auto_start", Checkbox).value
         )
+        # #2721: sent whenever the deploy default was known — the
+        # checkbox's initial state IS the server default, so an untouched
+        # form submits it unchanged. Unknown default (hidden checkbox):
+        # omitted, and the server applies its own.
+        phh_cb = self.query_one("#per_handle_home", Checkbox)
+        per_handle_home = phh_cb.value if phh_cb.display else None
         mounts = list(self._mounts) or None
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
@@ -606,6 +637,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                 rejected_domains,
                 settings,
                 egress_mode,
+                per_handle_home,
             ),
             exit_on_error=False,
         )
@@ -623,6 +655,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         rejected_domains,
         settings,
         egress_mode,
+        per_handle_home,
     ) -> None:
         try:
             ws = await asyncio.to_thread(
@@ -638,6 +671,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                 rejected_domains=rejected_domains,
                 settings=settings,
                 egress_mode=egress_mode,
+                per_handle_home=per_handle_home,
             )
         except AuthError:
             self.app.session_expired()
@@ -742,6 +776,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         "memory_limit",
         "pids_limit",
         "tmp_size",
+        "per_handle_home",
         "command",
         "health_check",
         "cancel",
@@ -799,6 +834,9 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         # #2409: the workspace's egress mode, seeded for the Netfilter
         # picker. Falls back to the deploy default when unset.
         self._egress_mode: str = workspace.egress_mode or EGRESS_MODE_DEFAULT
+        # #2721: home layout, seeded from the workspace. Mutable (#2719):
+        # a flip applies from the next connect/start.
+        self._per_handle_home: bool = bool(workspace.per_handle_home)
         # In-place editor state (#1778): when set, the next Add *replaces*
         # the item at this index/key instead of appending. Cleared on Add.
         self._editing_mount: int | None = None
@@ -970,6 +1008,15 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         classes="field-row",
                     )
                 with TabPane("Advanced", id="advanced_pane"):
+                    yield Horizontal(
+                        Static("Home layout"),
+                        Checkbox(
+                            "per-handle (off = shared home)",
+                            value=self._per_handle_home,
+                            id="per_handle_home",
+                        ),
+                        classes="field-row",
+                    )
                     yield Horizontal(
                         Static("Command"),
                         Input(
@@ -1323,6 +1370,10 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         allowed_domains = list(self._allowed_domains) or None
         rejected_domains = list(self._rejected_domains) or None
         egress_mode = self.query_one("#egress_mode", Select).value
+        # #2721: home layout is mutable and applies from the next
+        # connect/start — never a restart-needed field (open sessions
+        # keep their layout until they end).
+        per_handle_home = self.query_one("#per_handle_home", Checkbox).value
         try:
             settings = _collect_settings(self)
         except ValueError as exc:
@@ -1352,6 +1403,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             "allowed_domains": allowed_domains,
             "rejected_domains": rejected_domains,
             "egress_mode": egress_mode,
+            "per_handle_home": per_handle_home,
         }
         if settings is not None:
             body["settings"] = settings

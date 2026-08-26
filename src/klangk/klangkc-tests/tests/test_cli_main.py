@@ -2537,6 +2537,7 @@ class TestMainCLI:
             allowed_domains=None,
             rejected_domains=None,
             settings=None,
+            per_handle_home=None,
         )
 
     def test_create_with_command_flag(self, logged_in_cfg, monkeypatch):
@@ -2565,6 +2566,7 @@ class TestMainCLI:
             allowed_domains=None,
             rejected_domains=None,
             settings=None,
+            per_handle_home=None,
         )
 
     def test_create_with_invalid_env_flag(self, logged_in_cfg, monkeypatch):
@@ -2616,6 +2618,7 @@ class TestMainCLI:
             allowed_domains=["github.com:443", "pypi.org"],
             rejected_domains=None,
             settings=None,
+            per_handle_home=None,
         )
 
     def test_create_with_reject_flag(self, logged_in_cfg, monkeypatch):
@@ -2648,6 +2651,7 @@ class TestMainCLI:
             allowed_domains=None,
             rejected_domains=["evil.example.com"],
             settings=None,
+            per_handle_home=None,
         )
 
     def test_create_with_reject_cidr_rejected(
@@ -2712,6 +2716,7 @@ class TestMainCLI:
                 "memory_limit": "4g",
                 "pids_limit": 256,
             },
+            per_handle_home=None,
         )
 
     def test_create_with_invalid_allow_flag(self, logged_in_cfg, monkeypatch):
@@ -3228,6 +3233,70 @@ class TestMainCLI:
 
         body = client.put.call_args[1]["json"]
         assert body["auto_start"] is True
+
+    def test_create_with_home_layout_flags(self, logged_in_cfg, monkeypatch):
+        # #2721: --per-handle-home / --shared-home thread the home layout
+        # through to create_workspace; omitted = None (deploy default).
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="new-id", name="ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client = MagicMock()
+        client.create_workspace.return_value = ws
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(main.app, ["create", "ws", "--shared-home"])
+        assert result.exit_code == 0
+        client.create_workspace.assert_called_once_with(
+            "ws",
+            image=None,
+            service_command=None,
+            auto_start=False,
+            mounts=None,
+            env=None,
+            health_check=None,
+            allowed_domains=None,
+            rejected_domains=None,
+            settings=None,
+            per_handle_home=False,
+        )
+        client.create_workspace.reset_mock()
+        client.create_workspace.return_value = ws
+        result = runner.invoke(main.app, ["create", "ws", "--per-handle-home"])
+        assert result.exit_code == 0
+        assert (
+            client.create_workspace.call_args.kwargs["per_handle_home"] is True
+        )
+
+    def test_edit_with_home_layout_flag(self, logged_in_cfg, monkeypatch):
+        # #2721: `klangk edit --shared-home` flips the layout; the flip
+        # applies from the next connect/start (no restart prompt).
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(context_mod, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app, ["edit", "my-ws", "--shared-home"]
+            )
+            assert result.exit_code == 0
+
+        body = client.put.call_args[1]["json"]
+        assert body["per_handle_home"] is False
 
     def test_edit_with_settings_flags(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main

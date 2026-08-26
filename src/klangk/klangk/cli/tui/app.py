@@ -175,6 +175,11 @@ class KlangkApp(App):
     .field-row > Input, .field-row > Select {
         width: 1fr;
     }
+    /* A checkbox in a field-row keeps its content-sized (auto) width —
+    without this the row's fixed label column bleeds onto it (#2721). */
+    .field-row > Checkbox {
+        width: auto;
+    }
     /* Editor rows (Input + Add/Remove buttons): keep the Input fractional so
     the buttons always fit inside the pane (#1891) — a greedy default-width
     Input otherwise pushes Add/Remove past the tab pane's clip region, where

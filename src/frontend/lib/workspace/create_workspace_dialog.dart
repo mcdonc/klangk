@@ -38,6 +38,13 @@ class CreateWorkspaceDialog extends StatefulWidget {
   /// image-only (the user picks the nix image themselves).
   final bool nixAvailable;
 
+  /// #2721: deploy default home layout (KLANGKD_PER_HANDLE_HOME). The
+  /// Per-handle home checkbox starts on this, so an untouched form
+  /// submits exactly what a silent POST would get. Null = unknown (old
+  /// server / fetch failure): the toggle is hidden and the field omitted,
+  /// so the server applies its own default (#2737 review).
+  final bool? defaultPerHandleHome;
+
   const CreateWorkspaceDialog({
     super.key,
     required this.auth,
@@ -47,6 +54,7 @@ class CreateWorkspaceDialog extends StatefulWidget {
     this.defaultAllowedDomains = const [],
     this.netfilterEnabled = false,
     this.nixAvailable = false,
+    this.defaultPerHandleHome,
   });
 
   @override
@@ -73,6 +81,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _rejectedDomains = <String>[];
   bool _autoStart = false;
   bool _nixEnabled = false;
+  // #2721: home layout. Starts on the deploy default when known; null
+  // (unknown) hides the toggle and omits the field.
+  bool? _perHandleHome;
   // #2409: per-workspace egress mode. 'interactive' is the server default for
   // new workspaces (consent-gated egress on out of the box).
   String _egressMode = 'interactive';
@@ -101,6 +112,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   void initState() {
     super.initState();
     _selectedImage = widget.defaultImage;
+    _perHandleHome = widget.defaultPerHandleHome;
     // #1365: pre-fill the editor with the deploy-wide default so a new
     // workspace inherits it; the creator's edits replace (not merge with)
     // the default and are submitted as the workspace's allowed_domains.
@@ -231,6 +243,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
       body['rejected_domains'] = List<String>.from(_rejectedDomains);
     }
     body['egress_mode'] = _egressMode;
+    // #2721: sent only when the deploy default was known — the toggle's
+    // initial state IS that default, so an untouched form submits it
+    // unchanged. Unknown: omitted, and the server applies its own.
+    if (_perHandleHome != null) body['per_handle_home'] = _perHandleHome!;
     if (widget.allowAutostart && _autoStart) {
       body['auto_start'] = true;
     }
@@ -538,6 +554,30 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                           ),
                           onSubmitted: (_) => _submit(),
                         ),
+                        // #2721: home layout. Pre-reflects the deploy
+                        // default when known; hidden (and the field
+                        // omitted) when it couldn't be fetched — an
+                        // offered choice we can't pre-reflect would pin a
+                        // possibly-wrong value.
+                        if (_perHandleHome != null) ...[
+                          const SizedBox(height: 16),
+                          Material(
+                            type: MaterialType.transparency,
+                            child: CheckboxListTile(
+                              value: _perHandleHome,
+                              onChanged: (v) => setState(
+                                () => _perHandleHome = v ?? true,
+                              ),
+                              title: const Text('Per-handle home'),
+                              subtitle: const Text(
+                                'Each member gets a private /home/<handle>; '
+                                'off = everyone shares /home/klangk',
+                              ),
+                              controlAffinity: ListTileControlAffinity.trailing,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
                         // #2202: per-workspace nix flag (only when the
                         // server has a btrfs seed subvolume). Independent
                         // of the image choice — it mounts a shared /nix

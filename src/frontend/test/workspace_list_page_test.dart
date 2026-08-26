@@ -2137,8 +2137,12 @@ void main() {
       await tester.tap(find.byTooltip('New Workspace'));
       await tester.pumpAndSettle();
 
-      // Try adding invalid mount (no colon)
+      // Try adding invalid mount (no colon). The General pane grew
+      // (Per-handle home tile, #2721), pushing the mounts editor below
+      // the fold — scroll it in before tapping.
       await tester.enterText(_dialogMountInput(), 'bad-mount');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
+      await tester.pumpAndSettle();
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 
@@ -2285,8 +2289,12 @@ void main() {
       // No copy buttons initially
       expect(find.byTooltip('Copy'), findsNothing);
 
-      // Add a mount
+      // Add a mount. The General pane grew (Per-handle home tile,
+      // #2721), pushing the mounts editor below the fold — scroll it in
+      // before tapping.
       await tester.enterText(_dialogMountInput(), '/src:/work');
+      await tester.ensureVisible(find.byIcon(Icons.add).at(1));
+      await tester.pumpAndSettle();
       await tester.tap(find.byIcon(Icons.add).at(1));
       await tester.pumpAndSettle();
 

@@ -93,6 +93,7 @@ void main() {
       String? productName,
       List<String>? netfilterDefaultDomains,
       bool? netfilterEnabled,
+      bool? defaultPerHandleHome,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -112,6 +113,8 @@ void main() {
                 'netfilter_default_domains': netfilterDefaultDomains,
               if (netfilterEnabled != null)
                 'netfilter_enabled': netfilterEnabled,
+              if (defaultPerHandleHome != null)
+                'default_per_handle_home': defaultPerHandleHome,
             }),
             200,
           );
@@ -156,6 +159,26 @@ void main() {
       final service2 = AuthService();
       await Future.delayed(Duration.zero);
       expect(service2.allowAutostart, isTrue);
+    });
+
+    test('loads default_per_handle_home from /api/config', () async {
+      // #2721 / #2737 review: null (unknown) when the field is absent or
+      // the fetch fails — the create dialog then hides the toggle and
+      // omits the field so the server default applies.
+      testAuthHttpClientOverride = _bannerClient();
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.perHandleHomeDefault, isNull);
+
+      testAuthHttpClientOverride = _bannerClient(defaultPerHandleHome: false);
+      final service2 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service2.perHandleHomeDefault, isFalse);
+
+      testAuthHttpClientOverride = _bannerClient(defaultPerHandleHome: true);
+      final service3 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service3.perHandleHomeDefault, isTrue);
     });
 
     test('loads netfilter default domains + enabled from /api/config',

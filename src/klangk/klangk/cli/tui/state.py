@@ -329,6 +329,7 @@ class TuiState:
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         egress_mode: str | None = None,
+        per_handle_home: bool | None = None,
     ) -> Workspace:
         return self.client().create_workspace(
             name,
@@ -342,6 +343,7 @@ class TuiState:
             rejected_domains=rejected_domains,
             settings=settings,
             egress_mode=egress_mode,
+            per_handle_home=per_handle_home,
         )
 
     def update_workspace(self, workspace_id: str, **fields) -> None:
@@ -423,6 +425,30 @@ class TuiState:
         # Strict: the server serializes a Python bool, so require True exactly
         # (a string like "false" must not coerce to True).
         return config.get("allow_autostart") is True
+
+    def default_per_handle_home(self) -> bool | None:
+        """Deploy default home layout for NEW workspaces (#2721).
+
+        ``default_per_handle_home`` in ``/api/v1/config``
+        (KLANGKD_PER_HANDLE_HOME). The create form's checkbox pre-reflects
+        this so an untouched form submits the server's default.
+
+        Returns ``None`` when the default is UNKNOWN (no server / fetch
+        failure): the caller then hides the checkbox and OMITS the field,
+        so the server applies its own default — a config hiccup can
+        never silently force a layout onto a shared-home deploy (#2737
+        review). A fetched config that merely LACKS the key (old server)
+        returns ``True`` — per-handle is the historical behavior those
+        servers implement.
+        """
+        url = self.current_url()
+        if url is None:
+            return None
+        config = fetch_config(url)
+        if not isinstance(config, dict):
+            return None
+        val = config.get("default_per_handle_home")
+        return True if val is None else bool(val)
 
     # --- login arms ---
 

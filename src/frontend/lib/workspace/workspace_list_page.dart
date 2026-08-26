@@ -457,6 +457,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
         defaultAllowedDomains: _auth.netfilterDefaultDomains,
         netfilterEnabled: _auth.netfilterEnabled,
         nixAvailable: nixAvailable,
+        defaultPerHandleHome: _auth.perHandleHomeDefault,
       ),
     );
 

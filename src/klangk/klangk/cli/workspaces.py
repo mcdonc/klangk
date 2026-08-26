@@ -183,6 +183,15 @@ def create(
         "--auto-start",
         help="Start container automatically on server boot",
     ),
+    per_handle_home: bool | None = typer.Option(
+        None,
+        "--per-handle-home/--shared-home",
+        help=(
+            "Home layout: per-handle gives each member a private "
+            "/home/<handle>; shared puts everyone in /home/klangk. "
+            "Omitted = server default"
+        ),
+    ),
     health_check: str | None = typer.Option(
         None,
         "--health-check",
@@ -272,6 +281,7 @@ def create(
             allowed_domains=allow or None,
             rejected_domains=reject or None,
             settings=settings,
+            per_handle_home=per_handle_home,
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)

@@ -869,6 +869,17 @@ class MainScreen(StatusScreen):
         except (httpx.HTTPError, OSError, ValueError) as exc:
             logger.debug("Could not fetch default allowed domains: %s", exc)
             default_domains = []
+        # #2721: the deploy's home-layout default, pre-reflected by the
+        # form's Per-handle home checkbox. None (fetch failed) hides the
+        # checkbox and omits the field, so the server applies its own
+        # default — never a silently forced layout (#2737 review).
+        try:
+            default_per_handle_home = await asyncio.to_thread(
+                state.default_per_handle_home
+            )
+        except (httpx.HTTPError, OSError, ValueError) as exc:
+            logger.debug("Could not fetch home-layout default: %s", exc)
+            default_per_handle_home = None
         self.app.push_screen(
             CreateWorkspaceScreen(
                 allowed=allowed,
@@ -876,6 +887,7 @@ class MainScreen(StatusScreen):
                 allow_autostart=allow_autostart,
                 default_allowed_domains=default_domains,
                 nix_available=nix_available,
+                default_per_handle_home=default_per_handle_home,
             ),
             self._on_created,
         )
