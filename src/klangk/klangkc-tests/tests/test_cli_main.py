@@ -3445,6 +3445,70 @@ class TestMainCLI:
         body = client.put.call_args[1]["json"]
         assert body["settings"] == {"allow_sudo": True}
 
+    def test_edit_sudo_flip_prompts_restart(self, logged_in_cfg, monkeypatch):
+        """#2017: --no-sudo on a running workspace is a create-time change
+        (the sudoers rule) — the CLI must offer a restart, like the TUI
+        and web panel do."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            running=True,
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(context_mod, "_client", return_value=client):
+            answers = []
+
+            def _answer(prompt):
+                answers.append(prompt)
+                return "n"
+
+            with patch("builtins.input", side_effect=_answer):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app,
+                    ["edit", "my-ws", "--no-sudo"],
+                )
+                assert result.exit_code == 0
+                # The restart offer fired (its warning goes to stderr).
+                assert answers and "restart now?" in answers[0].lower()
+
+        client.restart_workspace.assert_not_called()  # declined
+
+    def test_edit_sudo_flip_on_stopped_ws_no_prompt(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#2017: same flip on a stopped workspace needs no restart offer."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            running=False,
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(context_mod, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--no-sudo"],
+            )
+            assert result.exit_code == 0
+            assert "restart" not in result.stdout.lower()
+
     def test_edit_restart_needed_decline(self, logged_in_cfg, monkeypatch):
         """Running ws + create-time field → warn, user declines restart."""
         from klangk.cli import main

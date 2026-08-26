@@ -88,10 +88,11 @@ sudo apt-get update && sudo apt-get install -y <package>
 ```
 
 A workspace can also be locked down individually below the deploy
-default (sudo-disabled) even on a sudo-enabled server — the owner sets
-`allow_sudo: false` in the workspace settings (`klangk edit --no-sudo`, or
-the _Allow sudo_ toggle in the workspace settings UI). The lock-down
-applies at the next container start.
+default (sudo-disabled) even on a sudo-enabled server — the owner (or a
+member with edit permission on the workspace) sets `allow_sudo: false` in
+the workspace settings (`klangk edit --no-sudo`, or the _Allow sudo_
+toggle in the workspace settings UI). The lock-down applies at the next
+container start.
 
 ### Without sudo
 

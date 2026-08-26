@@ -586,6 +586,66 @@ void main() {
     });
   });
 
+  testWidgets(
+      'saving with both toggles hidden preserves the stored bag (#2017)',
+      (tester) async {
+    // Deploy sudo off + no nix backend → neither toggle shown. A plain
+    // resource edit must not full-replace-wipe a stored allow_sudo
+    // lock-down or API-only keys.
+    Map<String, dynamic>? savedBody;
+    testAuthHttpClientOverride = MockClient((request) async {
+      final p = request.url.path;
+      if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+      if (p == '/api/v1/workspaces') {
+        return http.Response(
+          jsonEncode([
+            {
+              ..._workspace,
+              'settings': {'allow_sudo': false, 'bridge_timeout': 60},
+            }
+          ]),
+          200,
+        );
+      }
+      if (p == '/api/v1/workspaces/shared') {
+        return http.Response(jsonEncode([]), 200);
+      }
+      if (p == '/api/v1/images') {
+        // Neither nix_available nor sudo_available.
+        return http.Response(
+          jsonEncode({
+            'default': 'klangk-pi',
+            'allowed': ['klangk-pi'],
+          }),
+          200,
+        );
+      }
+      if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+        savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(jsonEncode({'status': 'updated'}), 200);
+      }
+      return http.Response('not found', 404);
+    });
+    await tester.pumpWidget(_buildPanel());
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.widgetWithText(TextField, 'CPU Limit').first, '2.0');
+    await tester.pumpAndSettle();
+    await _scrollToAndTap(tester, find.text('Save'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(savedBody, isNotNull);
+    expect(savedBody!['settings'], {
+      'allow_sudo': false,
+      'bridge_timeout': 60,
+      'cpu_limit': 2.0,
+    });
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+  });
+
   group('nix toggle (settings preservation)', () {
     // #2234 re-review: PUT settings is a full-replace bag. With a nix
     // backend configured the save now always emits settings, so it must

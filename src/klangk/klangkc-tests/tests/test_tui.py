@@ -2992,6 +2992,60 @@ async def test_main_screen_action_edit_load_fallbacks(monkeypatch):
         assert isinstance(app2.screen, EditWorkspaceScreen)
 
 
+async def test_main_and_detail_edit_pass_sudo_available(monkeypatch):
+    """#2017 review: both real edit entry points (list 'e' and the detail
+    screen) must forward sudo_available from /api/v1/images — the screen
+    constructor default (False) otherwise hides the toggle as dead wiring."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", image="base")
+
+    def images():
+        return {
+            "default": "base",
+            "allowed": ["base", "py:3"],
+            "sudo_available": True,
+        }
+
+    # List-screen entry.
+    st = _ws(
+        owned=[a],
+        list_images=images,
+        allow_autostart=lambda: True,
+    )
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        m = await _highlight_first(pilot, app)
+        m.action_edit()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, EditWorkspaceScreen)
+        assert app.screen._sudo_available is True
+        assert app.screen.query_one("#allow_sudo", Checkbox).display is True
+
+    # Detail-screen entry.
+    st2 = _ws(
+        owned=[a],
+        list_images=images,
+        allow_autostart=lambda: True,
+    )
+    st2.find_workspace = lambda n: a
+    app2 = KlangkApp(st2)
+    async with app2.run_test() as pilot:
+        app2.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        app2.screen.action_edit()
+        await app2.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app2.screen, EditWorkspaceScreen)
+        assert app2.screen._sudo_available is True
+        assert app2.screen.query_one("#allow_sudo", Checkbox).display is True
+
+
 async def test_main_screen_edit_find_auth_error_shows_overlay(monkeypatch):
     """AuthError in find_workspace during _do_edit (main screen) triggers
     session-expired overlay (#2035)."""
@@ -9295,6 +9349,41 @@ async def test_edit_screen_nix_off_clears_setting(monkeypatch):
         es._save()
         await app.workers.wait_for_complete()
         assert captured["settings"] == {"nix": False}
+
+
+async def test_edit_screen_hidden_toggles_preserve_bag(monkeypatch):
+    """#2017 review: with BOTH toggles hidden (deploy sudo off, no nix
+    backend), a save must not full-replace-wipe a stored allow_sudo
+    lock-down or API-only keys — the bag is seeded unconditionally."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj(
+        "alpha",
+        settings={"allow_sudo": False, "bridge_timeout": 60},
+    )
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)  # sudo_available/nix_available default False
+        await pilot.pause()
+        es = app.screen
+        es.query_one("#cpu_limit").value = "2.0"
+        es._save()
+        await app.workers.wait_for_complete()
+        # The lock-down, the API-only key, and the new limit all survive.
+        assert captured["settings"] == {
+            "allow_sudo": False,
+            "bridge_timeout": 60,
+            "cpu_limit": 2.0,
+        }
 
 
 async def test_edit_screen_sudo_hidden_when_not_available(monkeypatch):

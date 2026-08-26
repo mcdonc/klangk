@@ -1421,24 +1421,30 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         except ValueError as exc:
             self._msg(str(exc), error=True)
             return
-        # #2233: emit an explicit nix value (True/False) whenever the
-        # toggle is shown. PUT settings is a full-replace bag, so we must
-        # carry the checkbox state — including False — to actually turn
-        # the mount off (omitting the key leaves the stale bag untouched).
-        # Seed from the existing bag first so API-only keys the form does
-        # not represent (e.g. bridge_timeout) survive the full-replace
-        # instead of being silently wiped.
+        # PUT settings is a full-replace bag, so seed from the existing
+        # bag unconditionally — API-only keys the form does not represent
+        # (e.g. bridge_timeout) and toggle-gated keys (nix, allow_sudo)
+        # whose toggles are hidden on this deploy must survive the save
+        # instead of being silently wiped (#2017 review).
+        merged_settings = {
+            **(self._ws.settings or {}),
+            **(settings or {}),
+        }
+        # #2233: emit an explicit nix value whenever the toggle is shown —
+        # including False, to actually turn the mount off (omitting the
+        # key would leave the stale bag untouched).
         if self._nix_available:
-            settings = {
-                **(self._ws.settings or {}),
-                **(settings or {}),
-                "nix": bool(self.query_one("#nix", Checkbox).value),
-            }
-        # #2017: emit an explicit allow_sudo value whenever the toggle is
-        # shown, exactly like nix — PUT settings is a full-replace bag, so
-        # omitting the key would leave a stale lock-down in place after an
-        # uncheck-to-revert save. True follows the deploy posture (the
-        # server setting stays the ceiling).
+            merged_settings["nix"] = bool(
+                self.query_one("#nix", Checkbox).value
+            )
+        # #2017: same for the sudo posture — an explicit value whenever
+        # the toggle is shown, so an uncheck-to-revert actually clears a
+        # stored lock-down. True follows the deploy posture (the server
+        # setting stays the ceiling).
+        if self._sudo_available:
+            merged_settings["allow_sudo"] = bool(
+                self.query_one("#allow_sudo", Checkbox).value
+            )
         body = {
             "name": name,
             "image": image,
@@ -1452,15 +1458,8 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             "egress_mode": egress_mode,
             "per_handle_home": per_handle_home,
         }
-        if self._sudo_available:
-            sudo_value = bool(self.query_one("#allow_sudo", Checkbox).value)
-            settings = {
-                **(self._ws.settings or {}),
-                **(settings or {}),
-                "allow_sudo": sudo_value,
-            }
-        if settings is not None:
-            body["settings"] = settings
+        if merged_settings:
+            body["settings"] = merged_settings
         ws = self._ws
         orig_mounts = list(ws.mounts or []) or None
         orig_env = dict(ws.env or {}) or None
@@ -1480,14 +1479,14 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             # time, so toggling it on a running workspace needs a restart.
             or (
                 self._nix_available
-                and (settings or {}).get("nix", False)
+                and merged_settings.get("nix", False)
                 != bool((ws.settings or {}).get("nix"))
             )
             # #2017: the sudoers rule is written at container-create time,
             # so a posture flip needs a restart to take effect.
             or (
                 self._sudo_available
-                and (settings or {}).get("allow_sudo", True)
+                and merged_settings.get("allow_sudo", True)
                 != bool((ws.settings or {}).get("allow_sudo", True))
             )
         )

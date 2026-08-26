@@ -549,28 +549,23 @@ class _SettingsFormState extends State<_SettingsForm> {
   Future<void> _save() async {
     setState(() => _saving = true);
     final formSettings = _collectSettings();
-    final Map<String, dynamic> settings;
-    // #2233 / #2017: emit an explicit toggle value (nix / allow_sudo)
-    // whenever the toggle is shown. PUT settings is a full-replace bag,
-    // so we must carry the current checkbox state — including false — to
-    // actually turn the feature off (omitting the key leaves the stale
-    // bag untouched). Seed from the existing bag first so API-only keys
-    // the form does not represent (e.g. bridge_timeout) survive the
-    // full-replace instead of being silently wiped.
-    if (widget.nixAvailable || widget.sudoAvailable) {
-      final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
-          const <String, dynamic>{};
-      settings = {
-        ...bag,
-        ...formSettings,
-        if (widget.nixAvailable) 'nix': _nixEnabled,
-        // True follows the deploy posture (the server setting remains
-        // the ceiling; #2017).
-        if (widget.sudoAvailable) 'allow_sudo': _sudoEnabled,
-      };
-    } else {
-      settings = formSettings;
-    }
+    // PUT settings is a full-replace bag, so seed from the existing bag
+    // unconditionally — API-only keys the form does not represent (e.g.
+    // bridge_timeout) and toggle-gated keys (nix, allow_sudo) whose
+    // toggles are hidden on this deploy must survive the save instead of
+    // being silently wiped (#2017 review).
+    final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
+    final Map<String, dynamic> settings = {...bag, ...formSettings};
+    // #2233: emit an explicit nix value (true or false) whenever the
+    // toggle is shown — including false, to actually turn the mount off
+    // (omitting the key leaves the stale bag untouched).
+    if (widget.nixAvailable) settings['nix'] = _nixEnabled;
+    // #2017: same for the sudo posture — an explicit value whenever the
+    // toggle is shown, so an uncheck-to-revert actually clears a stored
+    // lock-down. True follows the deploy posture (the server setting
+    // remains the ceiling).
+    if (widget.sudoAvailable) settings['allow_sudo'] = _sudoEnabled;
     await widget.onSave({
       'name': _nameCtrl.text.trim(),
       'image': _selectedImage,
