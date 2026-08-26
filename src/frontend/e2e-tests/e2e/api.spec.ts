@@ -84,7 +84,7 @@ test.describe("API", () => {
 
     // Upload
     const uploadResp = await request.post(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/work/${fileName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/klangk/${fileName}`,
       {
         headers,
         multipart: {
@@ -100,7 +100,7 @@ test.describe("API", () => {
 
     // Verify upload in listing
     let listResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/klangk`,
       { headers },
     );
     let files = await listResp.json();
@@ -109,7 +109,7 @@ test.describe("API", () => {
 
     // Verify content
     const readResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/${fileName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/klangk/${fileName}`,
       { headers },
     );
     expect(readResp.ok()).toBeTruthy();
@@ -122,15 +122,15 @@ test.describe("API", () => {
       {
         headers,
         data: {
-          old_path: `/home/work/${fileName}`,
-          new_path: `/home/work/${renamedName}`,
+          old_path: `/home/klangk/${fileName}`,
+          new_path: `/home/klangk/${renamedName}`,
         },
       },
     );
     expect(renameResp.ok()).toBeTruthy();
 
     listResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/klangk`,
       { headers },
     );
     files = await listResp.json();
@@ -140,13 +140,13 @@ test.describe("API", () => {
 
     // Delete
     const deleteResp = await request.delete(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work/${renamedName}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/klangk/${renamedName}`,
       { headers },
     );
     expect(deleteResp.ok()).toBeTruthy();
 
     listResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/klangk`,
       { headers },
     );
     files = await listResp.json();
@@ -184,7 +184,7 @@ test.describe("API", () => {
     // Upload each file into the folder structure
     for (const [filePath, content] of Object.entries(testFiles)) {
       const resp = await request.post(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/work/${encodeURIComponent(filePath)}`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/klangk/${encodeURIComponent(filePath)}`,
         {
           headers,
           multipart: {
@@ -201,7 +201,7 @@ test.describe("API", () => {
 
     // Verify folder appears in listing
     const listResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/klangk`,
       { headers },
     );
     expect(listResp.ok()).toBeTruthy();
@@ -211,7 +211,7 @@ test.describe("API", () => {
 
     // Download folder as tar.gz
     const dlResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=/home/work/${encodeURIComponent(folder)}`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=/home/klangk/${encodeURIComponent(folder)}`,
       { headers },
     );
     expect(dlResp.ok()).toBeTruthy();
@@ -257,7 +257,7 @@ test.describe("API", () => {
     expect(wsResp.status()).toBe(401);
 
     const filesResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/fake-id/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/fake-id/files?path=/home/klangk`,
       { headers },
     );
     expect(filesResp.status()).toBe(401);
@@ -307,7 +307,7 @@ test.describe("API", () => {
 
     // Upload a file to workspace A only
     const uploadResp = await request.post(
-      `${API_BASE}/api/v1/workspaces/${wsA.id}/files/upload?path=/home/work/only-in-a.txt`,
+      `${API_BASE}/api/v1/workspaces/${wsA.id}/files/upload?path=/home/klangk/only-in-a.txt`,
       {
         headers,
         multipart: {
@@ -323,7 +323,7 @@ test.describe("API", () => {
 
     // Verify file exists in A
     const filesA = await request.get(
-      `${API_BASE}/api/v1/workspaces/${wsA.id}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${wsA.id}/files?path=/home/klangk`,
       { headers },
     );
     const namesA = (await filesA.json()).map((e: any) => e.name);
@@ -331,7 +331,7 @@ test.describe("API", () => {
 
     // Verify file does NOT exist in B
     const filesB = await request.get(
-      `${API_BASE}/api/v1/workspaces/${wsB.id}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${wsB.id}/files?path=/home/klangk`,
       { headers },
     );
     const namesB = (await filesB.json()).map((e: any) => e.name);
@@ -539,7 +539,7 @@ test.describe("API", () => {
 
     // Upload a file so we can test access
     const uploadResp = await request.post(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/work/shared.txt`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/klangk/shared.txt`,
       {
         headers: ownerHeaders,
         multipart: {
@@ -564,7 +564,7 @@ test.describe("API", () => {
 
     // Member cannot access the workspace files before sharing
     const preShareFiles = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/klangk`,
       { headers: memberHeaders },
     );
     expect(preShareFiles.ok()).toBeFalsy();
@@ -592,7 +592,7 @@ test.describe("API", () => {
 
     // Member can now access workspace files
     const postShareFiles = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/klangk`,
       { headers: memberHeaders },
     );
     expect(postShareFiles.ok()).toBeTruthy();
@@ -616,7 +616,7 @@ test.describe("API", () => {
 
     // Member can no longer access workspace files
     const postUnshareFiles = await request.get(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/work`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files?path=/home/klangk`,
       { headers: memberHeaders },
     );
     expect(postUnshareFiles.ok()).toBeFalsy();
@@ -880,7 +880,7 @@ test.describe("API", () => {
 
     const testContent = "hello from export test";
     const uploadResp = await request.post(
-      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/work/testfile.txt`,
+      `${API_BASE}/api/v1/workspaces/${workspaceId}/files/upload?path=/home/klangk/testfile.txt`,
       {
         headers: adminHeaders,
         multipart: {
@@ -937,7 +937,7 @@ test.describe("API", () => {
 
     // Verify the file survived the round-trip
     const fileResp = await request.get(
-      `${API_BASE}/api/v1/workspaces/${imported.id}/files/content?path=/home/work/testfile.txt`,
+      `${API_BASE}/api/v1/workspaces/${imported.id}/files/content?path=/home/klangk/testfile.txt`,
       { headers: adminHeaders },
     );
     expect(fileResp.ok()).toBeTruthy();

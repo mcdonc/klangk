@@ -36,7 +36,7 @@ test.describe("file-viewers/registry", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/notes.txt",
+        "/home/klangk/notes.txt",
         "registry-text-canary",
         headers,
         "text/plain",
@@ -44,7 +44,7 @@ test.describe("file-viewers/registry", () => {
 
       // Backing data is correct via the API.
       const api = await request.get(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/notes.txt`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/klangk/notes.txt`,
         { headers },
       );
       expect(api.ok()).toBeTruthy();
@@ -77,12 +77,12 @@ test.describe("file-viewers/registry", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/mystery.xyzzy",
+        "/home/klangk/mystery.xyzzy",
         "unknown-type-canary",
         headers,
       );
       const api = await request.get(
-        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/mystery.xyzzy`,
+        `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/klangk/mystery.xyzzy`,
         { headers },
       );
       expect(api.ok()).toBeTruthy();
@@ -113,14 +113,14 @@ test.describe("file-viewers/registry", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/a.txt",
+        "/home/klangk/a.txt",
         "AAA-content",
         headers,
       );
       await seedFile(
         request,
         workspaceId,
-        "/home/work/b.txt",
+        "/home/klangk/b.txt",
         "BBB-content",
         headers,
       );
@@ -143,7 +143,7 @@ test.describe("file-viewers/registry", () => {
         ["b.txt", "BBB-content"],
       ]) {
         const r = await request.get(
-          `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/work/${name}`,
+          `${API_BASE}/api/v1/workspaces/${workspaceId}/files/content?path=/home/klangk/${name}`,
           { headers },
         );
         expect((await r.json()).content).toBe(body);

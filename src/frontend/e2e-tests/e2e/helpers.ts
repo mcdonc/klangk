@@ -296,7 +296,7 @@ export function vp(page: Page) {
 
 /** Seed a file into a workspace via the files API. `content` may be a string
  *  (text files) or a Buffer (binary — images, pdfs). `path` is workspace-
- *  absolute (e.g. "/home/work/readme.md"). The upload is synchronous, so the file is
+ *  absolute (e.g. "/home/klangk/readme.md"). The upload is synchronous, so the file is
  *  immediately listable/readable when this resolves. */
 export async function seedFile(
   request: APIRequestContext,

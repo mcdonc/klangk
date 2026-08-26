@@ -146,7 +146,7 @@ def fuzz_path(rng: random.Random) -> str:
     generators = [
         # normal absolute path
         lambda: (
-            "/home/work/"
+            "/home/klangk/"
             + "".join(rng.choices(string.ascii_lowercase, k=rng.randint(1, 10)))
             + ".txt"
         ),

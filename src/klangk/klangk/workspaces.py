@@ -257,10 +257,6 @@ class Workspaces:
             raise ValueError(f"Path traversal blocked: {'/'.join(segments)}")
         return path
 
-    def workspace_path(self, workspace_id: str) -> Path:
-        """Build path to /{root}/{workspace_id}/home/work"""
-        return self.home_path(workspace_id) / "work"
-
     def home_path(self, workspace_id: str) -> Path:
         """Build path to /{root}/{workspace_id}/home"""
         return self.safe_path(workspace_id, "home")
@@ -271,11 +267,6 @@ class Workspaces:
 
     def get_config_host_path(self, workspace_id: str) -> Path:
         path = self.config_path(workspace_id)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def get_workspace_host_path(self, workspace_id: str) -> Path:
-        path = self.workspace_path(workspace_id)
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -440,8 +431,6 @@ class Workspaces:
         )
         home = self.home_path(workspace["id"])
         home.mkdir(parents=True, exist_ok=True)
-        work = self.workspace_path(workspace["id"])
-        work.mkdir(parents=True, exist_ok=True)
         users_dir = home / ".users"
         users_dir.mkdir(exist_ok=True)
         terminals_dir = home / ".terminals"
@@ -608,13 +597,11 @@ class Workspaces:
         """
         owner_id = ws["user_id"]
         workspace_id = ws["id"]
-        host_path = str(self.get_workspace_host_path(workspace_id))
         h_path = str(self.get_home_host_path(workspace_id))
         cfg_path = str(self.get_config_host_path(workspace_id))
         cid, status = await self.app.state.container_registry.start_container(
             container.ContainerStartSpec(
                 workspace_id=workspace_id,
-                host_path=host_path,
                 home_path=h_path,
                 existing_container_id=ws.get("container_id"),
                 num_ports=ws.get(

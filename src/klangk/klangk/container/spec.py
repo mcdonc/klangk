@@ -74,12 +74,12 @@ class ContainerStartSpec:
     the public method takes (and forwards) this spec, the inner
     under-lock implementation unpacks it once, and adding a start
     parameter becomes a single field here instead of a two-signature
-    edit. Field order and defaults match the pre-spec positional
-    signature.
+    edit. (The pre-#2725 ``host_path`` field — the ``home/work``
+    subtree — is gone; mounts are driven by ``home_path`` /
+    ``config_path`` / ``extra_mounts``.)
     """
 
     workspace_id: str
-    host_path: str
     home_path: str
     existing_container_id: str | None = None
     num_ports: int = DEFAULT_PORTS_PER_WORKSPACE

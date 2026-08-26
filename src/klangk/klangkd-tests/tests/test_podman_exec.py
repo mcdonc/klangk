@@ -117,7 +117,7 @@ class TestExecSession:
         """
         session = ExecSession("cid", _podman)
         proc = _mock_proc(b"")
-        cmd = ["bash", "-c", "echo remote-data > /home/work/out.txt"]
+        cmd = ["bash", "-c", "echo remote-data > /home/klangk/out.txt"]
         with patch(
             "asyncio.create_subprocess_exec",
             return_value=proc,
@@ -128,7 +128,7 @@ class TestExecSession:
         prefix = ("bash", "-lc", 'exec "$@"', "bash")
         assert argv[-len(cmd) - len(prefix) :] == (*prefix, *cmd)
         # specifically, the script-with-spaces is one element, not split
-        assert argv[-1] == "echo remote-data > /home/work/out.txt"
+        assert argv[-1] == "echo remote-data > /home/klangk/out.txt"
 
     async def test_write_sends_to_stdin(self):
         session = ExecSession("cid", _podman)
@@ -406,7 +406,7 @@ class TestExecSession:
         cmd = mock_exec.call_args[0]
         assert "-w" in cmd
         w_idx = cmd.index("-w")
-        assert cmd[w_idx + 1] == "/home/work"
+        assert cmd[w_idx + 1] == "/home/klangk"
 
     async def test_user_home_sets_env_and_work_dir(self):
         session = ExecSession(

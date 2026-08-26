@@ -29,7 +29,13 @@ test.describe("file-viewers/chrome", () => {
     );
     try {
       const body = "download-me-please-12345";
-      await seedFile(request, workspaceId, "/home/work/dl.txt", body, headers);
+      await seedFile(
+        request,
+        workspaceId,
+        "/home/klangk/dl.txt",
+        body,
+        headers,
+      );
 
       await openFilesTab(page);
       await clickFileRow(page, 0);
@@ -41,7 +47,7 @@ test.describe("file-viewers/chrome", () => {
       // anchor download does not reliably surface to Playwright in CI.
       const dl = await request.get(
         `${API_BASE}/api/v1/workspaces/${workspaceId}/files/download?path=${encodeURIComponent(
-          "/home/work/dl.txt",
+          "/home/klangk/dl.txt",
         )}`,
         { headers },
       );
@@ -62,7 +68,7 @@ test.describe("file-viewers/chrome", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/back.txt",
+        "/home/klangk/back.txt",
         "back-body",
         headers,
       );
@@ -96,7 +102,7 @@ test.describe("file-viewers/chrome", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/tabs.txt",
+        "/home/klangk/tabs.txt",
         "tabs-body",
         headers,
       );
@@ -130,7 +136,7 @@ test.describe("file-viewers/chrome", () => {
       await seedFile(
         request,
         workspaceId,
-        "/home/work/leave.txt",
+        "/home/klangk/leave.txt",
         "leave-body",
         headers,
       );

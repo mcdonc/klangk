@@ -1149,9 +1149,9 @@ class ContainerRegistry(NetworkSidecarMixin):
         """Inner implementation of start_container (called under lock).
 
         Unpacks the spec once (#2566); the body reads plain locals, same
-        as the pre-spec signature. ``spec.host_path`` is accepted for
-        interface compatibility but unused here — mounts are driven by
-        ``home_path`` / ``config_path`` / ``extra_mounts``.
+        as the pre-spec signature. Mounts are driven by
+        ``home_path`` / ``config_path`` / ``extra_mounts`` — the
+        pre-#2725 ``host_path`` (the ``home/work`` subtree) is gone.
         """
         workspace_id = spec.workspace_id
         home_path = spec.home_path

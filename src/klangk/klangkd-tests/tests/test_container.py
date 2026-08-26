@@ -660,7 +660,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -675,16 +674,13 @@ class TestStartContainer:
         # monitor can branch without a DB lookup per poll. Default True.
         with patch_podman(self.registry):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert self.registry.states[workspace["id"]].per_handle_home is True
         with patch_podman(self.registry):
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     per_handle_home=False,
                 )
@@ -696,9 +692,7 @@ class TestStartContainer:
         # keeps podman's default hooks-dir behavior (unrestricted). #1365
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         kwargs = p.create_container.call_args.kwargs
         assert "annotations" not in kwargs
@@ -716,9 +710,7 @@ class TestStartContainer:
         # the sidecar).
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         iid = self.registry.app.state.util.instance_id()
         slug = container._workspace_name_slug(workspace["name"])
@@ -738,7 +730,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(ws["id"], "/tmp/ws", "/tmp/home")
+                container.ContainerStartSpec(ws["id"], "/tmp/home")
             )
         iid = self.registry.app.state.util.instance_id()
         assert p.create_container.call_args.args[0] == (
@@ -776,7 +768,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     allowed_domains=["github.com:443"],
                 )
@@ -1578,7 +1569,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     allowed_domains=["github.com:443"],
                 )
@@ -1639,7 +1629,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     rejected_domains=["evil.com:443"],
                 )
@@ -1685,7 +1674,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     egress_mode="interactive",
                 )
@@ -1726,7 +1714,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     egress_mode="static",
                 )
@@ -1767,7 +1754,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     egress_mode="allow",
                 )
@@ -1807,7 +1793,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     egress_mode="allow",
                 )
@@ -1847,7 +1832,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     egress_mode="allow",
                 )
@@ -1886,7 +1870,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     egress_mode="allow",
                     rejected_domains=["evil.com:443"],
@@ -1911,7 +1894,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         egress_mode="interactive",
                     )
@@ -1935,7 +1917,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         egress_mode="interactive",
                     )
@@ -1976,7 +1957,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         egress_mode="interactive",
                     )
@@ -2003,7 +1983,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="existing-cid",
                     egress_mode="interactive",
@@ -2050,7 +2029,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     allowed_domains=["github.com:443"],
                     num_ports=2,
@@ -2098,7 +2076,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     allowed_domains=["github.com:443"],
                     num_ports=0,
@@ -2144,7 +2121,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     allowed_domains=["github.com:443"],
                 )
@@ -2176,7 +2152,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         allowed_domains=["github.com:443"],
                     )
@@ -2221,7 +2196,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         allowed_domains=["github.com:443"],
                     )
@@ -2269,7 +2243,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         allowed_domains=["github.com:443"],
                     )
@@ -2311,7 +2284,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         allowed_domains=["github.com:443"],
                     )
@@ -2344,7 +2316,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         allowed_domains=["github.com:443"],
                     )
@@ -2388,7 +2359,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         allowed_domains=["github.com:443"],
                     )
@@ -2412,7 +2382,6 @@ class TestStartContainer:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         allowed_domains=["github.com:443"],
                     )
@@ -2426,9 +2395,7 @@ class TestStartContainer:
         # no flag; see test_settings.py.)
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["cpus"] == 2.0
@@ -2446,9 +2413,7 @@ class TestStartContainer:
         monkeypatch.setattr(settings, "container_tmp_size", "4g")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["tmpfs"]["/tmp"] == "rw,exec,nosuid,size=4g"
@@ -2464,7 +2429,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     workspace_settings={"tmp_size": "512m"},
                 )
@@ -2482,9 +2446,7 @@ class TestStartContainer:
         monkeypatch.setattr(settings, "container_tmp_size", None)
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["tmpfs"]["/tmp"] == "rw,exec,nosuid"
@@ -2496,9 +2458,7 @@ class TestStartContainer:
         # setcap alternatives don't work under rootless podman (#2045).
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["cap_add"] == ["net_raw"]
@@ -2512,9 +2472,7 @@ class TestStartContainer:
         monkeypatch.setattr(settings, "enable_ping", False)
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         kwargs = p.create_container.call_args.kwargs
         assert "cap_add" not in kwargs
@@ -2532,9 +2490,7 @@ class TestStartContainer:
         monkeypatch.setattr(settings, "container_pids_limit", 512)
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         kwargs = p.create_container.call_args.kwargs
         assert kwargs["cpus"] == 1.5
@@ -2555,7 +2511,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     workspace_settings={
                         "cpu_limit": 4.0,
@@ -2582,7 +2537,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     workspace_settings={"cpu_limit": 0.5, "pids_limit": 100},
                 )
@@ -2604,7 +2558,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     workspace_settings={"cpu_limit": 3.0},
                 )
@@ -2629,7 +2582,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     workspace_settings={"cpu_limit": 2.0},
                 )
@@ -2649,7 +2601,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     workspace_settings={},
                 )
@@ -2660,9 +2611,7 @@ class TestStartContainer:
     async def test_sudo_disabled_by_default(self, workspace):
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         call = _sudo_call(p)
         assert call.kwargs.get("user") == "root"
@@ -2674,9 +2623,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         call = _sudo_call(p)
         assert call.kwargs.get("user") == "root"
@@ -2688,9 +2635,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
 
@@ -2700,9 +2645,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
 
@@ -2715,9 +2658,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
 
@@ -2731,9 +2672,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
@@ -2746,9 +2685,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert "NOPASSWD:ALL" in str(_sudo_call(p).args[1])
 
@@ -2761,9 +2698,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert "!ALL" in str(_sudo_call(p).args[1])
 
@@ -2779,9 +2714,7 @@ class TestStartContainer:
         ):
             with pytest.raises(RuntimeError, match="boom"):
                 await self.registry.start_container(
-                    container.ContainerStartSpec(
-                        workspace["id"], "/tmp/ws", "/tmp/home"
-                    )
+                    container.ContainerStartSpec(workspace["id"], "/tmp/home")
                 )
         ws = await app_state.state.model.workspaces.get_workspace(
             workspace["id"], user["id"]
@@ -2807,9 +2740,7 @@ class TestStartContainer:
         ) as p:
             task = asyncio.create_task(
                 self.registry.start_container(
-                    container.ContainerStartSpec(
-                        workspace["id"], "/tmp/ws", "/tmp/home"
-                    )
+                    container.ContainerStartSpec(workspace["id"], "/tmp/home")
                 )
             )
             await started.wait()
@@ -2833,7 +2764,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="existing-cid",
                 )
@@ -2870,7 +2800,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     ws_id,
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="stale-cid",
                 )
@@ -2908,7 +2837,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     ws_id,
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="stale-cid",
                 )
@@ -2946,7 +2874,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     ws_id,
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="stale-cid",
                 )
@@ -2984,7 +2911,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     ws_id,
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="stale-cid",
                 )
@@ -3012,7 +2938,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="stale-cid",
                 )
@@ -3039,7 +2964,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="existing-cid",
                     allowed_domains=["github.com:443"],
@@ -3059,7 +2983,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="old-cid",
                 )
@@ -3074,7 +2997,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="gone-cid",
                 )
@@ -3098,9 +3020,7 @@ class TestStartContainer:
         } == {"stale.com"}
         with patch_podman(self.registry):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert await ec.list_active(workspace["id"]) == []
 
@@ -3116,7 +3036,6 @@ class TestStartContainer:
             cid, status = await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     existing_container_id="existing-cid",
                 )
@@ -3144,7 +3063,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3175,7 +3093,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3197,9 +3114,7 @@ class TestStartContainer:
             ) as mock_set,
         ):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         mock_set.assert_called_once()
         cid, token = mock_set.call_args.args
@@ -3211,9 +3126,7 @@ class TestStartContainer:
     async def test_pull_policy_default_never(self, workspace):
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert p.create_container.call_args.kwargs["pull"] == "never"
 
@@ -3223,9 +3136,7 @@ class TestStartContainer:
         )
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert p.create_container.call_args.kwargs["pull"] == "missing"
 
@@ -3235,7 +3146,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     config_path="/tmp/config",
                 )
@@ -3249,7 +3159,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3262,7 +3171,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3274,7 +3182,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     hosting_hostname="example.com",
                     hosting_proto="https",
@@ -3301,7 +3208,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3316,7 +3222,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3334,7 +3239,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3356,7 +3260,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3374,7 +3277,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3400,7 +3302,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3414,7 +3315,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     num_ports=3,
                 )
@@ -3432,7 +3332,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     num_ports=2,
                 )
@@ -3449,7 +3348,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     num_ports=5,  # DB default; cap is 3
                 )
@@ -3471,7 +3369,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     num_ports=5,
                 )
@@ -3488,7 +3385,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     num_ports=5,
                 )
@@ -3522,7 +3418,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     num_ports=5,
                 )
@@ -3539,7 +3434,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                 )
             )
@@ -3559,7 +3453,6 @@ class TestStartContainer:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_env={"MY_VAR": "hello", "FOO": "bar"},
                 )
@@ -3584,9 +3477,7 @@ class TestStartContainer:
         monkeypatch.setenv("KLANGKWS_FEATURE_TEST_VAR", "feature-val")
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         env_list = p.create_container.call_args.kwargs["env"]
         env_dict = dict(e.split("=", 1) for e in env_list)
@@ -3637,9 +3528,7 @@ class TestStartContainerPortConflict:
             inspect_container=AsyncMock(return_value=stale_info),
         ) as p:
             cid, status = await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert status == "created"
         assert len(start_calls) == 2
@@ -3678,9 +3567,7 @@ class TestStartContainerPortConflict:
             ),
         ) as p:
             cid, _ = await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         # Should not have tried to remove its own container
         for call in p.remove_container.call_args_list:
@@ -3709,9 +3596,7 @@ class TestStartContainerPortConflict:
             ),
         ):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         # other-cid doesn't hold our ports — should not be removed
 
@@ -3736,9 +3621,7 @@ class TestStartContainerPortConflict:
             inspect_container=AsyncMock(return_value=None),
         ) as p:
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         # gone-cid vanished — no remove attempted
         assert not any(
@@ -3776,9 +3659,7 @@ class TestStartContainerPortConflict:
             ),
         ):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
 
     async def test_port_conflict_remove_error_logged(
@@ -3816,9 +3697,7 @@ class TestStartContainerPortConflict:
             ),
         ):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
 
     async def test_non_port_conflict_error_raised(self, workspace):
@@ -3832,9 +3711,7 @@ class TestStartContainerPortConflict:
             pytest.raises(podman.PodmanError, match="some other error"),
         ):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
 
     async def test_port_conflict_pasta_bind_error(self, workspace, app_state):
@@ -3862,9 +3739,7 @@ class TestStartContainerPortConflict:
             inspect_container=AsyncMock(return_value=None),
         ):
             cid, status = await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         assert status == "created"
         assert len(start_calls) == 2
@@ -3893,9 +3768,7 @@ class TestStartContainerPortConflict:
             pytest.raises(podman.PodmanError, match="Address already in use"),
         ):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
 
     async def test_port_conflict_retry_non_conflict_error(
@@ -3929,9 +3802,7 @@ class TestStartContainerPortConflict:
             pytest.raises(podman.PodmanError, match="container vanished"),
         ):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
 
 
@@ -4163,7 +4034,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=["nix-store:/nix"],
                     user_id="user-123",
@@ -4196,7 +4066,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=["existing:/data"],
                     user_id="user-123",
@@ -4219,7 +4088,6 @@ class TestExtraMountsVolumeCreation:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         extra_mounts=["stolen:/data"],
                     )
@@ -4235,7 +4103,6 @@ class TestExtraMountsVolumeCreation:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         extra_mounts=["bare:/data"],
                     )
@@ -4259,7 +4126,6 @@ class TestExtraMountsVolumeCreation:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         extra_mounts=["private:/data"],
                         user_id="user-me",
@@ -4284,7 +4150,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=["legacy:/data"],
                     user_id="user-123",
@@ -4301,7 +4166,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=["/home/me/src:/work/src"],
                 )
@@ -4315,7 +4179,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=["/data/shared:/mnt/data:ro"],
                 )
@@ -4329,7 +4192,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=["my-vol:/data:ro"],
                 )
@@ -4345,7 +4207,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=["./relative/path:/work/rel"],
                 )
@@ -4366,7 +4227,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=["bad-vol:/data"],
                 )
@@ -4381,7 +4241,6 @@ class TestExtraMountsVolumeCreation:
             await self.registry.start_container(
                 container.ContainerStartSpec(
                     workspace["id"],
-                    "/tmp/ws",
                     "/tmp/home",
                     extra_mounts=[
                         "/path/with spaces\x00and\x01binary:/work/bad"
@@ -4398,7 +4257,6 @@ class TestExtraMountsVolumeCreation:
                 await self.registry.start_container(
                     container.ContainerStartSpec(
                         workspace["id"],
-                        "/tmp/ws",
                         "/tmp/home",
                         extra_mounts=["/nonexistent/path:/work/src"],
                     )
@@ -4416,9 +4274,7 @@ class TestExtraMountsVolumeCreation:
             pytest.raises(RuntimeError, match="podman broke"),
         ):
             await self.registry.start_container(
-                container.ContainerStartSpec(
-                    workspace["id"], "/tmp/ws", "/tmp/home"
-                )
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
 
         # No browser registrations should remain for this workspace

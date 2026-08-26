@@ -212,7 +212,7 @@ class TestPerUserHome:
 
     @pytest.mark.asyncio
     async def test_shared_work_dir_accessible(self, server, auth):
-        """Shared /home/work directory is accessible and writable."""
+        """Shared /home/klangk directory is accessible and writable."""
         workspace_id, cleanup = create_workspace(server, auth)
         try:
             ws = await ws_connect(server, auth, workspace_id)
@@ -222,7 +222,7 @@ class TestPerUserHome:
                     [
                         "bash",
                         "-c",
-                        "touch /home/work/.e2e-test && echo ok",
+                        "touch /home/klangk/.e2e-test && echo ok",
                     ],
                 )
                 assert "ok" in output

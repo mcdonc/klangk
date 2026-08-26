@@ -456,7 +456,7 @@ Klangk renders common formats right in the browser — PDFs, images, spreadsheet
 > **Production —** _on screen:_ browser → Files tab. _pre-roll:_ files from Sc
 > 5/5b (`app.py`, `requirements.txt`); record right after 5/5b; **seed the Pyramid
 > PDF** (`assets/pyramid-docs.pdf`) into `demo`'s home via `seedDemoFile` against
-> an **absolute** container path (`/home/work/pyramid-docs.pdf`) AFTER the
+> an **absolute** container path (`/home/klangk/pyramid-docs.pdf`) AFTER the
 > container boots. _reset:_ none; re-seed the PDF if deleted. _gotchas:_ verify
 > the PDF renders off-camera (`PdfRenderer` must handle it); seed after
 > `openWorkspaceDemo` (the upload API needs the running container).

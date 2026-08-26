@@ -204,7 +204,7 @@ def _build_exec_argv(
     container_id: str,
     env: list[str],
     shell_cmd: list[str],
-    work_dir: str = "/home/work",
+    work_dir: str = SHARED_HOME,
 ) -> list[str]:
     argv = ["exec", "-t", "-i", "-u", CONTAINER_USER, "-w", work_dir]
     for entry in env:

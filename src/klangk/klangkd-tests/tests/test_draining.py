@@ -35,7 +35,6 @@ class TestDrainingGate:
             await registry.start_container(
                 ContainerStartSpec(
                     workspace_id="ws-x",
-                    host_path="/tmp/x",
                     home_path="/tmp/x/home",
                 )
             )
@@ -52,7 +51,6 @@ class TestDrainingGate:
             await registry.start_container(
                 ContainerStartSpec(
                     workspace_id="ws-x",
-                    host_path="/tmp/x",
                     home_path="/tmp/x/home",
                 )
             )
