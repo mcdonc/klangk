@@ -193,7 +193,8 @@ operators or integrators to act when upgrading.
   query filter and include it in each row, so pickers can hide the
   machine-generated role-group names. Existing rows are backfilled by a
   schema migration. Role groups are now also rejected as share/ACL
-  targets outside their own workspace (HTTP 400).
+  targets outside their own workspace (HTTP 400), and their names cannot
+  be changed (HTTP 400) — the name is the teardown/scope-guard key.
 
 - **Per-workspace sudo lock-down (#2017).** `allow_sudo` in the workspace
   settings bag (set with `klangk create`/`klangk edit`

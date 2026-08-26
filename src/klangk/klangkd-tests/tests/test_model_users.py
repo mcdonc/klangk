@@ -524,3 +524,30 @@ async def test_create_user_returns_disabled_false(users):
     key (#2588 review)."""
     u = await users.create_user("shape@x.com", "hash", verified=True)
     assert u["disabled"] is False
+
+
+async def test_update_group_rejects_workspace_role_rename(
+    users, user, app_state
+):
+    """#2750 review: renaming a workspace-role group would orphan it on
+    teardown and misdirect the ACL scope guard (both parse the
+    workspace-id suffix of the name) — refused at the model."""
+    from klangk.model import WorkspaceRoleScopeError
+
+    workspaces = app_state.state.model.workspaces
+    ws_row = await workspaces.create_workspace_with_acl(
+        user["id"], "no-rename"
+    )
+    role_group = await users.get_group_by_name(f"owners-{ws_row['id']}")
+    with pytest.raises(WorkspaceRoleScopeError, match="cannot be changed"):
+        await users.update_group(role_group["id"], name="renamed")
+    # Description stays editable.
+    assert (
+        await users.update_group(
+            role_group["id"], description="still editable"
+        )
+        is True
+    )
+    # Manual groups rename freely.
+    manual = await users.create_group("free-to-rename")
+    assert await users.update_group(manual["id"], name="renamed") is True

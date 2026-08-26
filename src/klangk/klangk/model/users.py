@@ -47,6 +47,21 @@ class AgentPrincipalError(ValueError):
     """
 
 
+class WorkspaceRoleScopeError(ValueError):
+    """Raised when an operation would violate a per-workspace role
+    group's scope (#2750).
+
+    Role groups carry their workspace id in their name
+    (``<role>-<workspace_id>``) and are identified by their ``source``
+    marker plus that suffix — teardown, ownership transfer, and the ACL
+    scope guard all parse it. Raised when an ACL write would grant a
+    role group on anything other than its own workspace's resource, or
+    when a rename would break the name↔workspace link. Guarded at the
+    model choke points; a global handler translates this to HTTP 400,
+    like ``AgentPrincipalError``.
+    """
+
+
 # Cached agent user dict (populated after seeding).
 agent_user_cache: dict | None = None
 
@@ -575,7 +590,27 @@ class UsersModel:
         name: str | None = None,
         description: str | None = None,
     ) -> bool:
-        """Update group name/description. Returns True if updated."""
+        """Update group name/description. Returns True if updated.
+
+        Raises ``WorkspaceRoleScopeError`` if *name* is set on a
+        ``workspace-role`` group (#2750): role groups are found by the
+        source marker **plus** the workspace-id suffix of their name
+        (teardown, ownership transfer, and the ACL scope guard all parse
+        it), so a rename would orphan them on delete or point the guard
+        at the wrong workspace. Descriptions stay editable.
+        """
+        if name is not None:
+            row = await self.app.state.db.fetchone(
+                "SELECT source FROM groups WHERE id = ?", (group_id,)
+            )
+            if (
+                row is not None
+                and row["source"] == GROUP_SOURCE_WORKSPACE_ROLE
+            ):
+                raise WorkspaceRoleScopeError(
+                    "Workspace role group names are managed by the system"
+                    " and cannot be changed"
+                )
         updates = {}
         if name is not None:
             updates["name"] = name

@@ -5228,6 +5228,72 @@ class TestUserGroupEndpoints:
         bad = await client.get("/api/v1/groups?source=nope", headers=headers)
         assert bad.status_code == 422
 
+    async def test_role_group_rename_rejected(
+        self, client, ws_admin, user, app_state, admin_user
+    ):
+        """#2750 review: PATCH (user and admin layers) refuses to rename a
+        workspace-role group — the name is the teardown/scope-guard key.
+        Description edits stay allowed."""
+        headers = await _auth_headers(client)
+        ws_id = (
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "rename-guard-ws"},
+            )
+        ).json()["id"]
+        owners = await app_state.state.model.users.get_group_by_name(
+            f"owners-{ws_id}"
+        )
+
+        resp = await client.patch(
+            f"/api/v1/groups/{owners['id']}",
+            headers=headers,
+            json={"name": "hijacked"},
+        )
+        assert resp.status_code == 403  # no edit ACE seeded on role groups
+
+        admin_headers = await self._admin_login(client)
+        # Grant the admin edit on this group's resource so the user-layer
+        # endpoint is reachable; the model guard must still refuse.
+        await app_state.state.model.acl.add_acl_entry(
+            f"/groups/{owners['id']}",
+            0,
+            model.ACTION_ALLOW,
+            "edit",
+            model.PRINCIPAL_USER,
+            user_id=admin_user["id"],
+        )
+        resp = await client.patch(
+            f"/api/v1/groups/{owners['id']}",
+            headers=admin_headers,
+            json={"name": "hijacked"},
+        )
+        assert resp.status_code == 400
+        assert "cannot be changed" in resp.json()["detail"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/groups/{owners['id']}",
+            headers=admin_headers,
+            json={"name": "hijacked"},
+        )
+        assert resp.status_code == 400
+        assert "cannot be changed" in resp.json()["detail"]
+
+        # Description edits are still fine on both layers.
+        resp = await client.patch(
+            f"/api/v1/admin/groups/{owners['id']}",
+            headers=admin_headers,
+            json={"description": "still editable"},
+        )
+        assert resp.status_code == 200
+
+        # The name is unchanged.
+        fetched = await app_state.state.model.users.get_group_by_id(
+            owners["id"]
+        )
+        assert fetched["name"] == f"owners-{ws_id}"
+
     async def test_admin_list_groups_source_filter(
         self, client, admin_user, ws_admin, user, app_state
     ):

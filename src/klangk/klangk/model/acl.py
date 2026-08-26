@@ -10,6 +10,7 @@ from .users import (
     AGENT_USER_ID,
     AgentPrincipalError,
     GROUP_SOURCE_WORKSPACE_ROLE,
+    WorkspaceRoleScopeError,
 )
 
 # ACL constants
@@ -22,18 +23,6 @@ PRINCIPAL_GROUP = 2
 
 SYSTEM_EVERYONE = 0
 SYSTEM_AUTHENTICATED = 1
-
-
-class WorkspaceRoleScopeError(ValueError):
-    """Raised when an ACL write would grant a per-workspace role group
-    on anything other than its own workspace's resource (#2750).
-
-    Role groups carry their workspace id in their name
-    (``<role>-<workspace_id>``); they are grantable only on
-    ``/workspaces/<that id>``. Raised at the model choke points
-    (``add_acl_entry``, ``replace_acl_entries``) and translated to
-    HTTP 400 by a global handler, like ``AgentPrincipalError``.
-    """
 
 
 def row_to_acl_entry(row) -> dict:
