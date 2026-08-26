@@ -8,7 +8,9 @@ from klangk.settings import resolve_dynamic_config
 from klangk.util import (
     MAX_PORT,
     Util,
+    authority_has_port,
     free_port,
+    is_portless_loopback_host,
     port_in_use,
     read_file_value,
     run_cmd_value,
@@ -373,6 +375,27 @@ class TestCorsOrigins:
         u = _util({"KLANGKD_EGRESS_PORT": "9000"})
         assert u.cors_origins() == ["http://localhost"]
 
+    def test_browser_listener_port_in_origin(self):
+        """Full mode without a pin: origin is the browser listener (#2732).
+
+        cors_origins derives through derive_hosting_info(None, None), so
+        the synthetic loopback floor carries KLANGKD_PORT — the origin
+        browsers actually load the UI from. Headless stays bare (no
+        browser listener to name).
+        """
+        u = _util({"KLANGKD_PORT": "8997"})
+        assert u.cors_origins() == ["http://localhost:8997"]
+
+    def test_hosting_hostname_pin_wins_over_browser_port(self):
+        """The env pin is used verbatim even in full mode."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_HOSTING_HOSTNAME": "klangk.example.com",
+            }
+        )
+        assert u.cors_origins() == ["http://klangk.example.com"]
+
     def test_hosting_hostname_carries_port(self):
         u = _util({"KLANGKD_HOSTING_HOSTNAME": "localhost:8996"})
         assert u.cors_origins() == ["http://localhost:8996"]
@@ -661,6 +684,161 @@ class TestDeriveHostingInfo:
         assert h == "localhost"
         assert p == "http"
         assert b == ""
+
+    # --- #2732: the synthetic loopback floor carries the browser port ---
+
+    def test_no_headers_loopback_floor_gains_browser_port(self):
+        """No env, no request, browser listener set -> localhost:<KLANGKD_PORT>.
+
+        This is the value baked into KLANGKWS_HOSTING_HOSTNAME for the
+        setup-time container start (the sandbox hosted-URL path): /hosted/
+        is served on the browser listener, so the URL must name it.
+        """
+        u = _util({"KLANGKD_PORT": "8997"})
+        h, p, b = u.derive_hosting_info(None, None)
+        assert h == "localhost:8997"
+        assert p == "http"
+        assert b == ""
+
+    def test_uds_host_localhost_gains_browser_port(self):
+        """Host: localhost from a CLI-over-UDS handshake gains the port too."""
+        u = _util({"KLANGKD_PORT": "8997"})
+        h, p, b = u.derive_hosting_info({"host": "localhost"}, None)
+        assert h == "localhost:8997"
+
+    def test_host_with_port_unchanged(self):
+        """A Host that already carries its port is never rewritten."""
+        u = _util({"KLANGKD_PORT": "8997"})
+        h, _, _ = u.derive_hosting_info({"host": "localhost:8997"}, None)
+        assert h == "localhost:8997"
+
+    def test_loopback_host_forms_gains_browser_port(self):
+        """Case, 127.0.0.0/8, and bracketed ::1 do not dodge the retarget.
+
+        Host is case-insensitive per RFC 7230 and every 127.x is a local
+        synthetic value — all of them name port 80 without the append.
+        ``[::1]`` is the only IPv6 form whose append is parseable.
+        """
+        u = _util({"KLANGKD_PORT": "8997"})
+        for host in ("LOCALHOST", "LocalHost", "127.0.0.2", "[::1]"):
+            h, _, _ = u.derive_hosting_info({"host": host}, None)
+            assert h == f"{host}:8997", host
+
+    def test_bare_ipv6_host_left_alone(self):
+        """Bare (unbracketed) IPv6 Hosts are never appended (#2732 review).
+
+        ``::1`` parses as port-bearing; ``::ffff:127.0.0.1`` (v4-mapped
+        loopback) parses as a port-less loopback — either way a bare
+        ``:port`` append would emit an unparseable authority, so both
+        pass through untouched.
+        """
+        u = _util({"KLANGKD_PORT": "8997"})
+        for host in ("::1", "::ffff:127.0.0.1"):
+            h, _, _ = u.derive_hosting_info({"host": host}, None)
+            assert h == host, host
+
+    def test_untrusted_portless_host_unchanged(self):
+        """A non-loopback port-less Host carries remote intent; untouched.
+
+        Same anti-phishing posture as the forwarded-header gate: an
+        untrusted peer's Host is already suspect, and rewriting it with a
+        local port would only launder it.
+        """
+        u = _util({"KLANGKD_PORT": "8997"})
+        h, _, _ = u.derive_hosting_info(
+            {"host": "evil.com", "x-forwarded-host": "evil.com"},
+            "203.0.113.7",
+        )
+        assert h == "evil.com"
+
+    def test_forwarded_host_not_port_appended(self):
+        """A trusted X-Forwarded-Host passes through verbatim (#2732).
+
+        An outer proxy on a standard port is a deliberate deployment —
+        appending the local browser port would break it.
+        """
+        u = _util({"KLANGKD_PORT": "8997"})
+        h, _, _ = u.derive_hosting_info(
+            {"x-forwarded-host": "example.com"}, "127.0.0.1"
+        )
+        assert h == "example.com"
+
+    def test_env_pin_not_port_appended(self):
+        """The KLANGKD_HOSTING_HOSTNAME pin wins verbatim, port or not."""
+        u = _util(
+            {
+                "KLANGKD_PORT": "8997",
+                "KLANGKD_HOSTING_HOSTNAME": "klangk.example.com",
+            }
+        )
+        h, _, _ = u.derive_hosting_info({"host": "localhost"}, None)
+        assert h == "klangk.example.com"
+
+    def test_headless_floor_stays_bare(self):
+        """Headless (no KLANGKD_PORT): nothing to point at, floor bare."""
+        u = _util({})
+        h, _, _ = u.derive_hosting_info(None, None)
+        assert h == "localhost"
+
+
+class TestAuthorityHasPort:
+    """host[:port] authority parsing for browser_listener_hostname (#2732)."""
+
+    def test_portless_names(self):
+        assert not authority_has_port("localhost")
+        assert not authority_has_port("example.com")
+        assert not authority_has_port("[::1]")
+
+    def test_ported_names(self):
+        assert authority_has_port("localhost:8997")
+        assert authority_has_port("example.com:80")
+        assert authority_has_port("[::1]:8997")
+
+    def test_non_numeric_suffix_is_not_a_port(self):
+        assert not authority_has_port("host:notaport")
+
+    def test_bare_ipv6_reports_ported(self):
+        """A bare unbracketed IPv6 literal is indistinguishable from host:port.
+
+        Documented-intentional: callers leave such an authority alone
+        (no supported client sends it), which is the safe outcome.
+        """
+        assert authority_has_port("::1")
+
+
+class TestIsPortlessLoopbackHost:
+    """The synthetic-local gate for browser_listener_hostname (#2732)."""
+
+    def test_loopback_names(self):
+        assert is_portless_loopback_host("localhost")
+        assert is_portless_loopback_host("LOCALHOST")
+        assert is_portless_loopback_host("LocalHost")
+        assert is_portless_loopback_host("127.0.0.1")
+        assert is_portless_loopback_host("127.0.0.2")
+        assert is_portless_loopback_host("[::1]")
+
+    def test_ported_loopback_is_not_portless(self):
+        assert not is_portless_loopback_host("localhost:8997")
+        assert not is_portless_loopback_host("[::1]:8997")
+
+    def test_remote_and_garbage_are_false(self):
+        assert not is_portless_loopback_host("example.com")
+        assert not is_portless_loopback_host("evil.com")
+        assert not is_portless_loopback_host("")
+        assert not is_portless_loopback_host("not-an-ip:xyz")
+
+    def test_bare_ipv6_forms_left_alone(self):
+        """No bare (unbracketed) IPv6 is ever retargeted (#2732 review).
+
+        A v4-mapped loopback like ``::ffff:127.0.0.1`` slips past the
+        port check (its last colon-suffix is not digits) yet parses as
+        loopback — appending ``:port`` would emit an authority no URL
+        parser accepts. Every colon-bearing unbracketed form is False.
+        """
+        assert not is_portless_loopback_host("::1")
+        assert not is_portless_loopback_host("::ffff:127.0.0.1")
+        # The safe append exists only for the bracketed form.
+        assert is_portless_loopback_host("[::1]")
 
 
 # --- effective_client_ip (#2586: workstation identity for the ---

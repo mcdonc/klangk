@@ -35,12 +35,20 @@ WebSocket connections are supported — tools like Jupyter and Marimo work out o
 
 ## Environment variables inside containers
 
-| Variable                    | Example                   | Description                                   |
-| --------------------------- | ------------------------- | --------------------------------------------- |
-| `KLANGKWS_PORT_MAPPINGS`    | `8000:9000,8001:9001,...` | Container-to-host port mapping (CSV)          |
-| `KLANGKD_HOSTING_HOSTNAME`  | `localhost:8997`          | Hostname for constructing hosted app URLs     |
-| `KLANGKD_HOSTING_PROTO`     | `http`                    | Protocol for hosted app URLs                  |
-| `KLANGKD_HOSTING_BASE_PATH` | `/klangk`                 | Base path prefix (empty for root deployments) |
+| Variable                     | Example                   | Description                                   |
+| ---------------------------- | ------------------------- | --------------------------------------------- |
+| `KLANGKWS_PORT_MAPPINGS`     | `8000:9000,8001:9001,...` | Container-to-host port mapping (CSV)          |
+| `KLANGKWS_HOSTING_HOSTNAME`  | `localhost:8997`          | Hostname for constructing hosted app URLs     |
+| `KLANGKWS_HOSTING_PROTO`     | `http`                    | Protocol for hosted app URLs                  |
+| `KLANGKWS_HOSTING_BASE_PATH` | `/klangk`                 | Base path prefix (empty for root deployments) |
+
+These are injected at container start. `KLANGKWS_HOSTING_HOSTNAME` names the
+browser listener (`KLANGKD_PORT`): with no `KLANGKD_HOSTING_HOSTNAME` override,
+any synthetic port-less loopback hostname — the setup-time start with no
+request in hand, or a `Host: localhost` arriving from a CLI connected over the
+backend socket — automatically carries the browser-listener port. The whole
+block is omitted in headless deployments (`KLANGKD_PORT` unset) and
+when hosting is disabled — the same clean-error outcome as below.
 
 Extensions and scripts inside the container can use these to construct correct URLs for their hosted apps. Pi's built-in `get_hosted_url` tool does this automatically.
 
@@ -55,7 +63,7 @@ http://localhost:8997/hosted/abc123/9000/
 ```
 
 Pass the **container port** (8000-8004); it resolves the mapped host port via
-`KLANGKWS_PORT_MAPPINGS` and combines it with the `KLANGKD_HOSTING_*` and
+`KLANGKWS_PORT_MAPPINGS` and combines it with the `KLANGKWS_HOSTING_*` and
 `KLANGKWS_WORKSPACE_ID` env vars to print the full URL. Use it from `setup.sh`,
 your `service_command`, a `health_check`, or interactively. Pi's
 `get_hosted_url` tool delegates to this same script, so the URL logic lives in
@@ -99,8 +107,10 @@ server-wide. This is a single knob that doubles as the count configuration:
 - **No ports are allocated** — not at workspace creation, not on container
   start. Existing workspaces release their allocations on their next start.
 - **No hosting env in containers** — `KLANGKWS_PORT_MAPPINGS` and the
-  `KLANGKD_HOSTING_*` vars are not injected, so `klangk-hosted-url` and the
-  agent's `get_hosted_url` tool error out cleanly.
+  `KLANGKWS_HOSTING_*` vars are not injected, so `klangk-hosted-url` and the
+  agent's `get_hosted_url` tool error out cleanly. The same happens in
+  headless deployments (`KLANGKD_PORT` unset): `/hosted/` is served by the
+  browser listener, which headless mode does not render (#2732).
 - **`/hosted/<ws>/<port>/` returns 404** — the proxy locations are
   collapsed to a single `return 404` block.
 

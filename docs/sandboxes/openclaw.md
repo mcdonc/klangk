@@ -23,7 +23,9 @@ klangk sandbox openclaw
 
 First run installs Node.js 24 (via nvm), openclaw, writes a config
 pointing at the Klangk LLM proxy, and runs a non-interactive onboard.
-The setup script prints the hosted app URL at the end.
+The setup script prints the hosted app URL at the end (on servers that
+serve hosted apps; on a headless server it instead points you at the
+workspace page in the Klangk UI, since no direct URL exists).
 
 The gateway starts automatically in the Service terminal tab (it runs as
 the workspace's agent identity in a dedicated `service` tmux session, not

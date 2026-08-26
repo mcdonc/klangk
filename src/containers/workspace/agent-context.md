@@ -80,10 +80,13 @@ You are an expert coding agent working within a container.
 
 ## Hosted Apps and Ports
 
-This container has mapped ports for serving apps to the user's
-browser. The `$KLANGKWS_PORT_MAPPINGS` env var lists container_port:host_port
-pairs (e.g., "8000:9000,8001:9001,..."). Only these mapped container ports are
-reachable from outside the container.
+When this server serves hosted apps, this container has mapped ports for
+serving apps to the user's browser. The `$KLANGKWS_PORT_MAPPINGS` env var
+lists container_port:host_port pairs (e.g., "8000:9000,8001:9001,...").
+Only these mapped container ports are reachable from outside the container.
+On a headless server the variable is absent entirely (no hosted-app URLs
+exist) — `get_hosted_url` will error, and apps are reachable only from
+inside the container.
 
 - Always configure apps to listen on one of the mapped container ports
   (8000, 8001, 8002, etc.). Never hardcode arbitrary ports like 3000 or 5000

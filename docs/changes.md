@@ -1337,6 +1337,18 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   Frontend e2e tests running four Playwright workers on one runner
   could exceed the 120s container bring-up budget under contention;
   the budget now doubles to 240s on CI (local runs keep 120s).
+- **Hosted-app URLs derived without a request now name the browser listener
+  (#2732).** The hostname floor used when no browser request is in hand
+  (sandbox setup starts, autostart) was a bare `localhost` — implying port
+  80 — and `sandboxes/openclaw/setup.sh` fell back to `localhost:8995`, the
+  container-egress port, which serves no `/hosted/` routes. The synthetic
+  loopback hostname now carries the configured `KLANGKD_PORT`, so the URL
+  printed at the end of a sandbox install is followable as-is.
+  `KLANGKD_HOSTING_HOSTNAME` pins and trusted `X-Forwarded-Host` values are
+  still used verbatim. Headless servers (no `KLANGKD_PORT`) no longer
+  inject `KLANGKWS_PORT_MAPPINGS` / `KLANGKWS_HOSTING_*` at all — setup
+  prints a pointer to the workspace page instead of a dead URL, and
+  `klangk-hosted-url` errors cleanly.
 - **Crash recovery no longer corrupts workspaces that reconnect
   mid-death-detection (#331).** When the crash monitor was handling a
   container's death while a user reconnect recreated the container, the

@@ -77,10 +77,6 @@ SANDBOX_DIR = os.path.join(REPO_ROOT, "sandboxes", "hermes")
 WS = "e2e-hermes-setup"
 EMAIL = "test@example.com"
 PASSWORD = "testpass"
-# The agent's user id (klangk.model.AGENT_USER_ID). setup.sh
-# repoints HOME at the agent's home (#1171) so the ~/.profile exports
-# land in the agent's home, not the owner's; the test reads that profile.
-AGENT_USER_ID = "00000000-0000-0000-0000-000000000001"
 # Real install (clone NousResearch/hermes-agent + uv sync .[all] + managed
 # Node) can take several minutes, especially on CI. The installer's own
 # estimate is 1-5 min for deps; the clone + Node add to that.
@@ -217,19 +213,19 @@ def _health_status(base_url, token, ws_id):
 def _agent_profile(data_dir, ws_id):
     """Path to the AGENT's ~/.profile on the host for *ws_id*.
 
-    setup.sh repoints HOME at the agent's home (#1171), so the
-    HERMES_HOME / PATH exports it writes land in the agent's home
-    (``.users/<AGENT_USER_ID>``), not the owner's. Since #1295
-    workspace storage is keyed by workspace_id, so the home tree
-    is ``<data>/workspaces/<ws_id>/home/.users/``.
+    setup.sh repoints HOME at the agent's home (#1171). Since #2718/#2720
+    the agent's handle is fixed: KLANGKWS_AGENT_HOME is always the shared
+    /home/klangk, whose host-side tree lives directly under the
+    workspace's home (``<data>/workspaces/<ws>/home/klangk``) — the old
+    ``.users/<AGENT_USER_ID>`` path is gone. (Same repair the openclaw
+    suite received in #2746.)
     """
     return os.path.join(
         data_dir,
         "workspaces",
         ws_id,
         "home",
-        ".users",
-        AGENT_USER_ID,
+        "klangk",
         ".profile",
     )
 

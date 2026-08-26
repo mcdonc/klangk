@@ -16,7 +16,7 @@ INSTALL_DIR="/openclaw"
 # the WS exec that runs this script); the `:-` fallback defends against an
 # unset var. With HOME repointed, the existing ~/.profile appends below
 # land in the agent's ~/.profile unchanged.
-export HOME="${KLANGKWS_AGENT_HOME:-/home/clanker}"
+export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 
 # Persist every env export the service_command depends on to ~/.profile
 # UP FRONT, before any long-running install step.
@@ -40,7 +40,7 @@ export HOME="${KLANGKWS_AGENT_HOME:-/home/clanker}"
 #   - NVM_DIR + nvm.sh source (so nvm/node load in new shells)
 #   - /openclaw/bin on PATH (so the `openclaw` binary is found)
 #   - OPENCLAW_HOME (so openclaw locates its config; the agent's
-#     $HOME is /home/clanker, not /openclaw, so without this openclaw
+#     $HOME is /home/klangk, not /openclaw, so without this openclaw
 #     looks in the wrong place and reports "Missing config" -- #1039)
 # These used to be appended at three separate points in setup, so a
 # mid-setup pane inherited PATH but not OPENCLAW_HOME. Each line is
@@ -174,16 +174,17 @@ cfg['models']['providers']['llm-proxy']['request'] = {'allowPrivateNetwork': Tru
 cfg['gateway']['bind'] = 'lan'
 cfg['gateway']['http'] = {'endpoints': {'chatCompletions': {'enabled': True}}}
 # Trust the Klangk reverse proxy and allow the hosted origin for
-# WebSocket connections (required since openclaw v2026.2.26).
+# WebSocket connections (required since openclaw v2026.2.26). The
+# KLANGKWS_HOSTING_* block is injected only when the server actually
+# serves hosted apps (#2732); when absent there is no working browser
+# origin to allow, so only the direct localhost origins are listed.
 hosting_proto = os.environ.get('KLANGKWS_HOSTING_PROTO', 'http')
-hosting_hostname = os.environ.get('KLANGKWS_HOSTING_HOSTNAME', 'localhost:8995')
-hosted_origin = f'{hosting_proto}://{hosting_hostname}'
+hosting_hostname = os.environ.get('KLANGKWS_HOSTING_HOSTNAME', '')
+allowed_origins = ['http://localhost:8000', 'http://127.0.0.1:8000']
+if hosting_hostname:
+    allowed_origins.insert(0, f'{hosting_proto}://{hosting_hostname}')
 cfg['gateway']['controlUi'] = cfg.get('gateway', {}).get('controlUi', {})
-cfg['gateway']['controlUi']['allowedOrigins'] = [
-    hosted_origin,
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
-]
+cfg['gateway']['controlUi']['allowedOrigins'] = allowed_origins
 cfg['gateway']['trustedProxies'] = ['0.0.0.0/0']
 cfg['secrets'] = {
     'providers': {
@@ -200,13 +201,18 @@ with open(cfg_path, 'w') as f:
 
 # Derive the hosted app URL from Klangk env vars.
 # Container port 8000 maps to the first host port in KLANGKWS_PORT_MAPPINGS.
+# The backend injects the KLANGKWS_HOSTING_* block only when it serves
+# /hosted/ (KLANGKD_PORT set, #2732) — KLANGKWS_HOSTING_HOSTNAME then names
+# the browser listener the URL is served on. When the block is absent the
+# server serves no hosted-app URL at all, so print a pointer to the UI
+# instead of guessing a host:port that cannot work.
 host_port=""
 if [ -n "${KLANGKWS_PORT_MAPPINGS:-}" ]; then
   # Format: 8000:9000,8001:9001,...
   host_port=$(echo "$KLANGKWS_PORT_MAPPINGS" | cut -d, -f1 | cut -d: -f2)
 fi
 proto="${KLANGKWS_HOSTING_PROTO:-http}"
-hostname="${KLANGKWS_HOSTING_HOSTNAME:-localhost:8995}"
+hostname="${KLANGKWS_HOSTING_HOSTNAME:-}"
 base_path="${KLANGKWS_HOSTING_BASE_PATH:-}"
 workspace_id="${KLANGKWS_WORKSPACE_ID:-}"
 
@@ -216,8 +222,12 @@ echo "openclaw: $(openclaw --version)"
 echo ""
 echo "Setup complete."
 echo "The gateway will start automatically via service-command."
-if [ -n "$host_port" ] && [ -n "$workspace_id" ]; then
+if [ -n "$host_port" ] && [ -n "$hostname" ] && [ -n "$workspace_id" ]; then
   echo ""
   echo "Open the UI at:"
   echo "  ${proto}://${hostname}${base_path}/hosted/${workspace_id}/${host_port}/"
+else
+  echo ""
+  echo "Hosted UI: open it from the workspace page in the Klangk UI"
+  echo "(this server serves no direct hosted-app URLs)."
 fi
