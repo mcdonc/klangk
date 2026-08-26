@@ -239,30 +239,32 @@ klangk ls --sort name --order asc       # sort by name, ascending
 klangk ls --filter gamma                # substring filter on name
 klangk create my-project                # create a workspace
 klangk create my-project --auto-start   # create with auto-start on server boot
-klangk create my-project --mount ~/src:/home/klangk/work/src          # with bind mount
+klangk create my-project --mount ~/src:/home/klangk/src          # with bind mount
 klangk create my-project --mount nix-store:/nix           # with named volume
 klangk create my-project --env FOO=bar                      # with env vars
 klangk create my-project --health-check 'curl -sf http://localhost:8080/health'  # with a service health check
 klangk create my-project --command 'npm run dev'  # with a service command
 klangk create my-project -c 'npm run dev'         # short form of --command
+klangk create my-project --per-handle-home       # per-member private homes (default: shared /home/klangk)
 klangk create my-project --allow github.com:443 --allow pypi.org  # with egress allowlist
 klangk edit my-project                  # interactive edit (name, image, command, health check, mounts, env, allowed domains)
 klangk edit my-project --auto-start     # enable auto-start on server boot
 klangk edit my-project --no-auto-start  # disable auto-start
 klangk edit my-project --env FOO=bar    # set env var via flag
 klangk edit my-project --allow github.com:443     # set allowed egress domain via flag
+klangk edit my-project --shared-home             # switch layout (applies from next connect/start)
 klangk dup my-project my-copy           # duplicate a workspace
 klangk shell my-project                 # drop into bash inside the container
 klangk shell my-project debug           # attach to the "debug" terminal window (created if it doesn't exist)
 klangk sandbox myws                     # create workspace from .klangk-sandbox.yaml
 klangk sandbox myws ~/projects/myapp    # specify sandbox root explicitly
 klangk sandbox myws --force             # re-apply config and re-run setup on existing workspace
-klangk exec my-project ls /home/klangk/work         # run a command in the container (login shell: sources ~/.profile)
+klangk exec my-project ls /home/klangk           # run a command in the container (login shell: sources ~/.profile)
 klangk exec --raw my-project rsync --server ...      # raw argv, no shell (for transports like rsync)
 klangk monitor                                        # stream all server events as JSON
 klangk monitor --type service_health | jq .           # pretty-print health transitions
 klangk monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
-klangk sync ~/src my-project:/home/klangk/work      # sync files to/from the container
+klangk sync ~/src my-project:/home/klangk/src      # sync files to/from the container
 klangk rm my-project                # delete a workspace
 klangk stop my-project              # stop the container for a workspace
 klangk start my-project             # start the container for a workspace

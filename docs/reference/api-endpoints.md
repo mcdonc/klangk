@@ -1316,11 +1316,16 @@ are created automatically.
   "image": "klangk-workspace:latest",
   "service_command": "/bin/bash",
   "mounts": ["my-volume:/home/user/data"],
-  "env": { "MY_VAR": "value" }
+  "env": { "MY_VAR": "value" },
+  "per_handle_home": true
 }
 ```
 
-All fields except `name` are optional.
+All fields except `name` are optional. `per_handle_home` selects the
+[home layout](../features/workspaces.md#home-directory-layout): `true`
+gives each member a private `/home/<handle>`, `false` (the server
+default, `KLANGKD_PER_HANDLE_HOME`) shares one `/home/klangk`. Omit it
+to inherit the server default.
 
 ```json
 {
@@ -1646,9 +1651,14 @@ command, volume mounts, environment variables). All fields optional.
   "image": "klangk-workspace:latest",
   "service_command": "/bin/bash",
   "mounts": ["vol:/data"],
-  "env": { "KEY": "VALUE" }
+  "env": { "KEY": "VALUE" },
+  "per_handle_home": false
 }
 ```
+
+`per_handle_home` may be flipped here too; the new layout applies from
+the workspace's next connect/start (open terminals keep their layout
+until they end).
 
 ```json
 { "status": "updated" }

@@ -92,16 +92,23 @@ sandbox:
   setup-timeout: 300
 ```
 
-| Field           | Required | Default  | Description                                                                                                |
-| --------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------- |
-| `mount-at`      | no       | `~/work` | Where the sandbox root is mounted inside the container. `~` expands to `/home/{handle}`.                   |
-| `setup`         | no       | (none)   | Script to run inside the container after creation. Relative to `mount-at`, or absolute if starts with `/`. |
-| `setup-timeout` | no       | `300`    | Maximum seconds the setup script may run before being killed. Set to `0` to disable.                       |
+| Field           | Required | Default  | Description                                                                                                   |
+| --------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `mount-at`      | no       | `~/work` | Where the sandbox root is mounted inside the container. `~` expands to `/home/{handle}` — see the note below. |
+| `setup`         | no       | (none)   | Script to run inside the container after creation. Relative to `mount-at`, or absolute if starts with `/`.    |
+| `setup-timeout` | no       | `300`    | Maximum seconds the setup script may run before being killed. Set to `0` to disable.                          |
 
 The setup script runs once — on workspace creation, not on
 reconnect. It runs as the `klangk` user inside the container. If
 `KLANGKD_ALLOW_SUDO` is enabled on the server, the script can use
 `sudo` for system-level setup (installing packages, etc.).
+
+> **`~` and the home layout:** In `mount-at`, `copy` destinations,
+> and `mounts` destinations, `~` always expands to `/home/{handle}` —
+> your home under the per-handle layout. On a **shared-home**
+> workspace (the default) your `$HOME` is `/home/klangk`, so a `~`
+> destination mounts outside your home; use an explicit absolute
+> path (e.g. `mount-at: /home/klangk/work`) there.
 
 ### `copy`
 
@@ -114,7 +121,7 @@ copy:
 Files copied from the host into the container home directory. Uses the
 same `source:destination` format as mounts. Tilde on the left expands
 to the host user's home; tilde on the right expands to the container
-user's home (`/home/{handle}`).
+user's home (`/home/{handle}` — see the `~` note above).
 
 Copies happen once during workspace creation, after the default home
 skeleton is populated but before the setup script runs. The copied
@@ -137,8 +144,8 @@ Bind mounts from the host into the container. Format:
 - **Source**: host path. Absolute, or relative to the sandbox root.
   Tilde expands to the host user's home.
 - **Destination**: container path. Tilde expands to
-  `/home/{handle}`. Relative paths (no `~` or `/` prefix) are
-  resolved relative to `mount-at`.
+  `/home/{handle}` (see the `~` note above). Relative paths (no `~`
+  or `/` prefix) are resolved relative to `mount-at`.
 - **Options**: optional, comma-separated. Common options: `ro`
   (read-only), `rw` (read-write, default).
 
@@ -308,7 +315,7 @@ export HOME="${KLANGKWS_AGENT_HOME:-/home/klangk}"
 # Now ~/.profile, ~/.local/bin, etc. resolve into the shared home.
 ```
 
-> Under the default per-handle layout the owner does **not** get tools
+> Under the per-handle layout the owner does **not** get tools
 > installed by a sandbox on their own PATH. Sandbox-installed services
 > are operated through the Service tab — that is the supported way to
 > manage them (e.g. `openclaw onboard`, restarting a gateway). Don't
