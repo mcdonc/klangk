@@ -6499,6 +6499,36 @@ class TestRegistryServiceSessionLocks:
         finally:
             held.release()
 
+
+class TestRegistryServiceFirePending:
+    """The registry's per-container pending-fire set (#2740): the marker
+    that a service-command fire half-completed (window exists, command
+    never typed) so the next ensure_service_session retries the send."""
+
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.registry = app_state.state.container_registry
+        self.registry._service_fire_pending.clear()
+
+    def teardown_method(self):
+        self.registry._service_fire_pending.clear()
+
+    def test_mark_and_query_pending(self):
+        reg = self.registry
+        assert reg.service_fire_pending("cid") is False
+        reg.mark_service_fire_pending("cid")
+        assert reg.service_fire_pending("cid") is True
+
+    def test_clear_pending(self):
+        reg = self.registry
+        reg.mark_service_fire_pending("cid")
+        reg.clear_service_fire_pending("cid")
+        assert reg.service_fire_pending("cid") is False
+
+    def test_clear_pending_is_noop_for_unknown_container(self):
+        # Must not raise for a container that never fired.
+        self.registry.clear_service_fire_pending("never-seen")
+
     def test_prune_noop_when_all_tracked(self):
         reg = self.registry
         reg.get_service_session_lock("a")

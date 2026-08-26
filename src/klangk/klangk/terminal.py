@@ -9,6 +9,7 @@ podman with ``SIGWINCH`` so it resizes the container PTY.
 
 import asyncio
 import codecs
+import contextlib
 import fcntl
 import re
 import logging
@@ -94,6 +95,17 @@ SERVICE_CMD_WINDOW = "service-cmd"
 # ``pi --mode rpc`` subprocess lifecycle (it survives the agent process
 # dying because it is just a tmux session) (#1133 D6).
 SERVICE_SESSION = "service"
+
+# Per-exec budget for the tmux control-plane calls in the service-command
+# fire sequence (has-session / list-windows / new-window / send-keys /
+# kill-window). These are cheap when the host is healthy (0.1-0.2s) but
+# pure control-plane -- nothing user-visible blocks on them being fast --
+# so the old 5s budget only ever fired as a false kill under runner CPU
+# saturation (a killed exec returns rc=-1 from ``Podman.run``, the
+# container side may or may not have completed). 15s keeps a bound on a
+# wedged runtime while leaving headroom for concurrent E2E jobs on a
+# shared host (#2740).
+SERVICE_EXEC_TIMEOUT = 15.0
 
 
 def should_fire_service_command(
@@ -311,7 +323,7 @@ class Terminal:
                 container_id,
                 ["tmux", "has-session", "-t", session_name],
                 user=CONTAINER_USER,
-                timeout=5,
+                timeout=SERVICE_EXEC_TIMEOUT,
             )
         except Exception:
             return False
@@ -319,8 +331,8 @@ class Terminal:
 
     async def service_cmd_window_exists(
         self, container_id: str, session_name: str
-    ) -> bool:
-        """Return True if the ``service-cmd`` window exists in *session_name*.
+    ) -> bool | None:
+        """Return whether the ``service-cmd`` window exists in *session_name*.
 
         This is the ephemeral "has the service command already fired in
         THIS container" check (#1033). Unlike ``setup_state`` it is
@@ -328,6 +340,14 @@ class Terminal:
         re-fires the service command for an already-``complete`` workspace.
         tmux allows duplicate window names, so we must inspect the list
         rather than rely on ``new-window`` failing.
+
+        Tri-state (#2740): ``True``/``False`` when tmux answered (rc=0),
+        ``None`` when the check itself failed (exec killed under load,
+        launch failure). A killed exec is NOT evidence the window is
+        absent -- assuming "absent" fired a duplicate ``service-cmd``
+        window and re-sent the command into a service that may already be
+        running. Callers treat ``None`` as "unknown, skip this round" and
+        retry on the next terminal_start/reconnect.
         """
         try:
             rc, stdout, _ = await self.podman.exec_container(
@@ -341,12 +361,12 @@ class Terminal:
                     "#{window_name}",
                 ],
                 user=CONTAINER_USER,
-                timeout=5,
+                timeout=SERVICE_EXEC_TIMEOUT,
             )
         except Exception:
-            return False
+            return None
         if rc != 0:
-            return False
+            return None
         return SERVICE_CMD_WINDOW in {
             line.strip() for line in stdout.splitlines() if line.strip()
         }
@@ -451,6 +471,58 @@ class Terminal:
                 container_id,
             )
 
+    async def kill_service_cmd_window(self, container_id: str) -> bool:
+        """Kill the ``service:service-cmd`` window; True iff it died.
+
+        The #1186 cleanup, factored out so every failure mode in the fire
+        sequence (failed new-window, failed send-keys, cancellation) shares
+        it. Best-effort: returns False on a failed/killed exec or launch
+        error, leaving the caller to mark the fire pending (#2740).
+        """
+        try:
+            rc, _, _ = await self.podman.exec_container(
+                container_id,
+                [
+                    "tmux",
+                    "kill-window",
+                    "-t",
+                    f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                ],
+                user=CONTAINER_USER,
+                timeout=SERVICE_EXEC_TIMEOUT,
+            )
+        except Exception:
+            return False
+        return rc == 0
+
+    async def _send_service_command(
+        self, container_id: str, service_command: str
+    ) -> bool:
+        """send-keys the service command into ``service:service-cmd``.
+
+        Shared by the fresh-fire path (window just created) and the
+        pending-retry path (window survived a failed fire). Returns True
+        only on a clean rc=0 exec -- a killed exec (rc=-1 under the
+        #2740 load budget) means the send state is UNKNOWN, not OK.
+        """
+        try:
+            rc, _, _ = await self.podman.exec_container(
+                container_id,
+                [
+                    "tmux",
+                    "send-keys",
+                    "-t",
+                    f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                    service_command,
+                    "Enter",
+                ],
+                user=CONTAINER_USER,
+                timeout=SERVICE_EXEC_TIMEOUT,
+            )
+        except Exception:
+            return False
+        return rc == 0
+
     async def ensure_service_session(
         self,
         container_id: str,
@@ -489,6 +561,26 @@ class Terminal:
         existence check before either created the window, producing two
         duplicate-named ``service-cmd`` windows (tmux allows duplicate
         names), leaving later ``send-keys -t service:service-cmd`` ambiguous.
+
+        Recovery (#2740): ``Podman.exec_container`` runs ``check=False``, so
+        a timed-out exec returns ``rc=-1`` instead of raising -- the old
+        ``except Exception`` guards never fired for timeouts, and a killed
+        ``send-keys`` was mistaken for success (window exists, command never
+        typed -> every later fire suppressed forever). Every step now checks
+        rc, and any failure lands in a recoverable state:
+
+        - failed new-window or send-keys: kill the half-created window so
+          the next ``terminal_start`` re-runs the whole sequence (#1186's
+          cleanup extended to the earlier steps).
+        - cleanup kill-window also fails: mark the fire pending on the
+          registry; the next call sees the window + pending flag and
+          retries ONLY the send into the surviving window.
+        - unknown window-exists (killed list-windows): skip this round;
+          the next ``terminal_start`` retries the check.
+        - cancellation (client WS drop) mid-sequence: mark pending, run
+          the cleanup, re-raise. A re-run of an already-typed command is
+          possible on the retry path; that is the accepted cost versus
+          permanently suppressing the service.
         """
         # Hold the per-container lock across the entire read-modify-write so
         # a concurrent caller (boot vs first terminal_start, owner vs
@@ -499,85 +591,128 @@ class Terminal:
             await self._ensure_tmux_session(
                 container_id, SERVICE_SESSION, user_home=SHARED_HOME
             )
-            if not (
-                should_fire_service_command(service_command, setup_state)
-            ) or await self.service_cmd_window_exists(
+            if not should_fire_service_command(service_command, setup_state):
+                return
+            exists = await self.service_cmd_window_exists(
                 container_id, SERVICE_SESSION
-            ):
-                return
-            try:
-                await self.podman.exec_container(
+            )
+            if exists is None:
+                # The check itself failed (killed exec under load): the
+                # window state is UNKNOWN. Firing here could duplicate the
+                # window and re-send into a running service; skipping keeps
+                # the exactly-once invariant and the next terminal_start
+                # retries the check (#2740).
+                logger.debug(
+                    "service-cmd window state unknown for %s; "
+                    "deferring fire to next terminal_start",
                     container_id,
-                    [
-                        "tmux",
-                        "new-window",
-                        "-d",
-                        "-t",
-                        SERVICE_SESSION,
-                        "-n",
-                        SERVICE_CMD_WINDOW,
-                    ],
-                    user=CONTAINER_USER,
-                    timeout=5,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to create %s window in %s",
-                    SERVICE_CMD_WINDOW,
-                    SERVICE_SESSION,
                 )
                 return
-            # The new window's shell needs a moment to source .profile / .bashrc
-            # before it can resolve PATH-dependent commands (nvm, openclaw, ...).
-            # Same race as #1030.
-            await asyncio.sleep(1)
+            if exists:
+                if self.registry.service_fire_pending(container_id):
+                    # A previous fire half-completed and its cleanup failed:
+                    # the window exists but the command was (probably)
+                    # never typed. Retry only the send -- recreating the
+                    # window would lose the settled shell (#2740).
+                    if await self._send_service_command(
+                        container_id, service_command
+                    ):
+                        self.registry.clear_service_fire_pending(container_id)
+                        self.registry.mark_service_started(container_id)
+                    else:
+                        logger.warning(
+                            "Service command retry failed for %s; "
+                            "will retry on next terminal_start",
+                            container_id,
+                        )
+                return
+            # Fresh fire. Any stale pending flag (e.g. the window died some
+            # other way) is moot once this sequence runs.
+            self.registry.clear_service_fire_pending(container_id)
             try:
-                await self.podman.exec_container(
-                    container_id,
-                    [
-                        "tmux",
-                        "send-keys",
-                        "-t",
-                        f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
-                        service_command,
-                        "Enter",
-                    ],
-                    user=CONTAINER_USER,
-                    timeout=5,
-                )
-                # The service command just fired -- reset the health-check
-                # startup-grace anchor so the monitor gives the service time
-                # to boot before a failing poll can flag it unhealthy (e.g.
-                # a gateway that isn't accepting connections yet).  Set only
-                # on a successful send-keys; the except path below never
-                # launched the command, so it must not start the grace
-                # window.
-                self.registry.mark_service_started(container_id)
-            except Exception:
-                logger.warning(
-                    "Failed to send service command to %s", SERVICE_SESSION
-                )
-                # The window was created above but we never typed the command
-                # into it. Kill it so the next fire re-runs the whole sequence
-                # instead of no-op'ing forever on the half-created window (#1186).
                 try:
-                    await self.podman.exec_container(
+                    rc, _, _ = await self.podman.exec_container(
                         container_id,
                         [
                             "tmux",
-                            "kill-window",
+                            "new-window",
+                            "-d",
                             "-t",
-                            f"{SERVICE_SESSION}:{SERVICE_CMD_WINDOW}",
+                            SERVICE_SESSION,
+                            "-n",
+                            SERVICE_CMD_WINDOW,
                         ],
                         user=CONTAINER_USER,
-                        timeout=5,
+                        timeout=SERVICE_EXEC_TIMEOUT,
                     )
                 except Exception:
+                    rc = -1
+                if rc != 0:
                     logger.warning(
-                        "Failed to clean up %s window in %s",
+                        "Failed to create %s window in %s",
                         SERVICE_CMD_WINDOW,
                         SERVICE_SESSION,
                     )
+                    # The exec may have been killed client-side while the
+                    # container side created the window -- clean it up so
+                    # the next fire re-runs the whole sequence instead of
+                    # suppressing on a command-less window (#2740).
+                    self.registry.mark_service_fire_pending(container_id)
+                    if await self.kill_service_cmd_window(container_id):
+                        self.registry.clear_service_fire_pending(container_id)
+                    else:
+                        logger.warning(
+                            "Failed to clean up %s window in %s",
+                            SERVICE_CMD_WINDOW,
+                            SERVICE_SESSION,
+                        )
+                    return
+                # The new window's shell needs a moment to source
+                # .profile / .bashrc before it can resolve PATH-dependent
+                # commands (nvm, openclaw, ...). Same race as #1030.
+                await asyncio.sleep(1)
+                if await self._send_service_command(
+                    container_id, service_command
+                ):
+                    # The service command just fired -- reset the
+                    # health-check startup-grace anchor so the monitor
+                    # gives the service time to boot before a failing poll
+                    # can flag it unhealthy (e.g. a gateway that isn't
+                    # accepting connections yet). Only on a clean send:
+                    # the failure paths never launched the command, so they
+                    # must not start the grace window.
+                    self.registry.mark_service_started(container_id)
+                    return
+                logger.warning(
+                    "Failed to send service command to %s", SERVICE_SESSION
+                )
+                # The window was created above but the command never
+                # landed in it. Kill it so the next fire re-runs the whole
+                # sequence instead of no-op'ing forever on the
+                # half-created window (#1186). If the cleanup itself
+                # fails, leave the fire pending so the next call retries
+                # the send into the surviving window (#2740).
+                self.registry.mark_service_fire_pending(container_id)
+                if await self.kill_service_cmd_window(container_id):
+                    self.registry.clear_service_fire_pending(container_id)
+                else:
+                    logger.warning(
+                        "Failed to clean up %s window in %s; "
+                        "fire marked pending",
+                        SERVICE_CMD_WINDOW,
+                        SERVICE_SESSION,
+                    )
+            except asyncio.CancelledError:
+                # The caller (e.g. the _start_terminal task on a client WS
+                # drop) went away mid-sequence. The synchronous pending
+                # flag lands BEFORE the cleanup await, so even a second
+                # cancellation during cleanup leaves a recoverable state:
+                # the next terminal_start sees window + pending and retries
+                # the send (#2740).
+                self.registry.mark_service_fire_pending(container_id)
+                with contextlib.suppress(Exception):
+                    await self.kill_service_cmd_window(container_id)
+                raise
 
     # --- container-side helpers ---
 

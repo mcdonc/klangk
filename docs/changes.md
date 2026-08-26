@@ -1298,6 +1298,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   fresh container's registry state could be dropped and its network
   sidecar torn down. Death teardown is now keyed to the dead container
   id, so a workspace re-bound to a fresh container is left untouched.
+- **Service commands now recover from interrupted startup (#2740).**
+  A podman exec killed by CPU load (or a client disconnect) during the
+  service-command fire could leave a half-created `service-cmd` tmux
+  window that silently suppressed the workspace's service command until
+  the container was recreated. Any such half-fire is now cleaned up and
+  retried on the next terminal start.
 - **Status WebSocket follows a server switch (#2029).** The TUI's live
   status connection kept dialing the previous server after switching
   servers, producing a false "server down" overlay. It now re-reads the

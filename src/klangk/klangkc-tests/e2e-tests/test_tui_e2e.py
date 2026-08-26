@@ -256,12 +256,23 @@ class TestTuiE2E:
             ).value = "tuiuser@example.com"
             app.screen.query_one("#password", Input).value = "wrongpass"
             app.screen._attempt_password()
-            # Wait for async HTTP login attempt to complete.
-            await asyncio.sleep(2)
-            await pilot.pause()
+            # Wait for the async login round-trip to land. Server-side
+            # login ALWAYS pays a full PBKDF2-HMAC-SHA512 (600k iters —
+            # dummy_verify_hash for unknown users, timing-leak defense),
+            # which stretches well past 2s on a loaded CI runner (two
+            # xdist workers + podman churn; #2740 flake family). Poll for
+            # the message instead of a fixed sleep, bounded by the
+            # client's own 15s HTTP budget.
+            msg = ""
+            deadline = asyncio.get_event_loop().time() + 15.0
+            while asyncio.get_event_loop().time() < deadline:
+                await pilot.pause()
+                await asyncio.sleep(0.1)
+                msg = str(app.screen.query_one("#message").render())
+                if msg:
+                    break
             # Should still be on login screen with an error message.
             assert isinstance(app.screen, LoginScreen)
-            msg = str(app.screen.query_one("#message").render())
             assert msg  # error message shown
 
     async def test_login_empty_fields(self, base_url, tmp_path, monkeypatch):

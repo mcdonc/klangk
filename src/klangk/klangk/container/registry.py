@@ -182,6 +182,11 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.draining: bool = False
         self._workspace_locks: dict[str, asyncio.Lock] = {}
         self._service_session_locks: dict[str, asyncio.Lock] = {}
+        # Containers whose service-command fire half-completed and whose
+        # cleanup ALSO failed, leaving a command-less ``service-cmd``
+        # window behind (#2740). Keyed like the locks above; cleared on
+        # successful fire/retry, cleanup, and container teardown.
+        self._service_fire_pending: set[str] = set()
         self.on_workspace_killed = None
         self.on_container_status_changed = None
 
@@ -390,6 +395,27 @@ class ContainerRegistry(NetworkSidecarMixin):
             del self._service_session_locks[cid]
         return len(stale)
 
+    def mark_service_fire_pending(self, container_id: str) -> None:
+        """Record a half-completed service-command fire (#2740).
+
+        Set when the ``service-cmd`` window exists but the command may
+        never have been typed into it (killed/timed-out send-keys whose
+        kill-window cleanup also failed, or a cancellation mid-sequence).
+        The next :meth:`terminal.ensure_service_session` call sees the
+        window plus this flag and retries only the send, instead of
+        suppressing the fire forever on the window-exists check.
+        """
+        self._service_fire_pending.add(container_id)
+
+    def clear_service_fire_pending(self, container_id: str) -> None:
+        """Drop the pending-fire marker (fire/retry/cleanup succeeded,
+        or the container was torn down). Safe when not set."""
+        self._service_fire_pending.discard(container_id)
+
+    def service_fire_pending(self, container_id: str) -> bool:
+        """True if a service-command fire is awaiting a send retry."""
+        return container_id in self._service_fire_pending
+
     def _get_workspace_lock(self, workspace_id: str) -> asyncio.Lock:
         """Get or create a per-workspace lock for container operations."""
         if workspace_id not in self._workspace_locks:
@@ -524,6 +550,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                 # Drop the per-container service-firing lock (#1188), then
                 # sweep any other entries orphaned by container churn (#1351).
                 self.clear_service_session_lock(state.container_id)
+                self.clear_service_fire_pending(state.container_id)
                 self.prune_service_session_locks(set(self._cid_to_wsid))
 
     # --- Proxy: PortAllocator ---
@@ -1064,6 +1091,7 @@ class ContainerRegistry(NetworkSidecarMixin):
                     self.states.pop(workspace_id, None)
                     self._cid_to_wsid.pop(cid, None)
                 self.clear_service_session_lock(cid)
+                self.clear_service_fire_pending(cid)
                 self._notify_status_changed(workspace_id, False)
             finally:
                 self.stopping.discard(workspace_id)
@@ -1679,6 +1707,7 @@ class ContainerRegistry(NetworkSidecarMixin):
             # re-bind that popped this container's mapping before teardown)
             # (#1351).
             self.clear_service_session_lock(container_id)
+            self.clear_service_fire_pending(container_id)
             self.prune_service_session_locks(set(self._cid_to_wsid))
             # Gone via this call AND (untracked, or our registry state torn
             # down — i.e. not left alone by the rebind guard).

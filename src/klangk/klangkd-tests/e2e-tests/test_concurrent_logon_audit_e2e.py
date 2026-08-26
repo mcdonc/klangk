@@ -39,7 +39,9 @@ def server(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def api(server):
-    with httpx_client(server, timeout=10.0) as client:
+    # 30s budget: login is PBKDF2 CPU work that stretches past 10s on a
+    # CI runner starved by concurrent xdist workers (#2740).
+    with httpx_client(server, timeout=30.0) as client:
         yield client
 
 
