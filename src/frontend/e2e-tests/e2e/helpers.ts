@@ -387,6 +387,16 @@ export async function createWorkspace(
   };
 }
 
+/** Default budget for waiting on container (and terminal) readiness.
+ *
+ *  240s (#245): the file-viewer specs run 4 Playwright workers on one
+ *  runner VM, and under that contention podman create/start + sidecar +
+ *  shared-home provisioning can exceed the old 120s — the failing test
+ *  then burned its retry on the same starved bring-up. 120s stays the
+ *  local-dev default via the explicit override; CI inherits the
+ *  load-tolerant budget. */
+const CONTAINER_READY_TIMEOUT = process.env.CI ? 240_000 : 120_000;
+
 /** Open a workspace in the browser and wait for the container to be ready. */
 export async function openWorkspace(
   page: Page,
@@ -394,7 +404,7 @@ export async function openWorkspace(
   workspaceId: string,
   {
     waitForTerminal = false,
-    containerTimeout = 120_000,
+    containerTimeout = CONTAINER_READY_TIMEOUT,
   }: { waitForTerminal?: boolean; containerTimeout?: number } = {},
 ) {
   // Set up WebSocket listener before login so we catch all WebSocket
@@ -505,7 +515,7 @@ export function dockerContainersForWorkspace(workspaceId: string): string[] {
 export async function connectContainer(
   workspaceId: string,
   token: string,
-  timeout = 120_000,
+  timeout = CONTAINER_READY_TIMEOUT,
 ): Promise<void> {
   const wsBase = API_BASE.replace(/^http/, "ws");
   // eslint-disable-next-line @typescript-eslint/no-var-requires
