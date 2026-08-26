@@ -421,7 +421,7 @@ class TestDrain:
         self, app_state, db
     ):
         """Drain's session/agent reset rides the on_workspace_killed
-        callback (wired in main.py) — assert it fires per workspace, so
+        callback (wired in the lifespan, klangk.lifecycle) — assert it fires per workspace, so
         a wiring change cannot leave stale sessions (#2527 review: the
         /stop endpoint calls reset_workspace_state itself, drain relies
         on this callback)."""

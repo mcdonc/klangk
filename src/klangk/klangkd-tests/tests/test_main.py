@@ -989,7 +989,7 @@ class TestLifespan:
             patch.object(util_mod.Util, "write_pid_file"),
             patch.object(util_mod.Util, "remove_pid_file"),
             patch(
-                "klangk.main.wshandler.reset_workspace_state",
+                "klangk.lifecycle.wshandler.reset_workspace_state",
                 new_callable=AsyncMock,
             ) as mock_reset,
         ):
@@ -1611,7 +1611,7 @@ class TestStartupShutdownRestart:
         registry = app_state.state.container_registry
         with (
             patch(
-                "klangk.main.wshandler.disconnect_all_websockets",
+                "klangk.lifecycle.wshandler.disconnect_all_websockets",
                 new_callable=AsyncMock,
             ) as mock_disc,
             patch.object(
@@ -2458,7 +2458,7 @@ class TestStartupShutdownRestart:
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("startup also exploded"),
             ),
-            patch("klangk.main.os._exit") as mock_exit,
+            patch("klangk.lifecycle.os._exit") as mock_exit,
             caplog.at_level("CRITICAL"),
         ):
             lc.on_sighup()
@@ -2580,6 +2580,8 @@ class TestSetupStaticFiles:
 
         test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
+        # build_app registers this once; mirror it here (#2738).
+        test_app.middleware("http")(main.no_cache_headers)
 
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
@@ -2603,6 +2605,7 @@ class TestSetupStaticFiles:
 
         test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
+        test_app.middleware("http")(main.no_cache_headers)
 
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
@@ -2624,6 +2627,7 @@ class TestSetupStaticFiles:
 
         test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
+        test_app.middleware("http")(main.no_cache_headers)
 
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
@@ -2726,6 +2730,7 @@ class TestSetupStaticFiles:
 
         test_app.state.auth = auth_mod.Auth(test_app)
         main.setup_static_files(test_app, tmp_path)
+        test_app.middleware("http")(main.no_cache_headers)
         transport = ASGITransport(app=test_app)
         async with AsyncClient(
             transport=transport, base_url="http://test"

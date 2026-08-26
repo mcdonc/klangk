@@ -1321,6 +1321,18 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   reconnect" promise real. Logout and session expiry tear the connection
   down too, so a logged-out TUI no longer keeps receiving the old
   server's events and a re-login no longer runs two status connections.
+- **SIGHUP `KLANGKD_FRONTEND_DIR` reload no longer breaks the restart
+  (#2738).** The in-process frontend remount re-registered the
+  no-cache HTTP middleware, which Starlette rejects once the app is
+  serving — the recycle task then failed and had to run its recovery
+  path. The middleware is now registered once at app build; a reload
+  also re-resolves the `/branding` mount instead of serving the stale
+  directory.
+- **Startup config refusals now exit `EX_CONFIG` (78) consistently
+  (#2738).** The password-mode admin lockout guard and the agent-handle
+  collision guard raised bare `RuntimeError`, which a supervisor would
+  restart-loop; they now raise the configuration error the launcher
+  maps to `EX_CONFIG`, like every other deterministic boot refusal.
 - **E2E container-readiness budget tolerates CI load (#245).**
   Frontend e2e tests running four Playwright workers on one runner
   could exceed the 120s container bring-up budget under contention;
