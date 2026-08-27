@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 
 from ..netfilter import parse_allowed_domains
 from .acl import ACTION_ALLOW, PRINCIPAL_GROUP, PRINCIPAL_USER
-from .users import AGENT_USER_ID, AgentPrincipalError
+from .users import (
+    AGENT_USER_ID,
+    AgentPrincipalError,
+    GROUP_SOURCE_WORKSPACE_ROLE,
+)
 
 # Must match the DB default and container.DEFAULT_PORTS_PER_WORKSPACE.
 DEFAULT_PORTS_PER_WORKSPACE = 5
@@ -37,6 +41,11 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "spectate-on-shared-terminals",
     ],
 }
+
+# The role word for the owners group (the membership target of
+# :meth:`transfer_workspace`). Kept separate from the dict above so the
+# swap path reads as intent, not as a naming-convention fragment.
+OWNER_ROLE = "owners"
 
 # Upper bound on compare-and-swap retries for the settings-bag merge
 # (:meth:`WorkspacesModel.update_workspace_settings`). Under normal load the
@@ -227,15 +236,37 @@ class WorkspacesModel:
             "created_at": created_at,
         }
 
+    async def get_workspace_role_groups(
+        self, db, workspace_id: str
+    ) -> list[dict]:
+        """The workspace's seeded role groups, by marker + workspace id.
+
+        Runs on the caller's connection (both callers — teardown and
+        ownership transfer — are inside transactions). Matching is
+        ``source = 'workspace-role'`` plus the workspace-id UUID suffix
+        of the name (#2750): the UUID is unique per workspace, so no
+        role-suffix list is duplicated here. Returns ``[{id, name}]``.
+        """
+        cursor = await db.execute(
+            "SELECT id, name FROM groups WHERE source = ? AND name LIKE ?",
+            (GROUP_SOURCE_WORKSPACE_ROLE, f"%-{workspace_id}"),
+        )
+        return [
+            {"id": row["id"], "name": row["name"]}
+            for row in await cursor.fetchall()
+        ]
+
     async def _seed_workspace_acl(self, db, ws: dict, user_id: str) -> None:
         """Seed the owner ACE and per-workspace role groups on ``db``.
 
         Writes the owner ``Allow`` ACE at position 0, then creates the four
         role groups (``owners``/``coders``/``collaborators``/``spectators``)
         with their permission ACEs at incrementing positions, and adds the
-        creator to the ``owners`` group. Runs on the caller's connection so
-        it commits/rolls back with the surrounding transaction. Must stay
-        in sync with :meth:`delete_workspace`'s teardown.
+        creator to the ``owners`` group. Role groups are inserted with
+        ``source = 'workspace-role'`` so global group lists can hide them
+        (#2750). Runs on the caller's connection so it commits/rolls back
+        with the surrounding transaction. Must stay in sync with
+        :meth:`delete_workspace`'s teardown.
         """
         resource = f"/workspaces/{ws['id']}"
         await db.execute(
@@ -259,11 +290,14 @@ class WorkspacesModel:
             group_name = f"{suffix}-{ws['id']}"
             group_id = str(uuid.uuid4())
             await db.execute(
-                "INSERT INTO groups (id, name, description) VALUES (?, ?, ?)",
+                "INSERT INTO groups (id, name, description, source)"
+                " VALUES (?, ?, ?, ?)",
                 (
                     group_id,
                     group_name,
-                    f"{group_name} for workspace {ws['name']}",
+                    f"Workspace role group: {suffix} of workspace"
+                    f" {ws['name']}",
+                    GROUP_SOURCE_WORKSPACE_ROLE,
                 ),
             )
             for perm in perms:
@@ -648,27 +682,25 @@ class WorkspacesModel:
             await db.execute(
                 "DELETE FROM acl_entries WHERE resource = ?", (resource,)
             )
-            # Clean up per-workspace role groups and their memberships
-            role_suffixes = ["owners", "coders", "collaborators", "spectators"]
-            for suffix in role_suffixes:
-                group_name = f"{suffix}-{workspace_id}"
-                cursor_g = await db.execute(
-                    "SELECT id FROM groups WHERE name = ?", (group_name,)
+            # Clean up per-workspace role groups and their memberships.
+            # Found by the source marker + workspace id (#2750) — no
+            # role-suffix list, so any group seeded for this workspace
+            # tears down even with a suffix outside the current four.
+            for group in await self.get_workspace_role_groups(
+                db, workspace_id
+            ):
+                group_id = group["id"]
+                await db.execute(
+                    "DELETE FROM user_groups WHERE group_id = ?",
+                    (group_id,),
                 )
-                row = await cursor_g.fetchone()
-                if row:
-                    group_id = row["id"]
-                    await db.execute(
-                        "DELETE FROM user_groups WHERE group_id = ?",
-                        (group_id,),
-                    )
-                    await db.execute(
-                        "DELETE FROM acl_entries WHERE group_id = ?",
-                        (group_id,),
-                    )
-                    await db.execute(
-                        "DELETE FROM groups WHERE id = ?", (group_id,)
-                    )
+                await db.execute(
+                    "DELETE FROM acl_entries WHERE group_id = ?",
+                    (group_id,),
+                )
+                await db.execute(
+                    "DELETE FROM groups WHERE id = ?", (group_id,)
+                )
             # Clean up port allocations
             await db.execute(
                 "DELETE FROM port_allocations WHERE workspace_id = ?",
@@ -1042,14 +1074,20 @@ class WorkspacesModel:
             )
 
             # 3. Swap owners-group membership: remove old owner, add new.
-            owners_group_name = f"owners-{workspace_id}"
-            g_cursor = await db.execute(
-                "SELECT id FROM groups WHERE name = ?",
-                (owners_group_name,),
+            # The owners group is found by the source marker + workspace
+            # id (#2750), not by reconstructed name.
+            owners_group = next(
+                (
+                    g
+                    for g in await self.get_workspace_role_groups(
+                        db, workspace_id
+                    )
+                    if g["name"].startswith(f"{OWNER_ROLE}-")
+                ),
+                None,
             )
-            g_row = await g_cursor.fetchone()
-            if g_row:
-                group_id = g_row["id"]
+            if owners_group:
+                group_id = owners_group["id"]
                 await db.execute(
                     "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?",
                     (old_owner_id, group_id),

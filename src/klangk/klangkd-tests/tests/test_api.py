@@ -5057,6 +5057,96 @@ class TestWorkspaceGroupSharing:
         )
         assert resp.status_code == 404
 
+    async def test_share_rejects_other_workspaces_role_group(
+        self, client, user, app_state
+    ):
+        """#2750: a workspace's role group is grantable only on its own
+        resource — sharing workspace A with workspace B's role group is a
+        400."""
+        headers = await _auth_headers(client)
+        ws_a = (
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "cross-guard-a"},
+            )
+        ).json()["id"]
+        ws_b = (
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "cross-guard-b"},
+            )
+        ).json()["id"]
+        owners_b = await app_state.state.model.users.get_group_by_name(
+            f"owners-{ws_b}"
+        )
+
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_a}/groups",
+            headers=headers,
+            json={"group_id": owners_b["id"]},
+        )
+        assert resp.status_code == 400
+        assert "grantable only" in resp.json()["detail"]
+
+        # Its own workspace's role group stays grantable.
+        owners_a = await app_state.state.model.users.get_group_by_name(
+            f"owners-{ws_a}"
+        )
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_a}/groups",
+            headers=headers,
+            json={"group_id": owners_a["id"]},
+        )
+        assert resp.status_code == 200
+
+    async def test_replace_acl_rejects_other_workspaces_role_group(
+        self, client, user, app_state
+    ):
+        """#2750: the PUT-acl writer carries the same cross-workspace
+        guard."""
+        headers = await _auth_headers(client)
+        ws_a = (
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "acl-guard-a"},
+            )
+        ).json()["id"]
+        ws_b = (
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "acl-guard-b"},
+            )
+        ).json()["id"]
+        owners_b = await app_state.state.model.users.get_group_by_name(
+            f"owners-{ws_b}"
+        )
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_a}"
+        )
+        payload = [
+            {
+                "position": e["position"],
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e["user_id"],
+                "group_id": owners_b["id"] if e["group_id"] else None,
+                "system_principal": e["system_principal"],
+            }
+            for e in entries
+        ]
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_a}/acl",
+            headers=headers,
+            json=payload,
+        )
+        assert resp.status_code == 400
+        assert "grantable only" in resp.json()["detail"]
+
     async def test_group_share_no_permission(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.get(
@@ -5072,6 +5162,186 @@ class TestUserGroupEndpoints:
         headers = await _auth_headers(client)
         resp = await client.get("/api/v1/groups", headers=headers)
         assert resp.status_code == 200
+        body = resp.json()
+        # Paged envelope (#2750), not the legacy bare list.
+        assert set(body) == {"groups", "page", "page_size", "total"}
+        assert body["page"] == 1
+
+    async def test_list_groups_source_filter_and_pagination(
+        self, client, ws_admin, user, app_state
+    ):
+        """#2750: seeded role groups are marked ``workspace-role`` and hide
+        behind ``?source=manual``; the paged envelope walks past the old
+        hard 200-row cap."""
+        headers = await _auth_headers(client)
+        for i in range(3):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": f"pollute-{i}"},
+            )
+            assert resp.status_code == 200
+
+        all_resp = await client.get("/api/v1/groups", headers=headers)
+        assert all_resp.status_code == 200
+        all_body = all_resp.json()
+        # 12 role groups + the boot-seeded admin/members groups.
+        assert all_body["total"] == 14
+        assert len(all_body["groups"]) == 10  # default page_size
+        role_ids_on_page = {
+            g["id"]
+            for g in all_body["groups"]
+            if g["source"] == "workspace-role"
+        }
+        assert role_ids_on_page
+
+        # Paginate: every page honors page_size and the walk covers all.
+        seen: set[str] = set()
+        page = 1
+        while True:
+            body = (
+                await client.get(
+                    f"/api/v1/groups?page={page}&page_size=5",
+                    headers=headers,
+                )
+            ).json()
+            seen.update(g["id"] for g in body["groups"])
+            if len(seen) >= body["total"]:
+                break
+            page += 1
+        assert len(seen) == 14
+
+        manual = await client.get(
+            "/api/v1/groups?source=manual", headers=headers
+        )
+        assert manual.status_code == 200
+        assert manual.json()["total"] == 2
+        assert {g["name"] for g in manual.json()["groups"]} == {
+            "admin",
+            "members",
+        }
+
+        roles = await client.get(
+            "/api/v1/groups?source=workspace-role", headers=headers
+        )
+        assert roles.json()["total"] == 12
+        bad = await client.get("/api/v1/groups?source=nope", headers=headers)
+        assert bad.status_code == 422
+
+    async def test_role_group_rename_rejected(
+        self, client, ws_admin, user, app_state, admin_user
+    ):
+        """#2750 review: PATCH (user and admin layers) refuses to rename a
+        workspace-role group — the name is the teardown/scope-guard key.
+        Description edits stay allowed."""
+        headers = await _auth_headers(client)
+        ws_id = (
+            await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "rename-guard-ws"},
+            )
+        ).json()["id"]
+        owners = await app_state.state.model.users.get_group_by_name(
+            f"owners-{ws_id}"
+        )
+
+        resp = await client.patch(
+            f"/api/v1/groups/{owners['id']}",
+            headers=headers,
+            json={"name": "hijacked"},
+        )
+        assert resp.status_code == 403  # no edit ACE seeded on role groups
+
+        admin_headers = await self._admin_login(client)
+        # Grant the admin edit on this group's resource so the user-layer
+        # endpoint is reachable; the model guard must still refuse.
+        await app_state.state.model.acl.add_acl_entry(
+            f"/groups/{owners['id']}",
+            0,
+            model.ACTION_ALLOW,
+            "edit",
+            model.PRINCIPAL_USER,
+            user_id=admin_user["id"],
+        )
+        resp = await client.patch(
+            f"/api/v1/groups/{owners['id']}",
+            headers=admin_headers,
+            json={"name": "hijacked"},
+        )
+        assert resp.status_code == 400
+        assert "cannot be changed" in resp.json()["detail"]
+
+        resp = await client.patch(
+            f"/api/v1/admin/groups/{owners['id']}",
+            headers=admin_headers,
+            json={"name": "hijacked"},
+        )
+        assert resp.status_code == 400
+        assert "cannot be changed" in resp.json()["detail"]
+
+        # Description edits are still fine on both layers.
+        resp = await client.patch(
+            f"/api/v1/admin/groups/{owners['id']}",
+            headers=admin_headers,
+            json={"description": "still editable"},
+        )
+        assert resp.status_code == 200
+
+        # The name is unchanged.
+        fetched = await app_state.state.model.users.get_group_by_id(
+            owners["id"]
+        )
+        assert fetched["name"] == f"owners-{ws_id}"
+
+    async def test_admin_list_groups_source_filter(
+        self, client, admin_user, ws_admin, user, app_state
+    ):
+        """#2750: the admin group list exposes the same filter and its
+        rows carry the marker."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "admin-filter-ws"},
+        )
+        assert resp.status_code == 200
+        admin_headers = await self._admin_login(client)
+        all_resp = await client.get(
+            "/api/v1/admin/groups", headers=admin_headers
+        )
+        assert all_resp.status_code == 200
+        all_body = all_resp.json()
+        # 4 role groups + admin/members.
+        assert all_body["total"] == 6
+        sources = {g["source"] for g in all_body["groups"]}
+        assert sources == {"manual", "workspace-role"}
+
+        manual = await client.get(
+            "/api/v1/admin/groups?source=manual", headers=admin_headers
+        )
+        assert manual.json()["total"] == 2
+
+        roles = await client.get(
+            "/api/v1/admin/groups?source=workspace-role",
+            headers=admin_headers,
+        )
+        assert roles.json()["total"] == 4
+
+        bad = await client.get(
+            "/api/v1/admin/groups?source=nope", headers=admin_headers
+        )
+        assert bad.status_code == 422
+
+    async def _admin_login(self, client):
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "testadmin@example.com",
+                "password": "testpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
     async def test_create_group(self, client, admin_user, user, app_state):
         """Any authenticated user with create permission can create groups."""

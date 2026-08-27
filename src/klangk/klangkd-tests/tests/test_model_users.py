@@ -111,12 +111,31 @@ async def test_insert_unverified_user(users):
 
 async def test_create_group_and_lookup(users):
     g = await users.create_group("g1", description="d")
+    assert g["source"] == "manual"
     by_name = await users.get_group_by_name("g1")
     assert by_name["id"] == g["id"]
+    assert by_name["source"] == "manual"
     by_id = await users.get_group_by_id(g["id"])
     assert by_id["name"] == "g1"
+    assert by_id["source"] == "manual"
     assert await users.get_group_by_name("missing") is None
     assert await users.get_group_by_id("missing") is None
+
+
+async def test_create_group_rejects_unknown_source(users):
+    from klangk.model.users import GROUP_SOURCES
+
+    with pytest.raises(ValueError, match="Invalid group source"):
+        await users.create_group("bad-source", source="nope")
+    assert "nope" not in GROUP_SOURCES
+
+
+async def test_create_group_with_workspace_role_source(users):
+    from klangk.model.users import GROUP_SOURCE_WORKSPACE_ROLE
+
+    g = await users.create_group("wr-1", source=GROUP_SOURCE_WORKSPACE_ROLE)
+    fetched = await users.get_group_by_id(g["id"])
+    assert fetched["source"] == GROUP_SOURCE_WORKSPACE_ROLE
 
 
 async def test_list_update_delete_group(users):
@@ -131,6 +150,41 @@ async def test_list_update_delete_group(users):
     assert await users.update_group(g["id"]) is False  # no fields
     assert await users.delete_group(g["id"]) is True
     assert await users.delete_group(g["id"]) is False
+
+
+async def test_list_groups_source_filter(users, app_state):
+    """#2750: source filter hides/shows workspace-role groups; rows carry
+    the source marker; the default shows everything."""
+    from klangk.model.users import (
+        GROUP_SOURCE_MANUAL,
+        GROUP_SOURCE_WORKSPACE_ROLE,
+    )
+
+    manual = await users.create_group("manual-g")
+    seeded = await users.create_group(
+        "owners-deadbeef", source=GROUP_SOURCE_WORKSPACE_ROLE
+    )
+    all_rows = await users.list_groups()
+    assert {manual["id"], seeded["id"]} <= {
+        gr["id"] for gr in all_rows["groups"]
+    }
+    assert all("source" in gr for gr in all_rows["groups"])
+
+    only_manual = await users.list_groups(source=GROUP_SOURCE_MANUAL)
+    ids = {gr["id"] for gr in only_manual["groups"]}
+    assert manual["id"] in ids
+    assert seeded["id"] not in ids
+    assert only_manual["total"] == len(ids)
+
+    only_roles = await users.list_groups(source=GROUP_SOURCE_WORKSPACE_ROLE)
+    assert [gr["id"] for gr in only_roles["groups"]] == [seeded["id"]]
+
+    # q + source compose.
+    both = await users.list_groups(
+        q="manual-g", source=GROUP_SOURCE_WORKSPACE_ROLE
+    )
+    assert both["total"] == 0
+    assert both["groups"] == []
 
 
 async def test_group_membership(users):
@@ -470,3 +524,30 @@ async def test_create_user_returns_disabled_false(users):
     key (#2588 review)."""
     u = await users.create_user("shape@x.com", "hash", verified=True)
     assert u["disabled"] is False
+
+
+async def test_update_group_rejects_workspace_role_rename(
+    users, user, app_state
+):
+    """#2750 review: renaming a workspace-role group would orphan it on
+    teardown and misdirect the ACL scope guard (both parse the
+    workspace-id suffix of the name) — refused at the model."""
+    from klangk.model import WorkspaceRoleScopeError
+
+    workspaces = app_state.state.model.workspaces
+    ws_row = await workspaces.create_workspace_with_acl(
+        user["id"], "no-rename"
+    )
+    role_group = await users.get_group_by_name(f"owners-{ws_row['id']}")
+    with pytest.raises(WorkspaceRoleScopeError, match="cannot be changed"):
+        await users.update_group(role_group["id"], name="renamed")
+    # Description stays editable.
+    assert (
+        await users.update_group(
+            role_group["id"], description="still editable"
+        )
+        is True
+    )
+    # Manual groups rename freely.
+    manual = await users.create_group("free-to-rename")
+    assert await users.update_group(manual["id"], name="renamed") is True

@@ -32,6 +32,12 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`GET /api/v1/groups` now returns a paged envelope (#2750).** The
+  response is `{groups, page, page_size, total}` (same shape as
+  `GET /api/v1/admin/groups`) instead of a bare list that was silently
+  truncated at 200 rows. Integrators must read the `groups` key and
+  paginate with `page`/`page_size`.
+
 - **`KLANGKD_ALLOW_SUDO` now defaults to on (#2017).** Passwordless sudo
   inside workspace containers is granted by default; operators who want
   the previous locked-down posture must set `KLANGKD_ALLOW_SUDO=0`
@@ -179,6 +185,16 @@ operators or integrators to act when upgrading.
   the web flow.
 
 ### Added
+
+- **Group `source` marker and filtering (#2750).** Groups now carry a
+  `source` column: `manual` for human-managed groups,
+  `workspace-role` for the four role groups seeded per workspace.
+  `GET /api/v1/groups` and `GET /api/v1/admin/groups` accept a `source`
+  query filter and include it in each row, so pickers can hide the
+  machine-generated role-group names. Existing rows are backfilled by a
+  schema migration. Role groups are now also rejected as share/ACL
+  targets outside their own workspace (HTTP 400), and their names cannot
+  be changed (HTTP 400) — the name is the teardown/scope-guard key.
 
 - **Per-workspace sudo lock-down (#2017).** `allow_sudo` in the workspace
   settings bag (set with `klangk create`/`klangk edit`
@@ -1309,6 +1325,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   custom `features.yaml` if present.
 
 ### Fixed
+
+- **`GET /api/v1/groups` no longer silently truncates at 200 rows
+  (#2750).** The endpoint previously fetched a single 200-row page and
+  returned it as a bare list; deployments with more groups (easy to hit
+  once per-workspace role groups accumulated) lost the tail. It now
+  paginates with the standard envelope — see the Breaking note above.
 
 - **TUI server switch and logout now drop the old server's status
   WebSocket (#2704).** Switching servers in the TUI (`c`) left the status

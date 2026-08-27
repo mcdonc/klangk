@@ -4,8 +4,9 @@ Covers the runner contract (fresh DB, replay no-op, failure semantics,
 validation), migration 0001's shape (password_history + cascade),
 0002's (users.last_login_at), 0003's (user_sessions + cascade,
 #2585), 0004's (workstation columns on user_sessions, #2586),
-0005's (users.disabled + users.last_activity_at, #2588), and
-0009's (workspaces.per_handle_home backfill, #2719).
+0005's (users.disabled + users.last_activity_at, #2588),
+0009's (workspaces.per_handle_home backfill, #2719), and
+0010's (groups.source marker + name-pattern backfill, #2750).
 """
 
 import aiosqlite
@@ -55,6 +56,7 @@ class TestRunner:
             (7, "0007_server_schedules"),
             (8, "0008_agent_user_klangk"),
             (9, "0009_per_handle_home"),
+            (10, "0010_groups_source"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -82,11 +84,15 @@ class TestRunner:
             info = await db.execute("PRAGMA table_info(workspaces)")
             cols = {r[1] for r in await info.fetchall()}
             assert "per_handle_home" in cols
+            # Migration 0010 added the groups source marker (#2750).
+            info = await db.execute("PRAGMA table_info(groups)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert "source" in cols
 
             # Migration 0008: no agent row exists on a fresh DB before
             # seeding (UPDATE is a no-op); recorded above.
 
-            # Re-run: nothing new applied, still exactly nine records.
+            # Re-run: nothing new applied, still exactly ten records.
             await app_state.state.model.init_db()
             assert await _recorded(db) == expected
 
@@ -126,6 +132,7 @@ class TestRunner:
                 (7, "0007_server_schedules"),
                 (8, "0008_agent_user_klangk"),
                 (9, "0009_per_handle_home"),
+                (10, "0010_groups_source"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -313,6 +320,100 @@ class TestFailureSemantics:
             )
             assert applied == ["0001_crash"]
             assert await _recorded(db) == [(1, "0001_crash")]
+
+
+class TestM0010GroupsSource:
+    """m0010: groups.source marker + name-pattern backfill (#2750).
+
+    The backfill is exercised against a hand-built pre-migration
+    schema (legacy ``groups`` without the column, minimal
+    ``workspaces``) by calling ``apply`` directly, the same pattern the
+    failure-semantics tests use for synthetic migrations.
+    """
+
+    WS_ID = "11111111-2222-3333-4444-555555555555"
+
+    async def _legacy_db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0010.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE groups ("
+            " id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL,"
+            " description TEXT,"
+            " created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+        )
+        await db.execute("CREATE TABLE workspaces (id TEXT, name TEXT)")
+        await db.execute(
+            "INSERT INTO workspaces (id, name) VALUES (?, ?)",
+            (self.WS_ID, "legacy-ws"),
+        )
+        return db
+
+    async def _sources(self, db) -> dict[str, tuple[str, str]]:
+        cursor = await db.execute(
+            "SELECT name, source, description FROM groups"
+        )
+        return {row[0]: (row[1], row[2]) for row in await cursor.fetchall()}
+
+    async def test_backfill_classifies_and_normalizes(self, tmp_path):
+        """Pattern-matching rows for an existing workspace become
+        workspace-role with normalized descriptions; everything else
+        stays manual."""
+        from klangk.model.migrations import m0010_groups_source
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO groups (id, name, description) VALUES"
+                " ('g1', ?, ?)",
+                (
+                    f"owners-{self.WS_ID}",
+                    f"owners-{self.WS_ID} for workspace legacy-ws",
+                ),
+            )
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g2', 'human')"
+            )
+            # Role-shaped name but the suffix is not a UUID.
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES"
+                " ('g3', 'coders-not-a-uuid')"
+            )
+            # Collision: role-shaped + valid UUID, but no such workspace.
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES"
+                " ('g4', 'spectators-99999999-9999-9999-9999-999999999999')"
+            )
+            await m0010_groups_source.migration.apply(db)
+
+            rows = await self._sources(db)
+            source, description = rows[f"owners-{self.WS_ID}"]
+            assert source == "workspace-role"
+            assert description == (
+                "Workspace role group: owners of workspace legacy-ws"
+            )
+            assert rows["human"][0] == "manual"
+            assert rows["coders-not-a-uuid"][0] == "manual"
+            assert (
+                rows["spectators-99999999-9999-9999-9999-999999999999"][0]
+                == "manual"
+            )
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_backfill_empty_groups_table(self, tmp_path):
+        """No rows to classify: the ALTER still lands, nothing raises."""
+        from klangk.model.migrations import m0010_groups_source
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            await m0010_groups_source.migration.apply(db)
+            assert await self._sources(db) == {}
+            info = await db.execute("PRAGMA table_info(groups)")
+            cols = {r[1] for r in await info.fetchall()}
+            assert "source" in cols
+        finally:
+            await db.__aexit__(None, None, None)
 
 
 class TestRenameDetection:

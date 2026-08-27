@@ -22,6 +22,16 @@ _DEFAULT_AGENT_EMAIL = "klangk@example.com"
 AGENT_HANDLE = _DEFAULT_AGENT_HANDLE
 AGENT_EMAIL = _DEFAULT_AGENT_EMAIL
 
+# Group source markers (#2750): who created a ``groups`` row. Mirrors
+# ``user_groups.source``. 'manual' is the default (human-created via the
+# API, plus the boot-seeded admin/members groups and OIDC-synced groups);
+# 'workspace-role' marks the four per-workspace role groups seeded by
+# ``WorkspacesModel._seed_workspace_acl`` so global group lists can hide
+# them and teardown can find them without reconstructing names.
+GROUP_SOURCE_MANUAL = "manual"
+GROUP_SOURCE_WORKSPACE_ROLE = "workspace-role"
+GROUP_SOURCES = frozenset({GROUP_SOURCE_MANUAL, GROUP_SOURCE_WORKSPACE_ROLE})
+
 
 class AgentPrincipalError(ValueError):
     """Raised when an operation would make the agent an ACL principal.
@@ -34,6 +44,21 @@ class AgentPrincipalError(ValueError):
     (``add_user_to_group``, ``add_acl_entry``, ``delete_user``,
     ``update_password``); a global handler translates this to HTTP 400.
     Subclasses ``ValueError`` for compatibility with existing handlers.
+    """
+
+
+class WorkspaceRoleScopeError(ValueError):
+    """Raised when an operation would violate a per-workspace role
+    group's scope (#2750).
+
+    Role groups carry their workspace id in their name
+    (``<role>-<workspace_id>``) and are identified by their ``source``
+    marker plus that suffix — teardown, ownership transfer, and the ACL
+    scope guard all parse it. Raised when an ACL write would grant a
+    role group on anything other than its own workspace's resource, or
+    when a rename would break the name↔workspace link. Guarded at the
+    model choke points; a global handler translates this to HTTP 400,
+    like ``AgentPrincipalError``.
     """
 
 
@@ -429,20 +454,35 @@ class UsersModel:
         name: str,
         description: str | None = None,
         group_id: str | None = None,
+        source: str = GROUP_SOURCE_MANUAL,
     ) -> dict:
-        """Create a group. Returns the group dict."""
+        """Create a group. Returns the group dict.
+
+        *source* marks who owns the row (#2750): ``manual`` for
+        human-managed groups, ``workspace-role`` for the per-workspace
+        role groups seeded by ``_seed_workspace_acl``.
+        """
+        if source not in GROUP_SOURCES:
+            raise ValueError(f"Invalid group source: {source!r}")
         async with self.app.state.db.transaction() as db:
             gid = group_id or str(uuid.uuid4())
             await db.execute(
-                "INSERT INTO groups (id, name, description) VALUES (?, ?, ?)",
-                (gid, name, description),
+                "INSERT INTO groups (id, name, description, source)"
+                " VALUES (?, ?, ?, ?)",
+                (gid, name, description, source),
             )
-            return {"id": gid, "name": name, "description": description}
+            return {
+                "id": gid,
+                "name": name,
+                "description": description,
+                "source": source,
+            }
 
     async def get_group_by_name(self, name: str) -> dict | None:
         """Find a group by name."""
         row = await self.app.state.db.fetchone(
-            "SELECT id, name, description, created_at FROM groups WHERE name = ?",
+            "SELECT id, name, description, source, created_at"
+            " FROM groups WHERE name = ?",
             (name,),
         )
         if row is None:
@@ -451,13 +491,15 @@ class UsersModel:
             "id": row["id"],
             "name": row["name"],
             "description": row["description"],
+            "source": row["source"],
             "created_at": row["created_at"],
         }
 
     async def get_group_by_id(self, group_id: str) -> dict | None:
         """Find a group by ID."""
         row = await self.app.state.db.fetchone(
-            "SELECT id, name, description, created_at FROM groups WHERE id = ?",
+            "SELECT id, name, description, source, created_at"
+            " FROM groups WHERE id = ?",
             (group_id,),
         )
         if row is None:
@@ -466,6 +508,7 @@ class UsersModel:
             "id": row["id"],
             "name": row["name"],
             "description": row["description"],
+            "source": row["source"],
             "created_at": row["created_at"],
         }
 
@@ -476,8 +519,14 @@ class UsersModel:
         sort: str = "name",
         order: str = "asc",
         q: str | None = None,
+        source: str | None = None,
     ) -> dict:
-        """List groups with server-side pagination, sorting, and filtering."""
+        """List groups with server-side pagination, sorting, and filtering.
+
+        *source* filters by the origin marker (#2750): ``None`` shows all,
+        ``'manual'`` hides the seeded workspace-role groups,
+        ``'workspace-role'`` shows only them. Rows carry ``source``.
+        """
         sort_col = _ADMIN_GROUP_SORT_COLUMNS.get(sort, "name")
         direction = "DESC" if order.lower() == "desc" else "ASC"
         page = max(1, page)
@@ -485,20 +534,26 @@ class UsersModel:
         offset = (page - 1) * page_size
 
         async with self.app.state.db.transaction() as db:
-            where_clause = ""
+            where_parts: list[str] = []
             params: list = []
             if q:
-                where_clause = " WHERE name LIKE ?"
+                where_parts.append("name LIKE ?")
                 params.append(f"%{q}%")
+            if source is not None:
+                where_parts.append("source = ?")
+                params.append(source)
+            where_clause = (
+                f" WHERE {' AND '.join(where_parts)}" if where_parts else ""
+            )
 
             count_cursor = await db.execute(
-                f"SELECT COUNT(*) AS c FROM groups{where_clause}",
+                f"SELECT COUNT(*) AS c FROM groups{where_clause}",  # noqa: S608
                 params,
             )
             total = (await count_cursor.fetchone())["c"]
 
             cursor = await db.execute(
-                "SELECT id, name, description, created_at"
+                "SELECT id, name, description, source, created_at"
                 f" FROM groups{where_clause}"
                 f" ORDER BY {sort_col} {direction}, id"
                 " LIMIT ? OFFSET ?",
@@ -509,6 +564,7 @@ class UsersModel:
                     "id": row["id"],
                     "name": row["name"],
                     "description": row["description"],
+                    "source": row["source"],
                     "created_at": row["created_at"],
                 }
                 for row in await cursor.fetchall()
@@ -534,7 +590,27 @@ class UsersModel:
         name: str | None = None,
         description: str | None = None,
     ) -> bool:
-        """Update group name/description. Returns True if updated."""
+        """Update group name/description. Returns True if updated.
+
+        Raises ``WorkspaceRoleScopeError`` if *name* is set on a
+        ``workspace-role`` group (#2750): role groups are found by the
+        source marker **plus** the workspace-id suffix of their name
+        (teardown, ownership transfer, and the ACL scope guard all parse
+        it), so a rename would orphan them on delete or point the guard
+        at the wrong workspace. Descriptions stay editable.
+        """
+        if name is not None:
+            row = await self.app.state.db.fetchone(
+                "SELECT source FROM groups WHERE id = ?", (group_id,)
+            )
+            if (
+                row is not None
+                and row["source"] == GROUP_SOURCE_WORKSPACE_ROLE
+            ):
+                raise WorkspaceRoleScopeError(
+                    "Workspace role group names are managed by the system"
+                    " and cannot be changed"
+                )
         updates = {}
         if name is not None:
             updates["name"] = name

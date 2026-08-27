@@ -751,3 +751,149 @@ async def test_settings_in_auto_start_listing(ws, user):
     )
     started = await ws.list_auto_start_workspaces()
     assert started[0]["settings"] == {"idle_timeout": 120}
+
+
+async def test_role_groups_carry_workspace_role_source(ws, app_state, user):
+    """#2750: seeded role groups are marked ``workspace-role`` and their
+    descriptions carry the normalized purpose."""
+    from klangk.model.users import GROUP_SOURCE_WORKSPACE_ROLE
+
+    ws_row = await ws.create_workspace_with_acl(user["id"], "marked-ws")
+    for suffix in ("owners", "coders", "collaborators", "spectators"):
+        group = await app_state.state.model.users.get_group_by_name(
+            f"{suffix}-{ws_row['id']}"
+        )
+        assert group is not None
+        assert group["source"] == GROUP_SOURCE_WORKSPACE_ROLE
+        assert group["description"] == (
+            f"Workspace role group: {suffix} of workspace marked-ws"
+        )
+
+
+async def test_delete_workspace_tears_down_unknown_suffix_role_group(
+    ws, app_state, user
+):
+    """Teardown matches role groups by the source marker + workspace id —
+    no role-suffix list — so a group seeded with a suffix outside the
+    current four still tears down (#2750)."""
+    from klangk.model.users import GROUP_SOURCE_WORKSPACE_ROLE
+
+    ws_row = await ws.create_workspace_with_acl(user["id"], "odd-suffix")
+    async with app_state.state.db.transaction() as db:
+        await db.execute(
+            "INSERT INTO groups (id, name, description, source)"
+            " VALUES (?, ?, ?, ?)",
+            (
+                "odd-role-group-id",
+                f"testers-{ws_row['id']}",
+                "stray future role",
+                GROUP_SOURCE_WORKSPACE_ROLE,
+            ),
+        )
+    assert await ws.delete_workspace(ws_row["id"], user["id"]) is True
+    assert (
+        await app_state.state.model.users.get_group_by_id("odd-role-group-id")
+        is None
+    )
+
+
+async def test_transfer_finds_owners_group_by_marker(ws, app_state, user):
+    """Ownership transfer finds the owners group via the source marker +
+    workspace id (#2750) — not a duplicated naming convention."""
+    new_owner = await app_state.state.model.users.create_user(
+        "marker-new@x.com", "h"
+    )
+    ws_row = await ws.create_workspace_with_acl(user["id"], "marker-transfer")
+    owners = await app_state.state.model.users.get_group_by_name(
+        f"owners-{ws_row['id']}"
+    )
+    transferred = await ws.transfer_workspace(ws_row["id"], new_owner["id"])
+    assert transferred["user_id"] == new_owner["id"]
+    members = await app_state.state.model.users.get_group_members(owners["id"])
+    assert [m["id"] for m in members] == [new_owner["id"]]
+
+
+async def test_add_acl_entry_rejects_cross_workspace_role_group(
+    ws, app_state, user
+):
+    """#2750: a workspace-role group is grantable only on its own
+    workspace's resource — model choke point raises for anything else."""
+    from klangk.model import PRINCIPAL_GROUP, WorkspaceRoleScopeError
+
+    ws_a = await ws.create_workspace_with_acl(user["id"], "guard-a")
+    ws_b = await ws.create_workspace_with_acl(user["id"], "guard-b")
+    owners_b = await app_state.state.model.users.get_group_by_name(
+        f"owners-{ws_b['id']}"
+    )
+    with pytest.raises(WorkspaceRoleScopeError, match="grantable only"):
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{ws_a['id']}",
+            100,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_GROUP,
+            group_id=owners_b["id"],
+        )
+    # Non-workspace resources are rejected too.
+    with pytest.raises(WorkspaceRoleScopeError):
+        await app_state.state.model.acl.add_acl_entry(
+            "/",
+            0,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_GROUP,
+            group_id=owners_b["id"],
+        )
+    # Its own workspace's resource is fine.
+    await app_state.state.model.acl.add_acl_entry(
+        f"/workspaces/{ws_b['id']}",
+        100,
+        ACTION_ALLOW,
+        "view",
+        PRINCIPAL_GROUP,
+        group_id=owners_b["id"],
+    )
+
+
+async def test_replace_acl_entries_rejects_cross_workspace_role_group(
+    ws, app_state, user
+):
+    """The replace writer carries the same guard (#2750)."""
+    from klangk.model import (
+        ACTION_DENY,
+        PRINCIPAL_GROUP,
+        PRINCIPAL_SYSTEM,
+        SYSTEM_EVERYONE,
+        WorkspaceRoleScopeError,
+    )
+
+    ws_a = await ws.create_workspace_with_acl(user["id"], "guard-replace-a")
+    ws_b = await ws.create_workspace_with_acl(user["id"], "guard-replace-b")
+    owners_b = await app_state.state.model.users.get_group_by_name(
+        f"owners-{ws_b['id']}"
+    )
+    with pytest.raises(WorkspaceRoleScopeError):
+        await app_state.state.model.acl.replace_acl_entries(
+            f"/workspaces/{ws_a['id']}",
+            [
+                {
+                    "position": 0,
+                    "action": ACTION_ALLOW,
+                    "principal_type": PRINCIPAL_GROUP,
+                    "permission": "view",
+                    "group_id": owners_b["id"],
+                },
+                {
+                    "position": 1,
+                    "action": ACTION_DENY,
+                    "principal_type": PRINCIPAL_SYSTEM,
+                    "permission": "*",
+                    "system_principal": SYSTEM_EVERYONE,
+                },
+            ],
+        )
+    # Nothing was written (the whole replace rolls back).
+    entries = await app_state.state.model.acl.get_acl_entries(
+        f"/workspaces/{ws_a['id']}"
+    )
+    assert all(e["group_id"] != owners_b["id"] for e in entries)
