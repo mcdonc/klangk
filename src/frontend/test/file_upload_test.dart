@@ -24,6 +24,7 @@ Widget buildDropZone({
         currentPath: currentPath,
         currentEntries: currentEntries,
         onUploadComplete: onUploadComplete ?? () {},
+        canUpload: true,
         child: const Text('DROP_HERE'),
       ),
     ),

@@ -112,11 +112,10 @@ returns 403 from `/files/download`. Binary renderers (image, PDF, video,
 spreadsheet) fetch raw bytes through the download endpoint, so they cannot
 render without it.
 
-Withholding `files-upload` disables uploads via `/files/upload` —
-drag-and-drop in the file viewer and saving edits from text-editor
-renderers both go through that endpoint. (The viewer currently still
-shows its upload affordances; uploads fail with 403 until it learns to
-hide them.)
+Withholding `files-upload` disables uploads via `/files/upload`: the file
+viewer hides its upload affordances (no drag-and-drop zone, no upload hints)
+and text-editor renderers become read-only, since their Save goes through
+that endpoint.
 
 Note the limit of the download gate: it blocks byte-perfect, unbounded export
 (any file size, whole directories as tar.gz), **not** content access.

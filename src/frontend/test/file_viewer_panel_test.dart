@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,6 +30,7 @@ FileViewerPanel buildPanel({
   String userHome = '/home/tester',
   FileRendererRegistry? registry,
   bool canDownload = true,
+  bool canUpload = true,
 }) =>
     FileViewerPanel(
       key: key,
@@ -38,6 +40,7 @@ FileViewerPanel buildPanel({
       userHome: userHome,
       registry: registry,
       canDownload: canDownload,
+      canUpload: canUpload,
     );
 
 void main() {
@@ -1888,6 +1891,85 @@ void main() {
           ),
         ),
       );
+      client.close();
+    });
+  });
+
+  group('FileViewerPanel upload permission (#2705)', () {
+    Future<_MockWsClient> pump(
+      WidgetTester tester, {
+      bool canUpload = false,
+      List<Map<String, dynamic>> entries = const [],
+    }) async {
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/files')) {
+          return http.Response(jsonEncode(entries), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+      final client = _MockWsClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 600,
+              child: buildPanel(
+                wsClient: client,
+                canUpload: canUpload,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return client;
+    }
+
+    testWidgets('drop zone and upload hint hidden when permission absent',
+        (tester) async {
+      final client = await pump(
+        tester,
+        entries: [
+          {
+            'name': 'data.csv',
+            'path': '/home/tester/data.csv',
+            'is_dir': false,
+            'size': 100
+          },
+        ],
+      );
+
+      expect(find.byType(DropTarget), findsNothing);
+      expect(find.textContaining('Drag files or folders'), findsNothing);
+      client.close();
+    });
+
+    testWidgets('empty-directory message drops the upload hint',
+        (tester) async {
+      final client = await pump(tester);
+
+      expect(find.text('Empty directory'), findsOneWidget);
+      expect(find.textContaining('Drag files or folders'), findsNothing);
+      client.close();
+    });
+
+    testWidgets('drop zone and hint present when permitted', (tester) async {
+      final client = await pump(
+        tester,
+        canUpload: true,
+        entries: [
+          {
+            'name': 'data.csv',
+            'path': '/home/tester/data.csv',
+            'is_dir': false,
+            'size': 100
+          },
+        ],
+      );
+
+      expect(find.byType(DropTarget), findsOneWidget);
+      expect(find.textContaining('Drag files or folders'), findsOneWidget);
       client.close();
     });
   });

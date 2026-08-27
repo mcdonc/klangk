@@ -61,11 +61,18 @@ class FileViewerPanel extends StatefulWidget {
   /// never accidentally fail open to download.
   final bool canDownload;
 
+  /// Whether the user holds the `files-upload` permission. When false,
+  /// upload affordances are hidden — no drop zone, no upload hints, and
+  /// editor renderers become read-only (their Save goes through
+  /// `/files/upload`). Required for the same fail-closed reason.
+  final bool canUpload;
+
   const FileViewerPanel({
     super.key,
     required this.wsClient,
     required this.workspaceId,
     required this.canDownload,
+    required this.canUpload,
     this.authToken,
     this.userHome,
     this.registry,
@@ -289,7 +296,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       readBytes: () => _readFileBytes(path),
       downloadUrl:
           '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
-      saveText: (content) => _saveFileText(path, content),
+      saveText:
+          widget.canUpload ? (content) => _saveFileText(path, content) : null,
     );
   }
 
@@ -696,6 +704,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Widget build(BuildContext context) {
     return SuppressBrowserContextMenu(
       child: FileDropZone(
+        canUpload: widget.canUpload,
         workspaceId: widget.workspaceId,
         authToken: widget.authToken,
         currentPath: _currentPath,
@@ -716,12 +725,14 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_entries.isEmpty) {
-      return const Align(
+      return Align(
         alignment: Alignment.bottomCenter,
         child: Padding(
-          padding: EdgeInsets.only(bottom: 32),
+          padding: const EdgeInsets.only(bottom: 32),
           child: Text(
-            'Empty directory\nDrag files or folders here to upload',
+            widget.canUpload
+                ? 'Empty directory\nDrag files or folders here to upload'
+                : 'Empty directory',
             textAlign: TextAlign.center,
           ),
         ),
@@ -736,16 +747,17 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             itemBuilder: (context, index) => _buildFileListItem(index),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Text(
-            'Drag files or folders here to upload',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.outline,
+        if (widget.canUpload)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(
+              'Drag files or folders here to upload',
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.outline,
+              ),
             ),
           ),
-        ),
       ],
     );
   }

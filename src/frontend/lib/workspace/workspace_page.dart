@@ -611,6 +611,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         userHome: wsClient.userHome,
         registry: _fileRenderers,
         canDownload: _hasPerm('files-download'),
+        canUpload: _hasPerm('files-upload'),
       ),
       featureTabs: _featureTabs,
       terminal: TerminalTabsView(

@@ -186,15 +186,15 @@ operators or integrators to act when upgrading.
 
 ### Added
 
-- **`files-upload` permission (#2705).** `POST
-/api/v1/workspaces/{id}/files/upload` now requires the new
-  `files-upload` permission in addition to `files`, mirroring the
-  `files-download` gate on downloads. New shares (members, groups,
+- **`files-upload` permission (#2705).** The workspace file-upload
+  endpoint (`POST /api/v1/workspaces/{id}/files/upload`) now requires
+  the new `files-upload` permission in addition to `files`, mirroring
+  the `files-download` gate on downloads. New shares (members, groups,
   coder/collaborator roles) grant it; migration `m0012` grants it to
   every principal holding `files-download`, so existing deployments keep
-  current behavior. The file viewer's upload affordances (drag-and-drop,
-  editor saves) still appear but fail with 403 when the permission is
-  absent.
+  current behavior. Without the permission the file viewer hides its
+  upload affordances (drag-and-drop, upload hints) and editor renderers
+  are read-only.
 
 - **`files-download` permission (#2705).** The workspace file-download
   endpoint (`GET /api/v1/workspaces/{id}/files/download`) now requires
