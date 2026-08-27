@@ -7,13 +7,26 @@ on:
   push:
     branches: [release/**]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner kind: stock (ubuntu-latest) or the self-hosted nix VM"
+        type: choice
+        options: [stock, nix]
+        default: stock
 
 jobs:
   test-frontend-e2e-cross-browser:
-    runs-on: nix
-    timeout-minutes: 60
+    # Defaults to stock GitHub-hosted runners (also for the scheduled runs);
+    # the self-hosted nix runner is a workflow_dispatch opt-in (input
+    # runner: nix). See backend-e2e-tests.yml for the provisioning split.
+    runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+
+      # Stock runners only (see backend-e2e-tests.yml).
+      - uses: ./.github/actions/devenv-setup
+        if: inputs.runner != 'nix'
 
       - uses: ./.github/actions/e2e-suite
         with:

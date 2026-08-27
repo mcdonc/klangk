@@ -3,6 +3,11 @@ name: "E2E: Frontend Tests"
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: "Runner kind: stock (ubuntu-latest) or the self-hosted nix VM"
+        type: choice
+        options: [stock, nix]
+        default: stock
       project:
         description: "Playwright project (chromium|firefox|webkit); blank = all"
         required: false
@@ -32,8 +37,11 @@ concurrency:
 jobs:
   # Chromium + API tests — gates PR merges
   test-frontend-e2e:
-    runs-on: nix
-    timeout-minutes: 30
+    # Defaults to stock GitHub-hosted runners; the self-hosted nix runner is
+    # a workflow_dispatch opt-in (input runner: nix). See backend-e2e-tests.yml
+    # for the provisioning split.
+    runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -51,6 +59,11 @@ jobs:
               - 'devenv.yaml'
               - '.github/workflows/frontend-e2e-tests.yml'
               - '.github/actions/e2e-suite/**'
+
+      # Stock runners only (see backend-e2e-tests.yml); skipped when the
+      # paths filter found no e2e-relevant changes.
+      - uses: ./.github/actions/devenv-setup
+        if: inputs.runner != 'nix' && steps.filter.outputs.e2e == 'true'
 
       - uses: ./.github/actions/e2e-suite
         with:
