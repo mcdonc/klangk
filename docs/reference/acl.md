@@ -88,7 +88,7 @@ other resource) are rejected with a 400 error.
 
 ## Workspace Permissions
 
-When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files.
+When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files, export.
 
 **Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, `files-download`, and `files-write`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
 
@@ -131,14 +131,14 @@ withhold `files` as well.
 
 `export` is a workspace permission checked on `/workspaces/{id}`: the owner's wildcard ACE and the seeded `owners-<id>` role group both cover it, so owners can export their own workspaces without any extra grant, and a **Deny** `export` ACE for **Everyone** on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do **not** get export implicitly — they must be an owner or hold an explicit grant. See [Export & Import](../features/export-import.md#export).
 
-### Admin-scoped permissions
+### Collection- and admin-scoped permissions
 
-Some permissions are checked on the `/admin` resource instead of a workspace:
+Not every permission is checked on a workspace resource:
 
-| Permission | Controls                                            |
-| ---------- | --------------------------------------------------- |
-| `create`   | Create/import workspaces (checked on `/workspaces`) |
-| `admin`    | Instance admin functions (`/admin/*` endpoints)     |
+| Permission | Where it is checked | Controls                                        |
+| ---------- | ------------------- | ----------------------------------------------- |
+| `create`   | `/workspaces`       | Create/import workspaces                        |
+| `admin`    | `/admin`            | Instance admin functions (`/admin/*` endpoints) |
 
 ## Checking Your Permissions
 

@@ -30,9 +30,11 @@ Notify, in this order:
 
 ## Before shutdown: get the data out
 
-- **Export workspaces that must survive.** Export is admin-only:
-  `klangk export <workspace>` writes a `.tar.gz` of the workspace's
-  home directory and metadata (see
+- **Export workspaces that must survive.** Export requires the
+  `export` permission on the workspace — owners have it out of the box
+  (#2707), and admins must be granted it (or be added to a workspace's
+  owners role) to export: `klangk export <workspace>` writes a `.tar.gz`
+  of the workspace's home directory and metadata (see
   [Workspace Export & Import](../features/export-import.md)). Note the
   **same-instance-only** rule: archives include the exporting
   instance's ID and are rejected by any other instance, so exports are
@@ -95,7 +97,7 @@ Work through these in order:
 ## Checklist
 
 - [ ] Shutdown date announced to users, admins, and integrators
-- [ ] Workspaces that must survive exported (admin-run `klangk export`)
+- [ ] Workspaces that must survive exported (owners, or granted admins, run `klangk export`)
 - [ ] Graceful stop performed; no workspace containers remain on the host
 - [ ] `data_dir` archived (encrypted) or deleted, per the admins' decision
 - [ ] Secrets revoked: JWT secret, LLM API keys, OIDC client secrets, SMTP credentials

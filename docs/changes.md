@@ -144,13 +144,12 @@ sync` report a clear permission-denied error.
 - **Workspace export is gated on the workspace, not admin (#2707).**
   `GET /api/v1/workspaces/{id}/export` (and `klangk export`) now
   requires the `export` permission on `/workspaces/{id}` instead of the
-  `admin` permission on `/admin`. Owners can export their own
-  workspaces unchanged — the owner wildcard ACE and the seeded
-  `owners-<id>` role group both cover `export` — but admins no longer
-  bulk-export workspaces they hold no grant on: they must be an owner
-  or receive an explicit `export` ACE. A Deny `export` ACE on a
-  workspace resource revokes export per workspace. Import is
-  unaffected (still `create` on `/workspaces`). See
+  `admin` permission on `/admin`: owners keep exporting their own
+  workspaces (the owner wildcard ACE and the seeded `owners-<id>` role
+  group both cover `export`), while admins no longer bulk-export
+  workspaces they hold no grant on. A Deny `export` ACE on a workspace
+  resource, positioned ahead of the wildcard allows, revokes export per
+  workspace (rewritable by anyone holding `share` there). See
   [Export & Import](https://github.com/mcdonc/klangk/blob/main/docs/features/export-import.md).
 
 - **Workspace creation restricted to administrators (#2569).** `POST

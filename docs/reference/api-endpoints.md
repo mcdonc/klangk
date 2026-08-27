@@ -676,8 +676,9 @@ No request body.
 Export a workspace as a `.tar.gz` archive. The archive contains the
 workspace configuration and container filesystem.
 
-**Auth:** JWT required. User must have `admin` permission on the
-requested resource.
+**Auth:** JWT required. User must have the `export` permission on the
+workspace resource (`/workspaces/{id}`) — the owner's wildcard ACE and
+the seeded `owners-<id>` role group both cover it (#2707).
 
 No request body. Returns `StreamingResponse` (`.tar.gz` binary stream).
 Headers: `Content-Disposition: attachment; filename="<name>.tar.gz"`,
