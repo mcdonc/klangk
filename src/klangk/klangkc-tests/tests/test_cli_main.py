@@ -3843,10 +3843,15 @@ class TestMainCLI:
         ctx.args = []
         mock_result = MagicMock()
         mock_result.returncode = 0
-        with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-            with patch("subprocess.run", return_value=mock_result) as mock_run:
-                with pytest.raises(typer.Exit) as exc_info:
-                    main.sync(ctx, src="/tmp/foo", dest="ws:/work/foo")
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("ws")
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="/tmp/foo", dest="ws:/work/foo")
         assert exc_info.value.exit_code == 0
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "/usr/bin/rsync"
@@ -3866,9 +3871,12 @@ class TestMainCLI:
 
         ctx = MagicMock()
         ctx.args = []
-        with patch("shutil.which", side_effect=which_no_rsync):
-            with pytest.raises(typer.Exit) as exc_info:
-                main.sync(ctx, src="/tmp/foo", dest="ws:/work/foo")
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("ws")
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=which_no_rsync):
+                with pytest.raises(typer.Exit) as exc_info:
+                    main.sync(ctx, src="/tmp/foo", dest="ws:/work/foo")
         assert exc_info.value.exit_code == 1
 
     def test_sync_passes_extra_args(self, logged_in_cfg):
@@ -3878,10 +3886,15 @@ class TestMainCLI:
         ctx.args = ["--delete", "--exclude=.git"]
         mock_result = MagicMock()
         mock_result.returncode = 0
-        with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-            with patch("subprocess.run", return_value=mock_result) as mock_run:
-                with pytest.raises(typer.Exit):
-                    main.sync(ctx, src="/tmp/foo", dest="ws:/work/foo")
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("ws")
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit):
+                        main.sync(ctx, src="/tmp/foo", dest="ws:/work/foo")
         cmd = mock_run.call_args[0][0]
         assert "--delete" in cmd
         assert "--exclude=.git" in cmd
@@ -3893,11 +3906,239 @@ class TestMainCLI:
         ctx.args = []
         mock_result = MagicMock()
         mock_result.returncode = 23
-        with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
-            with patch("subprocess.run", return_value=mock_result):
-                with pytest.raises(typer.Exit) as exc_info:
-                    main.sync(ctx, src="/tmp/foo", dest="ws:/work/foo")
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("ws")
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch("subprocess.run", return_value=mock_result):
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="/tmp/foo", dest="ws:/work/foo")
         assert exc_info.value.exit_code == 23
+
+    def _perm_client(self, perms, ws_id="ws1" + "0" * 52):
+        """A mock client whose my-permissions response carries *perms*."""
+        client = MagicMock()
+        client.resolve_workspace.return_value = Workspace(
+            id=ws_id, name="my-ws", created_at="2025-01-01T00:00:00Z"
+        )
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(
+                return_value={"permissions": {f"/workspaces/{ws_id}": perms}}
+            ),
+        )
+        return client
+
+    def test_sync_pull_denied_fails_before_rsync(self, logged_in_cfg):
+        """#2706: a remote source (workspace→local pull) without the
+        exec permission exits 1 before rsync ever runs."""
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = self._perm_client(["terminal", "files"])
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch("subprocess.run") as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="my-ws:/work/out", dest="/tmp/out")
+        assert exc_info.value.exit_code == 1
+        mock_run.assert_not_called()
+        client.get.assert_called_once()
+
+    def test_sync_pull_allowed_runs_rsync(self, logged_in_cfg):
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = self._perm_client(["terminal", "files", "exec-and-sync"])
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="my-ws:/work/out", dest="/tmp/out")
+        assert exc_info.value.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_sync_push_denied_fails_before_rsync(self, logged_in_cfg):
+        """#2706: a remote destination (local→workspace push) without
+        the exec-and-sync permission exits 1 before rsync ever runs."""
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = self._perm_client(["terminal", "files"])
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch("subprocess.run") as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="/tmp/foo", dest="my-ws:/work/foo")
+        assert exc_info.value.exit_code == 1
+        mock_run.assert_not_called()
+        client.get.assert_called_once()
+
+    def test_sync_push_allowed_runs_rsync(self, logged_in_cfg):
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = self._perm_client(["terminal", "files", "exec-and-sync"])
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="/tmp/foo", dest="my-ws:/work/foo")
+        assert exc_info.value.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_sync_ws_to_ws_requires_exec(self, logged_in_cfg):
+        """A workspace→workspace sync checks exec-and-sync on each remote side;
+        lacking it on the source is enough to stop the transfer."""
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = self._perm_client(["terminal", "files"])
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch("subprocess.run") as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="my-ws:/a", dest="my-ws:/b")
+        assert exc_info.value.exit_code == 1
+        mock_run.assert_not_called()
+
+    def test_sync_pull_unknown_host_proceeds(self, logged_in_cfg):
+        """A remote source that is not a klangk workspace (e.g. a real
+        ssh host via a custom --rsh) is left to rsync to report."""
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = MagicMock()
+        client.resolve_workspace.side_effect = WorkspaceNotFoundError("nope")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="nope:/x", dest="/tmp/out")
+        assert exc_info.value.exit_code == 0
+        mock_run.assert_called_once()
+        client.get.assert_not_called()
+
+    def test_sync_pull_api_error_proceeds(self, logged_in_cfg):
+        """A failed preflight lookup is not fatal — the server still
+        enforces the gate on the exec channel."""
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = self._perm_client([])
+        client.get.side_effect = httpx.ConnectError("boom")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="my-ws:/x", dest="/tmp/out")
+        assert exc_info.value.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_sync_pull_empty_permission_data_proceeds(self, logged_in_cfg):
+        """my-permissions omits resources with no granted permissions —
+        treat missing data as "cannot preflight" (rsync proceeds; the
+        server's exec-channel gate still enforces)."""
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = self._perm_client([])
+        client.get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"permissions": {}}),
+        )
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="my-ws:/x", dest="/tmp/out")
+        assert exc_info.value.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_sync_push_resolve_error_proceeds(self, logged_in_cfg):
+        """A resolve failure on the push side (network down) is not
+        fatal — the server still enforces the gate on the exec
+        channel."""
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = MagicMock()
+        client.resolve_workspace.side_effect = httpx.ConnectError("boom")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="/tmp/foo", dest="my-ws:/x")
+        assert exc_info.value.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_sync_preflight_non_json_error_body_proceeds(self, logged_in_cfg):
+        """A preflight response that is not JSON (e.g. an HTML 500 page
+        from a proxy in front of klangkd) must not crash the CLI — the
+        preflight is best-effort and the server still enforces the
+        exec gate."""
+        from klangk.cli import main
+
+        ctx = MagicMock()
+        ctx.args = []
+        client = self._perm_client([])
+        client.get.return_value = MagicMock(
+            status_code=500,
+            json=MagicMock(side_effect=ValueError("Expecting value")),
+        )
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"):
+                with patch(
+                    "subprocess.run", return_value=mock_result
+                ) as mock_run:
+                    with pytest.raises(typer.Exit) as exc_info:
+                        main.sync(ctx, src="my-ws:/x", dest="/tmp/out")
+        assert exc_info.value.exit_code == 0
+        mock_run.assert_called_once()
+
+    def test_remote_host(self):
+        from klangk.cli.execsync import remote_host
+
+        assert remote_host("ws:/work/out") == "ws"
+        assert remote_host("ws:/a/b:c") == "ws"
+        assert remote_host("/tmp/local") is None
+        assert remote_host("./rel:ative") is None
+        assert remote_host("") is None
 
 
 class TestVolumes:

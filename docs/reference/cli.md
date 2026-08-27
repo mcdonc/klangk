@@ -264,7 +264,8 @@ klangk exec --raw my-project rsync --server ...      # raw argv, no shell (for t
 klangk monitor                                        # stream all server events as JSON
 klangk monitor --type service_health | jq .           # pretty-print health transitions
 klangk monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
-klangk sync ~/src my-project:/home/klangk/src      # sync files to/from the container
+klangk sync ~/src my-project:/home/klangk/src      # push files to the container — needs the exec-and-sync permission
+klangk sync my-project:/home/klangk/src ~/src       # pull files out of the container — needs the exec-and-sync permission
 klangk rm my-project                # delete a workspace
 klangk stop my-project              # stop the container for a workspace
 klangk start my-project             # start the container for a workspace
