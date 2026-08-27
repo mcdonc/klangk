@@ -1127,6 +1127,14 @@ class KlangkSettings(BaseSettings):
     oidc_login_hook: str | None = None
     oidc_providers: list[dict] | None = None
 
+    # --- Lifecycle hooks (customize dir) ---
+    # File path to a Python workspace-created hook, optionally followed
+    # by ``:func_name`` (default ``on_workspace_created``). Fired after a
+    # workspace is created on every creation path (create / import /
+    # duplicate); the hook may mutate the workspace and rewrite its ACL.
+    # Failures are logged, never fatal (#2762). Reloaded on SIGHUP.
+    workspace_created_hook: str | None = None
+
     # --- SMTP / email ---
     smtp_host: str | None = None
     smtp_port: int | None = 587

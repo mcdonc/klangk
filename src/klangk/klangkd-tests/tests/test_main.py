@@ -30,6 +30,7 @@ from klangk import (
     model,
     oidc,
     features,
+    hooks as hooks_mod,
     workspaces,
 )
 from klangk.container import ContainerRegistry
@@ -62,6 +63,8 @@ def _make_app_state(settings=None):
     app_state.state.podman = Podman(app_state)
     app_state.state.oidc = oidc.OIDC(app_state)
     app_state.state.features = features.Features(app_state)
+    # #2762: customize-dir lifecycle hooks (workspace-created hook).
+    app_state.state.hooks = hooks_mod.Hooks(app_state)
     app_state.state.workspaces = workspaces.Workspaces(app_state)
     app_state.state.files = files_mod.Files(app_state)
     # #1520: the lifespan binds app.state.db as the active DB for its context;
@@ -892,6 +895,7 @@ class TestLifespan:
         )
         app.state.oidc = oidc.OIDC(app)
         app.state.features = features.Features(app)
+        app.state.hooks = app_state.state.hooks
         app.state.workspaces = workspaces.Workspaces(app)
         app.state.email = emailsvc_mod.EmailService(app)
         app.state.util = util_mod.Util(app)

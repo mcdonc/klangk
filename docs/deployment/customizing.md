@@ -191,6 +191,34 @@ The example hook's logic:
 
 Re-inviting after a revocation creates a new pending invitation that overrides the revocation.
 
+### Workspace-Created Hook
+
+A deployment-local Python callback that runs after every workspace is created — on all three creation paths: a fresh `POST /workspaces`, an **import**, and a **duplicate** — after the workspace row, the owner ACE, and the four role groups are committed, and before the create response is returned. It can mutate the new workspace and rewrite its ACL, which is the supported way to change the seeded permission posture without forking the model layer.
+
+The `customize/custom/hooks/` directory includes a sample `workspace_created.py`. Bind-mount it anywhere in the container and point the env var at it:
+
+```bash
+docker run -d \
+  -v ./hooks/workspace_created.py:/etc/klangk/workspace_created.py:ro \
+  -e KLANGKD_WORKSPACE_CREATED_HOOK=/etc/klangk/workspace_created.py \
+  ...
+```
+
+Like the login hook, the file is loaded directly by path (no `PYTHONPATH` entry, no image rebuild), supports `:func_name` (default `on_workspace_created`), and is re-loaded on SIGHUP reconfigure.
+
+The hook receives two arguments:
+
+- `workspace` — a deep copy of the new workspace's row **dict** (assign keys to mutate attributes: `workspace["egress_mode"] = "static"`; `name`, `image`, `mounts`, `env`, `allowed_domains`, `rejected_domains`, `settings`, `per_handle_home`, … all work; nested edits like `workspace["env"]["K"] = "v"` are detected too, and deleting a key clears the column). Edits are persisted after the hook returns, with the **same validation the create API applies** — the settings-bag schema, the image allowlist, the mount-spec policy, the domain-list grammar, and the `egress_mode` / `setup_state` / `per_handle_home` enums. An invalid edit is logged and dropped, the create still succeeds. It also carries two async ACL helpers:
+  - `entries = await workspace.acl_entries()` — the workspace's ACL, resolved like `GET /api/v1/workspaces/{id}/acl` (each entry's `principal` is the group name, user email, or `Everyone`/`Authenticated`);
+  - `await workspace.rewrite_acl(entries)` — replaces the ACL wholesale; filter/edit/extend the list from `acl_entries()` and hand it back. The **list order becomes the ACL order**, so add/remove/reorder are all the same operation. Keep an entry granting the owner access, or every new workspace starts fully locked out.
+- `actor` — the creating user's row dict (`actor["id"]`, `actor["email"]`, …).
+
+Both sync and async hook functions are supported. ACL rewrites require the `async def` form (calling the awaitable helpers from a sync hook raises a clear error — it never silently no-ops).
+
+**Failure semantics: log-and-continue.** The hook is a mutation extension point, not a gate — if it raises, the workspace still exists and the create response is returned normally. Errors are logged as a WARNING with the hook source, workspace id, and the exception, so partial effects stay visible. A missing hook file or a missing/uncallable `on_workspace_created` export _is_ a startup failure (same as a broken login hook).
+
+The sample hook's example: force every new workspace to `egress_mode: static`, and keep the coders/collaborators role groups' `files` grant while dropping `files-download` and `files-write` for a browse-without-download posture. Adapt it to your deployment's stance.
+
 ### OIDC Authentication
 
 To enable OIDC login, create an `oidc.yaml` and mount it at runtime. The `customize/custom/oidc/oidc.yaml` template has the schema and placeholder values:

@@ -233,6 +233,17 @@ sync` report a clear permission-denied error.
   renderers (image, PDF, video, spreadsheet) cannot fetch bytes — text
   viewing still works. The CLI/TUI expose no file-download affordances.
 
+- **`KLANGKD_WORKSPACE_CREATED_HOOK` (#2762).** New customize-dir hook:
+  a deployment-local Python file (point the env var at it, like
+  `KLANGKD_OIDC_LOGIN_HOOK`) whose `on_workspace_created(workspace,`
+  `actor)` runs after every workspace creation — create, import, and
+  duplicate — and may mutate workspace attributes (validated, persisted)
+  and rewrite the workspace ACL. Hook failures are logged and never
+  fail the create; reloaded on SIGHUP. See
+  [Customizing a Deployment](https://mcdonc.github.io/klangk/deployment/customizing/)
+  for the API; a commented example ships in
+  `customize/custom/hooks/workspace_created.py`.
+
 - **De-noised group lists in the UI (#2752).** The admin Groups tab
   defaults to `source=manual`, with a "Workspace role groups" filter
   chip to include the seeded per-workspace groups. The ACL editor's

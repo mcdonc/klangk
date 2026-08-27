@@ -77,6 +77,11 @@ async def app(db, temp_data_dir):
     app.state.oidc = oidc_mod.OIDC(app)
     app.state.features = features_mod.Features(app)
     app.state.workspaces = ws_mod.Workspaces(app)
+    # #2762: workspace-created hook state (fired from the Workspaces
+    # service layer on every creation path).
+    from klangk import hooks as hooks_mod
+
+    app.state.hooks = hooks_mod.Hooks(app)
     app.state.files = files_mod.Files(app)
     app.state.email = emailsvc_mod.EmailService(app)
     app.state.util = util_mod.Util(app)
@@ -3834,6 +3839,144 @@ class TestWorkspaceRoutes:
             owners["id"]
         )
         assert any(m["id"] == user["id"] for m in members)
+
+
+class TestWorkspaceCreatedHookFiring:
+    """#2762: the workspace-created hook fires on every creation path.
+
+    All three paths (create / import / duplicate) go through the
+    Workspaces service layer's create_workspace, which fires
+    app.state.hooks. The hook is installed directly on the wired Hooks
+    instance (unit-style, like TestCallLoginHook) — loading from
+    KLANGKD_WORKSPACE_CREATED_HOOK is covered in test_hooks.py.
+    """
+
+    @pytest.fixture(autouse=True)
+    async def _make_user_admin(self, ws_admin):
+        """#2569: workspace creation requires admin."""
+
+    def _install(self, app):
+        seen = []
+
+        async def hook(workspace, actor):
+            seen.append((workspace["id"], actor["id"]))
+            workspace["egress_mode"] = "static"
+
+        app.state.hooks.workspace_created_hook = hook
+        app.state.hooks.workspace_created_hook_is_async = True
+        app.state.hooks.workspace_created_hook_source = "firing-test"
+        return seen
+
+    async def test_fires_on_create(self, client, user, app):
+        seen = self._install(app)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "hooked-create"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert seen == [(body["id"], user["id"])]
+        # The mutation is persisted and reflected in the response.
+        assert body["egress_mode"] == "static"
+        row = await app.state.model.workspaces.get_workspace(body["id"])
+        assert row["egress_mode"] == "static"
+
+    async def test_fires_on_duplicate(self, client, user, app, app_state):
+        seen = self._install(app)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "hooked-dup-src"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        seen.clear()  # the source create also fired
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/duplicate",
+            json={"name": "hooked-dup"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert seen == [(body["id"], user["id"])]
+        assert body["id"] != ws_id
+        assert body["egress_mode"] == "static"
+
+    async def test_fires_on_import(self, client, user, app):
+        import io
+        import json
+        import tarfile
+
+        seen = self._install(app)
+        headers = await _auth_headers(client)
+        # Build a minimal importable archive (instance_id included —
+        # the import endpoint rejects foreign archives).
+        from klangk.settings import KlangkSettings
+
+        ns = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=KlangkSettings(os.environ))
+        )
+        ns.state.util = util_mod.Util(ns)
+        meta = json.dumps(
+            {
+                "instance_id": ns.state.util.instance_id(),
+                "name": "hooked-import",
+                "image": None,
+                "service_command": None,
+                "auto_start": False,
+                "mounts": None,
+                "env": None,
+                "health_check": None,
+                "allowed_domains": None,
+                "rejected_domains": None,
+                "settings": None,
+                "egress_mode": "interactive",
+                "per_handle_home": True,
+            }
+        ).encode()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={"file": ("archive.tar.gz", buf.read(), "application/gzip")},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert seen == [(body["id"], user["id"])]
+        assert body["egress_mode"] == "static"
+
+    async def test_raising_hook_does_not_fail_create(
+        self, client, user, app, caplog
+    ):
+        import logging
+
+        async def hook(workspace, actor):
+            raise RuntimeError("hook boom")
+
+        app.state.hooks.workspace_created_hook = hook
+        app.state.hooks.workspace_created_hook_is_async = True
+        app.state.hooks.workspace_created_hook_source = "firing-raise"
+        headers = await _auth_headers(client)
+        with caplog.at_level(logging.WARNING, logger="klangk.hooks"):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                json={"name": "hooked-raises"},
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "hooked-raises"
+        assert any(
+            "workspace-created hook firing-raise failed" in r.message
+            for r in caplog.records
+        )
 
 
 # --- Workspace sharing ---

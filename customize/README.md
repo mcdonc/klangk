@@ -5,8 +5,8 @@ deployment: a `docker-compose.yml` showcasing runtime configuration, plus
 example runtime-customization files under `custom/`.
 
 Most klangk customization — branding, legal links, email templates, CA certs,
-OIDC login hooks — happens at **runtime** via env vars and bind mounts, using
-the stock image with no rebuild.
+OIDC login hooks, workspace-created hooks — happens at **runtime** via env
+vars and bind mounts, using the stock image with no rebuild.
 
 **The only reason to build a custom image is features** (Dart UI features need a
 Flutter web rebuild; TypeScript workspace features need a workspace image
@@ -27,6 +27,8 @@ customize/
     oidc/              # OIDC config + login hook
       oidc.yaml        # ← EDIT THIS: your identity-provider config
       login_hook.py    # Example login hook (restricts logins to invited users)
+    hooks/             # Lifecycle hooks
+      workspace_created.py  # Example workspace-created hook (mutates new workspaces + ACLs)
     certs/             # Custom CA certificates
       cacert.pem       # ← EDIT THIS: your private CA cert (example provided)
     branding/          # Logo + assets served at /branding (no Flutter rebuild)
@@ -44,4 +46,4 @@ docker compose up
 
 Edit `docker-compose.yml` for branding, product name, CA certs, OIDC, and the
 LLM backend. The `custom/` directory is mounted as `KLANGKD_CUSTOMIZE_DIR` and
-contains `branding/`, `certs/`, `email-templates/`, and `oidc/`.
+contains `branding/`, `certs/`, `email-templates/`, `hooks/`, and `oidc/`.

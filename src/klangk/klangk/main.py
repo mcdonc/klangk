@@ -82,6 +82,7 @@ from . import (
     files,
     first_run,
     server_schedule,
+    hooks as hooks_mod,
     inactivity,
     model,
     caddy as caddy_mod,
@@ -256,6 +257,11 @@ def build_app(settings: KlangkSettings) -> FastAPI:
     # settings.data_dir at construction, not frozen at import) + CRUD/path
     # helpers.
     app.state.workspaces = workspaces.Workspaces(app)
+    # #2762: Hooks(app_state) owns the customize-dir lifecycle hooks
+    # (currently the workspace-created hook). Loaded at lifespan start
+    # and reloaded on SIGHUP (Hooks.reconfigure); the workspace-created
+    # hook fires from the Workspaces service layer at creation time.
+    app.state.hooks = hooks_mod.Hooks(app)
     # #1566: Files(app_state) owns the podman-exec file operations
     # (list/read/write/delete/rename/stream), previously free functions
     # in files.py that threaded podman through every call. The class owns
