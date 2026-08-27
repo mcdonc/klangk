@@ -8971,54 +8971,6 @@ class TestWorkspaceExportImport:
         resp = await client.get("/api/v1/admin/users", headers=admin_headers)
         assert resp.status_code == 200
 
-    async def test_export_classification_marking(
-        self, client, admin_user, user, app, monkeypatch
-    ):
-        """#2589/#2707: KLANGKD_EXPORT_CLASSIFICATION marks the archive
-        (banner file + response header); unset leaves it unmarked."""
-        import io
-        import tarfile
-
-        headers = await self._user_headers(client)
-        resp = await client.post(
-            "/api/v1/workspaces",
-            headers=headers,
-            json={"name": "classified"},
-        )
-        ws = resp.json()
-        admin_headers = await self._admin_headers(client)
-        export_url = f"/api/v1/workspaces/{ws['id']}/export"
-
-        # Default: no classification marking at all.
-        resp = await client.get(export_url, headers=admin_headers)
-        assert resp.status_code == 200
-        assert "x-classification" not in resp.headers
-        with tarfile.open(
-            fileobj=io.BytesIO(resp.content), mode="r:gz"
-        ) as tar:
-            assert "CLASSIFICATION.txt" not in tar.getnames()
-
-        # Configured: banner file inside the archive + response header.
-        monkeypatch.setattr(
-            app.state.settings,
-            "export_classification",
-            "CONFIDENTIAL // INTERNAL ONLY",
-        )
-        resp = await client.get(export_url, headers=admin_headers)
-        assert resp.status_code == 200
-        assert (
-            resp.headers["X-Classification"] == "CONFIDENTIAL // INTERNAL ONLY"
-        )
-        with tarfile.open(
-            fileobj=io.BytesIO(resp.content), mode="r:gz"
-        ) as tar:
-            names = tar.getnames()
-            assert "CLASSIFICATION.txt" in names
-            assert "workspace.json" in names
-            banner = tar.extractfile("CLASSIFICATION.txt")
-            assert banner is not None
-            assert banner.read().decode() == "CONFIDENTIAL // INTERNAL ONLY\n"
-
     async def test_export_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)
         resp = await client.get(

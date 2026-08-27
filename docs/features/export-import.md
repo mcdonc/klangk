@@ -4,7 +4,6 @@ Workspaces can be exported as `.tar.gz` archives and imported to create new work
 
 - `workspace.json` — metadata (name, instance ID, image, service command, mounts, env vars, num_ports, home layout)
 - `home/` — the workspace's home directory tree (files, dotfiles, virtualenvs, Pi sessions, bash history)
-- `CLASSIFICATION.txt` — classification banner, only present when `KLANGKD_EXPORT_CLASSIFICATION` is set (see below)
 
 ## Export
 
@@ -22,15 +21,6 @@ To revoke bulk export on an instance that never wants it, add a **Deny** ACE for
 This blocks export for everyone — including admins — while leaving every other admin capability (user management, invitations, groups, ACL editing) untouched. Import is unaffected: it checks the `create` permission on `/workspaces`.
 
 Add the entry via **Admin → ACL** in the web UI (select the `/admin` resource) or `PUT /api/v1/admin/acl/resource`. To grant export back to a narrow set of users, add an **Allow** `export` ACE for that user/group at an even lower position.
-
-### Classification marking
-
-Set `KLANGKD_EXPORT_CLASSIFICATION` (e.g. `CONFIDENTIAL // INTERNAL ONLY`) to stamp every exported archive with the text:
-
-- a `CLASSIFICATION.txt` file at the archive root, and
-- an `X-Classification` response header on the export response.
-
-Empty (the default) exports unmarked archives. The banner also applies to the per-workspace archives Klangk builds when a user account is deleted. Re-importing a marked archive is unaffected — import reads only `workspace.json` and `home/`.
 
 ## Import
 

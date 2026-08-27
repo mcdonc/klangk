@@ -377,7 +377,6 @@ port: "8997"
 | `login_banner_title`       |           | `KLANGKD_LOGIN_BANNER_TITLE`       |
 | `login_banner_every_visit` | `false`   | `KLANGKD_LOGIN_BANNER_EVERY_VISIT` |
 | `terminal_banner`          |           | `KLANGKD_TERMINAL_BANNER`          |
-| `export_classification`    |           | `KLANGKD_EXPORT_CLASSIFICATION`    |
 
 ### SSL / certs
 

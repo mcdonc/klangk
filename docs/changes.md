@@ -223,16 +223,14 @@ sync` report a clear permission-denied error.
   renderers (image, PDF, video, spreadsheet) cannot fetch bytes — text
   viewing still works. The CLI/TUI expose no file-download affordances.
 
-- **`export` permission + `KLANGKD_EXPORT_CLASSIFICATION` (#2707).**
-  Workspace export (`GET /api/v1/workspaces/{id}/export`, `klangk
-export`) now requires the `export` permission on `/admin` instead of
-  `admin`. The seeded admin-group wildcard grant covers it, so existing
-  admins are unaffected; a Deny `export` ACE for Everyone on `/admin`
-  revokes bulk export instance-wide while leaving other admin
-  capabilities and import untouched. When
-  `KLANGKD_EXPORT_CLASSIFICATION` is set, exported archives carry a
-  `CLASSIFICATION.txt` banner and an `X-Classification` response header.
-  See [Export & Import](https://github.com/mcdonc/klangk/blob/main/docs/features/export-import.md).
+- **`export` permission (#2707).** Workspace export
+  (`GET /api/v1/workspaces/{id}/export`, `klangk export`) now requires
+  the `export` permission on `/admin` instead of `admin`. The seeded
+  admin-group wildcard grant covers it, so existing admins are
+  unaffected; a Deny `export` ACE for Everyone on `/admin` revokes bulk
+  export instance-wide while leaving other admin capabilities and
+  import untouched. See
+  [Export & Import](https://github.com/mcdonc/klangk/blob/main/docs/features/export-import.md).
 
 - **De-noised group lists in the UI (#2752).** The admin Groups tab
   defaults to `source=manual`, with a "Workspace role groups" filter
