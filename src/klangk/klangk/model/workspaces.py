@@ -28,6 +28,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "spectate-on-shared-terminals",
         "files",
         "files-download",
+        "files-upload",
     ],
     "collaborators": [
         "terminal",
@@ -37,6 +38,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "share-terminals",
         "files",
         "files-download",
+        "files-upload",
     ],
     "spectators": [
         "terminal",

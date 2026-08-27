@@ -1422,9 +1422,9 @@ Requires a running container (returns 409 if stopped).
 Upload a file into the workspace container. Default 500 MB limit.
 Requires a running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`. Multipart form: `file` (upload), optional `path`
-query param (absolute container path).
+**Auth:** JWT required. User must have both `files` and `files-upload`
+permissions on `/workspaces/{id}`. Multipart form: `file` (upload),
+optional `path` query param (absolute container path).
 
 ```json
 { "path": "/home/klangk/uploads/file.txt", "status": "uploaded" }

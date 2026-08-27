@@ -90,7 +90,7 @@ other resource) are rejected with a 400 error.
 
 When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files.
 
-**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, and `files-download`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
+**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, `files-download`, and `files-upload`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
 
 **Permissions checked on workspace resources**:
 
@@ -98,8 +98,9 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | ---------------- | ----------------------------------------------------------------- |
 | `view`           | Can see the workspace exists                                      |
 | `terminal`       | Can open a terminal / exec commands                               |
-| `files`          | Can browse/read/upload files                                      |
+| `files`          | Can browse/read files                                             |
 | `files-download` | Can download raw bytes via `/files/download` (needs `files` too)  |
+| `files-upload`   | Can upload files via `/files/upload` (needs `files` too)          |
 | `edit`           | Can change workspace settings (name, image, command, mounts, env) |
 | `share`          | Can manage who has access (Sharing tab)                           |
 | `delete`         | Can delete the workspace                                          |
@@ -111,7 +112,13 @@ returns 403 from `/files/download`. Binary renderers (image, PDF, video,
 spreadsheet) fetch raw bytes through the download endpoint, so they cannot
 render without it.
 
-Note the limit of this gate: it blocks byte-perfect, unbounded export
+Withholding `files-upload` disables uploads via `/files/upload` —
+drag-and-drop in the file viewer and saving edits from text-editor
+renderers both go through that endpoint. (The viewer currently still
+shows its upload affordances; uploads fail with 403 until it learns to
+hide them.)
+
+Note the limit of the download gate: it blocks byte-perfect, unbounded export
 (any file size, whole directories as tar.gz), **not** content access.
 `files` alone still lets a member read any file up to 1 MB via
 `/files/content` — text files intact, binary files mostly (the bytes are

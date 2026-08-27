@@ -27,9 +27,9 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   static const _roleDescriptions = {
     'owners': 'Full admin access',
     'coders':
-        'Use isolated terminals, spectate on shared terminals, files + download',
+        'Use isolated terminals, spectate on shared terminals, files + upload/download',
     'collaborators':
-        'Use isolated and shared terminals, share terminals, files + download',
+        'Use isolated and shared terminals, share terminals, files + upload/download',
     'spectators': 'Watch shared terminals',
   };
 

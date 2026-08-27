@@ -4014,8 +4014,9 @@ class TestWorkspaceSharingRoutes:
     async def test_add_member_grants_files_download(
         self, client, user, app_state
     ):
-        """Sharing a member grants `files-download` alongside `files`
-        (#2705), so the simple share flow keeps download working."""
+        """Sharing a member grants `files-download`/`files-upload`
+        alongside `files` (#2705), so the simple share flow keeps both
+        transfer channels working."""
         headers = await _auth_headers(client)
         other = await self._create_other_user(app_state)
         resp = await client.post(
@@ -4039,6 +4040,7 @@ class TestWorkspaceSharingRoutes:
         assert member_perms == [
             "files",
             "files-download",
+            "files-upload",
             "terminal",
             "view",
         ]
@@ -5049,7 +5051,8 @@ class TestWorkspaceGroupSharing:
         groups = resp.json()
         group_names = [g["name"] for g in groups]
         assert "devs" in group_names
-        # The grant includes `files-download` alongside `files` (#2705).
+        # The grant includes `files-download`/`files-upload` alongside
+        # `files` (#2705).
         entries = await app_state.state.model.acl.get_acl_entries(
             f"/workspaces/{ws_id}"
         )
@@ -5062,6 +5065,7 @@ class TestWorkspaceGroupSharing:
         assert group_perms == [
             "files",
             "files-download",
+            "files-upload",
             "terminal",
             "view",
         ]
@@ -6707,6 +6711,82 @@ class TestFileRoutes:
                 f"/api/v1/workspaces/{ws_id}/files/download"
                 "?path=/home/klangk/dl.txt",
                 headers=other,
+            )
+            assert resp.status_code == 403
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_upload_denied_without_files_upload(
+        self, client, user, app_state
+    ):
+        """`files` alone does not grant upload: the route requires
+        `files-upload` too (mirrors the download gate)."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state, client, ws_id, ["view", "terminal", "files"]
+            )
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(0, "", ""),
+            ):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/upload"
+                    "?path=/home/klangk/up.txt",
+                    headers=other,
+                    files={"file": ("up.txt", b"data", "text/plain")},
+                )
+            assert resp.status_code == 403
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_upload_allowed_with_files_upload(
+        self, client, user, app_state
+    ):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state,
+                client,
+                ws_id,
+                ["view", "terminal", "files", "files-upload"],
+            )
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(0, "", ""),
+            ):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/upload"
+                    "?path=/home/klangk/up.txt",
+                    headers=other,
+                    files={"file": ("up.txt", b"data", "text/plain")},
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "uploaded"
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_upload_files_upload_alone_insufficient(
+        self, client, user, app_state
+    ):
+        """`files-upload` without `files` grants nothing."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state, client, ws_id, ["files-upload"]
+            )
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/files/upload"
+                "?path=/home/klangk/up.txt",
+                headers=other,
+                files={"file": ("up.txt", b"data", "text/plain")},
             )
             assert resp.status_code == 403
         finally:

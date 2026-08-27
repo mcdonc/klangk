@@ -850,6 +850,7 @@ ALL_PERMISSIONS = [
     "share-terminals",
     "files",
     "files-download",
+    "files-upload",
     "share",
     "manage_members",
     "admin",
