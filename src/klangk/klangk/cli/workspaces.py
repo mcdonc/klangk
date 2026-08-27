@@ -417,7 +417,7 @@ def export_workspace(
         None, "-o", "--output", help="Output file (default: <name>.tar.gz)"
     ),
 ) -> None:
-    """Export a workspace to a .tar.gz archive (admin only)."""
+    """Export a workspace to a .tar.gz archive."""
     context.require_auth()
     client = context._client()
     ws = context.resolve_or_exit(client, name)
@@ -474,8 +474,8 @@ def export_workspace(
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 403:
             context._err.print(
-                "[red]Export failed:[/red] permission denied — the "
-                "export permission is required (ask an administrator)"
+                "[red]Export failed:[/red] permission denied — you need"
+                " the export permission on this workspace"
             )
         else:
             context._err.print(f"[red]Export failed:[/red] {e.response.text}")

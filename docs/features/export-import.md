@@ -7,20 +7,25 @@ Workspaces can be exported as `.tar.gz` archives and imported to create new work
 
 ## Export
 
-Export requires the **`export`** permission on the `/admin` resource (`GET /api/v1/workspaces/{id}/export`). The seeded admin-group wildcard grant (`Allow group:admin *` on `/admin`) covers it, so existing admins can export out of the box. `klangk export <workspace>` downloads the archive; the tarball is built on the server using a temp file to avoid memory pressure on large workspaces.
+Export requires the **`export`** permission on the workspace's own resource (`GET /api/v1/workspaces/{id}/export` checks `/workspaces/{id}`). Both seeded grants cover it out of the box:
 
-### Disabling export
+- the owner's wildcard ACE (`Allow user:{id} *`), and
+- the `owners-<workspace_id>` role group's wildcard grant.
 
-To revoke bulk export on an instance that never wants it, add a **Deny** ACE for the `export` permission on the `/admin` resource, targeting the **Everyone** system principal, positioned **ahead of** the wildcard allow (lower position = checked first):
+So owners (and anyone added to the workspace's owners role) can export their own workspaces. Admins no longer blanket-export workspaces they hold no grant on — an admin must be an owner, an owners-role member, or hold an explicit `export` ACE. `klangk export <workspace>` downloads the archive; the tarball is built on the server using a temp file to avoid memory pressure on large workspaces.
 
-| Resource | Action | Principal   | Permission |
-| -------- | ------ | ----------- | ---------- |
-| `/admin` | Deny   | Everyone    | `export`   |
-| `/admin` | Allow  | group:admin | `*`        |
+### Disabling export per workspace
 
-This blocks export for everyone — including admins — while leaving every other admin capability (user management, invitations, groups, ACL editing) untouched. Import is unaffected: it checks the `create` permission on `/workspaces`.
+To revoke export on a workspace, add a **Deny** ACE for the `export` permission on that workspace's resource, targeting the **Everyone** system principal, positioned **ahead of** the wildcard allows (lower position = checked first):
 
-Add the entry via **Admin → ACL** in the web UI (select the `/admin` resource) or `PUT /api/v1/admin/acl/resource`. To grant export back to a narrow set of users, add an **Allow** `export` ACE for that user/group at an even lower position.
+| Resource           | Action | Principal           | Permission |
+| ------------------ | ------ | ------------------- | ---------- |
+| `/workspaces/{id}` | Deny   | Everyone            | `export`   |
+| `/workspaces/{id}` | Allow  | user / owners group | `*`        |
+
+The ACL walk is first-match-wins from the workspace resource upward, so the deny must sit on the workspace itself (a deny higher in the tree never gets consulted once the workspace-level wildcard matches). This blocks export for everyone on that workspace while leaving the owner's other capabilities untouched. Import is unaffected: it checks the `create` permission on `/workspaces`.
+
+Add the entry via the workspace **Sharing → Advanced ACL** editor in the web UI or `PUT /api/v1/admin/acl/resource`. To grant export to a narrow set of users on a workspace, add an **Allow** `export` ACE for that user/group at an even lower position.
 
 ## Import
 

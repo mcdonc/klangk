@@ -105,6 +105,7 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `edit`           | Can change workspace settings (name, image, command, mounts, env) |
 | `share`          | Can manage who has access (Sharing tab)                           |
 | `delete`         | Can delete the workspace                                          |
+| `export`         | Can export the workspace as a `.tar.gz` archive (#2707)           |
 | `*`              | All of the above                                                  |
 
 Withholding `files-download` keeps the in-app file viewer working for text
@@ -128,17 +129,16 @@ Note the limit of the download gate: it blocks byte-perfect, unbounded export
 decoded lossily). To cut a member off from workspace content entirely,
 withhold `files` as well.
 
+`export` is a workspace permission checked on `/workspaces/{id}`: the owner's wildcard ACE and the seeded `owners-<id>` role group both cover it, so owners can export their own workspaces without any extra grant, and a **Deny** `export` ACE for **Everyone** on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do **not** get export implicitly — they must be an owner or hold an explicit grant. See [Export & Import](../features/export-import.md#export).
+
 ### Admin-scoped permissions
 
 Some permissions are checked on the `/admin` resource instead of a workspace:
 
-| Permission | Controls                                                         |
-| ---------- | ---------------------------------------------------------------- |
-| `create`   | Create/import workspaces (checked on `/workspaces`)              |
-| `admin`    | Instance admin functions (`/admin/*` endpoints)                  |
-| `export`   | Bulk-export any workspace (`GET /workspaces/{id}/export`, #2707) |
-
-`export` is deliberately separate from `admin`: the seeded wildcard grant for the admin group covers it, but a deploy can revoke bulk export instance-wide with a single **Deny** `export` ACE for **Everyone** on `/admin` positioned ahead of the wildcard allow — admins keep every other capability. See [Export & Import](../features/export-import.md#disabling-export).
+| Permission | Controls                                            |
+| ---------- | --------------------------------------------------- |
+| `create`   | Create/import workspaces (checked on `/workspaces`) |
+| `admin`    | Instance admin functions (`/admin/*` endpoints)     |
 
 ## Checking Your Permissions
 

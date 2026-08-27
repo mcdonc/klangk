@@ -270,7 +270,7 @@ klangk rm my-project                # delete a workspace
 klangk stop my-project              # stop the container for a workspace
 klangk start my-project             # start the container for a workspace
 klangk restart my-project           # restart the container for a workspace (owner only)
-klangk export my-project            # export workspace to my-project.tar.gz (admin only)
+klangk export my-project            # export workspace to my-project.tar.gz (owner/export permission)
 klangk export my-project -o bak.tar.gz  # export to specific file
 klangk import bak.tar.gz            # import workspace from archive
 klangk import bak.tar.gz --name new-name  # import with a different name

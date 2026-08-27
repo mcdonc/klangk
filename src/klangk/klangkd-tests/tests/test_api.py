@@ -8870,10 +8870,9 @@ class TestWorkspaceExportImport:
         (home / "klangk").mkdir(exist_ok=True)
         (home / "klangk" / "hello.txt").write_text("hello world")
 
-        # Export as admin
-        admin_headers = await self._admin_headers(client)
+        # Export as the owner (#2707: export is workspace-scoped)
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/gzip"
@@ -8895,16 +8894,18 @@ class TestWorkspaceExportImport:
             assert metadata["name"] == "export-test"
             assert "instance_id" in metadata
 
-    async def test_export_requires_permission(self, client, user, app_state):
-        """Non-privileged users cannot export (#2707: export permission)."""
-        # Create workspace as admin (user is admin via ws_admin autouse)
+    async def test_export_requires_permission(
+        self, client, admin_user, user, app_state
+    ):
+        """Users without a grant on the workspace cannot export (#2707)."""
+        # Create workspace as the test user (owner via seeded ACEs)
         headers = await self._user_headers(client)
         resp = await client.post(
             "/api/v1/workspaces", headers=headers, json={"name": "no-export"}
         )
         ws = resp.json()
 
-        # Create a non-admin user and try to export — must be denied
+        # Create another user with no grant on the workspace — denied
         from klangk.auth import hash_password
 
         pw_hash = hash_password("testpass")
@@ -8918,19 +8919,71 @@ class TestWorkspaceExportImport:
                 "password": "testpass",
             },
         )
-        nonadmin_headers = {
+        other_headers = {
             "Authorization": f"Bearer {login.json()['access_token']}"
         }
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=nonadmin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=other_headers
         )
         assert resp.status_code == 403
+
+        # A bare admin (admin group, but no ownership/grant on this
+        # workspace) is denied too — export is workspace-scoped now.
+        admin_headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert resp.status_code == 403
+
+    async def test_export_by_owners_role_group_member(
+        self, client, admin_user, user, app, app_state
+    ):
+        """#2707: the seeded owners role group carries the export grant —
+        a member who is not the creating owner can export."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "role-export"},
+        )
+        ws = resp.json()
+
+        from klangk.auth import hash_password
+
+        coowner = await app_state.state.model.users.create_user(
+            "coowner-export@example.com",
+            hash_password("testpass"),
+            verified=True,
+        )
+        group = await app_state.state.model.users.get_group_by_name(
+            f"owners-{ws['id']}"
+        )
+        assert group is not None
+        await app_state.state.model.users.add_user_to_group(
+            coowner["id"], group["id"]
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "coowner-export@example.com",
+                "password": "testpass",
+            },
+        )
+        coowner_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws['id']}/export",
+            headers=coowner_headers,
+        )
+        assert resp.status_code == 200
 
     async def test_export_deny_ace_revokes_only_export(
         self, client, admin_user, user, app, app_state
     ):
-        """#2707: a deny ACE on /admin revokes export but not other admin
-        capabilities (the seeded wildcard grant keeps the rest)."""
+        """#2707: a deny ACE on the workspace resource revokes export but
+        not the owner's other capabilities (the wildcard ACE keeps the
+        rest)."""
         headers = await self._user_headers(client)
         resp = await client.post(
             "/api/v1/workspaces",
@@ -8939,14 +8992,12 @@ class TestWorkspaceExportImport:
         )
         ws = resp.json()
         export_url = f"/api/v1/workspaces/{ws['id']}/export"
-        admin_headers = await self._admin_headers(client)
 
-        # Admin (wildcard allow on /admin) can export first.
-        resp = await client.get(export_url, headers=admin_headers)
+        # The owner (wildcard ACE at position 0) can export first.
+        resp = await client.get(export_url, headers=headers)
         assert resp.status_code == 200
 
-        # Deny export to everyone, positioned ahead of the wildcard allow
-        # (the seeded allow sits at position 0 on /admin).
+        # Deny export to everyone, positioned ahead of the wildcard ACEs.
         from klangk.model import (
             ACTION_DENY,
             PRINCIPAL_SYSTEM,
@@ -8954,7 +9005,7 @@ class TestWorkspaceExportImport:
         )
 
         await app_state.state.model.acl.add_acl_entry(
-            "/admin",
+            f"/workspaces/{ws['id']}",
             -1,
             ACTION_DENY,
             "export",
@@ -8962,17 +9013,44 @@ class TestWorkspaceExportImport:
             system_principal=SYSTEM_EVERYONE,
         )
 
-        # Export is now denied for the same admin...
-        resp = await client.get(export_url, headers=admin_headers)
+        # Export is now denied for the owner...
+        resp = await client.get(export_url, headers=headers)
         assert resp.status_code == 403
 
-        # ...while every other admin capability (still matched by the
-        # wildcard allow) keeps working.
-        resp = await client.get("/api/v1/admin/users", headers=admin_headers)
+        # ...while the owner's other capabilities (still matched by the
+        # wildcard ACE) keep working — workspace status (view) and the
+        # ACL listing.
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws['id']}/status", headers=headers
+        )
+        assert resp.status_code == 200
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws['id']}/acl", headers=headers
+        )
         assert resp.status_code == 200
 
-    async def test_export_not_found(self, client, admin_user):
+    async def test_export_not_found(self, client, admin_user, app_state):
+        """A granted caller exporting a nonexistent workspace gets 404.
+
+        The permission check runs on the (nonexistent) resource path
+        first, so without a grant there it 403s at the root deny before
+        existence is ever consulted — grant export on the path to reach
+        the handler's not-found branch.
+        """
         headers = await self._admin_headers(client)
+        admin = await app_state.state.model.users.get_user_by_email(
+            "testadmin@example.com"
+        )
+        from klangk.model import ACTION_ALLOW, PRINCIPAL_USER
+
+        await app_state.state.model.acl.add_acl_entry(
+            "/workspaces/nonexistent-id",
+            0,
+            ACTION_ALLOW,
+            "export",
+            PRINCIPAL_USER,
+            user_id=admin["id"],
+        )
         resp = await client.get(
             "/api/v1/workspaces/nonexistent-id/export", headers=headers
         )
@@ -8998,8 +9076,17 @@ class TestWorkspaceExportImport:
         (home / "klangk" / "data.txt").write_text("test data")
 
         admin_headers = await self._admin_headers(client)
+
+        # #2707: export is gated on the workspace resource now — a bare
+        # admin (no ownership, no grant) is denied.
         export_resp = await client.get(
             f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+        )
+        assert export_resp.status_code == 403
+
+        # The owner (wildcard ACE) exports fine.
+        export_resp = await client.get(
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert export_resp.status_code == 200
 
@@ -9099,10 +9186,9 @@ class TestWorkspaceExportImport:
             )
             ws = resp.json()
 
-            admin_headers = await self._admin_headers(client)
             export_resp = await client.get(
                 f"/api/v1/workspaces/{ws['id']}/export",
-                headers=admin_headers,
+                headers=headers,
             )
             assert export_resp.status_code == 200
 
@@ -9366,9 +9452,8 @@ class TestWorkspaceExportImport:
         assert resp.status_code == 200
         ws = resp.json()
 
-        admin_headers = await self._admin_headers(client)
         export_resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert export_resp.status_code == 200
 
@@ -9548,10 +9633,9 @@ class TestWorkspaceExportImport:
             seen.append(threading.get_ident())
             return real_run(*args, **kwargs)
 
-        admin_headers = await self._admin_headers(client)
         with patch.object(subprocess, "run", spy):
             resp = await client.get(
-                f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+                f"/api/v1/workspaces/{ws['id']}/export", headers=headers
             )
         assert resp.status_code == 200
         assert seen
@@ -9751,9 +9835,8 @@ class TestWorkspaceExportImport:
         (home / "klangk").mkdir(exist_ok=True)
         (home / "klangk" / "file.txt").write_text("streamed content")
 
-        admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/gzip"
@@ -9793,9 +9876,8 @@ class TestWorkspaceExportImport:
             bytes(rng.getrandbits(8) for _ in range(512 * 1024))
         )
 
-        admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert resp.status_code == 200
 
@@ -9831,9 +9913,8 @@ class TestWorkspaceExportImport:
 
         monkeypatch.setattr(subprocess_mod, "run", _failing_run)
 
-        admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert resp.status_code == 200
         # Falls back to 0 * 0.4 = 0, clamped to 1
@@ -9849,9 +9930,8 @@ class TestWorkspaceExportImport:
         )
         ws = resp.json()
 
-        admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert resp.status_code == 200
         # Estimated size is 0 * 0.4 = 0, clamped to 1
@@ -9917,9 +9997,8 @@ class TestWorkspaceExportImport:
         (home / "klangk" / "relative_link").symlink_to("real.txt")
         (home / "klangk" / "external_link").symlink_to("/etc/passwd")
 
-        admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert resp.status_code == 200
 
@@ -9980,9 +10059,8 @@ class TestWorkspaceExportImport:
         (bin_dir / "data.bin").write_bytes(bin_content)
 
         # Export
-        admin_headers = await self._admin_headers(client)
         resp = await client.get(
-            f"/api/v1/workspaces/{ws['id']}/export", headers=admin_headers
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
         )
         assert resp.status_code == 200
         archive_bytes = resp.content
