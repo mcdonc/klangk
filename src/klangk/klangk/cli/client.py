@@ -1747,10 +1747,15 @@ class ExecSession(_ShellSession):
             elif data.get("type") == "exec_exit":
                 self.exit_code = data.get("code", 0)
                 break
-            elif data.get("type") == "error":  # pragma: no cover
-                logging.error(
-                    "Server error: %s",
-                    data.get("message", "unknown"),
+            elif data.get("type") == "error":
+                # Server-side nack (e.g. the #2706/#2712 exec-and-sync permission
+                # gate on exec_start). stderr, never stdout: stdout
+                # carries rsync's binary protocol when this session is
+                # the sync transport, and rsync relays transport stderr
+                # to the user's rsync output.
+                print(
+                    f"klangk: {data.get('message', 'unknown error')}",
+                    file=sys.stderr,
                 )
                 self.exit_code = 1
                 break

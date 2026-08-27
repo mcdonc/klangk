@@ -126,6 +126,22 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **`exec-and-sync` permission gates one-shot command execution and
+  `klangk sync` (#2706, #2712).** The one-shot exec channel — `klangk
+exec`, and the rsync transport `klangk sync` and `klangk sandbox`
+  ride on — now requires the new `exec-and-sync` permission on the
+  workspace, enforced server-side at `exec_start`. Both sync directions
+  are covered by the same gate: a member without `exec-and-sync` cannot
+  run one-shot commands or sync in either direction. Isolated terminals
+  still use `code-in-isolation` and are unaffected. Coders and
+  collaborators keep `exec-and-sync` (existing workspaces are backfilled
+  by migration), so revoking it is an admin choice — remove the
+  permission in the ACL editor to stop one-shot exec and bulk sync for a
+  member while keeping their terminal access. Custom ACEs that granted
+  `code-in-isolation` must add `exec-and-sync` explicitly to keep
+  one-shot exec working for those principals. `klangk exec`/`klangk
+sync` report a clear permission-denied error.
+
 - **Workspace creation restricted to administrators (#2569).** `POST
 /workspaces`, `POST /workspaces/import`, and workspace duplication
   now require the `create` permission on the `/workspaces` collection

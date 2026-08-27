@@ -166,6 +166,7 @@ handles of all current viewers.
 | `code-in-shared-terminals`     | \*     |        | yes           |            |
 | `spectate-on-shared-terminals` | \*     | yes    | yes           | yes        |
 | `files`                        | \*     | yes    | yes           |            |
+| `exec-and-sync`                | \*     | yes    | yes           |            |
 
 \* Owners have the wildcard (`*`) permission which implies all permissions.
 

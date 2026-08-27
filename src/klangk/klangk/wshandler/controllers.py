@@ -382,10 +382,19 @@ class ExecController:
         container_id = self._conn.container_id
         if not container_id:
             return
-        if not await self._conn._has_perm("code-in-isolation"):
+        # #2706/#2712: the one-shot exec channel is a programmatic
+        # bulk-read/write path — and it is also what ``klangk sync``
+        # rides on (its rsync transport is ``klangk exec --raw``), so
+        # this gate is the enforcement point for both. It uses the
+        # dedicated ``exec-and-sync`` permission, separate from
+        # ``code-in-isolation`` (isolated terminals), so an admin can
+        # keep terminals available while stopping one-shot command
+        # execution and bulk sync — revoking ``exec-and-sync`` blocks
+        # both sync directions along with ``klangk exec``.
+        if not await self._conn._has_perm("exec-and-sync"):
             send_error(
                 self._conn.sock,
-                "exec requires code-in-isolation permission",
+                "exec requires the exec-and-sync permission",
             )
             return
         await self.stop()

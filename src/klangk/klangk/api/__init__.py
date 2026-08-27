@@ -278,6 +278,7 @@ ALL_PERMISSIONS = [
     "delete",
     "terminal",
     "code-in-isolation",
+    "exec-and-sync",
     "spectate-on-shared-terminals",
     "code-in-shared-terminals",
     "share-terminals",

@@ -4093,6 +4093,33 @@ class TestExecSessionRunClosedWs:
         assert exit_code == 0
 
 
+class TestExecSessionErrorFrame:
+    async def test_error_frame_sets_exit_code_and_prints_stderr(self, capsys):
+        """#2706/#2712: a server-side nack (e.g. the exec-and-sync
+        permission gate) is printed to stderr — never stdout, which
+        carries rsync's protocol when the session is a sync transport —
+        and exits 1."""
+        from klangk.cli.client import ExecSession
+
+        ws = AsyncMock()
+        ws.send = AsyncMock()
+        ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "error",
+                    "message": "exec requires the exec-and-sync permission",
+                }
+            )
+        )
+
+        session = ExecSession(ws, command=["rsync", "--server"], stdin=None)
+        exit_code = await session.run()
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        assert "exec-and-sync permission" in captured.err
+        assert captured.out == ""
+
+
 class _FakeMonitorConn:
     """Async-iterator WS stub for ``klangk monitor``."""
 

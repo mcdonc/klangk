@@ -291,3 +291,18 @@ class TestSubmoduleStructure:
             "SUPPORT_EMAIL",
         ):
             assert not hasattr(api_init, name), f"api still defines {name}"
+
+
+def test_all_permissions_single_source():
+    """``ALL_PERMISSIONS`` must have exactly one definition. It is
+    load-bearing for /my-permissions and the klangk sync preflight
+    (#2706); a second hand-maintained copy in api/admin.py drifted
+    silently, so #2765 removed it — keep it removed."""
+    import klangk.api.admin as api_admin
+
+    assert not hasattr(api_admin, "ALL_PERMISSIONS")
+    # The exec-and-sync permission gate (#2706/#2712) depends on
+    # "exec-and-sync" being reportable via /my-permissions.
+    assert "exec-and-sync" in api.ALL_PERMISSIONS
+    # #2765's transfer permissions must be present too.
+    assert {"files-download", "files-write"} <= set(api.ALL_PERMISSIONS)

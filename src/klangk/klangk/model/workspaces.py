@@ -25,6 +25,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     "coders": [
         "terminal",
         "code-in-isolation",
+        "exec-and-sync",
         "spectate-on-shared-terminals",
         "files",
         "files-download",
@@ -33,6 +34,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     "collaborators": [
         "terminal",
         "code-in-isolation",
+        "exec-and-sync",
         "code-in-shared-terminals",
         "spectate-on-shared-terminals",
         "share-terminals",

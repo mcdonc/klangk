@@ -35,6 +35,7 @@ class AclEditorState extends State<AclEditor> {
     'files',
     'files-download',
     'files-write',
+    'exec-and-sync',
     'edit',
     'share',
     'delete',

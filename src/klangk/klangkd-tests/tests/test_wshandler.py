@@ -2654,9 +2654,9 @@ class TestExecHandlers:
         ):
             await conn.handle_exec_start({"command": ["ls"]})
         sock.send_json.assert_called()
-        assert "code-in-isolation" in sock.send_json.call_args[0][0].get(
-            "message", ""
-        )
+        assert "exec-and-sync permission" in sock.send_json.call_args[0][
+            0
+        ].get("message", "")
         assert conn.exec_session is None
 
     async def test_exec_start_no_command(self):
@@ -2667,6 +2667,71 @@ class TestExecHandlers:
             await conn.handle_exec_start({"command": []})
         sock.send_json.assert_called()
         assert "command" in sock.send_json.call_args[0][0].get("message", "")
+
+    async def test_exec_start_requires_exec_permission(self):
+        """#2706/#2712: the one-shot exec channel — which ``klangk sync``
+        rides on — is gated on the dedicated ``exec-and-sync`` permission, not on
+        ``code-in-isolation``: a member who may open isolated terminals
+        but lacks ``exec-and-sync`` gets no exec session (and thus no sync
+        in either direction)."""
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock)
+        conn.container_id = "cid"
+        with patch.object(
+            conn,
+            "_has_perm",
+            new=AsyncMock(side_effect=lambda p: p == "code-in-isolation"),
+        ):
+            await conn.handle_exec_start(
+                {
+                    "command": [
+                        "rsync",
+                        "--server",
+                        "--sender",
+                        "-vlogDtprz",
+                        ".",
+                        "/src",
+                    ]
+                }
+            )
+        sent = sock.send_json.call_args[0][0]
+        assert "exec-and-sync permission" in sent.get("message", "")
+        assert conn.exec_session is None
+
+    async def test_exec_start_with_exec_and_sync_permission_runs(
+        self, app_state
+    ):
+        """``exec-and-sync`` alone authorizes the session — the gate replaced the
+        old ``code-in-isolation`` check on this path, it does not stack
+        on top of it (terminals keep using ``code-in-isolation``)."""
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        mock_session = AsyncMock()
+
+        async def empty_output():
+            return
+            yield  # pragma: no cover
+
+        mock_session.output = empty_output
+        mock_session.returncode = 0
+        with patch(
+            "klangk.wshandler.controllers.ExecSession",
+            return_value=mock_session,
+        ):
+            with patch.object(
+                conn,
+                "_has_perm",
+                new=AsyncMock(side_effect=lambda p: p == "exec-and-sync"),
+            ):
+                await conn.handle_exec_start({"command": ["ls"]})
+        assert conn.exec_session is mock_session
+        conn.exec_task.cancel()
+        try:
+            await conn.exec_task
+        except asyncio.CancelledError:
+            pass
 
     async def test_exec_start_success(self, app_state):
         app_state = _make_app_state()
@@ -2916,7 +2981,7 @@ class TestExecController:
         await ctrl.start({"command": ["ls"]})
         msg = sock.send_json.call_args[0][0]
         assert msg["type"] == "error"
-        assert "code-in-isolation" in msg["message"]
+        assert "exec-and-sync permission" in msg["message"]
         assert ctrl.session is None
 
     async def test_start_no_command_sends_error(self):

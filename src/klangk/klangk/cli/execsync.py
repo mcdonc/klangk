@@ -9,6 +9,7 @@ single-responsibility modules, all imported back into
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import subprocess
 
@@ -17,9 +18,53 @@ import typer
 from rich.console import Console
 
 from .client import (
+    WorkspaceNotFoundError,
     ws_exec,
 )
 from . import context
+
+
+def remote_host(spec: str) -> str | None:
+    """The remote host when *spec* is a ``host:path`` spec, else None.
+
+    Mirrors rsync's own remote-path rule: a colon before any slash makes
+    the text before it the remote host (reached via the ``-e``
+    transport). A colon after a slash (``./a:b``) is a plain local
+    filename. Either side being remote means the sync rides the exec
+    channel of that workspace (#2706).
+    """
+    m = re.match(r"^([^/:]+):", spec)
+    return m.group(1) if m else None
+
+
+def sync_denied(client, host: str) -> bool:
+    """True when *host* is a workspace the user may not exec against.
+
+    #2706/#2712: ``klangk sync`` rides the one-shot exec channel (its
+    transport is ``klangk exec --raw``), which is gated server-side on
+    the ``exec-and-sync`` permission — so a denied member cannot sync in
+    either direction. This preflight exists only so the CLI can fail fast
+    with a clear message instead of rsync's transport-error noise.
+    Unknown hosts, API failures, and missing data return False — rsync
+    or the server reports those.
+    """
+    try:
+        ws = client.resolve_workspace(host)
+    except (WorkspaceNotFoundError, httpx.HTTPError):
+        return False
+    resource = f"/workspaces/{ws.id}"
+    try:
+        resp = client.get(
+            "/api/v1/my-permissions", params={"resource": resource}
+        )
+        perms = resp.json().get("permissions", {}).get(resource)
+    except (httpx.HTTPError, ValueError):
+        # ValueError: a non-JSON error body (e.g. an HTML 500 page from
+        # a proxy in front of klangkd) must not crash the preflight.
+        return False
+    if perms is None:
+        return False
+    return "exec-and-sync" not in perms
 
 
 @context.app.command(
@@ -126,6 +171,27 @@ def sync(
     rsync_bin = shutil.which("rsync")
     if not rsync_bin:
         context._err.print("[red]Cannot find rsync in PATH[/red]")
+        raise typer.Exit(code=1)
+
+    # #2706/#2712: sync rides the one-shot exec channel, gated on the
+    # ``exec-and-sync`` permission — a remote source or destination
+    # means the user needs it on that workspace (either direction).
+    # Fail fast with a clear permission error; the server still enforces
+    # when rsync gets that far.
+    client = context._client()
+    pull_host = remote_host(src)
+    if pull_host and sync_denied(client, pull_host):
+        context._err.print(
+            f"[red]Permission denied:[/red] syncing out of workspace"
+            f" '{pull_host}' requires the exec-and-sync permission"
+        )
+        raise typer.Exit(code=1)
+    push_host = remote_host(dest)
+    if push_host and sync_denied(client, push_host):
+        context._err.print(
+            f"[red]Permission denied:[/red] syncing into workspace"
+            f" '{push_host}' requires the exec-and-sync permission"
+        )
         raise typer.Exit(code=1)
 
     cmd = [

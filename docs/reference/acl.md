@@ -101,6 +101,7 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `files`          | Can browse/read files                                             |
 | `files-download` | Can download raw bytes via `/files/download` (needs `files` too)  |
 | `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)      |
+| `exec-and-sync`  | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace |
 | `edit`           | Can change workspace settings (name, image, command, mounts, env) |
 | `share`          | Can manage who has access (Sharing tab)                           |
 | `delete`         | Can delete the workspace                                          |
