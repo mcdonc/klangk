@@ -15,6 +15,16 @@ The flags: `--quiet` suppresses noisy devenv output; `-O dotenv.enable:bool fals
 
 A long-running interactive `devenv up` (backend + proxy + workspace image build) is a human-facing workflow; agents generally don't run it. If you need the backend up for something, ask.
 
+## CI runners (stock by default, nix opt-in)
+
+The five E2E workflows (backend, CLI, frontend, cross-browser, sandbox)
+default to **stock GitHub-hosted runners** (`ubuntu-latest`); on stock
+runners the `devenv-setup` action installs nix + devenv + podman/uidmap per
+run. To run a suite on the self-hosted NixOS runner (label `nix`, the
+klangk-ci VM — toolchain from the host config), trigger it via
+`workflow_dispatch` and set the `runner` input to `nix`; push/PR/schedule
+triggers always use the stock default (#2772).
+
 ## Running tests (match CI)
 
 Always run the test suites **the way CI runs them**. The exact invocations

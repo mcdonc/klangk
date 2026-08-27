@@ -1,6 +1,8 @@
-name: E2E suite on self-hosted NixOS runner
-description: Shared prepare/build/cleanup/run steps for the e2e suites on the
-  klangk-ci VM runners (label "nix")
+name: E2E suite (stock or self-hosted nix runner)
+description: Shared prepare/build/cleanup/run steps for the e2e suites. Works
+  on GitHub-hosted runners (after ./.github/actions/devenv-setup has installed
+  nix + devenv + podman) and on the self-hosted NixOS runner (label "nix",
+  klangk-ci VM) where the toolchain comes from the host config.
 
 inputs:
   run:
@@ -30,17 +32,25 @@ inputs:
 runs:
   using: composite
   steps:
-    # The JIT runner's .env file provides XDG_RUNTIME_DIR,
-    # DBUS_SESSION_BUS_ADDRESS, and XDG_CACHE_HOME to every step
-    # automatically — no per-step export needed.
+    # On GitHub-hosted runners devenv/nix only land on PATH after sourcing
+    # the nix profile (installed by devenv-setup); on the self-hosted nix
+    # runner the profile file also exists and sourcing it is a no-op.
     - name: Prepare klangk devenv
+      # Gated on the filter like the build/run steps: on stock runners
+      # devenv-setup is skipped when there is nothing to run, and devenv
+      # would not be on PATH here.
+      if: inputs.run == 'true'
       shell: bash
-      run: devenv shell -- true
+      run: |
+        . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
+        devenv shell -- true
 
     - name: Build images
       if: inputs.run == 'true'
       shell: bash
-      run: devenv tasks run ${{ inputs.build-tasks }}
+      run: |
+        . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
+        devenv tasks run ${{ inputs.build-tasks }}
 
     - name: Obtain FIPS image (pull, capped-build fallback)
       # #2631: the FIPS workspace image is published by image-workspace-
@@ -53,6 +63,7 @@ runs:
       if: inputs.run == 'true' && inputs.fips-image != ''
       shell: bash
       run: |
+        . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
         if devenv shell -- bash scripts/pull-fips-image.sh "${{ inputs.fips-image }}"; then
           echo "FIPS image pulled from ${{ inputs.fips-image }}"
         else
@@ -78,7 +89,9 @@ runs:
       shell: bash
       env:
         KLANGK_E2E_VERBOSE_PODMAN: ${{ inputs.verbose-podman == 'true' && '1' || '' }}
-      run: devenv shell -- ${{ inputs.suite }}
+      run: |
+        . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
+        devenv shell -- ${{ inputs.suite }}
 
     - name: Skip notice
       if: inputs.run != 'true'

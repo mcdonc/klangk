@@ -2,6 +2,12 @@ name: "E2E: Sandbox Tests"
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner kind: stock (ubuntu-latest) or the self-hosted nix VM"
+        type: choice
+        options: [stock, nix]
+        default: stock
   pull_request:
     paths:
       - "sandboxes/**"
@@ -13,12 +19,19 @@ concurrency:
 
 jobs:
   test-sandbox-e2e:
-    runs-on: nix
+    # Defaults to stock GitHub-hosted runners; the self-hosted nix runner is
+    # a workflow_dispatch opt-in (input runner: nix). See backend-e2e-tests.yml
+    # for the provisioning split.
+    runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
     # openclaw + hermes both do real installs (npm/uv + git clone) that take
     # several minutes each; they run sequentially in one job.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+
+      # Stock runners only (see backend-e2e-tests.yml).
+      - uses: ./.github/actions/devenv-setup
+        if: inputs.runner != 'nix'
 
       - uses: ./.github/actions/e2e-suite
         with:

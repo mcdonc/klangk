@@ -2,6 +2,12 @@ name: "E2E: Backend Tests"
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner kind: stock (ubuntu-latest) or the self-hosted nix VM"
+        type: choice
+        options: [stock, nix]
+        default: stock
   push:
     branches: [release/**]
   pull_request:
@@ -20,11 +26,13 @@ concurrency:
 
 jobs:
   test-backend-e2e:
-    # Self-hosted NixOS runner (label "nix", klangk-ci VM). nix, devenv, git,
-    # and rootless podman (SUID newuidmap shims) come from the host config;
-    # the shared action handles devenv prep, image builds, cleanup, and the
+    # Defaults to stock GitHub-hosted runners; the self-hosted NixOS runner
+    # (label "nix", klangk-ci VM) is a workflow_dispatch opt-in (input
+    # runner: nix). On nix, devenv/git/rootless podman (SUID newuidmap shims)
+    # come from the host config; on stock runners devenv-setup installs them.
+    # The shared action handles devenv prep, image builds, cleanup, and the
     # suite itself.
-    runs-on: nix
+    runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -41,6 +49,12 @@ jobs:
               - 'devenv.yaml'
               - '.github/workflows/backend-e2e-tests.yml'
               - '.github/actions/e2e-suite/**'
+
+      # Stock runners only: bootstrap nix + devenv + podman/uidmap. The nix
+      # runner already has the toolchain from its host config. Skipped when
+      # the paths filter found no e2e-relevant changes (nothing to run).
+      - uses: ./.github/actions/devenv-setup
+        if: inputs.runner != 'nix' && steps.filter.outputs.e2e == 'true'
 
       - uses: ./.github/actions/e2e-suite
         with:
