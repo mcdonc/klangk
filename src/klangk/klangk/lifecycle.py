@@ -94,7 +94,7 @@ class Lifecycle:
         # nothing in the logs. The done-callback discards from this set.
         self._recycle_tasks: set[asyncio.Task] = set()
         # #2527: one-shot guard for the TERM/INT graceful shutdown (set by
-        # the signal hook in launcher.py before graceful_shutdown runs) and
+        # the signal hook in main.py before graceful_shutdown runs) and
         # strong references to the hook task while it drains.
         self.shutting_down: bool = False
         self._shutdown_tasks: set[asyncio.Task] = set()

@@ -49,7 +49,7 @@ test = [
 [project.scripts]
 # User-facing command names are unchanged — they're entrypoint names,
 # distinct from the package names. One ``pip install klangk`` yields both.
-klangkd = "klangk.launcher:app"
+klangkd = "klangk.main:app"
 klangk = "klangk.cli.main:main"
 klangk-build-nix-seed = "klangk.seed:main"
 klangk-load-nix-seed-btrfs = "klangk.seed:load_main"

@@ -33,7 +33,7 @@ from klangk import (
     workspaces,
 )
 from klangk.container import ContainerRegistry
-from klangk.exceptions import ConfigurationError
+from klangk.exceptions import ConfigurationError, EX_CONFIG
 from _helpers import make_settings
 from klangk.wshandler.session import WebSocketState
 
@@ -1348,12 +1348,12 @@ class TestGracefulShutdown:
 
 class TestGracefulExitServer:
     """The uvicorn Server subclass that runs the shutdown hook before
-    uvicorn's own exit (launcher.py, #2527)."""
+    uvicorn's own exit (main.py, #2527)."""
 
     def _server_cls(self, app_state):
-        from klangk.launcher import _make_graceful_exit_server
+        from klangk.main import make_graceful_exit_server
 
-        return _make_graceful_exit_server(app_state)
+        return make_graceful_exit_server(app_state)
 
     async def test_hook_runs_once_then_original_called(self, app_state):
         """First TERM schedules graceful_shutdown (NOT handle_exit — the
@@ -1429,7 +1429,7 @@ class TestGracefulExitServer:
 
         with (
             patch.object(lc, "graceful_shutdown", side_effect=exploding_hook),
-            patch("klangk.launcher.logger.error") as mock_log,
+            patch("klangk.main.logger.error") as mock_log,
         ):
             hooked = None
 
@@ -1533,7 +1533,7 @@ class TestGracefulExitServer:
             # patching it, since we must run inside a loop to drive the
             # synchronous handler.
             with patch(
-                "klangk.launcher.asyncio.get_running_loop",
+                "klangk.main.asyncio.get_running_loop",
                 side_effect=RuntimeError,
             ):
                 with patch("signal.signal", side_effect=grab):
@@ -1568,6 +1568,38 @@ class TestGracefulExitServer:
             with cls.capture_signals(server):
                 pass
         assert raised == [15]
+
+
+class TestConfigErrorExitStatus:
+    """Config-error exit-status translation (#2666).
+
+    The launcher turns uvicorn's generic STARTUP_FAILURE exit (3) into
+    ``EX_CONFIG`` (78) when the lifespan flagged a deterministic
+    ``ConfigurationError`` on ``app.state.startup_config_error``, so a
+    supervisor can stop restart-looping a config that cannot fix itself.
+    """
+
+    def test_flagged_config_error_maps_to_ex_config(self):
+        app_state = types.SimpleNamespace(
+            startup_config_error=(
+                "KLANGKD_DEFAULT_PASSWORD violates the configured "
+                "password policy"
+            )
+        )
+        assert main.config_error_exit_status(app_state) == EX_CONFIG
+
+    def test_unflagged_state_maps_to_none(self):
+        # No attribute at all (normal startup, non-config crash).
+        assert main.config_error_exit_status(types.SimpleNamespace()) is None
+
+    def test_none_flag_maps_to_none(self):
+        app_state = types.SimpleNamespace(startup_config_error=None)
+        assert main.config_error_exit_status(app_state) is None
+
+    def test_ex_config_is_78(self):
+        """sysexits.h EX_CONFIG — the value systemd configs will pin via
+        ``RestartPreventExitStatus=78``."""
+        assert EX_CONFIG == 78
 
 
 class TestStartupShutdownRestart:
@@ -2916,10 +2948,10 @@ class TestPidFile:
 
 
 class TestCheckPidPreflight:
-    """Tests for launcher._check_pid_preflight (#1837)."""
+    """Tests for main.check_pid_preflight (#1837)."""
 
     def test_no_instance_id_file(self, tmp_path):
-        from klangk.launcher import _check_pid_preflight
+        from klangk.main import check_pid_preflight
 
         settings = make_settings(
             {
@@ -2927,10 +2959,10 @@ class TestCheckPidPreflight:
                 "KLANGKD_DATA_DIR": str(tmp_path / "data"),
             }
         )
-        assert _check_pid_preflight(settings) is None
+        assert check_pid_preflight(settings) is None
 
     def test_empty_instance_id(self, tmp_path):
-        from klangk.launcher import _check_pid_preflight
+        from klangk.main import check_pid_preflight
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -2941,10 +2973,10 @@ class TestCheckPidPreflight:
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
-        assert _check_pid_preflight(settings) is None
+        assert check_pid_preflight(settings) is None
 
     def test_no_pid_file(self, tmp_path):
-        from klangk.launcher import _check_pid_preflight
+        from klangk.main import check_pid_preflight
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -2957,10 +2989,10 @@ class TestCheckPidPreflight:
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
-        assert _check_pid_preflight(settings) is None
+        assert check_pid_preflight(settings) is None
 
     def test_stale_pid(self, tmp_path):
-        from klangk.launcher import _check_pid_preflight
+        from klangk.main import check_pid_preflight
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -2975,11 +3007,11 @@ class TestCheckPidPreflight:
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
-        assert _check_pid_preflight(settings) is None
+        assert check_pid_preflight(settings) is None
         assert not pid_file.exists()
 
     def test_own_pid(self, tmp_path):
-        from klangk.launcher import _check_pid_preflight
+        from klangk.main import check_pid_preflight
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -2993,10 +3025,10 @@ class TestCheckPidPreflight:
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
-        assert _check_pid_preflight(settings) is None
+        assert check_pid_preflight(settings) is None
 
     def test_live_foreign_pid(self, tmp_path):
-        from klangk.launcher import _check_pid_preflight
+        from klangk.main import check_pid_preflight
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -3011,10 +3043,10 @@ class TestCheckPidPreflight:
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
-        assert _check_pid_preflight(settings) == ppid
+        assert check_pid_preflight(settings) == ppid
 
     def test_permission_error_pid(self, tmp_path):
-        from klangk.launcher import _check_pid_preflight
+        from klangk.main import check_pid_preflight
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -3028,10 +3060,10 @@ class TestCheckPidPreflight:
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
-        assert _check_pid_preflight(settings) == 1
+        assert check_pid_preflight(settings) == 1
 
     def test_invalid_pid_content(self, tmp_path):
-        from klangk.launcher import _check_pid_preflight
+        from klangk.main import check_pid_preflight
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -3045,22 +3077,22 @@ class TestCheckPidPreflight:
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
-        assert _check_pid_preflight(settings) is None
+        assert check_pid_preflight(settings) is None
 
 
 class TestCheckPortPreflight:
-    """Tests for launcher._check_port_preflight (#2211)."""
+    """Tests for launcher.check_port_preflight (#2211)."""
 
     def test_no_listener_returns_false(self):
-        from klangk.launcher import _check_port_preflight
+        from klangk.main import check_port_preflight
 
         # Pick a high port unlikely to be in use.
-        assert _check_port_preflight("127.0.0.1", 59123) is False
+        assert check_port_preflight("127.0.0.1", 59123) is False
 
     def test_live_listener_returns_true(self):
         import socket as _socket
 
-        from klangk.launcher import _check_port_preflight
+        from klangk.main import check_port_preflight
 
         srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
         srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
@@ -3068,14 +3100,14 @@ class TestCheckPortPreflight:
         srv.listen(1)
         port = srv.getsockname()[1]
         try:
-            assert _check_port_preflight("127.0.0.1", port) is True
+            assert check_port_preflight("127.0.0.1", port) is True
         finally:
             srv.close()
 
     def test_connection_refused_returns_false(self):
         import socket as _socket
 
-        from klangk.launcher import _check_port_preflight
+        from klangk.main import check_port_preflight
 
         # Bind then close — port is free but was recently used.
         srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
@@ -3083,14 +3115,14 @@ class TestCheckPortPreflight:
         srv.bind(("127.0.0.1", 0))
         port = srv.getsockname()[1]
         srv.close()
-        assert _check_port_preflight("127.0.0.1", port) is False
+        assert check_port_preflight("127.0.0.1", port) is False
 
 
 class TestLauncherPidPreflightGracefulExit:
     """The launcher's ``main()`` must log and ``sys.exit(1)`` — not crash with
     ``ImportError`` — when a second instance collides with a running one (#1993).
 
-    ``_check_pid_preflight`` is unit-tested above; this exercises the *error
+    ``check_pid_preflight`` is unit-tested above; this exercises the *error
     path that consumes it* (inside ``main()``, which is otherwise
     ``# pragma: no cover``) by launching the real launcher in a subprocess
     against a state/data dir that already records a live foreign PID.
@@ -3134,7 +3166,7 @@ def _launch_refusal_subprocess(state_dir, data_dir):
     env["KLANGKD_STATE_DIR"] = str(state_dir)
     env["KLANGKD_DATA_DIR"] = str(data_dir)
     return subprocess.run(
-        [sys.executable, "-m", "klangk.launcher", "--config=none"],
+        [sys.executable, "-m", "klangk.main", "--config=none"],
         env=env,
         capture_output=True,
         text=True,
@@ -3193,10 +3225,10 @@ class TestLauncherPidRefusalDedup:
 
 
 class TestRefusalDedupHelpers:
-    """Unit tests for the refusal-dedup helpers in launcher.py (#2021)."""
+    """Unit tests for the refusal-dedup helpers in main.py (#2021)."""
 
     def test_marker_path_none_without_instance_id(self, tmp_path):
-        from klangk.launcher import _refusal_marker_path
+        from klangk.main import refusal_marker_path
 
         settings = make_settings(
             {
@@ -3204,10 +3236,10 @@ class TestRefusalDedupHelpers:
                 "KLANGKD_DATA_DIR": str(tmp_path / "data"),
             }
         )
-        assert _refusal_marker_path(settings) is None
+        assert refusal_marker_path(settings) is None
 
     def test_marker_path_none_for_empty_instance_id(self, tmp_path):
-        from klangk.launcher import _refusal_marker_path
+        from klangk.main import refusal_marker_path
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -3218,10 +3250,10 @@ class TestRefusalDedupHelpers:
                 "KLANGKD_DATA_DIR": str(data_dir),
             }
         )
-        assert _refusal_marker_path(settings) is None
+        assert refusal_marker_path(settings) is None
 
     def test_marker_path_sibling_of_pidfile(self, tmp_path):
-        from klangk.launcher import _refusal_marker_path
+        from klangk.main import refusal_marker_path
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -3233,47 +3265,47 @@ class TestRefusalDedupHelpers:
             }
         )
         assert (
-            _refusal_marker_path(settings)
+            refusal_marker_path(settings)
             == tmp_path / "state" / "klangk-abc.refusal"
         )
 
     def test_already_reported_false_when_absent(self, tmp_path):
-        from klangk.launcher import _refusal_already_reported
+        from klangk.main import refusal_already_reported
 
-        assert not _refusal_already_reported(tmp_path / "missing.refusal", 123)
+        assert not refusal_already_reported(tmp_path / "missing.refusal", 123)
 
     def test_already_reported_true_when_pid_matches(self, tmp_path):
-        from klangk.launcher import (
-            _mark_refusal_reported,
-            _refusal_already_reported,
+        from klangk.main import (
+            mark_refusal_reported,
+            refusal_already_reported,
         )
 
         marker = tmp_path / "klangk-x.refusal"
-        _mark_refusal_reported(marker, 456)
-        assert _refusal_already_reported(marker, 456)
+        mark_refusal_reported(marker, 456)
+        assert refusal_already_reported(marker, 456)
 
     def test_already_reported_false_when_pid_differs(self, tmp_path):
-        from klangk.launcher import (
-            _mark_refusal_reported,
-            _refusal_already_reported,
+        from klangk.main import (
+            mark_refusal_reported,
+            refusal_already_reported,
         )
 
         marker = tmp_path / "klangk-x.refusal"
-        _mark_refusal_reported(marker, 456)
-        assert not _refusal_already_reported(marker, 789)
+        mark_refusal_reported(marker, 456)
+        assert not refusal_already_reported(marker, 789)
 
     def test_already_reported_false_on_corrupt_marker(self, tmp_path):
-        from klangk.launcher import _refusal_already_reported
+        from klangk.main import refusal_already_reported
 
         marker = tmp_path / "klangk-x.refusal"
         marker.write_text("not-a-pid")
-        assert not _refusal_already_reported(marker, 123)
+        assert not refusal_already_reported(marker, 123)
 
     def test_mark_refusal_reported_creates_parent(self, tmp_path):
-        from klangk.launcher import _mark_refusal_reported
+        from klangk.main import mark_refusal_reported
 
         marker = tmp_path / "nested" / "dir" / "klangk-x.refusal"
-        _mark_refusal_reported(marker, 999)
+        mark_refusal_reported(marker, 999)
         assert marker.read_text() == "999"
 
     def test_mark_refusal_reported_swallows_oserror(self, tmp_path):
@@ -3281,12 +3313,12 @@ class TestRefusalDedupHelpers:
         # (FileExistsError) from mkdir. Best-effort: must not raise, so the
         # refusal path still exits cleanly (worst case: one extra line next
         # retry).
-        from klangk.launcher import _mark_refusal_reported
+        from klangk.main import mark_refusal_reported
 
         blocker = tmp_path / "blocker"
         blocker.write_text("")  # a file, not a directory
         marker = blocker / "klangk-x.refusal"
-        _mark_refusal_reported(marker, 999)  # must not raise
+        mark_refusal_reported(marker, 999)  # must not raise
         assert not marker.exists()
 
 
@@ -3421,30 +3453,22 @@ class TestBuildApp:
         ]
         assert not basic_config_calls
 
-    def test_no_module_level_app_attribute(self):
-        """main.py no longer exposes an ``app`` attribute (#1454).
+    def test_module_app_is_the_typer_cli_not_an_asgi_app(self):
+        """main.py exposes no module-level ASGI app (#1454, #2753).
 
-        The composition root is sealed: ``klangkd`` builds the app
-        explicitly. The E2E suites launch real ``klangkd`` (``python -m
-        klangk.launcher``) and contact it over its UDS (#1525).
+        The composition root stays sealed: the module-level ``app`` is the
+        *Typer CLI* (the ``klangkd`` console-script entry point, merged
+        from launcher.py in #2753), never a pre-built FastAPI app. The
+        ASGI app is built explicitly via ``build_app(settings)``; the E2E
+        suites launch real ``klangkd`` (``python -m klangk.main``) and
+        contact it over its UDS (#1525).
         """
-        assert not hasattr(main, "app")
+        import typer
 
-    def test_launcher_builds_app(self):
-        """The ``klangkd`` launcher module imports cleanly and exposes a
-        Typer ``app`` (the entry point the E2E suites now launch, #1525).
-        """
-        import runpy
-        from pathlib import Path
-
-        script = (
-            Path(__file__).resolve().parent.parent.parent
-            / "klangk"
-            / "launcher.py"
-        )
-        ns = runpy.run_path(str(script), run_name="not_main")
-        # The launcher exposes a Typer app used as the ``klangkd`` entry point.
-        assert ns["app"] is not None
+        assert isinstance(main.app, typer.Typer)
+        assert not isinstance(main.app, FastAPI)
+        # No pre-built ASGI app under any other conventional name either.
+        assert not hasattr(main, "asgi_app")
 
 
 class TestGetAppDep:

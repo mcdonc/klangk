@@ -194,7 +194,7 @@ class Server:
         env.pop("KLANGKD_FRONTEND_DIR", None)
         log_file = open(self.log_path, "w")  # noqa: SIM115
         self.proc = subprocess.Popen(
-            ["python3", "-m", "klangk.launcher", "--config=none"],
+            ["python3", "-m", "klangk.main", "--config=none"],
             cwd=os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
                 "..",

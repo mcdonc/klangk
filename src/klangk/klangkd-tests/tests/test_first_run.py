@@ -148,15 +148,15 @@ class TestGenerateDefaultConfig:
 
 
 class TestLauncherIntegration:
-    """launcher._resolve_config_path(None) wires first-run generation in."""
+    """main.resolve_config_path(None) wires first-run generation in."""
 
     def test_none_generates_when_missing(self, tmp_path, monkeypatch):
         monkeypatch.setenv("KLANGKD_CONFIG_DIR", str(tmp_path))
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
 
         path = tmp_path / "klangkd.yaml"
         assert not path.is_file()
-        resolved = _resolve_config_path(None)
+        resolved = resolve_config_path(None)
         assert resolved == str(path)
         assert path.is_file()
 
@@ -166,9 +166,9 @@ class TestLauncherIntegration:
         monkeypatch.setenv("KLANGKD_CONFIG_DIR", str(tmp_path))
         path = tmp_path / "klangkd.yaml"
         path.write_text("product_name: already-here\n")
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
 
-        resolved = _resolve_config_path(None)
+        resolved = resolve_config_path(None)
         assert resolved == str(path)
         assert "already-here" in path.read_text()
 
@@ -189,27 +189,27 @@ class TestLauncherIntegration:
         monkeypatch.setattr(
             first_run_mod, "generate_default_config", _raise_fileexists
         )
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
 
-        resolved = _resolve_config_path(None)
+        resolved = resolve_config_path(None)
         assert resolved == str(tmp_path / "klangkd.yaml")
 
     def test_explicit_missing_path_still_errors(self, tmp_path):
         import typer
 
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
 
         with pytest.raises(typer.BadParameter):
-            _resolve_config_path(str(tmp_path / "does-not-exist.yaml"))
+            resolve_config_path(str(tmp_path / "does-not-exist.yaml"))
 
     def test_none_sentinel_still_works(self):
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
 
-        assert _resolve_config_path("none") == "none"
+        assert resolve_config_path("none") == "none"
 
     def test_explicit_existing_path_still_works(self, tmp_path):
         cfg = tmp_path / "config.yaml"
         cfg.write_text("product_name: test\n")
-        from klangk.launcher import _resolve_config_path
+        from klangk.main import resolve_config_path
 
-        assert _resolve_config_path(str(cfg)) == str(cfg)
+        assert resolve_config_path(str(cfg)) == str(cfg)

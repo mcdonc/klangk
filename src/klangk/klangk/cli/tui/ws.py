@@ -11,7 +11,7 @@ The WS connection is the TUI's single reachability signal (#2052): its
 lifecycle (connect / drop) drives the unreachable overlay in
 :class:`~klangk.cli.tui.screens.main.MainScreen`, so we ping on a short
 interval to detect a wedged / half-open connection fast without any REST
-polling. The server side is lowered to match (``launcher.py``).
+polling. The server side is lowered to match (``main.py``).
 """
 
 from __future__ import annotations
