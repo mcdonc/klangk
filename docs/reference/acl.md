@@ -109,8 +109,14 @@ Withholding `files-download` keeps the in-app file viewer working for text
 files (read via `/files/content`) but hides every download affordance and
 returns 403 from `/files/download`. Binary renderers (image, PDF, video,
 spreadsheet) fetch raw bytes through the download endpoint, so they cannot
-render without it — this is intentional: the permission gates the exfil
-avenue, not just the UI.
+render without it.
+
+Note the limit of this gate: it blocks byte-perfect, unbounded export
+(any file size, whole directories as tar.gz), **not** content access.
+`files` alone still lets a member read any file up to 1 MB via
+`/files/content` — text files intact, binary files mostly (the bytes are
+decoded lossily). To cut a member off from workspace content entirely,
+withhold `files` as well.
 
 ## Checking Your Permissions
 

@@ -57,17 +57,18 @@ class FileViewerPanel extends StatefulWidget {
   /// Whether the user holds the `files-download` permission. When false,
   /// download affordances are hidden and raw-byte fetches fail fast
   /// (#2705) — the viewer itself keeps working for text via
-  /// `/files/content`.
+  /// `/files/content`. Required (no default) so a construction site can
+  /// never accidentally fail open to download.
   final bool canDownload;
 
   const FileViewerPanel({
     super.key,
     required this.wsClient,
     required this.workspaceId,
+    required this.canDownload,
     this.authToken,
     this.userHome,
     this.registry,
-    this.canDownload = true,
   });
 
   @override
