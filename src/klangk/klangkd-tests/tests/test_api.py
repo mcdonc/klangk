@@ -6177,6 +6177,49 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
+    async def test_list_files_permission_denied_returns_403(
+        self, client, user
+    ):
+        """#2766: an unreadable directory is an error, not an empty list."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", "find: '/home': Permission denied"),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home",
+                    headers=headers,
+                )
+            assert resp.status_code == 403
+            assert "Permission denied" in resp.json()["detail"]
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_list_files_find_error_returns_500(self, client, user):
+        """A non-permission find failure maps to 500 with the stderr text
+        (#2766)."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(1, "", "find: '/deep': Too many levels"),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/deep",
+                    headers=headers,
+                )
+            assert resp.status_code == 500
+            assert "Too many levels" in resp.json()["detail"]
+        finally:
+            self._cleanup(ws_id)
+
     async def test_list_files_no_container_returns_409(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(

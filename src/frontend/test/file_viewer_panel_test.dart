@@ -115,6 +115,34 @@ void main() {
       client.close();
     });
 
+    testWidgets('shows error when listing fails', (tester) async {
+      // #2766: a permission-denied directory must not render as empty.
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/files') &&
+            !request.url.path.contains('/content')) {
+          return http.Response(
+            jsonEncode({"detail": "find: '/home': Permission denied"}),
+            403,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockWsClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: buildPanel(wsClient: client),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Cannot list this directory'), findsOneWidget);
+      expect(find.textContaining('Permission denied'), findsOneWidget);
+      client.close();
+    });
+
     testWidgets('shows file entries from mock', (tester) async {
       testHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/files')) {

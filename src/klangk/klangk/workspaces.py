@@ -5,6 +5,7 @@ import os
 import random
 import re
 import shutil
+import stat
 import tempfile
 from pathlib import Path
 
@@ -38,6 +39,42 @@ def rmtree(path: Path | str, label: str = "") -> None:
     shutil.rmtree(path, onexc=_on_error)
 
 
+def ensure_listable(path: Path) -> None:
+    """Ensure a home-volume directory is listable by the container user.
+
+    mkdir modes are umask-filtered: a restrictive daemon umask yields a
+    volume root of 0711 — traversable, so listing /home/klangk works,
+    but unlistable, so the Files tab shows /home as empty (#2766).
+    ORs group/world r-x in (owner bits untouched). Both a heal and a
+    failed heal log LOUDLY — a restrictive root is evidence of the
+    underlying creation bug recurring, and the original trigger was
+    never reconstructed (#2766). A root the daemon cannot chmod
+    (foreign uid) stays broken but visible: the files API surfaces
+    the listing error instead.
+    """
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        if mode & 0o0555 != 0o0555:
+            healed = mode | 0o0555
+            os.chmod(path, healed)
+            logger.warning(
+                "#2766: home volume dir %s was NOT listable by the "
+                "container user (mode %04o — restrictive umask at "
+                "creation, or a foreign-uid root); healed to %04o. "
+                "If this recurs, find what created it.",
+                path,
+                mode,
+                healed,
+            )
+    except OSError as e:
+        logger.warning(
+            "#2766: cannot make %s listable (%s) — Files tab listings "
+            "of it will fail until an operator chmods it",
+            path,
+            e,
+        )
+
+
 def _ensure_shared_home_dir_sync(
     workspace_home: Path,
     name: str,
@@ -68,6 +105,11 @@ def _ensure_shared_home_dir_sync(
     # top dir may not exist yet (no in-tree caller mkdir'd it), and
     # unlike the old work/ helper this must not assume it does.
     shared_dir.mkdir(parents=True, exist_ok=True)
+    # #2766: mkdir modes are umask-tainted (0711 → unlistable /home) and
+    # exist_ok never fixes an existing root — chmod both here, the one
+    # choke point every start path funnels through.
+    ensure_listable(workspace_home)
+    ensure_listable(shared_dir)
     return created or not any(shared_dir.iterdir())
 
 

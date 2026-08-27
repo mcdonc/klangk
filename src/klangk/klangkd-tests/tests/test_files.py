@@ -144,11 +144,49 @@ class TestListFiles:
             _mock_pod,
             EXEC,
             new_callable=AsyncMock,
-            return_value=(1, "", "No such file"),
+            return_value=(
+                1,
+                "",
+                "find: '/no/such/dir': No such file or directory",
+            ),
         ):
             entries = await files_inst.list_files(CID, "/no/such/dir")
 
         assert entries == []
+
+    async def test_list_permission_denied_raises(self, files_inst):
+        """#2766: an unreadable directory must not render as empty."""
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(1, "", "find: '/home': Permission denied"),
+        ):
+            with pytest.raises(PermissionError, match="Permission denied"):
+                await files_inst.list_files(CID, "/home")
+
+    async def test_list_other_find_error_raises(self, files_inst):
+        """Any other find failure surfaces as a plain OSError (#2766)."""
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(1, "", "find: '/deep': Too many levels"),
+        ):
+            with pytest.raises(OSError, match="Too many levels") as excinfo:
+                await files_inst.list_files(CID, "/deep")
+        assert not isinstance(excinfo.value, PermissionError)
+
+    async def test_list_error_without_stderr_raises(self, files_inst):
+        """A non-zero exit with no stderr still raises, not empty."""
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(1, "", ""),
+        ):
+            with pytest.raises(OSError, match="status 1"):
+                await files_inst.list_files(CID, "/home")
 
     async def test_list_sorted(self, files_inst):
         find_output = (

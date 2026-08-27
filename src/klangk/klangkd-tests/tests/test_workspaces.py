@@ -1,6 +1,8 @@
 """Tests for workspaces: workspace lifecycle, directory management, port allocation."""
 
+import logging
 import os
+import stat
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -905,4 +907,79 @@ class TestEnsureSharedHome:
         assert dangling.is_dir()
         skel_mock.assert_awaited_once_with(
             "cid", model.AGENT_USER_ID, home="/home/klangk"
+        )
+
+    async def test_heals_unlistable_volume_root_mode(
+        self, user, app_state, caplog
+    ):
+        """#2766: a volume root without group/world r-x (umask-tainted
+        mkdir, or an inherited volume mode) is traversable but not
+        listable by the container user — the Files tab showed /home as
+        empty. The start choke point ORs r-x back in; owner bits keep."""
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "shared-home-mode-ws"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "klangk").mkdir(exist_ok=True)
+        os.chmod(home, 0o0711)
+        os.chmod(home / "klangk", 0o0711)
+
+        with patch(
+            "klangk.workspaces.Workspaces.populate_home_skel",
+            new_callable=AsyncMock,
+        ):
+            with caplog.at_level(logging.WARNING, logger="klangk.workspaces"):
+                await app_state.state.workspaces.ensure_shared_home(
+                    ws["id"], "cid"
+                )
+
+        for healed in (home, home / "klangk"):
+            mode = stat.S_IMODE(os.stat(healed).st_mode)
+            assert mode & 0o0555 == 0o0555
+            assert mode & 0o700 == 0o700
+        # The heal is loud (#2766): a restrictive root is evidence of
+        # the creation bug recurring and must leave a trace.
+        healed_logs = [r for r in caplog.records if "#2766" in r.message]
+        assert len(healed_logs) == 2
+        assert all("NOT listable" in r.message for r in healed_logs)
+        assert any(str(home) in r.message for r in healed_logs)
+        assert any("0711" in r.message for r in healed_logs)
+        assert any("0755" in r.message for r in healed_logs)
+
+    async def test_unchmoddable_volume_root_does_not_crash(
+        self, user, app_state, caplog
+    ):
+        """A root the daemon can't chmod (foreign uid) is skipped with a
+        warning — container start must not fail; the listing error
+        surfaces via the files API instead (#2766)."""
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "shared-home-unfixable-ws"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        os.chmod(home, 0o0711)
+
+        with (
+            patch(
+                "klangk.workspaces.os.chmod",
+                side_effect=PermissionError(1, "Operation not permitted"),
+            ),
+            patch(
+                "klangk.workspaces.Workspaces.populate_home_skel",
+                new_callable=AsyncMock,
+            ) as skel_mock,
+        ):
+            # Must not raise.
+            with caplog.at_level(logging.WARNING, logger="klangk.workspaces"):
+                await app_state.state.workspaces.ensure_shared_home(
+                    ws["id"], "cid"
+                )
+        skel_mock.assert_awaited_once_with(
+            "cid", model.AGENT_USER_ID, home="/home/klangk"
+        )
+        # The failed heal is equally loud (#2766).
+        assert any(
+            "cannot make" in r.message and str(home) in r.message
+            for r in caplog.records
         )

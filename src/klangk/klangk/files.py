@@ -14,10 +14,13 @@ every call. ``validate_path`` is a pure path-normalization helper with
 no podman/settings dependency, so it stays module-level.
 """
 
+import logging
 import posixpath
 from collections.abc import AsyncGenerator
 
 EXEC_USER = "klangk"
+
+logger = logging.getLogger(__name__)
 
 # 255 is the common Linux NAME_MAX; reading at import time is fine.
 NAME_MAX = 255
@@ -69,7 +72,7 @@ class Files:
     ) -> list[dict]:
         """List files and directories at the given path inside the container."""
         path = validate_path(path)
-        rc, out, _err = await self.app.state.podman.exec_container(
+        rc, out, err = await self.app.state.podman.exec_container(
             container_id,
             [
                 "find",
@@ -85,7 +88,23 @@ class Files:
             user=EXEC_USER,
         )
         if rc != 0:
-            return []
+            # At -maxdepth 1 a non-zero find means the start point itself
+            # failed. ENOENT lists as empty (a missing directory is not an
+            # error — matches stat_path/read_file); everything else — a
+            # permission-denied volume root rendered as a mysterious
+            # "Empty directory" (#2766) — is surfaced, not swallowed.
+            message = " ".join(err.split()) or f"find exited with status {rc}"
+            if "No such file or directory" in message:
+                return []
+            logger.warning(
+                "list_files failed for %s in container %s: %s",
+                path,
+                container_id,
+                message,
+            )
+            if "Permission denied" in message:
+                raise PermissionError(message)
+            raise OSError(message)
         entries = []
         for line in out.strip().splitlines():
             parts = line.split("\t")
