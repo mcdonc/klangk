@@ -58,7 +58,9 @@ void main() {
             jsonEncode({
               'user_id': 'u1',
               'email': 'admin@example.com',
-              'permissions': {'/admin': ['*']},
+              'permissions': {
+                '/admin': ['*']
+              },
               'groups': [],
             }),
             200,
@@ -78,8 +80,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('help icon renders when only email configured',
-        (tester) async {
+    testWidgets('help icon renders when only email configured', (tester) async {
       testAuthHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
@@ -92,7 +93,9 @@ void main() {
             jsonEncode({
               'user_id': 'u1',
               'email': 'admin@example.com',
-              'permissions': {'/admin': ['*']},
+              'permissions': {
+                '/admin': ['*']
+              },
               'groups': [],
             }),
             200,

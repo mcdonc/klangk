@@ -5,8 +5,10 @@ validation), migration 0001's shape (password_history + cascade),
 0002's (users.last_login_at), 0003's (user_sessions + cascade,
 #2585), 0004's (workstation columns on user_sessions, #2586),
 0005's (users.disabled + users.last_activity_at, #2588),
-0009's (workspaces.per_handle_home backfill, #2719), and
-0010's (groups.source marker + name-pattern backfill, #2750).
+0009's (workspaces.per_handle_home backfill, #2719),
+0010's (groups.source marker + name-pattern backfill, #2750),
+0011's (`files-download` mirror of Allow `files` ACEs, #2705), and
+0012's (`files-write` mirror of Allow `files-download` ACEs).
 """
 
 import aiosqlite
@@ -57,6 +59,8 @@ class TestRunner:
             (8, "0008_agent_user_klangk"),
             (9, "0009_per_handle_home"),
             (10, "0010_groups_source"),
+            (11, "0011_files_download"),
+            (12, "0012_files_write"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -133,6 +137,8 @@ class TestRunner:
                 (8, "0008_agent_user_klangk"),
                 (9, "0009_per_handle_home"),
                 (10, "0010_groups_source"),
+                (11, "0011_files_download"),
+                (12, "0012_files_write"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -412,6 +418,315 @@ class TestM0010GroupsSource:
             info = await db.execute("PRAGMA table_info(groups)")
             cols = {r[1] for r in await info.fetchall()}
             assert "source" in cols
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0011FilesDownload:
+    """Migration 0011 mirrors Allow `files` ACEs as Allow `files-download`
+    at the adjacent position (#2705)."""
+
+    async def _legacy_db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0011.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT NOT NULL, position INTEGER NOT NULL,"
+            " action INTEGER NOT NULL, principal_type INTEGER NOT NULL,"
+            " user_id TEXT, group_id TEXT, system_principal INTEGER,"
+            " permission TEXT NOT NULL,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _rows(self, db, resource: str) -> list[tuple]:
+        cursor = await db.execute(
+            "SELECT position, action, principal_type, user_id, group_id,"
+            " system_principal, permission FROM acl_entries"
+            " WHERE resource = ? ORDER BY position",
+            (resource,),
+        )
+        return await cursor.fetchall()
+
+    async def _insert(
+        self,
+        db,
+        resource,
+        position,
+        action,
+        permission,
+        *,
+        principal_type=1,
+        user_id=None,
+        group_id=None,
+        system_principal=None,
+    ):
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type, user_id,"
+            "  group_id, system_principal, permission)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                resource,
+                position,
+                action,
+                principal_type,
+                user_id,
+                group_id,
+                system_principal,
+                permission,
+            ),
+        )
+
+    async def test_mirrors_allow_files_adjacent(self, tmp_path):
+        """Each Allow `files` ACE gains an adjacent Allow `files-download`
+        twin; `*`, Deny `files`, and other permissions are untouched."""
+        from klangk.model.migrations import m0011_files_download
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            res = "/workspaces/ws-1"
+            # position 0: Allow * for the owner — already covers download.
+            await self._insert(db, res, 0, 1, "*", user_id="u-owner")
+            # position 1: Allow files for a member — must be mirrored.
+            await self._insert(db, res, 1, 1, "files", user_id="u-member")
+            # position 2: Deny files for a group — must NOT be mirrored.
+            await self._insert(
+                db, res, 2, 0, "files", principal_type=2, group_id="g-1"
+            )
+            # position 3: Allow view — untouched.
+            await self._insert(db, res, 3, 1, "view", user_id="u-member")
+            await m0011_files_download.migration.apply(db)
+
+            rows = await self._rows(db, res)
+            assert rows == [
+                (0, 1, 1, "u-owner", None, None, "*"),
+                (1, 1, 1, "u-member", None, None, "files"),
+                (2, 1, 1, "u-member", None, None, "files-download"),
+                (3, 0, 2, None, "g-1", None, "files"),
+                (4, 1, 1, "u-member", None, None, "view"),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_mirror_precedes_later_deny_wildcard(self, tmp_path):
+        """The mirror takes the position right after its source, so a
+        later Deny `*` keeps the same answer for `files-download` as the
+        source entry gave for `files` (appending at the end would be
+        shadowed by the deny)."""
+        from klangk.model.migrations import m0011_files_download
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            res = "/workspaces/ws-2"
+            await self._insert(db, res, 0, 1, "files", user_id="u-member")
+            await self._insert(
+                db, res, 1, 0, "*", principal_type=0, system_principal=0
+            )
+            await m0011_files_download.migration.apply(db)
+
+            rows = await self._rows(db, res)
+            assert rows == [
+                (0, 1, 1, "u-member", None, None, "files"),
+                (1, 1, 1, "u-member", None, None, "files-download"),
+                (2, 0, 0, None, None, 0, "*"),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_no_files_entries_noop(self, tmp_path):
+        """Resources without Allow `files` entries are untouched."""
+        from klangk.model.migrations import m0011_files_download
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            await self._insert(
+                db, "/", 0, 0, "*", principal_type=0, system_principal=0
+            )
+            await self._insert(
+                db, "/", 1, 1, "view", principal_type=0, system_principal=1
+            )
+            await m0011_files_download.migration.apply(db)
+            assert await self._rows(db, "/") == [
+                (0, 0, 0, None, None, 0, "*"),
+                (1, 1, 0, None, None, 1, "view"),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0012FilesUpload:
+    """Migration 0012 mirrors Allow `files-download` ACEs as Allow
+    `files-write` at the adjacent position (upload tracks download)."""
+
+    async def _legacy_db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0012.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT NOT NULL, position INTEGER NOT NULL,"
+            " action INTEGER NOT NULL, principal_type INTEGER NOT NULL,"
+            " user_id TEXT, group_id TEXT, system_principal INTEGER,"
+            " permission TEXT NOT NULL,"
+            " UNIQUE(resource, position))"
+        )
+        return db
+
+    async def _rows(self, db, resource: str) -> list[tuple]:
+        cursor = await db.execute(
+            "SELECT position, action, principal_type, user_id, group_id,"
+            " system_principal, permission FROM acl_entries"
+            " WHERE resource = ? ORDER BY position",
+            (resource,),
+        )
+        return await cursor.fetchall()
+
+    async def _insert(
+        self,
+        db,
+        resource,
+        position,
+        action,
+        permission,
+        *,
+        principal_type=1,
+        user_id=None,
+        group_id=None,
+        system_principal=None,
+    ):
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type, user_id,"
+            "  group_id, system_principal, permission)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                resource,
+                position,
+                action,
+                principal_type,
+                user_id,
+                group_id,
+                system_principal,
+                permission,
+            ),
+        )
+
+    async def test_mirrors_allow_files_download_adjacent(self, tmp_path):
+        """Each Allow `files-download` ACE gains an adjacent Allow
+        `files-write` twin; `files`, Deny `files-download`, and `*` are
+        untouched — in particular a plain `files` grant does NOT gain
+        upload (the source is `files-download`, not `files`)."""
+        from klangk.model.migrations import m0012_files_write
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            res = "/workspaces/ws-1"
+            await self._insert(db, res, 0, 1, "*", user_id="u-owner")
+            await self._insert(db, res, 1, 1, "files", user_id="u-member")
+            # 0011's mirror of the entry above — the source 0012 copies.
+            await self._insert(
+                db, res, 2, 1, "files-download", user_id="u-member"
+            )
+            # Deny files-download must not be mirrored.
+            await self._insert(
+                db,
+                res,
+                3,
+                0,
+                "files-download",
+                principal_type=2,
+                group_id="g-1",
+            )
+            await m0012_files_write.migration.apply(db)
+
+            rows = await self._rows(db, res)
+            assert rows == [
+                (0, 1, 1, "u-owner", None, None, "*"),
+                (1, 1, 1, "u-member", None, None, "files"),
+                (2, 1, 1, "u-member", None, None, "files-download"),
+                (3, 1, 1, "u-member", None, None, "files-write"),
+                (4, 0, 2, None, "g-1", None, "files-download"),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_no_files_download_entries_noop(self, tmp_path):
+        """A pre-0011 database shape (only `files`/`*` grants) is
+        untouched — 0012 never invents grants from `files`."""
+        from klangk.model.migrations import m0012_files_write
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            await self._insert(db, "/", 0, 1, "files", user_id="u-member")
+            await m0012_files_write.migration.apply(db)
+            assert await self._rows(db, "/") == [
+                (0, 1, 1, "u-member", None, None, "files"),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_0011_then_0012_grants_both_channels(self, tmp_path):
+        """The realistic upgrade path: on a legacy DB, 0011 materializes
+        `files-download` mirrors, then 0012 copies them — every `files`
+        holder ends up with both transfer permissions."""
+        from klangk.model.migrations import (
+            m0011_files_download,
+            m0012_files_write,
+        )
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            res = "/workspaces/ws-2"
+            await self._insert(db, res, 0, 1, "*", user_id="u-owner")
+            await self._insert(db, res, 1, 1, "files", user_id="u-member")
+            await m0011_files_download.migration.apply(db)
+            await m0012_files_write.migration.apply(db)
+
+            rows = await self._rows(db, res)
+            assert rows == [
+                (0, 1, 1, "u-owner", None, None, "*"),
+                (1, 1, 1, "u-member", None, None, "files"),
+                (2, 1, 1, "u-member", None, None, "files-download"),
+                (3, 1, 1, "u-member", None, None, "files-write"),
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_post_0011_mirror_deletion_withholds_upload(self, tmp_path):
+        """The motivating case for mirroring `files-download` (not
+        `files`): an operator who deleted one member's `files-download`
+        mirror after 0011 withholds upload from that member only, while a
+        member whose mirror is intact gains it."""
+        from klangk.model.migrations import (
+            m0011_files_download,
+            m0012_files_write,
+        )
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            res = "/workspaces/ws-3"
+            await self._insert(db, res, 0, 1, "files", user_id="u-kept")
+            await self._insert(db, res, 1, 1, "files", user_id="u-trimmed")
+            await m0011_files_download.migration.apply(db)
+            # Operator deletes u-trimmed's mirror post-0011.
+            await db.execute(
+                "DELETE FROM acl_entries"
+                " WHERE resource = ? AND user_id = ?"
+                " AND permission = 'files-download'",
+                (res, "u-trimmed"),
+            )
+            await m0012_files_write.migration.apply(db)
+
+            perms = {
+                (user_id, perm)
+                for _, _, _, user_id, _, _, perm in await self._rows(db, res)
+            }
+            assert ("u-kept", "files-download") in perms
+            assert ("u-kept", "files-write") in perms
+            assert ("u-trimmed", "files-download") not in perms
+            assert ("u-trimmed", "files-write") not in perms
         finally:
             await db.__aexit__(None, None, None)
 

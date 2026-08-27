@@ -54,10 +54,27 @@ class FileViewerPanel extends StatefulWidget {
   /// in; tests inject custom registries to exercise the mode switcher.
   final FileRendererRegistry? registry;
 
+  /// Whether the user holds the `files-download` permission. When false,
+  /// download affordances are hidden and raw-byte fetches fail fast
+  /// (#2705) — the viewer itself keeps working for text via
+  /// `/files/content`. Required (no default) so a construction site can
+  /// never accidentally fail open to download.
+  final bool canDownload;
+
+  /// Whether the user holds the `files-write` permission. When false,
+  /// every mutating affordance is hidden — no drop zone, no upload hints,
+  /// no Rename/Delete in the context menu, and editor renderers become
+  /// read-only (upload, rename, and delete all go through
+  /// `files-write`-gated routes). Required for the same fail-closed
+  /// reason.
+  final bool canWrite;
+
   const FileViewerPanel({
     super.key,
     required this.wsClient,
     required this.workspaceId,
+    required this.canDownload,
+    required this.canWrite,
     this.authToken,
     this.userHome,
     this.registry,
@@ -223,6 +240,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   /// [RenderableFile.readBytes] for binary renderers (image/pdf/video).
   Future<Uint8List> _readFileBytes(String path) async {
+    if (!widget.canDownload) {
+      // The `files-download` permission is absent (#2705) — binary
+      // renderers cannot fetch raw bytes.
+      throw Exception('Download not permitted');
+    }
     final response = await _client.get(
       Uri.parse(
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
@@ -276,7 +298,8 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       readBytes: () => _readFileBytes(path),
       downloadUrl:
           '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
-      saveText: (content) => _saveFileText(path, content),
+      saveText:
+          widget.canWrite ? (content) => _saveFileText(path, content) : null,
     );
   }
 
@@ -425,6 +448,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   }
 
   Future<void> _downloadPath(String path, String name, bool isDir) async {
+    if (!widget.canDownload) return;
     final url =
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}';
     try {
@@ -466,15 +490,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   }
 
   void _showContextMenu(Offset position, String path, String name, bool isDir) {
-    showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        position.dx,
-        position.dy,
-      ),
-      items: [
+    // Mutating actions (rename/delete) go through write-gated routes, so
+    // they hide with `canWrite`; a member with neither transfer
+    // permission gets no menu at all (#2705).
+    final items = <PopupMenuEntry<String>>[
+      if (widget.canDownload)
         const PopupMenuItem(
           value: 'download',
           child: ListTile(
@@ -483,6 +503,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             title: Text('Download'),
           ),
         ),
+      if (widget.canWrite)
         const PopupMenuItem(
           value: 'rename',
           child: ListTile(
@@ -491,6 +512,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             title: Text('Rename'),
           ),
         ),
+      if (widget.canWrite)
         const PopupMenuItem(
           value: 'delete',
           child: ListTile(
@@ -499,7 +521,17 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             title: Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ),
-      ],
+    ];
+    if (items.isEmpty) return;
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
+      items: items,
     ).then((action) {
       if (!mounted || action == null) return;
       if (action == 'download') {
@@ -630,13 +662,15 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         registry: _registry,
         file: _renderableFor(_selectedFile!),
         onClose: () => setState(() => _selectedFile = null),
-        onDownload: () {
-          final path = _selectedFile!;
-          final name = path.contains('/')
-              ? path.substring(path.lastIndexOf('/') + 1)
-              : path;
-          _downloadPath(path, name, false);
-        },
+        onDownload: widget.canDownload
+            ? () {
+                final path = _selectedFile!;
+                final name = path.contains('/')
+                    ? path.substring(path.lastIndexOf('/') + 1)
+                    : path;
+                _downloadPath(path, name, false);
+              }
+            : null,
       );
     }
     return _buildFileList();
@@ -679,6 +713,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Widget build(BuildContext context) {
     return SuppressBrowserContextMenu(
       child: FileDropZone(
+        canUpload: widget.canWrite,
         workspaceId: widget.workspaceId,
         authToken: widget.authToken,
         currentPath: _currentPath,
@@ -699,12 +734,14 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_entries.isEmpty) {
-      return const Align(
+      return Align(
         alignment: Alignment.bottomCenter,
         child: Padding(
-          padding: EdgeInsets.only(bottom: 32),
+          padding: const EdgeInsets.only(bottom: 32),
           child: Text(
-            'Empty directory\nDrag files or folders here to upload',
+            widget.canWrite
+                ? 'Empty directory\nDrag files or folders here to upload'
+                : 'Empty directory',
             textAlign: TextAlign.center,
           ),
         ),
@@ -719,16 +756,17 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             itemBuilder: (context, index) => _buildFileListItem(index),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Text(
-            'Drag files or folders here to upload',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.outline,
+        if (widget.canWrite)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(
+              'Drag files or folders here to upload',
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.outline,
+              ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -750,7 +788,10 @@ class _FileViewer extends StatefulWidget {
   final FileRendererRegistry registry;
   final RenderableFile file;
   final VoidCallback onClose;
-  final VoidCallback onDownload;
+
+  /// Null when download is not permitted — the download button is
+  /// hidden (#2705).
+  final VoidCallback? onDownload;
 
   @override
   State<_FileViewer> createState() => _FileViewerState();
@@ -805,11 +846,12 @@ class _FileViewerState extends State<_FileViewer> {
                       onSelected: (_) => setState(() => _selected = renderer),
                     ),
                   ),
-              IconButton(
-                icon: const Icon(Icons.download, size: 18),
-                tooltip: 'Download',
-                onPressed: widget.onDownload,
-              ),
+              if (widget.onDownload != null)
+                IconButton(
+                  icon: const Icon(Icons.download, size: 18),
+                  tooltip: 'Download',
+                  onPressed: widget.onDownload,
+                ),
               if (raw != null && !identical(raw, _selected))
                 IconButton(
                   icon: const Icon(Icons.subject, size: 18),

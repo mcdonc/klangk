@@ -16,6 +16,11 @@ class FileDropZone extends StatefulWidget {
   final VoidCallback onUploadComplete;
   final Widget child;
 
+  /// Whether the user holds the `files-upload` permission. When false the
+  /// zone renders its child untouched: no drag overlay, no drop handling,
+  /// no upload progress (#2705).
+  final bool canUpload;
+
   const FileDropZone({
     super.key,
     required this.workspaceId,
@@ -24,6 +29,7 @@ class FileDropZone extends StatefulWidget {
     this.currentEntries = const [],
     required this.onUploadComplete,
     required this.child,
+    required this.canUpload,
   });
 
   @override
@@ -130,6 +136,7 @@ class FileDropZoneState extends State<FileDropZone> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.canUpload) return widget.child;
     return DropTarget(
       onDragEntered: (_) => setState(() => _dragging = true),
       onDragExited: (_) => setState(() => _dragging = false),

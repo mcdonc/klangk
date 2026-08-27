@@ -733,8 +733,9 @@ Download a file or directory from the workspace container. Single files
 are streamed directly; directories are streamed as `.tar.gz` archives.
 Requires a running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`. Query param: `path` (absolute container path).
+**Auth:** JWT required. User must have both `files` and `files-download`
+permissions on `/workspaces/{id}`. Query param: `path` (absolute container
+path).
 
 No request body. Returns a streamed `application/octet-stream` (single
 file) or `application/gzip` (directory archive).
@@ -1403,8 +1404,8 @@ Clone an existing workspace's configuration into a new workspace.
 Rename or move a file or directory inside the workspace container.
 Requires a running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`.
+**Auth:** JWT required. User must have both `files` and `files-write`
+permissions on `/workspaces/{id}`.
 
 ```json
 { "old_path": "/home/klangk/old.py", "new_path": "/home/klangk/new.py" }
@@ -1421,9 +1422,9 @@ Requires a running container (returns 409 if stopped).
 Upload a file into the workspace container. Default 500 MB limit.
 Requires a running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`. Multipart form: `file` (upload), optional `path`
-query param (absolute container path).
+**Auth:** JWT required. User must have both `files` and `files-write`
+permissions on `/workspaces/{id}`. Multipart form: `file` (upload),
+optional `path` query param (absolute container path).
 
 ```json
 { "path": "/home/klangk/uploads/file.txt", "status": "uploaded" }
@@ -1769,8 +1770,8 @@ Delete a file or directory inside the workspace container. Requires a
 running container (returns 409 if stopped). Query param: `path`
 (absolute container path).
 
-**Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`.
+**Auth:** JWT required. User must have both `files` and `files-write`
+permissions on `/workspaces/{id}`.
 
 No request body.
 

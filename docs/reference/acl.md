@@ -90,19 +90,42 @@ other resource) are rejected with a 400 error.
 
 When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files.
 
-**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, and `files`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
+**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, `files-download`, and `files-write`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
 
 **Permissions checked on workspace resources**:
 
-| Permission | Controls                                                          |
-| ---------- | ----------------------------------------------------------------- |
-| `view`     | Can see the workspace exists                                      |
-| `terminal` | Can open a terminal / exec commands                               |
-| `files`    | Can browse/upload/download files                                  |
-| `edit`     | Can change workspace settings (name, image, command, mounts, env) |
-| `share`    | Can manage who has access (Sharing tab)                           |
-| `delete`   | Can delete the workspace                                          |
-| `*`        | All of the above                                                  |
+| Permission       | Controls                                                          |
+| ---------------- | ----------------------------------------------------------------- |
+| `view`           | Can see the workspace exists                                      |
+| `terminal`       | Can open a terminal / exec commands                               |
+| `files`          | Can browse/read files                                             |
+| `files-download` | Can download raw bytes via `/files/download` (needs `files` too)  |
+| `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)      |
+| `edit`           | Can change workspace settings (name, image, command, mounts, env) |
+| `share`          | Can manage who has access (Sharing tab)                           |
+| `delete`         | Can delete the workspace                                          |
+| `*`              | All of the above                                                  |
+
+Withholding `files-download` keeps the in-app file viewer working for text
+files (read via `/files/content`) but hides every download affordance and
+returns 403 from `/files/download`. Binary renderers (image, PDF, video,
+spreadsheet) fetch raw bytes through the download endpoint, so they cannot
+render without it.
+
+Withholding `files-write` disables every mutating route — upload
+(`/files/upload`), rename (`/files/rename`), and delete (`DELETE
+/files`) — so a `files`-only member can browse and read but not modify
+the workspace. In the file viewer the matching affordances disappear: no
+drag-and-drop zone or upload hints, no Rename/Delete in the context menu,
+and text-editor renderers go read-only (their Save uploads through that
+endpoint).
+
+Note the limit of the download gate: it blocks byte-perfect, unbounded export
+(any file size, whole directories as tar.gz), **not** content access.
+`files` alone still lets a member read any file up to 1 MB via
+`/files/content` — text files intact, binary files mostly (the bytes are
+decoded lossily). To cut a member off from workspace content entirely,
+withhold `files` as well.
 
 ## Checking Your Permissions
 

@@ -67,8 +67,7 @@ class AppBarActions extends StatelessWidget {
         // unlike the legal links which live on the auth screens.
         if (Branding.supportHref.isNotEmpty)
           IconButton(
-            icon: const Icon(Icons.help_outline,
-                color: KColors.textSecondary),
+            icon: const Icon(Icons.help_outline, color: KColors.textSecondary),
             tooltip: Branding.supportUrl.isNotEmpty
                 ? 'Support'
                 : Branding.supportEmail,

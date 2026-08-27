@@ -282,6 +282,8 @@ ALL_PERMISSIONS = [
     "code-in-shared-terminals",
     "share-terminals",
     "files",
+    "files-download",
+    "files-write",
     "share",
     "manage_members",
     "admin",
