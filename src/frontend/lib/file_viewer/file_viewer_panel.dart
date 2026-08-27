@@ -93,6 +93,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   bool _loading = false;
   int _loadGeneration = 0;
   late final FileRendererRegistry _registry;
+  String? _listError;
 
   /// Refresh the file list for the current directory, bypassing the cache
   /// (manual refresh, or after a mutation that changed this directory).
@@ -179,13 +180,17 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       if (cached != null) {
         setState(() {
           _entries = cached.entries;
+          _listError = null;
           _loading = false;
         });
         return;
       }
     }
     final requestedPath = _currentPath;
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _listError = null;
+    });
     try {
       final response = await _client.get(
         Uri.parse(
@@ -200,11 +205,38 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         _fileListCache.put(widget.workspaceId, requestedPath, entries);
         if (mounted) setState(() => _entries = entries);
       } else {
+        // Surface the failure instead of silently keeping the previous
+        // directory's entries (#2766): a permission-denied directory must
+        // not look like an empty one.
+        var detail = 'HTTP ${response.statusCode}';
+        try {
+          final body = jsonDecode(response.body);
+          if (body is Map && body['detail'] is String) {
+            detail = body['detail'] as String;
+          }
+        } on FormatException {
+          // Non-JSON body — keep the status-line detail.
+        }
         debugPrint('File listing failed: ${response.statusCode}');
+        // Clear the entries too: they belong to the previous directory
+        // and would otherwise feed FileDropZone's overwrite check with
+        // the wrong names (#2769 review).
+        if (mounted) {
+          setState(() {
+            _entries = [];
+            _listError = detail;
+          });
+        }
       }
     } catch (e) {
       if (generation != _loadGeneration) return;
       debugPrint('File listing error: $e');
+      if (mounted) {
+        setState(() {
+          _entries = [];
+          _listError = '$e';
+        });
+      }
     } finally {
       if (generation == _loadGeneration && mounted) {
         setState(() => _loading = false);
@@ -732,6 +764,20 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Widget _buildFileList() {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
+    }
+    if (_listError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            'Cannot list this directory:\n$_listError',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+            ),
+          ),
+        ),
+      );
     }
     if (_entries.isEmpty) {
       return Align(

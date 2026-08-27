@@ -115,6 +115,88 @@ void main() {
       client.close();
     });
 
+    testWidgets('shows error when listing fails', (tester) async {
+      // #2766: a permission-denied directory must not render as empty.
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/files') &&
+            !request.url.path.contains('/content')) {
+          return http.Response(
+            jsonEncode({"detail": "find: '/home': Permission denied"}),
+            403,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      final client = _MockWsClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: buildPanel(wsClient: client),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Cannot list this directory'), findsOneWidget);
+      expect(find.textContaining('Permission denied'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('cached listing replaces a stale error on navigate-back',
+        (tester) async {
+      // #2769 review: browse a cached dir, enter an erroring one, go
+      // back — the cached entries must show, not the old error.
+      testHttpClientOverride = MockClient((request) async {
+        if (!request.url.path.contains('/files') ||
+            request.url.path.contains('/content')) {
+          return http.Response('Not found', 404);
+        }
+        final path = request.url.queryParameters['path'] ?? '/home/tester';
+        if (path == '/denied') {
+          return http.Response(
+            jsonEncode({"detail": "find: '/denied': Permission denied"}),
+            403,
+          );
+        }
+        return http.Response(
+          jsonEncode([
+            {
+              'name': 'hello.txt',
+              'path': '/home/tester/hello.txt',
+              'is_dir': false,
+              'size': 11
+            },
+          ]),
+          200,
+        );
+      });
+
+      final client = _MockWsClient();
+      final key = GlobalKey<FileViewerPanelState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: buildPanel(key: key, wsClient: client),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('hello.txt'), findsOneWidget);
+
+      // Enter the erroring directory.
+      key.currentState!.openDir('/denied');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Cannot list this directory'), findsOneWidget);
+
+      // Back to the cached directory: entries, no stale error.
+      key.currentState!.openDir('/home/tester');
+      await tester.pumpAndSettle();
+      expect(find.text('hello.txt'), findsOneWidget);
+      expect(find.textContaining('Cannot list this directory'), findsNothing);
+      client.close();
+    });
+
     testWidgets('shows file entries from mock', (tester) async {
       testHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/files')) {

@@ -1404,6 +1404,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Files tab: a directory listing failure no longer renders as an
+  empty directory (#2766).** Listing an unreadable directory (e.g. a
+  home volume root created without world `r-x` under a restrictive
+  umask) now returns an error with the underlying message (403 for
+  permission denied, 500 otherwise) shown in the viewer, and workspace
+  start heals the home volume root to a listable mode.
+
 - **`GET /api/v1/groups` no longer silently truncates at 200 rows
   (#2750).** The endpoint previously fetched a single 200-row page and
   returned it as a bare list; deployments with more groups (easy to hit

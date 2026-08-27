@@ -58,6 +58,8 @@ def _files_http_error(
         return HTTPException(
             status_code=409, detail="Destination already exists"
         )
+    if isinstance(e, PermissionError):
+        return HTTPException(status_code=403, detail=str(e))
     return HTTPException(status_code=500, detail=str(e))
 
 
@@ -71,8 +73,8 @@ async def list_files(
     cid = _require_container(workspace_id, app.state.container_registry)
     try:
         return await app.state.files.list_files(cid, path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except (ValueError, OSError) as e:
+        raise _files_http_error(e) from None
 
 
 @router.get("/workspaces/{workspace_id}/files/content")

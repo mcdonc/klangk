@@ -144,11 +144,100 @@ class TestListFiles:
             _mock_pod,
             EXEC,
             new_callable=AsyncMock,
-            return_value=(1, "", "No such file"),
+            return_value=(
+                1,
+                "",
+                "find: '/no/such/dir': No such file or directory",
+            ),
         ):
             entries = await files_inst.list_files(CID, "/no/such/dir")
 
         assert entries == []
+
+    async def test_list_permission_denied_raises(self, files_inst):
+        """#2766: an unreadable directory must not render as empty."""
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(1, "", "find: '/home': Permission denied"),
+        ):
+            with pytest.raises(PermissionError, match="Permission denied"):
+                await files_inst.list_files(CID, "/home")
+
+    async def test_list_other_find_error_raises(self, files_inst):
+        """Any other START-POINT find failure surfaces as a plain OSError
+        (#2766)."""
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(1, "", "find: '/deep': Too many levels"),
+        ):
+            with pytest.raises(OSError, match="Too many levels") as excinfo:
+                await files_inst.list_files(CID, "/deep")
+        assert not isinstance(excinfo.value, PermissionError)
+
+    async def test_list_child_error_returns_entries(self, files_inst):
+        """#2769 review: find exits 1 for an unreadable CHILD entry too
+        (e.g. a symlink into a 0700 dir) while still printing the rest —
+        one bad entry must not 403/500 a readable directory."""
+        find_output = "a.txt\tf\t10\t0.0\t0.0\npeek\tN\t0\t0.0\t0.0\n"
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(
+                1,
+                find_output,
+                "find: '/home/klangk/peek': Permission denied\n\n",
+            ),
+        ):
+            entries = await files_inst.list_files(CID, "/home/klangk")
+
+        assert [e["name"] for e in entries] == ["a.txt", "peek"]
+
+    async def test_list_child_enoent_race_returns_entries(self, files_inst):
+        """A child deleted between readdir and stat is a child diagnostic,
+        not an empty-directory signal — the surviving entries list."""
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(
+                1,
+                "a.txt\tf\t10\t0.0\t0.0\n",
+                "find: '/home/klangk/gone': No such file or directory",
+            ),
+        ):
+            entries = await files_inst.list_files(CID, "/home/klangk")
+
+        assert [e["name"] for e in entries] == ["a.txt"]
+
+    async def test_list_exec_pins_c_locale(self, files_inst):
+        """find's diagnostics must stay in the parseable English form —
+        the classification keys on the quoted-path message format
+        (#2769 review)."""
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),
+        ) as mock:
+            await files_inst.list_files(CID, "/home/klangk")
+
+        assert mock.call_args.kwargs["extra_env"] == {"LC_ALL": "C"}
+
+    async def test_list_error_without_stderr_raises(self, files_inst):
+        """A non-zero exit with no stderr still raises, not empty."""
+        with patch.object(
+            _mock_pod,
+            EXEC,
+            new_callable=AsyncMock,
+            return_value=(1, "", ""),
+        ):
+            with pytest.raises(OSError, match="status 1"):
+                await files_inst.list_files(CID, "/home")
 
     async def test_list_sorted(self, files_inst):
         find_output = (

@@ -14,10 +14,20 @@ every call. ``validate_path`` is a pure path-normalization helper with
 no podman/settings dependency, so it stays module-level.
 """
 
+import logging
 import posixpath
+import re
 from collections.abc import AsyncGenerator
 
 EXEC_USER = "klangk"
+
+logger = logging.getLogger(__name__)
+
+# find's stderr diagnostics name the path they failed on:
+# ``find: '<path>': <reason>``. Used to tell a start-point failure
+# (whole listing fails) from a child-entry failure (one unreadable
+# entry; the rest of the listing is still good).
+_FIND_ERROR_PATH_RE = re.compile(r"^find: '(.*)': ")
 
 # 255 is the common Linux NAME_MAX; reading at import time is fine.
 NAME_MAX = 255
@@ -69,7 +79,7 @@ class Files:
     ) -> list[dict]:
         """List files and directories at the given path inside the container."""
         path = validate_path(path)
-        rc, out, _err = await self.app.state.podman.exec_container(
+        rc, out, err = await self.app.state.podman.exec_container(
             container_id,
             [
                 "find",
@@ -83,9 +93,59 @@ class Files:
                 r"%f\t%Y\t%s\t%T@\t%C@\n",
             ],
             user=EXEC_USER,
+            # C locale keeps find's diagnostics in the exact
+            # ``find: '<path>': <reason>`` form regardless of the
+            # container's or a workspace env override's locale — the
+            # classification below depends on it (#2769 review).
+            extra_env={"LC_ALL": "C"},
         )
         if rc != 0:
-            return []
+            # find exits 1 for BOTH start-point failures and individual
+            # child-entry failures (a stat-denied entry — e.g. a symlink
+            # into a 0700 dir — a raced-away file, ELOOP), and still
+            # prints the readable entries on stdout. Only a start-point
+            # failure fails the listing; child failures degrade to a
+            # logged warning plus the surviving entries (#2769 review).
+            start_errors = []
+            child_errors = []
+            for line in err.splitlines():
+                if not line.strip():
+                    continue
+                m = _FIND_ERROR_PATH_RE.match(line)
+                if m and m.group(1) == path:
+                    start_errors.append(line)
+                else:
+                    child_errors.append(line)
+            if child_errors:
+                logger.warning(
+                    "list_files: skipped unreadable entries under %s in "
+                    "container %s: %s",
+                    path,
+                    container_id,
+                    " | ".join(child_errors),
+                )
+            if start_errors:
+                message = " ".join(" ".join(start_errors).split())
+                if "No such file or directory" in message:
+                    # ENOENT lists as empty (a missing directory is not
+                    # an error — matches stat_path/read_file).
+                    return []
+                logger.warning(
+                    "list_files failed for %s in container %s: %s",
+                    path,
+                    container_id,
+                    message,
+                )
+                if "Permission denied" in message:
+                    # A permission-denied volume root rendered as a
+                    # mysterious "Empty directory" (#2766) — surfaced,
+                    # not swallowed.
+                    raise PermissionError(message)
+                raise OSError(message)
+            if not child_errors:
+                # rc != 0 with no diagnostics at all: cannot classify —
+                # surface it rather than guess.
+                raise OSError(f"find exited with status {rc}")
         entries = []
         for line in out.strip().splitlines():
             parts = line.split("\t")
