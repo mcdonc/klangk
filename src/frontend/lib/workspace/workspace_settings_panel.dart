@@ -15,6 +15,11 @@ import 'workspace_list_page.dart' show validateAllowedDomainSpec;
 class WorkspaceSettingsPanel extends StatefulWidget {
   final String workspaceId;
 
+  /// Whether the user holds the ``export`` permission on this workspace
+  /// (#2707). Gates the Export card — the endpoint 403s without it, so
+  /// the affordance must not be offered.
+  final bool canExport;
+
   /// Invoked when the user accepts the "restart needed" notice from inside
   /// the panel. Routed through the workspace page so it owns the restart
   /// lifecycle (in-flight indicator + container_ready handling) (#1780).
@@ -23,6 +28,7 @@ class WorkspaceSettingsPanel extends StatefulWidget {
   const WorkspaceSettingsPanel({
     super.key,
     required this.workspaceId,
+    this.canExport = true,
     required this.onRestart,
   });
 
@@ -185,6 +191,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       defaultImage: _defaultImage,
       nixAvailable: _nixAvailable,
       sudoAvailable: _sudoAvailable,
+      canExport: widget.canExport,
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
@@ -298,6 +305,10 @@ class _SettingsForm extends StatefulWidget {
   /// toggle can only lock a workspace down below that ceiling, so it's
   /// hidden when the deploy forbids sudo.
   final bool sudoAvailable;
+
+  /// #2707: whether the user holds ``export`` on this workspace — gates
+  /// the Export card (the endpoint 403s without it).
+  final bool canExport;
   final bool allowAutostart;
   final String? saveMessage;
   final bool pendingRestart;
@@ -312,6 +323,7 @@ class _SettingsForm extends StatefulWidget {
     required this.defaultImage,
     required this.nixAvailable,
     this.sudoAvailable = false,
+    this.canExport = true,
     required this.allowAutostart,
     required this.saveMessage,
     required this.pendingRestart,
@@ -705,7 +717,7 @@ class _SettingsFormState extends State<_SettingsForm> {
                       child: _buildSaveButton(),
                     ),
                     const SizedBox(height: 16),
-                    _buildExportCard(),
+                    if (widget.canExport) _buildExportCard(),
                     const SizedBox(height: 16),
                     _buildTransferCard(),
                     const SizedBox(height: 16),

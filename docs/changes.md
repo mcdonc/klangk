@@ -141,6 +141,16 @@ exec`, and the rsync transport `klangk sync` and `klangk sandbox`
   `code-in-isolation` must add `exec-and-sync` explicitly to keep
   one-shot exec working for those principals. `klangk exec`/`klangk
 sync` report a clear permission-denied error.
+- **Workspace export is gated on the workspace, not admin (#2707).**
+  `GET /api/v1/workspaces/{id}/export` (and `klangk export`) now
+  requires the `export` permission on `/workspaces/{id}` instead of the
+  `admin` permission on `/admin`: owners keep exporting their own
+  workspaces (the owner wildcard ACE and the seeded `owners-<id>` role
+  group both cover `export`), while admins no longer bulk-export
+  workspaces they hold no grant on. A Deny `export` ACE on a workspace
+  resource, positioned ahead of the wildcard allows, revokes export per
+  workspace (rewritable by anyone holding `share` there). See
+  [Export & Import](https://github.com/mcdonc/klangk/blob/main/docs/features/export-import.md).
 
 - **Workspace creation restricted to administrators (#2569).** `POST
 /workspaces`, `POST /workspaces/import`, and workspace duplication

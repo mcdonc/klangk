@@ -88,7 +88,7 @@ other resource) are rejected with a 400 error.
 
 ## Workspace Permissions
 
-When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files.
+When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files, export.
 
 **Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, `files-download`, and `files-write`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
 
@@ -105,6 +105,7 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `edit`           | Can change workspace settings (name, image, command, mounts, env) |
 | `share`          | Can manage who has access (Sharing tab)                           |
 | `delete`         | Can delete the workspace                                          |
+| `export`         | Can export the workspace as a `.tar.gz` archive (#2707)           |
 | `*`              | All of the above                                                  |
 
 Withholding `files-download` keeps the in-app file viewer working for text
@@ -127,6 +128,17 @@ Note the limit of the download gate: it blocks byte-perfect, unbounded export
 `/files/content` — text files intact, binary files mostly (the bytes are
 decoded lossily). To cut a member off from workspace content entirely,
 withhold `files` as well.
+
+`export` is a workspace permission checked on `/workspaces/{id}`: the owner's wildcard ACE and the seeded `owners-<id>` role group both cover it, so owners can export their own workspaces without any extra grant, and a **Deny** `export` ACE for **Everyone** on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do **not** get export implicitly — they must be an owner or hold an explicit grant. See [Export & Import](../features/export-import.md#export).
+
+### Collection- and admin-scoped permissions
+
+Not every permission is checked on a workspace resource:
+
+| Permission | Where it is checked | Controls                                        |
+| ---------- | ------------------- | ----------------------------------------------- |
+| `create`   | `/workspaces`       | Create/import workspaces                        |
+| `admin`    | `/admin`            | Instance admin functions (`/admin/*` endpoints) |
 
 ## Checking Your Permissions
 

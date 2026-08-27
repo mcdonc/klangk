@@ -130,7 +130,8 @@ http.Client _client({
   });
 }
 
-Widget _buildPanel({VoidCallback? onRestart}) => MultiProvider(
+Widget _buildPanel({VoidCallback? onRestart, bool canExport = true}) =>
+    MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
         ChangeNotifierProvider.value(value: WsClient()),
@@ -142,6 +143,7 @@ Widget _buildPanel({VoidCallback? onRestart}) => MultiProvider(
         home: Scaffold(
           body: WorkspaceSettingsPanel(
             workspaceId: _wsId,
+            canExport: canExport,
             onRestart: onRestart ?? () {},
           ),
         ),
@@ -1703,6 +1705,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(find.textContaining('Export failed'), findsOneWidget);
+    });
+
+    testWidgets('export card hidden without the export permission (#2707)',
+        (tester) async {
+      await tester.pumpWidget(_buildPanel(canExport: false));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Export Workspace'), findsNothing);
+      expect(find.text('Export'), findsNothing);
     });
   });
 

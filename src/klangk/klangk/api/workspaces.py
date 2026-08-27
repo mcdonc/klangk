@@ -49,7 +49,6 @@ from ..util import (
 )
 from ._common import (
     WorkspaceAclEntry,
-    admin_resource,
     autostart_allowed,
     workspace_collection_resource,
     workspace_resource,
@@ -830,19 +829,28 @@ async def workspace_status(
 @router.get("/workspaces/{workspace_id}/export")
 async def export_workspace(
     workspace_id: str,
-    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    user: dict = Depends(acl.has_permission("export", workspace_resource)),
     app=Depends(get_app_dep),
 ):
-    """Export a workspace as a .tar.gz archive (admin only).
+    """Export a workspace as a .tar.gz archive.
+
+    Requires the ``export`` permission on ``/workspaces/{id}`` (#2707).
+    The owner's wildcard ACE and the seeded ``owners-<id>`` role group
+    both cover it, so owners can export their own workspaces; admins no
+    longer blanket-export workspaces they hold no grant on. A deny ACE
+    for ``export`` on the workspace resource (positioned ahead of the
+    wildcard allows) revokes it per workspace.
 
     The archive contains workspace.json (metadata) and the home
     directory tree under home/.
     """
     workspace = await app.state.model.workspaces.get_workspace(
-        workspace_id, admin["id"]
+        workspace_id, user["id"]
     )
     if workspace is None:
-        # Admin may not own the workspace — look it up without access check.
+        # The caller may hold export via a group ACE (e.g. the owners
+        # role group) rather than a direct access row — look it up
+        # without the access check; the permission layer already gated.
         workspace = await app.state.model.workspaces.get_workspace_by_id(
             workspace_id
         )

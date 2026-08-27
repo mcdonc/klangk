@@ -4368,8 +4368,8 @@ class TestExportImportCLI:
         client = MagicMock()
         client.resolve_workspace.return_value = ws
         resp = MagicMock()
-        resp.text = "forbidden"
-        resp.status_code = 403
+        resp.text = "boom"
+        resp.status_code = 500
         client.export_workspace.side_effect = httpx.HTTPStatusError(
             "err", request=MagicMock(), response=resp
         )
@@ -4377,6 +4377,24 @@ class TestExportImportCLI:
 
         with pytest.raises(typer.Exit):
             main.export_workspace(name="err-ws", output=tmp_path / "o.tar.gz")
+
+    def test_export_http_error_403(self, logged_in_cfg, monkeypatch, tmp_path):
+        """#2707: the export-permission denial gets a specific message."""
+        from klangk.cli import main
+
+        ws = Workspace(id="ws-403-id", name="ws-403", created_at="2025-01-01")
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        resp = MagicMock()
+        resp.text = '{"detail": "Permission denied"}'
+        resp.status_code = 403
+        client.export_workspace.side_effect = httpx.HTTPStatusError(
+            "err", request=MagicMock(), response=resp
+        )
+        monkeypatch.setattr(context_mod, "_client", lambda: client)
+
+        with pytest.raises(typer.Exit):
+            main.export_workspace(name="ws-403", output=tmp_path / "o.tar.gz")
 
     def test_import_success(self, logged_in_cfg, monkeypatch, tmp_path):
         from klangk.cli import main

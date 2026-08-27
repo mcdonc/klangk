@@ -627,6 +627,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       settings: _hasPerm('edit')
           ? WorkspaceSettingsPanel(
               workspaceId: widget.workspaceId,
+              canExport: _hasPerm('export'),
               onRestart: _restartContainer,
             )
           : null,
