@@ -6220,6 +6220,34 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
+    async def test_list_files_nonexistent_dir_returns_empty_list(
+        self, client, user
+    ):
+        """#2766/#2769: a missing directory is NOT an error — the route
+        returns 200 + [] (statWorkspacePath leans on this to classify
+        paths by listing the parent)."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(
+                    1,
+                    "",
+                    "find: '/no/such/dir': No such file or directory",
+                ),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/no/such/dir",
+                    headers=headers,
+                )
+            assert resp.status_code == 200
+            assert resp.json() == []
+        finally:
+            self._cleanup(ws_id)
+
     async def test_list_files_no_container_returns_409(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(

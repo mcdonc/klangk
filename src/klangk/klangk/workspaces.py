@@ -136,6 +136,12 @@ def _ensure_home_symlink_sync(
     user_dir = users_dir / user_id
     created = not user_dir.exists()
     user_dir.mkdir(exist_ok=True)
+    # #2766: same umask-tainted-mkdir hazard as the volume root — the
+    # per-handle home (/home/<handle> resolves through .users/<uid>)
+    # must stay listable by the container's fixed exec user. Before the
+    # fast-path return so every connection heals, not just renames.
+    ensure_listable(users_dir)
+    ensure_listable(user_dir)
 
     symlink = workspace_home / handle
     target = f".users/{user_id}"

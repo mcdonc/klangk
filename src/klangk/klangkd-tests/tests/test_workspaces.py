@@ -402,6 +402,32 @@ class TestEnsureHomeSymlink:
         assert os.readlink(symlink) == ".users/uid-1"
         assert (home / ".users" / "uid-1").is_dir()
 
+    async def test_heals_unlistable_users_dirs(self, user, app_state, caplog):
+        """#2766/#2769: .users and the per-handle home have the same
+        umask-tainted-mkdir hazard as the volume root — the per-handle
+        home resolves through them, so an unlistable .users/<uid> breaks
+        the Files tab one level down. Healed loudly on every connect."""
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "symlink-mode-ws"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        users = home / ".users"
+        users.mkdir(parents=True, exist_ok=True)
+        (users / "uid-1").mkdir(exist_ok=True)
+        os.chmod(users, 0o0711)
+        os.chmod(users / "uid-1", 0o0711)
+
+        with caplog.at_level(logging.WARNING, logger="klangk.workspaces"):
+            await app_state.state.workspaces.ensure_home_symlink(
+                home, "carol", "uid-1"
+            )
+
+        for healed in (users, users / "uid-1"):
+            mode = stat.S_IMODE(os.stat(healed).st_mode)
+            assert mode & 0o0555 == 0o0555
+            assert mode & 0o700 == 0o700
+        assert len([r for r in caplog.records if "#2766" in r.message]) == 2
+
     async def test_idempotent(self, user, app_state):
         ws = await app_state.state.workspaces.create_workspace(
             user["id"], "symlink-ws2"

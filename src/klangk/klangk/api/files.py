@@ -73,7 +73,7 @@ async def list_files(
     cid = _require_container(workspace_id, app.state.container_registry)
     try:
         return await app.state.files.list_files(cid, path)
-    except (ValueError, FileNotFoundError, PermissionError, OSError) as e:
+    except (ValueError, OSError) as e:
         raise _files_http_error(e) from None
 
 

@@ -180,6 +180,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       if (cached != null) {
         setState(() {
           _entries = cached.entries;
+          _listError = null;
           _loading = false;
         });
         return;
@@ -213,16 +214,29 @@ class FileViewerPanelState extends State<FileViewerPanel> {
           if (body is Map && body['detail'] is String) {
             detail = body['detail'] as String;
           }
-        } catch (_) {
+        } on FormatException {
           // Non-JSON body — keep the status-line detail.
         }
         debugPrint('File listing failed: ${response.statusCode}');
-        if (mounted) setState(() => _listError = detail);
+        // Clear the entries too: they belong to the previous directory
+        // and would otherwise feed FileDropZone's overwrite check with
+        // the wrong names (#2769 review).
+        if (mounted) {
+          setState(() {
+            _entries = [];
+            _listError = detail;
+          });
+        }
       }
     } catch (e) {
       if (generation != _loadGeneration) return;
       debugPrint('File listing error: $e');
-      if (mounted) setState(() => _listError = '$e');
+      if (mounted) {
+        setState(() {
+          _entries = [];
+          _listError = '$e';
+        });
+      }
     } finally {
       if (generation == _loadGeneration && mounted) {
         setState(() => _loading = false);
