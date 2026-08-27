@@ -128,6 +128,18 @@ Note the limit of the download gate: it blocks byte-perfect, unbounded export
 decoded lossily). To cut a member off from workspace content entirely,
 withhold `files` as well.
 
+### Admin-scoped permissions
+
+Some permissions are checked on the `/admin` resource instead of a workspace:
+
+| Permission | Controls                                                         |
+| ---------- | ---------------------------------------------------------------- |
+| `create`   | Create/import workspaces (checked on `/workspaces`)              |
+| `admin`    | Instance admin functions (`/admin/*` endpoints)                  |
+| `export`   | Bulk-export any workspace (`GET /workspaces/{id}/export`, #2707) |
+
+`export` is deliberately separate from `admin`: the seeded wildcard grant for the admin group covers it, but a deploy can revoke bulk export instance-wide with a single **Deny** `export` ACE for **Everyone** on `/admin` positioned ahead of the wildcard allow — admins keep every other capability. See [Export & Import](../features/export-import.md#disabling-export).
+
 ## Checking Your Permissions
 
 **Web UI**: the UI automatically shows/hides elements based on your permissions (admin button, workspace tabs, create button, etc.).

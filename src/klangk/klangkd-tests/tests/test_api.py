@@ -8895,7 +8895,8 @@ class TestWorkspaceExportImport:
             assert metadata["name"] == "export-test"
             assert "instance_id" in metadata
 
-    async def test_export_requires_admin(self, client, user, app_state):
+    async def test_export_requires_permission(self, client, user, app_state):
+        """Non-privileged users cannot export (#2707: export permission)."""
         # Create workspace as admin (user is admin via ws_admin autouse)
         headers = await self._user_headers(client)
         resp = await client.post(
@@ -8924,6 +8925,99 @@ class TestWorkspaceExportImport:
             f"/api/v1/workspaces/{ws['id']}/export", headers=nonadmin_headers
         )
         assert resp.status_code == 403
+
+    async def test_export_deny_ace_revokes_only_export(
+        self, client, admin_user, user, app, app_state
+    ):
+        """#2707: a deny ACE on /admin revokes export but not other admin
+        capabilities (the seeded wildcard grant keeps the rest)."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "deny-export"},
+        )
+        ws = resp.json()
+        export_url = f"/api/v1/workspaces/{ws['id']}/export"
+        admin_headers = await self._admin_headers(client)
+
+        # Admin (wildcard allow on /admin) can export first.
+        resp = await client.get(export_url, headers=admin_headers)
+        assert resp.status_code == 200
+
+        # Deny export to everyone, positioned ahead of the wildcard allow
+        # (the seeded allow sits at position 0 on /admin).
+        from klangk.model import (
+            ACTION_DENY,
+            PRINCIPAL_SYSTEM,
+            SYSTEM_EVERYONE,
+        )
+
+        await app_state.state.model.acl.add_acl_entry(
+            "/admin",
+            -1,
+            ACTION_DENY,
+            "export",
+            PRINCIPAL_SYSTEM,
+            system_principal=SYSTEM_EVERYONE,
+        )
+
+        # Export is now denied for the same admin...
+        resp = await client.get(export_url, headers=admin_headers)
+        assert resp.status_code == 403
+
+        # ...while every other admin capability (still matched by the
+        # wildcard allow) keeps working.
+        resp = await client.get("/api/v1/admin/users", headers=admin_headers)
+        assert resp.status_code == 200
+
+    async def test_export_classification_marking(
+        self, client, admin_user, user, app, monkeypatch
+    ):
+        """#2589/#2707: KLANGKD_EXPORT_CLASSIFICATION marks the archive
+        (banner file + response header); unset leaves it unmarked."""
+        import io
+        import tarfile
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "classified"},
+        )
+        ws = resp.json()
+        admin_headers = await self._admin_headers(client)
+        export_url = f"/api/v1/workspaces/{ws['id']}/export"
+
+        # Default: no classification marking at all.
+        resp = await client.get(export_url, headers=admin_headers)
+        assert resp.status_code == 200
+        assert "x-classification" not in resp.headers
+        with tarfile.open(
+            fileobj=io.BytesIO(resp.content), mode="r:gz"
+        ) as tar:
+            assert "CLASSIFICATION.txt" not in tar.getnames()
+
+        # Configured: banner file inside the archive + response header.
+        monkeypatch.setattr(
+            app.state.settings,
+            "export_classification",
+            "CONFIDENTIAL // INTERNAL ONLY",
+        )
+        resp = await client.get(export_url, headers=admin_headers)
+        assert resp.status_code == 200
+        assert (
+            resp.headers["X-Classification"] == "CONFIDENTIAL // INTERNAL ONLY"
+        )
+        with tarfile.open(
+            fileobj=io.BytesIO(resp.content), mode="r:gz"
+        ) as tar:
+            names = tar.getnames()
+            assert "CLASSIFICATION.txt" in names
+            assert "workspace.json" in names
+            banner = tar.extractfile("CLASSIFICATION.txt")
+            assert banner is not None
+            assert banner.read().decode() == "CONFIDENTIAL // INTERNAL ONLY\n"
 
     async def test_export_not_found(self, client, admin_user):
         headers = await self._admin_headers(client)

@@ -198,6 +198,11 @@ class Workspaces:
         symlinks (e.g., -> /usr/bin/python3) are harmless in the archive —
         they resolve correctly inside the container. No symlink filtering.
 
+        When ``KLANGKD_EXPORT_CLASSIFICATION`` is set, a CLASSIFICATION.txt
+        banner is written into *tmpdir* and included at the archive root
+        (#2589 / #2707). Import extracts only workspace.json and home/, so
+        the banner is inert on re-import.
+
         Args:
             output: tar output path, or "-" for stdout.
             tmpdir: directory containing workspace.json.
@@ -211,6 +216,11 @@ class Workspaces:
             tmpdir,
             "workspace.json",
         ]
+        classification = self.app.state.settings.export_classification
+        if classification:
+            banner = Path(tmpdir) / "CLASSIFICATION.txt"
+            banner.write_text(classification + "\n")
+            args.append("CLASSIFICATION.txt")
         if home_dir is not None and home_dir.exists():
             ws_dir_name = home_dir.name
             escaped = re.escape(ws_dir_name)

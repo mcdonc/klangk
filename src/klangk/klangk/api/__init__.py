@@ -287,6 +287,7 @@ ALL_PERMISSIONS = [
     "files-write",
     "share",
     "manage_members",
+    "export",
     "admin",
     "manage_users",
     "manage_invitations",

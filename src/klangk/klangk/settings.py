@@ -1161,6 +1161,12 @@ class KlangkSettings(BaseSettings):
     # --- File upload ---
     file_upload_size_max: int | None = 524288000
 
+    # --- Export classification marking (#2589 / #2707) ---
+    # When non-empty, workspace export archives carry this text as a
+    # CLASSIFICATION.txt banner at the archive root, and the export
+    # response includes an X-Classification header with the same text.
+    export_classification: str = ""
+
     # --- Feature / feature config (#1659) ---
     # A config-file source for feature-declared dynamic keys (the keys the
     # build emits into features.json's container_env_keys + the per-feature

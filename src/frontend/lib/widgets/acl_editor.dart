@@ -40,6 +40,7 @@ class AclEditorState extends State<AclEditor> {
     'share',
     'delete',
     'create',
+    'export',
     '*',
   ];
 

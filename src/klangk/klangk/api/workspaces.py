@@ -830,10 +830,16 @@ async def workspace_status(
 @router.get("/workspaces/{workspace_id}/export")
 async def export_workspace(
     workspace_id: str,
-    admin: dict = Depends(acl.has_permission("admin", admin_resource)),
+    admin: dict = Depends(acl.has_permission("export", admin_resource)),
     app=Depends(get_app_dep),
 ):
-    """Export a workspace as a .tar.gz archive (admin only).
+    """Export a workspace as a .tar.gz archive.
+
+    Requires the ``export`` permission on ``/admin`` (#2707). The seeded
+    admin-group wildcard grant covers it, so admins keep export unless an
+    operator adds a deny ACE. When ``KLANGKD_EXPORT_CLASSIFICATION`` is
+    set, the archive carries a CLASSIFICATION.txt banner and the response
+    an X-Classification header (#2589).
 
     The archive contains workspace.json (metadata) and the home
     directory tree under home/.
@@ -910,13 +916,17 @@ async def export_workspace(
     # Rough estimate: gzip typically compresses to ~20% of original
     # for text-heavy home dirs (source code, dotfiles, configs).
     estimated_compressed = max(int(estimated_size * 0.2), 1)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{safe_name}.tar.gz"',
+        "X-Estimated-Size": str(estimated_compressed),
+    }
+    classification = app.state.settings.export_classification
+    if classification:
+        headers["X-Classification"] = classification
     return StreamingResponse(
         _stream(),
         media_type="application/gzip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{safe_name}.tar.gz"',
-            "X-Estimated-Size": str(estimated_compressed),
-        },
+        headers=headers,
     )
 
 

@@ -472,7 +472,13 @@ def export_workspace(
                 final = progress.tasks[task_id].completed
                 progress.update(task_id, total=final, completed=final)
     except httpx.HTTPStatusError as e:
-        context._err.print(f"[red]Export failed:[/red] {e.response.text}")
+        if e.response.status_code == 403:
+            context._err.print(
+                "[red]Export failed:[/red] permission denied — the "
+                "export permission is required (ask an administrator)"
+            )
+        else:
+            context._err.print(f"[red]Export failed:[/red] {e.response.text}")
         raise typer.Exit(code=1) from None
     _out = Console()
     _out.print(f"Exported [bold]{name}[/bold] → {out_path}")
