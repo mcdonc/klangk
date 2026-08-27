@@ -41,7 +41,7 @@ jobs:
     # a workflow_dispatch opt-in (input runner: nix). See backend-e2e-tests.yml
     # for the provisioning split.
     runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 

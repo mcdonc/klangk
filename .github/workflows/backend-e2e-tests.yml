@@ -33,7 +33,7 @@ jobs:
     # The shared action handles devenv prep, image builds, cleanup, and the
     # suite itself.
     runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 

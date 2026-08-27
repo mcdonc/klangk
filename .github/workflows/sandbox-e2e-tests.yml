@@ -25,7 +25,7 @@ jobs:
     runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
     # openclaw + hermes both do real installs (npm/uv + git clone) that take
     # several minutes each; they run sequentially in one job.
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
