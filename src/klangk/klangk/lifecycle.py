@@ -141,14 +141,18 @@ class Lifecycle:
             PRINCIPAL_GROUP,
             group_id=admin_group_id,
         )
-        # /groups: Authenticated users can create groups
+        # /groups: only admins can create (#2770). Group management
+        # otherwise runs through /admin/groups (admin permission).
+        # Deployers can loosen this per-deployment by adding an Allow
+        # `create` ACE on /groups targeting another group (the same
+        # recipe as /workspaces, #2569).
         await self.app.state.model.acl.add_acl_entry(
             "/groups",
             0,
             ACTION_ALLOW,
             "create",
-            PRINCIPAL_SYSTEM,
-            system_principal=SYSTEM_AUTHENTICATED,
+            PRINCIPAL_GROUP,
+            group_id=admin_group_id,
         )
         # /admin: admin group gets full access, deny everyone else
         await self.app.state.model.acl.add_acl_entry(

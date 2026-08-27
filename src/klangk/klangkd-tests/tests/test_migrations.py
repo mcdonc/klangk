@@ -7,8 +7,10 @@ validation), migration 0001's shape (password_history + cascade),
 0005's (users.disabled + users.last_activity_at, #2588),
 0009's (workspaces.per_handle_home backfill, #2719),
 0010's (groups.source marker + name-pattern backfill, #2750),
-0011's (`files-download` mirror of Allow `files` ACEs, #2705), and
-0012's (`files-write` mirror of Allow `files-download` ACEs).
+0011's (`files-download` mirror of Allow `files` ACEs, #2705),
+0012's (`files-write` mirror of Allow `files-download` ACEs), and
+0013's (exec-and-sync role-group backfill, #2706/#2712), and
+0014's (/groups create ACE tightened to the admin group, #2770).
 """
 
 import aiosqlite
@@ -62,6 +64,7 @@ class TestRunner:
             (11, "0011_files_download"),
             (12, "0012_files_write"),
             (13, "0013_exec_and_sync_permission"),
+            (14, "0014_groups_create_admin"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -141,6 +144,7 @@ class TestRunner:
                 (11, "0011_files_download"),
                 (12, "0012_files_write"),
                 (13, "0013_exec_and_sync_permission"),
+                (14, "0014_groups_create_admin"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -864,6 +868,135 @@ class TestM0013ExecAndSyncPermission:
             await m0013_exec_and_sync_permission.migration.apply(db)
             cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
             assert (await cursor.fetchone())[0] == 0
+class TestM0014GroupsCreateAdmin:
+    """Migration 0014 tightens the seeded Allow-create→authenticated ACE
+    on /groups to the admin group (#2770)."""
+
+    async def _legacy_db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0013.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT NOT NULL, position INTEGER NOT NULL,"
+            " action INTEGER NOT NULL, principal_type INTEGER NOT NULL,"
+            " user_id TEXT, group_id TEXT, system_principal INTEGER,"
+            " permission TEXT NOT NULL,"
+            " UNIQUE(resource, position))"
+        )
+        await db.execute(
+            "CREATE TABLE groups ("
+            " id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL,"
+            " description TEXT,"
+            " created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+        )
+        return db
+
+    async def _rows(self, db) -> list[tuple]:
+        cursor = await db.execute(
+            "SELECT position, action, principal_type, user_id, group_id,"
+            " system_principal, permission FROM acl_entries"
+            " WHERE resource = '/groups' ORDER BY position"
+        )
+        return await cursor.fetchall()
+
+    async def _seed_open_ace(self, db):
+        await db.execute(
+            "INSERT INTO acl_entries"
+            " (resource, position, action, principal_type, user_id,"
+            "  group_id, system_principal, permission)"
+            " VALUES ('/groups', 0, 1, 0, NULL, NULL, 1, 'create')"
+        )
+
+    async def test_rewrites_seeded_ace_to_admin_group(self, tmp_path):
+        """The exact seeded shape is replaced with an Allow-create ACE
+        for the admin group."""
+        from klangk.model.migrations import m0014_groups_create_admin
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-admin', 'admin')"
+            )
+            await self._seed_open_ace(db)
+            await m0014_groups_create_admin.migration.apply(db)
+
+            assert await self._rows(db) == [
+                (0, 1, 2, None, "g-admin", None, "create")
+            ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_no_groups_entries_noop(self, tmp_path):
+        """Fresh / pre-seed deployments (nothing on /groups) are
+        untouched — the new lifecycle seed covers them."""
+        from klangk.model.migrations import m0014_groups_create_admin
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-admin', 'admin')"
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  group_id, system_principal, permission)"
+                " VALUES ('/admin', 0, 1, 2, NULL, 'g-admin', NULL, '*')"
+            )
+            await m0014_groups_create_admin.migration.apply(db)
+
+            assert await self._rows(db) == []
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM acl_entries WHERE resource = '/admin'"
+            )
+            assert (await cursor.fetchone())[0] == 1
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_customized_resource_untouched(self, tmp_path):
+        """Any other /groups shape means an operator customized it —
+        extra entries, a different principal, a different permission —
+        and the migration must not clobber the operator's choice."""
+        from klangk.model.migrations import m0014_groups_create_admin
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-admin', 'admin')"
+            )
+            # Seeded shape + an operator-added loosening for members.
+            await self._seed_open_ace(db)
+            await db.execute(
+                "INSERT INTO groups (id, name) VALUES ('g-m', 'members')"
+            )
+            await db.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type, user_id,"
+                "  group_id, system_principal, permission)"
+                " VALUES ('/groups', 1, 1, 2, NULL, 'g-m', NULL, 'create')"
+            )
+            await m0014_groups_create_admin.migration.apply(db)
+
+            rows = await self._rows(db)
+            assert len(rows) == 2
+            assert (0, 1, 0, None, None, 1, "create") in rows
+            assert (1, 1, 2, None, "g-m", None, "create") in rows
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_seeded_shape_without_admin_group_deletes_only(
+        self, tmp_path
+    ):
+        """No 'admin' group row (ensure_admin_group recreates it at
+        boot): the seeded ACE is removed with no replacement."""
+        from klangk.model.migrations import m0014_groups_create_admin
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            await self._seed_open_ace(db)
+            await m0014_groups_create_admin.migration.apply(db)
+
+            assert await self._rows(db) == []
         finally:
             await db.__aexit__(None, None, None)
 

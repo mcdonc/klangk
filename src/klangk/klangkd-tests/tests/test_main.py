@@ -226,6 +226,26 @@ class TestSeedDefaultUser:
         assert admin_group["id"] in group_ids
 
 
+class TestSeedDefaultAcls:
+    """The tightened /groups seed (#2770): create goes to the admin
+    group, mirroring /workspaces (#2569) — not to system:authenticated."""
+
+    async def test_groups_create_seeded_for_admin_group(self, db, app_state):
+        lifecycle = _lifecycle(make_settings({}))
+        admin_group_id = await lifecycle.ensure_admin_group()
+        await lifecycle.seed_default_acls(admin_group_id)
+
+        entries = await app_state.state.model.acl.get_acl_entries("/groups")
+        assert len(entries) == 1
+        from klangk.model import ACTION_ALLOW, PRINCIPAL_GROUP
+
+        entry = entries[0]
+        assert entry["action"] == ACTION_ALLOW
+        assert entry["permission"] == "create"
+        assert entry["principal_type"] == PRINCIPAL_GROUP
+        assert entry["group_id"] == admin_group_id
+
+
 class TestSeedDefaultUserAuthModeGating:
     """#1645 Table A: password handling depends on auth_modes.
 

@@ -142,6 +142,15 @@ exec`, and the rsync transport `klangk sync` and `klangk sandbox`
   one-shot exec working for those principals. `klangk exec`/`klangk
 sync` report a clear permission-denied error.
 
+- **Group creation restricted to administrators (#2770).** The default
+  ACL no longer grants `create` on `/groups` to every authenticated
+  user; it goes to the `admin` group instead, matching workspace
+  creation (#2569). Existing deployments carrying the untouched seeded
+  ACE are migrated automatically; if you deliberately loosened `/groups`,
+  remove the Allow `create` → Authenticated users entry via the ACL
+  editor. To re-open group creation, add an Allow ACE for `create` on
+  `/groups` targeting the `members` group.
+
 - **Workspace creation restricted to administrators (#2569).** `POST
 /workspaces`, `POST /workspaces/import`, and workspace duplication
   now require the `create` permission on the `/workspaces` collection
