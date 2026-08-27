@@ -589,6 +589,14 @@ class _GroupsTabState extends State<_GroupsTab> {
   String _groupsSort = 'name';
   String _groupsOrder = 'asc';
   String _groupsQuery = '';
+
+  // Source filter (#2752): the browser defaults to manual-only — the
+  // seeded role-group flood hides where it hurts most — with a chip to
+  // include workspace role groups. Null sends no filter (show all);
+  // the API default stays show-all.
+  bool _showWorkspaceRoles = false;
+  String? get _groupsSource => _showWorkspaceRoles ? null : 'manual';
+
   final TextEditingController _groupSearchController = TextEditingController();
   Timer? _groupsQueryDebounce;
 
@@ -640,6 +648,8 @@ class _GroupsTabState extends State<_GroupsTab> {
       };
       final q = _groupsQuery.trim();
       if (q.isNotEmpty) query['q'] = q;
+      final source = _groupsSource;
+      if (source != null) query['source'] = source;
       final resp = await auth.authGet(
         '/api/v1/admin/groups?${_encodeQuery(query)}',
       );
@@ -767,6 +777,13 @@ class _GroupsTabState extends State<_GroupsTab> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  /// Toggle the workspace-role filter chip: off shows manual groups only,
+  /// on includes the seeded workspace role groups (#2752).
+  void _toggleWorkspaceRoles(bool value) {
+    setState(() => _showWorkspaceRoles = value);
+    _loadGroups(page: 1);
+  }
+
   Future<void> _changeGroupsSort(String sortKey) async {
     if (_groupsSort == sortKey) {
       setState(() => _groupsOrder = _groupsOrder == 'asc' ? 'desc' : 'asc');
@@ -853,6 +870,12 @@ class _GroupsTabState extends State<_GroupsTab> {
             pageSize: _groupsPageSize,
             total: _groupsTotal,
             onPage: (p) => _loadGroups(page: p),
+            filter: FilterChip(
+              label: const Text('Workspace role groups'),
+              selected: _showWorkspaceRoles,
+              onSelected: _toggleWorkspaceRoles,
+              tooltip: 'Include the seeded per-workspace role groups (#2752)',
+            ),
           ),
           Expanded(child: _buildGroupsList()),
         ],
@@ -1919,6 +1942,10 @@ class _AdminListToolbar extends StatelessWidget {
   final int total;
   final ValueChanged<int> onPage; // requested page number
 
+  /// Optional filter control rendered between the sort chips and the
+  /// search field (e.g. the groups-tab source chip, #2752).
+  final Widget? filter;
+
   const _AdminListToolbar({
     super.key,
     required this.columns,
@@ -1931,6 +1958,7 @@ class _AdminListToolbar extends StatelessWidget {
     required this.pageSize,
     required this.total,
     required this.onPage,
+    this.filter,
   });
 
   Widget _sortChip(String label, String sortKey) {
@@ -1955,6 +1983,7 @@ class _AdminListToolbar extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           for (final (label, key) in columns) _sortChip(label, key),
+          if (filter != null) filter!,
           const SizedBox(width: 12),
           SizedBox(
             width: 220,

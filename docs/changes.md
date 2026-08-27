@@ -186,6 +186,16 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **De-noised group lists in the UI (#2752).** The admin Groups tab
+  defaults to `source=manual`, with a "Workspace role groups" filter
+  chip to include the seeded per-workspace groups. The ACL editor's
+  add-entry picker offers manual groups plus the groups already
+  referenced by the resource's ACEs — other workspaces' role groups are
+  omitted — and the entries table is unchanged. Group (and picker user)
+  fetches now walk every page of the paged envelope instead of silently
+  truncating at 200 rows, and the picker dropdowns ellipsize long names
+  (e.g. UUID-suffixed role groups) instead of overflowing.
+
 - **Group `source` marker and filtering (#2750).** Groups now carry a
   `source` column: `manual` for human-managed groups,
   `workspace-role` for the four role groups seeded per workspace.
