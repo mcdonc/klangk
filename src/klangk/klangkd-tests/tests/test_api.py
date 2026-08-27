@@ -4014,7 +4014,7 @@ class TestWorkspaceSharingRoutes:
     async def test_add_member_grants_files_download(
         self, client, user, app_state
     ):
-        """Sharing a member grants `files-download`/`files-upload`
+        """Sharing a member grants `files-download`/`files-write`
         alongside `files` (#2705), so the simple share flow keeps both
         transfer channels working."""
         headers = await _auth_headers(client)
@@ -4040,7 +4040,7 @@ class TestWorkspaceSharingRoutes:
         assert member_perms == [
             "files",
             "files-download",
-            "files-upload",
+            "files-write",
             "terminal",
             "view",
         ]
@@ -5051,7 +5051,7 @@ class TestWorkspaceGroupSharing:
         groups = resp.json()
         group_names = [g["name"] for g in groups]
         assert "devs" in group_names
-        # The grant includes `files-download`/`files-upload` alongside
+        # The grant includes `files-download`/`files-write` alongside
         # `files` (#2705).
         entries = await app_state.state.model.acl.get_acl_entries(
             f"/workspaces/{ws_id}"
@@ -5065,7 +5065,7 @@ class TestWorkspaceGroupSharing:
         assert group_perms == [
             "files",
             "files-download",
-            "files-upload",
+            "files-write",
             "terminal",
             "view",
         ]
@@ -6716,11 +6716,11 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
-    async def test_upload_denied_without_files_upload(
+    async def test_upload_denied_without_files_write(
         self, client, user, app_state
     ):
         """`files` alone does not grant upload: the route requires
-        `files-upload` too (mirrors the download gate)."""
+        `files-write` too (mirrors the download gate)."""
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
@@ -6731,8 +6731,14 @@ class TestFileRoutes:
                 _mock_pod,
                 "exec_container",
                 new_callable=AsyncMock,
-                return_value=(0, "", ""),
+                return_value=(0, "f.txt\tf\t10\t0.0\t0.0\n", ""),
             ):
+                # Listing still works for a `files`-only member.
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home/klangk",
+                    headers=other,
+                )
+                assert resp.status_code == 200
                 resp = await client.post(
                     f"/api/v1/workspaces/{ws_id}/files/upload"
                     "?path=/home/klangk/up.txt",
@@ -6743,7 +6749,35 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
-    async def test_upload_allowed_with_files_upload(
+    async def test_delete_and_rename_denied_without_files_write(
+        self, client, user, app_state
+    ):
+        """`files` alone does not grant the destructive routes either:
+        delete and rename also require `files-write`."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state, client, ws_id, ["view", "terminal", "files"]
+            )
+            resp = await client.delete(
+                f"/api/v1/workspaces/{ws_id}/files?path=/home/klangk/victim.txt",
+                headers=other,
+            )
+            assert resp.status_code == 403
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/files/rename",
+                headers=other,
+                json={
+                    "old_path": "/home/klangk/a",
+                    "new_path": "/home/klangk/b",
+                },
+            )
+            assert resp.status_code == 403
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_delete_and_rename_allowed_with_files_write(
         self, client, user, app_state
     ):
         headers = await _auth_headers(client)
@@ -6753,7 +6787,58 @@ class TestFileRoutes:
                 app_state,
                 client,
                 ws_id,
-                ["view", "terminal", "files", "files-upload"],
+                ["view", "terminal", "files", "files-write"],
+            )
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "", ""),  # test -e: victim exists
+                    (0, "", ""),  # rm -rf
+                ],
+            ):
+                resp = await client.delete(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home/klangk/victim.txt",
+                    headers=other,
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "deleted"
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "", ""),  # test -e: source exists
+                    (1, "", ""),  # test -e: dest missing
+                    (0, "", ""),  # mkdir -p parent
+                    (0, "", ""),  # mv
+                ],
+            ):
+                resp = await client.post(
+                    f"/api/v1/workspaces/{ws_id}/files/rename",
+                    headers=other,
+                    json={
+                        "old_path": "/home/klangk/a",
+                        "new_path": "/home/klangk/b",
+                    },
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "renamed"
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_upload_allowed_with_files_write(
+        self, client, user, app_state
+    ):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state,
+                client,
+                ws_id,
+                ["view", "terminal", "files", "files-write"],
             )
             with patch.object(
                 _mock_pod,
@@ -6772,15 +6857,15 @@ class TestFileRoutes:
         finally:
             self._cleanup(ws_id)
 
-    async def test_upload_files_upload_alone_insufficient(
+    async def test_upload_files_write_alone_insufficient(
         self, client, user, app_state
     ):
-        """`files-upload` without `files` grants nothing."""
+        """`files-write` without `files` grants nothing."""
         headers = await _auth_headers(client)
         ws_id = await self._create_workspace(client, headers)
         try:
             other = await self._member_headers_with_perms(
-                app_state, client, ws_id, ["files-upload"]
+                app_state, client, ws_id, ["files-write"]
             )
             resp = await client.post(
                 f"/api/v1/workspaces/{ws_id}/files/upload"

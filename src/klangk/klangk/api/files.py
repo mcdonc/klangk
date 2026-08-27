@@ -99,6 +99,9 @@ async def delete_file(
     workspace_id: str,
     path: str,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    _write: dict = Depends(
+        acl.has_permission("files-write", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     cid = _require_container(workspace_id, app.state.container_registry)
@@ -119,6 +122,9 @@ async def rename_file(
     workspace_id: str,
     body: RenameFileRequest,
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
+    _write: dict = Depends(
+        acl.has_permission("files-write", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     cid = _require_container(workspace_id, app.state.container_registry)
@@ -172,8 +178,8 @@ async def upload_file(
     file: UploadFile,
     path: str = "",
     user: dict = Depends(acl.has_permission("files", workspace_resource)),
-    _upload: dict = Depends(
-        acl.has_permission("files-upload", workspace_resource)
+    _write: dict = Depends(
+        acl.has_permission("files-write", workspace_resource)
     ),
     app=Depends(get_app_dep),
 ):

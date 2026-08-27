@@ -283,7 +283,7 @@ ALL_PERMISSIONS = [
     "share-terminals",
     "files",
     "files-download",
-    "files-upload",
+    "files-write",
     "share",
     "manage_members",
     "admin",

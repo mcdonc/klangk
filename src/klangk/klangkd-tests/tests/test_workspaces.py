@@ -199,7 +199,7 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     positions = sorted(e["position"] for e in entries)
     assert positions == list(range(len(entries)))
     # 1 owner ACE + 1 + 6 + 8 + 2 group ACEs (coders/collaborators carry
-    # `files-download` and `files-upload` alongside `files`, #2705).
+    # `files-download` and `files-write` alongside `files`, #2705).
     assert len(entries) == 1 + 1 + 6 + 8 + 2
     # Coder/collaborator grants include both transfer permissions.
     for suffix in ["coders", "collaborators"]:
@@ -212,7 +212,7 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
             if e["principal_type"] == model.PRINCIPAL_GROUP
             and e["group_id"] == group["id"]
         }
-        assert {"files", "files-download", "files-upload"} <= perms
+        assert {"files", "files-download", "files-write"} <= perms
 
 
 async def test_create_workspace_with_acl_rollback_on_seeding_failure(

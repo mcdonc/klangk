@@ -30,7 +30,7 @@ FileViewerPanel buildPanel({
   String userHome = '/home/tester',
   FileRendererRegistry? registry,
   bool canDownload = true,
-  bool canUpload = true,
+  bool canWrite = true,
 }) =>
     FileViewerPanel(
       key: key,
@@ -40,7 +40,7 @@ FileViewerPanel buildPanel({
       userHome: userHome,
       registry: registry,
       canDownload: canDownload,
-      canUpload: canUpload,
+      canWrite: canWrite,
     );
 
 void main() {
@@ -1895,10 +1895,10 @@ void main() {
     });
   });
 
-  group('FileViewerPanel upload permission (#2705)', () {
+  group('FileViewerPanel write permission (#2705)', () {
     Future<_MockWsClient> pump(
       WidgetTester tester, {
-      bool canUpload = false,
+      bool canWrite = false,
       List<Map<String, dynamic>> entries = const [],
     }) async {
       testHttpClientOverride = MockClient((request) async {
@@ -1916,7 +1916,7 @@ void main() {
               height: 600,
               child: buildPanel(
                 wsClient: client,
-                canUpload: canUpload,
+                canWrite: canWrite,
               ),
             ),
           ),
@@ -1957,7 +1957,7 @@ void main() {
     testWidgets('drop zone and hint present when permitted', (tester) async {
       final client = await pump(
         tester,
-        canUpload: true,
+        canWrite: true,
         entries: [
           {
             'name': 'data.csv',
@@ -1970,6 +1970,72 @@ void main() {
 
       expect(find.byType(DropTarget), findsOneWidget);
       expect(find.textContaining('Drag files or folders'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('context menu hides Rename/Delete when permission absent',
+        (tester) async {
+      final client = await pump(
+        tester,
+        entries: [
+          {
+            'name': 'data.csv',
+            'path': '/home/tester/data.csv',
+            'is_dir': false,
+            'size': 100
+          },
+        ],
+      );
+
+      final center = tester.getCenter(find.text('data.csv'));
+      await tester.tapAt(center, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+
+      // Download remains (default canDownload: true in buildPanel).
+      expect(find.text('Download'), findsOneWidget);
+      expect(find.text('Rename'), findsNothing);
+      expect(find.text('Delete'), findsNothing);
+      client.close();
+    });
+
+    testWidgets('no context menu at all without both permissions',
+        (tester) async {
+      final client = await pump(
+        tester,
+        entries: [
+          {
+            'name': 'data.csv',
+            'path': '/home/tester/data.csv',
+            'is_dir': false,
+            'size': 100
+          },
+        ],
+      );
+      // Strip download too: the menu must not even open.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 600,
+              child: buildPanel(
+                wsClient: client,
+                canDownload: false,
+                canWrite: false,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final center = tester.getCenter(find.text('data.csv'));
+      await tester.tapAt(center, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Download'), findsNothing);
+      expect(find.text('Rename'), findsNothing);
+      expect(find.text('Delete'), findsNothing);
       client.close();
     });
   });

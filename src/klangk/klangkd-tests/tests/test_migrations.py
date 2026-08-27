@@ -8,7 +8,7 @@ validation), migration 0001's shape (password_history + cascade),
 0009's (workspaces.per_handle_home backfill, #2719),
 0010's (groups.source marker + name-pattern backfill, #2750),
 0011's (`files-download` mirror of Allow `files` ACEs, #2705), and
-0012's (`files-upload` mirror of Allow `files-download` ACEs).
+0012's (`files-write` mirror of Allow `files-download` ACEs).
 """
 
 import aiosqlite
@@ -60,7 +60,7 @@ class TestRunner:
             (9, "0009_per_handle_home"),
             (10, "0010_groups_source"),
             (11, "0011_files_download"),
-            (12, "0012_files_upload"),
+            (12, "0012_files_write"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -138,7 +138,7 @@ class TestRunner:
                 (9, "0009_per_handle_home"),
                 (10, "0010_groups_source"),
                 (11, "0011_files_download"),
-                (12, "0012_files_upload"),
+                (12, "0012_files_write"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -558,7 +558,7 @@ class TestM0011FilesDownload:
 
 class TestM0012FilesUpload:
     """Migration 0012 mirrors Allow `files-download` ACEs as Allow
-    `files-upload` at the adjacent position (upload tracks download)."""
+    `files-write` at the adjacent position (upload tracks download)."""
 
     async def _legacy_db(self, tmp_path):
         db = aiosqlite.connect(str(tmp_path / "m0012.db"))
@@ -615,10 +615,10 @@ class TestM0012FilesUpload:
 
     async def test_mirrors_allow_files_download_adjacent(self, tmp_path):
         """Each Allow `files-download` ACE gains an adjacent Allow
-        `files-upload` twin; `files`, Deny `files-download`, and `*` are
+        `files-write` twin; `files`, Deny `files-download`, and `*` are
         untouched — in particular a plain `files` grant does NOT gain
         upload (the source is `files-download`, not `files`)."""
-        from klangk.model.migrations import m0012_files_upload
+        from klangk.model.migrations import m0012_files_write
 
         db = await self._legacy_db(tmp_path)
         try:
@@ -639,14 +639,14 @@ class TestM0012FilesUpload:
                 principal_type=2,
                 group_id="g-1",
             )
-            await m0012_files_upload.migration.apply(db)
+            await m0012_files_write.migration.apply(db)
 
             rows = await self._rows(db, res)
             assert rows == [
                 (0, 1, 1, "u-owner", None, None, "*"),
                 (1, 1, 1, "u-member", None, None, "files"),
                 (2, 1, 1, "u-member", None, None, "files-download"),
-                (3, 1, 1, "u-member", None, None, "files-upload"),
+                (3, 1, 1, "u-member", None, None, "files-write"),
                 (4, 0, 2, None, "g-1", None, "files-download"),
             ]
         finally:
@@ -655,12 +655,12 @@ class TestM0012FilesUpload:
     async def test_no_files_download_entries_noop(self, tmp_path):
         """A pre-0011 database shape (only `files`/`*` grants) is
         untouched — 0012 never invents grants from `files`."""
-        from klangk.model.migrations import m0012_files_upload
+        from klangk.model.migrations import m0012_files_write
 
         db = await self._legacy_db(tmp_path)
         try:
             await self._insert(db, "/", 0, 1, "files", user_id="u-member")
-            await m0012_files_upload.migration.apply(db)
+            await m0012_files_write.migration.apply(db)
             assert await self._rows(db, "/") == [
                 (0, 1, 1, "u-member", None, None, "files"),
             ]
@@ -673,7 +673,7 @@ class TestM0012FilesUpload:
         holder ends up with both transfer permissions."""
         from klangk.model.migrations import (
             m0011_files_download,
-            m0012_files_upload,
+            m0012_files_write,
         )
 
         db = await self._legacy_db(tmp_path)
@@ -682,15 +682,51 @@ class TestM0012FilesUpload:
             await self._insert(db, res, 0, 1, "*", user_id="u-owner")
             await self._insert(db, res, 1, 1, "files", user_id="u-member")
             await m0011_files_download.migration.apply(db)
-            await m0012_files_upload.migration.apply(db)
+            await m0012_files_write.migration.apply(db)
 
             rows = await self._rows(db, res)
             assert rows == [
                 (0, 1, 1, "u-owner", None, None, "*"),
                 (1, 1, 1, "u-member", None, None, "files"),
                 (2, 1, 1, "u-member", None, None, "files-download"),
-                (3, 1, 1, "u-member", None, None, "files-upload"),
+                (3, 1, 1, "u-member", None, None, "files-write"),
             ]
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_post_0011_mirror_deletion_withholds_upload(self, tmp_path):
+        """The motivating case for mirroring `files-download` (not
+        `files`): an operator who deleted one member's `files-download`
+        mirror after 0011 withholds upload from that member only, while a
+        member whose mirror is intact gains it."""
+        from klangk.model.migrations import (
+            m0011_files_download,
+            m0012_files_write,
+        )
+
+        db = await self._legacy_db(tmp_path)
+        try:
+            res = "/workspaces/ws-3"
+            await self._insert(db, res, 0, 1, "files", user_id="u-kept")
+            await self._insert(db, res, 1, 1, "files", user_id="u-trimmed")
+            await m0011_files_download.migration.apply(db)
+            # Operator deletes u-trimmed's mirror post-0011.
+            await db.execute(
+                "DELETE FROM acl_entries"
+                " WHERE resource = ? AND user_id = ?"
+                " AND permission = 'files-download'",
+                (res, "u-trimmed"),
+            )
+            await m0012_files_write.migration.apply(db)
+
+            perms = {
+                (user_id, perm)
+                for _, _, _, user_id, _, _, perm in await self._rows(db, res)
+            }
+            assert ("u-kept", "files-download") in perms
+            assert ("u-kept", "files-write") in perms
+            assert ("u-trimmed", "files-download") not in perms
+            assert ("u-trimmed", "files-write") not in perms
         finally:
             await db.__aexit__(None, None, None)
 

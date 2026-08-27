@@ -90,7 +90,7 @@ other resource) are rejected with a 400 error.
 
 When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files.
 
-**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, `files-download`, and `files-upload`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
+**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, `files-download`, and `files-write`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
 
 **Permissions checked on workspace resources**:
 
@@ -100,7 +100,7 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `terminal`       | Can open a terminal / exec commands                               |
 | `files`          | Can browse/read files                                             |
 | `files-download` | Can download raw bytes via `/files/download` (needs `files` too)  |
-| `files-upload`   | Can upload files via `/files/upload` (needs `files` too)          |
+| `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)      |
 | `edit`           | Can change workspace settings (name, image, command, mounts, env) |
 | `share`          | Can manage who has access (Sharing tab)                           |
 | `delete`         | Can delete the workspace                                          |
@@ -112,10 +112,13 @@ returns 403 from `/files/download`. Binary renderers (image, PDF, video,
 spreadsheet) fetch raw bytes through the download endpoint, so they cannot
 render without it.
 
-Withholding `files-upload` disables uploads via `/files/upload`: the file
-viewer hides its upload affordances (no drag-and-drop zone, no upload hints)
-and text-editor renderers become read-only, since their Save goes through
-that endpoint.
+Withholding `files-write` disables every mutating route — upload
+(`/files/upload`), rename (`/files/rename`), and delete (`DELETE
+/files`) — so a `files`-only member can browse and read but not modify
+the workspace. In the file viewer the matching affordances disappear: no
+drag-and-drop zone or upload hints, no Rename/Delete in the context menu,
+and text-editor renderers go read-only (their Save uploads through that
+endpoint).
 
 Note the limit of the download gate: it blocks byte-perfect, unbounded export
 (any file size, whole directories as tar.gz), **not** content access.

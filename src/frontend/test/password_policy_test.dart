@@ -96,7 +96,8 @@ void main() {
       expect(two.validate('AB1!cdef'), isNull);
     });
 
-    test('non-ASCII runes count as special characters, never letters or '
+    test(
+        'non-ASCII runes count as special characters, never letters or '
         'digits', () {
       const spec = PasswordPolicy(minLength: 4, requireSpecial: 1);
       expect(spec.validate('abé!'), isNull);

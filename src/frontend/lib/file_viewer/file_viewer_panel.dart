@@ -61,18 +61,20 @@ class FileViewerPanel extends StatefulWidget {
   /// never accidentally fail open to download.
   final bool canDownload;
 
-  /// Whether the user holds the `files-upload` permission. When false,
-  /// upload affordances are hidden — no drop zone, no upload hints, and
-  /// editor renderers become read-only (their Save goes through
-  /// `/files/upload`). Required for the same fail-closed reason.
-  final bool canUpload;
+  /// Whether the user holds the `files-write` permission. When false,
+  /// every mutating affordance is hidden — no drop zone, no upload hints,
+  /// no Rename/Delete in the context menu, and editor renderers become
+  /// read-only (upload, rename, and delete all go through
+  /// `files-write`-gated routes). Required for the same fail-closed
+  /// reason.
+  final bool canWrite;
 
   const FileViewerPanel({
     super.key,
     required this.wsClient,
     required this.workspaceId,
     required this.canDownload,
-    required this.canUpload,
+    required this.canWrite,
     this.authToken,
     this.userHome,
     this.registry,
@@ -297,7 +299,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
       downloadUrl:
           '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
       saveText:
-          widget.canUpload ? (content) => _saveFileText(path, content) : null,
+          widget.canWrite ? (content) => _saveFileText(path, content) : null,
     );
   }
 
@@ -488,24 +490,20 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   }
 
   void _showContextMenu(Offset position, String path, String name, bool isDir) {
-    showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        position.dx,
-        position.dy,
-      ),
-      items: [
-        if (widget.canDownload)
-          const PopupMenuItem(
-            value: 'download',
-            child: ListTile(
-              dense: true,
-              leading: Icon(Icons.download, size: 18),
-              title: Text('Download'),
-            ),
+    // Mutating actions (rename/delete) go through write-gated routes, so
+    // they hide with `canWrite`; a member with neither transfer
+    // permission gets no menu at all (#2705).
+    final items = <PopupMenuEntry<String>>[
+      if (widget.canDownload)
+        const PopupMenuItem(
+          value: 'download',
+          child: ListTile(
+            dense: true,
+            leading: Icon(Icons.download, size: 18),
+            title: Text('Download'),
           ),
+        ),
+      if (widget.canWrite)
         const PopupMenuItem(
           value: 'rename',
           child: ListTile(
@@ -514,6 +512,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             title: Text('Rename'),
           ),
         ),
+      if (widget.canWrite)
         const PopupMenuItem(
           value: 'delete',
           child: ListTile(
@@ -522,7 +521,17 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             title: Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ),
-      ],
+    ];
+    if (items.isEmpty) return;
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
+      items: items,
     ).then((action) {
       if (!mounted || action == null) return;
       if (action == 'download') {
@@ -704,7 +713,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   Widget build(BuildContext context) {
     return SuppressBrowserContextMenu(
       child: FileDropZone(
-        canUpload: widget.canUpload,
+        canUpload: widget.canWrite,
         workspaceId: widget.workspaceId,
         authToken: widget.authToken,
         currentPath: _currentPath,
@@ -730,7 +739,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         child: Padding(
           padding: const EdgeInsets.only(bottom: 32),
           child: Text(
-            widget.canUpload
+            widget.canWrite
                 ? 'Empty directory\nDrag files or folders here to upload'
                 : 'Empty directory',
             textAlign: TextAlign.center,
@@ -747,7 +756,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
             itemBuilder: (context, index) => _buildFileListItem(index),
           ),
         ),
-        if (widget.canUpload)
+        if (widget.canWrite)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Text(

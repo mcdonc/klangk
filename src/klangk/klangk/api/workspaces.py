@@ -1225,7 +1225,7 @@ async def add_workspace_member(
         "terminal",
         "files",
         "files-download",
-        "files-upload",
+        "files-write",
     ):
         await app.state.model.acl.add_acl_entry(
             resource,
@@ -1449,7 +1449,7 @@ async def add_workspace_group(
     existing = await app.state.model.acl.get_acl_entries(resource)
     max_pos = max((e["position"] for e in existing), default=-1)
     for i, perm in enumerate(
-        ["view", "terminal", "files", "files-download", "files-upload"]
+        ["view", "terminal", "files", "files-download", "files-write"]
     ):
         await app.state.model.acl.add_acl_entry(
             resource,

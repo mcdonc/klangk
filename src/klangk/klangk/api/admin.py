@@ -838,27 +838,6 @@ STATIC_RESOURCES = [
     "/admin/groups",
 ]
 
-ALL_PERMISSIONS = [
-    "view",
-    "create",
-    "edit",
-    "delete",
-    "terminal",
-    "code-in-isolation",
-    "spectate-on-shared-terminals",
-    "code-in-shared-terminals",
-    "share-terminals",
-    "files",
-    "files-download",
-    "files-upload",
-    "share",
-    "manage_members",
-    "admin",
-    "manage_users",
-    "manage_invitations",
-    "*",
-]
-
 
 class ServerScheduleRequest(BaseModel):
     """Body for scheduling a server stop/recycle (#2661)."""
