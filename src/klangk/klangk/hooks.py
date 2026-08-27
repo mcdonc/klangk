@@ -15,7 +15,9 @@ Wiring mirrors the login hook (``KLANGKD_OIDC_LOGIN_HOOK`` /
   file is loaded directly via ``importlib.util`` — it does not need to
   be on ``PYTHONPATH``.
 - Loaded at startup and re-loaded on SIGHUP reconfigure
-  (:meth:`Hooks.reconfigure`, same lifecycle as the login hook).
+  (:meth:`Hooks.reconfigure`). A reload that fails (missing file,
+  unparseable, no callable) keeps the previously loaded hook — the
+  assign-on-success shape of :meth:`klangk.oidc.OIDC.load_login_hook`.
 - A missing file or a missing/uncallable function is a configuration
   error (boot refusal) — identical to a broken login hook.
 
@@ -28,23 +30,30 @@ workspace id, and the exception) so partial effects are visible.
 """
 
 import asyncio
+import copy
 import importlib.util
 import logging
 import os
-from typing import Callable
+from typing import Any, Callable
 
+from .container import ContainerRegistry
 from .exceptions import ConfigurationError
 from .model import EGRESS_MODES, SETUP_STATES
+from .netfilter import parse_allowed_domains
+from .workspace_settings import validate_settings
 
 logger = logging.getLogger(__name__)
 
 # Workspace-row fields a hook may mutate in place. The diff between the
-# pre-hook row and the hook's edits is persisted through
-# ``model.workspaces.update_workspace``, whose validation applies
-# (mirrored here for the enum/bool fields so a bad value is rejected
-# before the write, exactly like ``create_workspace_with_acl``). Keys
-# outside this set (id, user_id, container_id, num_ports, created_at)
-# are not persisted — they are provisioned, not declarative.
+# pre-hook row and the hook's copy is persisted through
+# ``model.workspaces.update_workspace`` — after the same validation the
+# create API applies (see _validate_hook_changes): the settings-bag
+# schema, the image allowlist, mount-spec policy, and the domain-list
+# grammar, plus the enum/bool fields mirrored from
+# ``create_workspace_with_acl``. Keys outside this set (id, user_id,
+# container_id, num_ports, created_at) are not persisted — they are
+# provisioned, not declarative. Deleting a mutable key from the handle
+# clears the column (``del workspace["env"]`` persists NULL).
 _HOOK_MUTABLE_FIELDS = frozenset(
     {
         "name",
@@ -80,15 +89,40 @@ def _parse_hook_value(raw: str) -> tuple[str, str]:
     return path, func_name
 
 
-def _validate_hook_changes(changed: dict) -> str | None:
-    """Validate a hook's row mutations.
+def _coerce_acl_int(value: Any, field: str) -> int:
+    """Coerce an ACL entry field to int (pydantic parity for hooks).
+
+    The HTTP ACL endpoints get this for free — pydantic coerces a JSON
+    ``"2"`` to ``2`` before the model sees it. A hand-written hook dict
+    skips pydantic, and the model-layer guards compare with strict int
+    equality, so a string-typed ``principal_type`` would silently skip
+    them (SQLite INTEGER affinity then stores it as an int). Coerce
+    here so the guards always run.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"ACL entry field {field!r} must be an integer, got {value!r}"
+        ) from exc
+
+
+def _validate_hook_changes(app, changed: dict) -> str | None:
+    """Validate a hook's row mutations — the create API's checks.
 
     Returns ``None`` when every changed field is valid, else an error
-    message describing the first invalid field. Enforces the same
-    enum/bool constraints as ``create_workspace_with_acl`` /
-    ``update_workspace`` — but *before* the write, so an invalid change
-    is dropped wholesale rather than half-persisted or silently coerced
-    (``update_workspace`` would turn a truthy ``per_handle_home`` into 1).
+    message describing the first invalid field. Mirrors what
+    ``POST /workspaces`` validates before persisting: the enum/bool
+    constraints of ``create_workspace_with_acl`` (enforced *before* the
+    write, so a bad value is dropped rather than coerced by
+    ``update_workspace``), the settings-bag schema
+    (:func:`klangk.workspace_settings.validate_settings`), the image
+    allowlist, the mount-spec policy
+    (:meth:`ContainerRegistry.validate_mounts`), and the domain-list
+    grammar (:func:`klangk.netfilter.parse_allowed_domains`, plus the
+    rejected-domains no-CIDR rule). Validated lists/bags are normalized
+    in place in ``changed`` (de-duplicated / coerced), exactly as the
+    API persists them.
     """
     if "setup_state" in changed and changed["setup_state"] not in SETUP_STATES:
         return f"invalid setup_state: {changed['setup_state']!r}"
@@ -98,30 +132,93 @@ def _validate_hook_changes(changed: dict) -> str | None:
         changed["per_handle_home"], bool
     ):
         return f"invalid per_handle_home: {changed['per_handle_home']!r}"
+    if "image" in changed and changed["image"] is not None:
+        registry: ContainerRegistry = app.state.container_registry
+        if changed["image"] not in registry.allowed_images:
+            return (
+                f"image {changed['image']!r} is not in the allowed image"
+                f" list: {sorted(registry.allowed_images)}"
+            )
+    if "mounts" in changed and changed["mounts"] is not None:
+        error = app.state.container_registry.validate_mounts(changed["mounts"])
+        if error:
+            return f"invalid mounts: {error}"
+    if "settings" in changed and changed["settings"] is not None:
+        try:
+            changed["settings"] = validate_settings(changed["settings"])
+        except ValueError as exc:
+            return f"invalid settings: {exc}"
+    if "allowed_domains" in changed and changed["allowed_domains"] is not None:
+        try:
+            changed["allowed_domains"] = parse_allowed_domains(
+                changed["allowed_domains"]
+            )
+        except ValueError as exc:
+            return f"invalid allowed_domains: {exc}"
+    if (
+        "rejected_domains" in changed
+        and changed["rejected_domains"] is not None
+    ):
+        for spec in changed["rejected_domains"]:
+            if spec.strip() and "/" in spec:
+                return (
+                    "invalid rejected_domains: no CIDR specs (a rejected"
+                    f" name is NXDOMAIN'd before resolution): {spec!r}"
+                )
+        try:
+            changed["rejected_domains"] = parse_allowed_domains(
+                changed["rejected_domains"], label="rejected_domains"
+            )
+        except ValueError as exc:
+            return f"invalid rejected_domains: {exc}"
     return None
 
 
 class WorkspaceHookHandle(dict):
     """The workspace row as seen by a workspace-created hook (#2762).
 
-    A ``dict`` subclass of the freshly created workspace row — hooks
-    read and assign keys like the plain row (``workspace["egress_mode"]
-    = "static"``) — plus two async ACL helpers that go through the ACL
-    model API. Attribute edits made in place are persisted (with
-    validation) by :meth:`Hooks.fire_workspace_created` after the hook
-    returns; ACL edits are the hook's own explicit calls.
+    A ``dict`` subclass holding a **deep copy** of the freshly created
+    workspace row — hooks read and assign keys like the plain row
+    (``workspace["egress_mode"] = "static"``), and nested edits
+    (``workspace["env"]["K"] = "v"``) are detected and persisted too.
+    Deleting a mutable key clears the column. Attribute edits made in
+    place are persisted (with the create API's validation) by
+    :meth:`Hooks.fire_workspace_created` after the hook returns; ACL
+    edits are the hook's own explicit calls.
     """
 
-    def __init__(self, workspace: dict, app):
-        super().__init__(workspace)
+    def __init__(self, workspace: dict, app, allow_await: bool = True):
+        super().__init__(copy.deepcopy(workspace))
         self.app = app
+        self.allow_await = allow_await
 
     @property
     def resource(self) -> str:
         """The workspace's ACL resource (``/workspaces/{id}``)."""
         return f"/workspaces/{self['id']}"
 
-    async def acl_entries(self) -> list[dict]:
+    def _require_async_hook(self, helper: str) -> None:
+        """Refuse ACL helpers from a sync hook — loudly.
+
+        A ``def`` (non-``async``) hook that called an ``async def``
+        helper would get back an unawaited coroutine: a silent no-op
+        plus a GC warning. The helpers are therefore plain functions
+        that check first and return the coroutine only for async hooks,
+        so a sync call fails fast with a clear message (the surrounding
+        log-and-continue turns it into a WARNING).
+        """
+        if not self.allow_await:
+            raise RuntimeError(
+                f"workspace.{helper}() is awaitable and requires an"
+                " 'async def' workspace-created hook"
+            )
+
+    async def _acl_entries(self) -> list[dict]:
+        return await self.app.state.model.acl.get_acl_entries_resolved(
+            self.resource
+        )
+
+    def acl_entries(self):
         """This workspace's ACL entries, ordered by position.
 
         Resolved like ``GET /api/v1/workspaces/{id}/acl``: each entry
@@ -130,13 +227,37 @@ class WorkspaceHookHandle(dict):
         ``group_id`` / ``system_principal``) and a display
         ``principal`` — the group name, the user's email, or
         ``Everyone`` / ``Authenticated`` for system principals.
+        Awaitable: ``entries = await workspace.acl_entries()``.
         """
+        self._require_async_hook("acl_entries")
+        return self._acl_entries()
 
-        return await self.app.state.model.acl.get_acl_entries_resolved(
-            self.resource
+    async def _rewrite_acl_impl(self, entries: list[dict]) -> None:
+        normalized = [
+            {
+                **entry,
+                "position": i,
+                "action": _coerce_acl_int(entry["action"], "action"),
+                "principal_type": _coerce_acl_int(
+                    entry["principal_type"], "principal_type"
+                ),
+                **(
+                    {
+                        "system_principal": _coerce_acl_int(
+                            entry["system_principal"], "system_principal"
+                        )
+                    }
+                    if entry.get("system_principal") is not None
+                    else {}
+                ),
+            }
+            for i, entry in enumerate(entries)
+        ]
+        await self.app.state.model.acl.replace_acl_entries(
+            self.resource, normalized
         )
 
-    async def rewrite_acl(self, entries: list[dict]) -> None:
+    def rewrite_acl(self, entries: list[dict]):
         """Replace the workspace's whole ACL (add/remove/reorder).
 
         ``entries`` is a list in the shape :meth:`acl_entries` returns
@@ -144,17 +265,17 @@ class WorkspaceHookHandle(dict):
         straight back); positions are renumbered by list index, so the
         list order is the new ACL order. New entries may be appended as
         plain dicts with ``action``, ``principal_type``, ``permission``,
-        and one principal field. The same guards as the API endpoints
-        apply (the system agent can never become a principal;
+        and one principal field (``action`` / ``principal_type`` /
+        ``system_principal`` accept ints or int-strings; they are
+        coerced so the same guards as the API endpoints always apply —
+        the system agent can never become a principal, and
         workspace-role groups are grantable only on their own
-        workspace).
+        workspace). Keep an entry granting the owner access, or every
+        new workspace starts fully locked out. Awaitable:
+        ``await workspace.rewrite_acl(entries)``.
         """
-        normalized = [
-            {**entry, "position": i} for i, entry in enumerate(entries)
-        ]
-        await self.app.state.model.acl.replace_acl_entries(
-            self.resource, normalized
-        )
+        self._require_async_hook("rewrite_acl")
+        return self._rewrite_acl_impl(entries)
 
 
 class Hooks:
@@ -189,13 +310,15 @@ class Hooks:
         :class:`~klangk.exceptions.ConfigurationError` when the path is
         set but the file is missing, unparseable, or lacks a callable of
         the requested name — same failure semantics as
-        :meth:`klangk.oidc.OIDC.load_login_hook`.
+        :meth:`klangk.oidc.OIDC.load_login_hook`. Like the login hook,
+        the instance attrs are assigned only on success, so a failed
+        SIGHUP reload keeps the previously loaded hook active.
         """
-        self.workspace_created_hook = None
-        self.workspace_created_hook_is_async = False
-        self.workspace_created_hook_source = None
         raw = self.app.state.settings.workspace_created_hook
         if not raw:
+            self.workspace_created_hook = None
+            self.workspace_created_hook_is_async = False
+            self.workspace_created_hook_source = None
             return
         path, func_name = _parse_hook_value(raw)
         if not os.path.isfile(path):
@@ -229,26 +352,33 @@ class Hooks:
     ) -> dict:
         """Fire the workspace-created hook for a fresh workspace.
 
-        The hook receives a :class:`WorkspaceHookHandle` (the row dict
-        plus ACL helpers) and the creating user's row as ``actor``.
-        Sync and async hook functions are both dispatched. Failures are
-        **log-and-continue**: a raising hook (or a rejected/failed
-        persist of its attribute edits) leaves the workspace exactly as
-        created and returns the input row — the create is never failed
-        or rolled back (#2762 failure semantics).
+        The hook receives a :class:`WorkspaceHookHandle` (a deep copy of
+        the row plus ACL helpers) and the creating user's row as
+        ``actor``. Sync and async hook functions are both dispatched.
+        Failures are **log-and-continue**: a raising hook (or a
+        rejected/failed persist of its attribute edits) leaves the
+        workspace exactly as created and returns the input row — the
+        create is never failed or rolled back (#2762 failure
+        semantics).
 
         Returns the workspace dict to hand back to the caller: the
         row re-read from the DB when the hook's attribute edits were
-        persisted, else the input dict.
+        persisted (``created_at`` carried over from the input — the
+        re-read omits it), else the input dict.
         """
         hook = self.workspace_created_hook
         if hook is None:
             return workspace
         source = self.workspace_created_hook_source
         ws_id = workspace.get("id")
-        # A copy, not the caller's dict: a raising hook must not leave
-        # half-applied edits on the row the caller returns to the user.
-        handle = WorkspaceHookHandle(workspace, self.app)
+        # A deep copy, not the caller's dict: a raising hook must not
+        # leave half-applied edits on the row the caller returns to the
+        # user — including nested structures (env, settings, mounts).
+        handle = WorkspaceHookHandle(
+            workspace,
+            self.app,
+            allow_await=self.workspace_created_hook_is_async,
+        )
         try:
             if self.workspace_created_hook_is_async:
                 await hook(handle, actor)
@@ -263,14 +393,17 @@ class Hooks:
                 exc_info=True,
             )
             return workspace
-        changed = {
-            field: handle[field]
-            for field in _HOOK_MUTABLE_FIELDS
-            if field in handle and handle[field] != workspace.get(field)
-        }
+        changed = {}
+        for field in _HOOK_MUTABLE_FIELDS:
+            if field not in handle:
+                # Deleted from the handle → clear the column.
+                if field in workspace:
+                    changed[field] = None
+            elif handle[field] != workspace.get(field):
+                changed[field] = handle[field]
         if not changed:
             return workspace
-        invalid = _validate_hook_changes(changed)
+        invalid = _validate_hook_changes(self.app, changed)
         if invalid is not None:
             logger.warning(
                 "workspace-created hook %s made an invalid change to "
@@ -297,5 +430,9 @@ class Hooks:
             )
             return workspace
         if refreshed is not None:
+            # get_workspace omits created_at; carry it from the input so
+            # the create response's shape is hook-invariant.
+            if "created_at" not in refreshed and "created_at" in workspace:
+                refreshed["created_at"] = workspace["created_at"]
             return refreshed
         return workspace  # pragma: no cover — row vanished mid-fire

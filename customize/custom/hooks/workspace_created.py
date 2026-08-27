@@ -31,10 +31,10 @@ awaitable.
 # permission lists on ``/workspaces/{id}``.
 #
 #   owners         -> *
-#   coders         -> terminal, code-in-isolation,
+#   coders         -> terminal, code-in-isolation, exec-and-sync,
 #                     spectate-on-shared-terminals, files,
 #                     files-download, files-write
-#   collaborators  -> terminal, code-in-isolation,
+#   collaborators  -> terminal, code-in-isolation, exec-and-sync,
 #                     code-in-shared-terminals,
 #                     spectate-on-shared-terminals, share-terminals,
 #                     files, files-download, files-write
@@ -91,4 +91,8 @@ async def on_workspace_created(workspace, actor):
     #         "permission": "view",
     #         "user_id": actor["id"],
     #     })
+    #
+    # Caution: rewrite_acl replaces the WHOLE list — keep the entry
+    # granting the owner access (the filter above does), or every new
+    # workspace starts fully locked out.
     await workspace.rewrite_acl(kept)

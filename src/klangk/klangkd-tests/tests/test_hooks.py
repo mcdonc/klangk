@@ -147,6 +147,32 @@ class TestLoadWorkspaceCreatedHook:
         )
         assert h.workspace_created_hook is None
 
+    def test_failed_reload_keeps_previous_hook(self, tmp_path):
+        # Assign-on-success (login-hook parity): a SIGHUP reload whose
+        # file went missing raises, and the loaded hook stays active.
+        hook_file = tmp_path / "myhook.py"
+        hook_file.write_text(
+            "def on_workspace_created(workspace, actor):\n    return None\n"
+        )
+        h = _hooks(
+            make_settings({"KLANGKD_WORKSPACE_CREATED_HOOK": str(hook_file)})
+        )
+        h.load_workspace_created_hook()
+        loaded = h.workspace_created_hook
+        assert loaded is not None
+        hook_file.unlink()
+        with pytest.raises(ConfigurationError, match="file not found"):
+            h.reconfigure(
+                types.SimpleNamespace(
+                    state=types.SimpleNamespace(
+                        settings=make_settings(
+                            {"KLANGKD_WORKSPACE_CREATED_HOOK": str(hook_file)}
+                        )
+                    )
+                )
+            )
+        assert h.workspace_created_hook is loaded
+
 
 class TestFireWorkspaceCreated:
     """Firing semantics against the real model (app_state fixture).
@@ -156,10 +182,10 @@ class TestFireWorkspaceCreated:
     fire_workspace_created directly on rows seeded via the model.
     """
 
-    async def _seed(self, app_state, user):
+    async def _seed(self, app_state, user, name="hooked-ws"):
         return (
             await app_state.state.model.workspaces.create_workspace_with_acl(
-                user["id"], "hooked-ws"
+                user["id"], name
             )
         )
 
@@ -416,3 +442,388 @@ class TestFireWorkspaceCreated:
         assert any(
             "persisting attribute changes" in r.message for r in caplog.records
         )
+
+    async def test_nested_mutation_persisted(self, app_state, user):
+        # Deep-copy handle: a nested edit is detected by the diff and
+        # persisted (a shallow copy would alias the caller's dict and
+        # see no change).
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+        ws = await app_state.state.model.workspaces.create_workspace_with_acl(
+            user["id"], "nested-ws", env={"A": "1"}
+        )
+
+        def hook(workspace, actor):
+            workspace["env"]["B"] = "2"
+            workspace["settings"] = dict(workspace["settings"] or {})
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-nested"
+        out = await hooks.fire_workspace_created(ws, user)
+        assert out["env"] == {"A": "1", "B": "2"}
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["env"] == {"A": "1", "B": "2"}
+
+    async def test_nested_mutation_then_raise_leaves_row_untouched(
+        self, app_state, user
+    ):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+        ws = await app_state.state.model.workspaces.create_workspace_with_acl(
+            user["id"], "nested-raise", settings={"idle_timeout": 60}
+        )
+        original_settings = {"idle_timeout": 60}
+
+        async def hook(workspace, actor):
+            workspace["settings"]["idle_timeout"] = 999
+            workspace["egress_mode"] = "allow"
+            raise RuntimeError("boom")
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = True
+        hooks.workspace_created_hook_source = "test-nested-raise"
+        out = await hooks.fire_workspace_created(ws, user)
+        # The caller's dict and the DB row both keep the seeded values.
+        assert out is ws
+        assert ws["settings"] == original_settings
+        assert ws["egress_mode"] == "interactive"
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["settings"] == original_settings
+        assert row["egress_mode"] == "interactive"
+
+    async def test_deletion_clears_column(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+        ws = await self._seed_env_workspace(app_state, user)
+
+        def hook(workspace, actor):
+            del workspace["env"]
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-del"
+        out = await hooks.fire_workspace_created(ws, user)
+        assert out["env"] is None
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["env"] is None
+
+    async def _seed_env_workspace(self, app_state, user):
+        return (
+            await app_state.state.model.workspaces.create_workspace_with_acl(
+                user["id"], "env-ws", env={"A": "1"}
+            )
+        )
+
+    async def test_invalid_settings_rejected(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["settings"] = {"idle_timeout": -1}
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-bad-settings"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["settings"] is None
+
+    async def test_settings_normalized_on_persist(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["settings"] = {"idle_timeout": "90"}
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-settings-norm"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["settings"] == {"idle_timeout": 90}
+
+    async def test_disallowed_image_rejected(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["image"] = "definitely-not-an-image"
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-bad-image"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["image"] is None
+
+    async def test_allowed_image_persisted(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+        image = app_state.state.container_registry.image_name
+
+        def hook(workspace, actor):
+            workspace["image"] = image
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-good-image"
+        ws = await self._seed(app_state, user)
+        out = await hooks.fire_workspace_created(ws, user)
+        assert out["image"] == image
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["image"] == image
+
+    async def test_invalid_mounts_rejected(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["mounts"] = ["nocolon"]
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-bad-mounts"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["mounts"] is None
+
+    async def test_valid_named_volume_mount_persisted(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["mounts"] = ["myvol:/mnt"]
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-good-mounts"
+        ws = await self._seed(app_state, user)
+        out = await hooks.fire_workspace_created(ws, user)
+        assert out["mounts"] == ["myvol:/mnt"]
+
+    async def test_invalid_allowed_domains_rejected(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["allowed_domains"] = ["!!not-a-host!!"]
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-bad-domains"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["allowed_domains"] is None
+
+    async def test_allowed_domains_normalized_on_persist(
+        self, app_state, user
+    ):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["allowed_domains"] = ["a.com", "a.com"]
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-domains-norm"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["allowed_domains"] == ["a.com"]
+
+    @pytest.mark.parametrize(
+        "domains",
+        [
+            ["10.0.0.0/8"],  # CIDR in rejected_domains — refused
+            ["!!not-a-host!!"],  # malformed host — refused
+        ],
+    )
+    async def test_rejected_domains_variants_refused(
+        self, app_state, user, domains
+    ):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["rejected_domains"] = domains
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-rejected-domains"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["rejected_domains"] is None
+
+    async def test_created_at_carried_over(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        async def hook(workspace, actor):
+            workspace["egress_mode"] = "static"
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = True
+        hooks.workspace_created_hook_source = "test-created-at"
+        ws = await self._seed(app_state, user)
+        out = await hooks.fire_workspace_created(ws, user)
+        # The re-read row carries the insert-time created_at, so the
+        # create response's shape is hook-invariant.
+        assert out.get("created_at") == ws["created_at"]
+
+    async def test_sync_hook_acl_helper_fails_loudly(
+        self, app_state, user, caplog
+    ):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace.acl_entries()  # sync hook: must raise, not no-op
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-sync-acl"
+        ws = await self._seed(app_state, user)
+        with caplog.at_level(logging.WARNING, logger="klangk.hooks"):
+            out = await hooks.fire_workspace_created(ws, user)
+        assert out is ws
+        assert "requires an 'async def' workspace-created hook" in caplog.text
+
+    async def test_rewrite_acl_coerces_int_strings(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        async def hook(workspace, actor):
+            entries = await workspace.acl_entries()
+            entries.append(
+                {
+                    "action": "1",  # ACTION_ALLOW as an int-string
+                    "principal_type": "1",  # PRINCIPAL_USER as an int-string
+                    "permission": "view",
+                    "user_id": actor["id"],
+                }
+            )
+            await workspace.rewrite_acl(entries)
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = True
+        hooks.workspace_created_hook_source = "test-coerce"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws['id']}"
+        )
+        appended = [
+            e
+            for e in entries
+            if e["principal_type"] == model.PRINCIPAL_USER
+            and e["user_id"] == user["id"]
+            and e["permission"] == "view"
+        ]
+        assert appended
+        assert appended[0]["action"] == model.ACTION_ALLOW
+
+    async def test_rewrite_acl_rejects_agent_principal(
+        self, app_state, user, caplog
+    ):
+        from klangk.model import AGENT_USER_ID
+
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        async def hook(workspace, actor):
+            entries = await workspace.acl_entries()
+            entries.append(
+                {
+                    "action": model.ACTION_ALLOW,
+                    "principal_type": model.PRINCIPAL_USER,
+                    "permission": "view",
+                    "user_id": AGENT_USER_ID,
+                }
+            )
+            await workspace.rewrite_acl(entries)
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = True
+        hooks.workspace_created_hook_source = "test-agent"
+        ws = await self._seed(app_state, user)
+        with caplog.at_level(logging.WARNING, logger="klangk.hooks"):
+            out = await hooks.fire_workspace_created(ws, user)
+        # The create survives; the rewrite rolled back wholesale.
+        assert out["id"] == ws["id"]
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws['id']}"
+        )
+        assert not any(e["user_id"] == AGENT_USER_ID for e in entries)
+
+    async def test_rewrite_acl_rejects_cross_workspace_role_group(
+        self, app_state, user, caplog
+    ):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+        other = await self._seed(app_state, user, name="other-ws")
+
+        # Resolve another workspace's coders role group id directly.
+        cursor = await app_state.state.db.fetchall(
+            "SELECT id FROM groups WHERE name = ?",
+            (f"coders-{other['id']}",),
+        )
+        foreign_group_id = cursor[0]["id"]
+
+        async def hook(workspace, actor):
+            entries = await workspace.acl_entries()
+            entries.append(
+                {
+                    "action": model.ACTION_ALLOW,
+                    "principal_type": model.PRINCIPAL_GROUP,
+                    "permission": "view",
+                    "group_id": foreign_group_id,
+                }
+            )
+            await workspace.rewrite_acl(entries)
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = True
+        hooks.workspace_created_hook_source = "test-foreign-role"
+        ws = await self._seed(app_state, user)
+        with caplog.at_level(logging.WARNING, logger="klangk.hooks"):
+            out = await hooks.fire_workspace_created(ws, user)
+        assert out["id"] == ws["id"]
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws['id']}"
+        )
+        assert not any(e["group_id"] == foreign_group_id for e in entries)
+
+    async def test_rewrite_acl_bad_int_rejected(self, app_state, user):
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        async def hook(workspace, actor):
+            await workspace.rewrite_acl(
+                [
+                    {
+                        "action": "allow",  # not an int or int-string
+                        "principal_type": model.PRINCIPAL_USER,
+                        "permission": "*",
+                        "user_id": actor["id"],
+                    }
+                ]
+            )
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = True
+        hooks.workspace_created_hook_source = "test-bad-int"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        # Hook failure: original seeded ACL intact.
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws['id']}"
+        )
+        assert any(e["permission"] == "*" for e in entries)
