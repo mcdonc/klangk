@@ -186,6 +186,17 @@ operators or integrators to act when upgrading.
 
 ### Added
 
+- **`files-download` permission (#2705).** The workspace file-download
+  endpoint (`GET /api/v1/workspaces/{id}/files/download`) now requires
+  the new `files-download` permission in addition to `files`, so
+  download can be withheld from members who can otherwise browse/read
+  files in the viewer. New shares (members, groups, coder/collaborator
+  roles) grant both permissions; a schema migration mirrors existing
+  `files` grants so current behavior is unchanged. Without the
+  permission the file viewer hides its download affordances and binary
+  renderers (image, PDF, video, spreadsheet) cannot fetch bytes — text
+  viewing still works. The CLI/TUI expose no file-download affordances.
+
 - **De-noised group lists in the UI (#2752).** The admin Groups tab
   defaults to `source=manual`, with a "Workspace role groups" filter
   chip to include the seeded per-workspace groups. The ACL editor's

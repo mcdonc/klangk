@@ -58,6 +58,7 @@ from klangk.model.migrations import m0007_server_schedules
 from klangk.model.migrations import m0008_agent_user_klangk
 from klangk.model.migrations import m0009_per_handle_home
 from klangk.model.migrations import m0010_groups_source
+from klangk.model.migrations import m0011_files_download
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -76,6 +77,7 @@ MIGRATIONS: list[Migration] = [
     m0008_agent_user_klangk.migration,
     m0009_per_handle_home.migration,
     m0010_groups_source.migration,
+    m0011_files_download.migration,
 ]
 
 

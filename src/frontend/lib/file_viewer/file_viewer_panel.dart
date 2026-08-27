@@ -54,6 +54,12 @@ class FileViewerPanel extends StatefulWidget {
   /// in; tests inject custom registries to exercise the mode switcher.
   final FileRendererRegistry? registry;
 
+  /// Whether the user holds the `files-download` permission. When false,
+  /// download affordances are hidden and raw-byte fetches fail fast
+  /// (#2705) — the viewer itself keeps working for text via
+  /// `/files/content`.
+  final bool canDownload;
+
   const FileViewerPanel({
     super.key,
     required this.wsClient,
@@ -61,6 +67,7 @@ class FileViewerPanel extends StatefulWidget {
     this.authToken,
     this.userHome,
     this.registry,
+    this.canDownload = true,
   });
 
   @override
@@ -223,6 +230,11 @@ class FileViewerPanelState extends State<FileViewerPanel> {
 
   /// [RenderableFile.readBytes] for binary renderers (image/pdf/video).
   Future<Uint8List> _readFileBytes(String path) async {
+    if (!widget.canDownload) {
+      // The `files-download` permission is absent (#2705) — binary
+      // renderers cannot fetch raw bytes.
+      throw Exception('Download not permitted');
+    }
     final response = await _client.get(
       Uri.parse(
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}',
@@ -425,6 +437,7 @@ class FileViewerPanelState extends State<FileViewerPanel> {
   }
 
   Future<void> _downloadPath(String path, String name, bool isDir) async {
+    if (!widget.canDownload) return;
     final url =
         '$_baseUrl/api/v1/workspaces/${widget.workspaceId}/files/download?path=${Uri.encodeComponent(path)}';
     try {
@@ -475,14 +488,15 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         position.dy,
       ),
       items: [
-        const PopupMenuItem(
-          value: 'download',
-          child: ListTile(
-            dense: true,
-            leading: Icon(Icons.download, size: 18),
-            title: Text('Download'),
+        if (widget.canDownload)
+          const PopupMenuItem(
+            value: 'download',
+            child: ListTile(
+              dense: true,
+              leading: Icon(Icons.download, size: 18),
+              title: Text('Download'),
+            ),
           ),
-        ),
         const PopupMenuItem(
           value: 'rename',
           child: ListTile(
@@ -630,13 +644,15 @@ class FileViewerPanelState extends State<FileViewerPanel> {
         registry: _registry,
         file: _renderableFor(_selectedFile!),
         onClose: () => setState(() => _selectedFile = null),
-        onDownload: () {
-          final path = _selectedFile!;
-          final name = path.contains('/')
-              ? path.substring(path.lastIndexOf('/') + 1)
-              : path;
-          _downloadPath(path, name, false);
-        },
+        onDownload: widget.canDownload
+            ? () {
+                final path = _selectedFile!;
+                final name = path.contains('/')
+                    ? path.substring(path.lastIndexOf('/') + 1)
+                    : path;
+                _downloadPath(path, name, false);
+              }
+            : null,
       );
     }
     return _buildFileList();
@@ -750,7 +766,10 @@ class _FileViewer extends StatefulWidget {
   final FileRendererRegistry registry;
   final RenderableFile file;
   final VoidCallback onClose;
-  final VoidCallback onDownload;
+
+  /// Null when download is not permitted — the download button is
+  /// hidden (#2705).
+  final VoidCallback? onDownload;
 
   @override
   State<_FileViewer> createState() => _FileViewerState();
@@ -805,11 +824,12 @@ class _FileViewerState extends State<_FileViewer> {
                       onSelected: (_) => setState(() => _selected = renderer),
                     ),
                   ),
-              IconButton(
-                icon: const Icon(Icons.download, size: 18),
-                tooltip: 'Download',
-                onPressed: widget.onDownload,
-              ),
+              if (widget.onDownload != null)
+                IconButton(
+                  icon: const Icon(Icons.download, size: 18),
+                  tooltip: 'Download',
+                  onPressed: widget.onDownload,
+                ),
               if (raw != null && !identical(raw, _selected))
                 IconButton(
                   icon: const Icon(Icons.subject, size: 18),

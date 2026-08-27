@@ -4011,6 +4011,38 @@ class TestWorkspaceSharingRoutes:
         assert len(resp.json()) == 1
         assert resp.json()[0]["email"] == "other@example.com"
 
+    async def test_add_member_grants_files_download(
+        self, client, user, app_state
+    ):
+        """Sharing a member grants `files-download` alongside `files`
+        (#2705), so the simple share flow keeps download working."""
+        headers = await _auth_headers(client)
+        other = await self._create_other_user(app_state)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "share-ws"}
+        )
+        ws_id = resp.json()["id"]
+        await client.post(
+            f"/api/v1/workspaces/{ws_id}/members",
+            headers=headers,
+            json={"email": "other@example.com"},
+        )
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_id}"
+        )
+        member_perms = sorted(
+            e["permission"]
+            for e in entries
+            if e["principal_type"] == model.PRINCIPAL_USER
+            and e["user_id"] == other["id"]
+        )
+        assert member_perms == [
+            "files",
+            "files-download",
+            "terminal",
+            "view",
+        ]
+
     async def test_add_member_notifies_owner_and_target(
         self, client, app, user, sockets, app_state
     ):
@@ -5017,6 +5049,22 @@ class TestWorkspaceGroupSharing:
         groups = resp.json()
         group_names = [g["name"] for g in groups]
         assert "devs" in group_names
+        # The grant includes `files-download` alongside `files` (#2705).
+        entries = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_id}"
+        )
+        group_perms = sorted(
+            e["permission"]
+            for e in entries
+            if e["principal_type"] == model.PRINCIPAL_GROUP
+            and e["group_id"] == group["id"]
+        )
+        assert group_perms == [
+            "files",
+            "files-download",
+            "terminal",
+            "view",
+        ]
 
     async def test_remove_group(self, client, user, app_state):
         headers = await _auth_headers(client)
@@ -6539,6 +6587,128 @@ class TestFileRoutes:
                     headers=headers,
                 )
             assert resp.status_code == 404
+        finally:
+            self._cleanup(ws_id)
+
+    async def _member_headers_with_perms(
+        self, app_state, client, ws_id, perms
+    ):
+        """Create other@example.com, grant *perms* on the workspace, and
+        return their auth headers (#2705 download gating)."""
+        other = await app_state.state.model.users.create_user(
+            "other@example.com",
+            auth_mod.hash_password("otherpass"),
+            verified=True,
+        )
+        resource = f"/workspaces/{ws_id}"
+        existing = await app_state.state.model.acl.get_acl_entries(resource)
+        next_pos = max((e["position"] for e in existing), default=-1) + 1
+        for perm in perms:
+            await app_state.state.model.acl.add_acl_entry(
+                resource,
+                next_pos,
+                model.ACTION_ALLOW,
+                perm,
+                model.PRINCIPAL_USER,
+                user_id=other["id"],
+            )
+            next_pos += 1
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "other@example.com",
+                "password": "otherpass",
+            },
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    async def test_download_denied_without_files_download(
+        self, client, user, app_state
+    ):
+        """`files` alone no longer grants download (#2705) — browsing
+        still works, raw-byte streaming does not."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state, client, ws_id, ["view", "terminal", "files"]
+            )
+            with patch.object(
+                _mock_pod,
+                "exec_container",
+                new_callable=AsyncMock,
+                return_value=(0, "regular file\t11", ""),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files?path=/home/klangk",
+                    headers=other,
+                )
+                assert resp.status_code == 200
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download"
+                    "?path=/home/klangk/dl.txt",
+                    headers=other,
+                )
+            assert resp.status_code == 403
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_download_allowed_with_files_download(
+        self, client, user, app_state
+    ):
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state,
+                client,
+                ws_id,
+                ["view", "terminal", "files", "files-download"],
+            )
+
+            async def fake_stream(*a, **kw):
+                yield b"download me"
+
+            with (
+                patch.object(
+                    _mock_pod,
+                    "exec_container",
+                    new_callable=AsyncMock,
+                    return_value=(0, "regular file\t11", ""),
+                ),
+                patch.object(
+                    _mock_pod,
+                    "exec_container_stream",
+                    side_effect=fake_stream,
+                ),
+            ):
+                resp = await client.get(
+                    f"/api/v1/workspaces/{ws_id}/files/download"
+                    "?path=/home/klangk/dl.txt",
+                    headers=other,
+                )
+            assert resp.status_code == 200
+            assert resp.content == b"download me"
+        finally:
+            self._cleanup(ws_id)
+
+    async def test_download_files_download_alone_insufficient(
+        self, client, user, app_state
+    ):
+        """`files-download` without `files` grants nothing (#2705): the
+        route requires both, so a lone grant cannot pull raw bytes."""
+        headers = await _auth_headers(client)
+        ws_id = await self._create_workspace(client, headers)
+        try:
+            other = await self._member_headers_with_perms(
+                app_state, client, ws_id, ["files-download"]
+            )
+            resp = await client.get(
+                f"/api/v1/workspaces/{ws_id}/files/download"
+                "?path=/home/klangk/dl.txt",
+                headers=other,
+            )
+            assert resp.status_code == 403
         finally:
             self._cleanup(ws_id)
 

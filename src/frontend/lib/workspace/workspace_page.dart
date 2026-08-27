@@ -610,6 +610,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
         authToken: authToken,
         userHome: wsClient.userHome,
         registry: _fileRenderers,
+        canDownload: _hasPerm('files-download'),
       ),
       featureTabs: _featureTabs,
       terminal: TerminalTabsView(

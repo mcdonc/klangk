@@ -33,6 +33,7 @@ class AclEditorState extends State<AclEditor> {
     'code-in-shared-terminals',
     'share-terminals',
     'files',
+    'files-download',
     'edit',
     'share',
     'delete',

@@ -28,6 +28,7 @@ FileViewerPanel buildPanel({
   String authToken = 'token',
   String userHome = '/home/tester',
   FileRendererRegistry? registry,
+  bool canDownload = true,
 }) =>
     FileViewerPanel(
       key: key,
@@ -36,6 +37,7 @@ FileViewerPanel buildPanel({
       authToken: authToken,
       userHome: userHome,
       registry: registry,
+      canDownload: canDownload,
     );
 
 void main() {
@@ -1769,6 +1771,123 @@ void main() {
       expect(key.currentState!.currentPathForTest, '/etc');
       expect(find.text('fresh.txt'), findsOneWidget);
 
+      client.close();
+    });
+  });
+
+  group('FileViewerPanel download permission (#2705)', () {
+    Future<_MockWsClient> pump(
+      WidgetTester tester, {
+      bool canDownload = false,
+    }) async {
+      testHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/files/content')) {
+          return http.Response(
+            jsonEncode({'content': 'file content'}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/files')) {
+          return http.Response(
+            jsonEncode([
+              {
+                'name': 'data.csv',
+                'path': '/home/tester/data.csv',
+                'is_dir': false,
+                'size': 100
+              },
+            ]),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      final client = _MockWsClient();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 600,
+              child: buildPanel(
+                wsClient: client,
+                canDownload: canDownload,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return client;
+    }
+
+    testWidgets('context menu hides Download when permission absent',
+        (tester) async {
+      final client = await pump(tester);
+
+      final center = tester.getCenter(find.text('data.csv'));
+      await tester.tapAt(center, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Download'), findsNothing);
+      // The other actions remain available.
+      expect(find.text('Rename'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('viewer chrome hides the download button', (tester) async {
+      final client = await pump(tester);
+
+      await tester.tap(find.text('data.csv'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Download'), findsNothing);
+      client.close();
+    });
+
+    testWidgets('viewer chrome shows the download button when permitted',
+        (tester) async {
+      final client = await pump(tester, canDownload: true);
+
+      await tester.tap(find.text('data.csv'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Download'), findsOneWidget);
+      client.close();
+    });
+
+    testWidgets('byte fetch fails fast with a clear error', (tester) async {
+      final client = await pump(tester);
+      final key = GlobalKey<FileViewerPanelState>();
+      // Re-pump with the key so the state is reachable.
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 800,
+              height: 600,
+              child: buildPanel(
+                wsClient: client,
+                key: key,
+                canDownload: false,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await expectLater(
+        key.currentState!.readFileBytesForTest('/home/tester/data.csv'),
+        throwsA(
+          isA<Exception>().having(
+            (e) => e.toString(),
+            'message',
+            contains('Download not permitted'),
+          ),
+        ),
+      );
       client.close();
     });
   });

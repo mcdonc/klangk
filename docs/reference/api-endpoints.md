@@ -733,8 +733,9 @@ Download a file or directory from the workspace container. Single files
 are streamed directly; directories are streamed as `.tar.gz` archives.
 Requires a running container (returns 409 if stopped).
 
-**Auth:** JWT required. User must have `files` permission on
-`/workspaces/{id}`. Query param: `path` (absolute container path).
+**Auth:** JWT required. User must have both `files` and `files-download`
+permissions on `/workspaces/{id}`. Query param: `path` (absolute container
+path).
 
 No request body. Returns a streamed `application/octet-stream` (single
 file) or `application/gzip` (directory archive).

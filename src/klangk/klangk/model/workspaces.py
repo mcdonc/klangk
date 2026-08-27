@@ -27,6 +27,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "code-in-isolation",
         "spectate-on-shared-terminals",
         "files",
+        "files-download",
     ],
     "collaborators": [
         "terminal",
@@ -35,6 +36,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "spectate-on-shared-terminals",
         "share-terminals",
         "files",
+        "files-download",
     ],
     "spectators": [
         "terminal",
