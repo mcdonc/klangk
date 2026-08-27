@@ -342,6 +342,17 @@ port: "8997"
 | `oidc_login_hook` |         | `KLANGKD_OIDC_LOGIN_HOOK`                  |
 | `oidc_providers`  |         | _(inline only — not settable via env var)_ |
 
+### Lifecycle hooks
+
+| Key                      | Default | Env var                          |
+| ------------------------ | ------- | -------------------------------- |
+| `workspace_created_hook` |         | `KLANGKD_WORKSPACE_CREATED_HOOK` |
+
+File path to a Python workspace-created hook (see
+[Customizing a Deployment](../deployment/customizing.md)); fires on every
+creation path (create / import / duplicate) and may mutate the workspace and
+rewrite its ACL. Failures are logged, never fatal. Reloaded on SIGHUP.
+
 ### SMTP / email
 
 | Key                   | Default    | Env var                       |

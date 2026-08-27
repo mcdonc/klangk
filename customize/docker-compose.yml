@@ -77,6 +77,12 @@ services:
       # KLANGKD_AUTH_MODES: "both"
       # KLANGKD_OIDC_LOGIN_HOOK: /home/klangk/custom/oidc/login_hook.py
 
+      # --- Lifecycle hooks (runtime, no rebuild) ---
+      # Workspace-created hook: mutates every new workspace + its ACL
+      # (see custom/hooks/workspace_created.py). Fires on create,
+      # import, and duplicate; failures are logged, never fatal.
+      # KLANGKD_WORKSPACE_CREATED_HOOK: /home/klangk/custom/hooks/workspace_created.py
+
       # --- LLM ---
       KLANGKD_LLM_MODELS: "${KLANGKD_LLM_MODELS}"
       KLANGKD_LLM_API_KEY: "${KLANGKD_LLM_API_KEY}"
@@ -105,5 +111,6 @@ services:
         target: /home/klangk/mount
         bind:
           create_host_path: false
-      # Customization directory — branding/, certs/, email-templates/, oidc/ subdirs:
+      # Customization directory — branding/, certs/, email-templates/, oidc/,
+      # hooks/ subdirs:
       - ./custom:/home/klangk/custom:ro

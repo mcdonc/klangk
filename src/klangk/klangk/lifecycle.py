@@ -653,6 +653,7 @@ class Lifecycle:
             "llm_router",
             "terminal",
             "oidc",
+            "hooks",
             "features",
             "workspaces",
             "files",
@@ -995,6 +996,13 @@ async def lifespan(app: FastAPI):
         app.state.oidc.init_providers()
         enforce_no_auth_bind_safety(app)
         app.state.oidc.load_login_hook()
+        # #2762: customize-dir lifecycle hooks, loaded beside the login
+        # hook with the same failure semantics (ConfigurationError →
+        # startup_config_error → EX_CONFIG). Guarded: some minimal test
+        # apps wire the lifespan without build_app's full state.
+        hooks_state = getattr(app.state, "hooks", None)
+        if hooks_state is not None:
+            hooks_state.load_workspace_created_hook()
         await app.state.lifecycle.seed_default_user()
         await app.state.lifecycle.seed_agent_user()
     except ConfigurationError as exc:

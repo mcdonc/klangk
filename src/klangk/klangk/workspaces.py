@@ -448,6 +448,22 @@ class Workspaces:
             )
             await _async_rmtree(home, f"workspace {workspace['id']} rollback")
             raise
+        # #2762: fire the deployment's workspace-created hook
+        # (KLANGKD_WORKSPACE_CREATED_HOOK) on every creation path —
+        # create, import, and duplicate all land here. Runs after the
+        # row + owner ACE + role groups are committed and the workspace
+        # is fully provisioned; failures are logged and never fail the
+        # create (Hooks.fire_workspace_created). Guarded: minimal test
+        # apps wire Workspaces without the full build_app state.
+        hooks_state = getattr(self.app.state, "hooks", None)
+        if (
+            hooks_state is not None
+            and hooks_state.workspace_created_hook is not None
+        ):
+            actor = await self.app.state.model.users.get_user_by_id(user_id)
+            workspace = await hooks_state.fire_workspace_created(
+                workspace, actor or {"id": user_id}
+            )
         return workspace
 
     async def list_workspaces(
