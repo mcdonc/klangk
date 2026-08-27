@@ -30,10 +30,11 @@ Klangk uses an Access Control List (ACL) system to manage permissions. Instead o
 | `/`           | Allow  | Authenticated | `view`     |
 | `/`           | Deny   | Everyone      | `*`        |
 | `/workspaces` | Allow  | group:admin   | `create`   |
+| `/groups`     | Allow  | group:admin   | `create`   |
 | `/admin`      | Allow  | group:admin   | `*`        |
 | `/admin`      | Deny   | Everyone      | `*`        |
 
-These defaults mean: any logged-in user can view pages; only members of the `admin` group can create workspaces or access admin functions; unauthenticated users are denied everything.
+These defaults mean: any logged-in user can view pages; only members of the `admin` group can create workspaces, create groups, or access admin functions; unauthenticated users are denied everything.
 
 ### Granting workspace creation to non-admin users
 

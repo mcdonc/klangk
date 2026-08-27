@@ -60,8 +60,8 @@ only members of the `admin` group can create groups (the `/groups`
 resource grants `create` to the admin group). To let other users create
 groups, add an **Allow** entry for the `create` permission on the
 `/groups` resource targeting the `members` group (or any other group)
-via the ACL editor — the same recipe as [workspace creation](#granting-
-workspace-creation-to-non-admin-users).
+via the ACL editor — the same recipe as
+[workspace creation](#granting-workspace-creation-to-non-admin-users).
 
 ## Default access rules
 

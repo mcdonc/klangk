@@ -19,12 +19,15 @@ shape means an operator customized the resource (loosened deliberately,
 added entries, reordered): the migration leaves it untouched, and the
 changelog documents the manual tightening step for that case.
 
-The replacement inserts an Allow ``create`` ACE for the ``admin`` group
-at position 0, so a migrated deployment's ``/groups`` ACL matches a
-freshly seeded one. If no ``admin`` group row exists (a pathological
-state — ``ensure_admin_group`` recreates it at boot), the seeded ACE is
+The replacement inserts an Allow ``create`` ACE for the ``admin``
+group at position 0, so a migrated deployment's ``/groups`` ACL matches a
+freshly seeded one. If no ``admin`` group row exists, the seeded ACE is
 simply deleted with no replacement: admins manage groups through
-``/admin/groups`` regardless.
+``/admin/groups`` regardless. That state is reachable without anything
+pathological — the admin group can be renamed (``update_group`` has no
+admin guard), and this migration runs before ``ensure_admin_group``
+recreates the row — so the branch is a deliberate fallback, not a
+should-never-happen.
 """
 
 from klangk.model.acl import (

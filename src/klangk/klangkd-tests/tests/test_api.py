@@ -5426,6 +5426,39 @@ class TestUserGroupEndpoints:
             for e in entries
         )
 
+    async def test_create_group_default_seed_admin_only(
+        self, client, admin_user, user, admin_group, app_state
+    ):
+        """#2770: under the real seeded tree (not the fixture's
+        hand-built approximation), POST /groups is admin-only — the
+        conftest admin_group fixture seeds no /groups entry at all, so
+        this is the only test that exercises seed_default_acls' actual
+        /groups default end to end."""
+        from klangk.lifecycle import Lifecycle
+
+        # Replace the fixture's approximation with the real seed.
+        async with app_state.state.db.transaction() as db:
+            await db.execute("DELETE FROM acl_entries")
+        await Lifecycle(app_state).seed_default_acls(admin_group["id"])
+
+        admin_headers = await self._admin_login(client)
+        resp = await client.post(
+            "/api/v1/groups",
+            headers=admin_headers,
+            json={"name": "admin-made-group"},
+        )
+        assert resp.status_code == 200
+
+        # A plain authenticated user is denied: nothing on /groups
+        # matches, and the walk falls through to /'s Deny * → everyone.
+        user_headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/groups",
+            headers=user_headers,
+            json={"name": "user-made-group"},
+        )
+        assert resp.status_code == 403
+
     async def test_create_group_duplicate(
         self, client, admin_user, user, app_state
     ):

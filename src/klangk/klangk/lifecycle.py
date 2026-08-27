@@ -187,9 +187,10 @@ class Lifecycle:
         """Ensure the 'members' group exists (#2569). Returns the group ID.
 
         New users (registration, invitation, OIDC first login, admin
-        create) are added to this group automatically. The default ACL
-        seed grants ``create`` on ``/workspaces`` to this group, so
-        members can create workspaces without being full admins.
+        create) are added to this group automatically. It gets no
+        default permissions — the ``/workspaces`` ``create`` seed goes to
+        the admin group (#2569); deployers who want all members to
+        create workspaces grant it to this group via the ACL editor.
         """
         group = await self.app.state.model.users.get_group_by_name("members")
         if group is None:

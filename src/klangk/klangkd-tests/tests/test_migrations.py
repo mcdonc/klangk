@@ -868,6 +868,10 @@ class TestM0013ExecAndSyncPermission:
             await m0013_exec_and_sync_permission.migration.apply(db)
             cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
             assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+
 class TestM0014GroupsCreateAdmin:
     """Migration 0014 tightens the seeded Allow-create→authenticated ACE
     on /groups to the admin group (#2770)."""
