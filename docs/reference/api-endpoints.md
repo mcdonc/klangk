@@ -1261,9 +1261,11 @@ Returns `StreamingResponse` (`application/x-ndjson`).
 
 ### POST `/api/v1/groups`
 
-Create a new group.
+Create a new group. The creator receives full (`*`) access to the new
+group.
 
-**Auth:** JWT required. User must have `create` permission on `/groups`.
+**Auth:** JWT required. User must have `create` permission on `/groups`
+(default: the `admin` group only).
 
 ```json
 { "name": "my-group", "description": "optional description" }

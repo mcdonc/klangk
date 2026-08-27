@@ -55,15 +55,21 @@ automatically on first startup:
 You can create additional groups (e.g., "engineering", "design") and
 share workspaces with an entire group instead of individual users.
 
-Manage groups from the Admin panel under the Groups tab.
+Manage groups from the Admin panel under the Groups tab. By default,
+only members of the `admin` group can create groups (the `/groups`
+resource grants `create` to the admin group). To let other users create
+groups, add an **Allow** entry for the `create` permission on the
+`/groups` resource targeting the `members` group (or any other group)
+via the ACL editor — the same recipe as
+[workspace creation](#granting-workspace-creation-to-non-admin-users).
 
 ## Default access rules
 
 On first startup, Klangk seeds these defaults:
 
 - Any logged-in user can view pages
-- Only members of the `admin` group can create workspaces or access
-  admin functions
+- Only members of the `admin` group can create workspaces, create
+  groups, or access admin functions
 - Unauthenticated users are denied everything
 
 ## Granting workspace creation to non-admin users

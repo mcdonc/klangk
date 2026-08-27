@@ -141,14 +141,18 @@ class Lifecycle:
             PRINCIPAL_GROUP,
             group_id=admin_group_id,
         )
-        # /groups: Authenticated users can create groups
+        # /groups: only admins can create (#2770). Group management
+        # otherwise runs through /admin/groups (admin permission).
+        # Deployers can loosen this per-deployment by adding an Allow
+        # `create` ACE on /groups targeting another group (the same
+        # recipe as /workspaces, #2569).
         await self.app.state.model.acl.add_acl_entry(
             "/groups",
             0,
             ACTION_ALLOW,
             "create",
-            PRINCIPAL_SYSTEM,
-            system_principal=SYSTEM_AUTHENTICATED,
+            PRINCIPAL_GROUP,
+            group_id=admin_group_id,
         )
         # /admin: admin group gets full access, deny everyone else
         await self.app.state.model.acl.add_acl_entry(
@@ -183,9 +187,10 @@ class Lifecycle:
         """Ensure the 'members' group exists (#2569). Returns the group ID.
 
         New users (registration, invitation, OIDC first login, admin
-        create) are added to this group automatically. The default ACL
-        seed grants ``create`` on ``/workspaces`` to this group, so
-        members can create workspaces without being full admins.
+        create) are added to this group automatically. It gets no
+        default permissions — the ``/workspaces`` ``create`` seed goes to
+        the admin group (#2569); deployers who want all members to
+        create workspaces grant it to this group via the ACL editor.
         """
         group = await self.app.state.model.users.get_group_by_name("members")
         if group is None:
