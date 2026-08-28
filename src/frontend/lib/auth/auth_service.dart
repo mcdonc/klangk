@@ -27,6 +27,13 @@ class AuthService extends ChangeNotifier {
   PasswordPolicy _passwordPolicy = const PasswordPolicy();
   String _instanceId = 'default';
   bool _allowAutostart = false;
+  // #2710: whether the server's browser-delegate bridge is enabled
+  // (KLANGKD_BROWSER_DELEGATE_ENABLED via /config's browser_delegate_enabled).
+  // The workspace connector gates its BrowserDelegate on this — a deploy
+  // that disabled the bridge gets no tab registered as a bridge target.
+  // Defaults to true so an old server that doesn't send the field keeps
+  // the current behavior.
+  bool _browserDelegateEnabled = true;
   // #2721: deploy default home layout for new workspaces
   // (KLANGKD_PER_HANDLE_HOME via /config's default_per_handle_home). The
   // create dialog pre-reflects it so an untouched form submits the
@@ -76,6 +83,12 @@ class AuthService extends ChangeNotifier {
   /// on this — setting auto_start on a server that rejects it would
   /// 400 (#1115).
   bool get allowAutostart => _allowAutostart;
+
+  /// #2710: whether the server's browser-delegate bridge is enabled
+  /// (KLANGKD_BROWSER_DELEGATE_ENABLED). The workspace page gates its
+  /// BrowserDelegate on this — on a disabled deploy the tab never
+  /// subscribes to bridge requests (and the server refuses them anyway).
+  bool get browserDelegateEnabled => _browserDelegateEnabled;
 
   /// #2721: the deploy default home layout for new workspaces (true =
   /// per-handle private homes, false = shared /home/klangk). Null when
@@ -175,6 +188,8 @@ class AuthService extends ChangeNotifier {
             (data['login_banner_every_visit'] as bool?) ?? false;
         _instanceId = (data['instance_id'] as String?) ?? 'default';
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
+        _browserDelegateEnabled =
+            (data['browser_delegate_enabled'] as bool?) ?? true;
         _perHandleHomeDefault = data['default_per_handle_home'] as bool?;
         _defaultClassificationBanner =
             (data['default_classification_banner'] as String? ?? '').trim();

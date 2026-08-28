@@ -254,6 +254,15 @@ class TestConfigFile:
         s = make_settings({"KLANGKD_NETFILTER_ENABLED": "false"})
         assert s.netfilter_enabled is False
 
+    def test_browser_delegate_enabled_defaults_true(self):
+        # #2710: the browser-delegate bridge ships on; the knob is an
+        # opt-out for hardened deploys.
+        assert make_settings({}).browser_delegate_enabled is True
+
+    def test_browser_delegate_enabled_env_override(self):
+        s = make_settings({"KLANGKD_BROWSER_DELEGATE_ENABLED": "false"})
+        assert s.browser_delegate_enabled is False
+
     def test_enable_ping_defaults_true(self):
         # #2045: unprivileged ping is enabled out of the box.
         assert make_settings({}).enable_ping is True

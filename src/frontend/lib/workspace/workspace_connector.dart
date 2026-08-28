@@ -37,6 +37,12 @@ class WorkspaceConnector {
   /// unrelated errors too — the owner filters by its own state.
   final void Function(String error)? onRestartError;
 
+  /// #2710: whether the deploy's browser-delegate bridge is enabled
+  /// (KLANGKD_BROWSER_DELEGATE_ENABLED via /config). When false, no
+  /// [BrowserDelegate] is started — this tab never answers bridge
+  /// requests (the server refuses them anyway). Defaults to true.
+  final bool browserDelegateEnabled;
+
   BrowserDelegate? _browserDelegate;
   StreamSubscription<Map<String, dynamic>>? _customEventSub;
   StreamSubscription<String>? _errorSub;
@@ -51,10 +57,13 @@ class WorkspaceConnector {
     required this.onSharedTerminalDeleted,
     required this.onPermissionError,
     this.onRestartError,
+    this.browserDelegateEnabled = true,
   });
 
-  /// Whether [connect] has been called and subscriptions are active.
-  bool get isActive => _browserDelegate != null;
+  /// Whether [connect] has called and subscriptions are active. (Distinct
+  /// from the delegate: a disabled bridge (#2710) starts no
+  /// [BrowserDelegate], but the connector is still active.)
+  bool _active = false;
 
   /// Whether a connect/reconnect is currently in progress.
   bool _inProgress = false;
@@ -71,6 +80,9 @@ class WorkspaceConnector {
       _inProgress = false;
     }
   }
+
+  /// Whether [connect] has been called and subscriptions are active.
+  bool get isActive => _active;
 
   /// Reconnect after a disconnect.  Tears down existing subscriptions
   /// first so we don't end up with duplicate listeners.
@@ -114,9 +126,13 @@ class WorkspaceConnector {
 
     wsClient.connectWorkspace(workspaceId);
 
-    // Start browser delegate for bridge requests
-    _browserDelegate = BrowserDelegate(wsClient, registry: featureRegistry);
-    _browserDelegate!.start();
+    // Start browser delegate for bridge requests — unless the deploy
+    // disabled the bridge (#2710); then this tab never becomes a bridge
+    // target.
+    if (browserDelegateEnabled) {
+      _browserDelegate = BrowserDelegate(wsClient, registry: featureRegistry);
+      _browserDelegate!.start();
+    }
 
     // Listen for container lifecycle events
     _customEventSub = wsClient.customEvents.listen((msg) {
@@ -145,12 +161,14 @@ class WorkspaceConnector {
       }
     });
 
+    _active = true;
     onConnected(connected: true, error: null);
   }
 
   /// Tear down subscriptions and the browser delegate.  Safe to call
   /// multiple times.
   void dispose() {
+    _active = false;
     _customEventSub?.cancel();
     _customEventSub = null;
     _errorSub?.cancel();

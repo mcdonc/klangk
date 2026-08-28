@@ -542,7 +542,19 @@ class TerminalController:
         on refresh the same ID re-registers with the new WebSocket.
         The CLI sends "klangkshell" as a sentinel — store it in tmux
         env but don't register it for bridge routing.
+
+        #2710: when the deploy disabled the browser delegate
+        (KLANGKD_BROWSER_DELEGATE_ENABLED=false, read live so a SIGHUP
+        reload applies), nothing is registered and any pre-disable
+        registration for this socket is revoked — the bridge endpoints
+        403 regardless, but this keeps the routing table honest.
         """
+        if not self._conn.app.state.settings.browser_delegate_enabled:
+            self._conn.app.state.container_registry.revoke_browser(
+                self._conn.sock
+            )
+            self._conn.browser_id = None
+            return
         if browser_id and browser_id != "klangkshell":
             self._conn.app.state.container_registry.revoke_browser(
                 self._conn.sock
@@ -780,9 +792,13 @@ class TerminalController:
                 # The window-exists check makes it a no-op after the first
                 # fire. Done before window sync so discovery picks it up.
                 await ctrl._fire_service_command()
-                if browser_id:
+                # Attach the browser ID (if any) into the container's tmux
+                # env. Reads conn.browser_id — the post-_register_browser
+                # value — so a deploy that disabled the delegate (#2710)
+                # never advertises an ID to the container.
+                if conn.browser_id:
                     await conn.app.state.terminal.attach_browser(
-                        conn.container_id, browser_id
+                        conn.container_id, conn.browser_id
                     )
                 if not await conn.activate_session(session):
                     return
@@ -847,6 +863,16 @@ class TerminalController:
         """
         browser_id = msg.get("browser_id")
         if not browser_id or not self._conn.container_id:
+            return
+        if not self._conn.app.state.settings.browser_delegate_enabled:
+            # #2710: the deploy disabled the browser-delegate bridge —
+            # re-attach would (re)register the tab for bridge routing and
+            # re-advertise the ID into the container env; instead drop any
+            # pre-disable registration so the routing table goes quiet.
+            self._conn.app.state.container_registry.revoke_browser(
+                self._conn.sock
+            )
+            self._conn.browser_id = None
             return
         self._conn.app.state.container_registry.revoke_browser(self._conn.sock)
         self._conn.app.state.container_registry.register_browser(

@@ -22,6 +22,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _require_delegate_enabled(app) -> None:
+    """Refuse the request when the deploy disabled the bridge (#2710).
+
+    ``KLANGKD_BROWSER_DELEGATE_ENABLED=false`` (read live off settings, so
+    a SIGHUP reload applies immediately) makes both delegate endpoints
+    return 403 before any browser/session resolution happens — no bridge
+    request is ever relayed to a browser tab.
+    """
+    if not app.state.settings.browser_delegate_enabled:
+        raise HTTPException(
+            status_code=403, detail="Browser delegate is disabled"
+        )
+
+
 class BrowserDelegateRequest(BaseModel):
     model_config = {"extra": "allow"}
     action: str
@@ -68,6 +82,7 @@ async def browser_delegate(
     and includes it in the POST.  The backend resolves the ID to the
     specific browser tab's WebSocket and relays the request.
     """
+    _require_delegate_enabled(app)
     session, target_sock, payload = _resolve_bridge_target(
         body, app.state.container_registry, app.state.sockets
     )
@@ -103,6 +118,7 @@ async def browser_delegate_stream(
     (#864): the workspace's ``settings.bridge_timeout`` override > the
     ``KLANGKD_BRIDGE_TIMEOUT_SECONDS`` deploy default > 30s.
     """
+    _require_delegate_enabled(app)
     session, target_sock, payload = _resolve_bridge_target(
         body, app.state.container_registry, app.state.sockets
     )

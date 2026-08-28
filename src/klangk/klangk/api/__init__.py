@@ -205,6 +205,15 @@ async def get_config(
         # boot) is permitted. The web UI gates its "Auto start" checkbox on
         # this so users can't toggle a setting the server will reject (#1115).
         "allow_autostart": autostart_allowed(app),
+        # Whether the browser-delegate bridge is enabled
+        # (KLANGKD_BROWSER_DELEGATE_ENABLED, #2710). Surfaced so the
+        # frontend can skip starting its BrowserDelegate (and thus never
+        # answers bridge requests) on deploys that disabled the channel.
+        # Not sensitive: any workspace-token holder learns the same fact
+        # from the endpoint's 403-vs-relay, and the default is the
+        # documented-on state — so it rides the public payload like
+        # allow_autostart, not the authenticated-only netfilter fields.
+        "browser_delegate_enabled": s.browser_delegate_enabled,
         # Home-layout default for NEW workspaces (KLANGKD_PER_HANDLE_HOME,
         # #2169 chunk 3 / #2721). The create surfaces (web dialog, TUI form,
         # `klangk create`) pre-reflect this so an untouched form submits the
