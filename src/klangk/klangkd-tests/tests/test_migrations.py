@@ -473,3 +473,4 @@ class TestPasswordHistory:
             (user["id"],),
         )
         assert row[0] == 0
+

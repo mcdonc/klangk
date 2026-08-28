@@ -450,7 +450,10 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   (`procleddy`) at an 80 ms poll under a ≤1%-of-one-core budget; degrades
   to a Python poller (multi-second interval, loudly surfaced) when the
   binary is absent. Read via
-  `GET /api/v1/workspaces/{id}/processes`; retention bounded by default.
+  `GET /api/v1/workspaces/{id}/processes` (requires the new
+  `read-proc-ledger` permission — by default only workspace owners have
+  it; other roles need an explicit ACL grant); retention bounded by
+  default.
   Enable with `KLANGKD_PROCESS_LEDGER_ENABLED=true`. See
   [Process Ledger](features/process-ledger.md).
 - **`KLANGKNETWORK_EGRESS_ACTIVITY_GATE` forwarding (#2514).** The

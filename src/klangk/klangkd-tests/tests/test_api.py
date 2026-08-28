@@ -3033,6 +3033,70 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 403
 
+    async def test_process_ledger_requires_read_proc_ledger(
+        self, client, user, app_state
+    ):
+        """#2520: the ledger endpoints are gated on the dedicated
+        ``read-proc-ledger`` permission — ``terminal`` alone no longer
+        grants read access."""
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "ledger-perm-ws"},
+        )
+        ws_id = create_resp.json()["id"]
+
+        other = await app_state.state.model.users.create_user(
+            "ledger-outsider@example.com",
+            auth_mod.hash_password("outsiderpass"),
+            verified=True,
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "ledger-outsider@example.com",
+                "password": "outsiderpass",
+            },
+        )
+        other_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+        resource = f"/workspaces/{ws_id}"
+        acl_model = app_state.state.model.acl
+        entries = await acl_model.get_acl_entries(resource)
+        next_pos = len(entries)  # positions are 0-based and dense here
+
+        # terminal alone: denied on both ledger endpoints.
+        await acl_model.add_acl_entry(
+            resource, next_pos, model.ACTION_ALLOW, "terminal",
+            model.PRINCIPAL_USER, user_id=other["id"],
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/processes", headers=other_headers
+        )
+        assert resp.status_code == 403
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/process-ledger",
+            headers=other_headers,
+        )
+        assert resp.status_code == 403
+
+        # read-proc-ledger: both endpoints open up.
+        await acl_model.add_acl_entry(
+            resource, next_pos + 1, model.ACTION_ALLOW, "read-proc-ledger",
+            model.PRINCIPAL_USER, user_id=other["id"],
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/processes", headers=other_headers
+        )
+        assert resp.status_code == 200
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/process-ledger",
+            headers=other_headers,
+        )
+        assert resp.status_code == 200
+
     async def test_workspace_status_not_found(self, client, user, app_state):
         headers = await _auth_headers(client)
         fake_id = "fake-status-id"
@@ -4544,6 +4608,52 @@ class TestWorkspaceRoles:
         roles = {r["role"]: r for r in resp.json()}
         member_ids = [m["id"] for m in roles["spectators"]["members"]]
         assert target["id"] in member_ids
+
+    async def test_role_groups_not_seeded_read_proc_ledger(
+        self, client, user, app_state
+    ):
+        """#2520: only the owners role group can read the ledger (via its
+        `*` wildcard) — a spectator is denied even though the spectator
+        group carries `terminal`."""
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "ledger-seed-ws"},
+        )
+        ws_id = resp.json()["id"]
+        await app_state.state.model.users.create_user(
+            "ledger-spec@test.com", auth_mod.hash_password("pass"),
+            verified=True,
+        )
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/roles/spectators",
+            headers=headers,
+            json={"email": "ledger-spec@test.com"},
+        )
+        assert resp.status_code == 200
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "ledger-spec@test.com", "password": "pass"},
+        )
+        spec_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/processes", headers=spec_headers
+        )
+        assert resp.status_code == 403
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/process-ledger",
+            headers=spec_headers,
+        )
+        assert resp.status_code == 403
+        # The owner (wildcard ACE) reads both endpoints.
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/processes", headers=headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 0
 
     async def test_remove_user_from_role(self, client, user, app_state):
         headers = await _auth_headers(client)

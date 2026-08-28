@@ -198,8 +198,12 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     # Position counter is global across all groups (no collisions).
     positions = sorted(e["position"] for e in entries)
     assert positions == list(range(len(entries)))
-    # 1 owner ACE + 1 + 4 + 6 + 2 group ACEs.
+    # 1 owner ACE + 1 + 4 + 6 + 2 group ACEs. No role group carries
+    # `read-proc-ledger` — the ledger is owners-only by default (#2520).
     assert len(entries) == 1 + 1 + 4 + 6 + 2
+    assert not any(
+        e["permission"] == "read-proc-ledger" for e in entries
+    )
 
 
 async def test_create_workspace_with_acl_rollback_on_seeding_failure(

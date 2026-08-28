@@ -28,6 +28,7 @@ class AclEditorState extends State<AclEditor> {
   static const _permissions = [
     'view',
     'terminal',
+    'read-proc-ledger',
     'code-in-isolation',
     'spectate-on-shared-terminals',
     'code-in-shared-terminals',

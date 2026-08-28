@@ -59,8 +59,12 @@ curl -H "Authorization: Bearer $TOKEN" \
   https://klangk.example.com/api/v1/workspaces/$WS/processes?limit=100
 ```
 
-Requires `terminal` permission on the workspace — the ledger reveals
-process activity, the same sensitivity class as the terminal.
+Requires the dedicated `read-proc-ledger` permission on the workspace.
+By default **only the owners role group can read the ledger** (its `*`
+wildcard covers the permission); no other role group is seeded it, so
+granting ledger access to anyone else — including coders and
+collaborators — is an explicit operator choice via the ACL editor
+(`read-proc-ledger` is in the permission lists).
 
 ## Honest limitations
 

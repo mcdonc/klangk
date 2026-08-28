@@ -830,7 +830,9 @@ async def workspace_status(
 @router.get("/workspaces/{workspace_id}/processes")
 async def workspace_processes(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("read-proc-ledger", workspace_resource)
+    ),
     app=Depends(get_app_dep),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
@@ -839,8 +841,9 @@ async def workspace_processes(
 
     Newest-first capture events (birth/exec) with principal attribution
     (``agent`` / ``user:<handle>`` / ``unknown``), attribution method, and
-    the pane-input hint. Requires ``terminal`` permission — the ledger
-    reveals process activity, same sensitivity class as the terminal.
+    the pane-input hint. Requires the dedicated ``read-proc-ledger``
+    permission — by default only the owners role group has it (via its
+    ``*`` wildcard); other roles need an explicit grant.
     """
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
@@ -855,7 +858,9 @@ async def workspace_processes(
 @router.get("/workspaces/{workspace_id}/process-ledger")
 async def workspace_process_ledger_status(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    user: dict = Depends(
+        acl.has_permission("read-proc-ledger", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
     """Return the ledger's capture status for this workspace (#2520).

@@ -806,6 +806,7 @@ ALL_PERMISSIONS = [
     "edit",
     "delete",
     "terminal",
+    "read-proc-ledger",
     "code-in-isolation",
     "spectate-on-shared-terminals",
     "code-in-shared-terminals",
