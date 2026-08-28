@@ -43,14 +43,17 @@ runs:
       shell: bash
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-        devenv shell -- true
+        # Retry wrapper for the devenv 2.2.x embedded-Nix UAF (#2774 / cachix/devenv#3064, #2775)
+        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+        "$retry" devenv shell -- true
 
     - name: Build images
       if: inputs.run == 'true'
       shell: bash
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-        devenv tasks run ${{ inputs.build-tasks }}
+        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+        "$retry" devenv tasks run ${{ inputs.build-tasks }}
 
     - name: Obtain FIPS image (pull, capped-build fallback)
       # #2631: the FIPS workspace image is published by image-workspace-
@@ -64,11 +67,14 @@ runs:
       shell: bash
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-        if devenv shell -- bash scripts/pull-fips-image.sh "${{ inputs.fips-image }}"; then
+        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+        # Wrapped so a UAF flake (#2774) is not misread as a pull failure
+        # and answered with an unnecessary capped local FIPS build.
+        if "$retry" devenv shell -- bash scripts/pull-fips-image.sh "${{ inputs.fips-image }}"; then
           echo "FIPS image pulled from ${{ inputs.fips-image }}"
         else
           echo "Pull failed — building FIPS image locally (compile capped to 2 jobs, #2631)"
-          KLANGKBUILD_FIPS_BUILD_JOBS=2 devenv shell -- devenv tasks run klangk:build-fips-image
+          KLANGKBUILD_FIPS_BUILD_JOBS=2 "$retry" devenv shell -- devenv tasks run klangk:build-fips-image
         fi
 
     - name: Clean leftover CI podman state
@@ -91,7 +97,8 @@ runs:
         KLANGK_E2E_VERBOSE_PODMAN: ${{ inputs.verbose-podman == 'true' && '1' || '' }}
       run: |
         . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
-        devenv shell -- ${{ inputs.suite }}
+        retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+        "$retry" devenv shell -- ${{ inputs.suite }}
 
     - name: Skip notice
       if: inputs.run != 'true'
