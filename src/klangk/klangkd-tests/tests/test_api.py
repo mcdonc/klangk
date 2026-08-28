@@ -6285,7 +6285,7 @@ class TestBrowserBridge:
                     headers=self._ws_token_headers("ws-own"),
                 )
             assert resp.status_code == 403
-            assert "does not belong" in resp.json()["detail"]
+            assert resp.json()["detail"] == "Unknown browser ID"
             mock_session.dispatch_browser_request_to.assert_not_awaited()
         finally:
             registry.revoke_workspace_browsers("ws-other")
@@ -6309,7 +6309,7 @@ class TestBrowserBridge:
                     headers=self._ws_token_headers("ws-own"),
                 )
             assert resp.status_code == 403
-            assert "does not belong" in resp.json()["detail"]
+            assert resp.json()["detail"] == "Unknown browser ID"
             mock_session.dispatch_browser_request_stream_to.assert_not_called()
         finally:
             registry.revoke_workspace_browsers("ws-other")

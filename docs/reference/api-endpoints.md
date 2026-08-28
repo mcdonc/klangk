@@ -1236,7 +1236,9 @@ Used by Pi extensions that need to interact with the user's browser
 
 **Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
 Returns **403** when the deploy disabled the bridge
-(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`, #2710).
+(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`, #2710), when the `browser_id`
+is unknown, or when it is not registered against the caller's workspace
+(#1715).
 
 ```json
 { "action": "navigate", "browser_id": "string" }
@@ -1253,7 +1255,9 @@ delimited JSON chunks.
 
 **Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
 Returns **403** when the deploy disabled the bridge
-(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`, #2710).
+(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`, #2710), when the `browser_id`
+is unknown, or when it is not registered against the caller's workspace
+(#1715).
 
 ```json
 { "action": "string", "browser_id": "string" }

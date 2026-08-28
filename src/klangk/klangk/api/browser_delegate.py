@@ -62,12 +62,13 @@ def _resolve_bridge_target(
     workspace_id, target_sock = resolved
 
     if workspace_id != token_workspace_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Browser ID does not belong to this workspace",
-        )
+        # Same detail as the unknown-ID branch: a mismatched (i.e.
+        # cross-workspace) browser_id must be indistinguishable from a
+        # bogus one, so the relay is not a liveness oracle for other
+        # workspaces' tabs (#1715).
+        raise HTTPException(status_code=403, detail="Unknown browser ID")
 
-    session = sockets.get_session(workspace_id)
+    session = sockets.get_session(token_workspace_id)
     if not session:
         raise HTTPException(
             status_code=502,
