@@ -241,6 +241,25 @@ class TestFireWorkspaceCreated:
         row = await app_state.state.model.workspaces.get_workspace(ws["id"])
         assert row["egress_mode"] == "static"
 
+    async def test_hook_sets_classification_banner(self, app_state, user):
+        """#2768: the marking is a plain mutable attribute — a hook that
+        sets it gets it persisted (normalized), like the STIG's per-level
+        classification from the deployment's own logic."""
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["classification_banner"] = "  CUI  "
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-banner"
+        ws = await self._seed(app_state, user)
+        out = await hooks.fire_workspace_created(ws, user)
+        assert out["classification_banner"] == "CUI"
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["classification_banner"] == "CUI"
+
     async def test_actor_passed_through(self, app_state, user):
         await app_state.state.model.init_db()
         hooks = await self._wire(app_state)
@@ -382,6 +401,8 @@ class TestFireWorkspaceCreated:
         [
             ("setup_state", "bogus"),
             ("per_handle_home", "yes"),
+            ("classification_banner", "A\nB"),
+            ("classification_banner", "X" * 121),
         ],
     )
     async def test_invalid_enum_and_bool_mutations_rejected(

@@ -271,6 +271,15 @@ class TestConfigFile:
         s = make_settings({"KLANGKD_PER_HANDLE_HOME": "true"})
         assert s.per_handle_home is True
 
+    def test_classification_banner_defaults_empty(self):
+        # #2768: unset by default — no banner anywhere, no reserved
+        # screen space.
+        assert make_settings({}).classification_banner == ""
+
+    def test_classification_banner_env_override(self):
+        s = make_settings({"KLANGKD_CLASSIFICATION_BANNER": "CUI"})
+        assert s.classification_banner == "CUI"
+
     # --- Container resource limits (#34) ---
 
     def test_container_limits_default_to_protective_caps(self):

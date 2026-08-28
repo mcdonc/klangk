@@ -940,6 +940,18 @@ class KlangkSettings(BaseSettings):
     # reloadable on SIGHUP (applies to workspaces created after the
     # reload).
     per_handle_home: bool = False
+    # classification_banner: deploy-wide default classification marking
+    # for workspaces (#2768), free text (e.g. UNCLASSIFIED, CUI, SECRET).
+    # Rendered as a persistent banner at the top and bottom of the web
+    # workspace page and as a status line in the TUI (the STIG "mark
+    # sensitive/classified output when required" control). A workspace
+    # overrides it per workspace (``classification_banner`` on
+    # POST/PUT /workspaces); NULL/absent workspaces inherit THIS value
+    # at display time. Empty (the default) = no deploy-wide marking: no
+    # banner is rendered anywhere and no screen space is reserved.
+    # Reloadable on SIGHUP; a reload re-marks every inheriting workspace
+    # immediately (resolution is at display time, not create time).
+    classification_banner: str = ""
     container_subnets: str | None = None
     # Nix workspace feature (#2198, #2201, #2220): per-workspace /nix from a
     # shared seed. ``nix_seed`` groups the seed path + the backend that

@@ -92,6 +92,15 @@ def edit(
             "Applies when the container is next created"
         ),
     ),
+    classification_banner: str | None = typer.Option(
+        None,
+        "--classification-banner",
+        help=(
+            "Classification marking shown as a persistent banner on the "
+            "workspace page (free text, e.g. UNCLASSIFIED, CUI, SECRET). "
+            "Use '' to clear back to the server default"
+        ),
+    ),
 ) -> None:
     """Edit workspace settings.
 
@@ -118,6 +127,7 @@ def edit(
         or memory_limit is not None
         or pids_limit is not None
         or allow_sudo is not None
+        or classification_banner is not None
     )
     if not has_flags:
         # Interactive mode
@@ -125,6 +135,12 @@ def edit(
         new_image = _prompt("Container Image", ws.image)
         new_command = _prompt("Service shell command", ws.service_command)
         new_health_check = _prompt("Health check command", ws.health_check)
+        # The banner prompt shows the deploy-default hint because an empty
+        # answer means "inherit the server default" (#2768).
+        new_banner = _prompt(
+            "Classification banner (empty = server default)",
+            ws.classification_banner,
+        )
 
         # Interactive mount editing loop
         current_mounts = list(ws.mounts or [])
@@ -309,6 +325,8 @@ def edit(
             body["service_command"] = new_command or None
         if new_health_check is not _SENTINEL:
             body["health_check"] = new_health_check or None
+        if new_banner is not _SENTINEL:
+            body["classification_banner"] = new_banner or None
         if mounts_changed:
             body["mounts"] = current_mounts or None
         if env_changed:
@@ -335,6 +353,8 @@ def edit(
             body["per_handle_home"] = per_handle_home
         if health_check is not None:
             body["health_check"] = health_check or None
+        if classification_banner is not None:
+            body["classification_banner"] = classification_banner or None
         if isinstance(mount, list):
             for m in mount:
                 err = validate_mount_spec(m)

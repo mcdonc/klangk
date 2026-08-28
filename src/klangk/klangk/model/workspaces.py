@@ -90,6 +90,47 @@ EGRESS_MODES = frozenset(
 # real column names; the prefix (e.g. "w.") is applied by the caller.
 SORT_COLUMNS = {"created": "created_at", "name": "name"}
 
+# Classification marking bounds (#2768). The marking is free text (an
+# operator-chosen label like ``UNCLASSIFIED`` / ``CUI`` / ``SECRET``),
+# rendered as a one-line banner — so it must be one line, printable, and
+# short enough to fit it.
+CLASSIFICATION_BANNER_MAX_LEN = 120
+
+
+def normalize_classification_banner(value) -> str | None:
+    """Validate + normalize a classification marking (#2768).
+
+    Accepts ``None`` (inherit the deploy default) or a one-line free-text
+    label. Strips surrounding whitespace; an empty result normalizes to
+    ``None`` (inherit). Rejects non-strings, values longer than
+    :data:`CLASSIFICATION_BANNER_MAX_LEN`, and any control character
+    (the marking renders as a single banner line — a newline or tab
+    would break the banner layout, and control chars are meaningless in
+    a marking label).
+
+    Raises ``ValueError`` with an operator-readable message.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(
+            f"classification_banner must be a string, got {value!r}"
+        )
+    v = value.strip()
+    if not v:
+        return None
+    if len(v) > CLASSIFICATION_BANNER_MAX_LEN:
+        raise ValueError(
+            "classification_banner must be at most"
+            f" {CLASSIFICATION_BANNER_MAX_LEN} characters, got {len(v)}"
+        )
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in v):
+        raise ValueError(
+            "classification_banner must be a single line of printable"
+            " text (control characters are not allowed)"
+        )
+    return v
+
 
 def sort_order_clause(sort: str, order: str, prefix: str = "") -> str:
     """Build a deterministic ORDER BY clause for paginated workspace lists.
@@ -111,7 +152,7 @@ _WORKSPACE_FULL_COLUMNS = (
     "SELECT id, user_id, name, container_id, num_ports, image,"
     " service_command, auto_start, setup_state, health_check,"
     " mounts, env, allowed_domains, rejected_domains, settings,"
-    " egress_mode, per_handle_home"
+    " egress_mode, per_handle_home, classification_banner"
 )
 
 
@@ -138,6 +179,7 @@ def _workspace_row_to_dict(row, *, auto_start=True) -> dict:
         "settings": json.loads(row["settings"]) if row["settings"] else None,
         "egress_mode": row["egress_mode"],
         "per_handle_home": bool(row["per_handle_home"]),
+        "classification_banner": row["classification_banner"],
     }
 
 
@@ -179,6 +221,7 @@ class WorkspacesModel:
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
         per_handle_home: bool = True,
+        classification_banner: str | None = None,
     ) -> dict:
         """INSERT a workspace row on ``db`` and return the new workspace dict.
 
@@ -201,8 +244,8 @@ class WorkspacesModel:
             " (id, user_id, name, image, service_command, auto_start,"
             " setup_state, health_check, mounts, env, allowed_domains,"
             " rejected_domains, settings, egress_mode, per_handle_home,"
-            " created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " classification_banner, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 workspace_id,
                 user_id,
@@ -219,6 +262,7 @@ class WorkspacesModel:
                 settings_json,
                 egress_mode,
                 1 if per_handle_home else 0,
+                classification_banner,
                 created_at,
             ),
         )
@@ -238,6 +282,7 @@ class WorkspacesModel:
             "settings": settings,
             "egress_mode": egress_mode,
             "per_handle_home": per_handle_home,
+            "classification_banner": classification_banner,
             "num_ports": DEFAULT_PORTS_PER_WORKSPACE,
             "created_at": created_at,
         }
@@ -347,6 +392,7 @@ class WorkspacesModel:
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
         per_handle_home: bool = True,
+        classification_banner: str | None = None,
     ) -> dict:
         """Create a workspace row AND seed its owner ACE + role groups.
 
@@ -370,6 +416,9 @@ class WorkspacesModel:
             raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
         if not isinstance(per_handle_home, bool):
             raise ValueError(f"Invalid per_handle_home: {per_handle_home!r}")
+        classification_banner = normalize_classification_banner(
+            classification_banner
+        )
         async with self.app.state.db.transaction() as db:
             ws = await self._insert_workspace_row(
                 db,
@@ -387,6 +436,7 @@ class WorkspacesModel:
                 settings=settings,
                 egress_mode=egress_mode,
                 per_handle_home=per_handle_home,
+                classification_banner=classification_banner,
             )
             await self._seed_workspace_acl(db, ws, user_id)
             return ws
@@ -407,6 +457,7 @@ class WorkspacesModel:
         settings: dict | None = None,
         egress_mode: str = EGRESS_MODE_DEFAULT,
         per_handle_home: bool = True,
+        classification_banner: str | None = None,
     ) -> dict:
         """Insert a workspace row only (no ACL seeding).
 
@@ -421,6 +472,9 @@ class WorkspacesModel:
             raise ValueError(f"Invalid egress_mode: {egress_mode!r}")
         if not isinstance(per_handle_home, bool):
             raise ValueError(f"Invalid per_handle_home: {per_handle_home!r}")
+        classification_banner = normalize_classification_banner(
+            classification_banner
+        )
         async with self.app.state.db.transaction() as db:
             return await self._insert_workspace_row(
                 db,
@@ -438,6 +492,7 @@ class WorkspacesModel:
                 settings=settings,
                 egress_mode=egress_mode,
                 per_handle_home=per_handle_home,
+                classification_banner=classification_banner,
             )
 
     async def list_workspaces(
@@ -468,7 +523,7 @@ class WorkspacesModel:
             "SELECT id, name, container_id, image, service_command,"
             " auto_start, setup_state, health_check, mounts, env,"
             " allowed_domains, rejected_domains, settings, egress_mode,"
-            " per_handle_home, created_at"
+            " per_handle_home, classification_banner, created_at"
             " FROM workspaces"
             f" {where} {order_by} LIMIT ? OFFSET ?",
             tuple(params),
@@ -496,6 +551,7 @@ class WorkspacesModel:
                 else None,
                 "egress_mode": row["egress_mode"],
                 "per_handle_home": bool(row["per_handle_home"]),
+                "classification_banner": row["classification_banner"],
                 "created_at": row["created_at"],
             }
             for row in rows
@@ -543,7 +599,8 @@ class WorkspacesModel:
             "SELECT DISTINCT w.id, w.name, w.container_id, w.image,"
             " w.service_command, w.auto_start, w.setup_state,"
             " w.health_check, w.mounts, w.env, w.allowed_domains, w.rejected_domains,"
-            " w.settings, w.egress_mode, w.per_handle_home, w.created_at,"
+            " w.settings, w.egress_mode, w.per_handle_home,"
+            " w.classification_banner, w.created_at,"
             " u.email AS owner_email"
             " FROM workspaces w"
             " JOIN acl_entries ae ON ae.resource = '/workspaces/' || w.id"
@@ -588,6 +645,7 @@ class WorkspacesModel:
                 else None,
                 "egress_mode": row["egress_mode"],
                 "per_handle_home": bool(row["per_handle_home"]),
+                "classification_banner": row["classification_banner"],
                 "created_at": row["created_at"],
                 "owner_email": row["owner_email"],
             }
@@ -802,6 +860,7 @@ class WorkspacesModel:
             "settings",
             "egress_mode",
             "per_handle_home",
+            "classification_banner",
         }
         to_set = {}
         for k, v in fields.items():
@@ -815,6 +874,11 @@ class WorkspacesModel:
                 if v not in EGRESS_MODES:
                     raise ValueError(f"Invalid egress_mode: {v!r}")
                 to_set[k] = v
+            elif k == "classification_banner":
+                # Empty/whitespace text clears the override (back to
+                # inheriting the deploy default); the validator raises
+                # on control characters / oversize values.
+                to_set[k] = normalize_classification_banner(v)
             elif k in (
                 "mounts",
                 "env",

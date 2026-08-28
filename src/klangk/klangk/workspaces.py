@@ -293,10 +293,10 @@ class Workspaces:
             "num_ports": ws.get("num_ports", 5),
             # Preserve egress posture across export -> import (#2402).
             "egress_mode": ws.get("egress_mode"),
-            # Preserve the home layout across export -> import (#2722).
-            # Legacy archives without the field import as per-handle
-            # (True) — every pre-#2169 workspace was per-user-homed.
             "per_handle_home": ws.get("per_handle_home", True),
+            # Preserve the classification marking across export -> import
+            # (#2768) — an imported workspace keeps its classification.
+            "classification_banner": ws.get("classification_banner"),
         }
 
     # --- path helpers (close over root) ---
@@ -461,6 +461,7 @@ class Workspaces:
         settings: dict | None = None,
         egress_mode: str = model.EGRESS_MODE_DEFAULT,
         per_handle_home: bool = True,
+        classification_banner: str | None = None,
     ) -> dict:
         workspace = (
             await self.app.state.model.workspaces.create_workspace_with_acl(
@@ -478,6 +479,7 @@ class Workspaces:
                 settings=settings,
                 egress_mode=egress_mode,
                 per_handle_home=per_handle_home,
+                classification_banner=classification_banner,
             )
         )
         home = self.home_path(workspace["id"])

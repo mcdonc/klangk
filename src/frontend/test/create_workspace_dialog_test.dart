@@ -110,7 +110,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(12));
+      expect(find.byType(TextField), findsNWidgets(13));
       expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
     });
 
@@ -193,6 +193,42 @@ void main() {
       expect(postedBody, isNotNull);
       expect(
           postedBody!['health_check'], 'curl -sf http://localhost:8080/health');
+    });
+
+    testWidgets('submits classification_banner when provided (#2768)',
+        (tester) async {
+      Map<String, dynamic>? postedBody;
+      testAuthHttpClientOverride = mockClient((request) async {
+        if (request.url.path == '/api/v1/workspaces' &&
+            request.method == 'POST') {
+          postedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode({'id': 'ws-1', 'name': 'My WS', 'created_at': ''}),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+      await tester.pumpWidget(buildDialog());
+      await tester.pump(); // post-frame callback
+      await tester.pump(); // dialog renders
+
+      await tester.enterText(_nameField(), 'My WS');
+      final bannerField = find.byWidgetPredicate(
+        (w) =>
+            w is TextField &&
+            w.decoration?.labelText == 'Classification Banner',
+      );
+      await tester.ensureVisible(bannerField);
+      await tester.enterText(bannerField, 'CUI');
+      // Submit via Enter in the marking field — exercises its onSubmitted
+      // -> _submit() path.
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      await tester.pump();
+
+      expect(postedBody, isNotNull);
+      expect(postedBody!['classification_banner'], 'CUI');
     });
 
     testWidgets('shows error on failure', (tester) async {

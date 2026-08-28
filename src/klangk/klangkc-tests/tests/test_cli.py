@@ -1295,6 +1295,52 @@ class TestKlangkClient:
         )
         assert w2.per_handle_home is True
 
+    def test_create_workspace_includes_classification_banner(self):
+        client = KlangkClient("http://test:8995", "token")
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            "id": "ws-1",
+            "name": "n",
+            "created_at": "x",
+        }
+        with patch.object(client, "post", return_value=mock_resp):
+            # #2768: only a non-empty label sets the override; omitted or
+            # empty = inherit the deploy default.
+            client.create_workspace("n", classification_banner="CUI")
+            assert (
+                client.post.call_args.kwargs["json"]["classification_banner"]
+                == "CUI"
+            )
+            client.create_workspace("n2")
+            assert (
+                "classification_banner"
+                not in client.post.call_args.kwargs["json"]
+            )
+            client.create_workspace("n3", classification_banner="")
+            assert (
+                "classification_banner"
+                not in client.post.call_args.kwargs["json"]
+            )
+
+    def test_workspace_from_json_parses_classification_banner(self):
+        # #2768: the marking drives the TUI detail status line; None =
+        # inherit the deploy default.
+        w = KlangkClient._workspace_from_json(
+            {
+                "id": "ws-1",
+                "name": "n",
+                "created_at": "x",
+                "classification_banner": "SECRET",
+            },
+            shared=False,
+        )
+        assert w.classification_banner == "SECRET"
+        w2 = KlangkClient._workspace_from_json(
+            {"id": "ws-1", "name": "n", "created_at": "x"},
+            shared=False,
+        )
+        assert w2.classification_banner is None
+
     def test_create_workspace_includes_allowed_domains(self):
         client = KlangkClient("http://test:8995", "token")
         mock_resp = MagicMock(status_code=200)

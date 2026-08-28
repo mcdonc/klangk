@@ -70,6 +70,8 @@ from .workspaces import (
     EGRESS_MODE_ALLOW,
     EGRESS_MODE_DEFAULT,
     EGRESS_MODES,
+    CLASSIFICATION_BANNER_MAX_LEN,
+    normalize_classification_banner,
 )
 from .ports import (
     MAX_PORT,
@@ -137,6 +139,8 @@ __all__ = (
     "EGRESS_MODE_ALLOW",
     "EGRESS_MODE_DEFAULT",
     "EGRESS_MODES",
+    "CLASSIFICATION_BANNER_MAX_LEN",
+    "normalize_classification_banner",
     # ports — constants + pure socket probe (re-exported via util too)
     "MAX_PORT",
     "port_in_use",

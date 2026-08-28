@@ -222,6 +222,19 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`KLANGKD_CLASSIFICATION_BANNER` (#2768).** Deploy-wide default
+  classification marking (free text) for the always-visible marking banner
+  the Application Security and Development STIG requires ("markings at the
+  top and the bottom of screens"). Per-workspace override via the
+  `classification_banner` field on `POST`/`PUT /api/v1/workspaces`, `klangk
+create`/`edit --classification-banner`, and the create/edit UIs; the
+  workspace-created hook can set it like any other attribute. The web
+  workspace page renders the banner pinned at the very top and bottom of
+  the screen (color-coded by marking), and the TUI workspace detail shows
+  a matching status line. With no marking configured (the default) no
+  banner is rendered and no screen space is reserved. Downloaded/exported
+  files are not marked — the screen banner is the scope.
+
 - **`files-write` permission (#2705).** The mutating files endpoints —
   upload (`POST …/files/upload`), rename (`POST …/files/rename`), and
   delete (`DELETE …/files`) — now require the new `files-write`

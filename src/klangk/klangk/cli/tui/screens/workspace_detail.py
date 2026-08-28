@@ -26,6 +26,7 @@ from textual.widgets import (
 )
 
 from ...client import AuthError, WorkspaceNotFoundError
+from ..marking import effective_marking, marking_style
 from ._base import (
     CheatsheetScreen,
     ConfirmScreen,
@@ -94,6 +95,15 @@ class WorkspaceDetailScreen(StatusScreen):
     WorkspaceDetailScreen #detail_body {
         margin-top: 1;
     }
+    /* #2768: the classification marking line. Full-width, height 1,
+    colored by marking convention. ``display: none`` when no marking is
+    configured (workspace override or deploy default) so no row is
+    reserved — the #2768 clarification. */
+    WorkspaceDetailScreen #marking_bar {
+        height: 1;
+        text-align: center;
+        display: none;
+    }
     """
 
     def __init__(self, name: str) -> None:
@@ -107,6 +117,10 @@ class WorkspaceDetailScreen(StatusScreen):
         self._shared_terminals: list[dict] = []
         self._missing = False
         self._load_error: str | None = None
+        # #2768: the deploy-wide default classification marking, fetched
+        # once (off the event loop) so the marking bar can fall back to it
+        # for a workspace without its own override. "" = none/unreachable.
+        self._deploy_banner = ""
         # Serializes terminal-list renders. Adding/removing a terminal fires
         # _render_terminals from BOTH the action handler and the backend's
         # terminals_changed broadcast; without a lock those two concurrent
@@ -129,6 +143,7 @@ class WorkspaceDetailScreen(StatusScreen):
         shared_list = SpatialListView(id="shared_term_list")
         shared_list.SPATIAL_UP_TARGET = "#term_list"
         yield Vertical(
+            Static("", id="marking_bar"),
             Horizontal(
                 Static("Terminals", id="term_label"),
                 Static(
@@ -200,6 +215,15 @@ class WorkspaceDetailScreen(StatusScreen):
         self.query_one("#term_list", ListView).focus()
 
     async def _mount_async(self) -> None:
+        # The deploy-default marking fetch is a plain HTTP call — run it
+        # off the event loop so a slow/unreachable server cannot stall
+        # the screen mount (same posture as _load_terminals).
+        try:
+            self._deploy_banner = await asyncio.to_thread(
+                self.app.tui_state.default_classification_banner
+            )
+        except Exception:  # noqa: BLE001 — degrade to no deploy marking
+            self._deploy_banner = ""
         await self._load()
         if self._ws is not None and not self._ws.running:
             await self._start_if_stopped()
@@ -281,6 +305,7 @@ class WorkspaceDetailScreen(StatusScreen):
         # terminal row green-then-grey, #1956) is recovered within moments.
         # No-op while a modal is on top (guarded in _focus_term_list).
         self._focus_term_list()
+        self._render_marking_bar()
         ws = self._ws
         body = self.query_one("#detail_body", Static)
         if ws is None:
@@ -310,11 +335,40 @@ class WorkspaceDetailScreen(StatusScreen):
             or 80
         )
         body.update(
-            Text.from_ansi(self._render_detail(self._detail_rows(ws), width))
+            Text.from_ansi(
+                self._render_detail(
+                    self._detail_rows(ws, self._deploy_banner), width
+                )
+            )
         )
 
+    def _render_marking_bar(self) -> None:
+        """Render (or hide) the classification marking line (#2768).
+
+        The STIG posture: the marking is persistent — visible on every
+        render of the detail screen, top of the screen, color-coded. With
+        no effective marking (no workspace override, no deploy default)
+        the bar is hidden entirely and reserves no row.
+        """
+        banner = effective_marking(
+            getattr(self._ws, "classification_banner", None)
+            if self._ws is not None
+            else None,
+            self._deploy_banner,
+        )
+        try:
+            bar = self.query_one("#marking_bar", Static)
+        except NoMatches:  # pragma: no cover - not yet mounted
+            return
+        if not banner:
+            bar.display = False
+            return
+        bar.display = True
+        # Text (not markup) so a label containing brackets stays literal.
+        bar.update(Text(banner, style=marking_style(banner)))
+
     @staticmethod
-    def _detail_rows(ws) -> list[tuple[str, str]]:
+    def _detail_rows(ws, deploy_banner: str = "") -> list[tuple[str, str]]:
         """Build the (label, value) rows shown in the workspace detail table."""
         rows: list[tuple[str, str]] = [
             ("id", str(ws.id)),
@@ -343,6 +397,11 @@ class WorkspaceDetailScreen(StatusScreen):
         if ws.health_check:
             rows.append(("health check", ws.health_check))
         rows.append(("auto-start", "on" if ws.auto_start else "off"))
+        banner = effective_marking(
+            getattr(ws, "classification_banner", None), deploy_banner
+        )
+        if banner:
+            rows.append(("classification", banner))
         if ws.mounts:
             rows.append(("mounts", "\n".join(str(m) for m in ws.mounts)))
         if ws.env:

@@ -20,6 +20,7 @@ import 'workspace_file_api.dart';
 import 'restart_flow.dart';
 import 'workspace_overlays.dart';
 import 'consent_banner.dart';
+import 'marking_banner.dart';
 import 'server_schedule_banner.dart';
 import 'consent_decider_service.dart';
 import 'consent_rules_panel.dart';
@@ -83,12 +84,24 @@ class _WorkspacePageState extends State<WorkspacePage> {
   /// load. When interactive, a [ConsentDeciderService] + [ConsentBanner] let
   /// the deciding user allow/deny held egress requests inline (#2246).
   String _egressMode = 'interactive';
+
+  /// #2768: the effective classification marking — the workspace's own
+  /// `classification_banner`, else the deploy default. Empty = no marking
+  /// configured: no banner, no reserved screen space. Rendered as
+  /// persistent top + bottom bars around the whole page (STIG: "top and
+  /// the bottom of screens").
+  String _marking = '';
+
   ConsentDeciderService? _consent;
   late final ToolPluginRegistry _featureRegistry;
   late final List<ToolPlugin> _features;
   late final List<WorkspaceTabPlugin> _featureTabs;
   late final FileRendererRegistry _fileRenderers;
   WorkspaceConnector? _connector;
+
+  /// #2768: subscription to workspace-row changes (marking edits) so the
+  /// classification banner re-resolves without re-entering the page.
+  StreamSubscription<void>? _markingSub;
 
   /// Resolves a ⌘/Ctrl-clicked terminal token and opens it: external `http(s)`
   /// URLs in a new tab; workspace files (after existence-verify) in the file
@@ -142,6 +155,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
     _featureTabs = WorkspaceTabRegistry().tabs;
     _fileRenderers = buildFileRendererRegistry(_features);
     _fetchWorkspaceName();
+    // #2768: re-resolve the effective marking when the workspace row
+    // changes (the server notifies on a classification_banner edit, so
+    // the banner updates live after saving in the settings panel).
+    _markingSub = context
+        .read<WsClient>()
+        .workspacesChanged
+        .listen((_) => _fetchWorkspaceName());
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
 
@@ -155,6 +175,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
         setState(() {
           if (name != null) _workspaceName = name;
           _egressMode = ws['egress_mode']?.toString() ?? 'interactive';
+          _marking = effectiveMarking(
+            ws['classification_banner']?.toString(),
+            auth.defaultClassificationBanner,
+          );
         });
         if (name != null) setPageTitle(_workspaceName);
         _maybeInitConsent(auth.token);
@@ -493,6 +517,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   void dispose() {
+    _markingSub.cancel();
     _consent?.dispose();
     for (final feature in _features) {
       feature.dispose();
@@ -517,49 +542,63 @@ class _WorkspacePageState extends State<WorkspacePage> {
     final wsClient = context.read<WsClient>();
     final authToken = context.read<AuthService>().token;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: AppBarTitle(
-          title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace',
-        ),
-        actions: [
-          for (final feature in _features)
-            if (feature.buildAppBarAction(context) != null)
-              feature.buildAppBarAction(context)!,
-          const AppBarActions(),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (_egressMode == 'interactive' && _consent != null)
-            ConsentBanner(service: _consent!),
-          ServerScheduleBanner(),
-          Expanded(
-            child: Stack(
-              children: [
-                _buildIdeLayout(wsClient, authToken),
+    // #2768: the classification banner wraps the whole page (top + bottom)
+    // — above the AppBar and outside the body, so it can never be
+    // displaced by the transient banners (those stack below it, inside
+    // the body). Empty marking renders nothing and reserves no space.
+    return Column(
+      children: [
+        MarkingBanner(text: _marking),
+        Expanded(
+          child: Scaffold(
+            appBar: AppBar(
+              title: AppBarTitle(
+                title: _workspaceName.isNotEmpty ? _workspaceName : 'Workspace',
+              ),
+              actions: [
                 for (final feature in _features)
-                  if (feature.buildOverlay(context) != null)
-                    feature.buildOverlay(context)!,
-                if (_containerStopped)
-                  buildContainerStoppedOverlay(
-                    restarting: _restarting,
-                    stopReason: _stopReason,
-                    onRestart: _restartContainer,
-                    onBack: () => context.go('/workspaces'),
+                  if (feature.buildAppBarAction(context) != null)
+                    feature.buildAppBarAction(context)!,
+                const AppBarActions(),
+              ],
+            ),
+            body: Column(
+              children: [
+                if (_egressMode == 'interactive' && _consent != null)
+                  ConsentBanner(service: _consent!),
+                ServerScheduleBanner(),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      _buildIdeLayout(wsClient, authToken),
+                      for (final feature in _features)
+                        if (feature.buildOverlay(context) != null)
+                          feature.buildOverlay(context)!,
+                      if (_containerStopped)
+                        buildContainerStoppedOverlay(
+                          restarting: _restarting,
+                          stopReason: _stopReason,
+                          onRestart: _restartContainer,
+                          onBack: () => context.go('/workspaces'),
+                        ),
+                      if (_disconnected &&
+                          !_containerStopped &&
+                          !wsClient.authFailed)
+                        buildDisconnectedOverlay(
+                          reconnecting: wsClient.reconnecting,
+                          reconnectAttempt: wsClient.reconnectAttempt,
+                          onReconnect: _reconnect,
+                          onBack: () => context.go('/workspaces'),
+                        ),
+                    ],
                   ),
-                if (_disconnected && !_containerStopped && !wsClient.authFailed)
-                  buildDisconnectedOverlay(
-                    reconnecting: wsClient.reconnecting,
-                    reconnectAttempt: wsClient.reconnectAttempt,
-                    onReconnect: _reconnect,
-                    onBack: () => context.go('/workspaces'),
-                  ),
+                ),
               ],
             ),
           ),
-        ],
-      ),
+        ),
+        MarkingBanner(text: _marking),
+      ],
     );
   }
 

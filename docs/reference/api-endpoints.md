@@ -1325,7 +1325,8 @@ are created automatically.
   "service_command": "/bin/bash",
   "mounts": ["my-volume:/home/user/data"],
   "env": { "MY_VAR": "value" },
-  "per_handle_home": true
+  "per_handle_home": true,
+  "classification_banner": "CUI"
 }
 ```
 
@@ -1334,6 +1335,12 @@ All fields except `name` are optional. `per_handle_home` selects the
 gives each member a private `/home/<handle>`, `false` (the server
 default, `KLANGKD_PER_HANDLE_HOME`) shares one `/home/klangk`. Omit it
 to inherit the server default.
+
+`classification_banner` is the workspace's classification marking,
+rendered as the persistent banner on the workspace page (#2768). Free
+text, one line. Omitted/empty = inherit the deploy-wide default
+(`KLANGKD_CLASSIFICATION_BANNER`), resolved at display time; when
+neither is set, no banner is rendered.
 
 ```json
 {
@@ -1660,13 +1667,19 @@ command, volume mounts, environment variables). All fields optional.
   "service_command": "/bin/bash",
   "mounts": ["vol:/data"],
   "env": { "KEY": "VALUE" },
-  "per_handle_home": false
+  "per_handle_home": false,
+  "classification_banner": ""
 }
 ```
 
 `per_handle_home` may be flipped here too; the new layout applies from
 the workspace's next connect/start (open terminals keep their layout
 until they end).
+
+`classification_banner` (#2768) replaces the workspace's marking
+outright; an empty value clears the override back to the deploy-wide
+default (`KLANGKD_CLASSIFICATION_BANNER`). The banner is display-only —
+no container restart is needed and the web UI updates it live.
 
 ```json
 { "status": "updated" }

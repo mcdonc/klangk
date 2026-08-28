@@ -211,6 +211,14 @@ async def get_config(
         # server's default. Not sensitive — the pre-auth payload carries it
         # (the TUI reads /config before login like it does allow_autostart).
         "default_per_handle_home": s.per_handle_home,
+        # Deploy-wide default classification marking (#2768), free text.
+        # Empty/unset = no deploy-wide marking: the web UI renders no
+        # banner and reserves no screen space. A workspace's own
+        # ``classification_banner`` overrides this; workspaces without
+        # one inherit it at display time. Not sensitive — the string is
+        # meant to be shown on screen, so it rides the pre-auth payload
+        # (same posture as default_per_handle_home).
+        "default_classification_banner": s.classification_banner,
         # Surfaced so the UI can validate password length inline (matches
         # the rule enforced server-side by auth.validate_password).
         "min_password_length": app.state.auth.min_password_length,

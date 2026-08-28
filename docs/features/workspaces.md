@@ -38,6 +38,13 @@ optionally configure:
   checkbox starts on the server default (`KLANGKD_PER_HANDLE_HOME`);
   if that default can't be fetched, the choice is left out and the
   server default applies. See [The Shell](the-shell.md).
+- **Classification banner** — a free-text classification marking
+  (e.g. `UNCLASSIFIED`, `CUI`, `SECRET`) shown as a persistent banner
+  at the top and bottom of the workspace page and as a status line in
+  the TUI. Empty = the server default
+  (`KLANGKD_CLASSIFICATION_BANNER`); when neither is set, no banner is
+  rendered and no screen space is reserved. Downloaded/exported files
+  are not marked — the screen banner is the scope.
 
 You can change all of these later from the workspace **Settings** tab.
 

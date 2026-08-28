@@ -9,8 +9,9 @@ validation), migration 0001's shape (password_history + cascade),
 0010's (groups.source marker + name-pattern backfill, #2750),
 0011's (`files-download` mirror of Allow `files` ACEs, #2705),
 0012's (`files-write` mirror of Allow `files-download` ACEs), and
-0013's (exec-and-sync role-group backfill, #2706/#2712), and
-0014's (/groups create ACE tightened to the admin group, #2770).
+0013's (exec-and-sync role-group backfill, #2706/#2712), 0014's
+(/groups create ACE tightened to the admin group, #2770), and
+0015's (workspaces.classification_banner, #2768).
 """
 
 import aiosqlite
@@ -65,6 +66,7 @@ class TestRunner:
             (12, "0012_files_write"),
             (13, "0013_exec_and_sync_permission"),
             (14, "0014_groups_create_admin"),
+            (15, "0015_classification_banner"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -145,6 +147,7 @@ class TestRunner:
                 (12, "0012_files_write"),
                 (13, "0013_exec_and_sync_permission"),
                 (14, "0014_groups_create_admin"),
+                (15, "0015_classification_banner"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -1163,3 +1166,43 @@ class TestPasswordHistory:
             (user["id"],),
         )
         assert row[0] == 0
+
+
+class TestClassificationBanner:
+    async def test_upgrade_adds_null_column(self, temp_data_dir, app_state):
+        """A database last booted before #2768 (workspaces without
+        classification_banner) gets the column from migration 0015, and
+        every pre-existing row reads back NULL — inherit the deploy
+        default, resolved at display time.
+        """
+        from _helpers import get_test_db
+
+        db_path = get_test_db().db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        async with aiosqlite.connect(str(db_path)) as db:
+            await db.execute("""
+                CREATE TABLE workspaces (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    container_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT INTO workspaces (id, user_id, name)"
+                " VALUES ('ws-old', 'user-x', 'legacy')"
+            )
+            await db.commit()
+
+        await app_state.state.model.init_db()
+        rows = await app_state.state.db.fetchall(
+            "SELECT classification_banner FROM workspaces WHERE id = 'ws-old'"
+        )
+        assert rows[0][0] is None
+        # Idempotent: re-running init_db skips the recorded migration.
+        await app_state.state.model.init_db()
+        rows = await app_state.state.db.fetchall(
+            "SELECT classification_banner FROM workspaces WHERE id = 'ws-old'"
+        )
+        assert rows[0][0] is None
