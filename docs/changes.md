@@ -254,18 +254,18 @@ sync` report a clear permission-denied error.
 ### Added
 
 - **`KLANGKD_CONTAINER_NPROC_LIMIT` / `KLANGKD_CONTAINER_NOFILE_LIMIT`
-  (#2085).** Deploy-wide per-process rlimits applied to every workspace
-  container via podman `--ulimit nproc=` / `--ulimit nofile=`. Values take
-  the `<soft>[:<hard>]` form (omitting the hard part sets both); default
-  unset = no flag = no behavior change, and malformed values abort
-  startup. Unlike `KLANGKD_CONTAINER_PIDS_LIMIT` (a cgroup-level cap on
-  the container as a whole), these are per-uid/per-process ceilings —
-  the knobs `ulimit -u` / `ulimit -n` report inside a workspace. A
-  workspace may override either via its settings bag (`nproc_limit` /
-  `nofile_limit`), settable through `PATCH /workspaces/{id}/settings`,
-  the workspace create/update `settings` field, or the create/edit forms
-  in the web UI and TUI. Reloadable on SIGHUP; applies to containers
-  started after the change.
+  (#2085).** Deploy-wide per-process rlimits for workspace containers
+  via podman `--ulimit` — the per-uid ceilings `ulimit -u` / `ulimit -n`
+  report, complementary to the cgroup-level pids limit. Values take the
+  `<soft>[:<hard>]` form (omitting the hard part sets both; podman's
+  `unlimited`/`-1`/`host` spellings are not accepted); default unset =
+  no flag, malformed values abort startup. Note `nproc` counts the host
+  uid's processes across all namespaces, so on the default rootless
+  keep-id deployment it is a combined budget shared by all workspaces,
+  not a per-workspace cap. Per-workspace override via the settings bag
+  (`nproc_limit` / `nofile_limit`: `PATCH /workspaces/{id}/settings`,
+  create/update `settings`, or the web/TUI forms); applies to containers
+  started after the change, reloadable on SIGHUP.
 
 - **`KLANGKD_CLASSIFICATION_BANNER` (#2768).** Deploy-wide default
   classification marking (free text) for the always-visible marking banner
@@ -1478,6 +1478,16 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   custom `features.yaml` if present.
 
 ### Fixed
+
+- **Workspace settings UI/TUI: clearing a limit field now actually
+  clears the override (#2085).** The web settings panel and the TUI edit
+  form seed the saved settings bag from the stored bag; a cleared
+  text field previously dropped its key from the form, letting the
+  stored override silently persist through the save. Form-managed
+  keys (idle timeout, CPU/memory/PIDs limits, /tmp size, nproc/nofile
+  limits) are now removed from the seed before overlay, so an emptied
+  field reverts that setting to the deploy default; API-only keys
+  (e.g. bridge_timeout) still survive the save.
 
 - **Files tab: a directory listing failure no longer renders as an
   empty directory (#2766).** Listing an unreadable directory (e.g. a

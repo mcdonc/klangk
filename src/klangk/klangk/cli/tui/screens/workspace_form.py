@@ -105,6 +105,23 @@ EGRESS_MODE_INTERACTIVE = "interactive"
 EGRESS_MODE_STATIC = "static"
 EGRESS_MODE_ALLOW = "allow"
 EGRESS_MODE_DEFAULT = EGRESS_MODE_INTERACTIVE
+
+# Settings-bag keys the edit form manages via text fields (#2085 review).
+# The edit save seeds the new bag from the stored one so API-only keys
+# (e.g. bridge_timeout) survive the full-replace PUT; these keys are
+# stripped from that seed so a cleared field actually clears the stored
+# override instead of silently keeping it.
+_FORM_MANAGED_SETTINGS_KEYS = frozenset(
+    {
+        "idle_timeout",
+        "cpu_limit",
+        "memory_limit",
+        "pids_limit",
+        "tmp_size",
+        "nproc_limit",
+        "nofile_limit",
+    }
+)
 _EGRESS_MODE_OPTIONS = [
     (Text("interactive (ask first)"), EGRESS_MODE_INTERACTIVE),
     (Text("static (deny + record)"), EGRESS_MODE_STATIC),
@@ -1511,8 +1528,18 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         # (e.g. bridge_timeout) and toggle-gated keys (nix, allow_sudo)
         # whose toggles are hidden on this deploy must survive the save
         # instead of being silently wiped (#2017 review).
+        #
+        # Text-field-managed keys are the exception (#2085 review): a
+        # cleared field means "revert to the deploy default", so they
+        # are stripped from the seed before the form values overlay —
+        # otherwise the stored override would silently persist through
+        # the save.
         merged_settings = {
-            **(self._ws.settings or {}),
+            **{
+                k: v
+                for k, v in (self._ws.settings or {}).items()
+                if k not in _FORM_MANAGED_SETTINGS_KEYS
+            },
             **(settings or {}),
         }
         # #2233: emit an explicit nix value whenever the toggle is shown —
@@ -1689,6 +1716,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             "cpu_limit",
             "memory_limit",
             "pids_limit",
+            "tmp_size",
             "nproc_limit",
             "nofile_limit",
         ):

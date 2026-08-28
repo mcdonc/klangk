@@ -13351,6 +13351,48 @@ async def test_edit_screen_save_includes_settings(monkeypatch):
         }
 
 
+async def test_edit_screen_clearing_fields_clears_overrides(monkeypatch):
+    """#2085 review: an emptied field reverts that setting to the deploy
+    default — form-managed keys are stripped from the seeded bag — while
+    API-only keys (bridge_timeout) survive the full-replace PUT."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def update(wid, **f):
+        captured["id"] = wid
+        captured.update(f)
+
+    ws = _wsobj(
+        "alpha",
+        image="base",
+        running=False,
+        settings={
+            "cpu_limit": 2.0,
+            "nproc_limit": "1024:2048",
+            "bridge_timeout": 60,
+        },
+    )
+    app = KlangkApp(_edit_state(ws, update=update))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        # Clear the pre-populated fields, keep one value.
+        es.query_one("#cpu_limit", Input).value = ""
+        es.query_one("#nproc_limit", Input).value = ""
+        es.query_one("#nofile_limit", Input).value = "65536"
+        es._save()
+        await app.workers.wait_for_complete()
+        assert captured["settings"] == {
+            "nofile_limit": "65536",
+            "bridge_timeout": 60,
+        }
+
+
 async def test_edit_screen_prepopulates_settings(monkeypatch):
     """Edit form pre-populates resource fields from workspace settings (#2217)."""
 

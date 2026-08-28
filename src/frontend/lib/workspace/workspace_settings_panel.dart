@@ -595,9 +595,27 @@ class _SettingsFormState extends State<_SettingsForm> {
     // bridge_timeout) and toggle-gated keys (nix, allow_sudo) whose
     // toggles are hidden on this deploy must survive the save instead of
     // being silently wiped (#2017 review).
+    //
+    // Text-field-managed keys are the exception (#2085 review): a
+    // cleared field means "revert to the deploy default", so they are
+    // stripped from the seed before the form values overlay — otherwise
+    // the stored override would silently persist through the save.
     final bag = (widget.workspace['settings'] as Map<String, dynamic>?) ??
         const <String, dynamic>{};
-    final Map<String, dynamic> settings = {...bag, ...formSettings};
+    const formManagedKeys = {
+      'idle_timeout',
+      'cpu_limit',
+      'memory_limit',
+      'pids_limit',
+      'tmp_size',
+      'nproc_limit',
+      'nofile_limit',
+    };
+    final seeded = {
+      for (final e in bag.entries)
+        if (!formManagedKeys.contains(e.key)) e.key: e.value,
+    };
+    final Map<String, dynamic> settings = {...seeded, ...formSettings};
     // #2233: emit an explicit nix value (true or false) whenever the
     // toggle is shown — including false, to actually turn the mount off
     // (omitting the key leaves the stale bag untouched).

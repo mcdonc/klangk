@@ -251,7 +251,11 @@ void main() {
       Map<String, dynamic>? savedBody;
       final ws = {
         ..._workspace,
-        'settings': {'nproc_limit': '1024:2048', 'nofile_limit': '65536'},
+        'settings': {
+          'nproc_limit': '1024:2048',
+          'nofile_limit': '65536',
+          'bridge_timeout': 60,
+        },
       };
       testAuthHttpClientOverride = MockClient((request) async {
         final p = request.url.path;
@@ -273,7 +277,7 @@ void main() {
         }
         if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
           savedBody = jsonDecode(request.body) as Map<String, dynamic>;
-          return http.Response(jsonEncode({'status': 'updated'}), 200);
+          return http.Response(jsonEncode({...ws, 'status': 'updated'}), 200);
         }
         return http.Response('not found', 404);
       });
@@ -301,9 +305,22 @@ void main() {
 
       expect(savedBody, isNotNull);
       expect(savedBody!['settings'], {
+        'bridge_timeout': 60,
         'nproc_limit': '512',
         'nofile_limit': '1024:4096',
       });
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+
+      // Clearing both fields drops the overrides from the saved bag
+      // (revert to deploy default); an API-only key in the seeded bag
+      // survives the full-replace PUT.
+      await tester.enterText(nprocField, '');
+      await tester.enterText(nofileField, '');
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(savedBody!['settings'], {'bridge_timeout': 60});
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });
