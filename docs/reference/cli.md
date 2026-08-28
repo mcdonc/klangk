@@ -261,8 +261,8 @@ klangk sandbox myws ~/projects/myapp    # specify sandbox root explicitly
 klangk sandbox myws --force             # re-apply config and re-run setup on existing workspace
 klangk exec my-project ls /home/klangk           # run a command in the container (login shell: sources ~/.profile)
 klangk exec --raw my-project rsync --server ...      # raw argv, no shell (for transports like rsync)
-klangk monitor                                        # stream all server events as JSON
-klangk monitor --type service_health | jq .           # pretty-print health transitions
+klangk monitor                                        # stream all server events you can see (scoped to your workspaces, #1714) as JSON
+klangk monitor --type service_health | jq .           # pretty-print health transitions for your workspaces
 klangk monitor --type service_health -- sh -c '[ "$KLANGK_HEALTHY" = false ] && notify-send "klangk" "$KLANGK_HEALTH_MESSAGE"'  # alert with the failure reason
 klangk sync ~/src my-project:/home/klangk/src      # push files to the container — needs the exec-and-sync permission
 klangk sync my-project:/home/klangk/src ~/src       # pull files out of the container — needs the exec-and-sync permission

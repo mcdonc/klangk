@@ -84,11 +84,12 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
     safe_ws.start_sender()
     conn = Connection(safe_ws, user, app)
     app.state.sockets.connections[safe_ws] = conn
-    # Replay current health of every health-checked workspace so a
-    # pure-WS consumer (e.g. ``klangk monitor``) sees steady-state
-    # status immediately instead of being blind until the next
-    # transition (#1175 item 1).
-    app.state.sockets.send_service_health_snapshot(safe_ws)
+    # Replay current health of every health-checked workspace the user
+    # can open so a pure-WS consumer (e.g. ``klangk monitor``) sees
+    # steady-state status immediately instead of being blind until the
+    # next transition (#1175 item 1). Scoped to the user's memberships
+    # (#1714).
+    await app.state.sockets.send_service_health_snapshot(safe_ws)
     # #2661: replay any pending server stop/recycle schedule so a
     # just-connected client can show the countdown immediately instead
     # of waiting for the scheduler's next periodic broadcast. Guarded:

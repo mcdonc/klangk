@@ -452,7 +452,7 @@ class MemoryPressureEvictor:
         )
         sockets = self.app.state.sockets
         registry = self.app.state.container_registry
-        sockets.notify_workspace_evicted(
+        await sockets.notify_workspace_evicted(
             victim.workspace_id,
             reason="host memory pressure",
         )

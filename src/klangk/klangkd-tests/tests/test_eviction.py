@@ -49,10 +49,14 @@ def _make_app_state(env=None):
     app = types.SimpleNamespace(state=types.SimpleNamespace(settings=settings))
     from klangk.podman import Podman
     from klangk.wshandler.session import WebSocketState
+    from _helpers import wire_db_and_model
 
     app.state.podman = Podman(app)
     app.state.sockets = WebSocketState(app)
     app.state.container_registry = container.ContainerRegistry(app)
+    # #1714: the evicted broadcast ACL-checks recipients, so the eviction
+    # paths need the DB/model/acl wiring the real app has.
+    wire_db_and_model(app)
     return app
 
 
@@ -389,11 +393,11 @@ class TestEvictOne:
         self._tracked(registry, "ws-1", "cid-1", 100)
         registry.notify_workspace_killed = AsyncMock()
         registry.stop_and_remove_container = AsyncMock()
-        broadcast = MagicMock()
+        broadcast = AsyncMock()
         app.state.sockets.notify_workspace_evicted = broadcast
 
         await evictor.evict_one(0.03)
-        broadcast.assert_called_once_with(
+        broadcast.assert_awaited_once_with(
             "ws-1", reason="host memory pressure"
         )
 
@@ -877,21 +881,48 @@ class TestNotifyWorkspaceEvicted:
     def _sockets(self):
         app = _make_app_state()
         from klangk.wshandler.session import WebSocketState
+        from _helpers import wire_db_and_model
 
-        return WebSocketState(app)
+        wire_db_and_model(app)
+        return WebSocketState(app), app
 
     def _conn(self, user_id="u1"):
         conn = MagicMock()
         conn.user = {"id": user_id}
         return conn
 
-    def test_fans_out_to_all_connections(self):
-        sockets = self._sockets()
+    async def _grant(self, app, user_id, workspace_id):
+        from klangk import model
+
+        await app.state.model.init_db()
+        # acl_entries.user_id has an FK to users(id): plant the row.
+        async with app.state.db.transaction() as tx:
+            await tx.execute(
+                "INSERT OR IGNORE INTO users (id, email, verified)"
+                " VALUES (?, ?, 1)",
+                (user_id, f"{user_id}@test.example"),
+            )
+        resource = f"/workspaces/{workspace_id}"
+        entries = await app.state.model.acl.get_acl_entries(resource)
+        position = max((e["position"] for e in entries), default=-1) + 1
+        await app.state.model.acl.add_acl_entry(
+            resource,
+            position,
+            model.ACTION_ALLOW,
+            "terminal",
+            model.PRINCIPAL_USER,
+            user_id=user_id,
+        )
+
+    async def test_fans_out_to_members(self):
+        sockets, app = self._sockets()
         sock1, sock2 = MagicMock(), MagicMock()
         sockets.connections[sock1] = self._conn()
         sockets.connections[sock2] = self._conn("u2")
+        await self._grant(app, "u1", "ws-1")
+        await self._grant(app, "u2", "ws-1")
 
-        sockets.notify_workspace_evicted("ws-1")
+        await sockets.notify_workspace_evicted("ws-1")
 
         for sock in (sock1, sock2):
             sock.send_json.assert_called_once_with(
@@ -902,8 +933,21 @@ class TestNotifyWorkspaceEvicted:
                 }
             )
 
-    def test_dead_socket_popped_unauthenticated_skipped(self):
-        sockets = self._sockets()
+    async def test_non_member_receives_nothing(self):
+        """#1714: a connected user with no grant on the workspace is skipped."""
+        sockets, app = self._sockets()
+        member, stranger = MagicMock(), MagicMock()
+        sockets.connections[member] = self._conn()
+        sockets.connections[stranger] = self._conn("u2")
+        await self._grant(app, "u1", "ws-1")
+
+        await sockets.notify_workspace_evicted("ws-1")
+
+        member.send_json.assert_called_once()
+        stranger.send_json.assert_not_called()
+
+    async def test_dead_socket_popped_unauthenticated_skipped(self):
+        sockets, app = self._sockets()
         dead, alive, anon = MagicMock(), MagicMock(), MagicMock()
         dead.send_json.side_effect = WS_ERRORS[0](
             "sender stopped — cannot enqueue"
@@ -911,8 +955,9 @@ class TestNotifyWorkspaceEvicted:
         sockets.connections[dead] = self._conn()
         sockets.connections[alive] = self._conn()
         sockets.connections[anon] = self._conn(user_id=None)
+        await self._grant(app, "u1", "ws-1")
 
-        sockets.notify_workspace_evicted("ws-1", reason="other")
+        await sockets.notify_workspace_evicted("ws-1", reason="other")
 
         alive.send_json.assert_called_once()
         anon.send_json.assert_not_called()

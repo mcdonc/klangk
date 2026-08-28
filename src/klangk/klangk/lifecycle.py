@@ -45,6 +45,38 @@ from .model.users import AGENT_EMAIL, AGENT_HANDLE
 logger = logging.getLogger(__name__)
 
 
+def broadcast_container_status(
+    app, workspace_id: str, running: bool, started_at: float | None = None
+) -> None:
+    """Schedule the member-scoped ``container_status`` broadcast (#1714).
+
+    Registered as the container registry's status-change callback. The
+    registry invokes it synchronously (from ``track_activity`` on a
+    container start and the stop paths), but the broadcast itself is
+    async: it ACL-checks each recipient for workspace membership.
+    Fire-and-forget on the running loop; outside a loop (sync test
+    harnesses driving the registry directly) there is nothing to
+    broadcast to.
+    """
+
+    async def _run() -> None:
+        try:
+            await app.state.sockets.notify_container_status(
+                workspace_id, running, started_at
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "container_status broadcast failed for workspace %s",
+                workspace_id,
+            )
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(_run())
+
+
 # Settings that a SIGHUP reload re-resolves and validates but CANNOT apply
 # without a full process restart: the HTTP listener is bound for the life of
 # the process, and the DB engine + on-disk state dir are already open/written.
@@ -1022,7 +1054,9 @@ async def lifespan(app: FastAPI):
 
     registry.set_on_workspace_killed(_on_workspace_killed)
     registry.set_on_container_status_changed(
-        app.state.sockets.notify_container_status
+        lambda ws_id, running, started_at=None: broadcast_container_status(
+            app, ws_id, running, started_at
+        )
     )
     await app.state.lifecycle.startup()
     # Reap orphaned pending consent rows from a prior run: the in-memory
