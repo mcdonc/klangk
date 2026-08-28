@@ -47,6 +47,9 @@ For each workspace with a health check configured:
    shared users, role groups) connected over WebSocket gets a
    `service_health` event so the UI can update in real time (#1714:
    the fan-out is scoped server-side — other tenants never see it).
+   Membership here means the `terminal` permission — the same gate as
+   connecting to the workspace — so a view-only grantee sees status in
+   the workspace list (via HTTP) but receives no live delta frames.
    Because the stream is deltas-only (it fires on transitions, not
    every poll), a client that connects to an _already_-unhealthy
    workspace also receives a one-time **snapshot** of the current

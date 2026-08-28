@@ -133,20 +133,17 @@ operators or integrators to act when upgrading.
   otherwise. Previously a container holding workspace A's token could
   relay actions (e.g. git-credential prompts, browser fetch) to another
   workspace's browser tab if it learned that tab's browser ID — the
-  token provided no workspace boundary on the relay.
-=======
-- **Workspace status broadcasts are now scoped to workspace members
-  (#1714).** `container_status`, `service_health` (including the
-  connect-time snapshot), and `workspace_evicted` WebSocket events
-  were previously fanned out to every authenticated connection, letting
-  any connected client enumerate every workspace's id, running state,
-  health, and the bounded `health_message` tail of another tenant's
-  service output. The server now delivers these frames only to
-  connections of users holding workspace access (the `terminal`
-  permission — owner, direct share, or role group). `klangk monitor`
-  and the workspace list page behave as before, seeing exactly the
-  workspaces the logged-in user can open.
-
+  token provided no workspace boundary on the relay.- **Workspace status WebSocket broadcasts are now scoped to workspace
+  members (#1714).** `container_status`, `service_health` (including
+  the connect-time snapshot), and `workspace_evicted` frames were
+  fanned out to every authenticated connection, letting any connected
+  client enumerate every workspace's id, running state, health, and
+  the bounded `health_message` tail of another tenant's service
+  output; they are now delivered only to users holding the `terminal`
+  permission on the workspace. A view-only grantee still sees status
+  in the workspace list (HTTP), but receives no live deltas; an admin
+  watching other tenants' workspaces via `klangk monitor` now sees
+  only their own workspaces — intended, and part of the fix.
 - **`exec-and-sync` permission gates one-shot command execution and
   `klangk sync` (#2706, #2712).** The one-shot exec channel — `klangk
 exec`, and the rsync transport `klangk sync` and `klangk sandbox`

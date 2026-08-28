@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from .. import model
+from ..acl import check_permission_inmemory, resource_ancestors
 from ..terminal import SERVICE_CMD_WINDOW
 from ..window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
@@ -818,6 +819,13 @@ class WebSocketState:
         Sends to all of an allowed user's connections (a user with the
         workspace open in two tabs gets both). Dead sockets are pruned;
         dispatch.py owns cleanup on disconnect.
+
+        One ACE fetch for the whole fan-out: the entries for the
+        resource's ancestor paths are loaded once and each distinct
+        user is then evaluated in memory
+        (:func:`klangk.acl.check_permission_inmemory`, the same
+        preload-then-evaluate shape ``permissions_for_resources`` uses)
+        — a transition burst doesn't re-query identical paths per user.
         """
         by_user: dict[str, list[tuple[SafeWebSocket, "Connection"]]] = {}
         for sock, conn in self.connections.items():
@@ -825,14 +833,19 @@ class WebSocketState:
             if uid is None:
                 continue
             by_user.setdefault(uid, []).append((sock, conn))
+        if not by_user:
+            return
+        resource = f"/workspaces/{workspace_id}"
         acl = self.app.state.acl
+        entries = await self.app.state.model.acl.get_acl_entries_map(
+            resource_ancestors(resource)
+        )
         dead = []
         for uid, conns in by_user.items():
             principals = await acl.get_principals(uid)
-            allowed = await acl.check_permission(
-                f"/workspaces/{workspace_id}", principals, "terminal"
-            )
-            if not allowed:
+            if not check_permission_inmemory(
+                resource, principals, "terminal", entries
+            ):
                 continue
             for sock, _conn in conns:
                 try:
@@ -1027,29 +1040,48 @@ class WebSocketState:
 
         Mirrors :meth:`notify_service_health`'s frame shape.  Consumer-side
         the frame is applied idempotently, so a transition arriving just
-        after the snapshot is harmless.  Workspaces whose container has
-        died are absent from ``registry.states`` and thus skipped (the
-        container-death hole is #1175 item 2).
+        after the snapshot is harmless; a transition or death arriving
+        *during* the snapshot's ACL pass is detected (seq/state re-check)
+        and the stale replay frame is dropped rather than sent over the
+        newer delta.  Workspaces whose container has died are absent
+        from ``registry.states`` and thus skipped (the container-death
+        hole is #1175 item 2).
         """
         conn = self.connections.get(sock)
         user_id = conn.user.get("id") if conn else None
         if user_id is None:
             return
+        registry = self.app.state.container_registry
+        # Snapshot (state, seq) pairs: the ACL pass below awaits, and a
+        # container that dies or a health transition that fires in that
+        # window must not be overwritten by a stale replay frame — the
+        # per-workspace seq bumps on every emit and the state is dropped
+        # on death, so a mismatch means a newer frame already went out.
         candidates = [
-            cs
-            for cs in self.app.state.container_registry.states.values()
+            (cs, cs.health_seq)
+            for cs in registry.states.values()
             if cs.health_check is not None and cs.health_status is not None
         ]
         if not candidates:
             return
         acl = self.app.state.acl
         principals = await acl.get_principals(user_id)
-        resources = [f"/workspaces/{cs.workspace_id}" for cs in candidates]
+        resources = [f"/workspaces/{cs.workspace_id}" for cs, _ in candidates]
         allowed = await acl.permissions_for_resources(
             resources, principals, ["terminal"]
         )
-        for cs in candidates:
+        for cs, seq in candidates:
             if f"/workspaces/{cs.workspace_id}" not in allowed:
+                continue
+            if registry.states.get(cs.workspace_id) is not cs:
+                # Died (state removed) or was re-bound while the ACL
+                # pass was in flight — its terminal/death frame already
+                # went to this member; don't replay over it.
+                continue
+            if cs.health_seq != seq:
+                # A transition fired mid-snapshot; its delta frame
+                # already went out — replaying the older status over it
+                # would flip the client backwards.
                 continue
             try:
                 sock.send_json(

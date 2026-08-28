@@ -2608,6 +2608,27 @@ class TestHandleWebsocket:
 
         websocket.accept.assert_awaited_once()
 
+    async def test_snapshot_failure_still_runs_cleanup(self, user, app_state):
+        """#1714 review: the connect-time snapshot awaits DB queries inside
+        the handler's try — a raise there must run the ``finally`` cleanup
+        (sender stopped, connection unregistered), not leak them."""
+        app_state = _make_app_state()
+
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
+
+        with patch.object(
+            app_state.state.sockets,
+            "send_service_health_snapshot",
+            AsyncMock(side_effect=RuntimeError("db unavailable")),
+        ):
+            await handle_websocket(websocket, app_state)
+
+        websocket.accept.assert_awaited_once()
+        # The finally block ran: the connection was unregistered.
+        assert not app_state.state.sockets.connections
+
     async def test_runtime_error_treated_as_disconnect(self, user, app_state):
         app_state = _make_app_state()
 
@@ -5182,6 +5203,87 @@ class TestServiceHealthSnapshot:
             registry.states.clear()
             self._register(sock, app_state)
             await sockets.send_service_health_snapshot(sock)
+        finally:
+            registry.states.clear()
+            registry.states.update(saved)
+            sockets.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    async def test_state_dropped_during_acl_pass_is_not_replayed(
+        self, app_state
+    ):
+        """#1714 review: a container dying while the snapshot's ACL pass is
+        in flight must not be resurrected by a stale running=true frame —
+        its terminal death frame already went to this member."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        saved = dict(registry.states)
+        sock = _mock_sock()
+        real = app_state.state.acl.permissions_for_resources
+
+        async def dying_during_acl(resources, principals, permissions):
+            # The container dies between the candidate snapshot and the
+            # sends: remove_state pops the registry entry.
+            registry.states.pop("ws-1", None)
+            return await real(resources, principals, permissions)
+
+        try:
+            registry.states.clear()
+            registry.states["ws-1"] = self._state(
+                "ws-1",
+                registry=registry,
+                health_check="true",
+                health_status="healthy",
+            )
+            self._register(sock, app_state)
+            await _grant_terminal(app_state, "uid-1", "ws-1")
+            with patch.object(
+                app_state.state.acl,
+                "permissions_for_resources",
+                new=dying_during_acl,
+            ):
+                await sockets.send_service_health_snapshot(sock)
+        finally:
+            registry.states.clear()
+            registry.states.update(saved)
+            sockets.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    async def test_transition_during_acl_pass_is_not_replayed(self, app_state):
+        """#1714 review: a health transition firing mid-snapshot bumps seq;
+        replaying the older status after the newer delta would flip the
+        client backwards, so the stale frame is dropped."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        saved = dict(registry.states)
+        sock = _mock_sock()
+        st = self._state(
+            "ws-1",
+            registry=registry,
+            health_check="true",
+            health_status="healthy",
+        )
+        real = app_state.state.acl.permissions_for_resources
+
+        async def transition_during_acl(resources, principals, permissions):
+            # A transition lands between the candidate snapshot and the
+            # sends: same state object, seq bumped.
+            st.health_seq += 1
+            return await real(resources, principals, permissions)
+
+        try:
+            registry.states.clear()
+            registry.states["ws-1"] = st
+            self._register(sock, app_state)
+            await _grant_terminal(app_state, "uid-1", "ws-1")
+            with patch.object(
+                app_state.state.acl,
+                "permissions_for_resources",
+                new=transition_during_acl,
+            ):
+                await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
             registry.states.update(saved)

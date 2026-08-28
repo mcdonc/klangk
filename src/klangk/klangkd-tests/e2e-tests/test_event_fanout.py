@@ -90,8 +90,8 @@ async def ws_connect(server, auth, workspace_id):
     """Open a WebSocket, connect to workspace, return ws.
 
     Drains messages until ``container_ready`` arrives. A
-    ``container_status`` broadcast (sent to all authenticated
-    connections when a container starts) can land before the ready
+    ``container_status`` broadcast (sent to the workspace's members
+    when a container starts, #1714) can land before the ready
     response, because the container is started during the
     ``workspace_connect`` handshake.
     """

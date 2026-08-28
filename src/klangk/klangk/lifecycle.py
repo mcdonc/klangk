@@ -44,6 +44,12 @@ from .model.users import AGENT_EMAIL, AGENT_HANDLE
 
 logger = logging.getLogger(__name__)
 
+# Strong references to in-flight container_status broadcast tasks (#1714
+# review): an unreferenced task is GC-eligible mid-execution — the same
+# hazard Lifecycle's own ``_recycle_tasks`` set guards against (#2527). The
+# done-callback discards from the set.
+_status_broadcast_tasks: set[asyncio.Task] = set()
+
 
 def broadcast_container_status(
     app, workspace_id: str, running: bool, started_at: float | None = None
@@ -74,7 +80,9 @@ def broadcast_container_status(
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    loop.create_task(_run())
+    task = loop.create_task(_run())
+    _status_broadcast_tasks.add(task)
+    task.add_done_callback(_status_broadcast_tasks.discard)
 
 
 # Settings that a SIGHUP reload re-resolves and validates but CANNOT apply

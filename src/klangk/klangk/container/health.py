@@ -275,7 +275,10 @@ class HealthMonitor:
         container is gone (#1175 item 2).  This closes the hole by
         emitting one unambiguous terminal frame with ``running=False``
         and ``healthy=False`` *before* the state is dropped, so a single
-        stream is a single source of truth.
+        stream is a single source of truth.  (Relative wire order vs the
+        separately-scheduled ``container_status`` frame — see
+        ``lifecycle.broadcast_container_status`` — is not guaranteed;
+        consumers must not depend on it.)
 
         *message* (#2524) carries the classified death cause (e.g.
         "OOM-killed at 8g memory limit") when the death was detected by

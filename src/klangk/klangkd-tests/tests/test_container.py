@@ -6273,6 +6273,8 @@ class TestHealthMonitorStartupGrace:
             self.registry.states.pop(st.workspace_id, None)
             self.registry._cid_to_wsid.pop(st.container_id, None)
 
+
+class TestHealthMonitorBroadcast:
     """_broadcast fans out to workspace members, not just the session (#1714)."""
 
     async def test_fans_out_via_notify_service_health(self, app_state):

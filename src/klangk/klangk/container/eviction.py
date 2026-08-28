@@ -401,11 +401,12 @@ class MemoryPressureEvictor:
         a stop path is excluded by the ``registry.stopping`` check
         (``stop_and_remove_container`` sets it synchronously at entry,
         before its first await). The remaining window is DURING this
-        method's two awaits: a concurrent idle-stop of the same victim
-        double-notifies and double-removes — benign (both stops are
-        state-tolerant, the remove 404-tolerant, and the death frame
-        deduplicates by state) — so no guard is needed and none would
-        be reachable.
+        method's awaits (the member-scoped ``workspace_evicted`` fan-out
+        plus the kill/stop calls — the fan-out became async with #1714):
+        a concurrent idle-stop of the same victim double-notifies and
+        double-removes — benign (both stops are state-tolerant, the
+        remove 404-tolerant, and the death frame deduplicates by state)
+        — so no guard is needed and none would be reachable.
         """
         candidates = self._evictable_workspaces()
         if not candidates:
