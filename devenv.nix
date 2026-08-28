@@ -270,10 +270,25 @@ in
           $(pkg-config --cflags libbpf) \
           -c procleddy_ebpf.bpf.c \
           -o "$DEVENV_ROOT/src/klangk/klangk/procleddy-ebpf.bpf.o"
+        EBPF="$DEVENV_ROOT/src/klangk/klangk/procleddy-ebpf"
         cc -O2 -Wall -Wextra -I. \
-          -o "$DEVENV_ROOT/src/klangk/klangk/procleddy-ebpf" \
+          -o "$EBPF" \
           procleddy-ebpf.c \
           $(pkg-config --cflags --libs libbpf)
+        # Best-effort file caps so the eBPF backend runs without root.
+        # Rebuilding wipes them (new inode), so this re-applies on every
+        # build. A no-op — one log line — on hosts without passwordless
+        # setcap; see docs/features/process-ledger.md for the host-side
+        # sudoers opt-in and the deployment-tier alternative.
+        if command -v setcap >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+          if sudo -n setcap cap_bpf,cap_perfmon+ep "$EBPF"; then
+            echo "procleddy-ebpf: file caps applied (cap_bpf,cap_perfmon)"
+          fi
+        else
+          echo "procleddy-ebpf: no passwordless setcap — binary built, but" \
+            "the eBPF backend will not load without CAP_BPF+CAP_PERFMON" \
+            "(see docs/features/process-ledger.md)" >&2
+        fi
       '';
       showOutput = true;
       execIfModified = [ "scripts/procleddy-ebpf/**" ];

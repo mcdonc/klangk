@@ -67,6 +67,48 @@ windows opened via the web UI or `klangk shell`).
   fork-without-exec events are not recorded (only the merged birth on
   exec — one row per program launched).
 
+### Automated builds and privileges
+
+The **build** is plain and portable: clang with a `bpf` target plus
+libbpf. The BPF object deliberately avoids CO-RE/vmlinux.h (no kernel
+structs are read; tracepoint argument layouts are declared in the
+source), so one object works across kernels and needs no kernel
+headers or BTF at build time. In devenv this is the
+`klangk:build-procleddy-ebpf` task; anywhere else it is the same two
+commands (`clang -target bpf -c ...` for the object, `cc ... -lbpf`
+for the loader). CI compiles it on stock runners — that is also what
+the test suite does (compile tests run everywhere; the runtime test
+skips without caps, the standard eBPF-project pattern).
+
+The **privilege to run** cannot be baked into a build; pick a tier:
+
+1. **Deployment tier (recommended):** run klangkd under systemd with
+   `AmbientCapabilities=CAP_BPF CAP_PERFMON` (and a matching
+   `CapabilityBoundingSet=`). The whole backend — including the
+   `procleddy-ebpf` subprocess — inherits the caps; nothing in the
+   build needs root.
+2. **Dev-host opt-in:** the devenv build task best-effort applies file
+caps
+   (`setcap cap_bpf,cap_perfmon+ep`) after every build — rebuilding
+   wipes them, so the task re-applies. This is a no-op until the host
+   allows passwordless setcap, e.g. in /etc/nixos:
+
+   ```nix
+   security.sudo.extraRules = [{
+     users = [ "YOUR-USER" ];
+     commands = [{
+       # Tighten to specific args/paths on multi-user hosts.
+       command = "/run/current-system/sw/bin/setcap";
+       options = [ "NOPASSWD" ];
+     }];
+   }];
+   ```
+
+3. **No privilege (default):** the task still builds the binary and
+   everything else works; `KLANGKD_PROCESS_LEDGER_BACKEND` stays `proc`
+   and the eBPF backend is simply not loadable — attempts fail loudly
+   at load time and the ledger's fallback rules apply.
+
 ## Reading the ledger
 
 ```bash
