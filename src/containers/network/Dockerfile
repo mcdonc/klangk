@@ -10,7 +10,8 @@
 # module today, but the package will grow multifile, and a wheel install keeps
 # working then (#2450). entrypoint.sh execs ``python3 -m proxy``.
 # alpine:3.21 pinned by IMMUTABLE DIGEST (multi-arch manifest list, #2063).
-# Bump: docker buildx imagetools inspect alpine:3.21 --format '{{.Manifest.Digest}}'
+# Bump: docker buildx imagetools inspect alpine:3.21
+# (read the `Digest:` line of the manifest list)
 FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 # Runtime: iptables + python3 + the C libs netfilterqueue links (the
 # interactive-mode NFQUEUE consumer, #2242). Build deps are installed

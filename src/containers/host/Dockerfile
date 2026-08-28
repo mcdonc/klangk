@@ -1,7 +1,7 @@
 # python:3.13-slim pinned by IMMUTABLE DIGEST (multi-arch manifest list)
 # so the registry cannot serve different content for the tag (#2063).
-# Bump: docker buildx imagetools inspect python:3.13-slim \
-#         --format '{{.Manifest.Digest}}'
+# Bump: docker buildx imagetools inspect python:3.13-slim
+# (read the `Digest:` line of the manifest list)
 FROM python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f AS base
 
 # Rebuild to pick up latest security patches (CVE-2026-45447 openssl).

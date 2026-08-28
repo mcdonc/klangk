@@ -105,10 +105,11 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
 
 # GitHub CLI (not in default Debian repos). Same posture as NodeSource above
 # (#2063): the archive keyring's SHA-256 is verified before use. Provenance:
-# the ring carries GitHub's current signing key (primary fingerprint
+# the ring carries GitHub's long-documented signing key (primary fingerprint
 #   2C61 0620 1985 B60E 6C7A C873 23F3 D4EA 7571 6059
 # — the fingerprint GitHub's install docs have long published) plus one
-# earlier rotation key. Bump: re-download the keyring, recompute sha256,
+# newer rotation key. Expect a keyring bump (loud sha256 failure) when the
+# old key is retired. Bump: re-download the keyring, recompute sha256,
 # update this ARG.
 ARG GITHUBCLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \

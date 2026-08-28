@@ -125,6 +125,13 @@ class TestFromLinesPinnedByDigest:
         assert "imagetools inspect" in wf, (
             "the base-image workflow must resolve the pushed manifest digest"
         )
+        # The json form is load-bearing: buildx special-cases plain
+        # '{{.Manifest…}}' --format values into printing the full table,
+        # which would corrupt the DIGEST capture (found in #2788 review).
+        assert "{{json .Manifest.Digest}}" in wf, (
+            "the digest extraction must use the json form — plain "
+            "'{{.Manifest.Digest}}' makes buildx print the whole table"
+        )
         assert 'echo "image=$REPO@$DIGEST"' in wf, (
             "the auto-PR must rewrite WORKSPACE_BASE_IMAGE to a repo@digest "
             "reference, not a mutable tag (#2063)"
@@ -192,15 +199,24 @@ class TestWorkspaceTarballPins:
             ), f"PROCESS_COMPOSE_SHA256_{arch} must be a 64-hex-char sha256"
 
     def test_no_unverified_curl_pipes(self):
-        """No `curl ... | sh` / `curl ... | tar` piping anywhere in the
-        workspace Dockerfile — download-to-file, verify, then act."""
-        text = _WORKSPACE_DF.read_text()
-        code_lines = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
-        for line in code_lines:
-            assert not re.search(r"curl\s+\S*\|", line), (
-                f"piped curl in workspace Dockerfile (unverified network "
-                f"input, #2063): {line.strip()}"
-            )
+        """No `curl ... | sh` / `curl ... | tar` piping in the image
+        Dockerfiles whose installs are fully pinned (workspace, host, base) —
+        download-to-file, verify, then act. The regex `curl[^|]*\|` matches
+        any line with `curl` followed later by a pipe (a `\S*`-anchored form
+        misses the space between flag and URL, which is how the original
+        `curl | sh` lines would slip past). nix-seed is excluded: its piped
+        nix installer is a documented accepted residual (see
+        docs/development/building-images.md, "Accepted residuals")."""
+        for df in (_WORKSPACE_DF, _HOST_DF, _WORKSPACE_BASE_DF):
+            text = df.read_text()
+            code_lines = [
+                ln for ln in text.splitlines() if not ln.lstrip().startswith("#")
+            ]
+            for line in code_lines:
+                assert not re.search(r"curl[^|]*\|", line), (
+                    f"piped curl in {df.name} (unverified network input, "
+                    f"#2063): {line.strip()}"
+                )
 
 
 # ── Apt repo keys: verified before entering a keyring ───────────────────────

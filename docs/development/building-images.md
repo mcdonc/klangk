@@ -94,10 +94,12 @@ are unaffected. To override at build time:
 
 ## Pinned Third-Party Artifacts (#2063)
 
-Every artifact fetched from the network at image-build time is verified
-against a hash pinned in the Dockerfile, and every base image is pulled
-by immutable digest — a compromised registry, CDN, or MITM cannot swap
-content undetected. A mismatch fails the build loudly.
+Every base image, release tarball, and apt repo key fetched from the
+network at image-build time is verified against a hash pinned in the
+Dockerfile or pulled by immutable digest — a compromised registry, CDN,
+or MITM cannot swap those inputs undetected, and a mismatch fails the
+build loudly. (Known residuals beyond that scope are listed under
+"Accepted residuals" below.)
 
 | Artifact                                         | Where the pin lives                                                                | Verify/rotate on bump                                                                                                                           |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -105,9 +107,9 @@ content undetected. A mismatch fails the build loudly.
 | Pi agent npm tarball                             | `PI_AGENT_SHA512` in `src/containers/workspace/Dockerfile`                         | `npm view @earendil-works/pi-coding-agent@<ver> dist.integrity` (base64 sha512 → hex)                                                           |
 | uv                                               | `UV_SHA256_AMD64` / `UV_SHA256_ARM64` in `src/containers/workspace/Dockerfile`     | `sha256sum` of each arch tarball, or the `.sha256` sidecars in the GitHub release                                                               |
 | process-compose                                  | `PROCESS_COMPOSE_SHA256_AMD64` / `_ARM64` in `src/containers/workspace/Dockerfile` | `sha256sum` of each arch tarball                                                                                                                |
-| Debian base (workspace, FIPS builders, nix-seed) | digest in `src/containers/workspace/Dockerfile.base` (pre-existing, #2432)         | `docker buildx imagetools inspect debian:trixie-slim --format '{{.Manifest.Digest}}'`; keep the three aligned builders in sync                  |
-| python host base                                 | digest in `src/containers/host/Dockerfile`                                         | `docker buildx imagetools inspect python:3.13-slim --format '{{.Manifest.Digest}}'`                                                             |
-| Alpine (network sidecar)                         | digest in `src/containers/network/Dockerfile`                                      | `docker buildx imagetools inspect alpine:3.21 --format '{{.Manifest.Digest}}'`                                                                  |
+| Debian base (workspace, FIPS builders, nix-seed) | digest in `src/containers/workspace/Dockerfile.base` (pre-existing, #2432)         | `docker buildx imagetools inspect debian:trixie-slim (read the Digest: line)`; keep the three aligned builders in sync                          |
+| python host base                                 | digest in `src/containers/host/Dockerfile`                                         | `docker buildx imagetools inspect python:3.13-slim (read the Digest: line)`                                                                     |
+| Alpine (network sidecar)                         | digest in `src/containers/network/Dockerfile`                                      | `docker buildx imagetools inspect alpine:3.21 (read the Digest: line)`                                                                          |
 | NodeSource repo key                              | `NODESOURCE_KEY_SHA256` in `Dockerfile.base`                                       | `sha256sum` of the fetched `gpgkey/nodesource-repo.gpg.key` (after cross-checking the new key's fingerprint against NodeSource's docs)          |
 | GitHub CLI repo key                              | `GITHUBCLI_KEYRING_SHA256` in `Dockerfile.base`                                    | `sha256sum` of the fetched `githubcli-archive-keyring.gpg` (fingerprint in the Dockerfile comment)                                              |
 | Caddy repo key (Cloudsmith)                      | `CADDY_REPO_KEY_SHA256` in `src/containers/host/Dockerfile`                        | `sha256sum` of the fetched `gpg.key` (fingerprint in the Dockerfile comment; cross-check <https://cloudsmith.io/~caddy/repos/stable/pub-keys/>) |
@@ -124,3 +126,26 @@ Notes:
   (integrity-checked by npm against registry metadata, as usual).
 - `scripts/tests/test_supply_chain_pins.py` holds contract tests asserting
   the pins exist; removing one without updating that file fails CI.
+
+### Accepted residuals
+
+Not everything fetched at build time is hash-verified. What remains
+trusted through TLS plus the source's own integrity mechanisms, and why
+(called out explicitly so the posture above is not over-read — #2788
+review):
+
+- **PyPI/npm dependency closures.** `pip install` of the klangk wheel's
+  deps (host image, network sidecar) and npm's resolution of the Pi
+  agent tarball's deps rely on the registry's metadata-bound integrity
+  records. Pinning the full transitive closure would require
+  `--require-hashes` lockfiles maintained outside this repo's wheels.
+- **nix-seed sandbox** (`src/containers/nix-seed/Dockerfile`): the nix
+  installer is still piped to `sh` and the devenv flake ref is mutable.
+  It is a build sandbox whose output is a content-addressed `/nix` store;
+  it is never baked into a shipped image. A malicious installer would
+  have to compromise the machine that computes those store addresses.
+- **`ssh-keyscan github.com`** in `Dockerfile.base` bakes host keys via
+  TOFU at build time rather than pinning GitHub's published
+  fingerprints.
+- **`dist-smoke-test.sh`** builds a throwaway `node:22-slim` (mutable
+  tag) smoke image — dev-only, never shipped.
