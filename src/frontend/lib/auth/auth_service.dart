@@ -143,6 +143,15 @@ class AuthService extends ChangeNotifier {
     _loadToken();
   }
 
+  /// Re-fetch `/api/v1/config` and apply the result (#2768 review).
+  ///
+  /// Deploy defaults can change under a live session (a SIGHUP settings
+  /// reload swaps KLANGKD_CLASSIFICATION_BANNER, for instance) — surfaces
+  /// that re-resolve deploy-derived state (the workspace page's marking
+  /// banner, on mount and on every workspaces-changed push) call this so
+  /// they read the current values instead of the ones cached at login.
+  Future<void> refreshDeployConfig() => _loadConfig();
+
   /// Fetch `/api/v1/config` and apply the result. Sends the persisted
   /// token when available so the server returns authenticated-only fields
   /// (notably the netfilter deploy allow-list + armed status, #1365) — the

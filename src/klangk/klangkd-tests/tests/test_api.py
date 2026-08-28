@@ -3232,12 +3232,14 @@ class TestWorkspaceRoutes:
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["rejected_domains"] == ["evil.com:443"]
 
-    async def test_update_classification_banner_notifies_owner_and_editor(
+    async def test_update_classification_banner_notifies_viewers(
         self, client, user, app
     ):
         """#2768: a marking change pushes workspaces_changed so open pages
-        re-render the banner — to the owner AND the editor (a shared
-        member with the edit ACE may not be the owner)."""
+        re-render the banner — to the owner, the editor (a shared member
+        with the edit ACE may not be the owner), and every ACL-shared
+        member (read-only viewers see the same page via
+        /workspaces/shared and must not keep a stale, lower marking)."""
         from klangk.model import ACTION_ALLOW, PRINCIPAL_USER
 
         notified = []
@@ -3273,6 +3275,19 @@ class TestWorkspaceRoutes:
         editor_headers = {
             "Authorization": f"Bearer {login.json()['access_token']}"
         }
+        # A read-only shared member (view ACE only) — the page it views
+        # re-resolves the marking on the same push.
+        viewer = await app.state.model.users.create_user(
+            "viewer@x.com", auth_mod.hash_password("testpass"), verified=True
+        )
+        await app.state.model.acl.add_acl_entry(
+            f"/workspaces/{ws_id}",
+            101,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_USER,
+            user_id=viewer["id"],
+        )
         # Drop the create-time notification so only the PUT's notifies
         # are asserted below.
         notified.clear()
@@ -3282,8 +3297,11 @@ class TestWorkspaceRoutes:
             headers=editor_headers,
         )
         assert resp.status_code == 200
-        # Owner + editor both notified, exactly once each.
-        assert sorted(notified) == sorted([owner_id, other["id"]])
+        # Owner, editor, and the read-only viewer — each notified exactly
+        # once.
+        assert sorted(notified) == sorted(
+            [owner_id, other["id"], viewer["id"]]
+        )
 
     async def test_update_empty_body_rejected(self, client, user):
         headers = await _auth_headers(client)

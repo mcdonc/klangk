@@ -167,6 +167,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   Future<void> _fetchWorkspaceName() async {
     final auth = context.read<AuthService>();
+    // #2768 review: re-fetch the deploy config before resolving the
+    // marking — KLANGKD_CLASSIFICATION_BANNER can change (SIGHUP reload)
+    // under a live session, and the marking must re-resolve against the
+    // current value, not the one cached at login. Runs on mount and on
+    // every workspaces-changed push.
+    await auth.refreshDeployConfig();
     try {
       final ws = await _findWorkspace(auth, '/api/v1/workspaces') ??
           await _findWorkspace(auth, '/api/v1/workspaces/shared');

@@ -14,23 +14,29 @@ isolated client (AGENTS.md "CLI subpackage isolation").
 
 from __future__ import annotations
 
-# (needle, background) pairs checked in order against the uppercased
-# marking; the first hit wins (TOP SECRET must precede SECRET).
-_MARKING_COLORS: tuple[tuple[str, str], ...] = (
-    ("TOP SECRET", "#E0A800"),
-    ("SECRET", "#C01818"),
-    ("CONFIDENTIAL", "#005EB8"),
-    ("CUI", "#0076CE"),
-    ("UNCLASSIFIED", "#007A33"),
+import re
+
+# (pattern, background) pairs checked in order against the marking; the
+# first hit wins (TOP SECRET must precede SECRET). Word-boundary matching
+# so a free-text label that merely *contains* a marking word (e.g.
+# "NOT SECRETIVE") is not colored as that marking.
+_MARKING_COLORS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"\b{word}\b", re.IGNORECASE), color)
+    for word, color in (
+        ("TOP SECRET", "#E0A800"),
+        ("SECRET", "#C01818"),
+        ("CONFIDENTIAL", "#005EB8"),
+        ("CUI", "#0076CE"),
+        ("UNCLASSIFIED", "#007A33"),
+    )
 )
 _FALLBACK_COLOR = "#8A6D00"  # neutral amber for free-text labels
 
 
 def marking_background(marking: str) -> str:
     """The banner background color (#rrggbb) for a marking label."""
-    upper = marking.upper()
-    for needle, color in _MARKING_COLORS:
-        if needle in upper:
+    for pattern, color in _MARKING_COLORS:
+        if pattern.search(marking):
             return color
     return _FALLBACK_COLOR
 

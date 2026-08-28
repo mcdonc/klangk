@@ -135,12 +135,10 @@ def edit(
         new_image = _prompt("Container Image", ws.image)
         new_command = _prompt("Service shell command", ws.service_command)
         new_health_check = _prompt("Health check command", ws.health_check)
-        # The banner prompt shows the deploy-default hint because an empty
-        # answer means "inherit the server default" (#2768).
-        new_banner = _prompt(
-            "Classification banner (empty = server default)",
-            ws.classification_banner,
-        )
+        # Plain label like the sibling prompts: Enter keeps the current
+        # value (the [(none)] display shows it); typing whitespace clears
+        # the override back to the deploy default (#2768).
+        new_banner = _prompt("Classification banner", ws.classification_banner)
 
         # Interactive mount editing loop
         current_mounts = list(ws.mounts or [])

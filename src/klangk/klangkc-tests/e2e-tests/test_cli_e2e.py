@@ -624,7 +624,7 @@ class TestServiceCommand:
                 ["klangk", "edit", "e2e-defcmd", "--command", "echo hello"],
                 env=env,
             )
-            assert result.returncode == 0
+            assert result.returncode == 0, result.stdout
             assert "Updated" in result.stdout
 
             # Clear
@@ -946,16 +946,34 @@ class TestMounts:
         _run(["klangk", "create", "e2e-mount-int"], env=env)
         try:
             # Interactive: keep name, keep image, keep command, keep
-            # classification banner, add mount "/tmp:/mnt/test", skip add,
-            # skip remove, skip add env, skip allowed-domains add,
-            # skip rejected-domains add
+            # health check, keep classification banner (5 Enter prompts
+            # before the mount loop), add mount "/tmp:/mnt/test", skip the
+            # loop's re-prompted add, skip remove, skip add env, skip
+            # allowed-domains add, skip rejected-domains add (11 lines; the
+            # add-prompt re-appears after each successful add). The input
+            # lines map 1:1 onto the prompts — a mis-counted newline
+            # silently lands the mount spec on an earlier _prompt and the
+            # edit still reports "Updated", so the mount is verified
+            # explicitly below.
             result = _run(
                 ["klangk", "edit", "e2e-mount-int"],
-                input="\n\n\n\n/tmp:/mnt/test\n\n\n\n\n",
+                input="\n\n\n\n\n/tmp:/mnt/test\n\n\n\n\n\n",
                 env=env,
             )
             assert result.returncode == 0
             assert "Updated" in result.stdout
+            # Verify the mount actually landed (and did not clobber the
+            # banner or health check): re-run the interactive edit with
+            # keep-everything input and inspect the echoed current state.
+            verify = _run(
+                ["klangk", "edit", "e2e-mount-int"],
+                input="\n" * 10,
+                env=env,
+            )
+            assert verify.returncode == 0
+            assert "/tmp:/mnt/test" in verify.stdout
+            assert "Classification banner [(none)]" in verify.stdout
+            assert "Health check command [(none)]" in verify.stdout
         finally:
             _run(["klangk", "rm", "e2e-mount-int"], env=env)
 

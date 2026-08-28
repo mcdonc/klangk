@@ -24,6 +24,17 @@ void main() {
     test('falls back to neutral amber for free-text labels', () {
       expect(markingColor('Internal use only'), const Color(0xFF8A6D00));
     });
+
+    test('word-boundary match: containing a marking word is not a match', () {
+      // #2768 review: substring matching colored any label that merely
+      // contained the word.
+      expect(markingColor('NOT SECRETIVE'), const Color(0xFF8A6D00));
+      expect(markingColor('CUISINE NOTES'), const Color(0xFF8A6D00));
+      expect(markingColor('SECRETS'), const Color(0xFF8A6D00));
+      // Punctuation boundaries still count as word boundaries.
+      expect(markingColor('SECRET//NOFORN'), const Color(0xFFC01818));
+      expect(markingColor('CUI//SP-ABC'), const Color(0xFF0076CE));
+    });
   });
 
   group('effectiveMarking', () {
@@ -76,6 +87,26 @@ void main() {
         (tester) async {
       await tester.pumpWidget(_wrap(MarkingBanner(text: '  CUI  ')));
       expect(find.text('CUI'), findsOneWidget);
+    });
+
+    testWidgets('scales down instead of ellipsizing a long marking',
+        (tester) async {
+      // #2768 review: an ellipsized marking ("SECRET//…") is not a
+      // marking — the full label must always render, shrinking via
+      // FittedBox on narrow viewports.
+      await tester.pumpWidget(
+        _wrap(
+          SizedBox(
+              width: 80,
+              child: MarkingBanner(text: 'SECRET//NOFORN//REL TO XYZ')),
+        ),
+      );
+      expect(find.text('SECRET//NOFORN//REL TO XYZ'), findsOneWidget);
+      // No overflow ellipsis in play — the text scales to fit.
+      final text = tester.widget<Text>(find.text('SECRET//NOFORN//REL TO XYZ'));
+      expect(text.overflow, isNull);
+      expect(find.byType(FittedBox), findsOneWidget);
+      expect(tester.takeException(), isNull); // no RenderFlex overflow
     });
   });
 }

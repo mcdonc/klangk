@@ -472,13 +472,20 @@ async def update_workspace(
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     # #2768: a marking change re-renders the persistent banner, so push
-    # the workspaces-changed notification (the web workspace page
-    # re-resolves its effective marking on it). Notify the owner and the
-    # editor — a shared member with the edit ACE may not be the owner.
+    # the workspaces-changed notification to every client that can view
+    # the workspace — the owner, the editor (a shared member with the
+    # edit ACE may not be the owner), and every ACL-shared member (they
+    # view the same page via /workspaces/shared and re-resolve the
+    # effective marking on this push; without it they keep viewing the
+    # old, lower marking until a manual reload).
     if "classification_banner" in fields:
-        app.state.sockets.notify_user_workspaces_changed(workspace["user_id"])
-        if user["id"] != workspace["user_id"]:
-            app.state.sockets.notify_user_workspaces_changed(user["id"])
+        members = await app.state.model.workspaces.get_workspace_members(
+            workspace_id
+        )
+        member_ids = {m["id"] for m in members}
+        member_ids.update({user["id"], workspace["user_id"]})
+        for uid in member_ids:
+            app.state.sockets.notify_user_workspaces_changed(uid)
 
     # Propagate health-relevant config changes to the live container
     # state (#1015) so HealthMonitor picks them up without a container

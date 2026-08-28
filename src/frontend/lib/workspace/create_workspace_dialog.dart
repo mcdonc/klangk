@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import 'marking_banner.dart' show classificationBannerMaxLength;
 import 'workspace_list_page.dart'
     show validateMountSpec, validateAllowedDomainSpec;
 import 'workspace_section_nav.dart';
@@ -607,7 +608,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                         // will carry. Empty inherits the deploy default.
                         TextField(
                           controller: _classificationBannerController,
+                          maxLength: classificationBannerMaxLength,
                           decoration: InputDecoration(
+                            counterText: '',
                             labelText: 'Classification Banner',
                             labelStyle: _labelStyle,
                             floatingLabelStyle: _labelStyle,

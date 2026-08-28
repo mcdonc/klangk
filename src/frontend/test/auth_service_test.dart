@@ -180,6 +180,25 @@ void main() {
       expect(service2.defaultClassificationBanner, 'CUI');
     });
 
+    test('refreshDeployConfig re-resolves the deploy default (#2768)',
+        () async {
+      // A SIGHUP settings reload can change
+      // KLANGKD_CLASSIFICATION_BANNER under a live session; the marking
+      // surface calls refreshDeployConfig (on mount + on every
+      // workspaces-changed push) instead of trusting the login-time
+      // snapshot.
+      testAuthHttpClientOverride =
+          _bannerClient(defaultClassificationBanner: 'CUI');
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.defaultClassificationBanner, 'CUI');
+
+      testAuthHttpClientOverride =
+          _bannerClient(defaultClassificationBanner: 'SECRET');
+      await service.refreshDeployConfig();
+      expect(service.defaultClassificationBanner, 'SECRET');
+    });
+
     test('loads default_per_handle_home from /api/config', () async {
       // #2721 / #2737 review: null (unknown) when the field is absent or
       // the fetch fails — the create dialog then hides the toggle and

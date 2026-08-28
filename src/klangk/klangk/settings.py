@@ -58,6 +58,11 @@ from pydantic import (
 # netfilter.py is pure-stdlib (no settings import), so this top-level import
 # is cycle-safe. Used by the netfilter_default_domains field validator below.
 from klangk.netfilter import parse_allowed_domains
+
+# Same for model.workspaces' normalize_classification_banner (model imports
+# neither settings nor anything that does) — used by the
+# classification_banner field validator below.
+from klangk.model.workspaces import normalize_classification_banner
 from pydantic_settings.sources.providers.env import parse_env_vars
 
 logger = logging.getLogger(__name__)
@@ -949,8 +954,13 @@ class KlangkSettings(BaseSettings):
     # POST/PUT /workspaces); NULL/absent workspaces inherit THIS value
     # at display time. Empty (the default) = no deploy-wide marking: no
     # banner is rendered anywhere and no screen space is reserved.
-    # Reloadable on SIGHUP; a reload re-marks every inheriting workspace
-    # immediately (resolution is at display time, not create time).
+    # Reloadable on SIGHUP. Resolution is at display time, not create
+    # time — clients re-resolve the deploy default on page (re)entry and
+    # on every workspaces-changed push, so a reload re-marks inheriting
+    # workspaces on the next re-resolve (not on already-idle open
+    # screens). Validated by _coerce_classification_banner (same rules as
+    # the per-workspace value); a malformed value aborts boot / denies
+    # the reload.
     classification_banner: str = ""
     container_subnets: str | None = None
     # Nix workspace feature (#2198, #2201, #2220): per-workspace /nix from a
@@ -1649,6 +1659,32 @@ class KlangkSettings(BaseSettings):
             raise ValueError(
                 f"KLANGKD_NETFILTER_DEFAULT_DOMAINS={v!r} has an invalid "
                 f"spec: {exc}"
+            ) from exc
+
+    @field_validator("classification_banner", mode="before")
+    @classmethod
+    def _coerce_classification_banner(cls, v):
+        """Validate ``KLANGKD_CLASSIFICATION_BANNER`` (#2768).
+
+        Applies the same rules as the per-workspace marking
+        (:func:`klangk.model.workspaces.normalize_classification_banner`):
+        strip, one line, no control/invisible format characters, at most
+        :data:`CLASSIFICATION_BANNER_MAX_LEN` chars. ``None`` / empty /
+        whitespace-only → ``""`` (no deploy-wide marking). The value rides
+        ``/api/v1/config`` to every client and renders as a banner, so a
+        malformed value (a stray newline, a bidirectional override) must
+        fail loudly: a malformed value **raises**, aborting boot; a SIGHUP
+        reload with a bad value is denied by ``_reload_settings``
+        (``main.py``), which keeps the runtime on the prior config — same
+        posture as ``netfilter_default_domains`` (#1939).
+        """
+        if v is None:
+            return ""
+        try:
+            return normalize_classification_banner(v) or ""
+        except ValueError as exc:
+            raise ValueError(
+                f"KLANGKD_CLASSIFICATION_BANNER is invalid: {exc}"
             ) from exc
 
     @field_validator("container_cpu_limit", mode="before")

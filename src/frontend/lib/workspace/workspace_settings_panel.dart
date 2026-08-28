@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import 'marking_banner.dart' show classificationBannerMaxLength;
 import 'workspace_section_nav.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
@@ -1079,7 +1080,9 @@ class _SettingsFormState extends State<_SettingsForm> {
         // (KLANGKD_CLASSIFICATION_BANNER); saving updates the banner.
         TextField(
           controller: _classificationBannerCtrl,
+          maxLength: classificationBannerMaxLength,
           decoration: InputDecoration(
+            counterText: '',
             labelText: 'Classification Banner',
             labelStyle: labelStyle,
             floatingLabelBehavior: FloatingLabelBehavior.always,

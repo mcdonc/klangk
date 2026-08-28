@@ -21,17 +21,34 @@ library;
 
 import 'package:flutter/material.dart';
 
+/// Maximum marking length. Must match the server's
+/// CLASSIFICATION_BANNER_MAX_LEN (klangk/model/workspaces.py) — used for
+/// client-side field caps so an oversize label is caught in the field
+/// instead of on the server round-trip.
+const int classificationBannerMaxLength = 120;
+
+/// Marking word → banner background color, in priority order (TOP SECRET
+/// before SECRET). Word-boundary matched (case-insensitive) so a
+/// free-text label that merely *contains* a marking word (e.g. "NOT
+/// SECRETIVE") is not colored as that marking.
+const Map<String, Color> _markingPalette = {
+  'TOP SECRET': Color(0xFFE0A800),
+  'SECRET': Color(0xFFC01818),
+  'CONFIDENTIAL': Color(0xFF005EB8),
+  'CUI': Color(0xFF0076CE),
+  'UNCLASSIFIED': Color(0xFF007A33),
+};
+
 /// The banner background color for a marking label.
 ///
-/// First case-insensitive keyword hit wins (TOP SECRET is checked before
-/// SECRET). Exported for tests.
+/// First case-insensitive word-boundary hit wins (TOP SECRET is checked
+/// before SECRET). Exported for tests.
 Color markingColor(String marking) {
-  final upper = marking.toUpperCase();
-  if (upper.contains('TOP SECRET')) return const Color(0xFFE0A800);
-  if (upper.contains('SECRET')) return const Color(0xFFC01818);
-  if (upper.contains('CONFIDENTIAL')) return const Color(0xFF005EB8);
-  if (upper.contains('CUI')) return const Color(0xFF0076CE);
-  if (upper.contains('UNCLASSIFIED')) return const Color(0xFF007A33);
+  for (final entry in _markingPalette.entries) {
+    if (RegExp('\\b${entry.key}\\b', caseSensitive: false).hasMatch(marking)) {
+      return entry.value;
+    }
+  }
   return const Color(0xFF8A6D00);
 }
 
@@ -72,15 +89,20 @@ class MarkingBanner extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: SizedBox(
           width: double.infinity,
-          child: Text(
-            marking,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
+          // #2768 review: scale down instead of ellipsize — a marking
+          // clipped to "SECRET//…" is not a marking under the STIG
+          // control, so the full label always stays legible (narrow
+          // viewports shrink the type rather than dropping text).
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              marking,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
             ),
           ),
         ),

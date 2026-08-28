@@ -95,12 +95,13 @@ class WorkspaceDetailScreen(StatusScreen):
     WorkspaceDetailScreen #detail_body {
         margin-top: 1;
     }
-    /* #2768: the classification marking line. Full-width, height 1,
-    colored by marking convention. ``display: none`` when no marking is
-    configured (workspace override or deploy default) so no row is
-    reserved — the #2768 clarification. */
+    /* #2768: the classification marking line. Full-width, centered,
+    auto-height so a marking longer than the terminal width wraps to
+    further lines instead of being clipped (an unreadable marking is not
+    a marking). ``display: none`` when no marking is configured
+    (workspace override or deploy default) so no row is reserved — the
+    #2768 clarification. */
     WorkspaceDetailScreen #marking_bar {
-        height: 1;
         text-align: center;
         display: none;
     }
@@ -214,16 +215,26 @@ class WorkspaceDetailScreen(StatusScreen):
             return
         self.query_one("#term_list", ListView).focus()
 
-    async def _mount_async(self) -> None:
-        # The deploy-default marking fetch is a plain HTTP call — run it
-        # off the event loop so a slow/unreachable server cannot stall
-        # the screen mount (same posture as _load_terminals).
+    async def _refresh_deploy_banner(self) -> None:
+        """(Re-)fetch the deploy-default marking (#2768).
+
+        A plain HTTP call, run off the event loop so a slow/unreachable
+        server cannot stall the screen (same posture as _load_terminals).
+        Called on mount, on every workspaces-changed push, and after an
+        edit — the deploy default can change under a live screen (a SIGHUP
+        settings reload), and the marking bar must fall back to the
+        current value, not a stale snapshot. A failure degrades to ""
+        (no deploy marking; the workspace's own marking still renders).
+        """
         try:
             self._deploy_banner = await asyncio.to_thread(
                 self.app.tui_state.default_classification_banner
             )
         except Exception:  # noqa: BLE001 — degrade to no deploy marking
             self._deploy_banner = ""
+
+    async def _mount_async(self) -> None:
+        await self._refresh_deploy_banner()
         await self._load()
         if self._ws is not None and not self._ws.running:
             await self._start_if_stopped()
@@ -554,6 +565,7 @@ class WorkspaceDetailScreen(StatusScreen):
         # time, when both modules are fully loaded.
         from .main import MainScreen  # allow-deferred-import
 
+        await self._refresh_deploy_banner()
         await self._load()
         try:
             self.app.query_one(MainScreen).refresh_lists()
@@ -628,6 +640,11 @@ class WorkspaceDetailScreen(StatusScreen):
         self._display()
 
     async def _reload_on_status(self) -> None:
+        # A workspaces_changed push re-resolves the marking (the workspace
+        # row re-fetch below) — refresh the deploy default too, so a
+        # SIGHUP-reloaded KLANGKD_CLASSIFICATION_BANNER re-marks here as
+        # well, not just on fresh screen mounts (#2768 review).
+        await self._refresh_deploy_banner()
         await self._load()
         if self._missing:
             # The workspace was deleted out from under this screen. Pop any

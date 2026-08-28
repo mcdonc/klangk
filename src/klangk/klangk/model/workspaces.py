@@ -1,6 +1,7 @@
 """Workspace CRUD, members, and shared-workspace listings."""
 
 import json
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 
@@ -103,10 +104,13 @@ def normalize_classification_banner(value) -> str | None:
     Accepts ``None`` (inherit the deploy default) or a one-line free-text
     label. Strips surrounding whitespace; an empty result normalizes to
     ``None`` (inherit). Rejects non-strings, values longer than
-    :data:`CLASSIFICATION_BANNER_MAX_LEN`, and any control character
-    (the marking renders as a single banner line — a newline or tab
-    would break the banner layout, and control chars are meaningless in
-    a marking label).
+    :data:`CLASSIFICATION_BANNER_MAX_LEN`, and any control or invisible
+    format character (the marking renders as a single banner line — a
+    newline or tab would break the banner layout, and control chars are
+    meaningless in a marking label). Invisible format characters are
+    rejected too (a marking is a security label: a bidirectional override
+    (U+202E) or zero-width character (U+200B) can make the banner display
+    as a *different* marking than what the DB/audit log records).
 
     Raises ``ValueError`` with an operator-readable message.
     """
@@ -124,10 +128,18 @@ def normalize_classification_banner(value) -> str | None:
             "classification_banner must be at most"
             f" {CLASSIFICATION_BANNER_MAX_LEN} characters, got {len(v)}"
         )
-    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in v):
+    # Cc (control: newline/tab/DEL/NEL), Cf (format: bidi overrides,
+    # zero-width chars, soft hyphen, BOM), Zl/Zp (line/paragraph
+    # separators) — all either break the one-line layout or can spoof the
+    # displayed marking.
+    bad = {
+        ch for ch in v if unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"}
+    }
+    if bad:
         raise ValueError(
             "classification_banner must be a single line of printable"
-            " text (control characters are not allowed)"
+            " text without control or invisible format characters"
+            f" (found: {', '.join(f'U+{ord(ch):04X}' for ch in sorted(bad))})"
         )
     return v
 

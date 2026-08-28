@@ -5425,6 +5425,33 @@ async def test_detail_marking_bar_hidden_when_unconfigured(monkeypatch):
         assert _detail_value(body, "classification") is None
 
 
+async def test_detail_marking_refreshes_on_workspaces_changed(monkeypatch):
+    """#2768 review: a workspaces_changed push re-resolves BOTH the
+    workspace row and the deploy default — a parked detail screen picks
+    up a SIGHUP-reloaded KLANGKD_CLASSIFICATION_BANNER, not just the
+    value cached at mount."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")  # inherits the deploy default
+    st = _ws(default_classification_banner=lambda: "CUI")
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        bar = app.screen.query_one("#marking_bar", Static)
+        assert "CUI" in str(bar.render())
+        # The deploy default changes (SIGHUP reload) while parked.
+        st.default_classification_banner = lambda: "SECRET"
+        app.screen.apply_status_event({"type": "workspaces_changed"})
+        await pilot.pause()
+        bar = app.screen.query_one("#marking_bar", Static)
+        assert "SECRET" in str(bar.render())
+
+
 async def test_detail_renders_aligned_two_column_table(monkeypatch):
     """#1910: the detail body renders as a two-column table — every value
     starts at the same column regardless of label length, so labels and
@@ -10407,6 +10434,12 @@ def test_marking_helpers():
     assert marking_background("UNCLASSIFIED") == "#007A33"
     # Free-text labels fall back to neutral amber.
     assert marking_background("Internal use only") == "#8A6D00"
+    # Word-boundary match: containing a marking word is not a match
+    # (#2768 review).
+    assert marking_background("NOT SECRETIVE") == "#8A6D00"
+    assert marking_background("CUISINE NOTES") == "#8A6D00"
+    assert marking_background("SECRETS") == "#8A6D00"
+    assert marking_background("SECRET//NOFORN") == "#C01818"
     assert marking_style("SECRET") == "bold white on #C01818"
     assert effective_marking("SECRET", "CUI") == "SECRET"
     assert effective_marking(None, "CUI") == "CUI"
@@ -10842,7 +10875,10 @@ async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     original = _wsobj("alpha", image="base", running=False)
     renamed = _wsobj("renamed", image="base")
-    returns = [original, renamed]
+    # Three loads consume the list: mount, the visit auto-start's
+    # post-restart re-load (both resolve by "alpha"), and the
+    # post-edit reload (resolves by "renamed").
+    returns = [original, original, renamed]
     finds = []
     st = _ws(
         list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
@@ -10862,6 +10898,13 @@ async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
         es.query_one("#name").value = "renamed"
         es._save()
         await app.workers.wait_for_complete()
+        # The post-edit reload worker is spawned from inside the save
+        # worker, so wait_for_complete above may return before it has
+        # finished its refresh+load hops — give it event-loop cycles
+        # before asserting (#2768 review: the reload now also re-fetches
+        # the deploy marking, one extra to_thread hop).
+        for _ in range(10):
+            await pilot.pause()
         # back on detail; name adopted + reloaded by the new name
         assert isinstance(app.screen, WorkspaceDetailScreen)
         assert app.screen._name == "renamed"
