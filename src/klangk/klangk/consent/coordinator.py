@@ -153,11 +153,25 @@ class ConsentCoordinator:
                 # #2332: prompting is paused workspace-wide. A destination
                 # with an in-effect recorded DENY is still blocked (the pause
                 # does not override existing verdicts); everything else is
-                # auto-allowed (no hold, no prompt, no row -- the sidecar
+                # auto-allowed (no hold, no prompt -- the sidecar
                 # learns/accepts the SYN like a static allow). Allow-list
                 # rules are enforced earlier at the sidecar DNS layer, so a
                 # host reaching this gate is already not allow-listed.
                 verdict = await self._paused_verdict(workspace_id, dst, dport)
+                if verdict["decision"] == VERDICT_ALLOW:
+                    # #2304: an auto-allow is still an observed egress
+                    # outcome -- record it (policy, decided_by NULL) so
+                    # auditing is unconditional. A paused-deny is a replay
+                    # of a verdict whose row already exists; no new row.
+                    try:
+                        model = self.app.state.model.egress_consent
+                        await model.record_static_allow(
+                            workspace_id, dst, dport
+                        )
+                    except Exception:
+                        logger.exception(
+                            "consent: paused-allow recording failed"
+                        )
                 fut = loop.create_future()
                 fut.set_result(verdict)
                 return fut
@@ -796,3 +810,31 @@ class ConsentCoordinator:
         """egress_mode == allow: default-permit (record + allow, no prompt) (#2406)."""
         ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
         return bool(ws) and ws.get("egress_mode") == EGRESS_MODE_ALLOW
+
+    async def record_dns_event(
+        self, workspace_id: str, decision: str, host: str
+    ) -> None:
+        """Record a DNS-layer egress outcome from the sidecar (#2304).
+
+        The sidecar's DNS proxy reports every outcome it itself decides --
+        ``allowed`` (allow-list / in-session-allowed name forwarded + learned)
+        or ``denied`` (reject-listed name NXDOMAIN'd) -- unconditionally, so
+        full egress auditing needs no opt-in setting. Routed to the existing
+        static policy rows (``decided_by`` NULL, port NULL): one row per
+        (workspace, host) via the dedup indexes, pruned by the retention
+        sweeper like any other terminal row. Best-effort -- a recording
+        failure is logged and swallowed (an audit gap must never break the
+        relay loop or the sidecar's egress path).
+        """
+        try:
+            consent = self.app.state.model.egress_consent
+            if decision == DECISION_ALLOWED:
+                await consent.record_static_allow(workspace_id, host, None)
+            elif decision == DECISION_DENIED:
+                await consent.record_static_denial(workspace_id, host, None)
+        except Exception:
+            logger.exception(
+                "consent: dns egress recording failed (%s %s)",
+                decision,
+                str(host)[:60],
+            )

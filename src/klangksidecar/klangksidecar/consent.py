@@ -80,6 +80,12 @@ class SidecarConsentClient:
         # ``{type:activity}`` frame sent. 0.0 so the first event always forwards.
         self._last_activity_send = 0.0
         self._activity_tasks: set[asyncio.Task] = set()
+        # DNS-layer outcome reporting (#2304): hosts already reported this WS
+        # session (see :meth:`record_dns`). Cleared on reconnect -- a fresh
+        # session against a possibly restarted klangkd re-reports once per
+        # host (the DB-side dedup index still collapses repeats).
+        self._dns_reported: set[str] = set()
+        self._dns_tasks: set[asyncio.Task] = set()
 
     @property
     def connected(self) -> bool:
@@ -304,12 +310,63 @@ class SidecarConsentClient:
         except Exception:
             pass  # best-effort: a dropped frame just delays the next idle bump
 
+    # Cap on the DNS-outcome dedup set (#2304): bounds memory (and frames for
+    # new hosts) under a hostile resolver storm. Past the cap, hosts already
+    # reported keep their dedup; new hosts are simply not reported this
+    # session (their egress still flows/gets gated normally -- only the audit
+    # frame is dropped). Mirrors _VERDICT_CACHE's 4096 discipline in state.py.
+    _DNS_REPORT_CAP = 4096
+
+    def record_dns(self, decision: str, host: str) -> None:
+        """Best-effort DNS-layer egress outcome report to klangkd (#2304).
+
+        The DNS proxy sees every FQDN egress attempt and now ALWAYS reports
+        the outcome -- allowed (allow-list / in-session allow) or denied
+        (reject-list / static off-list NXDOMAIN) -- so full egress auditing
+        is unconditional, not an opt-in setting. klangkd records a
+        policy-decided row (decided_by NULL) per (workspace, host); this
+        sidecar-side dedup (one frame per host per WS session) keeps a query
+        storm from re-sending hosts the DB-side unique index would collapse
+        anyway. Cleared on reconnect (fresh session). Sync-safe: called from
+        the DNS loop's coroutines, schedules the WS send as a task. Never
+        raises -- audit must not break egress.
+        """
+        if not self._connected.is_set() or self._ws is None:
+            return
+        if host in self._dns_reported:
+            return
+        if len(self._dns_reported) >= self._DNS_REPORT_CAP:
+            return
+        self._dns_reported.add(host)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # not on a loop (defensive) -> nothing to schedule
+        t = loop.create_task(self._send_dns(decision, host))
+        self._dns_tasks.add(t)  # strong ref so the send isn't GC'd mid-flight
+        t.add_done_callback(self._dns_tasks.discard)
+
+    async def _send_dns(self, decision: str, host: str) -> None:
+        ws = self._ws
+        if ws is None:
+            return
+        try:
+            await ws.send(
+                json.dumps({"type": "egress_dns", "decision": decision, "host": host})
+            )
+        except Exception:
+            pass  # best-effort: a dropped frame skips this host's audit row
+
     def _fail_close_pending(self) -> None:
         # A lost connection is a fresh session against a (possibly restarted)
         # coordinator, so prior verdicts must not be trusted: in-flight flows
         # re-prompt after reconnect instead of being silently re-allowed/denied
         # by a stale cached verdict (#2326 review).
         _VERDICT_CACHE.clear()
+        # Fresh session (#2304) also resets the DNS-outcome dedup: the next
+        # connection may face a restarted klangkd whose egress_consent rows
+        # may have been pruned, so each host's outcome is re-reported once.
+        self._dns_reported.clear()
         for lid in list(self._pending):
             fut = self._pending.pop(lid, None)
             if fut is not None and not fut.done():

@@ -85,8 +85,9 @@ workspace lacks `CAP_NET_ADMIN` so it cannot flush the ruleset.
 
 ## Consent recording (all modes)
 
-Every blocked or off-list destination is recorded to the `egress_consent`
-table, regardless of `egress_mode` (#2242):
+Every egress decision — **denied _and_ allowed** — is recorded to the
+`egress_consent` table, regardless of `egress_mode` (#2242, #2304 —
+full-egress auditing is unconditional, not an opt-in setting):
 
 - **static** -> recorded `denied` immediately, `decided_by` NULL (policy,
   no human). Static mode is strictly better than silent deny: every
@@ -98,6 +99,18 @@ table, regardless of `egress_mode` (#2242):
   when no decider answers within `egress_consent_timeout`.
 - **allow** -> off-list destinations recorded `allowed`, `decided_by`
   NULL (#2406) — a log of everything the workspace actually reached.
+
+The DNS layer itself is audited too (#2304): the sidecar's DNS proxy —
+which sees every FQDN egress attempt, allowed or not — reports each
+outcome it decides over its consent WebSocket, recorded as one
+`decided_by`-NULL policy row per host: `allowed` for every allow-listed
+(or in-session-consented) resolution that resolves + learns, `denied`
+for every reject-listed name NXDOMAIN'd. A paused-mode auto-allow is
+recorded the same way. Interactive off-list queries report nothing at
+the DNS layer — their decision point is the connection SYN, whose human
+or policy verdict is already recorded above. Frames are deduplicated
+per host per WebSocket session on the sidecar, and the rows are bounded
+by the same retention/cap sweep as everything else.
 
 The table is bounded (#2303): a retention window
 (`KLANGKD_EGRESS_CONSENT_RETENTION_DAYS`, default 30 days) deletes

@@ -148,18 +148,22 @@ async def _forward_and_learn(
     addr: tuple[str, int],
     qname: str,
     port_set: set[int | None],
-) -> None:
+) -> bool:
     """Forward a query wire to the upstream + learn/respond (allow path).
 
     Shared by the static-allow path and the consent-allow path (which passes
     ``{None}`` -- all-ports, like a port-less allow spec). Uses a non-blocking
     socket + the loop's sock_* helpers so the await yields to other holds +
-    the WS receive loop while the upstream is pending.
+    the WS receive loop while the upstream is pending. Returns True iff the
+    upstream answered and the allow path ran -- the caller reports the
+    outcome for egress auditing (#2304); an upstream failure is not an
+    allow (nothing was resolved or learned).
     """
     resp = await _forward_marked(data)
     if resp is None:
-        return
+        return False
     await _respond_allowed(s, resp, addr, qname, port_set)
+    return True
 
 
 async def _respond_recorded(
@@ -234,6 +238,16 @@ async def _handle_packet(
     NO ACCEPT -- its connection SYN is consent-gated at NFQUEUE (#2324), so the
     human decision window is the kernel's connect timeout (~127s), not the
     resolver's <=30s getaddrinfo cap. Static mode (no client) -> NXDOMAIN.
+
+    Egress auditing (#2304) is unconditional (no opt-in setting): every
+    outcome the DNS layer itself decides is reported to klangkd for
+    recording -- ``allowed`` for a forwarded+learned allow-list /
+    in-session-allowed name, ``denied`` for a reject-listed name (NXDOMAIN,
+    both modes). A static off-list NXDOMAIN has no channel (a client-less
+    sidecar has no WS). The interactive off-list path deliberately reports
+    nothing here: the query resolves (not denied at this layer) and the
+    decision point is the connection SYN, whose verdict -- human or policy --
+    is already recorded by the coordinator via the ``egress`` frame.
     """
     try:
         qname = query_name(data)
@@ -253,6 +267,8 @@ async def _handle_packet(
         if DEBUG:
             print(f"reject {qname}", flush=True)
         _send_nxdomain(s, data, addr)
+        if client is not None:
+            client.record_dns("denied", qname)  # audit (#2304): policy deny
         return
     ports = ports_for(qname)
     deny, port_set = _decision(qname, ports)
@@ -266,4 +282,6 @@ async def _handle_packet(
         else:
             _send_nxdomain(s, data, addr)
         return
-    await _forward_and_learn(s, data, addr, qname, port_set)
+    if await _forward_and_learn(s, data, addr, qname, port_set):
+        if client is not None:
+            client.record_dns("allowed", qname)  # audit (#2304): policy allow

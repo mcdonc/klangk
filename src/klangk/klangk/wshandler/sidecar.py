@@ -4,9 +4,13 @@ The network sidecar connects here -- one socket per workspace, at startup --
 and sends each blocked egress destination as ``{type:egress, id, dst, dport}``.
 For each, the coordinator gate-checks: interactive + a live decider -> the
 request is *held* (the sidecar keeps the connection in-flight) and this
-endpoint relays the eventual verdict back as ``{type:verdict, id, decision}``;
+endpoint relays the eventual verdict back as ``{type:verdict, id, decision}`;
 otherwise the coordinator records a static denial and returns deny at once,
-and the sidecar NXDOMAIN/DROPs immediately (no hold).
+and the sidecar NXDOMAIN/DROPs immediately (no hold). It also accepts
+``{type:egress_dns, decision, host}`` frames -- the DNS proxy's unconditional
+outcome audit (#2304; every allow-listed resolution ``allowed``, every
+reject-listed NXDOMAIN ``denied``) -- recorded as policy rows without a
+verdict round-trip.
 
 Auth is the workspace's own JWT (the sidecar shares it, validated by Caddy's
 ``forward_auth`` and re-decoded here for the workspace id) -- the same
@@ -95,6 +99,28 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
                 state = app.state.container_registry.states.get(workspace_id)
                 if state is not None:
                     state.record_activity()
+                continue
+            if mtype == "egress_dns":
+                # Sidecar reports a DNS-layer egress outcome (#2304): every
+                # allow-listed resolution (allowed) and reject-listed
+                # NXDOMAIN (denied) is recorded unconditionally -- full
+                # egress auditing with no opt-in setting. One task per frame
+                # (like the egress relays) so the DB write never blocks the
+                # receive loop; best-effort inside the coordinator.
+                decision = msg.get("decision")
+                host = msg.get("host")
+                if (
+                    decision in ("allowed", "denied")
+                    and isinstance(host, str)
+                    and host
+                ):
+                    task = asyncio.create_task(
+                        coordinator.record_dns_event(
+                            workspace_id, decision, host
+                        )
+                    )
+                    relay_tasks.add(task)
+                    task.add_done_callback(relay_tasks.discard)
                 continue
             if mtype != "egress":
                 continue

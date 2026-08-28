@@ -1644,6 +1644,108 @@ class TestBumpActivity:
         await self._drain(c)  # the scheduled send raises internally, swallowed
 
 
+class TestRecordDns:
+    """DNS-layer outcome reporting (#2304): every allow-listed resolution
+    (allowed) and reject-listed NXDOMAIN (denied) is reported to klangkd,
+    deduped per host for the WS session so a query storm can't flood frames."""
+
+    def _client(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+        sent = []
+
+        class _FakeWS:
+            async def send(self, frame):
+                sent.append(frame)
+
+        c._ws = _FakeWS()
+        return c, sent
+
+    async def _drain(self, c):
+        # run any scheduled dns-send tasks to completion (deterministic)
+        if c._dns_tasks:
+            await asyncio.gather(*c._dns_tasks, return_exceptions=True)
+
+    async def test_allowed_sends_egress_dns_frame(self, proxy, tmp_path):
+        c, sent = self._client(proxy, tmp_path)
+        c.record_dns("allowed", "ok.test")
+        await self._drain(c)
+        assert [json.loads(f) for f in sent] == [
+            {"type": "egress_dns", "decision": "allowed", "host": "ok.test"}
+        ]
+
+    async def test_denied_sends_egress_dns_frame(self, proxy, tmp_path):
+        c, sent = self._client(proxy, tmp_path)
+        c.record_dns("denied", "evil.test")
+        await self._drain(c)
+        assert [json.loads(f) for f in sent] == [
+            {"type": "egress_dns", "decision": "denied", "host": "evil.test"}
+        ]
+
+    async def test_repeat_host_deduped_within_session(self, proxy, tmp_path):
+        # One frame per host per session: a resolver hammering the same
+        # allow-listed name sends the outcome once (the DB-side unique index
+        # would collapse the rows anyway).
+        c, sent = self._client(proxy, tmp_path)
+        for _ in range(50):
+            c.record_dns("allowed", "ok.test")
+        await self._drain(c)
+        assert len(sent) == 1
+
+    async def test_distinct_hosts_each_reported(self, proxy, tmp_path):
+        c, sent = self._client(proxy, tmp_path)
+        c.record_dns("allowed", "a.test")
+        c.record_dns("denied", "b.test")
+        await self._drain(c)
+        assert len(sent) == 2
+
+    async def test_cap_stops_new_hosts(self, proxy, tmp_path, monkeypatch):
+        # Past the dedup-set cap the set stops growing: new hosts are not
+        # reported this session (egress itself is unaffected -- only the
+        # audit frame is dropped).
+        c, sent = self._client(proxy, tmp_path)
+        monkeypatch.setattr(c, "_DNS_REPORT_CAP", 2)
+        c.record_dns("allowed", "a.test")
+        c.record_dns("allowed", "b.test")
+        c.record_dns("allowed", "c.test")  # past cap -> dropped
+        await self._drain(c)
+        hosts = sorted(json.loads(f)["host"] for f in sent)
+        assert hosts == ["a.test", "b.test"]
+        assert "c.test" not in c._dns_reported  # cap also bounds memory
+
+    async def test_reconnect_clears_dedup(self, proxy, tmp_path):
+        # A lost connection is a fresh session (#2304): _fail_close_pending
+        # clears the dedup so each host re-reports once on reconnect (klangkd
+        # may have restarted / pruned its rows in between).
+        c, sent = self._client(proxy, tmp_path)
+        c.record_dns("allowed", "ok.test")
+        await self._drain(c)
+        assert len(sent) == 1
+        c._fail_close_pending()  # what _run's finally does on disconnect
+        assert c._dns_reported == set()
+        c.record_dns("allowed", "ok.test")
+        await self._drain(c)
+        assert len(sent) == 2  # re-reported once for the new session
+
+    async def test_disconnected_is_noop(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c.record_dns("allowed", "ok.test")  # not connected -> no schedule/raise
+        await self._drain(c)
+        assert c._dns_tasks == set()
+
+    async def test_send_error_is_swallowed(self, proxy, tmp_path):
+        c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
+        c._connected.set()
+
+        class _BadWS:
+            async def send(self, frame):
+                raise OSError("gone")
+
+        c._ws = _BadWS()
+        c.record_dns("allowed", "ok.test")  # must not raise
+        await self._drain(c)  # the scheduled send raises internally, swallowed
+
+
 class TestEgressAcct:
     """mangle-OUTPUT egress byte accounting (#2485): the in-kernel rule the
     idle-activity sampler polls, scoped to unmarked (workspace) traffic and
@@ -2587,6 +2689,33 @@ class TestHandlePacket:
         fwd.assert_awaited_once()  # forwarded + learned, not denied
         s.sendto.assert_not_called()  # no NXDOMAIN
 
+    async def test_allowed_name_reports_outcome(self, proxy, monkeypatch):
+        # #2304: an allow-listed resolution is reported to klangkd (allowed,
+        # by policy) for unconditional audit -- but only when the upstream
+        # actually answered (_forward_and_learn True).
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "allowed.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [("allowed.test", None, False)])
+        fwd = AsyncMock(return_value=True)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_learn", fwd)
+        s = MagicMock()
+        client = MagicMock()
+        client.connected = True
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), client)
+        client.record_dns.assert_called_once_with("allowed", "allowed.test")
+
+    async def test_allowed_upstream_failure_reports_nothing(self, proxy, monkeypatch):
+        # An upstream failure is not an allow: nothing was resolved/learned,
+        # so no audit row (#2304).
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "allowed.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [("allowed.test", None, False)])
+        fwd = AsyncMock(return_value=False)
+        monkeypatch.setattr(proxy.resolve, "_forward_and_learn", fwd)
+        s = MagicMock()
+        client = MagicMock()
+        client.connected = True
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), client)
+        client.record_dns.assert_not_called()
+
     async def test_denied_no_client_sends_nxdomain(self, proxy, monkeypatch):
         monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
         monkeypatch.setattr(proxy.allowlist, "SPECS", [])
@@ -2594,6 +2723,23 @@ class TestHandlePacket:
         s = MagicMock()
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
+
+    async def test_static_denied_with_client_reports_nothing_at_dns(
+        self, proxy, monkeypatch
+    ):
+        # #2304: an off-list name in interactive mode is NOT denied at the
+        # DNS layer (it resolves; the SYN is the decision point, recorded via
+        # the egress frame) -- so nothing is reported here. (The off-list +
+        # no-client NXDOMAIN path also reports nothing: no WS exists.)
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+        rec = AsyncMock()
+        monkeypatch.setattr(proxy.resolve, "_forward_and_record", rec)
+        client = MagicMock()
+        client.connected = True
+        s = MagicMock()
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), client)
+        client.record_dns.assert_not_called()
 
     async def test_denied_with_client_resolves_and_records(self, proxy, monkeypatch):
         # Interactive: a denied name resolves + records IP->host (NO ACCEPT) so
@@ -2637,6 +2783,21 @@ class TestHandlePacket:
         await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), None)
         s.sendto.assert_called_once_with(b"NXD", ("1.2.3.4", 53))
         fwd.assert_not_awaited()
+
+    async def test_rejected_name_reports_denied(self, proxy, monkeypatch):
+        # #2304: a reject-listed NXDOMAIN is a policy denial decided at the
+        # DNS layer -- reported for unconditional audit (both modes; here
+        # with a client, which is the only mode with a WS channel).
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(
+            proxy.allowlist, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
+        )
+        monkeypatch.setattr(proxy.resolve, "nxdomain_for", lambda d: b"NXD")
+        s = MagicMock()
+        client = MagicMock()
+        client.connected = True
+        await proxy._handle_packet(s, b"q", ("1.2.3.4", 53), client)
+        client.record_dns.assert_called_once_with("denied", "evil.test")
 
     async def test_rejected_name_nxdomain_even_with_client(self, proxy, monkeypatch):
         # Reject takes precedence over consent: even in interactive mode a

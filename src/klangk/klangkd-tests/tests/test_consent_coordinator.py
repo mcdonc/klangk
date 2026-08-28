@@ -778,6 +778,63 @@ class TestConsentCoordinatorHoldPaused:
         app.state.model.egress_consent.record_static_denial.assert_not_awaited()
         assert coord._holds == {}
 
+    async def test_paused_auto_allow_records_policy_allow_row(self):
+        # #2304: an auto-allow while paused is still an observed egress
+        # outcome -- recorded (policy, decided_by NULL) so auditing is
+        # unconditional, not just for prompted verdicts.
+        import time
+
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=time.time() + 600
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        assert fut.result()["decision"] == "allow"
+        app.state.model.egress_consent.record_static_allow.assert_awaited_once_with(
+            FULL_WS, "1.2.3.4", 443
+        )
+
+    async def test_paused_deny_records_no_new_row(self):
+        # A paused-deny is a replay of an in-effect verdict whose row already
+        # exists -- no new record (#2304).
+        import time
+
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=time.time() + 600
+        )
+        app.state.model.egress_consent.active_verdict_for = AsyncMock(
+            return_value={
+                "id": "rid-1",
+                "workspace_id": FULL_WS,
+                "dest_host": "1.2.3.4",
+                "dest_port": 443,
+                "decision": "denied",
+            }
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        assert fut.result()["decision"] == "deny"
+        app.state.model.egress_consent.record_static_allow.assert_not_awaited()
+        app.state.model.egress_consent.record_static_denial.assert_not_awaited()
+
+    async def test_paused_allow_recording_failure_does_not_break_verdict(self):
+        # The recording is best-effort: a DB error must not turn the paused
+        # auto-allow into a deny or a raise (#2304).
+        import time
+
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=time.time() + 600
+        )
+        app.state.model.egress_consent.record_static_allow = AsyncMock(
+            side_effect=RuntimeError("db down")
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        assert fut.result()["decision"] == "allow"
+
     async def test_paused_respects_recorded_deny(self):
         # A recorded in-effect deny still blocks while paused (the pause does
         # not override existing verdicts).
@@ -1315,6 +1372,48 @@ def _sidecar_app(token_result=FULL_WS):
     return app, coord
 
 
+class TestRecordDnsEvent:
+    """DNS-layer outcome recording from the sidecar (#2304): unconditional
+    full-egress auditing (no opt-in setting), routed to the static policy rows."""
+
+    async def test_allowed_routes_to_static_allow(self):
+        app = _app()
+        coord = ConsentCoordinator(app)
+        await coord.record_dns_event(FULL_WS, "allowed", "ok.test")
+        app.state.model.egress_consent.record_static_allow.assert_awaited_once_with(
+            FULL_WS, "ok.test", None
+        )
+        app.state.model.egress_consent.record_static_denial.assert_not_awaited()
+
+    async def test_denied_routes_to_static_denial(self):
+        app = _app()
+        coord = ConsentCoordinator(app)
+        await coord.record_dns_event(FULL_WS, "denied", "evil.test")
+        app.state.model.egress_consent.record_static_denial.assert_awaited_once_with(
+            FULL_WS, "evil.test", None
+        )
+        app.state.model.egress_consent.record_static_allow.assert_not_awaited()
+
+    async def test_unknown_decision_is_noop(self):
+        # Anything but allowed/denied (the handler also filters, but the
+        # coordinator is defense-in-depth) records nothing.
+        app = _app()
+        coord = ConsentCoordinator(app)
+        await coord.record_dns_event(FULL_WS, "pending", "odd.test")
+        app.state.model.egress_consent.record_static_allow.assert_not_awaited()
+        app.state.model.egress_consent.record_static_denial.assert_not_awaited()
+
+    async def test_model_error_is_swallowed(self):
+        # Best-effort audit: a recording failure is logged + swallowed so it
+        # can never break the sidecar relay loop.
+        app = _app()
+        app.state.model.egress_consent.record_static_allow = AsyncMock(
+            side_effect=RuntimeError("db down")
+        )
+        coord = ConsentCoordinator(app)
+        await coord.record_dns_event(FULL_WS, "allowed", "ok.test")  # no raise
+
+
 class TestEgressSidecarWS:
     async def test_missing_token_rejected(self):
         from klangk.wshandler.sidecar import handle_egress_sidecar
@@ -1406,6 +1505,55 @@ class TestEgressSidecarWS:
         app.state.sidecar_connections.resolve_ack.assert_called_once_with(
             "ack-1", True
         )
+        await ws.feed(WebSocketDisconnect())
+        await handler
+
+    async def test_egress_dns_frame_records_outcome(self):
+        # #2304: a {type:egress_dns} frame (the DNS proxy reporting an outcome
+        # it decided itself) is recorded via the coordinator, off the receive
+        # loop (a task, like the egress relays).
+        from klangk.wshandler.sidecar import handle_egress_sidecar
+
+        app, coord = _sidecar_app()
+        ws = _FakeWS({"token": FULL_WS})
+        handler = asyncio.create_task(handle_egress_sidecar(ws, app))
+        await ws.feed(
+            json.dumps(
+                {
+                    "type": "egress_dns",
+                    "decision": "allowed",
+                    "host": "ok.test",
+                }
+            )
+        )
+        await asyncio.sleep(0.05)
+        coord.record_dns_event.assert_awaited_once_with(
+            FULL_WS, "allowed", "ok.test"
+        )
+        await ws.feed(WebSocketDisconnect())
+        await handler
+
+    async def test_egress_dns_invalid_frames_ignored(self):
+        # A bad decision value or a non-string host records nothing (the
+        # frame is skipped, not fatal to the socket).
+        from klangk.wshandler.sidecar import handle_egress_sidecar
+
+        app, coord = _sidecar_app()
+        ws = _FakeWS({"token": FULL_WS})
+        handler = asyncio.create_task(handle_egress_sidecar(ws, app))
+        await ws.feed(
+            json.dumps(
+                {"type": "egress_dns", "decision": "maybe", "host": "x.test"}
+            )
+        )
+        await ws.feed(
+            json.dumps(
+                {"type": "egress_dns", "decision": "allowed", "host": 123}
+            )
+        )
+        await ws.feed(json.dumps({"type": "egress_dns"}))
+        await asyncio.sleep(0.05)
+        coord.record_dns_event.assert_not_awaited()
         await ws.feed(WebSocketDisconnect())
         await handler
 
