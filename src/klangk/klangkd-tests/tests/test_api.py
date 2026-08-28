@@ -2993,6 +2993,97 @@ class TestWorkspaceRoutes:
         finally:
             registry.crash.trackers.pop(ws_id, None)
 
+    async def test_workspace_status_monitor_only_member(
+        self, client, user, app_state
+    ):
+        """#2783: ``monitor`` alone (no ``terminal``) can read status —
+        health observation is decoupled from exec/attach."""
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "status-monitor-only"},
+        )
+        ws_id = create_resp.json()["id"]
+        other = await app_state.state.model.users.create_user(
+            "monitor@example.com",
+            auth_mod.hash_password("monpass"),
+            verified=True,
+        )
+        resource = f"/workspaces/{ws_id}"
+        seeded = await app_state.state.model.acl.get_acl_entries(resource)
+        pos = max((e["position"] for e in seeded), default=-1) + 1
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            pos,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            pos + 1,
+            model.ACTION_ALLOW,
+            "monitor",
+            model.PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "monitor@example.com", "password": "monpass"},
+        )
+        other_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/status", headers=other_headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["running"] is False
+
+    async def test_workspace_status_view_only_member_denied(
+        self, client, user, app_state
+    ):
+        """``view`` alone does not grant status reads — ``monitor`` is the
+        gate (the deployment-wide view-for-authenticated seed stays too
+        weak)."""
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "status-view-only"},
+        )
+        ws_id = create_resp.json()["id"]
+        other = await app_state.state.model.users.create_user(
+            "viewer@example.com",
+            auth_mod.hash_password("viewpass"),
+            verified=True,
+        )
+        seeded = await app_state.state.model.acl.get_acl_entries(
+            f"/workspaces/{ws_id}"
+        )
+        pos = max((e["position"] for e in seeded), default=-1) + 1
+        await app_state.state.model.acl.add_acl_entry(
+            f"/workspaces/{ws_id}",
+            pos,
+            model.ACTION_ALLOW,
+            "view",
+            model.PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "viewer@example.com", "password": "viewpass"},
+        )
+        other_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/status", headers=other_headers
+        )
+        assert resp.status_code == 403
+
     async def test_workspace_status_not_found(self, client, user, app_state):
         headers = await _auth_headers(client)
         fake_id = "fake-status-id"
@@ -3000,7 +3091,7 @@ class TestWorkspaceRoutes:
             f"/workspaces/{fake_id}",
             0,
             model.ACTION_ALLOW,
-            "terminal",
+            "monitor",
             model.PRINCIPAL_USER,
             user_id=user["id"],
         )
@@ -4400,6 +4491,7 @@ class TestWorkspaceSharingRoutes:
             "files",
             "files-download",
             "files-write",
+            "monitor",
             "terminal",
             "view",
         ]

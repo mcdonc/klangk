@@ -892,6 +892,7 @@ class TestNotifyWorkspaceEvicted:
         return conn
 
     async def _grant(self, app, user_id, workspace_id):
+        """Seed a member ALLOW ``monitor`` ACE (#1714/#2783)."""
         from klangk import model
 
         await app.state.model.init_db()
@@ -909,7 +910,7 @@ class TestNotifyWorkspaceEvicted:
             resource,
             position,
             model.ACTION_ALLOW,
-            "terminal",
+            "monitor",
             model.PRINCIPAL_USER,
             user_id=user_id,
         )

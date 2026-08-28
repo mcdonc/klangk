@@ -796,7 +796,7 @@ async def start_workspace(
 @router.get("/workspaces/{workspace_id}/status")
 async def workspace_status(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("terminal", workspace_resource)),
+    user: dict = Depends(acl.has_permission("monitor", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     """Return container status for a workspace.
@@ -1278,13 +1278,17 @@ async def add_workspace_member(
         raise HTTPException(
             status_code=400, detail="Cannot share with yourself"
         )
-    # Add ACL entries granting the target user view+terminal+files(+dl/ul)
-    # on this workspace, packed at the next available positions.
+    # Add ACL entries granting the target user view+monitor+terminal+
+    # files(+dl/ul) on this workspace, packed at the next available
+    # positions. ``monitor`` rides along with ``terminal`` (#2783) so a
+    # shared member keeps receiving health/status frames — it can also
+    # be granted alone for monitoring-only members.
     resource = f"/workspaces/{workspace_id}"
     existing = await app.state.model.acl.get_acl_entries(resource)
     next_pos = max((e["position"] for e in existing), default=-1) + 1
     for perm in (
         "view",
+        "monitor",
         "terminal",
         "files",
         "files-download",

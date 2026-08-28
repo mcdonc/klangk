@@ -5773,9 +5773,10 @@ def _health_registry(ws_state=None):
 
 
 async def _grant_health_member(reg, user_id: str, workspace_id: str) -> None:
-    """Seed a member ALLOW ACE for a health fan-out test (#1714).
+    """Seed a member ALLOW ``monitor`` ACE for a health fan-out test
+    (#1714/#2783).
 
-    The status fan-outs ACL-check each recipient for ``terminal`` on
+    The status fan-outs ACL-check each recipient for ``monitor`` on
     ``/workspaces/{id}``; the per-test DB starts with no ACEs (default
     deny), so tests that assert delivery must grant membership first.
     """
@@ -5796,7 +5797,7 @@ async def _grant_health_member(reg, user_id: str, workspace_id: str) -> None:
         resource,
         position,
         model.ACTION_ALLOW,
-        "terminal",
+        "monitor",
         model.PRINCIPAL_USER,
         user_id=user_id,
     )

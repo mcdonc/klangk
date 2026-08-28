@@ -290,6 +290,7 @@ STATIC_RESOURCES = [
 
 ALL_PERMISSIONS = [
     "view",
+    "monitor",
     "create",
     "edit",
     "delete",

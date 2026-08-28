@@ -810,11 +810,14 @@ class WebSocketState:
         ``health_message`` tail of another tenant's service output) to
         anyone with a WebSocket. This scopes delivery server-side:
         connections are grouped by user and each distinct user is
-        ACL-checked for ``terminal`` on ``/workspaces/{workspace_id}`` —
-        the permission every grant path carries (the owner's wildcard
-        ACE, a direct member share, and every role group), while the
-        deployment-wide ``view``-for-authenticated seed ACE at ``/`` is
-        deliberately too weak to count as membership.
+        ACL-checked for ``monitor`` on ``/workspaces/{workspace_id}`` —
+        the dedicated status-observation permission (#2783). Every
+        grant path that carries ``terminal`` also seeds ``monitor``
+        (the owner's wildcard ACE, a direct member share, and every
+        role group), and ``monitor`` can be granted alone for
+        monitoring-only members, while the deployment-wide
+        ``view``-for-authenticated seed ACE at ``/`` is deliberately
+        too weak to count as membership.
 
         Sends to all of an allowed user's connections (a user with the
         workspace open in two tabs gets both). Dead sockets are pruned;
@@ -844,7 +847,7 @@ class WebSocketState:
         for uid, conns in by_user.items():
             principals = await acl.get_principals(uid)
             if not check_permission_inmemory(
-                resource, principals, "terminal", entries
+                resource, principals, "monitor", entries
             ):
                 continue
             for sock, _conn in conns:
@@ -1034,9 +1037,10 @@ class WebSocketState:
 
         Scoped to the connection's user's memberships (#1714): the
         allowed workspace set is resolved with one
-        ``permissions_for_resources`` pass (``terminal`` on each
-        candidate resource), so a connecting client learns the health
-        of workspaces it can open — never other tenants'.
+        ``permissions_for_resources`` pass (``monitor`` on each
+        candidate resource — the dedicated status-observation
+        permission, #2783), so a connecting client learns the health
+        of workspaces it can observe — never other tenants'.
 
         Mirrors :meth:`notify_service_health`'s frame shape.  Consumer-side
         the frame is applied idempotently, so a transition arriving just
@@ -1068,7 +1072,7 @@ class WebSocketState:
         principals = await acl.get_principals(user_id)
         resources = [f"/workspaces/{cs.workspace_id}" for cs, _ in candidates]
         allowed = await acl.permissions_for_resources(
-            resources, principals, ["terminal"]
+            resources, principals, ["monitor"]
         )
         for cs, seq in candidates:
             if f"/workspaces/{cs.workspace_id}" not in allowed:

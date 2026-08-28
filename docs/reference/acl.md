@@ -91,23 +91,24 @@ other resource) are rejected with a 400 error.
 
 When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files, export.
 
-**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `terminal`, `files`, `files-download`, and `files-write`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
+**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `monitor`, `terminal`, `files`, `files-download`, and `files-write`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
 
 **Permissions checked on workspace resources**:
 
-| Permission       | Controls                                                          |
-| ---------------- | ----------------------------------------------------------------- |
-| `view`           | Can see the workspace exists                                      |
-| `terminal`       | Can open a terminal / exec commands                               |
-| `files`          | Can browse/read files                                             |
-| `files-download` | Can download raw bytes via `/files/download` (needs `files` too)  |
-| `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)      |
-| `exec-and-sync`  | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace |
-| `edit`           | Can change workspace settings (name, image, command, mounts, env) |
-| `share`          | Can manage who has access (Sharing tab)                           |
-| `delete`         | Can delete the workspace                                          |
-| `export`         | Can export the workspace as a `.tar.gz` archive (#2707)           |
-| `*`              | All of the above                                                  |
+| Permission       | Controls                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `view`           | Can see the workspace exists                                                                                                    |
+| `monitor`        | Can observe health/status: `GET /workspaces/{id}/status` and the `container_status` / `service_health` WebSocket frames (#2783) |
+| `terminal`       | Can open a terminal / exec commands                                                                                             |
+| `files`          | Can browse/read files                                                                                                           |
+| `files-download` | Can download raw bytes via `/files/download` (needs `files` too)                                                                |
+| `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)                                                                    |
+| `exec-and-sync`  | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace                                        |
+| `edit`           | Can change workspace settings (name, image, command, mounts, env)                                                               |
+| `share`          | Can manage who has access (Sharing tab)                                                                                         |
+| `delete`         | Can delete the workspace                                                                                                        |
+| `export`         | Can export the workspace as a `.tar.gz` archive (#2707)                                                                         |
+| `*`              | All of the above                                                                                                                |
 
 Withholding `files-download` keeps the in-app file viewer working for text
 files (read via `/files/content`) but hides every download affordance and

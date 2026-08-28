@@ -24,6 +24,7 @@ DEFAULT_PORTS_PER_WORKSPACE = 5
 _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
     "owners": ["*"],
     "coders": [
+        "monitor",
         "terminal",
         "code-in-isolation",
         "exec-and-sync",
@@ -33,6 +34,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "files-write",
     ],
     "collaborators": [
+        "monitor",
         "terminal",
         "code-in-isolation",
         "exec-and-sync",
@@ -44,6 +46,7 @@ _ROLE_GROUP_PERMISSIONS: dict[str, list[str]] = {
         "files-write",
     ],
     "spectators": [
+        "monitor",
         "terminal",
         "spectate-on-shared-terminals",
     ],

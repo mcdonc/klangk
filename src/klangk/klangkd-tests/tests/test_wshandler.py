@@ -131,10 +131,11 @@ def _auth():
     return auth_mod.Auth(state)
 
 
-async def _grant_terminal(app_state, user_id: str, workspace_id: str) -> None:
-    """Seed a member ALLOW ACE so a connection passes the #1714 scope.
+async def _grant_monitor(app_state, user_id: str, workspace_id: str) -> None:
+    """Seed a member ALLOW ``monitor`` ACE so a connection passes the
+    #1714/#2783 scope.
 
-    The status fan-outs ACL-check each recipient for ``terminal`` on
+    The status fan-outs ACL-check each recipient for ``monitor`` on
     ``/workspaces/{id}``; the per-test DB starts with no ACEs (default
     deny), so tests that assert delivery must grant membership first.
     """
@@ -153,7 +154,7 @@ async def _grant_terminal(app_state, user_id: str, workspace_id: str) -> None:
         resource,
         position,
         model.ACTION_ALLOW,
-        "terminal",
+        "monitor",
         model.PRINCIPAL_USER,
         user_id=user_id,
     )
@@ -4796,8 +4797,8 @@ class TestNotifyContainerStatus:
         try:
             self._register(sock_a, {"id": "uid-1", "email": "a@x"}, app_state)
             self._register(sock_b, {"id": "uid-2", "email": "b@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-123")
-            await _grant_terminal(app_state, "uid-2", "ws-123")
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await _grant_monitor(app_state, "uid-2", "ws-123")
             await sockets.notify_container_status("ws-123", True)
         finally:
             sockets.connections.pop(sock_a, None)
@@ -4821,7 +4822,7 @@ class TestNotifyContainerStatus:
             self._register(
                 stranger, {"id": "uid-2", "email": "b@x"}, app_state
             )
-            await _grant_terminal(app_state, "uid-1", "ws-123")
+            await _grant_monitor(app_state, "uid-1", "ws-123")
             await sockets.notify_container_status("ws-123", True)
         finally:
             sockets.connections.pop(member, None)
@@ -4864,7 +4865,7 @@ class TestNotifyContainerStatus:
         try:
             self._register(sock_a, {"id": "uid-1", "email": "a@x"}, app_state)
             self._register(sock_b, {"id": "uid-1", "email": "a@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-123")
+            await _grant_monitor(app_state, "uid-1", "ws-123")
             await sockets.notify_container_status("ws-123", True)
         finally:
             sockets.connections.pop(sock_a, None)
@@ -4878,7 +4879,7 @@ class TestNotifyContainerStatus:
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-789")
+            await _grant_monitor(app_state, "uid-1", "ws-789")
             await sockets.notify_container_status("ws-789", True, 1000.0)
         finally:
             sockets.connections.pop(sock, None)
@@ -4892,7 +4893,7 @@ class TestNotifyContainerStatus:
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-456")
+            await _grant_monitor(app_state, "uid-1", "ws-456")
             await sockets.notify_container_status("ws-456", False)
         finally:
             sockets.connections.pop(sock, None)
@@ -4920,7 +4921,7 @@ class TestNotifyContainerStatus:
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-1")
+            await _grant_monitor(app_state, "uid-1", "ws-1")
             await sockets.notify_container_status("ws-1", True)
             assert sock not in sockets.connections
         finally:
@@ -4943,8 +4944,8 @@ class TestNotifyServiceHealth:
         try:
             self._register(sock_a, {"id": "uid-1", "email": "a@x"}, app_state)
             self._register(sock_b, {"id": "uid-2", "email": "b@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-123")
-            await _grant_terminal(app_state, "uid-2", "ws-123")
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await _grant_monitor(app_state, "uid-2", "ws-123")
             await sockets.notify_service_health("ws-123", healthy=True)
         finally:
             sockets.connections.pop(sock_a, None)
@@ -4972,7 +4973,7 @@ class TestNotifyServiceHealth:
             self._register(
                 stranger, {"id": "uid-2", "email": "b@x"}, app_state
             )
-            await _grant_terminal(app_state, "uid-1", "ws-123")
+            await _grant_monitor(app_state, "uid-1", "ws-123")
             await sockets.notify_service_health(
                 "ws-123", healthy=False, message="boom"
             )
@@ -4982,6 +4983,52 @@ class TestNotifyServiceHealth:
         member.send_json.assert_called_once()
         stranger.send_json.assert_not_called()
 
+    async def test_monitor_without_terminal_receives_frames(self, app_state):
+        """#2783: ``monitor`` alone — without ``terminal`` — is the status
+        gate; a monitoring-only member observes health without being
+        able to open a terminal."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await sockets.notify_service_health("ws-123", healthy=False)
+        finally:
+            sockets.connections.pop(sock, None)
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "service_health"
+        assert msg["workspace_id"] == "ws-123"
+
+    async def test_terminal_without_monitor_receives_nothing(self, app_state):
+        """The two permissions are distinct: ``terminal`` alone no longer
+        grants status reception (grant ``monitor`` too, or rely on the
+        seeded/migrated pairing)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
+            await app_state.state.model.init_db()
+            async with app_state.state.db.transaction() as tx:
+                await tx.execute(
+                    "INSERT OR IGNORE INTO users (id, email, verified)"
+                    " VALUES (?, ?, 1)",
+                    ("uid-1", "uid-1@test.example"),
+                )
+            await app_state.state.model.acl.add_acl_entry(
+                "/workspaces/ws-123",
+                0,
+                model.ACTION_ALLOW,
+                "terminal",
+                model.PRINCIPAL_USER,
+                user_id="uid-1",
+            )
+            await sockets.notify_service_health("ws-123", healthy=False)
+        finally:
+            sockets.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
     async def test_sends_unhealthy_with_reason(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
@@ -4990,7 +5037,7 @@ class TestNotifyServiceHealth:
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-9")
+            await _grant_monitor(app_state, "uid-1", "ws-9")
             await sockets.notify_service_health(
                 "ws-9", healthy=False, message="curl: connection refused"
             )
@@ -5021,7 +5068,7 @@ class TestNotifyServiceHealth:
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-1")
+            await _grant_monitor(app_state, "uid-1", "ws-1")
             await sockets.notify_service_health("ws-1", healthy=True)
             assert sock not in sockets.connections
         finally:
@@ -5093,8 +5140,8 @@ class TestServiceHealthSnapshot:
                 health_status="healthy",
             )
             self._register(sock, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-healthy")
-            await _grant_terminal(app_state, "uid-1", "ws-sick")
+            await _grant_monitor(app_state, "uid-1", "ws-healthy")
+            await _grant_monitor(app_state, "uid-1", "ws-sick")
             await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
@@ -5151,7 +5198,7 @@ class TestServiceHealthSnapshot:
                 health_status="healthy",
             )
             self._register(sock, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-1")
+            await _grant_monitor(app_state, "uid-1", "ws-1")
             await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
@@ -5184,8 +5231,8 @@ class TestServiceHealthSnapshot:
                 health_status="unhealthy",
             )
             self._register(sock, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-1")
-            await _grant_terminal(app_state, "uid-1", "ws-2")
+            await _grant_monitor(app_state, "uid-1", "ws-1")
+            await _grant_monitor(app_state, "uid-1", "ws-2")
             # Must not raise; the dead socket ends the snapshot early.
             await sockets.send_service_health_snapshot(sock)
         finally:
@@ -5237,7 +5284,7 @@ class TestServiceHealthSnapshot:
                 health_status="healthy",
             )
             self._register(sock, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-1")
+            await _grant_monitor(app_state, "uid-1", "ws-1")
             with patch.object(
                 app_state.state.acl,
                 "permissions_for_resources",
@@ -5277,7 +5324,7 @@ class TestServiceHealthSnapshot:
             registry.states.clear()
             registry.states["ws-1"] = st
             self._register(sock, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-1")
+            await _grant_monitor(app_state, "uid-1", "ws-1")
             with patch.object(
                 app_state.state.acl,
                 "permissions_for_resources",
@@ -5354,7 +5401,7 @@ class TestNotifyServiceHealthForwarding:
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            await _grant_terminal(app_state, "uid-1", "ws-9")
+            await _grant_monitor(app_state, "uid-1", "ws-9")
             await sockets.notify_service_health(
                 "ws-9",
                 healthy=False,
@@ -5400,7 +5447,7 @@ class TestServiceHealthSnapshotFields:
                 app_state=app_state,
             )
             sockets.connections[sock] = conn
-            await _grant_terminal(app_state, "uid-1", "ws-1")
+            await _grant_monitor(app_state, "uid-1", "ws-1")
             await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
