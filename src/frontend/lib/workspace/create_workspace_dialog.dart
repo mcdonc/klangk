@@ -85,7 +85,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _memoryLimitController = TextEditingController();
   final _pidsLimitController = TextEditingController();
   final _tmpSizeController = TextEditingController();
-  final _nprocLimitController = TextEditingController();
   final _nofileLimitController = TextEditingController();
   late String _selectedImage;
   final _mounts = <String>[];
@@ -153,7 +152,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     _memoryLimitController.dispose();
     _pidsLimitController.dispose();
     _tmpSizeController.dispose();
-    _nprocLimitController.dispose();
     _nofileLimitController.dispose();
     super.dispose();
   }
@@ -240,10 +238,11 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     if (pids.isNotEmpty) s['pids_limit'] = int.parse(pids);
     final tmp = _tmpSizeController.text.trim();
     if (tmp.isNotEmpty) s['tmp_size'] = tmp;
-    // #2085: per-process rlimits (<soft>[:<hard>]); passed through as
-    // strings — the server's settings gate validates the form.
-    final nproc = _nprocLimitController.text.trim();
-    if (nproc.isNotEmpty) s['nproc_limit'] = nproc;
+    // #2085: per-process nofile rlimit (<soft>[:<hard>]); passed
+    // through as a string — the server's settings gate validates the
+    // form. (nproc is deploy-only: its rlimit counts the host uid
+    // across all namespaces, so a per-workspace value would gate the
+    // shared counter rather than isolate this workspace.)
     final nofile = _nofileLimitController.text.trim();
     if (nofile.isNotEmpty) s['nofile_limit'] = nofile;
     return s;
@@ -583,21 +582,6 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                           children: [
                             Expanded(
                               child: TextField(
-                                controller: _nprocLimitController,
-                                decoration: InputDecoration(
-                                  labelText: 'nproc Limit',
-                                  labelStyle: _labelStyle,
-                                  floatingLabelStyle: _labelStyle,
-                                  floatingLabelBehavior:
-                                      FloatingLabelBehavior.always,
-                                  border: const OutlineInputBorder(),
-                                  hintText: 'e.g. 1024, 1024:2048',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextField(
                                 controller: _nofileLimitController,
                                 decoration: InputDecoration(
                                   labelText: 'nofile Limit',
@@ -606,7 +590,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                                   floatingLabelBehavior:
                                       FloatingLabelBehavior.always,
                                   border: const OutlineInputBorder(),
-                                  hintText: 'e.g. 65536',
+                                  hintText: 'e.g. 65536, 65536:131072',
                                 ),
                               ),
                             ),

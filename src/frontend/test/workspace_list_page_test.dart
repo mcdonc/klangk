@@ -1173,7 +1173,7 @@ void main() {
       expect(
           find.descendant(
               of: find.byType(AlertDialog), matching: find.byType(TextField)),
-          findsNWidgets(15));
+          findsNWidgets(14));
       // Image picker + egress-mode picker (#2409).
       expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
     });

@@ -2601,8 +2601,8 @@ class TestStartContainer:
     async def test_ulimits_workspace_override_wins(
         self, workspace, monkeypatch
     ):
-        # #2085: settings.nproc_limit / nofile_limit override the deploy
-        # defaults per-key (override > default > none).
+        # #2085: settings.nofile_limit overrides the deploy default
+        # (override > default > none). nproc is deploy-only.
         settings = self.registry.app.state.settings
         monkeypatch.setattr(settings, "container_nproc_limit", "1024:2048")
         monkeypatch.setattr(settings, "container_nofile_limit", "65536")
@@ -2627,11 +2627,30 @@ class TestStartContainer:
                 container.ContainerStartSpec(
                     workspace["id"],
                     "/tmp/home",
-                    workspace_settings={"nproc_limit": 512},
+                    workspace_settings={"nofile_limit": "65536"},
                 )
             )
         kwargs = p.create_container.call_args.kwargs
-        assert kwargs["ulimits"] == ["nproc=512"]
+        assert kwargs["ulimits"] == ["nofile=65536"]
+
+    async def test_ulimits_nproc_is_deploy_only(self, workspace, monkeypatch):
+        # #2085: RLIMIT_NPROC counts the host uid across all namespaces,
+        # so a per-workspace nproc threshold would gate the shared
+        # counter rather than isolate the workspace — the bag cannot set
+        # it (validate_settings rejects the key), and a bag that somehow
+        # carries it is ignored: only the deploy setting applies.
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_nproc_limit", "1024")
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    workspace_settings={"nproc_limit": "999999"},
+                )
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["ulimits"] == ["nproc=1024"]
 
     async def test_workspace_settings_override_resource_limits(
         self, workspace, monkeypatch

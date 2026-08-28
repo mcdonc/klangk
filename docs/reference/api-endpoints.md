@@ -1371,18 +1371,17 @@ to inherit the server default.
 `settings` is a bag of per-workspace behavioral overrides (#864). Known
 keys (unknown keys are rejected with `400`):
 
-| Key              | Type    | Meaning                                                                                                                              |
-| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `idle_timeout`   | int (s) | Idle timeout override; `0` = never idle out, unset = deploy default (#1018). Applies at the next container start.                    |
-| `bridge_timeout` | int (s) | Browser-delegate stream bridge timeout.                                                                                              |
-| `cpu_limit`      | float   | `--cpus` limit (e.g. `2.0`).                                                                                                         |
-| `memory_limit`   | string  | `--memory` limit (e.g. `"4g"`, `"512m"`).                                                                                            |
-| `pids_limit`     | int     | `--pids-limit` (e.g. `512`).                                                                                                         |
-| `nproc_limit`    | string  | `--ulimit nproc=` (`<soft>[:<hard>]`, e.g. `"1024:2048"`; see the `KLANGKD_CONTAINER_NPROC_LIMIT` caveat about shared-uid counting). |
-| `nofile_limit`   | string  | `--ulimit nofile=` (`<soft>[:<hard>]`, e.g. `"65536"`).                                                                              |
-| `tmp_size`       | string  | `/tmp` tmpfs size (e.g. `"4g"`).                                                                                                     |
-| `nix`            | bool    | Mount a per-workspace `/nix`.                                                                                                        |
-| `allow_sudo`     | bool    | Restrict sudo (deploy `KLANGKD_ALLOW_SUDO` is a ceiling).                                                                            |
+| Key              | Type    | Meaning                                                                                                                                                                                                                                                                          |
+| ---------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| `idle_timeout`   | int (s) | Idle timeout override; `0` = never idle out, unset = deploy default (#1018). Applies at the next container start.                                                                                                                                                                |
+| `bridge_timeout` | int (s) | Browser-delegate stream bridge timeout.                                                                                                                                                                                                                                          |
+| `cpu_limit`      | float   | `--cpus` limit (e.g. `2.0`).                                                                                                                                                                                                                                                     |
+| `memory_limit`   | string  | `--memory` limit (e.g. `"4g"`, `"512m"`).                                                                                                                                                                                                                                        |
+| `pids_limit`     | int     | `--pids-limit` (e.g. `512`).                                                                                                                                                                                                                                                     |
+| `nofile_limit`   | string  | `--ulimit nofile=` (`<soft>[:<hard>]`, e.g. `"65536"`). (`nproc` is deploy-only — `KLANGKD_CONTAINER_NPROC_LIMIT` — because its rlimit counts the host uid across all namespaces, so a per-workspace threshold would gate the shared counter rather than isolate the workspace.) |     |
+| `tmp_size`       | string  | `/tmp` tmpfs size (e.g. `"4g"`).                                                                                                                                                                                                                                                 |
+| `nix`            | bool    | Mount a per-workspace `/nix`.                                                                                                                                                                                                                                                    |
+| `allow_sudo`     | bool    | Restrict sudo (deploy `KLANGKD_ALLOW_SUDO` is a ceiling).                                                                                                                                                                                                                        |
 
 `classification_banner` is the workspace's classification marking,
 rendered as the persistent banner on the workspace page (#2768). Free

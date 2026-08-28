@@ -85,11 +85,11 @@ def _collect_settings(screen: Screen) -> dict | None:
     raw = screen.query_one("#tmp_size", Input).value.strip()
     if raw:
         settings["tmp_size"] = raw
-    # #2085: per-process rlimits (<soft>[:<hard>]); passed through as
-    # strings — the server's settings gate validates the form.
-    raw = screen.query_one("#nproc_limit", Input).value.strip()
-    if raw:
-        settings["nproc_limit"] = raw
+    # #2085: per-process nofile rlimit (<soft>[:<hard>]); passed
+    # through as a string — the server's settings gate validates the
+    # form. (nproc is deploy-only: its rlimit counts the host uid across
+    # all namespaces, so a per-workspace value would gate the shared
+    # counter rather than isolate this workspace.)
     raw = screen.query_one("#nofile_limit", Input).value.strip()
     if raw:
         settings["nofile_limit"] = raw
@@ -118,7 +118,6 @@ _FORM_MANAGED_SETTINGS_KEYS = frozenset(
         "memory_limit",
         "pids_limit",
         "tmp_size",
-        "nproc_limit",
         "nofile_limit",
     }
 )
@@ -168,7 +167,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         "memory_limit",
         "pids_limit",
         "tmp_size",
-        "nproc_limit",
         "nofile_limit",
         "per_handle_home",
         "classification_banner",
@@ -374,18 +372,10 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                         classes="field-row",
                     )
                     yield Horizontal(
-                        Static("nproc limit"),
-                        Input(
-                            id="nproc_limit",
-                            placeholder="e.g. 1024, 1024:2048",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
                         Static("nofile limit"),
                         Input(
                             id="nofile_limit",
-                            placeholder="e.g. 65536",
+                            placeholder="e.g. 65536, 65536:131072",
                         ),
                         classes="field-row",
                     )
@@ -819,7 +809,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
             "memory_limit",
             "pids_limit",
             "tmp_size",
-            "nproc_limit",
             "nofile_limit",
         ):
             self._create()
@@ -866,7 +855,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         "memory_limit",
         "pids_limit",
         "tmp_size",
-        "nproc_limit",
         "nofile_limit",
         "per_handle_home",
         "classification_banner",
@@ -1113,20 +1101,11 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                         classes="field-row",
                     )
                     yield Horizontal(
-                        Static("nproc limit"),
-                        Input(
-                            value=str(_s.get("nproc_limit", "")),
-                            id="nproc_limit",
-                            placeholder="e.g. 1024, 1024:2048",
-                        ),
-                        classes="field-row",
-                    )
-                    yield Horizontal(
                         Static("nofile limit"),
                         Input(
                             value=str(_s.get("nofile_limit", "")),
                             id="nofile_limit",
-                            placeholder="e.g. 65536",
+                            placeholder="e.g. 65536, 65536:131072",
                         ),
                         classes="field-row",
                     )
@@ -1717,7 +1696,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             "memory_limit",
             "pids_limit",
             "tmp_size",
-            "nproc_limit",
             "nofile_limit",
         ):
             self._save()

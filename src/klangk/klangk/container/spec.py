@@ -162,20 +162,6 @@ def resolve_pids_limit(app, workspace_settings: dict | None) -> int | None:
     )
 
 
-def resolve_nproc_limit(app, workspace_settings: dict | None) -> str | None:
-    """Per-workspace ``nproc`` rlimit (``--ulimit nproc=``), #2085.
-
-    Complements :func:`resolve_pids_limit`: the cgroup cap bounds the
-    container's total process count, while the rlimit bounds each uid's
-    process/thread count — the knob ``ulimit -u`` reports inside the
-    workspace. ``None`` means no ``--ulimit`` flag.
-    """
-    return ws_settings.resolve_nproc_limit(
-        _ws_setting(workspace_settings),
-        app.state.settings.container_nproc_limit,
-    )
-
-
 def resolve_nofile_limit(app, workspace_settings: dict | None) -> str | None:
     """Per-workspace ``nofile`` rlimit (``--ulimit nofile=``), #2085.
 
@@ -196,9 +182,18 @@ def resolve_ulimits(app, workspace_settings: dict | None) -> list[str] | None:
     only when the list is non-empty — unset = no flag = no behavior
     change). Order is fixed (nproc, then nofile) so the emitted args are
     deterministic.
+
+    ``nproc`` is deliberately **deploy-only**: the kernel counts
+    RLIMIT_NPROC against the host uid across all namespaces, so on the
+    default rootless keep-id deployment a per-workspace threshold would
+    gate the one shared counter every workspace (and the daemon itself)
+    draws from — a misleading "override" rather than isolation (the
+    per-container bound is ``pids_limit``). It is therefore read straight
+    off the deploy setting, ignoring the workspace bag; ``nofile`` is
+    per-process and resolves with the normal override precedence.
     """
     ulimits: list[str] = []
-    nproc = resolve_nproc_limit(app, workspace_settings)
+    nproc = app.state.settings.container_nproc_limit
     if nproc is not None:
         ulimits.append(f"nproc={nproc}")
     nofile = resolve_nofile_limit(app, workspace_settings)

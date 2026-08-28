@@ -256,10 +256,13 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     "cpu_limit": _coerce_float,
     "memory_limit": _coerce_memory,
     "pids_limit": _coerce_positive_int,
-    # #2085: per-process rlimits (podman --ulimit nproc=/nofile=). These
-    # are the per-uid ceilings tooling reads (`ulimit -u` / `ulimit -n`),
-    # complementary to pids_limit (the cgroup-level cap).
-    "nproc_limit": _coerce_ulimit,
+    # #2085: per-process rlimit (podman --ulimit nofile=) — the open-fd
+    # ceiling per process. Deploy-only for ``nproc``: the kernel counts
+    # RLIMIT_NPROC against the host uid across all namespaces, so on the
+    # default rootless keep-id deployment a per-workspace nproc threshold
+    # would gate the same shared counter every workspace (and the daemon)
+    # draws from — not an isolation knob. nofile is per-process, so a
+    # per-workspace override is meaningful.
     "nofile_limit": _coerce_ulimit,
     # #2378: per-workspace /tmp tmpfs size (podman size string, same grammar
     # as memory_limit — a positive number + optional k/m/g/t/p unit).
@@ -438,17 +441,6 @@ def resolve_pids_limit(
 ) -> int | None:
     """Resolve the per-workspace PIDs limit (``--pids-limit``, int)."""
     return resolve(workspace, "pids_limit", deploy_default)
-
-
-def resolve_nproc_limit(
-    workspace: dict | None, deploy_default: str | None
-) -> str | None:
-    """Resolve the per-workspace ``nproc`` rlimit (``--ulimit``).
-
-    #2085: same precedence as the other resolvers (workspace override >
-    deploy default > none); the value is a ``<soft>[:<hard>]`` string.
-    """
-    return resolve(workspace, "nproc_limit", deploy_default)
 
 
 def resolve_nofile_limit(

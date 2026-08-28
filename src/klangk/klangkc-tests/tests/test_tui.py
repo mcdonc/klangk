@@ -13302,7 +13302,6 @@ async def test_create_screen_collects_settings(monkeypatch):
         cs.query_one("#memory_limit", Input).value = "4g"
         cs.query_one("#pids_limit", Input).value = "256"
         cs.query_one("#tmp_size", Input).value = "2g"
-        cs.query_one("#nproc_limit", Input).value = "1024:2048"
         cs.query_one("#nofile_limit", Input).value = "65536"
         result = _collect_settings(cs)
         assert result == {
@@ -13311,7 +13310,6 @@ async def test_create_screen_collects_settings(monkeypatch):
             "memory_limit": "4g",
             "pids_limit": 256,
             "tmp_size": "2g",
-            "nproc_limit": "1024:2048",
             "nofile_limit": "65536",
         }
 
@@ -13338,7 +13336,6 @@ async def test_edit_screen_save_includes_settings(monkeypatch):
         es.query_one("#cpu_limit", Input).value = "2.0"
         es.query_one("#pids_limit", Input).value = "512"
         es.query_one("#tmp_size", Input).value = "1g"
-        es.query_one("#nproc_limit", Input).value = "1024"
         es.query_one("#nofile_limit", Input).value = "1024:4096"
         es._save()
         await app.workers.wait_for_complete()
@@ -13346,7 +13343,6 @@ async def test_edit_screen_save_includes_settings(monkeypatch):
             "cpu_limit": 2.0,
             "pids_limit": 512,
             "tmp_size": "1g",
-            "nproc_limit": "1024",
             "nofile_limit": "1024:4096",
         }
 
@@ -13372,7 +13368,7 @@ async def test_edit_screen_clearing_fields_clears_overrides(monkeypatch):
         running=False,
         settings={
             "cpu_limit": 2.0,
-            "nproc_limit": "1024:2048",
+            "memory_limit": "4g",
             "bridge_timeout": 60,
         },
     )
@@ -13383,7 +13379,7 @@ async def test_edit_screen_clearing_fields_clears_overrides(monkeypatch):
         es = app.screen
         # Clear the pre-populated fields, keep one value.
         es.query_one("#cpu_limit", Input).value = ""
-        es.query_one("#nproc_limit", Input).value = ""
+        es.query_one("#memory_limit", Input).value = ""
         es.query_one("#nofile_limit", Input).value = "65536"
         es._save()
         await app.workers.wait_for_complete()
@@ -13421,13 +13417,11 @@ async def test_edit_screen_prepopulates_settings(monkeypatch):
         assert es.query_one("#tmp_size", Input).value == "3g"
         assert es.query_one("#memory_limit", Input).value == ""
         assert es.query_one("#pids_limit", Input).value == ""
-        # #2085: rlimit fields pre-populate from the bag too.
-        assert es.query_one("#nproc_limit", Input).value == ""
+        # #2085: the nofile rlimit field pre-populates from the bag too.
         assert es.query_one("#nofile_limit", Input).value == ""
-        es2 = None
         ws2 = _wsobj(
             "test-ws2",
-            settings={"nproc_limit": "1024:2048", "nofile_limit": "65536"},
+            settings={"nofile_limit": "65536"},
         )
         app.push_screen(
             EditWorkspaceScreen(
@@ -13439,7 +13433,6 @@ async def test_edit_screen_prepopulates_settings(monkeypatch):
         )
         await pilot.pause()
         es2 = app.screen
-        assert es2.query_one("#nproc_limit", Input).value == "1024:2048"
         assert es2.query_one("#nofile_limit", Input).value == "65536"
 
 

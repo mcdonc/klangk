@@ -255,17 +255,19 @@ sync` report a clear permission-denied error.
 
 - **`KLANGKD_CONTAINER_NPROC_LIMIT` / `KLANGKD_CONTAINER_NOFILE_LIMIT`
   (#2085).** Deploy-wide per-process rlimits for workspace containers
-  via podman `--ulimit` — the per-uid ceilings `ulimit -u` / `ulimit -n`
-  report, complementary to the cgroup-level pids limit. Values take the
+  via podman `--ulimit` — the ceilings `ulimit -u` / `ulimit -n` report,
+  complementary to the cgroup-level pids limit. Values take the
   `<soft>[:<hard>]` form (omitting the hard part sets both; podman's
   `unlimited`/`-1`/`host` spellings are not accepted); default unset =
-  no flag, malformed values abort startup. Note `nproc` counts the host
-  uid's processes across all namespaces, so on the default rootless
-  keep-id deployment it is a combined budget shared by all workspaces,
-  not a per-workspace cap. Per-workspace override via the settings bag
-  (`nproc_limit` / `nofile_limit`: `PATCH /workspaces/{id}/settings`,
-  create/update `settings`, or the web/TUI forms); applies to containers
-  started after the change, reloadable on SIGHUP.
+  no flag, malformed values abort startup. `nproc` counts the host uid's
+  processes across all namespaces, so on the default rootless keep-id
+  deployment it is a combined budget shared by all workspaces and is
+  deploy-only (no per-workspace override — the per-workspace process
+  knob stays `pids_limit`); `nofile` is per-process and may be
+  overridden per workspace via the settings bag (`nofile_limit`:
+  `PATCH /workspaces/{id}/settings`, create/update `settings`, or the
+  web/TUI forms). Applies to containers started after the change,
+  reloadable on SIGHUP.
 
 - **`KLANGKD_CLASSIFICATION_BANNER` (#2768).** Deploy-wide default
   classification marking (free text) for the always-visible marking banner

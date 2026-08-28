@@ -245,14 +245,13 @@ void main() {
     });
   });
 
-  group('ulimit fields (#2085)', () {
+  group('nofile field (#2085)', () {
     testWidgets('pre-populates from the settings bag and saves edits',
         (tester) async {
       Map<String, dynamic>? savedBody;
       final ws = {
         ..._workspace,
         'settings': {
-          'nproc_limit': '1024:2048',
           'nofile_limit': '65536',
           'bridge_timeout': 60,
         },
@@ -284,20 +283,14 @@ void main() {
       await tester.pumpWidget(_buildPanel());
       await tester.pumpAndSettle();
 
-      // Pre-populated from settings.nproc_limit / nofile_limit.
-      final nprocField = find.widgetWithText(TextField, 'nproc Limit');
+      // Pre-populated from settings.nofile_limit.
       final nofileField = find.widgetWithText(TextField, 'nofile Limit');
-      expect(
-        tester.widget<TextField>(nprocField).controller?.text,
-        '1024:2048',
-      );
       expect(
         tester.widget<TextField>(nofileField).controller?.text,
         '65536',
       );
 
-      // Edit both and save — the strings pass through to the bag.
-      await tester.enterText(nprocField, '512');
+      // Edit and save — the string passes through to the bag.
       await tester.enterText(nofileField, '1024:4096');
       await _scrollToAndTap(tester, find.text('Save'));
       await tester.pump();
@@ -306,16 +299,14 @@ void main() {
       expect(savedBody, isNotNull);
       expect(savedBody!['settings'], {
         'bridge_timeout': 60,
-        'nproc_limit': '512',
         'nofile_limit': '1024:4096',
       });
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
 
-      // Clearing both fields drops the overrides from the saved bag
+      // Clearing the field drops the override from the saved bag
       // (revert to deploy default); an API-only key in the seeded bag
       // survives the full-replace PUT.
-      await tester.enterText(nprocField, '');
       await tester.enterText(nofileField, '');
       await _scrollToAndTap(tester, find.text('Save'));
       await tester.pump();

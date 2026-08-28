@@ -107,6 +107,14 @@ def test_validate_settings_rejects_unknown_key():
         ws.validate_settings({"nonsense": 1})
 
 
+def test_validate_settings_rejects_nproc_limit():
+    # #2085: nproc is deploy-only — RLIMIT_NPROC counts the host uid
+    # across all namespaces, so a per-workspace threshold would gate the
+    # shared counter, not isolate this workspace.
+    with pytest.raises(ValueError, match="Unknown setting 'nproc_limit'"):
+        ws.validate_settings({"nproc_limit": "512"})
+
+
 def test_validate_settings_lists_known_keys_on_error():
     with pytest.raises(ValueError) as exc:
         ws.validate_settings({"bogus": 1})
@@ -222,8 +230,10 @@ def test_validate_settings_rejects_zero_tmp_size():
         ws.validate_settings({"tmp_size": "0"})
 
 
-# #2085: nproc_limit / nofile_limit are ulimit values (<soft>[:<hard>]).
-@pytest.mark.parametrize("key", ["nproc_limit", "nofile_limit"])
+# #2085: nofile_limit is a ulimit value (<soft>[:<hard>]). (nproc is
+# deploy-only — the shared host-uid counter makes a per-workspace nproc
+# threshold misleading — so it is not a settings-bag key.)
+@pytest.mark.parametrize("key", ["nofile_limit"])
 def test_validate_settings_accepts_ulimit_forms(key):
     # String forms pass through (stripped); a bare int is stringified so
     # the stored bag always carries the podman form.
@@ -232,14 +242,14 @@ def test_validate_settings_accepts_ulimit_forms(key):
     assert ws.validate_settings({key: 0}) == {key: "0"}
 
 
-@pytest.mark.parametrize("key", ["nproc_limit", "nofile_limit"])
+@pytest.mark.parametrize("key", ["nofile_limit"])
 def test_validate_settings_rejects_bad_ulimit(key):
     for bad in ("many", "64k", "-5", "1024:", ":2048", "1.5", 1.5, True, [1]):
         with pytest.raises(ValueError, match=f"settings.{key}"):
             ws.validate_settings({key: bad})
 
 
-@pytest.mark.parametrize("key", ["nproc_limit", "nofile_limit"])
+@pytest.mark.parametrize("key", ["nofile_limit"])
 def test_validate_settings_rejects_ulimit_soft_above_hard(key):
     # setrlimit rejects soft > hard; fail at the API boundary instead.
     with pytest.raises(ValueError, match="hard limit must be >="):
@@ -328,13 +338,7 @@ def test_typed_resolvers_bind_keys():
     assert ws.resolve_tmp_size({"settings": {"tmp_size": "4g"}}, "2g") == "4g"
     assert ws.resolve_tmp_size({"settings": None}, "2g") == "2g"
     assert ws.resolve_tmp_size({"settings": {}}, None) is None
-    # #2085: nproc/nofile rlimits resolve like the other limits.
-    assert (
-        ws.resolve_nproc_limit({"settings": {"nproc_limit": "512"}}, "1024")
-        == "512"
-    )
-    assert ws.resolve_nproc_limit({"settings": {}}, "1024") == "1024"
-    assert ws.resolve_nproc_limit(None, None) is None
+    # #2085: the nofile rlimit resolves like the other limits.
     assert (
         ws.resolve_nofile_limit(
             {"settings": {"nofile_limit": "1024:4096"}}, "65536"
@@ -352,7 +356,6 @@ def test_known_settings_has_all_documented_keys():
             "cpu_limit",
             "memory_limit",
             "pids_limit",
-            "nproc_limit",
             "nofile_limit",
             "tmp_size",
             "nix",

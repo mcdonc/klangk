@@ -110,7 +110,7 @@ void main() {
       expect(find.text('New Workspace'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Create'), findsOneWidget);
-      expect(find.byType(TextField), findsNWidgets(15));
+      expect(find.byType(TextField), findsNWidgets(14));
       expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(2));
     });
 
@@ -1078,9 +1078,6 @@ void main() {
       final tmpField = find.byWidgetPredicate(
         (w) => w is TextField && w.decoration?.labelText == '/tmp size',
       );
-      final nprocField = find.byWidgetPredicate(
-        (w) => w is TextField && w.decoration?.labelText == 'nproc Limit',
-      );
       final nofileField = find.byWidgetPredicate(
         (w) => w is TextField && w.decoration?.labelText == 'nofile Limit',
       );
@@ -1095,8 +1092,6 @@ void main() {
       await tester.enterText(pidsField, '256');
       await tester.ensureVisible(tmpField);
       await tester.enterText(tmpField, '2g');
-      await tester.ensureVisible(nprocField);
-      await tester.enterText(nprocField, '1024:2048');
       await tester.ensureVisible(nofileField);
       await tester.enterText(nofileField, '65536');
 
@@ -1111,7 +1106,6 @@ void main() {
         'memory_limit': '4g',
         'pids_limit': 256,
         'tmp_size': '2g',
-        'nproc_limit': '1024:2048',
         'nofile_limit': '65536',
       });
     });
