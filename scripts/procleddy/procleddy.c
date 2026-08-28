@@ -541,7 +541,7 @@ static struct cand {
 } *cand;
 
 int main(int argc, char **argv) {
-    long interval_ms = 20;
+    long interval_ms = 80;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--interval-ms") && i + 1 < argc) {
             const char *s = argv[++i];
@@ -558,6 +558,10 @@ int main(int argc, char **argv) {
         }
     }
     if (interval_ms < 10) interval_ms = 10;
+
+    /* Seed the poll-jitter RNG per process so restarts don't fall into
+     * the same wakeup pattern. */
+    srand((unsigned)(now_s() * 1000.0) ^ (unsigned)getpid());
 
     signal(SIGTERM, on_term);
     signal(SIGINT, on_term);
@@ -769,6 +773,12 @@ int main(int argc, char **argv) {
         }
 
         double sleep_s = budget - work;
+        if (sleep_s < 0.001) sleep_s = 0.001;
+        /* Jitter (±25%) on the final wait: avoids lockstep with other
+         * periodic /proc scanners and spreads wakeups that would
+         * otherwise align across restarts. Applied after the duty-cycle
+         * governor so cost-spike stretching still dominates. */
+        sleep_s *= 0.75 + 0.5 * ((double)rand() / (double)RAND_MAX);
         if (sleep_s < 0.001) sleep_s = 0.001;
         struct timespec ts = {(time_t)sleep_s,
                               (long)((sleep_s - (time_t)sleep_s) * 1e9)};
