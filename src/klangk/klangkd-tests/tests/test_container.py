@@ -2572,6 +2572,67 @@ class TestStartContainer:
         assert kwargs["memory"] == "2g"
         assert kwargs["pids_limit"] == 512
 
+    async def test_ulimits_unset_means_no_flags(self, workspace):
+        # #2085: both deploy defaults unset (the default) -> None -> no
+        # --ulimit flags = no behavior change.
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["ulimits"] is None
+
+    async def test_ulimits_deploy_defaults_passed_through(
+        self, workspace, monkeypatch
+    ):
+        # #2085: deploy-wide KLANGKD_CONTAINER_NPROC_LIMIT /
+        # KLANGKD_CONTAINER_NOFILE_LIMIT flow to podman.create as the
+        # ulimits kwargs (one --ulimit flag each, nproc first).
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_nproc_limit", "1024:2048")
+        monkeypatch.setattr(settings, "container_nofile_limit", "65536")
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(workspace["id"], "/tmp/home")
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["ulimits"] == ["nproc=1024:2048", "nofile=65536"]
+
+    async def test_ulimits_workspace_override_wins(
+        self, workspace, monkeypatch
+    ):
+        # #2085: settings.nproc_limit / nofile_limit override the deploy
+        # defaults per-key (override > default > none).
+        settings = self.registry.app.state.settings
+        monkeypatch.setattr(settings, "container_nproc_limit", "1024:2048")
+        monkeypatch.setattr(settings, "container_nofile_limit", "65536")
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    workspace_settings={"nofile_limit": "1024:4096"},
+                )
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["ulimits"] == ["nproc=1024:2048", "nofile=1024:4096"]
+
+    async def test_ulimits_workspace_override_without_deploy_default(
+        self, workspace
+    ):
+        # #2085: no deploy default + a bag override -> just that one
+        # --ulimit value.
+        with patch_podman(self.registry) as p:
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    workspace_settings={"nproc_limit": 512},
+                )
+            )
+        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["ulimits"] == ["nproc=512"]
+
     async def test_workspace_settings_override_resource_limits(
         self, workspace, monkeypatch
     ):

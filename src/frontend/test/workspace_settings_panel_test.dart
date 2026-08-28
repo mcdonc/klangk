@@ -245,6 +245,70 @@ void main() {
     });
   });
 
+  group('ulimit fields (#2085)', () {
+    testWidgets('pre-populates from the settings bag and saves edits',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      final ws = {
+        ..._workspace,
+        'settings': {'nproc_limit': '1024:2048', 'nofile_limit': '65536'},
+      };
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/workspaces') {
+          return http.Response(jsonEncode([ws]), 200);
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Pre-populated from settings.nproc_limit / nofile_limit.
+      final nprocField = find.widgetWithText(TextField, 'nproc Limit');
+      final nofileField = find.widgetWithText(TextField, 'nofile Limit');
+      expect(
+        tester.widget<TextField>(nprocField).controller?.text,
+        '1024:2048',
+      );
+      expect(
+        tester.widget<TextField>(nofileField).controller?.text,
+        '65536',
+      );
+
+      // Edit both and save — the strings pass through to the bag.
+      await tester.enterText(nprocField, '512');
+      await tester.enterText(nofileField, '1024:4096');
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(savedBody, isNotNull);
+      expect(savedBody!['settings'], {
+        'nproc_limit': '512',
+        'nofile_limit': '1024:4096',
+      });
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
   group('WorkspaceSettingsPanel load + render', () {
     testWidgets('renders config fields populated from the workspace',
         (tester) async {

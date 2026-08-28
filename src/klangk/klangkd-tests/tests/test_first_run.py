@@ -146,6 +146,16 @@ class TestGenerateDefaultConfig:
         assert "container_memory_limit: 8g" in active
         assert "container_pids_limit: 16384" in active
 
+    def test_template_mentions_ulimit_knobs(self, tmp_path):
+        # #2085: the ulimit keys ship commented (default unset = no
+        # --ulimit flag), but present — the template's purpose is
+        # discoverability.
+        path = str(tmp_path / "klangkd.yaml")
+        first_run.generate_default_config(path)
+        body = Path(path).read_text()
+        assert "# container_nproc_limit: 1024:2048" in body
+        assert "# container_nofile_limit: 65536" in body
+
 
 class TestLauncherIntegration:
     """main.resolve_config_path(None) wires first-run generation in."""

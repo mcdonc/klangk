@@ -409,6 +409,28 @@ class TestCreateContainer:
         assert "--memory" not in args
         assert "--pids-limit" not in args
 
+    async def test_ulimits_each_emit_a_flag(self):
+        # #2085: each ulimits entry becomes one --ulimit flag, in order.
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n",
+                "img",
+                ulimits=["nproc=1024:2048", "nofile=65536"],
+                replace=False,
+            )
+        args = _args(m)
+        emitted = [args[i + 1] for i, a in enumerate(args) if a == "--ulimit"]
+        assert emitted == ["nproc=1024:2048", "nofile=65536"]
+
+    async def test_ulimits_unset_emit_no_flags(self):
+        # #2085: no/empty ulimits = no --ulimit flag = no behavior change.
+        for ulimits in (None, []):
+            with patch(EXEC, _exec(("id\n", "", 0))) as m:
+                await _p.create_container(
+                    "n", "img", ulimits=ulimits, replace=False
+                )
+            assert "--ulimit" not in _args(m)
+
     async def test_cap_add_emitted(self):
         # #2045: each cap_add entry becomes a --cap-add flag.
         with patch(EXEC, _exec(("id\n", "", 0))) as m:

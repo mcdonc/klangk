@@ -504,6 +504,80 @@ class TestConfigFile:
         with pytest.raises(Exception, match="must be > 0"):
             make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "0"})
 
+    # --- #2085: deploy-wide --ulimit (nproc / nofile) ---
+
+    def test_container_nproc_limit_from_env(self):
+        s = make_settings({"KLANGKD_CONTAINER_NPROC_LIMIT": "1024:2048"})
+        assert s.container_nproc_limit == "1024:2048"
+
+    def test_container_nofile_limit_from_env(self):
+        s = make_settings({"KLANGKD_CONTAINER_NOFILE_LIMIT": "65536"})
+        assert s.container_nofile_limit == "65536"
+
+    def test_container_ulimit_from_yaml_int_is_stringified(self, tmp_path):
+        # A bare YAML int is accepted and re-stringified so the field
+        # always carries the podman <soft>[:<hard>] form.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("container_nproc_limit: 1024\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.container_nproc_limit == "1024"
+
+    def test_container_ulimit_defaults_are_none(self):
+        # Default unset = no --ulimit flag = no behavior change (#2085).
+        s = make_settings({})
+        assert s.container_nproc_limit is None
+        assert s.container_nofile_limit is None
+
+    def test_container_ulimit_empty_string_is_none(self):
+        s = make_settings(
+            {
+                "KLANGKD_CONTAINER_NPROC_LIMIT": "",
+                "KLANGKD_CONTAINER_NOFILE_LIMIT": "",
+            }
+        )
+        assert s.container_nproc_limit is None
+        assert s.container_nofile_limit is None
+
+    def test_container_ulimit_malformed_aborts(self):
+        for var, raw in (
+            ("KLANGKD_CONTAINER_NPROC_LIMIT", "many"),
+            ("KLANGKD_CONTAINER_NPROC_LIMIT", "1024:"),
+            ("KLANGKD_CONTAINER_NPROC_LIMIT", ":2048"),
+            ("KLANGKD_CONTAINER_NPROC_LIMIT", "1024:2048:4096"),
+            ("KLANGKD_CONTAINER_NOFILE_LIMIT", "64k"),
+            ("KLANGKD_CONTAINER_NOFILE_LIMIT", "-5"),
+            ("KLANGKD_CONTAINER_NOFILE_LIMIT", "1.5"),
+        ):
+            with pytest.raises(Exception, match="Expected <soft>"):
+                make_settings({var: raw})
+
+    def test_container_ulimit_bool_aborts(self, tmp_path):
+        # bool is a subclass of int — rejected explicitly.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("container_nofile_limit: true\n")
+        with pytest.raises(Exception, match="not a boolean"):
+            make_settings({}, config_file=str(cfg))
+
+    def test_container_ulimit_wrong_type_aborts(self, tmp_path):
+        # A YAML list (or any non-int/str/bool) is rejected.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("container_nproc_limit: [1024, 2048]\n")
+        with pytest.raises(Exception, match="got list"):
+            make_settings({}, config_file=str(cfg))
+
+    def test_container_ulimit_soft_above_hard_aborts(self):
+        # setrlimit rejects soft > hard with EINVAL — fail at boot, not
+        # at the first workspace start.
+        with pytest.raises(Exception, match="hard limit must be >="):
+            make_settings({"KLANGKD_CONTAINER_NOFILE_LIMIT": "4096:1024"})
+
+    def test_container_ulimit_zero_is_accepted(self):
+        # Unlike --pids-limit=0 (podman reads it as unlimited), an rlimit
+        # of 0 unambiguously means zero, so it is a legal (if extreme)
+        # value — accepted, not treated as "unset".
+        s = make_settings({"KLANGKD_CONTAINER_NPROC_LIMIT": "0"})
+        assert s.container_nproc_limit == "0"
+
     def test_file_cmd_resolution_from_yaml(self, tmp_path):
         """file:/cmd: values in YAML resolve at construction (#1461)."""
         secret = tmp_path / "jwt.txt"

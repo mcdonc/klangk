@@ -89,6 +89,15 @@ _CONTAINER_MEM_LIMIT_RE = re.compile(
     r"^(?P<num>\d+(\.\d+)?)[kKmMgGtTpP]?[bB]?$"
 )
 
+# Ulimit value grammar (#2085): ``<soft>[:<hard>]`` with non-negative
+# integer parts — the value half of podman's ``--ulimit name=<soft>[:<hard>]``
+# (e.g. ``1024``, ``1024:2048``). ``\d+`` rejects negatives, empty parts,
+# and stray units outright; the soft<=hard check happens in the coercer
+# (setrlimit rejects soft>hard with EINVAL, so a boot-time error beats a
+# workspace-start failure). Podman sets hard=soft when the hard part is
+# omitted (same as docker).
+_ULIMIT_VALUE_RE = re.compile(r"^(?P<soft>\d+)(?::(?P<hard>\d+))?$")
+
 # The XDG "klangkd" subdir used by the default-roots (state + config). The
 # server's tree is ``klangkd`` (the binary name) — distinct from the CLI's
 # ``klangk`` tree. Different audiences, different shapes: server state is
@@ -295,6 +304,53 @@ def _coerce_setting_float(
             "(nan/inf and <= 0 are rejected)."
         )
     return value
+
+
+def _coerce_ulimit(v, name: str) -> str | None:
+    """Validate a podman ulimit value string (``1024``/``1024:2048``) or None.
+
+    Shared body of the ulimit validators (#2085): ``None``/empty →
+    ``None`` (no ``--ulimit`` flag); a non-negative ``int`` (YAML
+    ``container_nproc_limit: 1024``) is accepted and re-stringified so
+    the field always carries the podman form; a string must match
+    ``<soft>[:<hard>]`` with non-negative integers. Malformed values,
+    negatives, and ``soft > hard`` raise naming *name* (the ENV_VAR
+    string) so ``KlangkSettings(...)`` construction fails and the
+    server refuses to boot — same strict-on-malformed posture as the
+    other container limits (#34). Podman remains the authority on what
+    the runtime can actually apply.
+    """
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool):
+        raise ValueError(
+            f"{name}={v!r} must be a ulimit value (<soft>[:<hard>]),"
+            " not a boolean."
+        )
+    if isinstance(v, int):
+        s = str(v)
+    elif isinstance(v, str):
+        s = v.strip()
+    else:
+        raise ValueError(
+            f"{name}={v!r} must be a ulimit value (<soft>[:<hard>]),"
+            f" got {type(v).__name__}."
+        )
+    m = _ULIMIT_VALUE_RE.match(s)
+    if m is None:
+        raise ValueError(
+            f"{name}={v!r} is invalid. Expected <soft>[:<hard>] with"
+            " non-negative integers, e.g. 1024 or 1024:2048 (omitting"
+            " the hard part sets both to the soft value)."
+        )
+    if m.group("hard") is not None and int(m.group("hard")) < int(
+        m.group("soft")
+    ):
+        raise ValueError(
+            f"{name}={v!r} is invalid: the hard limit must be >= the"
+            " soft limit (setrlimit rejects soft > hard)."
+        )
+    return s
 
 
 def _coerce_podman_size(v, name: str) -> str | None:
@@ -1115,6 +1171,18 @@ class KlangkSettings(BaseSettings):
     container_cpu_limit: float | None = 2.0
     container_memory_limit: str | None = "8g"
     container_pids_limit: int | None = 16384
+    # #2085: per-process rlimits (podman --ulimit) — nproc caps
+    # processes/threads per uid (the knob `ulimit -u` reads), nofile caps
+    # open file descriptors (`ulimit -n`). Complements the cgroup-level
+    # container_pids_limit: rlimits are per-uid/per-process, so they are
+    # the familiar, tool-readable ceiling agent shells report. Value form
+    # <soft>[:<hard>] (omitting hard sets both). Default unset = no flag =
+    # no behavior change; malformed values abort startup, same posture as
+    # the other limits (#34). Reloadable on SIGHUP; applies to containers
+    # started after the change. A workspace may override each via its
+    # settings bag (nproc_limit / nofile_limit).
+    container_nproc_limit: str | None = None
+    container_nofile_limit: str | None = None
     # #2378: per-workspace /tmp tmpfs size (``--tmpfs /tmp:...,size=<n>``).
     # Default ``2g`` preserves the pre-#2378 hardcoded mount size; a
     # workspace may override it via its settings bag (``settings.tmp_size``).
@@ -1769,6 +1837,32 @@ class KlangkSettings(BaseSettings):
         unambiguous.)
         """
         return _coerce_positive_int(v, "KLANGKD_CONTAINER_PIDS_LIMIT")
+
+    @field_validator("container_nproc_limit", mode="before")
+    @classmethod
+    def _coerce_container_nproc_limit(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_NPROC_LIMIT`` (#2085).
+
+        Accepts a ``<soft>[:<hard>]`` string (env var) or a bare
+        non-negative int (YAML config file, re-stringified so the field
+        carries the podman form); ``None`` / empty → ``None`` (no
+        ``--ulimit`` flag). A malformed value, a negative, or
+        ``soft > hard`` **raises** and aborts startup — same posture as
+        the other container limits (#34). ``0`` is accepted: unlike
+        ``--pids-limit=0`` (which podman reads as "unlimited"), an
+        rlimit of 0 unambiguously means zero.
+        """
+        return _coerce_ulimit(v, "KLANGKD_CONTAINER_NPROC_LIMIT")
+
+    @field_validator("container_nofile_limit", mode="before")
+    @classmethod
+    def _coerce_container_nofile_limit(cls, v):
+        """Coerce + validate ``KLANGKD_CONTAINER_NOFILE_LIMIT`` (#2085).
+
+        Same grammar and posture as
+        ``container_nproc_limit`` — see that validator.
+        """
+        return _coerce_ulimit(v, "KLANGKD_CONTAINER_NOFILE_LIMIT")
 
     @field_validator("container_tmp_size", mode="before")
     @classmethod

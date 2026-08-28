@@ -253,6 +253,20 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`KLANGKD_CONTAINER_NPROC_LIMIT` / `KLANGKD_CONTAINER_NOFILE_LIMIT`
+  (#2085).** Deploy-wide per-process rlimits applied to every workspace
+  container via podman `--ulimit nproc=` / `--ulimit nofile=`. Values take
+  the `<soft>[:<hard>]` form (omitting the hard part sets both); default
+  unset = no flag = no behavior change, and malformed values abort
+  startup. Unlike `KLANGKD_CONTAINER_PIDS_LIMIT` (a cgroup-level cap on
+  the container as a whole), these are per-uid/per-process ceilings —
+  the knobs `ulimit -u` / `ulimit -n` report inside a workspace. A
+  workspace may override either via its settings bag (`nproc_limit` /
+  `nofile_limit`), settable through `PATCH /workspaces/{id}/settings`,
+  the workspace create/update `settings` field, or the create/edit forms
+  in the web UI and TUI. Reloadable on SIGHUP; applies to containers
+  started after the change.
+
 - **`KLANGKD_CLASSIFICATION_BANNER` (#2768).** Deploy-wide default
   classification marking (free text) for the always-visible marking banner
   the Application Security and Development STIG requires ("markings at the

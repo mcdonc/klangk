@@ -114,6 +114,12 @@ def _render_config() -> str:
 container_cpu_limit: 2.0
 container_memory_limit: 8g
 container_pids_limit: 16384
+# #2085: optional per-process rlimits (podman --ulimit), complementary to
+# the cgroup caps above: nproc caps processes/threads per uid (ulimit -u),
+# nofile caps open file descriptors (ulimit -n). Value form <soft>[:<hard>]
+# (omitting the hard part sets both). Default unset = no flag.
+# container_nproc_limit: 1024:2048
+# container_nofile_limit: 65536
 # #2378: /tmp tmpfs size per workspace (podman size string, e.g. 2g, 512m).
 # Default 2g matches the pre-#2378 mount; a workspace may override it via
 # its settings bag (settings.tmp_size). Empty -> no size= option (podman

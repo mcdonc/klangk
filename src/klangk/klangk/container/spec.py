@@ -162,6 +162,51 @@ def resolve_pids_limit(app, workspace_settings: dict | None) -> int | None:
     )
 
 
+def resolve_nproc_limit(app, workspace_settings: dict | None) -> str | None:
+    """Per-workspace ``nproc`` rlimit (``--ulimit nproc=``), #2085.
+
+    Complements :func:`resolve_pids_limit`: the cgroup cap bounds the
+    container's total process count, while the rlimit bounds each uid's
+    process/thread count — the knob ``ulimit -u`` reports inside the
+    workspace. ``None`` means no ``--ulimit`` flag.
+    """
+    return ws_settings.resolve_nproc_limit(
+        _ws_setting(workspace_settings),
+        app.state.settings.container_nproc_limit,
+    )
+
+
+def resolve_nofile_limit(app, workspace_settings: dict | None) -> str | None:
+    """Per-workspace ``nofile`` rlimit (``--ulimit nofile=``), #2085.
+
+    Caps each process's open file descriptors (``ulimit -n``); ``None``
+    means no ``--ulimit`` flag.
+    """
+    return ws_settings.resolve_nofile_limit(
+        _ws_setting(workspace_settings),
+        app.state.settings.container_nofile_limit,
+    )
+
+
+def resolve_ulimits(app, workspace_settings: dict | None) -> list[str] | None:
+    """Assemble the ``--ulimit`` values for a workspace container (#2085).
+
+    Each resolved rlimit becomes one ``name=<soft>[:<hard>]`` entry
+    (``podman.create_container`` emits one ``--ulimit`` flag per entry,
+    only when the list is non-empty — unset = no flag = no behavior
+    change). Order is fixed (nproc, then nofile) so the emitted args are
+    deterministic.
+    """
+    ulimits: list[str] = []
+    nproc = resolve_nproc_limit(app, workspace_settings)
+    if nproc is not None:
+        ulimits.append(f"nproc={nproc}")
+    nofile = resolve_nofile_limit(app, workspace_settings)
+    if nofile is not None:
+        ulimits.append(f"nofile={nofile}")
+    return ulimits or None
+
+
 def resolve_tmp_size(app, workspace_settings: dict | None) -> str | None:
     """Per-workspace ``/tmp`` tmpfs size (``--tmpfs /tmp:...,size=<n>``).
 
@@ -415,5 +460,8 @@ def build_create_kwargs(
         cpus=resolve_cpu_limit(app, workspace_settings),
         memory=resolve_memory_limit(app, workspace_settings),
         pids_limit=resolve_pids_limit(app, workspace_settings),
+        # #2085: per-process rlimits; None (both unset) = no --ulimit
+        # flags at all.
+        ulimits=resolve_ulimits(app, workspace_settings),
         pull=image_pull_policy(app),
     )

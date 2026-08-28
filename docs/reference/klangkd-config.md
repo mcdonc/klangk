@@ -321,6 +321,8 @@ override it per-workspace (`settings.idle_timeout` — see
 | `memory_eviction_sustain_polls`     | `3`                             | `KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS`     |
 | `memory_eviction_poll_interval`     | `10` (floored at 1)             | `KLANGKD_MEMORY_EVICTION_POLL_INTERVAL`     |
 | `container_pids_limit`              | `16384`                         | `KLANGKD_CONTAINER_PIDS_LIMIT`              |
+| `container_nproc_limit`             | _(unset)_                       | `KLANGKD_CONTAINER_NPROC_LIMIT`             |
+| `container_nofile_limit`            | _(unset)_                       | `KLANGKD_CONTAINER_NOFILE_LIMIT`            |
 | `container_restart_enabled`         | `false`                         | `KLANGKD_CONTAINER_RESTART_ENABLED`         |
 | `container_restart_max_retries`     | `5`                             | `KLANGKD_CONTAINER_RESTART_MAX_RETRIES`     |
 | `container_restart_backoff_seconds` | `5.0`                           | `KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS` |

@@ -350,6 +350,8 @@ class _SettingsFormState extends State<_SettingsForm> {
   late TextEditingController _memoryLimitCtrl;
   late TextEditingController _pidsLimitCtrl;
   late TextEditingController _tmpSizeCtrl;
+  late TextEditingController _nprocLimitCtrl;
+  late TextEditingController _nofileLimitCtrl;
   late String _selectedImage;
   late List<String> _mounts;
   late Map<String, String> _envVars;
@@ -452,6 +454,12 @@ class _SettingsFormState extends State<_SettingsForm> {
     _tmpSizeCtrl = TextEditingController(
       text: (settings['tmp_size'] as String?) ?? '',
     );
+    _nprocLimitCtrl = TextEditingController(
+      text: (settings['nproc_limit'] as String?) ?? '',
+    );
+    _nofileLimitCtrl = TextEditingController(
+      text: (settings['nofile_limit'] as String?) ?? '',
+    );
   }
 
   @override
@@ -553,6 +561,8 @@ class _SettingsFormState extends State<_SettingsForm> {
     _memoryLimitCtrl.dispose();
     _pidsLimitCtrl.dispose();
     _tmpSizeCtrl.dispose();
+    _nprocLimitCtrl.dispose();
+    _nofileLimitCtrl.dispose();
     super.dispose();
   }
 
@@ -568,6 +578,12 @@ class _SettingsFormState extends State<_SettingsForm> {
     if (pids.isNotEmpty) s['pids_limit'] = int.parse(pids);
     final tmp = _tmpSizeCtrl.text.trim();
     if (tmp.isNotEmpty) s['tmp_size'] = tmp;
+    // #2085: per-process rlimits (<soft>[:<hard>]); passed through as
+    // strings — the server's settings gate validates the form.
+    final nproc = _nprocLimitCtrl.text.trim();
+    if (nproc.isNotEmpty) s['nproc_limit'] = nproc;
+    final nofile = _nofileLimitCtrl.text.trim();
+    if (nofile.isNotEmpty) s['nofile_limit'] = nofile;
     return s;
   }
 
@@ -1039,6 +1055,36 @@ class _SettingsFormState extends State<_SettingsForm> {
                   floatingLabelBehavior: FloatingLabelBehavior.always,
                   border: const OutlineInputBorder(),
                   hintText: 'e.g. 2g, 512m',
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _nprocLimitCtrl,
+                decoration: InputDecoration(
+                  labelText: 'nproc Limit',
+                  labelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'e.g. 1024, 1024:2048',
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _nofileLimitCtrl,
+                decoration: InputDecoration(
+                  labelText: 'nofile Limit',
+                  labelStyle: labelStyle,
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: const OutlineInputBorder(),
+                  hintText: 'e.g. 65536',
                 ),
               ),
             ),

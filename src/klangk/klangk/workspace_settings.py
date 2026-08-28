@@ -53,6 +53,16 @@ from typing import Any, Callable
 # can actually apply.
 _MEMORY_LIMIT_RE = re.compile(r"^(?P<num>\d+(\.\d+)?)[kKmMgGtTpP]?[bB]?$")
 
+# Ulimit value grammar (#2085, mirrors ``KLANGKD_CONTAINER_NPROC_LIMIT`` /
+# ``KLANGKD_CONTAINER_NOFILE_LIMIT`` in settings.py): ``<soft>[:<hard>]``
+# with non-negative integer parts — the value half of podman's
+# ``--ulimit name=<soft>[:<hard>]``. ``\d+`` rejects negatives and stray
+# units outright; the soft<=hard check happens in :func:`_coerce_ulimit`
+# (setrlimit rejects soft > hard with EINVAL, so an API-time 400 beats a
+# workspace-start failure). Podman sets hard=soft when the hard part is
+# omitted.
+_ULIMIT_VALUE_RE = re.compile(r"^(?P<soft>\d+)(?::(?P<hard>\d+))?$")
+
 
 def _coerce_int(key: str, value: Any) -> int:
     """Coerce a settings value to an ``int`` (no sign gating).
@@ -194,6 +204,48 @@ def _coerce_bool(key: str, value: Any) -> bool:
     raise ValueError(f"settings.{key}={value!r} is not a boolean")
 
 
+def _coerce_ulimit(key: str, value: Any) -> str:
+    """Coerce a settings value to a podman ulimit string (``1024:2048``).
+
+    #2085: accepts a ``<soft>[:<hard>]`` string (non-negative integers;
+    omitting the hard part sets both — same as podman) or a bare
+    non-negative int, re-stringified so the stored bag always carries
+    the podman form. Rejects bools, floats, negatives, and ``soft >
+    hard`` (setrlimit rejects that with EINVAL — fail at the API
+    boundary, not at workspace start). ``0`` is accepted (an rlimit of
+    0 unambiguously means zero, unlike a cgroup pids limit of 0).
+    """
+    if isinstance(value, bool):
+        raise ValueError(
+            f"settings.{key} must be a ulimit value (<soft>[:<hard>]),"
+            " not a boolean"
+        )
+    if isinstance(value, int):
+        s = str(value)
+    elif isinstance(value, str):
+        s = value.strip()
+    else:
+        raise ValueError(
+            f"settings.{key} must be a ulimit value (<soft>[:<hard>]),"
+            f" got {type(value).__name__}"
+        )
+    m = _ULIMIT_VALUE_RE.match(s)
+    if m is None:
+        raise ValueError(
+            f"settings.{key}={value!r} is not a valid ulimit value:"
+            " expected <soft>[:<hard>] with non-negative integers,"
+            " e.g. 1024 or 1024:2048 (omitting the hard part sets both)"
+        )
+    if m.group("hard") is not None and int(m.group("hard")) < int(
+        m.group("soft")
+    ):
+        raise ValueError(
+            f"settings.{key}={value!r} is not a valid ulimit value:"
+            " the hard limit must be >= the soft limit"
+        )
+    return s
+
+
 # Schema: each known settings key maps to a normalizer that validates +
 # coerces the value (raising ``ValueError`` on a bad value) and returns the
 # normalized form to store. Keys not in this dict are rejected by
@@ -204,6 +256,11 @@ SCHEMA: dict[str, Callable[[str, Any], Any]] = {
     "cpu_limit": _coerce_float,
     "memory_limit": _coerce_memory,
     "pids_limit": _coerce_positive_int,
+    # #2085: per-process rlimits (podman --ulimit nproc=/nofile=). These
+    # are the per-uid ceilings tooling reads (`ulimit -u` / `ulimit -n`),
+    # complementary to pids_limit (the cgroup-level cap).
+    "nproc_limit": _coerce_ulimit,
+    "nofile_limit": _coerce_ulimit,
     # #2378: per-workspace /tmp tmpfs size (podman size string, same grammar
     # as memory_limit — a positive number + optional k/m/g/t/p unit).
     "tmp_size": _coerce_memory,
@@ -381,6 +438,28 @@ def resolve_pids_limit(
 ) -> int | None:
     """Resolve the per-workspace PIDs limit (``--pids-limit``, int)."""
     return resolve(workspace, "pids_limit", deploy_default)
+
+
+def resolve_nproc_limit(
+    workspace: dict | None, deploy_default: str | None
+) -> str | None:
+    """Resolve the per-workspace ``nproc`` rlimit (``--ulimit``).
+
+    #2085: same precedence as the other resolvers (workspace override >
+    deploy default > none); the value is a ``<soft>[:<hard>]`` string.
+    """
+    return resolve(workspace, "nproc_limit", deploy_default)
+
+
+def resolve_nofile_limit(
+    workspace: dict | None, deploy_default: str | None
+) -> str | None:
+    """Resolve the per-workspace ``nofile`` rlimit (``--ulimit``).
+
+    #2085: same precedence as the other resolvers (workspace override >
+    deploy default > none); the value is a ``<soft>[:<hard>]`` string.
+    """
+    return resolve(workspace, "nofile_limit", deploy_default)
 
 
 def resolve_tmp_size(

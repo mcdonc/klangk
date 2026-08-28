@@ -288,6 +288,7 @@ class Podman:
         cpus: float | None = None,
         memory: str | None = None,
         pids_limit: int | None = None,
+        ulimits: list[str] | None = None,
         command: list[str] | None = None,
         network: str | None = None,
     ) -> str:
@@ -315,6 +316,13 @@ class Podman:
         deploy-wide resource caps (#34): each emits its flag **only when
         non-None**, so an unset limit = no flag = no behavior change — the
         same omit-when-unset posture as ``cap_drop``/``userns``.
+        ``ulimits`` (#2085) is the per-process rlimit layer: each entry
+        becomes one ``--ulimit <value>`` flag (``nproc=1024:2048``,
+        ``nofile=65536``), emitted only when the list is non-empty —
+        the same posture as the cgroup caps. Unlike ``pids_limit`` (a
+        cgroup-level cap on the container as a whole), rlimits apply
+        per-uid/per-process inside the workspace and are the knob tooling
+        reads (``ulimit -u`` / ``ulimit -n``).
         """
         # --hooks-dir is a podman global flag (before the subcommand), not a
         # create flag. Placing it after "create" causes podman to silently
@@ -341,6 +349,8 @@ class Podman:
             args += ["--memory", memory]
         if pids_limit is not None:
             args += ["--pids-limit", str(pids_limit)]
+        for ulimit in ulimits or []:
+            args += ["--ulimit", ulimit]
         if network:
             args += ["--network", network]
         for key, value in (labels or {}).items():

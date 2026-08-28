@@ -85,6 +85,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _memoryLimitController = TextEditingController();
   final _pidsLimitController = TextEditingController();
   final _tmpSizeController = TextEditingController();
+  final _nprocLimitController = TextEditingController();
+  final _nofileLimitController = TextEditingController();
   late String _selectedImage;
   final _mounts = <String>[];
   final _envVars = <String, String>{};
@@ -151,6 +153,8 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     _memoryLimitController.dispose();
     _pidsLimitController.dispose();
     _tmpSizeController.dispose();
+    _nprocLimitController.dispose();
+    _nofileLimitController.dispose();
     super.dispose();
   }
 
@@ -236,6 +240,12 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     if (pids.isNotEmpty) s['pids_limit'] = int.parse(pids);
     final tmp = _tmpSizeController.text.trim();
     if (tmp.isNotEmpty) s['tmp_size'] = tmp;
+    // #2085: per-process rlimits (<soft>[:<hard>]); passed through as
+    // strings — the server's settings gate validates the form.
+    final nproc = _nprocLimitController.text.trim();
+    if (nproc.isNotEmpty) s['nproc_limit'] = nproc;
+    final nofile = _nofileLimitController.text.trim();
+    if (nofile.isNotEmpty) s['nofile_limit'] = nofile;
     return s;
   }
 
@@ -563,6 +573,40 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                                       FloatingLabelBehavior.always,
                                   border: const OutlineInputBorder(),
                                   hintText: 'e.g. 2g, 512m',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _nprocLimitController,
+                                decoration: InputDecoration(
+                                  labelText: 'nproc Limit',
+                                  labelStyle: _labelStyle,
+                                  floatingLabelStyle: _labelStyle,
+                                  floatingLabelBehavior:
+                                      FloatingLabelBehavior.always,
+                                  border: const OutlineInputBorder(),
+                                  hintText: 'e.g. 1024, 1024:2048',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: TextField(
+                                controller: _nofileLimitController,
+                                decoration: InputDecoration(
+                                  labelText: 'nofile Limit',
+                                  labelStyle: _labelStyle,
+                                  floatingLabelStyle: _labelStyle,
+                                  floatingLabelBehavior:
+                                      FloatingLabelBehavior.always,
+                                  border: const OutlineInputBorder(),
+                                  hintText: 'e.g. 65536',
                                 ),
                               ),
                             ),

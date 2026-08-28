@@ -222,6 +222,30 @@ def test_validate_settings_rejects_zero_tmp_size():
         ws.validate_settings({"tmp_size": "0"})
 
 
+# #2085: nproc_limit / nofile_limit are ulimit values (<soft>[:<hard>]).
+@pytest.mark.parametrize("key", ["nproc_limit", "nofile_limit"])
+def test_validate_settings_accepts_ulimit_forms(key):
+    # String forms pass through (stripped); a bare int is stringified so
+    # the stored bag always carries the podman form.
+    assert ws.validate_settings({key: "1024"}) == {key: "1024"}
+    assert ws.validate_settings({key: " 1024:2048 "}) == {key: "1024:2048"}
+    assert ws.validate_settings({key: 0}) == {key: "0"}
+
+
+@pytest.mark.parametrize("key", ["nproc_limit", "nofile_limit"])
+def test_validate_settings_rejects_bad_ulimit(key):
+    for bad in ("many", "64k", "-5", "1024:", ":2048", "1.5", 1.5, True, [1]):
+        with pytest.raises(ValueError, match=f"settings.{key}"):
+            ws.validate_settings({key: bad})
+
+
+@pytest.mark.parametrize("key", ["nproc_limit", "nofile_limit"])
+def test_validate_settings_rejects_ulimit_soft_above_hard(key):
+    # setrlimit rejects soft > hard; fail at the API boundary instead.
+    with pytest.raises(ValueError, match="hard limit must be >="):
+        ws.validate_settings({key: "4096:1024"})
+
+
 # --- validate_settings_patch (merge semantics) ---
 
 
@@ -304,6 +328,20 @@ def test_typed_resolvers_bind_keys():
     assert ws.resolve_tmp_size({"settings": {"tmp_size": "4g"}}, "2g") == "4g"
     assert ws.resolve_tmp_size({"settings": None}, "2g") == "2g"
     assert ws.resolve_tmp_size({"settings": {}}, None) is None
+    # #2085: nproc/nofile rlimits resolve like the other limits.
+    assert (
+        ws.resolve_nproc_limit({"settings": {"nproc_limit": "512"}}, "1024")
+        == "512"
+    )
+    assert ws.resolve_nproc_limit({"settings": {}}, "1024") == "1024"
+    assert ws.resolve_nproc_limit(None, None) is None
+    assert (
+        ws.resolve_nofile_limit(
+            {"settings": {"nofile_limit": "1024:4096"}}, "65536"
+        )
+        == "1024:4096"
+    )
+    assert ws.resolve_nofile_limit({"settings": None}, None) is None
 
 
 def test_known_settings_has_all_documented_keys():
@@ -314,6 +352,8 @@ def test_known_settings_has_all_documented_keys():
             "cpu_limit",
             "memory_limit",
             "pids_limit",
+            "nproc_limit",
+            "nofile_limit",
             "tmp_size",
             "nix",
             "allow_sudo",
