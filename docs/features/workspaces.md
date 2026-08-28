@@ -154,8 +154,9 @@ cross-tenant and cross-user data access on shared hosts.
 
 ## Idle timeout
 
-Containers stop automatically after 30 minutes of inactivity
-(configurable via `KLANGKD_IDLE_TIMEOUT_SECONDS`). Activity includes
+Containers stop automatically after 60 minutes of inactivity
+(configurable deploy-wide via `KLANGKD_IDLE_TIMEOUT_SECONDS`; the
+default was raised from 30 to 60 minutes in #2480). Activity includes
 terminal input, file operations, and AI agent events — so containers
 stay alive during long-running LLM requests as long as events are
 flowing.
@@ -170,6 +171,25 @@ so they're immediately available when you or a collaborator reconnect.
 Only the idle timeout (or an explicit, admin-gated _Shutdown container_
 command) tears a container down. This lets long-lived services outlive
 any single user's session (#301, #1235).
+
+### Per-workspace override
+
+A workspace owner can override the deploy-wide default for a single
+workspace (#1018) — for example to keep a long-running service alive
+indefinitely, or to reap an expensive scratch workspace faster:
+
+- **Web UI:** set **Idle Timeout (s)** in the workspace's Settings tab
+  (or on the create-workspace dialog).
+- **CLI:** pass `--idle-timeout` to `klangk create` or `klangk edit`.
+- **API:** set `settings.idle_timeout` (a full-replace on `POST`/`PUT`,
+  or a partial merge on `PATCH /api/v1/workspaces/{id}/settings`).
+
+The value is seconds. `0` means **never idle out**; unset means the
+deploy-wide `KLANGKD_IDLE_TIMEOUT_SECONDS` default. An override takes
+effect the next time the container starts — a running container keeps
+its current timeout until it is restarted. Auto-started workspaces are
+pinned to `0` at boot so they come up unattended and stay up between
+user connections.
 
 ## Export and import
 

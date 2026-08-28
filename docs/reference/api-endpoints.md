@@ -870,6 +870,29 @@ user from all roles.
 
 ---
 
+### PATCH `/api/v1/workspaces/{id}/settings`
+
+Partial-merge update of the workspace's per-workspace `settings` bag —
+each key in the body sets/replaces that override; `null` **deletes**
+the key (reverting it to the deploy-wide default); keys not present
+are left untouched. See the `settings` field on
+[POST `/api/v1/workspaces`](#post-apiv1workspaces) for the known keys.
+
+**Auth:** JWT required. User must have `edit` permission on `/workspaces/{id}`.
+
+```json
+{ "idle_timeout": 0 }
+```
+
+```json
+{ "settings": { "idle_timeout": 0, "cpu_limit": 2.0 } }
+```
+
+An empty patch (`{}`) is rejected with `400`. Like a `PUT`, a changed
+`idle_timeout` applies the next time the container starts.
+
+---
+
 ### POST `/api/v1/admin/groups`
 
 Create a new group (admin).
@@ -1334,7 +1357,8 @@ are created automatically.
   "mounts": ["my-volume:/home/user/data"],
   "env": { "MY_VAR": "value" },
   "per_handle_home": true,
-  "classification_banner": "CUI"
+  "classification_banner": "CUI",
+  "settings": { "idle_timeout": 0 }
 }
 ```
 
@@ -1343,6 +1367,20 @@ All fields except `name` are optional. `per_handle_home` selects the
 gives each member a private `/home/<handle>`, `false` (the server
 default, `KLANGKD_PER_HANDLE_HOME`) shares one `/home/klangk`. Omit it
 to inherit the server default.
+
+`settings` is a bag of per-workspace behavioral overrides (#864). Known
+keys (unknown keys are rejected with `400`):
+
+| Key              | Type    | Meaning                                                                                                           |
+| ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| `idle_timeout`   | int (s) | Idle timeout override; `0` = never idle out, unset = deploy default (#1018). Applies at the next container start. |
+| `bridge_timeout` | int (s) | Browser-delegate stream bridge timeout.                                                                           |
+| `cpu_limit`      | float   | `--cpus` limit (e.g. `2.0`).                                                                                      |
+| `memory_limit`   | string  | `--memory` limit (e.g. `"4g"`, `"512m"`).                                                                         |
+| `pids_limit`     | int     | `--pids-limit` (e.g. `512`).                                                                                      |
+| `tmp_size`       | string  | `/tmp` tmpfs size (e.g. `"4g"`).                                                                                  |
+| `nix`            | bool    | Mount a per-workspace `/nix`.                                                                                     |
+| `allow_sudo`     | bool    | Restrict sudo (deploy `KLANGKD_ALLOW_SUDO` is a ceiling).                                                         |
 
 `classification_banner` is the workspace's classification marking,
 rendered as the persistent banner on the workspace page (#2768). Free
@@ -1676,13 +1714,20 @@ command, volume mounts, environment variables). All fields optional.
   "mounts": ["vol:/data"],
   "env": { "KEY": "VALUE" },
   "per_handle_home": false,
-  "classification_banner": ""
+  "classification_banner": "",
+  "settings": { "idle_timeout": 600 }
 }
 ```
 
 `per_handle_home` may be flipped here too; the new layout applies from
 the workspace's next connect/start (open terminals keep their layout
 until they end).
+
+`settings` is a **full replace** of the
+[settings bag](#post-apiv1workspaces) — keys absent from the request are
+reverted to the deploy-wide default, and an explicit `null` clears the
+whole bag. Use `PATCH /api/v1/workspaces/{id}/settings` to merge
+individual keys instead.
 
 `classification_banner` (#2768) replaces the workspace's marking
 outright; an empty value clears the override back to the deploy-wide

@@ -247,12 +247,14 @@ klangk create my-project --command 'npm run dev'  # with a service command
 klangk create my-project -c 'npm run dev'         # short form of --command
 klangk create my-project --per-handle-home       # per-member private homes (default: shared /home/klangk)
 klangk create my-project --allow github.com:443 --allow pypi.org  # with egress allowlist
+klangk create my-project --idle-timeout 0        # per-workspace idle timeout (seconds; 0 = never idle out)
 klangk edit my-project                  # interactive edit (name, image, command, health check, mounts, env, allowed domains)
 klangk edit my-project --auto-start     # enable auto-start on server boot
 klangk edit my-project --no-auto-start  # disable auto-start
 klangk edit my-project --env FOO=bar    # set env var via flag
 klangk edit my-project --allow github.com:443     # set allowed egress domain via flag
 klangk edit my-project --shared-home             # switch layout (applies from next connect/start)
+klangk edit my-project --idle-timeout 600 # set per-workspace idle timeout in seconds (0 = never idle out)
 klangk dup my-project my-copy           # duplicate a workspace
 klangk shell my-project                 # drop into bash inside the container
 klangk shell my-project debug           # attach to the "debug" terminal window (created if it doesn't exist)

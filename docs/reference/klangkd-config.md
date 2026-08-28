@@ -282,6 +282,10 @@ port: "8997"
 | `bridge_timeout_seconds` |                                  | `KLANGKD_BRIDGE_TIMEOUT_SECONDS` |
 | `idle_timeout_seconds`   | `3600`                           | `KLANGKD_IDLE_TIMEOUT_SECONDS`   |
 
+`idle_timeout_seconds` is the deploy-wide default; a workspace can
+override it per-workspace (`settings.idle_timeout` — see
+[Workspaces § Idle timeout](../features/workspaces.md#idle-timeout)).
+
 ### Container / workspace
 
 | Key                                 | Default                         | Env var                                     |
