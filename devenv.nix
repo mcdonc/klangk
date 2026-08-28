@@ -242,8 +242,9 @@ in
     # the "C watcher not found ... falling back to the Python poller"
     # warning and the ledger runs degraded (~3s interval). cc comes with
     # the devenv env (same toolchain test_procleddy_watcher builds with).
-    # execIfModified keys on the single source file; if the binary is
-    # ever deleted while the source is unchanged, `touch` the .c (or
+    # execIfModified keys on the watcher's sources (any file under
+    # scripts/procleddy/, not just procleddy.c); if the binary is ever
+    # deleted while the sources are unchanged, `touch` a source (or
     # `devenv tasks run klangk:build-procleddy --force`) to recompile.
     "klangk:build-procleddy" = {
       exec = ''
@@ -252,7 +253,7 @@ in
           "$DEVENV_ROOT/scripts/procleddy/procleddy.c"
       '';
       showOutput = true;
-      execIfModified = [ "scripts/procleddy/procleddy.c" ];
+      execIfModified = [ "scripts/procleddy/**" ];
     };
     "klangk:kill-port-holders" = {
       exec = ''
