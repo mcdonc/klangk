@@ -378,6 +378,19 @@ class TestConfig:
         resp = await client.get("/api/v1/config")
         assert resp.json()["default_per_handle_home"] is True
 
+    async def test_get_config_advertises_classification_banner_default(
+        self, client, app
+    ):
+        # #2768: the deploy default marking (KLANGKD_CLASSIFICATION_BANNER)
+        # is surfaced so the web UI can render the banner for workspaces
+        # without their own marking. Empty by default (no banner, no
+        # reserved space); pre-auth like default_per_handle_home.
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["default_classification_banner"] == ""
+        app.state.settings.classification_banner = "CUI"
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["default_classification_banner"] == "CUI"
+
     async def test_get_config_omits_netfilter_fields_when_unauthenticated(
         self, client, app
     ):
@@ -3080,6 +3093,109 @@ class TestWorkspaceRoutes:
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["per_handle_home"] is False
 
+    async def test_create_and_update_classification_banner(self, client, user):
+        # #2768: the marking is settable at create (stripped), exposed in
+        # list payloads, editable via PUT, and clearable with an empty
+        # value (back to inheriting the deploy default — NULL).
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "marked", "classification_banner": "  SECRET  "},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["classification_banner"] == "SECRET"
+        ws_id = resp.json()["id"]
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["classification_banner"] == "SECRET"
+        # PUT replaces it.
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"classification_banner": "CUI"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["classification_banner"] == "CUI"
+        # Empty clears the override (inherit).
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"classification_banner": ""},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["classification_banner"] is None
+
+    async def test_create_classification_banner_validation(self, client, user):
+        # #2768: one printable line, at most 120 chars.
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={
+                "name": "bad-mark",
+                "classification_banner": "TOP\nSECRET",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "single line" in resp.json()["detail"]
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={
+                "name": "long-mark",
+                "classification_banner": "X" * 121,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "at most" in resp.json()["detail"]
+        resp = await client.put(
+            "/api/v1/workspaces/missing",
+            json={"classification_banner": "ok"},
+            headers=headers,
+        )
+        # The edit ACL dependency gates nonexistent workspaces as 403
+        # before the handler's 404 path can fire.
+        assert resp.status_code == 403
+        # An invalid PUT banner (control character) is a 400.
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "bad-put-mark"},
+            headers=headers,
+        )
+        put_id = resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/workspaces/{put_id}",
+            json={"classification_banner": "A\nB"},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "single line" in resp.json()["detail"]
+
+    async def test_duplicate_carries_classification_banner(self, client, user):
+        # #2768: the marking is workspace metadata — a duplicate keeps it.
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={
+                "name": "dup-marked",
+                "classification_banner": "SECRET",
+            },
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/duplicate",
+            json={"name": "dup-marked-2"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["classification_banner"] == "SECRET"
+
     async def test_update_workspace_allowed_domains(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -3115,6 +3231,91 @@ class TestWorkspaceRoutes:
         resp = await client.get("/api/v1/workspaces", headers=headers)
         match = [w for w in resp.json() if w["id"] == ws_id]
         assert match[0]["rejected_domains"] == ["evil.com:443"]
+
+    async def test_update_classification_banner_notifies_viewers(
+        self, client, user, app
+    ):
+        """#2768: a marking change pushes workspaces_changed so open pages
+        re-render the banner — to the owner, the editor (a shared member
+        with the edit ACE may not be the owner), and every ACL-shared
+        member (read-only viewers see the same page via
+        /workspaces/shared and must not keep a stale, lower marking)."""
+        from klangk.model import ACTION_ALLOW, PRINCIPAL_USER
+
+        notified = []
+        app.state.sockets.notify_user_workspaces_changed = lambda uid: (
+            notified.append(uid)
+        )
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "notify-ws"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        owner_id = resp.json()["user_id"]
+        # A second user with a direct edit ACE (a shared editor).
+        import klangk.auth as auth_mod
+
+        other = await app.state.model.users.create_user(
+            "editor@x.com", auth_mod.hash_password("testpass"), verified=True
+        )
+        await app.state.model.acl.add_acl_entry(
+            f"/workspaces/{ws_id}",
+            100,
+            ACTION_ALLOW,
+            "edit",
+            PRINCIPAL_USER,
+            user_id=other["id"],
+        )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={"identifier": "editor@x.com", "password": "testpass"},
+        )
+        editor_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+        # A read-only shared member (view ACE only) — the page it views
+        # re-resolves the marking on the same push.
+        viewer = await app.state.model.users.create_user(
+            "viewer@x.com", auth_mod.hash_password("testpass"), verified=True
+        )
+        await app.state.model.acl.add_acl_entry(
+            f"/workspaces/{ws_id}",
+            101,
+            ACTION_ALLOW,
+            "view",
+            PRINCIPAL_USER,
+            user_id=viewer["id"],
+        )
+        # Drop the create-time notification so only the PUT's notifies
+        # are asserted below.
+        notified.clear()
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"classification_banner": "CUI"},
+            headers=editor_headers,
+        )
+        assert resp.status_code == 200
+        # Owner, editor, and the read-only viewer — each notified exactly
+        # once.
+        assert sorted(notified) == sorted(
+            [owner_id, other["id"], viewer["id"]]
+        )
+
+    async def test_update_empty_body_rejected(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "empty-put"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}", json={}, headers=headers
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "No fields to update"
 
     async def test_create_workspace_with_settings(self, client, user):
         headers = await _auth_headers(client)
@@ -8861,6 +9062,7 @@ class TestWorkspaceMetadata:
             "num_ports": 3,
             "egress_mode": None,
             "per_handle_home": True,
+            "classification_banner": None,
         }
 
     def test_defaults_num_ports(self):
@@ -9358,6 +9560,75 @@ class TestWorkspaceExportImport:
         new_home = app.state.workspaces.home_path(imported["id"])
         assert (new_home / "klangk" / "data.txt").exists()
         assert (new_home / "klangk" / "data.txt").read_text() == "test data"
+
+    async def test_export_import_preserves_classification_banner(
+        self, client, admin_user, user, app
+    ):
+        """#2768: the marking rides in workspace.json — a real export ->
+        import round trip keeps the workspace classified."""
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={
+                "name": "mark-export",
+                "classification_banner": "SECRET",
+            },
+        )
+        ws = resp.json()
+        home = app.state.workspaces.home_path(ws["id"])
+        home.mkdir(parents=True, exist_ok=True)
+        export_resp = await client.get(
+            f"/api/v1/workspaces/{ws['id']}/export", headers=headers
+        )
+        assert export_resp.status_code == 200
+        import_resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            params={"name": "mark-imported"},
+            files={
+                "file": (
+                    "archive.tar.gz",
+                    export_resp.content,
+                    "application/gzip",
+                )
+            },
+        )
+        assert import_resp.status_code == 200
+        assert import_resp.json()["classification_banner"] == "SECRET"
+
+    async def test_import_invalid_classification_banner_falls_back(
+        self, client, admin_user, user
+    ):
+        """#2768: a malformed marking in a (tampered/stale) archive drops
+        to the inherit default instead of failing the import — the home
+        tree is the payload; the banner is a label."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                self._meta(
+                    name="mark-bad-archive", classification_banner="A\nB"
+                )
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["classification_banner"] is None
 
     async def test_import_uses_archive_name(self, client, admin_user, user):
         # Build a minimal archive with workspace.json

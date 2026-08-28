@@ -35,6 +35,11 @@ class AuthService extends ChangeNotifier {
   // its own default — a hiccup can never silently force a layout
   // (#2737 review).
   bool? _perHandleHomeDefault;
+  // #2768: deploy-wide default classification marking
+  // (KLANGKD_CLASSIFICATION_BANNER via /config's
+  // default_classification_banner). The workspace page falls back to it
+  // when the workspace has no own marking; empty = no banner anywhere.
+  String _defaultClassificationBanner = '';
   // #1365: deploy-wide netfilter default allow-list + whether the feature
   // is armed. Surfaced via /api/v1/config so the create-workspace UI can
   // pre-fill its allowed-domains editor from the default (a workspace
@@ -77,6 +82,12 @@ class AuthService extends ChangeNotifier {
   /// unknown — the create dialog then hides the toggle and omits the
   /// field so the server default applies.
   bool? get perHandleHomeDefault => _perHandleHomeDefault;
+
+  /// #2768: the deploy-wide default classification marking (free text;
+  /// empty = none configured — no banner is rendered and no screen space
+  /// is reserved). A workspace's own `classification_banner` overrides
+  /// this.
+  String get defaultClassificationBanner => _defaultClassificationBanner;
 
   /// #1365: the deploy-wide netfilter default allow-list
   /// (KLANGKD_NETFILTER_DEFAULT_DOMAINS). The create-workspace dialog
@@ -132,6 +143,15 @@ class AuthService extends ChangeNotifier {
     _loadToken();
   }
 
+  /// Re-fetch `/api/v1/config` and apply the result (#2768 review).
+  ///
+  /// Deploy defaults can change under a live session (a SIGHUP settings
+  /// reload swaps KLANGKD_CLASSIFICATION_BANNER, for instance) — surfaces
+  /// that re-resolve deploy-derived state (the workspace page's marking
+  /// banner, on mount and on every workspaces-changed push) call this so
+  /// they read the current values instead of the ones cached at login.
+  Future<void> refreshDeployConfig() => _loadConfig();
+
   /// Fetch `/api/v1/config` and apply the result. Sends the persisted
   /// token when available so the server returns authenticated-only fields
   /// (notably the netfilter deploy allow-list + armed status, #1365) — the
@@ -156,6 +176,8 @@ class AuthService extends ChangeNotifier {
         _instanceId = (data['instance_id'] as String?) ?? 'default';
         _allowAutostart = (data['allow_autostart'] as bool?) ?? false;
         _perHandleHomeDefault = data['default_per_handle_home'] as bool?;
+        _defaultClassificationBanner =
+            (data['default_classification_banner'] as String? ?? '').trim();
         _netfilterDefaultDomains =
             (data['netfilter_default_domains'] as List?)?.cast<String>() ??
                 const [];

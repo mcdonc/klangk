@@ -183,6 +183,10 @@ class Workspace:
     # /home/.users/{id} home (via a /home/{handle} symlink); False = all
     # members share /home/klangk. Server default is True.
     per_handle_home: bool = True
+    # Classification marking rendered as the persistent banner (#2768).
+    # None/empty = inherit the deploy default
+    # (KLANGKD_CLASSIFICATION_BANNER), resolved at display time.
+    classification_banner: str | None = None
     owner_email: str | None = None
     running: bool = False
     health: str | None = None
@@ -493,6 +497,7 @@ class KlangkClient:
             rejected_domains=w.get("rejected_domains"),
             egress_mode=w.get("egress_mode"),
             per_handle_home=bool(w.get("per_handle_home", True)),
+            classification_banner=w.get("classification_banner"),
             service_started_at=w.get("service_started_at"),
             settings=w.get("settings"),
         )
@@ -512,6 +517,7 @@ class KlangkClient:
         rejected_domains: list[str] | None = None,
         settings: dict | None = None,
         per_handle_home: bool | None = None,
+        classification_banner: str | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
         if image:
@@ -540,6 +546,11 @@ class KlangkClient:
         # (KLANGKD_PER_HANDLE_HOME) — same convention as egress_mode.
         if per_handle_home is not None:
             body["per_handle_home"] = per_handle_home
+        # Empty/None = inherit the deploy default marking
+        # (KLANGKD_CLASSIFICATION_BANNER); only a non-empty label sets the
+        # per-workspace override (#2768).
+        if classification_banner:
+            body["classification_banner"] = classification_banner
         resp = self.post("/api/v1/workspaces", json=body)
         self.check_auth(resp)
         self._raise_for_status(resp)

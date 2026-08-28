@@ -330,6 +330,7 @@ class TuiState:
         settings: dict | None = None,
         egress_mode: str | None = None,
         per_handle_home: bool | None = None,
+        classification_banner: str | None = None,
     ) -> Workspace:
         return self.client().create_workspace(
             name,
@@ -344,6 +345,7 @@ class TuiState:
             settings=settings,
             egress_mode=egress_mode,
             per_handle_home=per_handle_home,
+            classification_banner=classification_banner,
         )
 
     def update_workspace(self, workspace_id: str, **fields) -> None:
@@ -449,6 +451,23 @@ class TuiState:
             return None
         val = config.get("default_per_handle_home")
         return True if val is None else bool(val)
+
+    def default_classification_banner(self) -> str:
+        """Deploy-wide default classification marking (#2768).
+
+        ``default_classification_banner`` in ``/api/v1/config"
+        (KLANGKD_CLASSIFICATION_BANNER; pre-auth payload). Empty string —
+        the default — when unset or unreachable: the caller renders no
+        banner and reserves no screen space.
+        """
+        url = self.current_url()
+        if url is None:
+            return ""
+        config = fetch_config(url)
+        if not isinstance(config, dict):
+            return ""
+        val = config.get("default_classification_banner")
+        return val.strip() if isinstance(val, str) else ""
 
     # --- login arms ---
 

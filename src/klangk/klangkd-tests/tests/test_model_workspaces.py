@@ -144,6 +144,108 @@ async def test_update_workspace_flips_per_handle_home(ws, user):
     assert got["per_handle_home"] is False
 
 
+# -- classification marking (#2768) --
+
+
+async def test_classification_banner_roundtrip(ws, user):
+    created = await ws.create_workspace_with_acl(
+        user["id"], "marked", classification_banner="  SECRET  "
+    )
+    # Whitespace is stripped at create; the row and every read path
+    # (get / list / shared list) carry the normalized value.
+    assert created["classification_banner"] == "SECRET"
+    got = await ws.get_workspace_by_id(created["id"])
+    assert got["classification_banner"] == "SECRET"
+    listed = await ws.list_workspaces(user["id"])
+    assert listed["items"][0]["classification_banner"] == "SECRET"
+    # Default is NULL (inherit the deploy default at display time).
+    bare = await ws.create_workspace(user["id"], "unmarked")
+    assert bare["classification_banner"] is None
+
+
+async def test_classification_banner_empty_normalizes_to_inherit(ws, user):
+    created = await ws.create_workspace(user["id"], "inherit", "")
+    assert created["classification_banner"] is None
+    got = await ws.get_workspace_by_id(created["id"])
+    assert got["classification_banner"] is None
+
+
+async def test_update_workspace_sets_and_clears_classification_banner(
+    ws, user
+):
+    created = await ws.create_workspace(user["id"], "mark-edit")
+    assert await ws.update_workspace(
+        created["id"], user["id"], classification_banner="CUI"
+    )
+    got = await ws.get_workspace_by_id(created["id"])
+    assert got["classification_banner"] == "CUI"
+    # An emptied value clears the override (back to inherit).
+    assert await ws.update_workspace(
+        created["id"], user["id"], classification_banner="  "
+    )
+    got = await ws.get_workspace_by_id(created["id"])
+    assert got["classification_banner"] is None
+
+
+async def test_create_rejects_bad_classification_banner(ws, user):
+    with pytest.raises(ValueError, match="at most"):
+        await ws.create_workspace(
+            user["id"], "too-long", classification_banner="X" * 121
+        )
+    with pytest.raises(ValueError, match="single line"):
+        await ws.create_workspace(
+            user["id"], "newline", classification_banner="TOP\nSECRET"
+        )
+    with pytest.raises(ValueError, match="must be a string"):
+        await ws.create_workspace(user["id"], "int", classification_banner=5)
+
+
+async def test_update_rejects_bad_classification_banner(ws, user):
+    created = await ws.create_workspace(user["id"], "mark-bad")
+    with pytest.raises(ValueError, match="single line"):
+        await ws.update_workspace(
+            created["id"], user["id"], classification_banner="A\x00B"
+        )
+
+
+def test_normalize_classification_banner_unit():
+    from klangk.model.workspaces import normalize_classification_banner
+
+    assert normalize_classification_banner(None) is None
+    assert normalize_classification_banner("") is None
+    assert normalize_classification_banner("   ") is None
+    assert normalize_classification_banner(" CUI ") == "CUI"
+    # 120 is the ceiling; 121 rejects.
+    assert len(normalize_classification_banner("X" * 120)) == 120
+    with pytest.raises(ValueError):
+        normalize_classification_banner("X" * 121)
+
+
+def test_normalize_rejects_invisible_format_characters():
+    """#2768 review: a marking is a security label — bidi overrides and
+    zero-width characters could make the banner *display* as a different
+    marking than the DB records, and NEL/Zl/Zp break the one-line layout.
+    All must reject with the format-character message."""
+    from klangk.model.workspaces import normalize_classification_banner
+
+    for bad in (
+        "TOP\u202eSECRET",  # RTL override — renders reversed
+        "CUI\u200b",  # zero-width space
+        "A\u0085B",  # NEL (Unicode line break, category Cc)
+        "A\u2028B",  # line separator (Zl)
+        "A\u2029B",  # paragraph separator (Zp)
+        "A\u00adB",  # soft hyphen (Cf)
+        "A\ufeffB",  # BOM (Cf)
+        "A\u2066B",  # left-to-right isolate (Cf)
+    ):
+        with pytest.raises(ValueError, match="invisible format"):
+            normalize_classification_banner(bad)
+    # Printable non-ASCII stays allowed (accented/site-specific labels).
+    assert normalize_classification_banner("CUI//FOUO Ünïcode") == (
+        "CUI//FOUO Ünïcode"
+    )
+
+
 async def test_list_workspaces_with_query(ws, user):
     await ws.create_workspace(user["id"], "alpha")
     await ws.create_workspace(user["id"], "beta")

@@ -253,6 +253,15 @@ def create(
             "when the container is next created"
         ),
     ),
+    classification_banner: str | None = typer.Option(
+        None,
+        "--classification-banner",
+        help=(
+            "Classification marking shown as a persistent banner on the "
+            "workspace page (free text, e.g. UNCLASSIFIED, CUI, SECRET). "
+            "Omitted = the server default (KLANGKD_CLASSIFICATION_BANNER)"
+        ),
+    ),
 ) -> None:
     """Create a new workspace."""
     context.require_auth()
@@ -292,6 +301,7 @@ def create(
             rejected_domains=reject or None,
             settings=settings,
             per_handle_home=per_handle_home,
+            classification_banner=classification_banner,
         )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.json().get("detail", exc.response.text)

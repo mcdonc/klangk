@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import 'marking_banner.dart' show classificationBannerMaxLength;
 import 'workspace_section_nav.dart';
 import '../utils/web_helpers_stub.dart'
     if (dart.library.js_interop) '../utils/web_helpers_web.dart';
@@ -367,6 +368,9 @@ class _SettingsFormState extends State<_SettingsForm> {
   // #2721: home layout, seeded from the workspace. Mutable (#2719): a
   // flip applies from the next connect/start.
   bool _perHandleHome = true;
+  // #2768: classification marking, seeded from the workspace. Empty =
+  // inherit the deploy default (resolved at display time).
+  final _classificationBannerCtrl = TextEditingController();
   String? _mountError;
   String? _envError;
   String? _allowedDomainsError;
@@ -427,6 +431,8 @@ class _SettingsFormState extends State<_SettingsForm> {
     _egressMode = (widget.workspace['egress_mode'] as String?) ?? 'interactive';
     _autoStart = (widget.workspace['auto_start'] as bool?) ?? false;
     _perHandleHome = (widget.workspace['per_handle_home'] as bool?) ?? true;
+    _classificationBannerCtrl.text =
+        (widget.workspace['classification_banner'] as String?) ?? '';
     final settings =
         (widget.workspace['settings'] as Map<String, dynamic>?) ?? {};
     _idleTimeoutCtrl = TextEditingController(
@@ -473,6 +479,12 @@ class _SettingsFormState extends State<_SettingsForm> {
         widget.workspace['per_handle_home']) {
       // coverage:ignore-start
       _perHandleHome = (widget.workspace['per_handle_home'] as bool?) ?? true;
+    } // coverage:ignore-end
+    if (old.workspace['classification_banner'] !=
+        widget.workspace['classification_banner']) {
+      // coverage:ignore-start
+      _classificationBannerCtrl.text =
+          (widget.workspace['classification_banner'] as String?) ?? '';
     } // coverage:ignore-end
     final oldSettings = (old.workspace['settings'] as Map<String, dynamic>?) ??
         const <String, dynamic>{};
@@ -531,6 +543,7 @@ class _SettingsFormState extends State<_SettingsForm> {
     _nameCtrl.dispose();
     _cmdCtrl.dispose();
     _healthCheckCtrl.dispose();
+    _classificationBannerCtrl.dispose();
     _mountCtrl.dispose();
     _envCtrl.dispose();
     _allowedDomainsCtrl.dispose();
@@ -592,6 +605,9 @@ class _SettingsFormState extends State<_SettingsForm> {
       'rejected_domains': _rejectedDomains.isNotEmpty ? _rejectedDomains : null,
       'egress_mode': _egressMode,
       'per_handle_home': _perHandleHome,
+      // #2768: full-replace — an emptied field clears the override back
+      // to the deploy default. Display-time only (no restart needed).
+      'classification_banner': _classificationBannerCtrl.text.trim(),
       if (widget.allowAutostart) 'auto_start': _autoStart,
       if (settings.isNotEmpty) 'settings': settings,
     });
@@ -1057,6 +1073,21 @@ class _SettingsFormState extends State<_SettingsForm> {
             floatingLabelBehavior: FloatingLabelBehavior.always,
             border: const OutlineInputBorder(),
             hintText: 'Optional — polled to gauge service health',
+          ),
+        ),
+        const SizedBox(height: 16),
+        // #2768: classification marking. Empty = the server default
+        // (KLANGKD_CLASSIFICATION_BANNER); saving updates the banner.
+        TextField(
+          controller: _classificationBannerCtrl,
+          maxLength: classificationBannerMaxLength,
+          decoration: InputDecoration(
+            counterText: '',
+            labelText: 'Classification Banner',
+            labelStyle: labelStyle,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            border: const OutlineInputBorder(),
+            hintText: 'e.g. UNCLASSIFIED, CUI (empty = server default)',
           ),
         ),
         // #2721: home layout. Mutable (#2719) — a flip applies from the

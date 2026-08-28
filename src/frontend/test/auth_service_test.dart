@@ -94,6 +94,7 @@ void main() {
       List<String>? netfilterDefaultDomains,
       bool? netfilterEnabled,
       bool? defaultPerHandleHome,
+      String? defaultClassificationBanner,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -115,6 +116,8 @@ void main() {
                 'netfilter_enabled': netfilterEnabled,
               if (defaultPerHandleHome != null)
                 'default_per_handle_home': defaultPerHandleHome,
+              if (defaultClassificationBanner != null)
+                'default_classification_banner': defaultClassificationBanner,
             }),
             200,
           );
@@ -159,6 +162,41 @@ void main() {
       final service2 = AuthService();
       await Future.delayed(Duration.zero);
       expect(service2.allowAutostart, isTrue);
+    });
+
+    test('loads default_classification_banner from /api/config (#2768)',
+        () async {
+      // Empty by default (no banner, no reserved space); set when the
+      // server advertises one.
+      testAuthHttpClientOverride = _bannerClient();
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.defaultClassificationBanner, '');
+
+      testAuthHttpClientOverride =
+          _bannerClient(defaultClassificationBanner: 'CUI');
+      final service2 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service2.defaultClassificationBanner, 'CUI');
+    });
+
+    test('refreshDeployConfig re-resolves the deploy default (#2768)',
+        () async {
+      // A SIGHUP settings reload can change
+      // KLANGKD_CLASSIFICATION_BANNER under a live session; the marking
+      // surface calls refreshDeployConfig (on mount + on every
+      // workspaces-changed push) instead of trusting the login-time
+      // snapshot.
+      testAuthHttpClientOverride =
+          _bannerClient(defaultClassificationBanner: 'CUI');
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.defaultClassificationBanner, 'CUI');
+
+      testAuthHttpClientOverride =
+          _bannerClient(defaultClassificationBanner: 'SECRET');
+      await service.refreshDeployConfig();
+      expect(service.defaultClassificationBanner, 'SECRET');
     });
 
     test('loads default_per_handle_home from /api/config', () async {

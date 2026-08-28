@@ -43,6 +43,7 @@ from ..model import (
     EGRESS_MODES,
     PRINCIPAL_GROUP,
     PRINCIPAL_USER,
+    normalize_classification_banner,
 )
 from ..util import (
     sanitize_disposition_name,
@@ -276,6 +277,10 @@ class CreateWorkspaceRequest(BaseModel):
     # handler resolves it before the create. Editable afterwards via PUT
     # (a flip applies to the layout realized on the next connect/start).
     per_handle_home: bool | None = None
+    # Classification marking rendered as the persistent banner (#2768).
+    # Free text, one line. None/empty = inherit the deploy default
+    # (KLANGKD_CLASSIFICATION_BANNER), resolved at display time.
+    classification_banner: str | None = None
 
 
 @router.post("/workspaces")
@@ -317,6 +322,12 @@ async def create_workspace(
         else app.state.settings.per_handle_home
     )
     try:
+        classification_banner = normalize_classification_banner(
+            body.classification_banner
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
         ws = await app.state.workspaces.create_workspace(
             user["id"],
             body.name,
@@ -332,6 +343,7 @@ async def create_workspace(
             settings=settings,
             egress_mode=body.egress_mode,
             per_handle_home=per_handle_home,
+            classification_banner=classification_banner,
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -392,6 +404,10 @@ class UpdateWorkspaceRequest(BaseModel):
     # null stores 0 (shared) via the truthy coercion — same as
     # auto_start; only POST's null means "inherit the deploy default".
     per_handle_home: bool | None = None
+    # Classification marking (#2768): full-replace like the other PUT
+    # fields. A present-but-empty/whitespace value CLEARS the override
+    # (back to inheriting the deploy default, resolved at display time).
+    classification_banner: str | None = None
 
 
 @router.put("/workspaces/{workspace_id}")
@@ -437,6 +453,13 @@ async def update_workspace(
             fields["settings"] = validate_settings(fields["settings"])
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if "classification_banner" in fields:
+        try:
+            fields["classification_banner"] = normalize_classification_banner(
+                fields["classification_banner"]
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
@@ -447,6 +470,22 @@ async def update_workspace(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # #2768: a marking change re-renders the persistent banner, so push
+    # the workspaces-changed notification to every client that can view
+    # the workspace — the owner, the editor (a shared member with the
+    # edit ACE may not be the owner), and every ACL-shared member (they
+    # view the same page via /workspaces/shared and re-resolve the
+    # effective marking on this push; without it they keep viewing the
+    # old, lower marking until a manual reload).
+    if "classification_banner" in fields:
+        members = await app.state.model.workspaces.get_workspace_members(
+            workspace_id
+        )
+        member_ids = {m["id"] for m in members}
+        member_ids.update({user["id"], workspace["user_id"]})
+        for uid in member_ids:
+            app.state.sockets.notify_user_workspaces_changed(uid)
 
     # Propagate health-relevant config changes to the live container
     # state (#1015) so HealthMonitor picks them up without a container
@@ -559,6 +598,7 @@ async def duplicate_workspace(
             settings=source.get("settings"),
             egress_mode=source.get("egress_mode"),
             per_handle_home=source.get("per_handle_home"),
+            classification_banner=source.get("classification_banner"),
         )
     except SAIntegrityError:
         raise HTTPException(
@@ -1047,6 +1087,19 @@ async def _extract_archive_metadata(
     if not isinstance(per_handle_home, bool):
         per_handle_home = True
 
+    # Preserve the classification marking across export -> import (#2768).
+    # An archive is re-validated like every other field: a malformed
+    # marking (wrong type, control characters, oversize) drops to the
+    # inherit default rather than failing the whole import — the home
+    # tree is the payload; the banner is a label.
+    classification_banner = metadata.get("classification_banner")
+    try:
+        classification_banner = normalize_classification_banner(
+            classification_banner
+        )
+    except ValueError:
+        classification_banner = None
+
     return {
         "name": ws_name,
         "image": image,
@@ -1060,6 +1113,7 @@ async def _extract_archive_metadata(
         "settings": metadata.get("settings"),
         "egress_mode": egress_mode,
         "per_handle_home": per_handle_home,
+        "classification_banner": classification_banner,
     }
 
 
@@ -1157,6 +1211,7 @@ async def import_workspace(
                 # that layout (#2722). Legacy archives without the field
                 # already carried True from _extract_archive_metadata.
                 per_handle_home=meta["per_handle_home"],
+                classification_banner=meta["classification_banner"],
             )
         except SAIntegrityError:
             raise HTTPException(

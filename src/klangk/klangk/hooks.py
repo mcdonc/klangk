@@ -39,6 +39,7 @@ from typing import Any, Callable
 from .container import ContainerRegistry
 from .exceptions import ConfigurationError
 from .model import EGRESS_MODES, SETUP_STATES
+from .model.workspaces import normalize_classification_banner
 from .netfilter import parse_allowed_domains
 from .workspace_settings import validate_settings
 
@@ -69,6 +70,7 @@ _HOOK_MUTABLE_FIELDS = frozenset(
         "settings",
         "egress_mode",
         "per_handle_home",
+        "classification_banner",
     }
 )
 
@@ -132,6 +134,16 @@ def _validate_hook_changes(app, changed: dict) -> str | None:
         changed["per_handle_home"], bool
     ):
         return f"invalid per_handle_home: {changed['per_handle_home']!r}"
+    if (
+        "classification_banner" in changed
+        and changed["classification_banner"] is not None
+    ):
+        try:
+            changed["classification_banner"] = normalize_classification_banner(
+                changed["classification_banner"]
+            )
+        except ValueError as exc:
+            return f"invalid classification_banner: {exc}"
     if "image" in changed and changed["image"] is not None:
         registry: ContainerRegistry = app.state.container_registry
         if changed["image"] not in registry.allowed_images:

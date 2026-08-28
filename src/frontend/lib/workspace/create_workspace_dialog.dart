@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../auth/auth_service.dart';
 import '../theme/colors.dart';
+import 'marking_banner.dart' show classificationBannerMaxLength;
 import 'workspace_list_page.dart'
     show validateMountSpec, validateAllowedDomainSpec;
 import 'workspace_section_nav.dart';
@@ -72,6 +73,9 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
   final _nameController = TextEditingController();
   final _cmdController = TextEditingController();
   final _healthCheckController = TextEditingController();
+  // #2768: free-text classification marking; empty = the server applies
+  // the deploy default (KLANGKD_CLASSIFICATION_BANNER).
+  final _classificationBannerController = TextEditingController();
   final _mountController = TextEditingController();
   final _envController = TextEditingController();
   final _allowedDomainsController = TextEditingController();
@@ -137,6 +141,7 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     _nameController.dispose();
     _cmdController.dispose();
     _healthCheckController.dispose();
+    _classificationBannerController.dispose();
     _mountController.dispose();
     _envController.dispose();
     _allowedDomainsController.dispose();
@@ -241,6 +246,10 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
     final healthCheck = _healthCheckController.text.trim();
     final body = <String, dynamic>{'name': name};
     if (command.isNotEmpty) body['service_command'] = command;
+    final classificationBanner = _classificationBannerController.text.trim();
+    if (classificationBanner.isNotEmpty) {
+      body['classification_banner'] = classificationBanner;
+    }
     if (_selectedImage != widget.defaultImage) {
       body['image'] = _selectedImage;
     }
@@ -590,6 +599,25 @@ class _CreateWorkspaceDialogState extends State<CreateWorkspaceDialog> {
                             border: const OutlineInputBorder(),
                             hintText:
                                 'Optional — polled to gauge service health',
+                          ),
+                          onSubmitted: (_) => _submit(),
+                        ),
+                        const SizedBox(height: 16),
+                        // #2768: classification marking. Free text — the
+                        // persistent banner label this workspace's page
+                        // will carry. Empty inherits the deploy default.
+                        TextField(
+                          controller: _classificationBannerController,
+                          maxLength: classificationBannerMaxLength,
+                          decoration: InputDecoration(
+                            counterText: '',
+                            labelText: 'Classification Banner',
+                            labelStyle: _labelStyle,
+                            floatingLabelStyle: _labelStyle,
+                            floatingLabelBehavior: FloatingLabelBehavior.always,
+                            border: const OutlineInputBorder(),
+                            hintText:
+                                'e.g. UNCLASSIFIED, CUI (empty = server default)',
                           ),
                           onSubmitted: (_) => _submit(),
                         ),

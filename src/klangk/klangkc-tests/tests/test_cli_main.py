@@ -1898,6 +1898,97 @@ class TestMainCLI:
         assert body["service_command"] == "pi"
         assert "image" not in body  # not provided, not sent
 
+    def test_edit_with_classification_banner_flag(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#2768: --classification-banner sets the marking; '' clears it
+        back to the deploy default; omitted leaves it untouched."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        with patch.object(context_mod, "_client", return_value=client):
+            from typer.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--classification-banner", "CUI"],
+            )
+            assert result.exit_code == 0
+            assert (
+                client.put.call_args[1]["json"]["classification_banner"]
+                == "CUI"
+            )
+
+            result = runner.invoke(
+                main.app,
+                ["edit", "my-ws", "--classification-banner", ""],
+            )
+            assert result.exit_code == 0
+            assert (
+                client.put.call_args[1]["json"]["classification_banner"]
+                is None
+            )
+
+            result = runner.invoke(main.app, ["edit", "my-ws", "--name", "x"])
+            assert result.exit_code == 0
+            assert (
+                "classification_banner" not in client.put.call_args[1]["json"]
+            )
+
+    def test_edit_interactive_classification_banner(
+        self, logged_in_cfg, monkeypatch
+    ):
+        """#2768: interactive mode prompts for the marking (5th prompt);
+        Enter keeps the current value, text sets it, whitespace clears it."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+            classification_banner="SECRET",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        client.put.return_value = MagicMock(status_code=200)
+
+        # keep name/image/command/health, set the banner, skip the loops
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=["", "", "", "", "CUI", "", "", "", ""],
+            ):
+                from typer.testing import CliRunner
+
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+        body = client.put.call_args[1]["json"]
+        assert body["classification_banner"] == "CUI"
+
+        # Enter on the banner prompt keeps the current value; with nothing
+        # else changed the body is empty and the CLI skips the PUT
+        # entirely (`if not body`).
+        client.put.reset_mock()
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch(
+                "builtins.input",
+                side_effect=["", "", "", "", "", "", "", "", ""],
+            ):
+                runner = CliRunner()
+                result = runner.invoke(main.app, ["edit", "my-ws"])
+                assert result.exit_code == 0
+        assert client.put.called is False
+
     def test_edit_with_health_check_flag(self, logged_in_cfg, monkeypatch):
         from klangk.cli import main
 
@@ -1968,7 +2059,7 @@ class TestMainCLI:
         with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "pi", "", "", "", "", ""],
+                side_effect=["", "", "pi", "", "", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2005,6 +2096,7 @@ class TestMainCLI:
                     "",
                     "",
                     "curl -sf http://x/h",
+                    "",
                     "",
                     "",
                     "",
@@ -2048,6 +2140,7 @@ class TestMainCLI:
                     "",
                     "",
                     "",
+                    "",
                 ],
             ):
                 from typer.testing import CliRunner
@@ -2079,6 +2172,7 @@ class TestMainCLI:
             with patch(
                 "builtins.input",
                 side_effect=[
+                    "",
                     "",
                     "",
                     "",
@@ -2117,7 +2211,7 @@ class TestMainCLI:
         with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "1", "", "", "", "", ""],
+                side_effect=["", "", "", "", "", "", "1", "", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2149,6 +2243,7 @@ class TestMainCLI:
             with patch(
                 "builtins.input",
                 side_effect=[
+                    "",
                     "",
                     "",
                     "",
@@ -2198,6 +2293,7 @@ class TestMainCLI:
                     "",
                     "",
                     "",
+                    "",
                     "99",
                     "",
                     "abc",
@@ -2236,7 +2332,7 @@ class TestMainCLI:
         with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "1", "", "", "", ""],
+                side_effect=["", "", "", "", "", "", "1", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2267,6 +2363,7 @@ class TestMainCLI:
             with patch(
                 "builtins.input",
                 side_effect=[
+                    "",
                     "",
                     "",
                     "",
@@ -2441,7 +2538,8 @@ class TestMainCLI:
         # keep name, image, command; skip add mount (no mounts, no remove prompt)
         with patch.object(context_mod, "_client", return_value=client):
             with patch(
-                "builtins.input", side_effect=["", "", "", "", "", "", "", ""]
+                "builtins.input",
+                side_effect=["", "", "", "", "", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -2468,7 +2566,19 @@ class TestMainCLI:
         with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "FOO=bar", "", "", "", ""],
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "FOO=bar",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
@@ -2497,7 +2607,20 @@ class TestMainCLI:
         with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "bad", "A=1", "", "", "", ""],
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "bad",
+                    "A=1",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ):
                 from typer.testing import CliRunner
 
@@ -2538,6 +2661,7 @@ class TestMainCLI:
             rejected_domains=None,
             settings=None,
             per_handle_home=None,
+            classification_banner=None,
         )
 
     def test_create_with_command_flag(self, logged_in_cfg, monkeypatch):
@@ -2567,6 +2691,7 @@ class TestMainCLI:
             rejected_domains=None,
             settings=None,
             per_handle_home=None,
+            classification_banner=None,
         )
 
     def test_create_with_invalid_env_flag(self, logged_in_cfg, monkeypatch):
@@ -2619,6 +2744,7 @@ class TestMainCLI:
             rejected_domains=None,
             settings=None,
             per_handle_home=None,
+            classification_banner=None,
         )
 
     def test_create_with_reject_flag(self, logged_in_cfg, monkeypatch):
@@ -2652,6 +2778,7 @@ class TestMainCLI:
             rejected_domains=["evil.example.com"],
             settings=None,
             per_handle_home=None,
+            classification_banner=None,
         )
 
     def test_create_with_no_sudo_flag(self, logged_in_cfg, monkeypatch):
@@ -2682,6 +2809,7 @@ class TestMainCLI:
             rejected_domains=None,
             settings={"allow_sudo": False},
             per_handle_home=None,
+            classification_banner=None,
         )
 
     def test_create_with_sudo_flag_omitted_sends_nothing(
@@ -2768,6 +2896,7 @@ class TestMainCLI:
                 "pids_limit": 256,
             },
             per_handle_home=None,
+            classification_banner=None,
         )
 
     def test_create_with_invalid_allow_flag(self, logged_in_cfg, monkeypatch):
@@ -2860,6 +2989,7 @@ class TestMainCLI:
                     "",  # image
                     "",  # command
                     "",  # health_check
+                    "",
                     "",  # mount add
                     "",  # env add
                     "github.com:443",  # domain add
@@ -2900,6 +3030,7 @@ class TestMainCLI:
                     "",  # image
                     "",  # command
                     "",  # health_check
+                    "",
                     "",  # mount add
                     "",  # env add
                     "",  # allowed-domains add (skip)
@@ -2942,6 +3073,7 @@ class TestMainCLI:
                     "",  # image
                     "",  # command
                     "",  # health_check
+                    "",
                     "",  # mount add
                     "",  # env add
                     "",  # allowed-domains add (skip)
@@ -2984,6 +3116,7 @@ class TestMainCLI:
                     "",  # image
                     "",  # command
                     "",  # health_check
+                    "",
                     "",  # mount add
                     "",  # env add
                     "",  # allowed-domains add (skip)
@@ -3027,6 +3160,7 @@ class TestMainCLI:
                     "",  # image
                     "",  # command
                     "",  # health_check
+                    "",
                     "",  # mount add
                     "",  # env add
                     "github.com:443",  # domain add
@@ -3067,6 +3201,7 @@ class TestMainCLI:
                     "",  # image
                     "",  # command
                     "",  # health_check
+                    "",
                     "",  # mount add
                     "",  # env add
                     "",  # domain add (skip)
@@ -3109,6 +3244,7 @@ class TestMainCLI:
                     "",  # image
                     "",  # command
                     "",  # health_check
+                    "",
                     "",  # mount add
                     "",  # env add
                     "not valid!",  # invalid domain
@@ -3150,6 +3286,7 @@ class TestMainCLI:
                     "",  # image
                     "",  # command
                     "",  # health_check
+                    "",
                     "",  # mount add
                     "",  # env add
                     "",  # domain add (skip)
@@ -3187,7 +3324,7 @@ class TestMainCLI:
         with patch.object(context_mod, "_client", return_value=client):
             with patch(
                 "builtins.input",
-                side_effect=["", "", "", "", "", "", "1", "", "", "", ""],
+                side_effect=["", "", "", "", "", "", "", "1", "", "", "", ""],
             ):
                 from typer.testing import CliRunner
 
@@ -3218,6 +3355,7 @@ class TestMainCLI:
             with patch(
                 "builtins.input",
                 side_effect=[
+                    "",
                     "",
                     "",
                     "",
@@ -3314,6 +3452,7 @@ class TestMainCLI:
             rejected_domains=None,
             settings=None,
             per_handle_home=False,
+            classification_banner=None,
         )
         client.create_workspace.reset_mock()
         client.create_workspace.return_value = ws

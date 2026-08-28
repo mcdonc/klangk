@@ -144,6 +144,8 @@ def _st(**methods):
     defaults = {
         "list_owned_workspaces": lambda: [],
         "list_shared_workspaces": lambda: [],
+        # #2768: the detail screen's deploy-default marking fetch.
+        "default_classification_banner": lambda: "",
     }
     for k, v in {**defaults, **methods}.items():
         setattr(st, k, v)
@@ -2701,6 +2703,7 @@ def test_tui_state_workspace_methods(monkeypatch, redirect_xdg):
         settings=None,
         egress_mode=None,
         per_handle_home=None,
+        classification_banner=None,
     )
     fake.list_images.assert_called_once_with()
 
@@ -5329,6 +5332,124 @@ async def test_detail_renders_allowed_domains(monkeypatch):
         assert "pypi.org" in body
         assert _detail_value(body, "rejected domains") is not None
         assert "evil.example.com" in body
+
+
+async def test_detail_marking_bar_workspace_override(monkeypatch):
+    """#2768: the workspace's own classification_banner renders as the
+    persistent top marking line, color-coded, plus a detail-table row."""
+    from klangk.cli.tui.marking import marking_background
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", classification_banner="SECRET")
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        bar = app.screen.query_one("#marking_bar", Static)
+        assert bar.display is True
+        rendered = str(bar.render())
+        assert "SECRET" in rendered
+        # Color-coded by marking convention (red for SECRET).
+        assert marking_background("SECRET") == "#C01818"
+        body = str(app.screen.query_one("#detail_body").render())
+        assert _detail_value(body, "classification") == "SECRET"
+
+
+async def test_detail_marking_bar_deploy_default_fallback(monkeypatch):
+    """#2768: a workspace without its own marking inherits the deploy
+    default (KLANGKD_CLASSIFICATION_BANNER) at display time."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")  # no classification_banner
+    st = _ws(default_classification_banner=lambda: "CUI")
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        bar = app.screen.query_one("#marking_bar", Static)
+        assert bar.display is True
+        assert "CUI" in str(bar.render())
+        body = str(app.screen.query_one("#detail_body").render())
+        assert _detail_value(body, "classification") == "CUI"
+
+
+async def test_detail_marking_bar_fetch_failure_degrades(monkeypatch):
+    """#2768: a failing deploy-default fetch degrades to no default — the
+    workspace's own marking still renders."""
+
+    async def noop(*a, **k):
+        return None
+
+    def boom():
+        raise RuntimeError("unreachable")
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha", classification_banner="SECRET")
+    st = _ws(default_classification_banner=boom)
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        bar = app.screen.query_one("#marking_bar", Static)
+        assert bar.display is True
+        assert "SECRET" in str(bar.render())
+
+
+async def test_detail_marking_bar_hidden_when_unconfigured(monkeypatch):
+    """#2768: no marking anywhere renders NO bar and reserves no row."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")
+    st = _ws()
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        bar = app.screen.query_one("#marking_bar", Static)
+        assert bar.display is False
+        body = str(app.screen.query_one("#detail_body").render())
+        assert _detail_value(body, "classification") is None
+
+
+async def test_detail_marking_refreshes_on_workspaces_changed(monkeypatch):
+    """#2768 review: a workspaces_changed push re-resolves BOTH the
+    workspace row and the deploy default — a parked detail screen picks
+    up a SIGHUP-reloaded KLANGKD_CLASSIFICATION_BANNER, not just the
+    value cached at mount."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    a = _wsobj("alpha")  # inherits the deploy default
+    st = _ws(default_classification_banner=lambda: "CUI")
+    st.find_workspace = lambda n: a
+    app = KlangkApp(st)
+    async with app.run_test() as pilot:
+        app.push_screen(WorkspaceDetailScreen("alpha"))
+        await pilot.pause()
+        bar = app.screen.query_one("#marking_bar", Static)
+        assert "CUI" in str(bar.render())
+        # The deploy default changes (SIGHUP reload) while parked.
+        st.default_classification_banner = lambda: "SECRET"
+        app.screen.apply_status_event({"type": "workspaces_changed"})
+        await pilot.pause()
+        bar = app.screen.query_one("#marking_bar", Static)
+        assert "SECRET" in str(bar.render())
 
 
 async def test_detail_renders_aligned_two_column_table(monkeypatch):
@@ -10206,6 +10327,126 @@ async def test_edit_screen_field_submit_saves(monkeypatch):
         assert not isinstance(app.screen, EditWorkspaceScreen)
 
 
+async def test_edit_screen_classification_banner_in_save_body(monkeypatch):
+    """#2768: the marking field seeds from the workspace and is sent on
+    save; an emptied field clears the override (None = inherit)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    updated = []
+    ws = _wsobj("alpha", running=False, classification_banner="SECRET")
+    app = KlangkApp(_edit_state(ws, update=lambda *a, **k: updated.append(k)))
+    async with app.run_test() as pilot:
+        _edit_screen(app, ws)
+        await pilot.pause()
+        es = app.screen
+        assert es.query_one("#classification_banner").value == "SECRET"
+        # Change it, save.
+        es.query_one("#classification_banner").value = "CUI"
+        es._save()
+        await app.workers.wait_for_complete()
+        assert updated[-1]["classification_banner"] == "CUI"
+        # Clear it, save — None clears the override back to inherit.
+        es.query_one("#classification_banner").value = "   "
+        es._save()
+        await app.workers.wait_for_complete()
+        assert updated[-1]["classification_banner"] is None
+
+
+async def test_create_screen_classification_banner_sent(monkeypatch):
+    """#2768: the create form's marking field is sent when non-empty,
+    omitted when empty (server applies the deploy default)."""
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(scr_main, "listen_for_status", noop)
+    captured = {}
+
+    def create(name, **k):
+        captured["k"] = k
+        return _wsobj(name)
+
+    app = KlangkApp(_create_state(create=create))
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.screen.action_create()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        cs = app.screen
+        cs.query_one("#name").value = "marked"
+        cs.query_one("#classification_banner").value = "SECRET"
+        cs._create()
+        await app.workers.wait_for_complete()
+        assert captured["k"]["classification_banner"] == "SECRET"
+
+
+def test_tui_state_default_classification_banner(monkeypatch, redirect_xdg):
+    """#2768: the deploy-default marking resolver reads /config and
+    degrades to "" on every failure shape."""
+    from klangk.cli.tui import state as state_mod
+
+    st = state_mod.TuiState("https://x.example")
+    # No server at all.
+    st2 = state_mod.TuiState(None)
+    monkeypatch.setattr(st2, "current_url", lambda: None, raising=True)
+    assert st2.default_classification_banner() == ""
+    # Unreachable server.
+    monkeypatch.setattr(
+        state_mod,
+        "fetch_config",
+        lambda url: "unreachable",
+    )
+    assert st.default_classification_banner() == ""
+    # Config without the key (old server).
+    monkeypatch.setattr(state_mod, "fetch_config", lambda url: {})
+    assert st.default_classification_banner() == ""
+    # Non-string value (malformed) is ignored.
+    monkeypatch.setattr(
+        state_mod,
+        "fetch_config",
+        lambda url: {"default_classification_banner": 5},
+    )
+    assert st.default_classification_banner() == ""
+    # The real shape.
+    monkeypatch.setattr(
+        state_mod,
+        "fetch_config",
+        lambda url: {"default_classification_banner": " CUI "},
+    )
+    assert st.default_classification_banner() == "CUI"
+
+
+def test_marking_helpers():
+    """#2768: color convention + effective-marking resolution."""
+    from klangk.cli.tui.marking import (
+        effective_marking,
+        marking_background,
+        marking_style,
+    )
+
+    assert marking_background("TOP SECRET") == "#E0A800"
+    assert marking_background("top secret//sci") == "#E0A800"
+    assert marking_background("SECRET") == "#C01818"
+    assert marking_background("CONFIDENTIAL") == "#005EB8"
+    assert marking_background("CUI//SP-ABC") == "#0076CE"
+    assert marking_background("UNCLASSIFIED") == "#007A33"
+    # Free-text labels fall back to neutral amber.
+    assert marking_background("Internal use only") == "#8A6D00"
+    # Word-boundary match: containing a marking word is not a match
+    # (#2768 review).
+    assert marking_background("NOT SECRETIVE") == "#8A6D00"
+    assert marking_background("CUISINE NOTES") == "#8A6D00"
+    assert marking_background("SECRETS") == "#8A6D00"
+    assert marking_background("SECRET//NOFORN") == "#C01818"
+    assert marking_style("SECRET") == "bold white on #C01818"
+    assert effective_marking("SECRET", "CUI") == "SECRET"
+    assert effective_marking(None, "CUI") == "CUI"
+    assert effective_marking("", "  ") == ""
+    assert effective_marking("  ", "CUI") == "CUI"
+
+
 async def test_edit_screen_restart_declined(monkeypatch):
     async def noop(*a, **k):
         return None
@@ -10634,7 +10875,10 @@ async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
     monkeypatch.setattr(scr_main, "listen_for_status", noop)
     original = _wsobj("alpha", image="base", running=False)
     renamed = _wsobj("renamed", image="base")
-    returns = [original, renamed]
+    # Three loads consume the list: mount, the visit auto-start's
+    # post-restart re-load (both resolve by "alpha"), and the
+    # post-edit reload (resolves by "renamed").
+    returns = [original, original, renamed]
     finds = []
     st = _ws(
         list_images=lambda: {"default": "base", "allowed": ["base", "py:3"]},
@@ -10654,6 +10898,13 @@ async def test_edit_rename_propagates_to_detail_and_list(monkeypatch):
         es.query_one("#name").value = "renamed"
         es._save()
         await app.workers.wait_for_complete()
+        # The post-edit reload worker is spawned from inside the save
+        # worker, so wait_for_complete above may return before it has
+        # finished its refresh+load hops — give it event-loop cycles
+        # before asserting (#2768 review: the reload now also re-fetches
+        # the deploy marking, one extra to_thread hop).
+        for _ in range(10):
+            await pilot.pause()
         # back on detail; name adopted + reloaded by the new name
         assert isinstance(app.screen, WorkspaceDetailScreen)
         assert app.screen._name == "renamed"

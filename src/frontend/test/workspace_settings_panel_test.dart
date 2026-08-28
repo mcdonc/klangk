@@ -173,6 +173,78 @@ void main() {
     testAuthHttpClientOverride = null;
   });
 
+  group('classification banner (#2768)', () {
+    testWidgets('renders the field populated from the workspace',
+        (tester) async {
+      testAuthHttpClientOverride = _client(
+        workspace: {..._workspace, 'classification_banner': 'SECRET'},
+      );
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      final field = find.widgetWithText(TextField, 'Classification Banner');
+      expect(field, findsOneWidget);
+      final tf = tester.widget<TextField>(field);
+      expect(tf.controller?.text, 'SECRET');
+    });
+
+    testWidgets('saves an edited marking and clears with an empty field',
+        (tester) async {
+      Map<String, dynamic>? savedBody;
+      testAuthHttpClientOverride = MockClient((request) async {
+        final p = request.url.path;
+        if (p == '/api/v1/config') return http.Response(jsonEncode({}), 200);
+        if (p == '/api/v1/workspaces') {
+          return http.Response(
+            jsonEncode([
+              {..._workspace, 'classification_banner': 'SECRET'}
+            ]),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode([]), 200);
+        }
+        if (p == '/api/v1/images') {
+          return http.Response(
+            jsonEncode({
+              'default': 'klangk-pi',
+              'allowed': ['klangk-pi'],
+            }),
+            200,
+          );
+        }
+        if (p == '/api/v1/workspaces/$_wsId' && request.method == 'PUT') {
+          savedBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(jsonEncode({'status': 'updated'}), 200);
+        }
+        return http.Response('not found', 404);
+      });
+      await tester.pumpWidget(_buildPanel());
+      await tester.pumpAndSettle();
+
+      // Edit to CUI, save.
+      final field = find.widgetWithText(TextField, 'Classification Banner');
+      await tester.enterText(field, 'CUI');
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(savedBody, isNotNull);
+      expect(savedBody!['classification_banner'], 'CUI');
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+
+      // Empty field clears the override (server normalizes '' to inherit).
+      await tester.enterText(field, '');
+      await _scrollToAndTap(tester, find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(savedBody!['classification_banner'], '');
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+    });
+  });
+
   group('WorkspaceSettingsPanel load + render', () {
     testWidgets('renders config fields populated from the workspace',
         (tester) async {

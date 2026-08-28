@@ -144,6 +144,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         "pids_limit",
         "tmp_size",
         "per_handle_home",
+        "classification_banner",
         "command",
         "health_check",
         "cancel",
@@ -352,6 +353,14 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                             "per-handle (off = shared home)",
                             value=bool(self._default_per_handle_home),
                             id="per_handle_home",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("Marking"),
+                        Input(
+                            id="classification_banner",
+                            placeholder=("e.g. CUI (empty = server default)"),
                         ),
                         classes="field-row",
                     )
@@ -629,6 +638,12 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         # omitted, and the server applies its own.
         phh_cb = self.query_one("#per_handle_home", Checkbox)
         per_handle_home = phh_cb.value if phh_cb.display else None
+        # #2768: free-text classification marking; empty = inherit the
+        # deploy default (KLANGKD_CLASSIFICATION_BANNER).
+        classification_banner = (
+            self.query_one("#classification_banner", Input).value.strip()
+            or None
+        )
         mounts = list(self._mounts) or None
         env = dict(self._env) or None
         allowed_domains = list(self._allowed_domains) or None
@@ -663,6 +678,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                 settings,
                 egress_mode,
                 per_handle_home,
+                classification_banner,
             ),
             exit_on_error=False,
         )
@@ -681,6 +697,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         settings,
         egress_mode,
         per_handle_home,
+        classification_banner,
     ) -> None:
         try:
             ws = await asyncio.to_thread(
@@ -697,6 +714,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
                 settings=settings,
                 egress_mode=egress_mode,
                 per_handle_home=per_handle_home,
+                classification_banner=classification_banner,
             )
         except AuthError:
             self.app.session_expired()
@@ -752,6 +770,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
             "name",
             "command",
             "health_check",
+            "classification_banner",
             "idle_timeout",
             "cpu_limit",
             "memory_limit",
@@ -803,6 +822,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         "pids_limit",
         "tmp_size",
         "per_handle_home",
+        "classification_banner",
         "command",
         "health_check",
         "cancel",
@@ -1052,6 +1072,15 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                             "per-handle (off = shared home)",
                             value=self._per_handle_home,
                             id="per_handle_home",
+                        ),
+                        classes="field-row",
+                    )
+                    yield Horizontal(
+                        Static("Marking"),
+                        Input(
+                            value=self._ws.classification_banner or "",
+                            id="classification_banner",
+                            placeholder="e.g. CUI (empty = server default)",
                         ),
                         classes="field-row",
                     )
@@ -1416,6 +1445,14 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         # connect/start — never a restart-needed field (open sessions
         # keep their layout until they end).
         per_handle_home = self.query_one("#per_handle_home", Checkbox).value
+        # #2768: classification marking. Always sent (full-replace like
+        # the other PUT fields): an emptied field clears the override so
+        # the workspace inherits the deploy default again. Display-time
+        # only — never a restart-needed field.
+        classification_banner = (
+            self.query_one("#classification_banner", Input).value.strip()
+            or None
+        )
         try:
             settings = _collect_settings(self)
         except ValueError as exc:
@@ -1457,6 +1494,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             "rejected_domains": rejected_domains,
             "egress_mode": egress_mode,
             "per_handle_home": per_handle_home,
+            "classification_banner": classification_banner,
         }
         if merged_settings:
             body["settings"] = merged_settings
@@ -1598,6 +1636,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             "name",
             "command",
             "health_check",
+            "classification_banner",
             "idle_timeout",
             "cpu_limit",
             "memory_limit",

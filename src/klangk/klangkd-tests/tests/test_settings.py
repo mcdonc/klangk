@@ -271,6 +271,44 @@ class TestConfigFile:
         s = make_settings({"KLANGKD_PER_HANDLE_HOME": "true"})
         assert s.per_handle_home is True
 
+    def test_classification_banner_defaults_empty(self):
+        # #2768: unset by default — no banner anywhere, no reserved
+        # screen space.
+        assert make_settings({}).classification_banner == ""
+
+    def test_classification_banner_env_override(self):
+        s = make_settings({"KLANGKD_CLASSIFICATION_BANNER": "CUI"})
+        assert s.classification_banner == "CUI"
+
+    def test_classification_banner_strips_and_empty_is_none(self):
+        s = make_settings({"KLANGKD_CLASSIFICATION_BANNER": "  SECRET  "})
+        assert s.classification_banner == "SECRET"
+        # Whitespace-only normalizes to the empty (no-marking) default.
+        s = make_settings({"KLANGKD_CLASSIFICATION_BANNER": "   "})
+        assert s.classification_banner == ""
+
+    def test_classification_banner_yaml_null_is_empty(self, tmp_path):
+        # YAML ``classification_banner:`` (null) delivers None to the
+        # validator — same as unset (no deploy marking).
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("classification_banner:\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.classification_banner == ""
+
+    def test_classification_banner_rejects_malformed(self):
+        """#2768 review: the deploy default rides /config to every client
+        and renders as a banner — same one-line/printable/length rules as
+        the per-workspace value, aborting boot on violation."""
+        for bad in (
+            "TOP\nSECRET",
+            "X" * 121,
+            "TOP\u202eSECRET",  # bidi override
+        ):
+            with pytest.raises(
+                Exception, match="KLANGKD_CLASSIFICATION_BANNER"
+            ):
+                make_settings({"KLANGKD_CLASSIFICATION_BANNER": bad})
+
     # --- Container resource limits (#34) ---
 
     def test_container_limits_default_to_protective_caps(self):
