@@ -447,7 +447,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   process launched inside a running workspace container, with best-effort
   principal attribution (`agent` / `user:<handle>` / `unknown`), argv,
   and a pane-input hint. Captured host-side by a C watcher subprocess
-  (`procleddy`) at a 20 ms poll under a ≤1%-of-one-core budget; degrades
+  (`procleddy`) at an 80 ms poll (±25% jitter, so independent pollers never lockstep) under a ≤1%-of-one-core budget; degrades
   to a Python poller (multi-second interval, loudly surfaced) when the
   binary is absent. Read via
   `GET /api/v1/workspaces/{id}/processes` (requires the new
@@ -465,6 +465,12 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   build re-applies it automatically on hosts with passwordless
   setcap, and deployments can wire it into the unit
   (`ExecStartPre=+klangk-ebpf-setcaps`). See
+  The monitor now also runs as its own privileged systemd service
+  (`klangk-ebpf-capture`, `AmbientCapabilities=CAP_BPF CAP_PERFMON`,
+  unit example in the docs) speaking the same contract over a UNIX
+  socket (`KLANGKD_EBPF_CAPTURE_SOCKET`): klangkd stays entirely
+  unprivileged, validates the wiring at startup with exact remediation
+  messages, and marks coverage gaps across service restarts.
   [Process Ledger](features/process-ledger.md) and
   [Packaged deployments](deployment/packaged.md).
 - **`KLANGKNETWORK_EGRESS_ACTIVITY_GATE` forwarding (#2514).** The

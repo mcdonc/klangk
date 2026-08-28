@@ -76,6 +76,8 @@ def _app(tmp_path):
         process_ledger_retention_seconds=1e9,
         process_ledger_retention_rows=5,
         process_ledger_watcher=str(tmp_path / "absent"),
+        process_ledger_backend="proc",
+        process_ledger_ebpf_socket=str(tmp_path / "absent-capture.sock"),
     )
     app.state.model = types.SimpleNamespace(
         process_launch=types.SimpleNamespace()

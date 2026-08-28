@@ -38,7 +38,7 @@ uid. Workspace membership is a ppid-walk to the container init's host pid
 shells klangkd itself creates (the agent's `service` window, and user
 windows opened via the web UI or `klangk shell`).
 
-- **Performance contract:** poll interval ≤ 80 ms (default 20 ms) at ≤1% of one core at
+- **Performance contract:** poll interval ≤ 80 ms (default 80 ms) at ≤1% of one core at
   ~12k processes. The watcher parses `status` at full rate only for new
   and watched pids; everyone else gets a staggered (~20 s) refresh. A
   cost spike stretches the cadence (skipped polls) rather than running
@@ -89,15 +89,16 @@ skips without caps, the standard eBPF-project pattern).
 
 The **privilege to run** cannot be baked into a build; pick a tier:
 
-1. **Deployment tier (recommended): grant the caps to the binary
-   itself** — `setcap cap_bpf,cap_perfmon+ep` on `procleddy-ebpf`
-   (see *Granting the caps in deployments* below). This is the
-   narrowest grant: exactly one ELF, exactly two capabilities; the
-   klangkd process tree itself stays cap-free. An alternative —
-   systemd `AmbientCapabilities=CAP_BPF CAP_PERFMON` on the klangkd
-   unit — works but hands the caps to *every* process the backend
-   execs; prefer the per-binary grant (see the security warning
-   below).
+1. **Deployment tier (recommended): the capture service** — run
+   `procleddy-ebpf` as its own systemd unit with
+   `AmbientCapabilities=CAP_BPF CAP_PERFMON`; klangkd connects to its
+   socket (see *The eBPF capture service* above). Privilege is
+   root-controlled unit config scoped to one small service; klangkd's
+   tree stays cap-free. The alternative — file caps on the binary
+   (`setcap cap_bpf,cap_perfmon+ep`, see *Granting the caps in
+   deployments*) — is narrower than unit-level ambient caps on klangkd
+   but wider than the service: the capped binary lives in a writable
+   path and outlives the build.
 2. **Dev-host opt-in:** the devenv build task best-effort applies file
 caps
    (`setcap cap_bpf,cap_perfmon+ep`) after every build — rebuilding
@@ -119,6 +120,69 @@ caps
    everything else works; `KLANGKD_PROCESS_LEDGER_BACKEND` stays `proc`
    and the eBPF backend is simply not loadable — attempts fail loudly
    at load time and the ledger's fallback rules apply.
+
+### The eBPF capture service (recommended deployment shape)
+
+The monitor does not have to live in klangkd's process tree — and on a
+real deployment it shouldn't: run it as its own small systemd service
+with exactly the two capabilities it needs. klangkd stays completely
+unprivileged and consumes the event stream over a UNIX socket
+(`KLANGKD_PROCESS_LEDGER_BACKEND=ebpf`, socket default
+`/run/klangk-ebpf/capture.sock`). Privilege lives in root-controlled
+unit config — no file caps, no sudoers rules, nothing for a build to
+re-apply.
+
+Unit for a host that also uses the tracefs group-read remount (see
+below):
+
+```ini
+# /etc/systemd/system/klangk-ebpf-capture.service
+[Unit]
+Description=klangk eBPF process-ledger capture (#2520)
+After=tracefs-group-read.service
+
+[Service]
+Type=simple
+User=YOUR-KLANGKD-USER
+RuntimeDirectory=klangk-ebpf
+# The whole grant, in two lines — scoped to this one service:
+AmbientCapabilities=CAP_BPF CAP_PERFMON
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON
+ExecStart=/path/to/procleddy-ebpf --socket /run/klangk-ebpf/capture.sock
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+(The binary and its `.bpf.o` sit side by side; see *Building the
+monitor* below. `--dry-run` skips all BPF work and emits heartbeats
+only — useful as a smoke test of the socket path without privileges.)
+
+klangkd validates the wiring at startup: a missing socket or a refused
+connection logs the exact remediation (install/start
+`klangk-ebpf-capture.service`) and falls back to the Python poller
+loudly — never a silent coverage claim. If the service restarts,
+klangkd marks a coverage gap and reconnects; a sustained outage trips
+the same loud fallback. Scope (workspace root pids) flows over the
+socket, so container start/stop is picked up exactly as with the
+spawned watcher.
+
+### Building the monitor
+
+Two commands, portable across kernels (no CO-RE/vmlinux.h; tracepoint
+argument layouts are declared in-source, so no kernel headers or BTF
+are needed at build time):
+
+```bash
+clang -target bpf -O2 -g -c procleddy_ebpf.bpf.c -o procleddy-ebpf.bpf.o
+cc -O2 -o procleddy-ebpf procleddy-ebpf.c $(pkg-config --cflags --libs libbpf)
+```
+
+In devenv this is the `klangk:build-procleddy-ebpf` task; until the
+wheel ships the artifacts (#2777), deploy them to the service host
+yourself and point `ExecStart` (and, for spawn mode,
+`KLANGKD_PROCESS_LEDGER_WATCHER`) at them.
 
 ### Granting the caps in deployments
 
@@ -235,7 +299,7 @@ collaborators — is an explicit operator choice via the ACL editor
 ## Honest limitations
 
 - **Sub-interval processes are dark**: a process that execs and exits
-  within one poll interval (~20 ms watched; seconds in fallback) is
+  within one poll interval (~80 ms watched, ±25% jitter; seconds in fallback) is
   never seen. What the ledger covers is surviving processes and
   longer-lived recon (scans, installs, staging), plus everything
   persistent.

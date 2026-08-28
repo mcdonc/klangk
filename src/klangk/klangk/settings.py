@@ -1047,7 +1047,7 @@ class KlangkSettings(BaseSettings):
     # at <=1% of one core; the value is a ceiling the watcher's duty-cycle
     # governor may stretch on cost spikes (degrades to skipped polls,
     # never runs hot).
-    process_ledger_interval_ms: int = 20
+    process_ledger_interval_ms: int = 80
     # Python-fallback poll interval (seconds) when the C watcher is
     # unavailable — budget-derived, multi-second by design; the effective
     # interval is surfaced via the ledger status API so degraded coverage
@@ -1068,6 +1068,12 @@ class KlangkSettings(BaseSettings):
     # stdin-scope / NDJSON-stdout contract. An explicit
     # process_ledger_watcher path still overrides either default.
     process_ledger_backend: Literal["proc", "ebpf"] = "proc"
+    # eBPF capture-service socket (#2520): when the backend is "ebpf"
+    # and no explicit watcher path is set, klangkd connects to this
+    # UNIX socket instead of spawning the monitor itself — the monitor
+    # runs as its own privileged systemd service (see
+    # docs/features/process-ledger.md, "The eBPF capture service").
+    process_ledger_ebpf_socket: str = "/run/klangk-ebpf/capture.sock"
     # consent_decider_timeout (#2308): a consent decider (a live client that
     # can approve/deny held egress) is registered while its WebSocket is
     # connected and pinging. This is the liveness window -- a decider whose

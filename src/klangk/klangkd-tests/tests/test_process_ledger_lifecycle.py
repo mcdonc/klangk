@@ -34,7 +34,14 @@ class _LaunchRecorder:
         return 0
 
 
-def _app(tmp_path, *, enabled=True, watcher=None, backend="proc"):
+def _app(
+    tmp_path,
+    *,
+    enabled=True,
+    watcher=None,
+    backend="proc",
+    ebpf_socket=None,
+):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
     app.state.settings = types.SimpleNamespace(
@@ -49,6 +56,8 @@ def _app(tmp_path, *, enabled=True, watcher=None, backend="proc"):
             else watcher
         ),
         process_ledger_backend=backend,
+        process_ledger_ebpf_socket=ebpf_socket
+        or str(tmp_path / "absent-capture.sock"),
     )
     recorder = _LaunchRecorder()
     app.state.model = types.SimpleNamespace(process_launch=recorder)
@@ -316,6 +325,200 @@ async def test_status_reflects_state(tmp_path):
     st = led.status()
     assert st["roots"] == 1
     assert st["anchors"] == 1
+
+
+class _CaptureServer:
+    """Minimal stand-in for the eBPF capture service: accepts one
+    connection, records scope lines, replies with scripted NDJSON."""
+
+    def __init__(self):
+        self.scope_lines = []
+        self.server = None
+        self.writer = None
+
+    async def start(self, path):
+        self.server = await asyncio.start_unix_server(
+            self._handle, path
+        )
+
+    async def _handle(self, reader, writer):
+        self.writer = writer
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            self.scope_lines.append(line.decode().strip())
+
+    async def send(self, obj):
+        if self.writer is not None:
+            self.writer.write(json.dumps(obj).encode() + b"\n")
+            await self.writer.drain()
+
+    def close(self):
+        if self.server is not None:
+            self.server.close()
+        if self.writer is not None:
+            self.writer.close()
+
+
+@pytest.mark.asyncio
+async def test_ebpf_service_mode_lifecycle(tmp_path, caplog):
+    """backend=ebpf with no explicit watcher path connects to the
+    capture service socket: scope is pushed, events flow into rows,
+    and a disconnect marks a gap and reconnects (#2520)."""
+    sock = str(tmp_path / "capture.sock")
+    server = _CaptureServer()
+    await server.start(sock)
+    app, rec = _app(
+        tmp_path, watcher="", backend="ebpf", ebpf_socket=sock
+    )
+    led = pl.ProcessLedger(app)
+    led.set_root(WS, 100)
+    with caplog.at_level("INFO", logger="klangk.process_ledger"):
+        await led.start()
+    assert led.backend == "ebpf"
+    assert led._capture_writer is not None
+    assert "capture running — eBPF capture service at" in caplog.text
+    for _ in range(40):
+        if server.scope_lines:
+            break
+        await asyncio.sleep(0.05)
+    assert server.scope_lines, "scope line must reach the service"
+    assert json.loads(server.scope_lines[0])["roots"] == [100]
+    await server.send(
+        {
+            "type": "birth",
+            "pid": 42,
+            "ppid": 100,
+            "uid": 1000,
+            "comm": "sh",
+            "argv": "sh -c ls",
+            "ancestry": [42, 100],
+            "ts_realtime": 1.0,
+        }
+    )
+    for _ in range(40):
+        if rec.launches:
+            break
+        await asyncio.sleep(0.05)
+    assert rec.launches and rec.launches[0]["pid"] == 42
+    # Service restart: connection drops -> gap + reconnect attempt.
+    server.close()
+    for _ in range(60):
+        if led.gaps:
+            break
+        await asyncio.sleep(0.05)
+    assert led.gaps, "disconnect must mark a coverage gap"
+    await led.stop()
+
+
+@pytest.mark.asyncio
+async def test_ebpf_service_mode_missing_socket(tmp_path, caplog):
+    app, _ = _app(
+        tmp_path, watcher="", backend="ebpf"
+    )  # absent-capture.sock default
+    led = pl.ProcessLedger(app)
+    with caplog.at_level("WARNING", logger="klangk.process_ledger"):
+        await led.start()
+    assert led.backend == "python-fallback"
+    assert "does not exist" in caplog.text
+    assert "klangk-ebpf-capture" in caplog.text
+    await led.stop()
+
+
+@pytest.mark.asyncio
+async def test_ebpf_service_mode_refused(tmp_path, caplog):
+    sock = tmp_path / "dead.sock"
+    # A socket file with no listener: connect() refuses.
+    import socket as socket_mod
+
+    s = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
+    s.bind(str(sock))
+    app, _ = _app(
+        tmp_path, watcher="", backend="ebpf", ebpf_socket=str(sock)
+    )
+    led = pl.ProcessLedger(app)
+    with caplog.at_level("WARNING", logger="klangk.process_ledger"):
+        await led.start()
+    assert led.backend == "python-fallback"
+    assert "refused the connection" in caplog.text
+    s.close()
+    await led.stop()
+
+
+@pytest.mark.asyncio
+async def test_ebpf_service_mode_oserror(tmp_path, caplog, monkeypatch):
+    async def boom(path):  # noqa: ARG001
+        raise OSError("boom")
+
+    monkeypatch.setattr(pl.asyncio, "open_unix_connection", boom)
+    app, _ = _app(
+        tmp_path, watcher="", backend="ebpf", ebpf_socket=str(tmp_path / "x.sock")
+    )
+    led = pl.ProcessLedger(app)
+    with caplog.at_level("WARNING", logger="klangk.process_ledger"):
+        await led.start()
+    assert led.backend == "python-fallback"
+    assert "cannot connect to eBPF capture socket" in caplog.text
+    await led.stop()
+
+
+@pytest.mark.asyncio
+async def test_ebpf_service_mode_stop_while_connected(tmp_path):
+    """stop() with the connection still open closes the writer, and a
+    reader that observes EOF while stopping returns quietly."""
+    sock = str(tmp_path / "capture.sock")
+    server = _CaptureServer()
+    await server.start(sock)
+    app, rec = _app(
+        tmp_path, watcher="", backend="ebpf", ebpf_socket=sock
+    )
+    led = pl.ProcessLedger(app)
+    await led.start()
+    assert led._capture_writer is not None
+    await server.send({"type": "heartbeat", "interval_ms": 0})
+    await asyncio.sleep(0.05)
+    # garbage line: must be skipped, not crash the reader
+    server.writer.write(b"not-json\n")
+    await server.writer.drain()
+    await asyncio.sleep(0.05)
+    await led.stop()
+    assert led._capture_writer is None
+    assert led._task is None
+    # Reader observing EOF after stop returns via the stopping branch.
+    stream = asyncio.StreamReader()
+    stream.feed_data(b"")
+    stream.feed_eof()
+    led._capture_stream = stream
+    led._task = None
+    await led._read_capture_events()
+    del rec
+
+
+@pytest.mark.asyncio
+async def test_push_scope_capture_writer_error(tmp_path):
+    app, _ = _app(tmp_path)
+    led = pl.ProcessLedger(app)
+
+    class BadWriter:
+        def is_closing(self):
+            return False
+
+        def write(self, data):  # noqa: ARG002
+            raise BrokenPipeError
+
+        async def drain(self):  # pragma: no cover - not reached
+            return None
+
+    led._capture_writer = BadWriter()
+    await led._push_scope()  # swallowed
+
+    class RaisingWriter(BadWriter):
+        def write(self, data):  # noqa: ARG002
+            raise RuntimeError("handler is closed")
+
+    led._capture_writer = RaisingWriter()
+    await led._push_scope()  # swallowed
 
 
 def test_watcher_path_per_backend(tmp_path):

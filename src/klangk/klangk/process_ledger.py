@@ -169,6 +169,12 @@ class ProcessLedger:
         self._task: asyncio.Task | None = None
         self._watcher_proc: asyncio.subprocess.Process | None = None
         self._watcher_reader: asyncio.Task | None = None
+        # eBPF capture-service connection (#2520): writer for scope
+        # pushes, stream for the NDJSON event reader — set when the
+        # monitor runs as its own systemd service instead of a spawned
+        # child.
+        self._capture_writer: asyncio.StreamWriter | None = None
+        self._capture_stream: asyncio.StreamReader | None = None
         self._watcher_restarts: list[float] = []
         # Coverage bookkeeping surfaced via status(): how many events the
         # active backend captured, and the effective poll interval.
@@ -383,11 +389,18 @@ class ProcessLedger:
             )
             self.backend = "ebpf" if ebpf else "c-watcher"
             if ebpf:
-                logger.info(
-                    "process-ledger: capture running — eBPF watcher pid %s "
-                    "(event-driven, no polling)",
-                    self._watcher_proc.pid,
-                )
+                if self._capture_writer is not None:
+                    logger.info(
+                        "process-ledger: capture running — eBPF capture "
+                        "service at %s (event-driven, no polling)",
+                        self.app.state.settings.process_ledger_ebpf_socket,
+                    )
+                else:
+                    logger.info(
+                        "process-ledger: capture running — eBPF watcher "
+                        "pid %s (event-driven, no polling)",
+                        self._watcher_proc.pid,
+                    )
             else:
                 logger.info(
                     "process-ledger: capture running — C watcher pid %s, "
@@ -425,7 +438,20 @@ class ProcessLedger:
 
     # -------------------------------------------------- C watcher
     async def _start_watcher(self) -> bool:
-        """Spawn the C helper; False (and logged) if unavailable."""
+        """Attach the capture backend; False (and logged) if unavailable.
+
+        Two attach modes for the eBPF monitor (#2520): as its own
+        privileged systemd service (backend=ebpf with no explicit watcher
+        path — klangkd connects to the capture socket), or as a spawned
+        child with file capabilities (explicit watcher path). The /proc
+        poller always spawns.
+        """
+        explicit = self.app.state.settings.process_ledger_watcher
+        if (
+            self.app.state.settings.process_ledger_backend == "ebpf"
+            and not explicit
+        ):
+            return await self._connect_capture()
         path = self.watcher_path
         if not path.exists():
             logger.warning(
@@ -461,6 +487,89 @@ class ProcessLedger:
         await self._push_scope()
         return True
 
+    async def _connect_capture(self) -> bool:
+        """Connect to the eBPF capture service; False (and logged,
+        with remediation) when it is missing or dead."""
+        path = self.app.state.settings.process_ledger_ebpf_socket
+        try:
+            stream, writer = await asyncio.open_unix_connection(path)
+        except FileNotFoundError:
+            logger.warning(
+                "process-ledger: eBPF capture socket %s does not exist — "
+                "the klangk-ebpf-capture service is not running. Install "
+                "and start it (see docs/features/process-ledger.md, 'The "
+                "eBPF capture service'); falling back to the Python "
+                "poller (effective interval ~%.1fs, degraded)",
+                path,
+                self.fallback_interval_s,
+            )
+            return False
+        except (ConnectionRefusedError, ConnectionResetError):
+            logger.warning(
+                "process-ledger: eBPF capture socket %s refused the "
+                "connection — the service is dead or restarting "
+                "(systemctl status klangk-ebpf-capture); falling back to "
+                "the Python poller (effective interval ~%.1fs, degraded)",
+                path,
+                self.fallback_interval_s,
+            )
+            return False
+        except OSError as exc:
+            logger.warning(
+                "process-ledger: cannot connect to eBPF capture socket "
+                "%s (%s) — falling back to the Python poller "
+                "(effective interval ~%.1fs, degraded)",
+                path,
+                exc,
+                self.fallback_interval_s,
+            )
+            return False
+        self._capture_stream = stream
+        self._capture_writer = writer
+        self._watcher_reader = asyncio.create_task(
+            self._read_capture_events(), name="process-ledger-capture"
+        )
+        await self._push_scope()
+        return True
+
+    async def _read_capture_events(self) -> None:
+        """Consume NDJSON events from the capture-service socket.
+
+        On disconnect: mark a gap and let the restart machinery
+        reconnect (bounded; sustained outage falls back to the Python
+        poller loudly, never silently claiming coverage).
+        """
+        stream = self._capture_stream
+        assert stream is not None
+        while True:
+            line = await stream.readline()
+            if not line:
+                if self._task is None:
+                    return  # stopping
+                writer, self._capture_writer = self._capture_writer, None
+                self._capture_stream = None
+                if writer is not None:
+                    writer.close()
+                logger.warning(
+                    "process-ledger: eBPF capture service disconnected; "
+                    "reconnecting"
+                )
+                try:
+                    await self._on_watcher_exit()
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception(
+                        "process-ledger: capture reconnect path failed"
+                    )
+                return
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            try:
+                await self._handle_event(event)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("process-ledger: event handler error")
+
     async def _stop_watcher(self) -> None:
         reader, self._watcher_reader = self._watcher_reader, None
         current = asyncio.current_task()
@@ -480,9 +589,29 @@ class ProcessLedger:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except (asyncio.TimeoutError, ProcessLookupError):
                 proc.kill()
+        writer, self._capture_writer = self._capture_writer, None
+        self._capture_stream = None
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (OSError, RuntimeError):  # pragma: no cover
+                pass
 
     async def _push_scope(self) -> None:
-        """Push the current root-pid scope to the watcher (stdin line)."""
+        """Push the current root-pid scope to the capture backend."""
+        writer = self._capture_writer
+        if writer is not None:
+            scope = json.dumps(
+                {"type": "scope", "roots": sorted(set(self._roots.values()))}
+            )
+            try:
+                if not writer.is_closing():
+                    writer.write(scope.encode() + b"\n")
+                    await writer.drain()
+            except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                pass  # service gone; the reader reconnects
+            return
         proc = self._watcher_proc
         if proc is None or proc.stdin is None:
             return
