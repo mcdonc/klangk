@@ -945,12 +945,13 @@ class TestMounts:
         TestMounts._login(cli_config)
         _run(["klangk", "create", "e2e-mount-int"], env=env)
         try:
-            # Interactive: keep name, keep image, keep command,
-            # add mount "/tmp:/mnt/test", skip add, skip remove,
-            # skip add env, skip allowed-domains add, skip rejected-domains add
+            # Interactive: keep name, keep image, keep command, keep
+            # classification banner, add mount "/tmp:/mnt/test", skip add,
+            # skip remove, skip add env, skip allowed-domains add,
+            # skip rejected-domains add
             result = _run(
                 ["klangk", "edit", "e2e-mount-int"],
-                input="\n\n\n/tmp:/mnt/test\n\n\n\n\n",
+                input="\n\n\n\n/tmp:/mnt/test\n\n\n\n\n",
                 env=env,
             )
             assert result.returncode == 0

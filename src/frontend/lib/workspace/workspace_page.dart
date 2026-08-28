@@ -517,7 +517,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   void dispose() {
-    _markingSub.cancel();
+    _markingSub?.cancel();
     _consent?.dispose();
     for (final feature in _features) {
       feature.dispose();
