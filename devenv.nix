@@ -94,6 +94,9 @@ in
       gzip
       gnutar
       caddy # reverse-proxy engine (Caddy, sole engine in 2.X, #1559/#1642)
+      clang # BPF-target compile for the eBPF ledger watcher (#2520)
+      libbpf # loader for the eBPF ledger watcher (#2520)
+      pkg-config
       podman
       ruff
       sqlite.bin
@@ -255,6 +258,26 @@ in
       showOutput = true;
       execIfModified = [ "scripts/procleddy/**" ];
     };
+    "klangk:build-procleddy-ebpf" = {
+      exec = ''
+        cd "$DEVENV_ROOT/scripts/procleddy-ebpf"
+        # Unwrapped clang: the nix cc-wrapper injects hardening flags
+        # (-fstack-protector, -fzero-call-used-regs) the bpf backend
+        # rejects ("unsupported option ... for target 'bpf'").
+        BPFC="${pkgs.llvmPackages.clang-unwrapped}/bin/clang"
+        "$BPFC" -target bpf -O2 -g -Wall -Wextra -I. \
+          -I${pkgs.linuxHeaders}/include \
+          $(pkg-config --cflags libbpf) \
+          -c procleddy_ebpf.bpf.c \
+          -o "$DEVENV_ROOT/src/klangk/klangk/procleddy-ebpf.bpf.o"
+        cc -O2 -Wall -Wextra -I. \
+          -o "$DEVENV_ROOT/src/klangk/klangk/procleddy-ebpf" \
+          procleddy-ebpf.c \
+          $(pkg-config --cflags --libs libbpf)
+      '';
+      showOutput = true;
+      execIfModified = [ "scripts/procleddy-ebpf/**" ];
+    };
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
@@ -293,6 +316,7 @@ in
         "klangk:build-workspace-image"
         "klangk:build-network-sidecar"
         "klangk:build-procleddy"
+        "klangk:build-procleddy-ebpf"
         "klangk:kill-port-holders"
       ];
     };

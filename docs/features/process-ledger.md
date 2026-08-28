@@ -51,6 +51,21 @@ windows opened via the web UI or `klangk shell`).
   visible, never silent.
 - **Retention:** rows are pruned by age (default 7 days) and a global
   row cap (default 50000), both configurable.
+- **eBPF backend (spike, `KLANGKD_PROCESS_LEDGER_BACKEND=ebpf`):**
+  instead of polling, a tracepoint-backed monitor (`procleddy-ebpf`)
+  captures every `execve` exactly — short-lived processes included, no
+  polling dark window. `sched_process_fork/exit` maintain a kernel-side
+  parent map; `sys_enter_execve[_at]` captures argv + uid and walks the
+  map toward the workspace roots in-kernel; the loader emits the same
+  NDJSON contract, so klangkd needs no other changes. This is the
+  privileged deployment tier: the process needs `CAP_BPF` +
+  `CAP_PERFMON` (e.g. systemd `AmbientCapabilities=`) — it cannot run
+  in the unprivileged containerized host image, where the `/proc`
+  poller remains the backend. Spike limitations: argv truncated to 32
+  args / 2 KiB, `sid` not captured, ancestry of processes forked before
+  the monitor started is finished from `/proc` by the loader, and
+  fork-without-exec events are not recorded (only the merged birth on
+  exec — one row per program launched).
 
 ## Reading the ledger
 

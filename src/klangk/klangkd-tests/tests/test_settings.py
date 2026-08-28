@@ -140,6 +140,17 @@ class TestConfigFile:
         )
         assert s.brand_color == "#00FF00"
 
+    def test_process_ledger_backend_selection(self):
+        """#2520: the ledger capture backend defaults to the /proc
+        poller, is switchable to eBPF via env, and rejects unknown
+        values."""
+        s = make_settings({})
+        assert s.process_ledger_backend == "proc"
+        s = make_settings({"KLANGKD_PROCESS_LEDGER_BACKEND": "ebpf"})
+        assert s.process_ledger_backend == "ebpf"
+        with pytest.raises(Exception):
+            make_settings({"KLANGKD_PROCESS_LEDGER_BACKEND": "nope"})
+
     def test_yaml_doesnt_override_env(self, tmp_path):
         """A key set in both env and YAML: env wins."""
         cfg = tmp_path / "config.yaml"

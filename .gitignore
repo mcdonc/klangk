@@ -27,6 +27,9 @@ src/klangk/dist/
 # Compiled process-ledger C watcher (devenv task klangk:build-procleddy,
 # #2520) at the wheel-adjacent path klangkd loads it from.
 src/klangk/klangk/procleddy
+# eBPF watcher spike (#2520): loader + BPF object, same location rules.
+src/klangk/klangk/procleddy-ebpf
+src/klangk/klangk/procleddy-ebpf.bpf.o
 src/frontend/.flutter-plugins
 src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec_overrides.yaml

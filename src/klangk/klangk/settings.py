@@ -1061,6 +1061,13 @@ class KlangkSettings(BaseSettings):
     # Explicit path to the C watcher binary; empty = wheel-adjacent
     # default (klangk/procleddy).
     process_ledger_watcher: str = ""
+    # Capture backend (#2520): "proc" = the /proc poller (procleddy,
+    # works unprivileged), "ebpf" = the tracepoint-backed monitor
+    # (procleddy-ebpf, privileged tier: CAP_BPF + CAP_PERFMON, exact
+    # capture with no polling dark window). Both speak the same
+    # stdin-scope / NDJSON-stdout contract. An explicit
+    # process_ledger_watcher path still overrides either default.
+    process_ledger_backend: Literal["proc", "ebpf"] = "proc"
     # consent_decider_timeout (#2308): a consent decider (a live client that
     # can approve/deny held egress) is registered while its WebSocket is
     # connected and pinging. This is the liveness window -- a decider whose

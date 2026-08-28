@@ -196,10 +196,22 @@ class ProcessLedger:
 
     @property
     def watcher_path(self) -> Path:
-        return Path(
-            self.app.state.settings.process_ledger_watcher
-            or _default_watcher_path()
+        """Watcher binary for the configured backend (#2520).
+
+        An explicit ``process_ledger_watcher`` path overrides either
+        backend's default; otherwise the backend picks its wheel-adjacent
+        binary (procleddy for the /proc poller, procleddy-ebpf for the
+        eBPF monitor).
+        """
+        explicit = self.app.state.settings.process_ledger_watcher
+        if explicit:
+            return Path(explicit)
+        name = (
+            "procleddy-ebpf"
+            if self.app.state.settings.process_ledger_backend == "ebpf"
+            else "procleddy"
         )
+        return Path(__file__).parent / name
 
     # ------------------------------------------------------- anchors
     def set_root(self, workspace_id: str, pid: int) -> None:
@@ -366,13 +378,23 @@ class ProcessLedger:
             return
         self.started_at = time.time()
         if await self._start_watcher():
-            self.backend = "c-watcher"
-            logger.info(
-                "process-ledger: capture running — C watcher pid %s, "
-                "target interval %.0f ms",
-                self._watcher_proc.pid,
-                self.interval_target_s * 1000.0,
+            ebpf = (
+                self.app.state.settings.process_ledger_backend == "ebpf"
             )
+            self.backend = "ebpf" if ebpf else "c-watcher"
+            if ebpf:
+                logger.info(
+                    "process-ledger: capture running — eBPF watcher pid %s "
+                    "(event-driven, no polling)",
+                    self._watcher_proc.pid,
+                )
+            else:
+                logger.info(
+                    "process-ledger: capture running — C watcher pid %s, "
+                    "target interval %.0f ms",
+                    self._watcher_proc.pid,
+                    self.interval_target_s * 1000.0,
+                )
         else:
             self.backend = "python-fallback"
             self.effective_interval_ms = self.fallback_interval_s * 1000.0
@@ -693,6 +715,3 @@ def _read_nspid_tail(hpid: int, root: str = "/proc") -> int | None:
     return None
 
 
-def _default_watcher_path() -> str:
-    """Wheel-adjacent default location for the C helper."""
-    return str(Path(__file__).parent / "procleddy")

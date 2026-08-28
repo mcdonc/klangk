@@ -454,8 +454,12 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   `read-proc-ledger` permission — by default only workspace owners have
   it; other roles need an explicit ACL grant); retention bounded by
   default.
-  Enable with `KLANGKD_PROCESS_LEDGER_ENABLED=true`. See
-  [Process Ledger](features/process-ledger.md).
+  Enable with `KLANGKD_PROCESS_LEDGER_ENABLED=true`.
+  **`KLANGKD_PROCESS_LEDGER_BACKEND=ebpf` (spike)** switches capture to
+  a tracepoint-backed monitor (`procleddy-ebpf`, needs `CAP_BPF` +
+  `CAP_PERFMON` — privileged deployments only) that records every
+  `execve` exactly, including the sub-millisecond processes the poller
+  cannot see. See [Process Ledger](features/process-ledger.md).
 - **`KLANGKNETWORK_EGRESS_ACTIVITY_GATE` forwarding (#2514).** The
   sidecar's idle-activity report interval is now honored when set in
   klangkd's environment (forwarded to the sidecar like

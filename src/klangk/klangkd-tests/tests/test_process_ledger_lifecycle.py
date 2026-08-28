@@ -13,6 +13,7 @@ import asyncio
 import json
 import time
 import types
+from pathlib import Path
 
 import pytest
 
@@ -33,7 +34,7 @@ class _LaunchRecorder:
         return 0
 
 
-def _app(tmp_path, *, enabled=True, watcher=None):
+def _app(tmp_path, *, enabled=True, watcher=None, backend="proc"):
     app = types.SimpleNamespace()
     app.state = types.SimpleNamespace()
     app.state.settings = types.SimpleNamespace(
@@ -42,7 +43,12 @@ def _app(tmp_path, *, enabled=True, watcher=None):
         process_ledger_fallback_interval_s=0.05,
         process_ledger_retention_seconds=1e9,
         process_ledger_retention_rows=100000,
-        process_ledger_watcher=watcher or str(tmp_path / "absent-procleddy"),
+        process_ledger_watcher=(
+            str(tmp_path / "absent-procleddy")
+            if watcher is None
+            else watcher
+        ),
+        process_ledger_backend=backend,
     )
     recorder = _LaunchRecorder()
     app.state.model = types.SimpleNamespace(process_launch=recorder)
@@ -275,9 +281,43 @@ async def test_status_reflects_state(tmp_path):
     assert st["anchors"] == 1
 
 
-def test_default_watcher_path():
-    p = pl._default_watcher_path()
-    assert p.endswith("procleddy")
+def test_watcher_path_per_backend(tmp_path):
+    """watcher_path picks the backend's wheel-adjacent binary; an
+    explicit process_ledger_watcher path overrides either backend
+    (#2520). watcher="" clears the fixture's absent-path default so
+    the wheel-adjacent resolution is exercised.
+    """
+    app, _ = _app(tmp_path, watcher="")
+    led = pl.ProcessLedger(app)
+    assert led.watcher_path.name == "procleddy"
+
+    app, _ = _app(tmp_path, watcher="", backend="ebpf")
+    led = pl.ProcessLedger(app)
+    assert led.watcher_path.name == "procleddy-ebpf"
+
+    app, _ = _app(
+        tmp_path, backend="ebpf", watcher=str(tmp_path / "explicit")
+    )
+    led = pl.ProcessLedger(app)
+    assert led.watcher_path == Path(str(tmp_path / "explicit"))
+
+
+@pytest.mark.asyncio
+async def test_start_with_ebpf_backend_labels_and_logs(tmp_path, caplog):
+    """backend=ebpf spawns the same contract (fake watcher works) and is
+    labeled 'ebpf' in state, status, and the startup log (#2520 spike —
+    the real binary needs CAP_BPF, exercised separately)."""
+    wpath = tmp_path / "fakewatcher"
+    wpath.write_text(FAKE_WATCHER)
+    wpath.chmod(0o755)
+    app, rec = _app(tmp_path, watcher=str(wpath), backend="ebpf")
+    led = pl.ProcessLedger(app)
+    led.set_root(WS, 100)
+    with caplog.at_level("INFO", logger="klangk.process_ledger"):
+        await led.start()
+    assert led.backend == "ebpf"
+    assert "capture running — eBPF watcher pid" in caplog.text
+    await led.stop()
 
 
 def test_log_task_exception_logs_error(caplog):
