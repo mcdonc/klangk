@@ -1047,7 +1047,7 @@ class KlangkSettings(BaseSettings):
     # at <=1% of one core; the value is a ceiling the watcher's duty-cycle
     # governor may stretch on cost spikes (degrades to skipped polls,
     # never runs hot).
-    process_ledger_interval_ms: int = 80
+    process_ledger_interval_ms: int = 20
     # Python-fallback poll interval (seconds) when the C watcher is
     # unavailable — budget-derived, multi-second by design; the effective
     # interval is surfaced via the ledger status API so degraded coverage

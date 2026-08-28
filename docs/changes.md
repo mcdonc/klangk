@@ -447,7 +447,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   process launched inside a running workspace container, with best-effort
   principal attribution (`agent` / `user:<handle>` / `unknown`), argv,
   and a pane-input hint. Captured host-side by a C watcher subprocess
-  (`procleddy`) at an 80 ms poll under a ≤1%-of-one-core budget; degrades
+  (`procleddy`) at a 20 ms poll under a ≤1%-of-one-core budget; degrades
   to a Python poller (multi-second interval, loudly surfaced) when the
   binary is absent. Read via
   `GET /api/v1/workspaces/{id}/processes` (requires the new

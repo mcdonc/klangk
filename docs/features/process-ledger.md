@@ -38,7 +38,7 @@ uid. Workspace membership is a ppid-walk to the container init's host pid
 shells klangkd itself creates (the agent's `service` window, and user
 windows opened via the web UI or `klangk shell`).
 
-- **Performance contract:** poll interval 80 ms at ≤1% of one core at
+- **Performance contract:** poll interval ≤ 80 ms (default 20 ms) at ≤1% of one core at
   ~12k processes. The watcher parses `status` at full rate only for new
   and watched pids; everyone else gets a staggered (~20 s) refresh. A
   cost spike stretches the cadence (skipped polls) rather than running
@@ -69,7 +69,7 @@ collaborators — is an explicit operator choice via the ACL editor
 ## Honest limitations
 
 - **Sub-interval processes are dark**: a process that execs and exits
-  within one poll interval (~80 ms watched; seconds in fallback) is
+  within one poll interval (~20 ms watched; seconds in fallback) is
   never seen. What the ledger covers is surviving processes and
   longer-lived recon (scans, installs, staging), plus everything
   persistent.
