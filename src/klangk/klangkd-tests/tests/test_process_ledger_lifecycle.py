@@ -68,6 +68,8 @@ time.sleep(30)
 CRASH_WATCHER = r"""#!/usr/bin/env python3
 import sys
 sys.stdin.buffer.read(1)
+print("simulated load failure: BPF load failed (Operation not permitted)",
+      file=sys.stderr, flush=True)
 sys.exit(1)
 """
 
@@ -139,20 +141,55 @@ async def test_start_with_watcher_and_event_flow(tmp_path, caplog):
 
 
 @pytest.mark.asyncio
-async def test_watcher_exit_marks_gap_and_restarts(tmp_path):
+async def test_push_scope_tolerates_closed_transport(tmp_path):
+    """#2520: writing scope to a watcher whose transport already closed
+    must be a no-op — uvloop raises RuntimeError (not BrokenPipeError)
+    there, which previously crashed the reader task with an
+    unretrieved-exception error."""
+    app, _ = _app(tmp_path)
+    led = pl.ProcessLedger(app)
+
+    class ClosingStdin:
+        def is_closing(self):
+            return True
+
+    led._watcher_proc = types.SimpleNamespace(stdin=ClosingStdin())
+    await led._push_scope()  # early return, no write attempted
+
+    class RaisingStdin:
+        def is_closing(self):
+            return False
+
+        def write(self, data):  # noqa: ARG002
+            raise RuntimeError("handler is closed")
+
+        async def drain(self):  # pragma: no cover - not reached
+            return None
+
+    led._watcher_proc = types.SimpleNamespace(stdin=RaisingStdin())
+    await led._push_scope()  # RuntimeError swallowed
+
+
+@pytest.mark.asyncio
+async def test_watcher_exit_marks_gap_and_restarts(tmp_path, caplog):
     wpath = tmp_path / "crashwatcher"
     wpath.write_text(CRASH_WATCHER)
     wpath.chmod(0o755)
     app, _ = _app(tmp_path, watcher=str(wpath))
     led = pl.ProcessLedger(app)
-    await led.start()
-    assert led.backend == "c-watcher"
-    # watcher reads one byte then exits -> reader notices -> restart
-    for _ in range(40):
-        if len(led._watcher_restarts) >= 1 or led.gaps:
-            break
-        await asyncio.sleep(0.05)
-    assert led.gaps, "crash must mark a coverage gap"
+    with caplog.at_level("WARNING", logger="klangk.process_ledger"):
+        await led.start()
+        assert led.backend == "c-watcher"
+        # watcher reads one byte then exits -> reader notices -> restart
+        for _ in range(40):
+            if len(led._watcher_restarts) >= 1 or led.gaps:
+                break
+            await asyncio.sleep(0.05)
+        assert led.gaps, "crash must mark a coverage gap"
+    # The crashed watcher's stderr is surfaced, not swallowed (#2520):
+    # an instantly-exiting watcher must explain itself in the log.
+    assert "watcher exited rc=1" in caplog.text
+    assert "simulated load failure" in caplog.text
     await led.stop()
 
 

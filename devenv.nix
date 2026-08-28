@@ -275,18 +275,17 @@ in
           -o "$EBPF" \
           procleddy-ebpf.c \
           $(pkg-config --cflags --libs libbpf)
-        # Best-effort file caps so the eBPF backend runs without root,
-        # via the same shipped entrypoint deployments use
-        # (klangk-ebpf-setcaps: resolves the right binary, applies
-        # exactly cap_bpf,cap_perfmon+ep, verifies with getcap).
+        # Best-effort file caps so the eBPF backend runs without root.
+        # Direct setcap (not the klangk-ebpf-setcaps entrypoint): the
+        # sudoers rule matches the setcap path/args exactly, and $EBPF
+        # is already resolved here. NB: probe with the real command —
+        # `sudo -n true` never matches a scoped (NOPASSWD-for-one-command)
+        # rule, so gating on it would silently skip working setups.
         # Rebuilding wipes caps (new inode), so this re-applies every
-        # build. A no-op — one log line — on hosts without passwordless
-        # setcap; see docs/features/process-ledger.md for the host-side
-        # sudoers opt-in and the deployment tiers.
-        if sudo -n true 2>/dev/null; then
-          if sudo -n "$UV_PYTHON" -m klangk.ebpf_setcaps; then
-            echo "procleddy-ebpf: file caps applied (cap_bpf,cap_perfmon)"
-          fi
+        # build. A no-op — one log line — on hosts without the rule; see
+        # docs/features/process-ledger.md for the opt-in and tiers.
+        if sudo -n setcap cap_bpf,cap_perfmon+ep "$EBPF" 2>/dev/null; then
+          echo "procleddy-ebpf: file caps applied (cap_bpf,cap_perfmon)"
         else
           echo "procleddy-ebpf: no passwordless setcap — binary built, but" \
             "the eBPF backend will not load without CAP_BPF+CAP_PERFMON" \

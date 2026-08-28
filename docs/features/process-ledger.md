@@ -59,13 +59,20 @@ windows opened via the web UI or `klangk shell`).
   map toward the workspace roots in-kernel; the loader emits the same
   NDJSON contract, so klangkd needs no other changes. This is the
   privileged deployment tier: the process needs `CAP_BPF` +
-  `CAP_PERFMON` (e.g. systemd `AmbientCapabilities=`) — it cannot run
-  in the unprivileged containerized host image, where the `/proc`
-  poller remains the backend. Spike limitations: argv truncated to 32
-  args / 2 KiB, `sid` not captured, ancestry of processes forked before
-  the monitor started is finished from `/proc` by the loader, and
-  fork-without-exec events are not recorded (only the merged birth on
-  exec — one row per program launched).
+  `CAP_PERFMON` (e.g. via file caps — see *Granting the caps in
+  deployments*) **and read access to tracefs** — libbpf resolves each
+  tracepoint's perf-event ID from `/sys/kernel/tracing/events/*/id`,
+  which systemd mounts root-only (`0700`) and capabilities do not
+  bypass file modes: on a stock host every attach fails `-EACCES`
+  unless tracefs is group/world-readable (remount
+  `gid=…,mode=0750` — metadata only, buffers stay root-only) or the
+  watcher runs as root. It cannot run in the unprivileged containerized
+  host image in any case, where the `/proc` poller remains the backend.
+  Spike limitations: argv truncated to 32 args / 2 KiB, `sid` not
+  captured, ancestry of processes forked before the monitor started is
+  finished from `/proc` by the loader, and fork-without-exec events are
+  not recorded (only the merged birth on exec — one row per program
+  launched).
 
 ### Automated builds and privileges
 

@@ -144,6 +144,9 @@ async def test_push_scope_broken_pipe(tmp_path):
     led.set_root(WS, 5)
 
     class _Stdin:
+        def is_closing(self):
+            return False
+
         def write(self, b):  # pragma: no cover - not reached
             raise BrokenPipeError
 

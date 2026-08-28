@@ -442,7 +442,10 @@ class ProcessLedger:
                 str(int(self.interval_target_s * 1000)),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                # Captured, not devnull'd: a load failure (missing
+                # CAP_BPF) explains an instantly-exiting watcher, and
+                # swallowing it made restart loops undiagnosable.
+                stderr=asyncio.subprocess.PIPE,
             )
         except OSError as exc:
             logger.warning(
@@ -487,11 +490,14 @@ class ProcessLedger:
             {"type": "scope", "roots": sorted(set(self._roots.values()))}
         )
         try:
+            if proc.stdin.is_closing():
+                return
             proc.stdin.write(scope.encode() + b"\n")
             await proc.stdin.drain()
-        except (BrokenPipeError, ConnectionResetError):
-            # Watcher died; the reader task will notice and restart/fall
-            # back.
+        except (BrokenPipeError, ConnectionResetError, RuntimeError):
+            # Watcher died (uvloop surfaces a closed transport as
+            # RuntimeError, not BrokenPipeError); the reader task
+            # notices the exit and restarts/falls back.
             pass
 
     async def _read_watcher_stdout(self) -> None:
@@ -508,7 +514,32 @@ class ProcessLedger:
                 # Watcher exited (crash or SIGTERM during stop()).
                 if self._task is None:
                     return  # stopping; not a crash
-                await self._on_watcher_exit()
+                rc = proc.returncode
+                stderr_tail = ""
+                stderr = getattr(proc, "stderr", None)
+                if stderr is not None:
+                    try:
+                        err = await asyncio.wait_for(
+                            proc.stderr.read(), timeout=2
+                        )
+                        stderr_tail = err.decode("utf-8", "replace").strip()
+                    except asyncio.TimeoutError:  # pragma: no cover
+                        pass
+                if stderr_tail:
+                    logger.warning(
+                        "process-ledger: watcher exited rc=%s: %s",
+                        rc,
+                        stderr_tail[-500:],
+                    )
+                try:
+                    await self._on_watcher_exit()
+                except Exception:  # pragma: no cover - defensive
+                    # Never let a restart-path error kill the reader
+                    # task silently (unretrieved-exception noise): log
+                    # and keep the fallback bookkeeping intact.
+                    logger.exception(
+                        "process-ledger: watcher restart path failed"
+                    )
                 return
             try:
                 event = json.loads(line)
