@@ -65,25 +65,62 @@ accumulate. The local `:latest` tag is never pushed to GHCR.
 
 ## Workspace Base Image Pin
 
-The workspace `Dockerfile` pins its base image to a specific version
-via a build `ARG`:
+The workspace `Dockerfile` pins its base image to an **immutable digest**
+via a build `ARG` (#2063):
 
 ```dockerfile
-ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.06.10-e973f3c
+ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base@sha256:…
 FROM $WORKSPACE_BASE_IMAGE
 ```
 
-This means changes to `Dockerfile.base` on main don't silently
-affect other branches. The flow:
+The digest references the multi-arch manifest (amd64 + arm64); the build
+selects the platform via `--platform`. This means changes to
+`Dockerfile.base` on main don't silently affect other branches, and the
+registry cannot serve different content for the same reference. The flow:
 
 1. Someone changes `Dockerfile.base` and pushes to main.
 2. The `image-workspace-base.yml` workflow builds and pushes the new
    base image with a versioned tag.
-3. The same workflow automatically opens a PR to update the `ARG`
-   default in `src/containers/workspace/Dockerfile` to the new
-   version.
+3. The same workflow resolves the pushed manifest's digest and
+   automatically opens a PR to update the `ARG` default in
+   `src/containers/workspace/Dockerfile` to `repo@sha256:…`.
 4. A maintainer reviews and merges the PR.
 
-Stable/deploy branches keep their original pinned base version and
+Stable/deploy branches keep their original pinned base digest and
 are unaffected. To override at build time:
-`--build-arg WORKSPACE_BASE_IMAGE=ghcr.io/.../klangk-workspace-base:some-version`.
+`--build-arg WORKSPACE_BASE_IMAGE=ghcr.io/.../klangk-workspace-base@sha256:…`.
+`pull-base-image` pulls exactly this pinned reference (never a mutable
+`:latest`) so the local cache matches what a build consumes.
+
+## Pinned Third-Party Artifacts (#2063)
+
+Every artifact fetched from the network at image-build time is verified
+against a hash pinned in the Dockerfile, and every base image is pulled
+by immutable digest — a compromised registry, CDN, or MITM cannot swap
+content undetected. A mismatch fails the build loudly.
+
+| Artifact                                         | Where the pin lives                                                                | Verify/rotate on bump                                                                                                                           |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace base image                             | `WORKSPACE_BASE_IMAGE` ARG in `src/containers/workspace/Dockerfile`                | automatic — the base-image workflow's auto-PR rewrites the ARG with the new `repo@digest`                                                       |
+| Pi agent npm tarball                             | `PI_AGENT_SHA512` in `src/containers/workspace/Dockerfile`                         | `npm view @earendil-works/pi-coding-agent@<ver> dist.integrity` (base64 sha512 → hex)                                                           |
+| uv                                               | `UV_SHA256_AMD64` / `UV_SHA256_ARM64` in `src/containers/workspace/Dockerfile`     | `sha256sum` of each arch tarball, or the `.sha256` sidecars in the GitHub release                                                               |
+| process-compose                                  | `PROCESS_COMPOSE_SHA256_AMD64` / `_ARM64` in `src/containers/workspace/Dockerfile` | `sha256sum` of each arch tarball                                                                                                                |
+| Debian base (workspace, FIPS builders, nix-seed) | digest in `src/containers/workspace/Dockerfile.base` (pre-existing, #2432)         | `docker buildx imagetools inspect debian:trixie-slim --format '{{.Manifest.Digest}}'`; keep the three aligned builders in sync                  |
+| python host base                                 | digest in `src/containers/host/Dockerfile`                                         | `docker buildx imagetools inspect python:3.13-slim --format '{{.Manifest.Digest}}'`                                                             |
+| Alpine (network sidecar)                         | digest in `src/containers/network/Dockerfile`                                      | `docker buildx imagetools inspect alpine:3.21 --format '{{.Manifest.Digest}}'`                                                                  |
+| NodeSource repo key                              | `NODESOURCE_KEY_SHA256` in `Dockerfile.base`                                       | `sha256sum` of the fetched `gpgkey/nodesource-repo.gpg.key` (after cross-checking the new key's fingerprint against NodeSource's docs)          |
+| GitHub CLI repo key                              | `GITHUBCLI_KEYRING_SHA256` in `Dockerfile.base`                                    | `sha256sum` of the fetched `githubcli-archive-keyring.gpg` (fingerprint in the Dockerfile comment)                                              |
+| Caddy repo key (Cloudsmith)                      | `CADDY_REPO_KEY_SHA256` in `src/containers/host/Dockerfile`                        | `sha256sum` of the fetched `gpg.key` (fingerprint in the Dockerfile comment; cross-check <https://cloudsmith.io/~caddy/repos/stable/pub-keys/>) |
+
+Notes:
+
+- The apt **sources lists** (NodeSource, GitHub CLI, Caddy) are written
+  inline in the Dockerfiles, not fetched — the GPG key is the only
+  network-sourced trust input, and apt's own signature verification then
+  covers the package indexes and `.deb`s. Caddy itself is intentionally
+  not version-pinned so rebuilds pick up security patches; its integrity
+  rests on the pinned repo key.
+- Deps of the Pi agent tarball are still resolved by npm at build time
+  (integrity-checked by npm against registry metadata, as usual).
+- `scripts/tests/test_supply_chain_pins.py` holds contract tests asserting
+  the pins exist; removing one without updating that file fails CI.

@@ -1,9 +1,28 @@
-FROM python:3.13-slim AS base
+# python:3.13-slim pinned by IMMUTABLE DIGEST (multi-arch manifest list)
+# so the registry cannot serve different content for the tag (#2063).
+# Bump: docker buildx imagetools inspect python:3.13-slim \
+#         --format '{{.Manifest.Digest}}'
+FROM python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f AS base
 
 # Rebuild to pick up latest security patches (CVE-2026-45447 openssl).
 # The reverse proxy is Caddy (klangkd's default engine since #1559), installed
 # from the official Caddy apt repo (not in Debian's default repos). nginx is
 # gone — klangkd renders a Caddyfile and drives Caddy over its admin API.
+#
+# Supply-chain posture (#2063): the Cloudsmith GPG key is trusted only after
+# its SHA-256 is verified against the pin below — an unverified fetch lets a
+# MITM/compromised CDN choose which key signs the repo. The apt sources list
+# is written inline (not fetched), so the key is the only network-sourced
+# trust input; apt then GPG-verifies the package indexes and debs with it.
+#
+# Key provenance (for independent verification): the repo's primary key
+# fingerprint is 6576 0C51 EDEA 2017 CEA2  CA15 155B 6D79 CA56 EA34,
+# published at https://cloudsmith.io/~caddy/repos/stable/pub-keys/
+#
+# Bump: if Cloudsmith rotates the key, re-download gpg.key, recompute its
+# sha256, and update this ARG (after cross-checking the new fingerprint
+# against the pub-keys page above).
+ARG CADDY_REPO_KEY_SHA256=783dfee04b19e851a928cd87b34710213ebbe7628f98d9f34595ab83be578c00
 RUN apt-get update && apt-get install -y --no-install-recommends \
       apt-transport-https \
       bash \
@@ -23,8 +42,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tar \
       uidmap \
     && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-        | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
-    && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+        -o /tmp/caddy-stable.key \
+    && echo "${CADDY_REPO_KEY_SHA256}  /tmp/caddy-stable.key" | sha256sum -c - \
+    && gpg --dearmor --yes \
+        -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg /tmp/caddy-stable.key \
+    && rm -f /tmp/caddy-stable.key \
+    && echo 'deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main' \
         > /etc/apt/sources.list.d/caddy-stable.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends caddy \

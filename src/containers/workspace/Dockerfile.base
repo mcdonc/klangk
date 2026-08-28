@@ -79,9 +79,21 @@ ENV LC_ALL=en_US.UTF-8
 # install Debian's separate `npm`, which would pull distro Node 20 as a
 # dependency. NodeSource keeps every 26.x patch in its repo, so this pin is
 # durable. (#2432)
+#
+# Supply-chain (#2063): the repo key's SHA-256 is verified before it enters
+# the keyring. Key provenance: primary fingerprint
+#   6F71 F525 2828 41EE DAF8 51B4 2F59 B5F9 9B1B E0B4
+# (NodeSource's documented repo key). The sources list is written inline, so
+# the key is the only network-sourced trust input. Bump: if NodeSource rotates
+# the key, re-download gpgkey/nodesource-repo.gpg.key, recompute its sha256,
+# and update this ARG.
+ARG NODESOURCE_KEY_SHA256=b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d
 ARG NODEJS_VERSION=26.7.0-1nodesource1
 RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-      | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \
+        -o /tmp/nodesource-repo.gpg.key \
+    && echo "${NODESOURCE_KEY_SHA256}  /tmp/nodesource-repo.gpg.key" | sha256sum -c - \
+    && gpg --dearmor -o /usr/share/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key \
+    && rm -f /tmp/nodesource-repo.gpg.key \
     && chmod 644 /usr/share/keyrings/nodesource.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_26.x nodistro main" \
        > /etc/apt/sources.list.d/nodesource.list \
@@ -91,9 +103,19 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
     && rm -rf /var/lib/apt/lists/* \
     && chown -R root:root /var/log/apt
 
-# GitHub CLI (not in default Debian repos)
+# GitHub CLI (not in default Debian repos). Same posture as NodeSource above
+# (#2063): the archive keyring's SHA-256 is verified before use. Provenance:
+# the ring carries GitHub's current signing key (primary fingerprint
+#   2C61 0620 1985 B60E 6C7A C873 23F3 D4EA 7571 6059
+# — the fingerprint GitHub's install docs have long published) plus one
+# earlier rotation key. Bump: re-download the keyring, recompute sha256,
+# update this ARG.
+ARG GITHUBCLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+        -o /tmp/githubcli-archive-keyring.gpg \
+    && echo "${GITHUBCLI_KEYRING_SHA256}  /tmp/githubcli-archive-keyring.gpg" | sha256sum -c - \
+    && mv /tmp/githubcli-archive-keyring.gpg /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod 644 /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \

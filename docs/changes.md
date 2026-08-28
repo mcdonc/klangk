@@ -126,6 +126,18 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Image builds verify every network-fetched third-party artifact
+  (#2063).** The uv and process-compose tarballs are now SHA-256-verified
+  per architecture before extraction (no more `curl | sh` / `curl | tar`
+  pipes), the Pi agent npm tarball is fetched directly and SHA-512-verified,
+  and the NodeSource / GitHub CLI / Caddy apt repo keys are hash-verified
+  before entering a keyring (Caddy's sources list is written inline). Base
+  images (workspace base, python host, Alpine sidecar, Debian FIPS builders)
+  are pulled by immutable `@sha256:` digest instead of mutable tags, with
+  the base-image workflow's auto-PR now pinning the digest. Pins live in
+  the Dockerfiles; rotation procedures are documented in
+  [Building Images](../development/building-images.md).
+
 - **Browser-delegate requests are bound to the caller's workspace
   (#1715).** `/api/v1/browser-delegate` and `/api/v1/browser-delegate/stream`
   now verify that the submitted `browser_id` was registered against the
