@@ -35,6 +35,7 @@ import random
 import re
 import shlex
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -788,6 +789,9 @@ _DETAIL_PREFIX_NAMES: list[tuple[str, str]] = [
     ("concurrent same-host deduped to one prompt, but both", "ALLOW-REFUSED"),
     ("fan-out phase failed", "UNEXPECTED-ERROR"),
     ("run aborted", "UNEXPECTED-ERROR"),
+    # egress_consent row verification for allow verdicts (#2304).
+    ("db-row mismatch", "DB-ROW-MISMATCH"),
+    ("no decided row", "DB-ROW-MISMATCH"),
 ]
 
 OUTCOME_NAMES: dict[str, str] = {
@@ -832,6 +836,7 @@ OUTCOME_NAMES: dict[str, str] = {
     "CONCURRENT-NOT-DEDUPED": "concurrent connections to the same destination each produced a prompt (the coordinator's per-destination dedup is broken -- each should collapse to one).",
     "ONCE-CROSS-CONN": "a `once` verdict on one connection released a separate concurrent connection to the same host (the verdict leaked across connections -- #2361).",
     "RETRANSMIT-DUPLICATED": "a held connection's SYN retransmits produced more than one consent request (the in-flight dedup is broken -- #2366).",
+    "DB-ROW-MISMATCH": "a resolved human allow did not leave the correct egress_consent row (decision / duration / decided_by / revoked) -- the audit trail contradicts the verdict. #2304",
 }
 
 _EXPECT_CONN_NAMES = {
@@ -932,6 +937,9 @@ class SmokeTest:
         # + stop_server) must run exactly once even though it is reachable
         # from the async finally, atexit, and the SIGTERM handler (#2443).
         self._cleaned_up = False
+        # The smoke decider's user id, looked up lazily for the egress_consent
+        # row verification (#2304) and cached.
+        self._decider_uid: str | None = None
 
     # -- interrupt-safe cleanup -----------------------------------------
     @staticmethod
@@ -1469,7 +1477,91 @@ class SmokeTest:
             "would mismatch (#2417)"
         )
 
+    # -- egress_consent row verification (#2304) -------------------------
+
+    def _db_connect(self) -> sqlite3.Connection | None:
+        """Read-only connection to klangkd's SQLite DB, or None when the DB
+        is not reachable (external ``--server`` runs have no data_dir; the
+        row check then silently skips rather than fail spuriously)."""
+        if not self.server or not self.server.get("data_dir"):
+            return None
+        path = os.path.join(self.server["data_dir"], "klangk.db")
+        if not os.path.exists(path):
+            return None
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10)
+        con.row_factory = sqlite3.Row
+        return con
+
+    def _decider_user_id(self) -> str | None:
+        """The smoke decider's user id (smoke@example.com), cached."""
+        if self._decider_uid is not None:
+            return self._decider_uid
+        con = self._db_connect()
+        if con is None:
+            return None
+        try:
+            cur = con.execute(
+                "SELECT id FROM users WHERE email = ?", ("smoke@example.com",)
+            )
+            row = cur.fetchone()
+        finally:
+            con.close()
+        if row is not None:
+            self._decider_uid = row["id"]
+        return self._decider_uid
+
+    def _check_allow_row(self, canon: str, duration: str) -> str | None:
+        """Verify the egress_consent row a resolved human allow must leave
+        (#2304), so the fuzz run checks the audit trail, not just enforcement.
+
+        The NEWEST decided row for (workspace, host, 443) must be
+        ``decision='allowed'``, ``duration`` exactly this verdict's token,
+        ``decided_by`` the decider's user id (a human allow, never a policy
+        row), and not revoked. Ordering by ``decided_at`` DESC is safe: a
+        later allow can only create its request after any prior pending row
+        for the destination expired (pending dedup), so no later-dated row
+        for this (host, port) can predate the allow being checked. Returns
+        None when the row is correct (or unverifiable), else a detail string.
+        """
+        con = self._db_connect()
+        if con is None:
+            return None  # no DB visibility -> skip (external --server)
+        try:
+            cur = con.execute(
+                "SELECT decision, duration, decided_by, revoked_at"
+                " FROM egress_consent"
+                " WHERE workspace_id = ? AND dest_host = ? AND dest_port = ?"
+                " AND decided_at IS NOT NULL"
+                " ORDER BY decided_at DESC LIMIT 1",
+                (self.ws_id, canon, 443),
+            )
+            row = cur.fetchone()
+        finally:
+            con.close()
+        if row is None:
+            return f"no decided row for {canon}:443 after an allow verdict"
+        uid = self._decider_user_id()
+        problems: list[str] = []
+        if row["decision"] != "allowed":
+            problems.append(f"decision={row['decision']!r}")
+        if row["duration"] != duration:
+            problems.append(
+                f"duration={row['duration']!r} (want {duration!r})"
+            )
+        if row["decided_by"] is None:
+            problems.append(
+                "decided_by NULL (policy row, not a human verdict)"
+            )
+        elif uid is not None and row["decided_by"] != uid:
+            problems.append(f"decided_by={row['decided_by']!r} (want {uid!r})")
+        if row["revoked_at"] is not None:
+            problems.append("revoked_at set")
+        if problems:
+            return f"db-row mismatch for {canon}:443: " + ", ".join(problems)
+        return None
+
     # -- per-iteration -----------------------------------------------------
+
     async def _run_step(self, pilot, step: _Step) -> _Result:
         canon = _canonical(step.host)
         now = time.time()
@@ -1522,6 +1614,7 @@ class SmokeTest:
                     )
                 )
             action_taken = step.action
+            db_problem = None
             if step.action == "none":
                 # No verdict: the server auto-expires the held request at the
                 # consent timeout (a one-shot deny) -> nothing carries over.
@@ -1539,11 +1632,24 @@ class SmokeTest:
                 await pilot.pause()
                 resolved = await _wait_resolved(self.app, rid, timeout=20.0)
                 sidecar = "resolved" if resolved else "held(!)"
+                if decision == DECISION_ALLOWED and resolved:
+                    # #2304: a resolved human allow must leave the correct
+                    # egress_consent row -- the fuzz run checks the audit
+                    # trail too, not just enforcement. resolve() commits the
+                    # row before the egress_resolved broadcast _wait_resolved
+                    # observed, so the row is already durable here.
+                    db_problem = self._check_allow_row(canon, step.duration)
+                    if db_problem is None:
+                        sidecar = "resolved+db\u2713"
                 # once is consumed by this connection; the rest cover the dest.
                 self.model.record(canon, decision, step.duration, time.time())
             text = await _wait_result(self.container, outfile)
             exit_code = _parse_exit(text)
             status = _classify_conn(expect_conn, exit_code)
+            if db_problem is not None:
+                # A wrong audit row contradicts the recording contract
+                # deterministically -- a hard mismatch, not a finding.
+                status = MISMATCH
             res = self._record(
                 _Result(
                     step,
@@ -1554,6 +1660,7 @@ class SmokeTest:
                     sidecar,
                     exit_code,
                     status,
+                    detail=db_problem or "",
                 )
             )
             await self._retries_after_verdict(pilot, step, canon)
