@@ -82,11 +82,15 @@ skips without caps, the standard eBPF-project pattern).
 
 The **privilege to run** cannot be baked into a build; pick a tier:
 
-1. **Deployment tier (recommended):** run klangkd under systemd with
-   `AmbientCapabilities=CAP_BPF CAP_PERFMON` (and a matching
-   `CapabilityBoundingSet=`). The whole backend — including the
-   `procleddy-ebpf` subprocess — inherits the caps; nothing in the
-   build needs root.
+1. **Deployment tier (recommended): grant the caps to the binary
+   itself** — `setcap cap_bpf,cap_perfmon+ep` on `procleddy-ebpf`
+   (see *Granting the caps in deployments* below). This is the
+   narrowest grant: exactly one ELF, exactly two capabilities; the
+   klangkd process tree itself stays cap-free. An alternative —
+   systemd `AmbientCapabilities=CAP_BPF CAP_PERFMON` on the klangkd
+   unit — works but hands the caps to *every* process the backend
+   execs; prefer the per-binary grant (see the security warning
+   below).
 2. **Dev-host opt-in:** the devenv build task best-effort applies file
 caps
    (`setcap cap_bpf,cap_perfmon+ep`) after every build — rebuilding
@@ -108,6 +112,55 @@ caps
    everything else works; `KLANGKD_PROCESS_LEDGER_BACKEND` stays `proc`
    and the eBPF backend is simply not loadable — attempts fail loudly
    at load time and the ledger's fallback rules apply.
+
+### Granting the caps in deployments
+
+On a privileged deployment host (bare metal / VM / systemd service —
+kernel ≥ 5.8), the recipe is:
+
+1. **Build and place the binary.** Until the wheel ships it (#2777),
+   compile it next to the install (`clang -target bpf` for the object,
+   `cc -lbpf` for the loader) and either put both at the wheel-adjacent
+   default (`<site-packages>/klangk/procleddy-ebpf` and
+   `.bpf.o`) or anywhere and point
+   `KLANGKD_PROCESS_LEDGER_WATCHER` at the loader.
+2. **Grant exactly what the monitor needs:**
+
+   ```bash
+   sudo setcap cap_bpf,cap_perfmon+ep /path/to/procleddy-ebpf
+   ```
+
+   klangkd stays unprivileged: when it spawns the watcher, the file
+   capabilities activate in the child at exec — the parent never
+   holds them.
+3. **Re-apply on every upgrade.** A rebuild creates a new inode and
+   file caps do not survive; automate it, e.g. in the unit:
+
+   ```ini
+   ExecStartPre=+/usr/sbin/setcap cap_bpf,cap_perfmon+ep /path/to/procleddy-ebpf
+   ```
+
+   (the `+` prefix runs the command with full privileges — the unit
+   file itself is root-controlled, so this keeps setcap out of the
+   service's reach). On NixOS, store paths are immutable — use a
+   `security.wrappers` entry with the same `capabilities` string
+   instead, which makes a capped copy under `/run/wrappers/bin`.
+
+Gotchas that silently defeat the grant:
+
+- **Delivery mechanisms drop xattrs.** `cp` without `-a`/`--preserve`,
+  plain `rsync` without `-X`, and `tar` without `--xattrs` all strip
+  capabilities; **OCI/container images cannot carry them at all** —
+  which is one reason the eBPF tier is unavailable in the published
+  containerized host image (the `/proc` poller is the backend there).
+- **`NoNewPrivileges=yes` blocks file caps.** A systemd unit with NNP
+  set (or a process already in `no_new_privs`) cannot acquire
+  capabilities at exec — setcap appears applied but the load still
+  fails with EPERM.
+- **Mode bits matter on multi-user hosts.** The capped binary is
+  executable by anyone who can read it; restrict to the klangkd user
+  (`chown klangkd:klangkd; chmod 750`) if other local users exist —
+   see the swap-the-binary note in the warning below.
 
 ### Security warning: what these capabilities actually grant
 
