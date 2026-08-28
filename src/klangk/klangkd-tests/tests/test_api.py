@@ -397,13 +397,14 @@ class TestConfig:
         # #2710: the frontend gates its BrowserDelegate on this flag, so
         # /config must carry it (public payload — like allow_autostart,
         # not the authenticated-only netfilter perimeter fields).
-        app.state.settings.browser_delegate_enabled = True
+        app.state.settings.browser_delegate_enabled = False
+        try:
+            resp = await client.get("/api/v1/config")
+            assert resp.json()["browser_delegate_enabled"] is False
+        finally:
+            app.state.settings.browser_delegate_enabled = True
         resp = await client.get("/api/v1/config")
         assert resp.json()["browser_delegate_enabled"] is True
-        app.state.settings.browser_delegate_enabled = False
-        resp = await client.get("/api/v1/config")
-        assert resp.json()["browser_delegate_enabled"] is False
-        app.state.settings.browser_delegate_enabled = True
 
     async def test_get_config_omits_netfilter_fields_when_unauthenticated(
         self, client, app

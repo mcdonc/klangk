@@ -245,8 +245,9 @@ create`/`edit --classification-banner`, and the create/edit UIs; the
   drive the user's browser tab — a workspace-data read channel that
   bypasses file permissions). Defaults to `true`; set `false` to return
   403 from both endpoints, stop registering browser tabs for bridge
-  routing, stop attaching a browser ID into the container
-  (`klangk-browser-id` comes up empty), and advertise
+  routing, stop attaching a browser ID into new terminals (terminals
+  already running keep a stale `klangk-browser-id`, but their bridge
+  POSTs get the same 403), and advertise
   `browser_delegate_enabled: false` via `/api/v1/config` so the web UI
   stops answering bridge requests. Reloadable on SIGHUP. See
   [Browser Bridge](../architecture/browser-bridge.md).

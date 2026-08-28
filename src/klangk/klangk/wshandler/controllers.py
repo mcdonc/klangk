@@ -862,17 +862,19 @@ class TerminalController:
         active browser tab.
         """
         browser_id = msg.get("browser_id")
-        if not browser_id or not self._conn.container_id:
-            return
         if not self._conn.app.state.settings.browser_delegate_enabled:
             # #2710: the deploy disabled the browser-delegate bridge —
             # re-attach would (re)register the tab for bridge routing and
             # re-advertise the ID into the container env; instead drop any
             # pre-disable registration so the routing table goes quiet.
+            # Checked before the browser_id/container guards so a disabled
+            # deploy also clears a stale registration here.
             self._conn.app.state.container_registry.revoke_browser(
                 self._conn.sock
             )
             self._conn.browser_id = None
+            return
+        if not browser_id or not self._conn.container_id:
             return
         self._conn.app.state.container_registry.revoke_browser(self._conn.sock)
         self._conn.app.state.container_registry.register_browser(

@@ -60,9 +60,9 @@ class WorkspaceConnector {
     this.browserDelegateEnabled = true,
   });
 
-  /// Whether [connect] has called and subscriptions are active. (Distinct
-  /// from the delegate: a disabled bridge (#2710) starts no
-  /// [BrowserDelegate], but the connector is still active.)
+  /// Set true when the connect subscriptions go live, false in [dispose].
+  /// Distinct from the delegate: a disabled bridge (#2710) starts no
+  /// [BrowserDelegate], but the connector is still active.
   bool _active = false;
 
   /// Whether a connect/reconnect is currently in progress.
