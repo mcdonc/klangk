@@ -40,8 +40,12 @@
  *     to strtoul on unterminated memory).
  *   - status/cmdline reads: fixed buffers, short/oversized/garbage reads
  *     degrade to "no event this poll", never to unbounded parsing.
- *   - pids capped at MAX_PIDS (1<<20): a pid above the cap is ignored
- *     (bounded memory; Linux pid_max default is well under this).
+ *   - pids capped at pid_limit, read from /proc/sys/kernel/pid_max at
+ *     startup (64-bit defaults allow pids up to 4194303; the old
+ *     fixed 1<<20 cap silently ignored every workspace pid on such
+ *     hosts). A pid at/above the limit is ignored, never a crash. The
+ *     pid table is a sparse two-level page table (4 KiB pages of 64
+ *     entries), so memory tracks live pids, not the pid space.
  *   - ancestry walks: depth-capped + stamp-visited (a corrupted ppid
  *     cycle cannot loop forever).
  *   - printf JSON strings escaped + field-capped.
@@ -69,7 +73,12 @@
 #include <unistd.h>
 
 #define DEFAULT_ROOT "/proc"
-#define MAX_PIDS (1 << 20)   /* hard pid cap: bounds every table */
+#define LISTED_MAX (1 << 20)  /* max pids parsed from one listing */
+#define PAGE_SHIFT 6
+#define PAGE_ENTRIES (1u << PAGE_SHIFT)   /* 64 entries x 64B = 4 KiB */
+#define PID_LIMIT_DEFAULT (1u << 22)      /* 64-bit pid_max default */
+#define PID_LIMIT_MAX (1u << 23)          /* hard ceiling, 8388608 */
+static uint32_t pid_limit = PID_LIMIT_DEFAULT; /* valid pids: 1..limit-1 */
 #define EXIT_POLLS 3         /* unseen-polls before exit event */
 #define ANCESTRY_MAX 64      /* chain length carried on birth */
 #define WALK_DEPTH 1024      /* hard cap for ppid-chain walks */
@@ -105,7 +114,7 @@ static uint32_t *watched_list;
 static size_t nwatched, watched_cap;
 
 static void watched_add(uint32_t pid) {
-    if (nwatched >= MAX_PIDS) {
+    if (nwatched >= pid_limit) {
         /* More watched pids than the pid table can hold; this is a fork
          * bomb or a bug. Degrade: the pid stays un-watched (no change
          * detection), which is the safe direction. */
@@ -113,7 +122,7 @@ static void watched_add(uint32_t pid) {
     }
     if (nwatched == watched_cap) {
         size_t want = watched_cap ? watched_cap * 2 : 256;
-        if (want > MAX_PIDS) want = MAX_PIDS;
+        if (want > pid_limit) want = pid_limit;
         uint32_t *nw = realloc(watched_list, want * sizeof *nw);
         if (!nw) {
             fprintf(stderr, "procleddy: realloc watched failed"
@@ -126,8 +135,15 @@ static void watched_add(uint32_t pid) {
     watched_list[nwatched++] = pid;
 }
 
-static struct pinfo *tab;          /* indexed by pid */
-static uint32_t pid_cap = 0;       /* allocated slots (grows to MAX_PIDS) */
+/* Sparse two-level pid table, indexed by pid. Level 1 is an array of
+ * page pointers sized by pid_limit/PAGE_ENTRIES (8 MiB of pid space ->
+ * 128 KiB of pointers); level-2 pages (64 entries) are calloc'd on
+ * demand, so resident memory tracks live pids (~1000 on a busy host
+ * -> ~64 KiB), not the pid space (a flat 4M-entry table would be
+ * ~256 MiB). Pages are never moved or freed while running, so pointers
+ * handed out by pinfo_at stay valid across a poll. */
+static struct pinfo **pages;
+static uint32_t pages_cap;
 static const char *proc_root = DEFAULT_ROOT;
 static int rootfd = -1;
 static int verbose = 0;
@@ -139,6 +155,26 @@ static size_t nroots, roots_cap;
 static int scope_changed = 1; /* rescan membership on first/changed scope */
 
 static void on_term(int sig) { (void)sig; stopped = 1; }
+
+static void read_pid_limit(void) {
+    /* Always the REAL /proc (not --root): pid_limit describes the host's
+     * pid space, which is what the emitted pids belong to even when the
+     * listing is redirected at a fake tree for tests. Valid pids are
+     * 1..pid_max-1, so a pid == pid_max is already out of range. Clamped
+     * to a hard ceiling so a hostile/garbage value cannot blow up the
+     * level-1 table. */
+    FILE *f = fopen("/proc/sys/kernel/pid_max", "r");
+    if (f) {
+        unsigned long v = 0;
+        if (fscanf(f, "%lu", &v) == 1 && v >= 32768) {
+            if (v > PID_LIMIT_MAX) v = PID_LIMIT_MAX;
+            pid_limit = (uint32_t)v;
+        }
+        fclose(f);
+    }
+    if (verbose)
+        fprintf(stderr, "procleddy: pid_limit %u (pid_max)\n", pid_limit);
+}
 
 static double now_s(void) {
     struct timespec ts;
@@ -154,29 +190,59 @@ static double realtime_s(void) {
 
 static int oom_logged = 0;
 
-static void ensure_pid_table(uint32_t pid) {
-    if (pid < pid_cap) return;
-    uint32_t want = pid + 1024;
-    if (want > MAX_PIDS) want = MAX_PIDS;
-    struct pinfo *nt = calloc(want, sizeof *nt);
-    if (!nt) {
-        /* Out of memory: refuse to die — keep the old table and let the
-         * caller skip the pid. Log once so the condition is diagnosable. */
-        if (!oom_logged) {
-            fprintf(stderr, "procleddy: calloc failed for pid %" PRIu32
-                    " (want %" PRIu32 " slots) — pid will be invisible\n",
-                    pid, want);
-            oom_logged = 1;
+static struct pinfo *page_for(uint32_t pid, int alloc) {
+    uint32_t pg = pid >> PAGE_SHIFT;
+    if (pg >= pages_cap) {
+        if (!alloc) return NULL;
+        uint32_t want =
+            (pid_limit + PAGE_ENTRIES - 1) >> PAGE_SHIFT;
+        /* Level 1 only ever grows once (pid_limit is fixed at boot);
+         * calloc keeps unseen pages NULL. */
+        struct pinfo **np = calloc(want, sizeof *np);
+        if (!np) {
+            if (!oom_logged) {
+                fprintf(stderr, "procleddy: calloc failed for page table"
+                        " (%u pages) — pids will be invisible\n", want);
+                oom_logged = 1;
+            }
+            return NULL;
         }
-        return;
+        if (pages) {
+            memcpy(np, pages, pages_cap * sizeof *np);
+            free(pages);
+        }
+        pages = np;
+        pages_cap = want;
     }
-    if (tab) {
-        uint32_t copy = pid_cap < want ? pid_cap : want;
-        memcpy(nt, tab, copy * sizeof *nt);
-        free(tab);
+    if (!pages[pg]) {
+        if (!alloc) return NULL;
+        pages[pg] = calloc(PAGE_ENTRIES, sizeof **pages);
+        if (!pages[pg]) {
+            if (!oom_logged) {
+                fprintf(stderr, "procleddy: calloc failed for pid page"
+                        " %u — pids will be invisible\n", pg);
+                oom_logged = 1;
+            }
+            return NULL;
+        }
     }
-    tab = nt;
-    pid_cap = want;
+    return pages[pg];
+}
+
+/* Storage slot for *pid* (allocates the page on first sight). NULL only
+ * on OOM (logged once) — callers skip the pid, never crash. */
+static struct pinfo *pinfo_at(uint32_t pid) {
+    if (pid >= pid_limit) return NULL;
+    struct pinfo *page = page_for(pid, 1);
+    return page ? &page[pid & (PAGE_ENTRIES - 1)] : NULL;
+}
+
+/* Probe variant for walks/scans: never allocates. A pid never parsed
+ * has no page (or a zeroed slot) — callers treat it as not alive. */
+static struct pinfo *pinfo_get(uint32_t pid) {
+    if (pid >= pid_limit) return NULL;
+    struct pinfo *page = page_for(pid, 0);
+    return page ? &page[pid & (PAGE_ENTRIES - 1)] : NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -303,9 +369,9 @@ static ssize_t list_proc(uint32_t *out, size_t cap) {
             uint32_t v = 0;
             for (size_t i = 0; ok && i < nm_len && nm[i]; i++) {
                 if (!isdigit((unsigned char)nm[i])) ok = 0;
-                else if (v <= MAX_PIDS) v = v * 10 + (uint32_t)(nm[i] - '0');
+                else if (v <= pid_limit) v = v * 10 + (uint32_t)(nm[i] - '0');
             }
-            if (ok && v > 0 && v < MAX_PIDS && n < cap) out[n++] = v;
+            if (ok && v > 0 && v < pid_limit && n < cap) out[n++] = v;
             off += rl;
         }
     }
@@ -345,11 +411,11 @@ static int parse_status(uint32_t pid, struct pinfo *pi) {
             char *s = line + 5;
             while (*s == ' ' || *s == '\t') s++;
             unsigned long pv = 0;
-            while (isdigit((unsigned char)*s) && pv <= MAX_PIDS) {
+            while (isdigit((unsigned char)*s) && pv <= pid_limit) {
                 pv = pv * 10 + (unsigned long)(*s - '0');
                 s++;
             }
-            ppid = (uint32_t)(pv <= MAX_PIDS ? pv : 0);
+            ppid = (uint32_t)(pv <= pid_limit ? pv : 0);
         } else if (line[0] == 'U' && !strncmp(line, "Uid:", 4)) {
             /* Bounded manual parse: "Uid:\treal eff saved fs" — we need
              * real (a) and effective (b). Consistent with PPid/NSsid. */
@@ -373,11 +439,11 @@ static int parse_status(uint32_t pid, struct pinfo *pi) {
             char *s = line + 6;
             while (*s == ' ' || *s == '\t') s++;
             unsigned long sv = 0;
-            while (isdigit((unsigned char)*s) && sv <= MAX_PIDS) {
+            while (isdigit((unsigned char)*s) && sv <= pid_limit) {
                 sv = sv * 10 + (unsigned long)(*s - '0');
                 s++;
             }
-            sid = (uint32_t)(sv <= MAX_PIDS ? sv : 0);
+            sid = (uint32_t)(sv <= pid_limit ? sv : 0);
         }
     }
     if (!have_uid) return 0;
@@ -439,11 +505,12 @@ static int descends_from_root(uint32_t pid, uint32_t *ancestry,
     uint32_t cur = pid;
     if (is_root(cur)) return 1;
     for (int depth = 0; depth < WALK_DEPTH; depth++) {
-        if (cur == 0 || cur >= pid_cap || !tab[cur].alive) return 0;
-        if (tab[cur].seen_walk == stamp) return 0; /* cycle */
-        tab[cur].seen_walk = stamp;
-        uint32_t pp = tab[cur].ppid;
-        if (pp == 0 || pp == cur || pp >= MAX_PIDS) return 0;
+        struct pinfo *pi = pinfo_get(cur);
+        if (cur == 0 || pi == NULL || !pi->alive) return 0;
+        if (pi->seen_walk == stamp) return 0; /* cycle */
+        pi->seen_walk = stamp;
+        uint32_t pp = pi->ppid;
+        if (pp == 0 || pp == cur || pp >= pid_limit) return 0;
         if (is_root(pp)) {
             /* include BOTH the root's child and the root itself: the
              * ledger joins workspaces + anchors on the chain, and the
@@ -496,6 +563,8 @@ int main(int argc, char **argv) {
     signal(SIGINT, on_term);
     signal(SIGPIPE, SIG_IGN);
 
+    read_pid_limit();
+
     if (open_root(proc_root) < 0) {
         perror("procleddy: open root");
         return 1;
@@ -508,7 +577,7 @@ int main(int argc, char **argv) {
     uint64_t refresh_mod = (uint64_t)(20000 / interval_ms);
     if (refresh_mod < 1) refresh_mod = 1;
 
-    uint32_t *listed = malloc(MAX_PIDS * sizeof *listed);
+    uint32_t *listed = malloc(LISTED_MAX * sizeof *listed);
     if (!listed) { perror("malloc listed"); return 1; }
     cand = malloc(CAND_MAX * sizeof *cand);
     if (!cand) { perror("malloc cand"); return 1; }
@@ -526,27 +595,25 @@ int main(int argc, char **argv) {
 
         pump_stdin();
 
-        ssize_t n = list_proc(listed, MAX_PIDS);
+        ssize_t n = list_proc(listed, LISTED_MAX);
         if (n < 0) {
             /* /proc listing failed entirely: emit nothing, sleep, retry.
              * A transient failure must not spin or die. */
             goto sleep;
         }
 
-        /* Phase 0: grow the table for every listed pid. */
-        for (ssize_t i = 0; i < n; i++)
-            ensure_pid_table(listed[i]);
-
         /* Phase A (parse + store): full rate for new + watched pids,
          * staggered refresh for the rest (ancestry freshness). Everything
          * is STORED before any event logic runs so membership walks in
          * phase B see a consistent table regardless of directory order
-         * (parent-after-child no longer loses the child). */
+         * (parent-after-child no longer loses the child). pinfo_at
+         * allocates the pid's page on first sight (the old phase-0
+         * pre-grow). */
         size_t ncand = 0;
         for (ssize_t i = 0; i < n; i++) {
             uint32_t pid = listed[i];
-            if (pid >= pid_cap) continue; /* table growth refused (OOM) */
-            struct pinfo *pi = &tab[pid];
+            struct pinfo *pi = pinfo_at(pid);
+            if (pi == NULL) continue; /* above pid_limit or OOM */
             int is_new = !pi->alive ||
                          (scope_changed && pi->alive && !pi->watched);
             int due_refresh =
@@ -568,7 +635,7 @@ int main(int argc, char **argv) {
             fresh.alive = 1;
             if (was_new || (scope_changed && !pi->watched))
                 fresh.watched = 0; /* determined in phase B */
-            tab[pid] = fresh;
+            *pi = fresh;
             if (ncand < CAND_MAX) {
                 cand[ncand].pid = pid;
                 cand[ncand].old = old;
@@ -591,7 +658,8 @@ int main(int argc, char **argv) {
                    realtime_s());
         for (size_t c = 0; c < ncand; c++) {
             uint32_t pid = cand[c].pid;
-            struct pinfo *pi = &tab[pid];
+            struct pinfo *pi = pinfo_get(pid);
+            if (pi == NULL) continue; /* above pid_limit or OOM */
             if (cand[c].is_new) {
                 size_t alen = 0;
                 int in_ws =
@@ -655,7 +723,13 @@ int main(int argc, char **argv) {
          * O(watched) via the compact list; swap-remove keeps it dense. */
         for (size_t w = 0; w < nwatched; ) {
             uint32_t pid = watched_list[w];
-            struct pinfo *pi = &tab[pid];
+            struct pinfo *pi = pinfo_get(pid);
+            if (pi == NULL) {
+                /* Page vanished (OOM at parse time): drop from the watch
+                 * list, nothing to report. */
+                watched_list[w] = watched_list[--nwatched];
+                continue;
+            }
             if (!pi->alive) {
                 watched_list[w] = watched_list[--nwatched];
                 continue;
@@ -703,10 +777,11 @@ int main(int argc, char **argv) {
 
     printf("{\"type\":\"snapshot_end\",\"ts\":%.6f}\n", realtime_s());
     fflush(stdout);
-    /* Clean shutdown for leak-sensitive builds (ASAN): the pid table,
-     * roots, watched list, candidates and the dirent buffer are all
-     * process-lifetime allocations. */
-    free(tab);
+    /* Clean shutdown for leak-sensitive builds (ASAN): the pid pages,
+     * page table, roots, watched list, candidates and the dirent buffer
+     * are all process-lifetime allocations. */
+    for (uint32_t pg = 0; pg < pages_cap; pg++) free(pages[pg]);
+    free(pages);
     free(roots);
     free(watched_list);
     free(cand);

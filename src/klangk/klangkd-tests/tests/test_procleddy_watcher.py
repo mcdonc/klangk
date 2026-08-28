@@ -117,8 +117,12 @@ def run_watcher(
     interval_ms=50,
     stdin_extra=b"",
     _remove_after=None,
+    _add_after=None,
 ):
-    """_remove_after: (FakeProc, pid, delay) — remove a pid mid-run."""
+    """_remove_after: (FakeProc, pid, delay) — remove a pid mid-run.
+    _add_after: (FakeProc, pid, ppid, name, delay) — create a pid
+    mid-run (birth-after-snapshot coverage; the watcher must see it in
+    a later listing, not just the cold-start scan)."""
     import threading
 
     remover = None
@@ -131,6 +135,14 @@ def run_watcher(
 
         remover = threading.Thread(target=_rm, daemon=True)
         remover.start()
+    if _add_after is not None:
+        fp_add, pid_add, ppid_add, name_add, delay_add = _add_after
+
+        def _add():
+            time.sleep(delay_add)
+            fp_add.mk(pid_add, ppid_add, name_add)
+
+        threading.Thread(target=_add, daemon=True).start()
     """Run the watcher for ~runtime seconds; returns (events, rc, stderr)."""
     proc = subprocess.Popen(
         [
@@ -183,6 +195,28 @@ def test_clean_tree_births_ancestry_exit(tmp_path, watcher_bin):
     assert set(births) == {100, 101, 102}, "host proc 200 must be excluded"
     assert births[102]["ancestry"] == [102, 101, 100]
     assert births[100]["argv"].startswith("/usr/bin/container-init")
+
+
+def test_birth_after_initial_snapshot(tmp_path, watcher_bin):
+    """A pid created AFTER the cold-start scan (under an already-watched
+    root) must emit a birth — the listing is a persistent fd + rewind,
+    so new entries must still be enumerated on later polls."""
+    fp = FakeProc(tmp_path / "proc")
+    fp.mk(100, 1, "init")
+    fp.mk(101, 100, "bash")
+    events, rc, _ = run_watcher(
+        watcher_bin,
+        fp.root,
+        scope_lines=[b'{"type":"scope","roots":[100]}'],
+        runtime=1.2,
+        _add_after=(fp, 102, 100, "late-daemon", 0.5),
+    )
+    assert rc == 0
+    births = {e["pid"] for e in events if e["type"] == "birth"}
+    assert 102 in births, (
+        "pid created mid-run under a watched root must be born: "
+        f"{sorted(births)}"
+    )
 
 
 def test_exit_event_on_removal(tmp_path, watcher_bin):
@@ -267,10 +301,22 @@ def test_ppid_cycle_terminates(tmp_path, watcher_bin):
     assert births == {100}
 
 
+def _host_pid_limit() -> int:
+    """The watcher sizes its pid space from /proc/sys/kernel/pid_max
+    (64-bit defaults allow pids up to 4194303 — the old fixed 1<<20 cap
+    silently ignored every workspace pid on such hosts)."""
+    with open("/proc/sys/kernel/pid_max") as f:
+        return int(f.read().strip())
+
+
 def test_pid_above_cap_ignored(tmp_path, watcher_bin):
+    """A pid at/above pid_max is ignored (kernel never issues it; a
+    hostile listing must not allocate for it either)."""
+    limit = _host_pid_limit()
     fp = FakeProc(tmp_path / "proc")
     fp.mk(100, 1, "init")
-    fp.mk(1 << 21, 100, "over-cap")  # > MAX_PIDS (1<<20)
+    fp.mk(limit, 100, "over-cap")  # == pid_max: already out of range
+    fp.mk(limit + 12345, 100, "way-over")
     events, rc, _ = run_watcher(
         watcher_bin,
         fp.root,
@@ -280,7 +326,37 @@ def test_pid_above_cap_ignored(tmp_path, watcher_bin):
     assert rc == 0
     births = {e["pid"] for e in events if e["type"] == "birth"}
     assert 100 in births
-    assert (1 << 21) not in births
+    assert limit not in births
+    assert (limit + 12345) not in births
+
+
+def test_high_pids_near_limit_are_watched(tmp_path, watcher_bin):
+    """Regression: hosts with the 64-bit pid_max default (4194304) issue
+    pids in the millions; the watcher must classify them, not silently
+    drop them above a fixed 1<<20 cap (every workspace pid was invisible
+    on such hosts — zero ledger rows)."""
+    limit = _host_pid_limit()
+    root = limit - 2000
+    child = limit - 1999
+    grandchild = limit - 1998
+    fp = FakeProc(tmp_path / "proc")
+    fp.mk(root, 1, "container-init")
+    fp.mk(child, root, "bash")
+    fp.mk(grandchild, child, "agent")
+    events, rc, _ = run_watcher(
+        watcher_bin,
+        fp.root,
+        scope_lines=[json.dumps(
+            {"type": "scope", "roots": [root]}
+        ).encode()],
+        runtime=0.8,
+    )
+    assert rc == 0
+    births = {e["pid"]: e for e in events if e["type"] == "birth"}
+    assert {root, child, grandchild} <= set(births), (
+        f"pids near pid_max ({limit}) must be watched; got {sorted(births)}"
+    )
+    assert births[grandchild]["ancestry"] == [grandchild, child, root]
 
 
 def test_fork_burst_parent_after_child(tmp_path, watcher_bin):
