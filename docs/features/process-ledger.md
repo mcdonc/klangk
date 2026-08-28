@@ -109,6 +109,50 @@ caps
    and the eBPF backend is simply not loadable — attempts fail loudly
    at load time and the ledger's fallback rules apply.
 
+### Security warning: what these capabilities actually grant
+
+`CAP_BPF` + `CAP_PERFMON` are not narrow "ledger" rights — they are
+host-wide kernel privileges, and the eBPF tier should be treated as a
+trust-boundary decision, not a checkbox:
+
+- **Kernel attack surface.** A BPF-capable process loads programs the
+  kernel executes. Verifier/JIT bugs in that path are a recurring
+  local-privilege-escalation class; upstream defaults
+  `kernel.unprivileged_bpf_disabled=1` precisely to shrink it. Granting
+  the caps to a service re-opens that surface *for that service's whole
+  process tree* (with `AmbientCapabilities`, every process klangkd
+  execs — including anything a compromised klangkd runs — holds them).
+- **Observation, host-wide.** `CAP_PERFMON` permits kprobes,
+  tracepoints, and perf counters over **every** process on the host,
+  not just workspaces — secrets can pass through kernel memory, argv,
+  and buffers observable from these hooks. The monitor itself filters
+  to workspace roots, but the *capability holder* has no such filter.
+  On hosts co-tenanting anything sensitive, this is a confidentiality
+  consideration.
+- **File-capped binaries are privilege that outlives the build.** A
+  `setcap`'d `procleddy-ebpf` in a writable checkout is a
+  swap-the-binary-and-inherit-the-caps vector for anyone who can write
+  that path (and any local user can exec it unless its mode bits say
+  otherwise). On multi-user hosts, restrict the file to your user and
+  prefer the systemd tier, where the caps live in unit config under
+  root control rather than in a mutable tree.
+- **`kernel.unprivileged_bpf_disabled=0` is not required** for this
+  backend (tracepoint programs always require the caps anyway). It
+  only unlocks socket-filter-class BPF for *all* local users — skip it
+  unless something else needs it, and never enable it to "make the
+  ledger work".
+- **Keep the set minimal.** The monitor needs exactly
+  `CAP_BPF`+`CAP_PERFMON`. `CAP_SYS_ADMIN`/`CAP_NET_ADMIN` variants
+  recommended by generic eBPF tooling docs are for XDP/tc/bpftrace use
+  cases this backend does not have; every cap beyond the two is pure
+  added exposure.
+
+Practical posture: on a single-user dev box, the systemd tier with the
+minimal cap set is a reasonable trade. On multi-user or production
+hosts, weigh the audit value of exact capture against handing a
+service tree kernel-program-loading rights — the `/proc` poller tier
+exists precisely so the ledger remains useful without any of this.
+
 ## Reading the ledger
 
 ```bash
