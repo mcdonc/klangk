@@ -12,6 +12,8 @@ class _MockWsClient extends WsClient {
       StreamController<String>.broadcast();
   final StreamController<Map<String, dynamic>> _sharedDeletedCtrl =
       StreamController<Map<String, dynamic>>.broadcast();
+  final StreamController<Map<String, dynamic>> _browserRequestsCtrl =
+      StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<String> _terminalOutput =
       StreamController<String>.broadcast();
 
@@ -32,6 +34,10 @@ class _MockWsClient extends WsClient {
   @override
   Stream<Map<String, dynamic>> get sharedTerminalDeleted =>
       _sharedDeletedCtrl.stream;
+
+  @override
+  Stream<Map<String, dynamic>> get browserRequests =>
+      _browserRequestsCtrl.stream;
 
   @override
   Stream<String> get terminalOutput => _terminalOutput.stream;
@@ -62,6 +68,7 @@ class _MockWsClient extends WsClient {
     _customEventsCtrl.close();
     _errorsCtrl.close();
     _sharedDeletedCtrl.close();
+    _browserRequestsCtrl.close();
     _terminalOutput.close();
   }
 }
@@ -390,6 +397,53 @@ void main() {
 
       // Only one reconnect should have executed
       expect(connectedCount, 2);
+
+      connector.dispose();
+      ws.close();
+    });
+
+    test('connect starts the browser delegate by default', () async {
+      final ws = _MockWsClient();
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-123',
+        featureRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {},
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPermissionError: (_) {},
+      );
+
+      await connector.connect();
+
+      // The delegate subscribed to bridge requests.
+      expect(ws._browserRequestsCtrl.hasListener, isTrue);
+
+      connector.dispose();
+      ws.close();
+    });
+
+    test('skips the browser delegate when disabled (#2710)', () async {
+      final ws = _MockWsClient();
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-123',
+        featureRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {},
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPermissionError: (_) {},
+        browserDelegateEnabled: false,
+      );
+
+      await connector.connect();
+
+      // No delegate: this tab never subscribes to bridge requests...
+      expect(ws._browserRequestsCtrl.hasListener, isFalse);
+      // ...but the connector itself is still active (subscriptions live).
+      expect(connector.isActive, isTrue);
 
       connector.dispose();
       ws.close();

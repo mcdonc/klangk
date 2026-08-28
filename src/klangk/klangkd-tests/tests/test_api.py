@@ -391,6 +391,21 @@ class TestConfig:
         resp = await client.get("/api/v1/config")
         assert resp.json()["default_classification_banner"] == "CUI"
 
+    async def test_get_config_advertises_browser_delegate_flag(
+        self, client, app
+    ):
+        # #2710: the frontend gates its BrowserDelegate on this flag, so
+        # /config must carry it (public payload — like allow_autostart,
+        # not the authenticated-only netfilter perimeter fields).
+        app.state.settings.browser_delegate_enabled = False
+        try:
+            resp = await client.get("/api/v1/config")
+            assert resp.json()["browser_delegate_enabled"] is False
+        finally:
+            app.state.settings.browser_delegate_enabled = True
+        resp = await client.get("/api/v1/config")
+        assert resp.json()["browser_delegate_enabled"] is True
+
     async def test_get_config_omits_netfilter_fields_when_unauthenticated(
         self, client, app
     ):
@@ -6286,6 +6301,43 @@ class TestBrowserBridge:
             mock_session.dispatch_browser_request_stream_to.assert_called_once()
         finally:
             registry.revoke_workspace_browsers("ws-stream")
+
+    async def test_disabled_returns_403_before_resolution(
+        self, client, app, user, registry, sockets
+    ):
+        """#2710: KLANGKD_BROWSER_DELEGATE_ENABLED=false 403s both endpoints
+        before any browser/session resolution — a valid, registered browser
+        is never contacted."""
+        mock_sock = MagicMock()
+        registry.register_browser("bid-off", "ws-off", mock_sock)
+        mock_session = AsyncMock()
+        mock_session.browser_subscribers = {mock_sock}
+        mock_session.dispatch_browser_request_to = AsyncMock()
+        mock_session.dispatch_browser_request_stream_to = MagicMock()
+        app.state.settings.browser_delegate_enabled = False
+        try:
+            with patch.object(
+                sockets, "get_session", return_value=mock_session
+            ):
+                resp = await client.post(
+                    "/api/v1/browser-delegate",
+                    json={"action": "fetch", "browser_id": "bid-off"},
+                    headers=self._ws_token_headers("ws-off"),
+                )
+                stream_resp = await client.post(
+                    "/api/v1/browser-delegate/stream",
+                    json={"action": "fetch", "browser_id": "bid-off"},
+                    headers=self._ws_token_headers("ws-off"),
+                )
+            assert resp.status_code == 403
+            assert "disabled" in resp.json()["detail"].lower()
+            assert stream_resp.status_code == 403
+            assert "disabled" in stream_resp.json()["detail"].lower()
+            mock_session.dispatch_browser_request_to.assert_not_awaited()
+            mock_session.dispatch_browser_request_stream_to.assert_not_called()
+        finally:
+            app.state.settings.browser_delegate_enabled = True
+            registry.revoke_workspace_browsers("ws-off")
 
 
 # --- Volume routes ---

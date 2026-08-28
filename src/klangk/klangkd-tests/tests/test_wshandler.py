@@ -1272,6 +1272,64 @@ class TestHandleTerminalStart:
         registry.revoke_workspace_browsers("ws")
         registry.states.pop("ws", None)
 
+    async def test_terminal_start_disabled_never_arms_bridge(self, app_state):
+        """#2710: with KLANGKD_BROWSER_DELEGATE_ENABLED=false, terminal_start
+        registers no browser for bridge routing and attaches no ID into
+        the container env (klangk-browser-id comes up empty)."""
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+        conn._user_home = "/home/testuser"
+
+        async def _perm(*a):
+            return True
+
+        conn._has_perm = _perm  # type: ignore[method-assign]
+        registry.track_activity("cid", "ws")
+        session = sockets.get_or_create_session("ws", app_state)
+        await session.add_subscriber(sock, "cid")
+        sockets.connections[sock] = conn
+
+        app_state.state.settings.browser_delegate_enabled = False
+        with (
+            patch.object(_ws_controllers, "TerminalSession") as MockTS,
+            patch.object(
+                _mock_term, "attach_browser", new_callable=AsyncMock
+            ) as mock_attach,
+        ):
+            mock_session = _mock_terminal()
+            MockTS.return_value = mock_session
+
+            async def fake_output():
+                return
+                yield
+
+            mock_session.output = fake_output
+
+            await conn.handle_terminal_start(
+                {"cols": 80, "rows": 24, "browser_id": "bid-off"}
+            )
+            await asyncio.sleep(0)
+
+            assert conn.browser_id is None
+            assert registry.resolve_browser("bid-off") is None
+            mock_attach.assert_not_awaited()
+
+            conn.terminal_task.cancel()
+            try:
+                await conn.terminal_task
+            except asyncio.CancelledError:
+                pass
+
+        app_state.state.settings.browser_delegate_enabled = True
+        sockets.sessions.pop("ws", None)
+        sockets.connections.pop(sock, None)
+        registry.states.pop("ws", None)
+
     async def test_browser_reattach_updates_registration(self, app_state):
         """browser_reattach re-registers the browser ID and calls attach_browser."""
         app_state = _make_app_state()
@@ -1294,6 +1352,36 @@ class TestHandleTerminalStart:
         assert registry.resolve_browser("bid-old") is None
         mock_attach.assert_awaited_once_with("cid", "bid-new")
 
+        registry.revoke_workspace_browsers("ws")
+
+    async def test_browser_reattach_disabled_drops_registration(
+        self, app_state
+    ):
+        """#2710: with KLANGKD_BROWSER_DELEGATE_ENABLED=false, re-attach
+        neither registers the new ID nor attaches it to the container —
+        and drops any pre-disable registration instead."""
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        sock = _mock_sock()
+        conn = _base_conn(ws=sock, app_state=app_state)
+        conn.container_id = "cid"
+        conn.workspace_id = "ws"
+
+        registry.register_browser("bid-old", "ws", sock)
+        conn.browser_id = "bid-old"
+        app_state.state.settings.browser_delegate_enabled = False
+
+        with patch.object(
+            _mock_term, "attach_browser", new_callable=AsyncMock
+        ) as mock_attach:
+            await conn.handle_browser_reattach({"browser_id": "bid-new"})
+
+        assert conn.browser_id is None
+        assert registry.resolve_browser("bid-new") is None
+        assert registry.resolve_browser("bid-old") is None
+        mock_attach.assert_not_awaited()
+
+        app_state.state.settings.browser_delegate_enabled = True
         registry.revoke_workspace_browsers("ws")
 
     async def test_browser_reattach_no_browser_id_is_noop(self):

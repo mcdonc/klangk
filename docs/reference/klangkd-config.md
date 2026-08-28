@@ -304,6 +304,7 @@ port: "8997"
 | `enable_ping`                       | `true`                          | `KLANGKD_ENABLE_PING`                       |
 | `podman_bin`                        | `podman`                        | `KLANGKD_PODMAN_BIN`                        |
 | `disable_tmux`                      |                                 | `KLANGKD_DISABLE_TMUX`                      |
+| `browser_delegate_enabled`          | `true`                          | `KLANGKD_BROWSER_DELEGATE_ENABLED`          |
 | `netfilter_enabled`                 | `true`                          | `KLANGKD_NETFILTER_ENABLED`                 |
 | `netfilter_default_domains`         | _(unset)_                       | `KLANGKD_NETFILTER_DEFAULT_DOMAINS`         |
 | `egress_consent_retention_days`     | `30`                            | `KLANGKD_EGRESS_CONSENT_RETENTION_DAYS`     |

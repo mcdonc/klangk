@@ -989,6 +989,23 @@ class KlangkSettings(BaseSettings):
     enable_ping: bool = True
     podman_bin: str | None = "podman"
     disable_tmux: str = ""
+    # browser_delegate_enabled: master switch for the browser-delegate
+    # bridge (#2710) — the workspace-token-gated endpoints
+    # (``/api/v1/browser-delegate{,/stream}``) that let a container drive
+    # the user's browser tab (fetch with the user's cookies, clipboard,
+    # feature actions) and read back everything it renders. That is a
+    # workspace-data read channel that bypasses file permissions
+    # entirely, so a hardened deploy may want it off. Defaults to True
+    # (the feature ships on). Set False to: return 403 from both
+    # endpoints, stop registering browser tabs for bridge routing, stop
+    # attaching a browser ID into the container's tmux env (so
+    # ``klangk-browser-id`` comes up empty and container-side helpers
+    # fail fast), and advertise ``browser_delegate_enabled: false`` via
+    # ``/api/v1/config`` so the frontend doesn't start its
+    # BrowserDelegate. Read at boot and on SIGHUP (reloadable) — a reload
+    # applies to requests and registrations after it; already-attached
+    # container envs keep the stale ID but the endpoint 403s regardless.
+    browser_delegate_enabled: bool = True
     health_check_interval: float | None = None
     health_check_startup_grace: float | None = None
     health_check_timeout: float | None = None

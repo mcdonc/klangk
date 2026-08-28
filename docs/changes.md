@@ -239,6 +239,18 @@ create`/`edit --classification-banner`, and the create/edit UIs; the
   configured (the default) no banner is rendered and no screen space is
   reserved. Downloaded/exported files are not marked — the screen banner is
   the scope.
+- **`KLANGKD_BROWSER_DELEGATE_ENABLED` (#2710).** Deploy-wide kill
+  switch for the browser-delegate bridge (the workspace-token-gated
+  `/api/v1/browser-delegate{,/stream}` endpoints that let a container
+  drive the user's browser tab — a workspace-data read channel that
+  bypasses file permissions). Defaults to `true`; set `false` to return
+  403 from both endpoints, stop registering browser tabs for bridge
+  routing, stop attaching a browser ID into new terminals (terminals
+  already running keep a stale `klangk-browser-id`, but their bridge
+  POSTs get the same 403), and advertise
+  `browser_delegate_enabled: false` via `/api/v1/config` so the web UI
+  stops answering bridge requests. Reloadable on SIGHUP. See
+  [Browser Bridge](../architecture/browser-bridge.md).
 
 - **`files-write` permission (#2705).** The mutating files endpoints —
   upload (`POST …/files/upload`), rename (`POST …/files/rename`), and

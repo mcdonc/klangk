@@ -2,6 +2,21 @@
 
 Pi extensions and tools inside the container can delegate actions to the browser via the backend bridge endpoint.
 
+## Disabling the bridge
+
+`KLANGKD_BROWSER_DELEGATE_ENABLED=false` (#2710) turns the bridge off for the whole deployment: both endpoints return 403, browser tabs are no longer registered for bridge routing, no browser ID is attached into terminals started after the change, and `/api/v1/config` advertises `browser_delegate_enabled: false` so the web UI stops answering bridge requests. Reloadable on SIGHUP.
+
+Two caveats when flipping the switch on a running deployment:
+
+- **Terminals already running keep the ID they were attached with** — nothing
+  clears the tmux env, so `klangk-browser-id` still prints it — but their
+  bridge POSTs get the same 403, so the channel is dead either way.
+- **A re-enable arms the server from the next `terminal_start`, but browser
+  tabs only resume answering after a page reload** — the tab decides at
+  connect time (from `/config`) whether to start its `BrowserDelegate`, and
+  until it reloads, container helpers dispatched to it wait out the bridge
+  timeout instead of failing fast.
+
 ## How It Works
 
 Extensions POST to `http://host.containers.internal:<egress_port>/api/v1/browser-delegate` with a browser ID. Each browser tab generates a UUID stored in `sessionStorage` (survives refresh, unique per tab). When a terminal starts, the frontend sends this ID with the `terminal_start` WebSocket message. The backend maps the ID to the tab's WebSocket. The container reads the current browser ID dynamically via `klangk-browser-id` (which reads from tmux's global environment, updated on every attach/reattach).

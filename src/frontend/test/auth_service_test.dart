@@ -95,6 +95,7 @@ void main() {
       bool? netfilterEnabled,
       bool? defaultPerHandleHome,
       String? defaultClassificationBanner,
+      bool? browserDelegateEnabled,
     }) {
       return MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
@@ -118,6 +119,8 @@ void main() {
                 'default_per_handle_home': defaultPerHandleHome,
               if (defaultClassificationBanner != null)
                 'default_classification_banner': defaultClassificationBanner,
+              if (browserDelegateEnabled != null)
+                'browser_delegate_enabled': browserDelegateEnabled,
             }),
             200,
           );
@@ -217,6 +220,21 @@ void main() {
       final service3 = AuthService();
       await Future.delayed(Duration.zero);
       expect(service3.perHandleHomeDefault, isTrue);
+    });
+
+    test('loads browser_delegate_enabled from /api/config', () async {
+      // #2710: defaults to true when the field is absent (old servers
+      // keep the bridge); a disabled deploy surfaces false so the
+      // workspace page skips its BrowserDelegate.
+      testAuthHttpClientOverride = _bannerClient();
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.browserDelegateEnabled, isTrue);
+
+      testAuthHttpClientOverride = _bannerClient(browserDelegateEnabled: false);
+      final service2 = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service2.browserDelegateEnabled, isFalse);
     });
 
     test('loads netfilter default domains + enabled from /api/config',

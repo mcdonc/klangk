@@ -249,6 +249,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
       wsClient: wsClient,
       workspaceId: widget.workspaceId,
       featureRegistry: _featureRegistry,
+      // #2710: on a deploy that disabled the browser-delegate bridge, the
+      // tab never subscribes to bridge requests.
+      browserDelegateEnabled:
+          context.read<AuthService>().browserDelegateEnabled,
       onConnected: ({required bool connected, String? error}) {
         if (!mounted) return;
         if (!connected) {

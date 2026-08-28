@@ -1235,6 +1235,8 @@ Used by Pi extensions that need to interact with the user's browser
 (e.g. navigating, reading page content).
 
 **Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
+Returns **403** when the deploy disabled the bridge
+(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`, #2710).
 
 ```json
 { "action": "navigate", "browser_id": "string" }
@@ -1250,6 +1252,8 @@ Streaming variant of browser-delegate. Returns results as newline-
 delimited JSON chunks.
 
 **Auth:** Workspace JWT required + proxy IP ACL (container traffic only).
+Returns **403** when the deploy disabled the bridge
+(`KLANGKD_BROWSER_DELEGATE_ENABLED=false`, #2710).
 
 ```json
 { "action": "string", "browser_id": "string" }
