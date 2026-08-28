@@ -50,3 +50,25 @@ applies when the package is installed non-editable; source-tree deployments set
 
 Operators running their own build of the UI (e.g. a custom Flutter build) set
 `KLANGKD_FRONTEND_DIR` to that directory in all three modes.
+
+## Process-ledger eBPF tier (privileged hosts only)
+
+The packaged wheel serves the [Process
+Ledger](../features/process-ledger.md) with the unprivileged `/proc`
+poller out of the box. The exact-capture eBPF backend needs the
+`procleddy-ebpf` binary *and* `CAP_BPF`+`CAP_PERFMON`; until the wheel
+ships the binary (#2777), build it from `scripts/procleddy-ebpf/`
+(clang `-target bpf` + libbpf — no kernel headers needed), place it
+next to the install (or point `KLANGKD_PROCESS_LEDGER_WATCHER` at it),
+and grant the caps with the shipped helper:
+
+```bash
+sudo klangk-ebpf-setcaps            # resolves the right binary,
+                                    # applies exactly cap_bpf,cap_perfmon+ep
+```
+
+Re-apply after every upgrade (rebuilds wipe file caps) — e.g.
+`ExecStartPre=+klangk-ebpf-setcaps` in the unit. The containerized host
+image cannot use this tier (OCI images cannot carry file capabilities;
+see the feature doc's privilege tiers and security warning before
+granting anything).

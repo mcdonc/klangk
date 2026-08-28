@@ -51,6 +51,7 @@ test = [
 # distinct from the package names. One ``pip install klangk`` yields both.
 klangkd = "klangk.launcher:app"
 klangk = "klangk.cli.main:main"
+klangk-ebpf-setcaps = "klangk.ebpf_setcaps:main"
 klangk-build-nix-seed = "klangk.seed:main"
 klangk-load-nix-seed-btrfs = "klangk.seed:load_main"
 

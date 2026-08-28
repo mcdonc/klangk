@@ -127,17 +127,22 @@ kernel ≥ 5.8), the recipe is:
 2. **Grant exactly what the monitor needs:**
 
    ```bash
-   sudo setcap cap_bpf,cap_perfmon+ep /path/to/procleddy-ebpf
+   sudo klangk-ebpf-setcaps
    ```
 
-   klangkd stays unprivileged: when it spawns the watcher, the file
-   capabilities activate in the child at exec — the parent never
-   holds them.
+   The shipped entrypoint resolves the right binary the same way
+   klangkd does (`--path` and `--config` for overrides — explicit
+   `KLANGKD_PROCESS_LEDGER_WATCHER` is honored) and applies exactly
+   `cap_bpf,cap_perfmon+ep`, verifying with `getcap`. The raw form, if
+   you prefer: `sudo setcap cap_bpf,cap_perfmon+ep
+   /path/to/procleddy-ebpf`. klangkd stays unprivileged: when it spawns
+   the watcher, the file capabilities activate in the child at exec —
+   the parent never holds them.
 3. **Re-apply on every upgrade.** A rebuild creates a new inode and
    file caps do not survive; automate it, e.g. in the unit:
 
    ```ini
-   ExecStartPre=+/usr/sbin/setcap cap_bpf,cap_perfmon+ep /path/to/procleddy-ebpf
+   ExecStartPre=+klangk-ebpf-setcaps
    ```
 
    (the `+` prefix runs the command with full privileges — the unit

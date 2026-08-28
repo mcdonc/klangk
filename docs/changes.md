@@ -459,7 +459,14 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   a tracepoint-backed monitor (`procleddy-ebpf`, needs `CAP_BPF` +
   `CAP_PERFMON` — privileged deployments only) that records every
   `execve` exactly, including the sub-millisecond processes the poller
-  cannot see. See [Process Ledger](features/process-ledger.md).
+  cannot see. A new shipped entrypoint, `klangk-ebpf-setcaps`, grants
+  the caps to the right binary (config/env-aware path resolution,
+  exactly `cap_bpf,cap_perfmon+ep`, `getcap` verification) — the devenv
+  build re-applies it automatically on hosts with passwordless
+  setcap, and deployments can wire it into the unit
+  (`ExecStartPre=+klangk-ebpf-setcaps`). See
+  [Process Ledger](features/process-ledger.md) and
+  [Packaged deployments](deployment/packaged.md).
 - **`KLANGKNETWORK_EGRESS_ACTIVITY_GATE` forwarding (#2514).** The
   sidecar's idle-activity report interval is now honored when set in
   klangkd's environment (forwarded to the sidecar like

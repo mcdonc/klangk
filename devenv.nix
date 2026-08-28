@@ -275,13 +275,16 @@ in
           -o "$EBPF" \
           procleddy-ebpf.c \
           $(pkg-config --cflags --libs libbpf)
-        # Best-effort file caps so the eBPF backend runs without root.
-        # Rebuilding wipes them (new inode), so this re-applies on every
+        # Best-effort file caps so the eBPF backend runs without root,
+        # via the same shipped entrypoint deployments use
+        # (klangk-ebpf-setcaps: resolves the right binary, applies
+        # exactly cap_bpf,cap_perfmon+ep, verifies with getcap).
+        # Rebuilding wipes caps (new inode), so this re-applies every
         # build. A no-op — one log line — on hosts without passwordless
         # setcap; see docs/features/process-ledger.md for the host-side
-        # sudoers opt-in and the deployment-tier alternative.
-        if command -v setcap >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-          if sudo -n setcap cap_bpf,cap_perfmon+ep "$EBPF"; then
+        # sudoers opt-in and the deployment tiers.
+        if sudo -n true 2>/dev/null; then
+          if sudo -n "$UV_PYTHON" -m klangk.ebpf_setcaps; then
             echo "procleddy-ebpf: file caps applied (cap_bpf,cap_perfmon)"
           fi
         else
