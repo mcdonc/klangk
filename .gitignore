@@ -24,6 +24,9 @@ features/**/klangk/.dart_tool/
 features/**/klangk/build/
 # Wheel build output (scripts/build_wheel.sh -> src/klangk/dist/).
 src/klangk/dist/
+# Compiled process-ledger C watcher (devenv task klangk:build-procleddy,
+# #2520) at the wheel-adjacent path klangkd loads it from.
+src/klangk/klangk/procleddy
 src/frontend/.flutter-plugins
 src/frontend/.flutter-plugins-dependencies
 src/frontend/pubspec_overrides.yaml

@@ -236,6 +236,24 @@ in
         "src/containers/host/Dockerfile.fips"
       ];
     };
+    # Compile the process-ledger C watcher (#2520) to the wheel-adjacent
+    # default location klangkd looks at (klangk/procleddy — see
+    # _default_watcher_path). Without this, every dev-backend start logs
+    # the "C watcher not found ... falling back to the Python poller"
+    # warning and the ledger runs degraded (~3s interval). cc comes with
+    # the devenv env (same toolchain test_procleddy_watcher builds with).
+    # execIfModified keys on the single source file; if the binary is
+    # ever deleted while the source is unchanged, `touch` the .c (or
+    # `devenv tasks run klangk:build-procleddy --force`) to recompile.
+    "klangk:build-procleddy" = {
+      exec = ''
+        cc -O2 -Wall -Wextra \
+          -o "$DEVENV_ROOT/src/klangk/klangk/procleddy" \
+          "$DEVENV_ROOT/scripts/procleddy/procleddy.c"
+      '';
+      showOutput = true;
+      execIfModified = [ "scripts/procleddy/procleddy.c" ];
+    };
     "klangk:kill-port-holders" = {
       exec = ''
         if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
@@ -273,6 +291,7 @@ in
         "klangk:flutter-build"
         "klangk:build-workspace-image"
         "klangk:build-network-sidecar"
+        "klangk:build-procleddy"
         "klangk:kill-port-holders"
       ];
     };
