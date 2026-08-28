@@ -43,17 +43,29 @@ class BrowserDelegateRequest(BaseModel):
 
 
 def _resolve_bridge_target(
-    body: BrowserDelegateRequest, container_registry, sockets
+    body: BrowserDelegateRequest,
+    container_registry,
+    sockets,
+    token_workspace_id: str,
 ):
     """Resolve a browser ID to (session, target_sock, payload).
 
-    Raises HTTPException (403/502) if the browser ID is unknown, the
-    workspace has no session, or the target browser is not subscribed.
+    The browser must belong to the caller's workspace: a token for
+    workspace A may never relay through a browser registered against
+    workspace B (#1715). Raises HTTPException (403/502) if the browser ID
+    is unknown, bound to another workspace, the workspace has no
+    session, or the target browser is not subscribed.
     """
     resolved = container_registry.resolve_browser(body.browser_id)
     if resolved is None:
         raise HTTPException(status_code=403, detail="Unknown browser ID")
     workspace_id, target_sock = resolved
+
+    if workspace_id != token_workspace_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Browser ID does not belong to this workspace",
+        )
 
     session = sockets.get_session(workspace_id)
     if not session:
@@ -84,7 +96,7 @@ async def browser_delegate(
     """
     _require_delegate_enabled(app)
     session, target_sock, payload = _resolve_bridge_target(
-        body, app.state.container_registry, app.state.sockets
+        body, app.state.container_registry, app.state.sockets, workspace_id
     )
     # Credential get operations may wait for user interaction (PAT dialog
     # or OAuth device flow) — allow up to 15 minutes (matching GitHub's
@@ -120,7 +132,7 @@ async def browser_delegate_stream(
     """
     _require_delegate_enabled(app)
     session, target_sock, payload = _resolve_bridge_target(
-        body, app.state.container_registry, app.state.sockets
+        body, app.state.container_registry, app.state.sockets, workspace_id
     )
     # Fetch the workspace so its settings.bridge_timeout override can apply.
     # One DB lookup per stream request — these are not high-frequency

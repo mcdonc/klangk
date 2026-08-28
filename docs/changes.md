@@ -126,6 +126,15 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **Browser-delegate requests are bound to the caller's workspace
+  (#1715).** `/api/v1/browser-delegate` and `/api/v1/browser-delegate/stream`
+  now verify that the submitted `browser_id` was registered against the
+  same workspace as the caller's workspace token, and return 403
+  otherwise. Previously a container holding workspace A's token could
+  relay actions (e.g. git-credential prompts, browser fetch) to another
+  workspace's browser tab if it learned that tab's browser ID — the
+  token provided no workspace boundary on the relay.
+
 - **`exec-and-sync` permission gates one-shot command execution and
   `klangk sync` (#2706, #2712).** The one-shot exec channel — `klangk
 exec`, and the rsync transport `klangk sync` and `klangk sandbox`

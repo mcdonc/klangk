@@ -28,6 +28,7 @@ LLM calls tool → Pi extension execute()
   → shell out to klangk-browser-id to get current browser ID
   → HTTP POST to /api/v1/browser-delegate {action, browser_id, ...}
   → Backend resolves browser_id → (workspace_id, target_connection)
+    and rejects unless workspace_id matches the caller's workspace token (#1715)
   → WebSocket message to target only: {"type":"browser_request","id":"...","action":"..."}
   → Flutter BrowserDelegate handles action (fetch, celebrate, etc.)
   → WebSocket message: {"cmd":"browser_response","id":"...","data":"..."}
