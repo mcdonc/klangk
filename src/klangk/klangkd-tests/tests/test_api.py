@@ -6265,6 +6265,55 @@ class TestBrowserBridge:
         finally:
             registry.revoke_workspace_browsers("ws-err")
 
+    async def test_cross_workspace_browser_id_returns_403(
+        self, client, app, user, registry, sockets
+    ):
+        """#1715: a token for workspace A cannot relay through a browser
+        registered against workspace B."""
+        mock_sock = MagicMock()
+        registry.register_browser("bid-other", "ws-other", mock_sock)
+        mock_session = AsyncMock()
+        mock_session.browser_subscribers = {mock_sock}
+        mock_session.dispatch_browser_request_to = AsyncMock()
+        try:
+            with patch.object(
+                sockets, "get_session", return_value=mock_session
+            ):
+                resp = await client.post(
+                    "/api/v1/browser-delegate",
+                    json={"action": "fetch", "browser_id": "bid-other"},
+                    headers=self._ws_token_headers("ws-own"),
+                )
+            assert resp.status_code == 403
+            assert resp.json()["detail"] == "Unknown browser ID"
+            mock_session.dispatch_browser_request_to.assert_not_awaited()
+        finally:
+            registry.revoke_workspace_browsers("ws-other")
+
+    async def test_stream_cross_workspace_browser_id_returns_403(
+        self, client, app, user, registry, sockets
+    ):
+        """#1715: same binding on /browser-delegate/stream."""
+        mock_sock = MagicMock()
+        registry.register_browser("bid-other-s", "ws-other", mock_sock)
+        mock_session = AsyncMock()
+        mock_session.browser_subscribers = {mock_sock}
+        mock_session.dispatch_browser_request_stream_to = MagicMock()
+        try:
+            with patch.object(
+                sockets, "get_session", return_value=mock_session
+            ):
+                resp = await client.post(
+                    "/api/v1/browser-delegate/stream",
+                    json={"action": "fetch", "browser_id": "bid-other-s"},
+                    headers=self._ws_token_headers("ws-own"),
+                )
+            assert resp.status_code == 403
+            assert resp.json()["detail"] == "Unknown browser ID"
+            mock_session.dispatch_browser_request_stream_to.assert_not_called()
+        finally:
+            registry.revoke_workspace_browsers("ws-other")
+
     async def test_stream_endpoint_relays_ndjson(
         self, client, app, user, registry, sockets
     ):
