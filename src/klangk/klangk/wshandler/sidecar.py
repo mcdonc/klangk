@@ -33,6 +33,7 @@ import logging
 from fastapi import WebSocket, WebSocketDisconnect
 
 from .. import auth
+from ..model.egress_consent import DECISION_ALLOWED, DECISION_DENIED
 from .safe_websocket import WS_ERRORS, SlowClientError, SafeWebSocket
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,7 @@ async def handle_egress_sidecar(websocket: WebSocket, app) -> None:
                 decision = msg.get("decision")
                 host = msg.get("host")
                 if (
-                    decision in ("allowed", "denied")
+                    decision in (DECISION_ALLOWED, DECISION_DENIED)
                     and isinstance(host, str)
                     and host
                 ):

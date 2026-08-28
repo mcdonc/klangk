@@ -1702,7 +1702,7 @@ class TestRecordDns:
     async def test_cap_stops_new_hosts(self, proxy, tmp_path, monkeypatch):
         # Past the dedup-set cap the set stops growing: new hosts are not
         # reported this session (egress itself is unaffected -- only the
-        # audit frame is dropped).
+        # audit frame is dropped), and the cap logs exactly once.
         c, sent = self._client(proxy, tmp_path)
         monkeypatch.setattr(c, "_DNS_REPORT_CAP", 2)
         c.record_dns("allowed", "a.test")
@@ -1712,6 +1712,16 @@ class TestRecordDns:
         hosts = sorted(json.loads(f)["host"] for f in sent)
         assert hosts == ["a.test", "b.test"]
         assert "c.test" not in c._dns_reported  # cap also bounds memory
+        assert c._dns_cap_logged is True  # the cap is visible, not silent
+        c.record_dns("allowed", "d.test")  # still past cap -> no re-log spam
+        await self._drain(c)
+        assert c._dns_cap_logged is True
+
+    async def test_cap_flag_resets_on_reconnect(self, proxy, tmp_path):
+        c, sent = self._client(proxy, tmp_path)
+        c._dns_cap_logged = True  # a prior session tripped the cap
+        c._fail_close_pending()  # what _run's finally does on disconnect
+        assert c._dns_cap_logged is False  # fresh session re-arms the cap
 
     async def test_reconnect_clears_dedup(self, proxy, tmp_path):
         # A lost connection is a fresh session (#2304): _fail_close_pending
@@ -1733,17 +1743,27 @@ class TestRecordDns:
         await self._drain(c)
         assert c._dns_tasks == set()
 
-    async def test_send_error_is_swallowed(self, proxy, tmp_path):
+    async def test_send_error_is_swallowed_and_re_reports(self, proxy, tmp_path):
+        # #2304 review: a send failure is transient loss, not sticky -- the
+        # dedup entry is dropped so the NEXT resolution of the host
+        # re-reports (the audit row lands one resolution late, not never).
         c = proxy.SidecarConsentClient("http://h/ev", str(tmp_path / "t"), 5)
         c._connected.set()
+        fails = {"n": 0}
 
         class _BadWS:
             async def send(self, frame):
+                fails["n"] += 1
                 raise OSError("gone")
 
         c._ws = _BadWS()
         c.record_dns("allowed", "ok.test")  # must not raise
         await self._drain(c)  # the scheduled send raises internally, swallowed
+        assert fails["n"] == 1
+        assert "ok.test" not in c._dns_reported  # dedup entry dropped
+        c.record_dns("allowed", "ok.test")  # re-reported on the next hit
+        await self._drain(c)
+        assert fails["n"] == 2
 
 
 class TestEgressAcct:

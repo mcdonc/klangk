@@ -819,6 +819,31 @@ class TestConsentCoordinatorHoldPaused:
         app.state.model.egress_consent.record_static_allow.assert_not_awaited()
         app.state.model.egress_consent.record_static_denial.assert_not_awaited()
 
+    async def test_paused_allow_verdict_replays_without_new_row(self):
+        # An in-effect ALLOW verdict replayed while paused is NOT re-recorded
+        # (#2304): the human row already exists; a policy row on top would
+        # duplicate the decision.
+        import time
+
+        app = _app(request=_request())
+        app.state.model.workspaces.get_consent_pause = AsyncMock(
+            return_value=time.time() + 600
+        )
+        app.state.model.egress_consent.active_verdict_for = AsyncMock(
+            return_value={
+                "id": "rid-1",
+                "workspace_id": FULL_WS,
+                "dest_host": "1.2.3.4",
+                "dest_port": 443,
+                "decision": "allowed",
+            }
+        )
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        assert fut.result()["decision"] == "allow"
+        app.state.model.egress_consent.record_static_allow.assert_not_awaited()
+        app.state.model.egress_consent.record_static_denial.assert_not_awaited()
+
     async def test_paused_allow_recording_failure_does_not_break_verdict(self):
         # The recording is best-effort: a DB error must not turn the paused
         # auto-allow into a deny or a raise (#2304).

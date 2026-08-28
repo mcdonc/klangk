@@ -85,9 +85,9 @@ workspace lacks `CAP_NET_ADMIN` so it cannot flush the ruleset.
 
 ## Consent recording (all modes)
 
-Every egress decision — **denied _and_ allowed** — is recorded to the
-`egress_consent` table, regardless of `egress_mode` (#2242, #2304 —
-full-egress auditing is unconditional, not an opt-in setting):
+Every egress decision that reaches klangkd — **denied _and_ allowed** —
+is recorded to the `egress_consent` table, regardless of `egress_mode`
+(#2242, #2304 — auditing needs no opt-in setting):
 
 - **static** -> recorded `denied` immediately, `decided_by` NULL (policy,
   no human). Static mode is strictly better than silent deny: every
@@ -105,12 +105,21 @@ which sees every FQDN egress attempt, allowed or not — reports each
 outcome it decides over its consent WebSocket, recorded as one
 `decided_by`-NULL policy row per host: `allowed` for every allow-listed
 (or in-session-consented) resolution that resolves + learns, `denied`
-for every reject-listed name NXDOMAIN'd. A paused-mode auto-allow is
-recorded the same way. Interactive off-list queries report nothing at
-the DNS layer — their decision point is the connection SYN, whose human
-or policy verdict is already recorded above. Frames are deduplicated
-per host per WebSocket session on the sidecar, and the rows are bounded
-by the same retention/cap sweep as everything else.
+for every reject-listed name NXDOMAIN'd. A paused-mode auto-allow with
+no prior verdict is recorded the same way (a replayed in-effect verdict
+is not — its human row already exists). Interactive off-list queries
+report nothing at the DNS layer — their decision point is the connection
+SYN, whose human or policy verdict is already recorded above.
+
+The audit frames are best-effort and session-bounded: one frame per
+host per WebSocket session on the sidecar, capped at 4096 hosts (past
+the cap the sidecar logs once and stops reporting new hosts until the
+WS reconnects), and a lost frame re-reports on that host's next
+resolution. Per-connection decisions that never reach klangkd —
+session-host and cached-verdict auto-allows at NFQUEUE, and WS-outage
+fail-close denies — are not recorded (per-connection flow audit is the
+follow-up scope). The rows are bounded by the same retention/cap sweep
+as everything else.
 
 The table is bounded (#2303): a retention window
 (`KLANGKD_EGRESS_CONSENT_RETENTION_DAYS`, default 30 days) deletes

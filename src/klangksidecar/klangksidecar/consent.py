@@ -86,6 +86,9 @@ class SidecarConsentClient:
         # host (the DB-side dedup index still collapses repeats).
         self._dns_reported: set[str] = set()
         self._dns_tasks: set[asyncio.Task] = set()
+        # Set once when the DNS-report cap engages (one log line per session,
+        # #2304 review); reset with the dedup set on reconnect.
+        self._dns_cap_logged = False
 
     @property
     def connected(self) -> bool:
@@ -311,20 +314,24 @@ class SidecarConsentClient:
             pass  # best-effort: a dropped frame just delays the next idle bump
 
     # Cap on the DNS-outcome dedup set (#2304): bounds memory (and frames for
-    # new hosts) under a hostile resolver storm. Past the cap, hosts already
-    # reported keep their dedup; new hosts are simply not reported this
-    # session (their egress still flows/gets gated normally -- only the audit
-    # frame is dropped). Mirrors _VERDICT_CACHE's 4096 discipline in state.py.
+    # new hosts) under a hostile resolver storm. Past the cap the set STOPS
+    # GROWING: hosts already reported keep their dedup; new hosts are not
+    # reported for the rest of this WS session (their egress still flows /
+    # gets gated normally -- only the audit frame is dropped) until a
+    # reconnect re-arms it. Deliberately NOT a clear-and-rearm like
+    # _VERDICT_CACHE: denied flows stop hitting NFQUEUE once learned, but a
+    # workspace can emit unlimited fresh DNS names for free, so clearing
+    # under a flood would re-open unbounded frame sends. 4096 matches
+    # _VERDICT_CACHE's size as a familiar bound, not its mechanism.
     _DNS_REPORT_CAP = 4096
 
     def record_dns(self, decision: str, host: str) -> None:
         """Best-effort DNS-layer egress outcome report to klangkd (#2304).
 
-        The DNS proxy sees every FQDN egress attempt and now ALWAYS reports
-        the outcome -- allowed (allow-list / in-session allow) or denied
-        (reject-list / static off-list NXDOMAIN) -- so full egress auditing
-        is unconditional, not an opt-in setting. klangkd records a
-        policy-decided row (decided_by NULL) per (workspace, host); this
+        The DNS proxy reports every outcome it itself decides -- ``allowed``
+        (allow-list / in-session allow) or ``denied`` (reject-list NXDOMAIN)
+        -- so full egress auditing needs no opt-in setting. klangkd records
+        a policy-decided row (decided_by NULL) per (workspace, host); this
         sidecar-side dedup (one frame per host per WS session) keeps a query
         storm from re-sending hosts the DB-side unique index would collapse
         anyway. Cleared on reconnect (fresh session). Sync-safe: called from
@@ -336,11 +343,23 @@ class SidecarConsentClient:
         if host in self._dns_reported:
             return
         if len(self._dns_reported) >= self._DNS_REPORT_CAP:
+            # Log once per session so an operator auditing a busy workspace
+            # can see why fresh hosts stopped appearing (#2304 review: the
+            # cap must not silently disable the feature).
+            if not self._dns_cap_logged:
+                self._dns_cap_logged = True
+                print(
+                    f"dns-proxy: egress-audit report cap reached"
+                    f" ({self._DNS_REPORT_CAP} hosts this session); new hosts"
+                    " are not reported until the WS reconnects (#2304)",
+                    flush=True,
+                )
             return
         self._dns_reported.add(host)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            self._dns_reported.discard(host)
             return  # not on a loop (defensive) -> nothing to schedule
         t = loop.create_task(self._send_dns(decision, host))
         self._dns_tasks.add(t)  # strong ref so the send isn't GC'd mid-flight
@@ -349,13 +368,17 @@ class SidecarConsentClient:
     async def _send_dns(self, decision: str, host: str) -> None:
         ws = self._ws
         if ws is None:
+            self._dns_reported.discard(host)
             return
         try:
             await ws.send(
                 json.dumps({"type": "egress_dns", "decision": decision, "host": host})
             )
         except Exception:
-            pass  # best-effort: a dropped frame skips this host's audit row
+            # Transient loss, not sticky (#2304 review): drop the dedup entry
+            # so the NEXT resolution of this host re-reports -- the audit row
+            # then lands one resolution late instead of never.
+            self._dns_reported.discard(host)
 
     def _fail_close_pending(self) -> None:
         # A lost connection is a fresh session against a (possibly restarted)
@@ -363,10 +386,12 @@ class SidecarConsentClient:
         # re-prompt after reconnect instead of being silently re-allowed/denied
         # by a stale cached verdict (#2326 review).
         _VERDICT_CACHE.clear()
-        # Fresh session (#2304) also resets the DNS-outcome dedup: the next
-        # connection may face a restarted klangkd whose egress_consent rows
-        # may have been pruned, so each host's outcome is re-reported once.
+        # Fresh session (#2304) also resets the DNS-outcome dedup + its cap
+        # log flag: the next connection may face a restarted klangkd whose
+        # egress_consent rows may have been pruned, so each host's outcome is
+        # re-reported once.
         self._dns_reported.clear()
+        self._dns_cap_logged = False
         for lid in list(self._pending):
             fut = self._pending.pop(lid, None)
             if fut is not None and not fut.done():

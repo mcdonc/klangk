@@ -254,15 +254,17 @@ sync` report a clear permission-denied error.
 ### Added
 
 - **Unconditional full-egress audit logging (#2304).** Every egress
-  decision is now recorded to `egress_consent` — allowed as well as denied
-  — with the decision and decider (policy = `decided_by` NULL, human = user
-  id); there is no opt-in setting. The sidecar's DNS proxy reports each
-  outcome it decides (allow-listed resolutions as `allowed`, reject-listed
-  NXDOMAINs as `denied`), a paused-mode auto-allow is recorded, and rows are
-  deduplicated per (workspace, host, port) and bounded by the existing
+  decision that reaches klangkd — DNS-layer outcomes and SYN-gate verdicts,
+  allowed as well as denied — is now recorded to `egress_consent` with the
+  decision and decider (policy = `decided_by` NULL, human = user id); there
+  is no opt-in setting. The sidecar's DNS proxy reports each outcome it
+  decides (allow-listed resolutions as `allowed`, reject-listed NXDOMAINs
+  as `denied`), a paused-mode auto-allow is recorded, and rows are deduped
+  per (workspace, host, port) and bounded by the existing
   `KLANGKD_EGRESS_CONSENT_RETENTION_DAYS` / `KLANGKD_EGRESS_CONSENT_ROW_CAP`
-  sweep. Per-connection TCP/UDP flow audit (dst endpoints + resolved IPs) is
-  the follow-up scope.
+  sweep. Per-connection flow audit (session-host/cached-verdict auto-allows,
+  WS-outage fail-close denies, dst endpoints + resolved IPs) is the
+  follow-up scope.
 
 - **`KLANGKD_CLASSIFICATION_BANNER` (#2768).** Deploy-wide default
   classification marking (free text) for the always-visible marking banner

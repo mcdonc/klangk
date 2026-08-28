@@ -157,12 +157,16 @@ class ConsentCoordinator:
                 # learns/accepts the SYN like a static allow). Allow-list
                 # rules are enforced earlier at the sidecar DNS layer, so a
                 # host reaching this gate is already not allow-listed.
-                verdict = await self._paused_verdict(workspace_id, dst, dport)
-                if verdict["decision"] == VERDICT_ALLOW:
-                    # #2304: an auto-allow is still an observed egress
+                verdict, replayed = await self._paused_verdict(
+                    workspace_id, dst, dport
+                )
+                if verdict["decision"] == VERDICT_ALLOW and not replayed:
+                    # #2304: a pause auto-allow is still an observed egress
                     # outcome -- record it (policy, decided_by NULL) so
-                    # auditing is unconditional. A paused-deny is a replay
-                    # of a verdict whose row already exists; no new row.
+                    # auditing needs no opt-in. A replayed verdict (an
+                    # in-effect allow/deny already decided by a human) is NOT
+                    # re-recorded: its row exists, and a policy row on top
+                    # would duplicate the human decision.
                     try:
                         model = self.app.state.model.egress_consent
                         await model.record_static_allow(
@@ -257,8 +261,9 @@ class ConsentCoordinator:
 
     async def _paused_verdict(
         self, workspace_id: str, dst: str, dport: int | None
-    ) -> dict:
-        """Verdict for a held SYN while prompting is paused (#2332).
+    ) -> tuple[dict, bool]:
+        """Verdict for a held SYN while prompting is paused (#2332), plus
+        whether it replayed an in-effect recorded verdict.
 
         A destination with an in-effect recorded DENY is still blocked (the
         pause respects existing verdicts); everything else is auto-allowed
@@ -266,21 +271,30 @@ class ConsentCoordinator:
         carries the connection) without learning the IP, so each NEW
         connection re-gates: once the pause elapses, new connections to the
         same host prompt again (none linger auto-allowed past the window).
+        The second return value is True when the verdict replays a recorded
+        row (deny or allow) -- the caller skips the #2304 policy-allow
+        recording in that case, since the human row already exists.
         """
         row = await self.app.state.model.egress_consent.active_verdict_for(
             workspace_id, dst, dport
         )
         if row is not None and row["decision"] == DECISION_DENIED:
-            return {
-                "decision": VERDICT_DENY,
-                "reason": "paused_deny",
+            return (
+                {
+                    "decision": VERDICT_DENY,
+                    "reason": "paused_deny",
+                    "duration": DURATION_ONCE,
+                },
+                True,
+            )
+        return (
+            {
+                "decision": VERDICT_ALLOW,
+                "reason": "paused",
                 "duration": DURATION_ONCE,
-            }
-        return {
-            "decision": VERDICT_ALLOW,
-            "reason": "paused",
-            "duration": DURATION_ONCE,
-        }
+            },
+            row is not None,
+        )
 
     def _register_hold(self, request: dict) -> asyncio.Future:
         """Register a held request + arm its timeout + fan out (interactive path)."""
