@@ -205,9 +205,9 @@ class HealthMonitor:
                 message,
             )
         if new_status != old_status:
-            self._broadcast(state, new_status, state.health_message)
+            await self._broadcast(state, new_status, state.health_message)
 
-    def _emit(
+    async def _emit(
         self,
         state: ContainerState,
         *,
@@ -223,7 +223,7 @@ class HealthMonitor:
         fields can never diverge between them again.
         """
         state.health_seq += 1
-        self.connections.notify_service_health(
+        await self.connections.notify_service_health(
             state.workspace_id,
             healthy=healthy,
             message=message,
@@ -232,20 +232,21 @@ class HealthMonitor:
             seq=state.health_seq,
         )
 
-    def _broadcast(
+    async def _broadcast(
         self,
         state: ContainerState,
         status: str,
         message: str | None = None,
     ) -> None:
-        """Emit a ``service_health`` transition event to all connections.
+        """Emit a ``service_health`` transition event to workspace members.
 
-        Fanned out via :meth:`WsState.notify_service_health` so the
-        workspace list page learns about health transitions for
-        auto-started services even when nobody is connected to the
-        workspace's terminal session (#1015).  The failure *reason*
-        rides along as ``health_message`` so operators can see *why*
-        it's unhealthy without digging through logs (#1088).
+        Fanned out via :meth:`WsState.notify_service_health` (scoped to
+        the workspace's members, #1714) so the workspace list page learns
+        about health transitions for auto-started services even when
+        nobody is connected to the workspace's terminal session (#1015).
+        The failure *reason* rides along as ``health_message`` so
+        operators can see *why* it's unhealthy without digging through
+        logs (#1088).
 
         Also forwards the additive contract fields (#1175):
         ``running=True`` (this is a live-container frame), the last
@@ -253,14 +254,14 @@ class HealthMonitor:
         ``seq`` (#1175 item 4) bumped on every emit so a reconnecting
         consumer can detect a missed transition.
         """
-        self._emit(
+        await self._emit(
             state,
             healthy=status == "healthy",
             message=message,
             running=True,
         )
 
-    def broadcast_death(
+    async def broadcast_death(
         self, state: ContainerState, *, message: str | None = None
     ) -> None:
         """Emit the terminal ``service_health`` frame for a dying container.
@@ -274,13 +275,16 @@ class HealthMonitor:
         container is gone (#1175 item 2).  This closes the hole by
         emitting one unambiguous terminal frame with ``running=False``
         and ``healthy=False`` *before* the state is dropped, so a single
-        stream is a single source of truth.
+        stream is a single source of truth.  (Relative wire order vs the
+        separately-scheduled ``container_status`` frame — see
+        ``lifecycle.broadcast_container_status`` — is not guaranteed;
+        consumers must not depend on it.)
 
         *message* (#2524) carries the classified death cause (e.g.
         "OOM-killed at 8g memory limit") when the death was detected by
         the crash monitor; expected stops leave it None.
         """
-        self._emit(
+        await self._emit(
             state,
             healthy=False,
             message=message,

@@ -1162,7 +1162,7 @@ class TestDeathFrameCarriesCause:
         dead_state(reg, health_check="true")
         frames = []
 
-        def fake_broadcast(state, *, message=None):
+        async def fake_broadcast(state, *, message=None):
             frames.append(message)
 
         with patch.object(reg.health, "broadcast_death", fake_broadcast):
@@ -1177,7 +1177,7 @@ class TestDeathFrameCarriesCause:
         dead_state(reg, health_check="true")
         frames = []
 
-        def fake_broadcast(state, *, message=None):
+        async def fake_broadcast(state, *, message=None):
             frames.append(message)
 
         with patch.object(reg.health, "broadcast_death", fake_broadcast):

@@ -1775,7 +1775,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # learn the service is down.  Only health-checked workspaces ever
         # appeared on the stream, so only those get a terminal frame.
         if state is not None and state.health_check is not None:
-            self.health.broadcast_death(state, message=cause)
+            await self.health.broadcast_death(state, message=cause)
         if self.on_workspace_killed:
             try:
                 await self.on_workspace_killed(workspace_id, container_id)

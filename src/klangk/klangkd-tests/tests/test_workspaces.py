@@ -200,10 +200,11 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     # Position counter is global across all groups (no collisions).
     positions = sorted(e["position"] for e in entries)
     assert positions == list(range(len(entries)))
-    # 1 owner ACE + 1 + 7 + 9 + 2 group ACEs (coders/collaborators carry
-    # `files-download`/`files-write` alongside `files` (#2705) and
-    # `exec-and-sync` (#2706/#2712)).
-    assert len(entries) == 1 + 1 + 7 + 9 + 2
+    # 1 owner ACE + 1 + 8 + 10 + 3 group ACEs (coders/collaborators carry
+    # `files-download`/`files-write` alongside `files` (#2705),
+    # `exec-and-sync` (#2706/#2712), and `monitor` (#2783) joins every
+    # role that has `terminal`, spectators included).
+    assert len(entries) == 1 + 1 + 8 + 10 + 3
     # Coder/collaborator grants include both transfer permissions and
     # the exec-channel permission.
     for suffix in ["coders", "collaborators"]:

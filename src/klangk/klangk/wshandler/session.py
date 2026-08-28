@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from .. import model
+from ..acl import check_permission_inmemory, resource_ancestors
 from ..terminal import SERVICE_CMD_WINDOW
 from ..window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
@@ -798,16 +799,77 @@ class WebSocketState:
             )
             logger.info("Reset workspace state for %s", workspace_id)
 
-    def notify_container_status(
+    async def _send_to_workspace_members(
+        self, workspace_id: str, message: dict
+    ) -> None:
+        """Send a per-workspace *message* to that workspace's members (#1714).
+
+        The pre-#1714 fan-outs iterated every authenticated connection
+        and left filtering to the client, which leaked every workspace's
+        id, running state, and health (including the bounded
+        ``health_message`` tail of another tenant's service output) to
+        anyone with a WebSocket. This scopes delivery server-side:
+        connections are grouped by user and each distinct user is
+        ACL-checked for ``monitor`` on ``/workspaces/{workspace_id}`` —
+        the dedicated status-observation permission (#2783). Every
+        grant path that carries ``terminal`` also seeds ``monitor``
+        (the owner's wildcard ACE, a direct member share, and every
+        role group), and ``monitor`` can be granted alone for
+        monitoring-only members, while the deployment-wide
+        ``view``-for-authenticated seed ACE at ``/`` is deliberately
+        too weak to count as membership.
+
+        Sends to all of an allowed user's connections (a user with the
+        workspace open in two tabs gets both). Dead sockets are pruned;
+        dispatch.py owns cleanup on disconnect.
+
+        One ACE fetch for the whole fan-out: the entries for the
+        resource's ancestor paths are loaded once and each distinct
+        user is then evaluated in memory
+        (:func:`klangk.acl.check_permission_inmemory`, the same
+        preload-then-evaluate shape ``permissions_for_resources`` uses)
+        — a transition burst doesn't re-query identical paths per user.
+        """
+        by_user: dict[str, list[tuple[SafeWebSocket, "Connection"]]] = {}
+        for sock, conn in self.connections.items():
+            uid = conn.user.get("id")
+            if uid is None:
+                continue
+            by_user.setdefault(uid, []).append((sock, conn))
+        if not by_user:
+            return
+        resource = f"/workspaces/{workspace_id}"
+        acl = self.app.state.acl
+        entries = await self.app.state.model.acl.get_acl_entries_map(
+            resource_ancestors(resource)
+        )
+        dead = []
+        for uid, conns in by_user.items():
+            principals = await acl.get_principals(uid)
+            if not check_permission_inmemory(
+                resource, principals, "monitor", entries
+            ):
+                continue
+            for sock, _conn in conns:
+                try:
+                    sock.send_json(message)
+                except WS_ERRORS:
+                    dead.append(sock)
+        for sock in dead:
+            self.connections.pop(sock, None)
+
+    async def notify_container_status(
         self,
         workspace_id: str,
         running: bool,
         service_started_at: float | None = None,
     ) -> None:
-        """Broadcast container running/stopped status to all connections.
+        """Broadcast container running/stopped status to workspace members.
 
         Sent when a workspace container starts or is killed so the
         workspace list page can update status icons in real time.
+        Scoped to members of *workspace_id* (#1714) via
+        :meth:`_send_to_workspace_members`.
         """
         message: dict = {
             "type": "container_status",
@@ -816,24 +878,15 @@ class WebSocketState:
         }
         if service_started_at is not None:
             message["service_started_at"] = service_started_at
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") is None:
-                continue
-            try:
-                sock.send_json(message)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        await self._send_to_workspace_members(workspace_id, message)
 
-    def notify_workspace_evicted(
+    async def notify_workspace_evicted(
         self, workspace_id: str, *, reason: str = "host memory pressure"
     ) -> None:
-        """Broadcast a workspace-evicted event to all connections (#2526).
+        """Broadcast a workspace-evicted event to workspace members (#2526).
 
-        Fanned out to every connection (like
-        :meth:`notify_container_status`) so workspace list pages and any
+        Scoped to members of *workspace_id* (#1714) like
+        :meth:`notify_container_status`, so workspace list pages and any
         client watching the workspace learn *why* it stopped — the
         eviction path's own analogue of the idle monitor's
         ``container_stopped``/idle-timeout event, kept distinct from it
@@ -846,16 +899,7 @@ class WebSocketState:
             "workspace_id": workspace_id,
             "reason": reason,
         }
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") is None:
-                continue
-            try:
-                sock.send_json(message)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        await self._send_to_workspace_members(workspace_id, message)
 
     def broadcast_to_all(self, message: dict) -> None:
         """Broadcast *message* to every authenticated connection.
@@ -941,7 +985,7 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
-    def notify_service_health(
+    async def notify_service_health(
         self,
         workspace_id: str,
         *,
@@ -951,13 +995,13 @@ class WebSocketState:
         health_checked_at: float | None = None,
         seq: int = 0,
     ) -> None:
-        """Broadcast service-health status to all connections.
+        """Broadcast service-health status to workspace members.
 
-        Fanned out to every connection (like
-        :meth:`notify_container_status`) so the workspace list page can
-        reflect health transitions for auto-started services even when no
-        one is connected to that workspace's terminal session (#1015).
-        The frontend ignores events for workspaces it doesn't display.
+        Scoped to members of *workspace_id* (#1714) via
+        :meth:`_send_to_workspace_members`, so the workspace list page
+        still reflects health transitions for auto-started services even
+        when no one is connected to that workspace's terminal session
+        (#1015) — but other tenants no longer learn them.
 
         ``message`` carries the failure *reason* (a bounded tail of the
         check's stderr/stdout) so an unhealthy workspace isn't a black
@@ -978,19 +1022,10 @@ class WebSocketState:
             health_checked_at=health_checked_at,
             seq=seq,
         )
-        dead = []
-        for sock, conn in self.connections.items():
-            if conn.user.get("id") is None:
-                continue
-            try:
-                sock.send_json(message_dict)
-            except WS_ERRORS:
-                dead.append((sock, conn))
-        for sock, _ in dead:
-            self.connections.pop(sock, None)
+        await self._send_to_workspace_members(workspace_id, message_dict)
 
-    def send_service_health_snapshot(self, sock: SafeWebSocket) -> None:
-        """Send the current health of every health-checked workspace.
+    async def send_service_health_snapshot(self, sock: SafeWebSocket) -> None:
+        """Send the current health of the member workspaces to one socket.
 
         The ``service_health`` stream is **deltas only**: it fires on a
         status transition, not every poll, so a steady-state unhealthy
@@ -1000,16 +1035,57 @@ class WebSocketState:
         checked (``health_check`` configured and at least one poll
         completed) to a single connection right after it registers.
 
-        Mirrors :meth:`notify_service_health`'s fan-out scope (every
-        workspace, consumer filters): server-side scoping is tracked
-        separately (#1175 item 5).  Consumer-side the frame is applied
-        idempotently, so a transition arriving just after the snapshot
-        is harmless.  Workspaces whose container has died are absent
+        Scoped to the connection's user's memberships (#1714): the
+        allowed workspace set is resolved with one
+        ``permissions_for_resources`` pass (``monitor`` on each
+        candidate resource — the dedicated status-observation
+        permission, #2783), so a connecting client learns the health
+        of workspaces it can observe — never other tenants'.
+
+        Mirrors :meth:`notify_service_health`'s frame shape.  Consumer-side
+        the frame is applied idempotently, so a transition arriving just
+        after the snapshot is harmless; a transition or death arriving
+        *during* the snapshot's ACL pass is detected (seq/state re-check)
+        and the stale replay frame is dropped rather than sent over the
+        newer delta.  Workspaces whose container has died are absent
         from ``registry.states`` and thus skipped (the container-death
         hole is #1175 item 2).
         """
-        for cs in list(self.app.state.container_registry.states.values()):
-            if cs.health_check is None or cs.health_status is None:
+        conn = self.connections.get(sock)
+        user_id = conn.user.get("id") if conn else None
+        if user_id is None:
+            return
+        registry = self.app.state.container_registry
+        # Snapshot (state, seq) pairs: the ACL pass below awaits, and a
+        # container that dies or a health transition that fires in that
+        # window must not be overwritten by a stale replay frame — the
+        # per-workspace seq bumps on every emit and the state is dropped
+        # on death, so a mismatch means a newer frame already went out.
+        candidates = [
+            (cs, cs.health_seq)
+            for cs in registry.states.values()
+            if cs.health_check is not None and cs.health_status is not None
+        ]
+        if not candidates:
+            return
+        acl = self.app.state.acl
+        principals = await acl.get_principals(user_id)
+        resources = [f"/workspaces/{cs.workspace_id}" for cs, _ in candidates]
+        allowed = await acl.permissions_for_resources(
+            resources, principals, ["monitor"]
+        )
+        for cs, seq in candidates:
+            if f"/workspaces/{cs.workspace_id}" not in allowed:
+                continue
+            if registry.states.get(cs.workspace_id) is not cs:
+                # Died (state removed) or was re-bound while the ACL
+                # pass was in flight — its terminal/death frame already
+                # went to this member; don't replay over it.
+                continue
+            if cs.health_seq != seq:
+                # A transition fired mid-snapshot; its delta frame
+                # already went out — replaying the older status over it
+                # would flip the client backwards.
                 continue
             try:
                 sock.send_json(

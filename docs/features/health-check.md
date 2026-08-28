@@ -43,14 +43,21 @@ For each workspace with a health check configured:
    `HOME` set.
 2. **Exit code 0 = healthy.** Any non-zero exit code, a timeout, or an
    error counts as **unhealthy**.
-3. When the status changes, every connected client gets a
-   `service_health` event so the UI can update in real time. Because the
-   stream is deltas-only (it fires on transitions, not every poll), a
-   client that connects to an _already_-unhealthy workspace also
-   receives a one-time **snapshot** of every health-checked
-   workspace's current status immediately on connect -- so a pure-WS
-   consumer like `klangk monitor` sees steady-state failures right
-   away instead of being blind until the next transition (#1175).
+3. When the status changes, every **member of the workspace** (owner,
+   shared users, role groups) connected over WebSocket gets a
+   `service_health` event so the UI can update in real time (#1714:
+   the fan-out is scoped server-side — other tenants never see it).
+   Membership here means the `monitor` permission — the dedicated
+   status-observation permission (#2783), granted alongside `terminal`
+   by every share path — so a monitoring-only grantee (no `terminal`)
+   receives live deltas, while a view-only grantee does not.
+   Because the stream is deltas-only (it fires on transitions, not
+   every poll), a client that connects to an _already_-unhealthy
+   workspace also receives a one-time **snapshot** of the current
+   status of every health-checked workspace it can observe immediately
+   on connect -- so a pure-WS consumer like `klangk monitor` sees
+   steady-state failures right away instead of being blind until the
+   next transition (#1175).
    Each `service_health` frame also carries three additive fields:
    `running` (`false` on the terminal **container-death** frame, so a
    consumer watching only this stream learns the service is down

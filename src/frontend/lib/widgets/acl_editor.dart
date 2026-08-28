@@ -27,6 +27,7 @@ class AclEditorState extends State<AclEditor> {
   static const _principalTypeLabels = {0: 'System', 1: 'User', 2: 'Group'};
   static const _permissions = [
     'view',
+    'monitor',
     'terminal',
     'code-in-isolation',
     'spectate-on-shared-terminals',

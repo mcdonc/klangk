@@ -35,6 +35,7 @@ from klangk import (
 )
 from klangk.container import ContainerRegistry
 from klangk.exceptions import ConfigurationError, EX_CONFIG
+from klangk.lifecycle import broadcast_container_status
 from _helpers import make_settings
 from klangk.wshandler.session import WebSocketState
 
@@ -1091,6 +1092,56 @@ class TestLifespan:
             async with main.lifespan(app):
                 pass  # pragma: no cover
         assert app.state.startup_config_error == str(refusal)
+
+
+class TestBroadcastContainerStatus:
+    """The registry status callback schedules the scoped broadcast (#1714).
+
+    The registry invokes its status-change callback synchronously (from
+    ``track_activity`` and the stop paths); the broadcast itself is
+    async because it ACL-checks every recipient, so the callback wraps
+    it in a fire-and-forget task.
+    """
+
+    def _app(self):
+        return types.SimpleNamespace(
+            state=types.SimpleNamespace(
+                sockets=types.SimpleNamespace(
+                    notify_container_status=AsyncMock()
+                )
+            )
+        )
+
+    async def test_schedules_scoped_broadcast(self):
+        app = self._app()
+        broadcast_container_status(app, "ws-1", True, 1000.0)
+        # Let the scheduled task run to completion.
+        for _ in range(3):
+            await asyncio.sleep(0)
+        app.state.sockets.notify_container_status.assert_awaited_once_with(
+            "ws-1", True, 1000.0
+        )
+
+    async def test_broadcast_error_is_logged_not_raised(self, caplog):
+        app = self._app()
+        app.state.sockets.notify_container_status.side_effect = RuntimeError(
+            "acl unavailable"
+        )
+        with caplog.at_level("ERROR", logger="klangk.lifecycle"):
+            broadcast_container_status(app, "ws-2", False)
+            for _ in range(3):
+                await asyncio.sleep(0)
+        assert any(
+            "container_status broadcast failed" in r.message
+            for r in caplog.records
+        )
+
+    def test_no_running_loop_is_a_noop(self):
+        # Sync registry call paths (unit harnesses driving track_activity
+        # directly) have no loop to schedule on — nothing to broadcast to.
+        app = self._app()
+        broadcast_container_status(app, "ws-3", True)
+        app.state.sockets.notify_container_status.assert_not_called()
 
 
 # --- SIGHUP runtime restart (#1212) ---

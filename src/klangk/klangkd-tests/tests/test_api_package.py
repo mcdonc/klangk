@@ -306,3 +306,5 @@ def test_all_permissions_single_source():
     assert "exec-and-sync" in api.ALL_PERMISSIONS
     # #2765's transfer permissions must be present too.
     assert {"files-download", "files-write"} <= set(api.ALL_PERMISSIONS)
+    # #2783's health/status gate must be reportable the same way.
+    assert "monitor" in api.ALL_PERMISSIONS

@@ -5772,6 +5772,37 @@ def _health_registry(ws_state=None):
     return app_state.state.container_registry
 
 
+async def _grant_health_member(reg, user_id: str, workspace_id: str) -> None:
+    """Seed a member ALLOW ``monitor`` ACE for a health fan-out test
+    (#1714/#2783).
+
+    The status fan-outs ACL-check each recipient for ``monitor`` on
+    ``/workspaces/{id}``; the per-test DB starts with no ACEs (default
+    deny), so tests that assert delivery must grant membership first.
+    """
+    from klangk import model
+
+    await reg.app.state.model.init_db()
+    # acl_entries.user_id has an FK to users(id): plant the principal row.
+    async with reg.app.state.db.transaction() as tx:
+        await tx.execute(
+            "INSERT OR IGNORE INTO users (id, email, verified)"
+            " VALUES (?, ?, 1)",
+            (user_id, f"{user_id}@test.example"),
+        )
+    resource = f"/workspaces/{workspace_id}"
+    entries = await reg.app.state.model.acl.get_acl_entries(resource)
+    position = max((e["position"] for e in entries), default=-1) + 1
+    await reg.app.state.model.acl.add_acl_entry(
+        resource,
+        position,
+        model.ACTION_ALLOW,
+        "monitor",
+        model.PRINCIPAL_USER,
+        user_id=user_id,
+    )
+
+
 def _health_state(
     *,
     workspace_id="ws-h",
@@ -6063,7 +6094,7 @@ class TestHealthMonitorCheckWorkspace:
                 "_run_one",
                 AsyncMock(return_value=("unhealthy", "connection refused")),
             ),
-            patch.object(monitor, "_broadcast") as bcast,
+            patch.object(monitor, "_broadcast", AsyncMock()) as bcast,
         ):
             await monitor._check_workspace(st)
         assert st.health_status == "unhealthy"
@@ -6078,7 +6109,7 @@ class TestHealthMonitorCheckWorkspace:
             patch.object(
                 monitor, "_run_one", AsyncMock(return_value=("healthy", ""))
             ),
-            patch.object(monitor, "_broadcast") as bcast,
+            patch.object(monitor, "_broadcast", AsyncMock()) as bcast,
         ):
             await monitor._check_workspace(st)
         assert st.health_status == "healthy"
@@ -6164,7 +6195,7 @@ class TestHealthMonitorStartupGrace:
                 "_run_one",
                 AsyncMock(return_value=("unhealthy", "connection refused")),
             ),
-            patch.object(monitor, "_broadcast") as bcast,
+            patch.object(monitor, "_broadcast", AsyncMock()) as bcast,
         ):
             await monitor._check_workspace(st)
         # Status, reason, and last-checked are all untouched: the grace
@@ -6184,7 +6215,7 @@ class TestHealthMonitorStartupGrace:
             patch.object(
                 monitor, "_run_one", AsyncMock(return_value=("healthy", ""))
             ),
-            patch.object(monitor, "_broadcast") as bcast,
+            patch.object(monitor, "_broadcast", AsyncMock()) as bcast,
         ):
             await monitor._check_workspace(st)
         assert st.health_status == "healthy"
@@ -6202,7 +6233,7 @@ class TestHealthMonitorStartupGrace:
                 "_run_one",
                 AsyncMock(return_value=("unhealthy", "connection refused")),
             ),
-            patch.object(monitor, "_broadcast") as bcast,
+            patch.object(monitor, "_broadcast", AsyncMock()) as bcast,
         ):
             await monitor._check_workspace(st)
         assert st.health_status == "unhealthy"
@@ -6243,9 +6274,11 @@ class TestHealthMonitorStartupGrace:
             self.registry.states.pop(st.workspace_id, None)
             self.registry._cid_to_wsid.pop(st.container_id, None)
 
-    """_broadcast fans out to ALL connections, not just the session."""
 
-    def test_fans_out_via_notify_service_health(self, app_state):
+class TestHealthMonitorBroadcast:
+    """_broadcast fans out to workspace members, not just the session (#1714)."""
+
+    async def test_fans_out_via_notify_service_health(self, app_state):
         reg = _health_registry()
         monitor = reg.health
         sock = _mock_sock_for_health()
@@ -6254,9 +6287,10 @@ class TestHealthMonitorStartupGrace:
             reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
+            await _grant_health_member(reg, "u1", st.workspace_id)
             # No WorkspaceSession registered for this workspace — yet
-            # the event must still reach the connection.
-            monitor._broadcast(st, "unhealthy", "connection refused")
+            # the event must still reach the member's connection.
+            await monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
             reg.app.state.sockets.connections.pop(sock, None)
         sock.send_json.assert_called_once_with(
@@ -6271,6 +6305,28 @@ class TestHealthMonitorStartupGrace:
                 "seq": 1,
             }
         )
+
+    async def test_non_member_never_receives_health_frames(self, app_state):
+        """#1714: a connected user with no grant on the workspace is skipped."""
+        reg = _health_registry()
+        monitor = reg.health
+        member = _mock_sock_for_health()
+        stranger = _mock_sock_for_health()
+        st = _health_state(health_status="unhealthy")
+        try:
+            reg.app.state.sockets.connections[member] = SimpleNamespace(
+                user={"id": "u1", "email": "a@x"}
+            )
+            reg.app.state.sockets.connections[stranger] = SimpleNamespace(
+                user={"id": "u2", "email": "b@x"}
+            )
+            await _grant_health_member(reg, "u1", st.workspace_id)
+            await monitor._broadcast(st, "unhealthy", "connection refused")
+        finally:
+            reg.app.state.sockets.connections.pop(member, None)
+            reg.app.state.sockets.connections.pop(stranger, None)
+        member.send_json.assert_called_once()
+        stranger.send_json.assert_not_called()
 
 
 class TestHealthMonitorLoopSkips:
@@ -6359,7 +6415,7 @@ class TestHealthMonitorLoopSkips:
 class TestHealthMonitorBroadcastSeq:
     """_broadcast bumps per-workspace seq and forwards live fields."""
 
-    def test_bumps_seq_each_emit_and_forwards_fields(self, app_state):
+    async def test_bumps_seq_each_emit_and_forwards_fields(self, app_state):
         reg = _health_registry()
         monitor = reg.health
         sock = _mock_sock_for_health()
@@ -6369,8 +6425,9 @@ class TestHealthMonitorBroadcastSeq:
             reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
-            monitor._broadcast(st, "unhealthy", "connection refused")
-            monitor._broadcast(st, "unhealthy", "connection refused")
+            await _grant_health_member(reg, "u1", st.workspace_id)
+            await monitor._broadcast(st, "unhealthy", "connection refused")
+            await monitor._broadcast(st, "unhealthy", "connection refused")
         finally:
             reg.app.state.sockets.connections.pop(sock, None)
         frames = [c[0][0] for c in sock.send_json.call_args_list]
@@ -6394,7 +6451,7 @@ class TestHealthMonitorDeath:
         app_state = _make_app_state()
         self.registry = app_state.state.container_registry
 
-    def test_broadcast_death_emits_terminal_frame(self, app_state):
+    async def test_broadcast_death_emits_terminal_frame(self, app_state):
         reg = _health_registry()
         monitor = reg.health
         sock = _mock_sock_for_health()
@@ -6405,7 +6462,8 @@ class TestHealthMonitorDeath:
             reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
-            monitor.broadcast_death(st)
+            await _grant_health_member(reg, "u1", st.workspace_id)
+            await monitor.broadcast_death(st)
         finally:
             reg.app.state.sockets.connections.pop(sock, None)
         frame = sock.send_json.call_args[0][0]
@@ -6437,6 +6495,7 @@ class TestHealthMonitorDeath:
             reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
+            await _grant_health_member(reg, "u1", st.workspace_id)
             reg.set_on_workspace_killed(on_killed)
             await reg.notify_workspace_killed(st.workspace_id)
         finally:
@@ -6501,6 +6560,7 @@ class TestHealthMonitorDeath:
             reg.app.state.sockets.connections[sock] = SimpleNamespace(
                 user={"id": "u1", "email": "a@x"}
             )
+            await _grant_health_member(reg, "u1", st.workspace_id)
             # Patch the registry that actually runs the cleanup loop
             # (``reg``), not ``self.registry`` -- otherwise the real
             # ``podman remove_container`` fires on a fake container id

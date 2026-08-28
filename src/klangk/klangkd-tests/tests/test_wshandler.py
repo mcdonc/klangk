@@ -131,6 +131,35 @@ def _auth():
     return auth_mod.Auth(state)
 
 
+async def _grant_monitor(app_state, user_id: str, workspace_id: str) -> None:
+    """Seed a member ALLOW ``monitor`` ACE so a connection passes the
+    #1714/#2783 scope.
+
+    The status fan-outs ACL-check each recipient for ``monitor`` on
+    ``/workspaces/{id}``; the per-test DB starts with no ACEs (default
+    deny), so tests that assert delivery must grant membership first.
+    """
+    await app_state.state.model.init_db()
+    # acl_entries.user_id has an FK to users(id): plant the principal row.
+    async with app_state.state.db.transaction() as tx:
+        await tx.execute(
+            "INSERT OR IGNORE INTO users (id, email, verified)"
+            " VALUES (?, ?, 1)",
+            (user_id, f"{user_id}@test.example"),
+        )
+    resource = f"/workspaces/{workspace_id}"
+    entries = await app_state.state.model.acl.get_acl_entries(resource)
+    position = max((e["position"] for e in entries), default=-1) + 1
+    await app_state.state.model.acl.add_acl_entry(
+        resource,
+        position,
+        model.ACTION_ALLOW,
+        "monitor",
+        model.PRINCIPAL_USER,
+        user_id=user_id,
+    )
+
+
 def _mock_sock(headers=None, query_params=None):
     """Create a mock SafeWebSocket for testing.
 
@@ -2580,6 +2609,27 @@ class TestHandleWebsocket:
 
         websocket.accept.assert_awaited_once()
 
+    async def test_snapshot_failure_still_runs_cleanup(self, user, app_state):
+        """#1714 review: the connect-time snapshot awaits DB queries inside
+        the handler's try — a raise there must run the ``finally`` cleanup
+        (sender stopped, connection unregistered), not leak them."""
+        app_state = _make_app_state()
+
+        token = _auth().create_token(user["id"], user["email"])
+        websocket = _mock_raw_sock(query_params={"token": token})
+        websocket.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
+
+        with patch.object(
+            app_state.state.sockets,
+            "send_service_health_snapshot",
+            AsyncMock(side_effect=RuntimeError("db unavailable")),
+        ):
+            await handle_websocket(websocket, app_state)
+
+        websocket.accept.assert_awaited_once()
+        # The finally block ran: the connection was unregistered.
+        assert not app_state.state.sockets.connections
+
     async def test_runtime_error_treated_as_disconnect(self, user, app_state):
         app_state = _make_app_state()
 
@@ -4732,14 +4782,14 @@ class TestNotifyUserTerminalsChanged:
 
 
 class TestNotifyContainerStatus:
-    """notify_container_status broadcasts to all authenticated connections."""
+    """notify_container_status broadcasts to workspace members only (#1714)."""
 
     def _register(self, sock, user, app_state):
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         app_state.state.sockets.connections[sock] = conn
         return conn
 
-    def test_sends_to_all_authenticated(self, app_state):
+    async def test_sends_to_members_of_both_users(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock_a = _mock_sock()
@@ -4747,7 +4797,9 @@ class TestNotifyContainerStatus:
         try:
             self._register(sock_a, {"id": "uid-1", "email": "a@x"}, app_state)
             self._register(sock_b, {"id": "uid-2", "email": "b@x"}, app_state)
-            sockets.notify_container_status("ws-123", True)
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await _grant_monitor(app_state, "uid-2", "ws-123")
+            await sockets.notify_container_status("ws-123", True)
         finally:
             sockets.connections.pop(sock_a, None)
             sockets.connections.pop(sock_b, None)
@@ -4759,44 +4811,108 @@ class TestNotifyContainerStatus:
         sock_a.send_json.assert_called_once_with(expected)
         sock_b.send_json.assert_called_once_with(expected)
 
-    def test_includes_service_started_at(self, app_state):
+    async def test_non_member_receives_nothing(self, app_state):
+        """#1714: a connected user with no grant on the workspace is skipped."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        member = _mock_sock()
+        stranger = _mock_sock()
+        try:
+            self._register(member, {"id": "uid-1", "email": "a@x"}, app_state)
+            self._register(
+                stranger, {"id": "uid-2", "email": "b@x"}, app_state
+            )
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await sockets.notify_container_status("ws-123", True)
+        finally:
+            sockets.connections.pop(member, None)
+            sockets.connections.pop(stranger, None)
+        member.send_json.assert_called_once()
+        stranger.send_json.assert_not_called()
+
+    async def test_view_only_grant_is_not_membership(self, app_state):
+        """The ``/``-level view-for-authenticated ACE must not leak frames.
+
+        Seeds the deployment default (view at ``/`` for authenticated)
+        and asserts it still does not count as membership — only a real
+        grant on the workspace does.
+        """
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            sockets.notify_container_status("ws-789", True, 1000.0)
+            await app_state.state.model.init_db()
+            await app_state.state.model.acl.add_acl_entry(
+                "/",
+                0,
+                model.ACTION_ALLOW,
+                "view",
+                model.PRINCIPAL_SYSTEM,
+                system_principal=model.SYSTEM_AUTHENTICATED,
+            )
+            await sockets.notify_container_status("ws-123", True)
+        finally:
+            sockets.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    async def test_same_users_two_connections_both_receive(self, app_state):
+        """All connections of an allowed user receive the frame."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock_a = _mock_sock()
+        sock_b = _mock_sock()
+        try:
+            self._register(sock_a, {"id": "uid-1", "email": "a@x"}, app_state)
+            self._register(sock_b, {"id": "uid-1", "email": "a@x"}, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await sockets.notify_container_status("ws-123", True)
+        finally:
+            sockets.connections.pop(sock_a, None)
+            sockets.connections.pop(sock_b, None)
+        sock_a.send_json.assert_called_once()
+        sock_b.send_json.assert_called_once()
+
+    async def test_includes_service_started_at(self, app_state):
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-789")
+            await sockets.notify_container_status("ws-789", True, 1000.0)
         finally:
             sockets.connections.pop(sock, None)
         msg = sock.send_json.call_args[0][0]
         assert msg["service_started_at"] == 1000.0
         assert msg["running"] is True
 
-    def test_sends_stopped(self, app_state):
+    async def test_sends_stopped(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            sockets.notify_container_status("ws-456", False)
+            await _grant_monitor(app_state, "uid-1", "ws-456")
+            await sockets.notify_container_status("ws-456", False)
         finally:
             sockets.connections.pop(sock, None)
         msg = sock.send_json.call_args[0][0]
         assert msg["running"] is False
         assert msg["workspace_id"] == "ws-456"
 
-    def test_skips_unauthenticated(self, app_state):
+    async def test_skips_unauthenticated(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock = _mock_sock()
         try:
             self._register(sock, {"id": None, "email": ""}, app_state)
-            sockets.notify_container_status("ws-1", True)
+            await sockets.notify_container_status("ws-1", True)
         finally:
             sockets.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
-    def test_dead_socket_is_pruned(self, app_state):
+    async def test_dead_member_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         from klangk.wshandler import WS_ERRORS
@@ -4805,21 +4921,22 @@ class TestNotifyContainerStatus:
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            sockets.notify_container_status("ws-1", True)
+            await _grant_monitor(app_state, "uid-1", "ws-1")
+            await sockets.notify_container_status("ws-1", True)
             assert sock not in sockets.connections
         finally:
             sockets.connections.pop(sock, None)
 
 
 class TestNotifyServiceHealth:
-    """notify_service_health fans health events out to all connections."""
+    """notify_service_health fans health events out to workspace members."""
 
     def _register(self, sock, user, app_state):
         conn = _base_conn(user=user, ws=sock, app_state=app_state)
         app_state.state.sockets.connections[sock] = conn
         return conn
 
-    def test_sends_healthy_to_all_authenticated(self, app_state):
+    async def test_sends_healthy_to_members(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock_a = _mock_sock()
@@ -4827,7 +4944,9 @@ class TestNotifyServiceHealth:
         try:
             self._register(sock_a, {"id": "uid-1", "email": "a@x"}, app_state)
             self._register(sock_b, {"id": "uid-2", "email": "b@x"}, app_state)
-            sockets.notify_service_health("ws-123", healthy=True)
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await _grant_monitor(app_state, "uid-2", "ws-123")
+            await sockets.notify_service_health("ws-123", healthy=True)
         finally:
             sockets.connections.pop(sock_a, None)
             sockets.connections.pop(sock_b, None)
@@ -4843,7 +4962,74 @@ class TestNotifyServiceHealth:
         sock_a.send_json.assert_called_once_with(expected)
         sock_b.send_json.assert_called_once_with(expected)
 
-    def test_sends_unhealthy_with_reason(self, app_state):
+    async def test_non_member_receives_nothing(self, app_state):
+        """#1714: another tenant never sees health frames."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        member = _mock_sock()
+        stranger = _mock_sock()
+        try:
+            self._register(member, {"id": "uid-1", "email": "a@x"}, app_state)
+            self._register(
+                stranger, {"id": "uid-2", "email": "b@x"}, app_state
+            )
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await sockets.notify_service_health(
+                "ws-123", healthy=False, message="boom"
+            )
+        finally:
+            sockets.connections.pop(member, None)
+            sockets.connections.pop(stranger, None)
+        member.send_json.assert_called_once()
+        stranger.send_json.assert_not_called()
+
+    async def test_monitor_without_terminal_receives_frames(self, app_state):
+        """#2783: ``monitor`` alone — without ``terminal`` — is the status
+        gate; a monitoring-only member observes health without being
+        able to open a terminal."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-123")
+            await sockets.notify_service_health("ws-123", healthy=False)
+        finally:
+            sockets.connections.pop(sock, None)
+        msg = sock.send_json.call_args[0][0]
+        assert msg["type"] == "service_health"
+        assert msg["workspace_id"] == "ws-123"
+
+    async def test_terminal_without_monitor_receives_nothing(self, app_state):
+        """The two permissions are distinct: ``terminal`` alone no longer
+        grants status reception (grant ``monitor`` too, or rely on the
+        seeded/migrated pairing)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        sock = _mock_sock()
+        try:
+            self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
+            await app_state.state.model.init_db()
+            async with app_state.state.db.transaction() as tx:
+                await tx.execute(
+                    "INSERT OR IGNORE INTO users (id, email, verified)"
+                    " VALUES (?, ?, 1)",
+                    ("uid-1", "uid-1@test.example"),
+                )
+            await app_state.state.model.acl.add_acl_entry(
+                "/workspaces/ws-123",
+                0,
+                model.ACTION_ALLOW,
+                "terminal",
+                model.PRINCIPAL_USER,
+                user_id="uid-1",
+            )
+            await sockets.notify_service_health("ws-123", healthy=False)
+        finally:
+            sockets.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    async def test_sends_unhealthy_with_reason(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         # The failure reason rides along on the broadcast so operators
@@ -4851,7 +5037,8 @@ class TestNotifyServiceHealth:
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            sockets.notify_service_health(
+            await _grant_monitor(app_state, "uid-1", "ws-9")
+            await sockets.notify_service_health(
                 "ws-9", healthy=False, message="curl: connection refused"
             )
         finally:
@@ -4861,18 +5048,18 @@ class TestNotifyServiceHealth:
         assert msg["type"] == "service_health"
         assert msg["health_message"] == "curl: connection refused"
 
-    def test_skips_unauthenticated(self, app_state):
+    async def test_skips_unauthenticated(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         sock = _mock_sock()
         try:
             self._register(sock, {"id": None, "email": ""}, app_state)
-            sockets.notify_service_health("ws-1", healthy=True)
+            await sockets.notify_service_health("ws-1", healthy=True)
         finally:
             sockets.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
-    def test_dead_socket_is_pruned(self, app_state):
+    async def test_dead_member_socket_is_pruned(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         from klangk.wshandler import WS_ERRORS
@@ -4881,7 +5068,8 @@ class TestNotifyServiceHealth:
         sock.send_json = MagicMock(side_effect=WS_ERRORS[0]("dead"))
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            sockets.notify_service_health("ws-1", healthy=True)
+            await _grant_monitor(app_state, "uid-1", "ws-1")
+            await sockets.notify_service_health("ws-1", healthy=True)
             assert sock not in sockets.connections
         finally:
             sockets.connections.pop(sock, None)
@@ -4900,8 +5088,16 @@ class TestServiceHealthSnapshot:
         cs.health_message = message
         return cs
 
-    def test_replays_only_checked_workspaces(self, app_state):
-        """Healthy + unhealthy are sent; unchecked and no-check skipped."""
+    def _register(self, sock, app_state, user_id="uid-1"):
+        conn = _base_conn(
+            user={"id": user_id, "email": "a@x"}, ws=sock, app_state=app_state
+        )
+        app_state.state.sockets.connections[sock] = conn
+        return conn
+
+    async def test_replays_only_checked_member_workspaces(self, app_state):
+        """Healthy + unhealthy are sent; unchecked, no-check, and
+        non-member workspaces are skipped (#1714)."""
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
@@ -4936,10 +5132,21 @@ class TestServiceHealthSnapshot:
                 health_check=None,
                 health_status=None,
             )
-            sockets.send_service_health_snapshot(sock)
+            # another tenant's workspace: checked, but not granted
+            registry.states["ws-foreign"] = self._state(
+                "ws-foreign",
+                registry=registry,
+                health_check="true",
+                health_status="healthy",
+            )
+            self._register(sock, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-healthy")
+            await _grant_monitor(app_state, "uid-1", "ws-sick")
+            await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
             registry.states.update(saved)
+            sockets.connections.pop(sock, None)
 
         frames = [c[0][0] for c in sock.send_json.call_args_list]
         assert len(frames) == 2
@@ -4950,10 +5157,32 @@ class TestServiceHealthSnapshot:
         assert by_ws["ws-sick"]["health_message"] == "conn refused"
         assert "ws-unchecked" not in by_ws
         assert "ws-nocheck" not in by_ws
+        assert "ws-foreign" not in by_ws
         for f in frames:
             assert f["type"] == "service_health"
 
-    def test_targets_only_the_given_socket(self, app_state):
+    async def test_unregistered_socket_gets_nothing(self, app_state):
+        """A socket with no registered connection has no user to scope by."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        saved = dict(registry.states)
+        sock = _mock_sock()
+        try:
+            registry.states.clear()
+            registry.states["ws-1"] = self._state(
+                "ws-1",
+                registry=registry,
+                health_check="true",
+                health_status="healthy",
+            )
+            await sockets.send_service_health_snapshot(sock)
+        finally:
+            registry.states.clear()
+            registry.states.update(saved)
+        sock.send_json.assert_not_called()
+
+    async def test_targets_only_the_given_socket(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
@@ -4968,14 +5197,17 @@ class TestServiceHealthSnapshot:
                 health_check="true",
                 health_status="healthy",
             )
-            sockets.send_service_health_snapshot(sock)
+            self._register(sock, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-1")
+            await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
             registry.states.update(saved)
+            sockets.connections.pop(sock, None)
         sock.send_json.assert_called_once()
         other.send_json.assert_not_called()
 
-    def test_dead_socket_breaks_cleanly(self, app_state):
+    async def test_dead_socket_breaks_cleanly(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
@@ -4998,13 +5230,17 @@ class TestServiceHealthSnapshot:
                 health_check="true",
                 health_status="unhealthy",
             )
+            self._register(sock, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-1")
+            await _grant_monitor(app_state, "uid-1", "ws-2")
             # Must not raise; the dead socket ends the snapshot early.
-            sockets.send_service_health_snapshot(sock)
+            await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
             registry.states.update(saved)
+            sockets.connections.pop(sock, None)
 
-    def test_empty_registry_sends_nothing(self, app_state):
+    async def test_empty_registry_sends_nothing(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
@@ -5012,10 +5248,93 @@ class TestServiceHealthSnapshot:
         sock = _mock_sock()
         try:
             registry.states.clear()
-            sockets.send_service_health_snapshot(sock)
+            self._register(sock, app_state)
+            await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
             registry.states.update(saved)
+            sockets.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    async def test_state_dropped_during_acl_pass_is_not_replayed(
+        self, app_state
+    ):
+        """#1714 review: a container dying while the snapshot's ACL pass is
+        in flight must not be resurrected by a stale running=true frame —
+        its terminal death frame already went to this member."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        saved = dict(registry.states)
+        sock = _mock_sock()
+        real = app_state.state.acl.permissions_for_resources
+
+        async def dying_during_acl(resources, principals, permissions):
+            # The container dies between the candidate snapshot and the
+            # sends: remove_state pops the registry entry.
+            registry.states.pop("ws-1", None)
+            return await real(resources, principals, permissions)
+
+        try:
+            registry.states.clear()
+            registry.states["ws-1"] = self._state(
+                "ws-1",
+                registry=registry,
+                health_check="true",
+                health_status="healthy",
+            )
+            self._register(sock, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-1")
+            with patch.object(
+                app_state.state.acl,
+                "permissions_for_resources",
+                new=dying_during_acl,
+            ):
+                await sockets.send_service_health_snapshot(sock)
+        finally:
+            registry.states.clear()
+            registry.states.update(saved)
+            sockets.connections.pop(sock, None)
+        sock.send_json.assert_not_called()
+
+    async def test_transition_during_acl_pass_is_not_replayed(self, app_state):
+        """#1714 review: a health transition firing mid-snapshot bumps seq;
+        replaying the older status after the newer delta would flip the
+        client backwards, so the stale frame is dropped."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        saved = dict(registry.states)
+        sock = _mock_sock()
+        st = self._state(
+            "ws-1",
+            registry=registry,
+            health_check="true",
+            health_status="healthy",
+        )
+        real = app_state.state.acl.permissions_for_resources
+
+        async def transition_during_acl(resources, principals, permissions):
+            # A transition lands between the candidate snapshot and the
+            # sends: same state object, seq bumped.
+            st.health_seq += 1
+            return await real(resources, principals, permissions)
+
+        try:
+            registry.states.clear()
+            registry.states["ws-1"] = st
+            self._register(sock, app_state)
+            await _grant_monitor(app_state, "uid-1", "ws-1")
+            with patch.object(
+                app_state.state.acl,
+                "permissions_for_resources",
+                new=transition_during_acl,
+            ):
+                await sockets.send_service_health_snapshot(sock)
+        finally:
+            registry.states.clear()
+            registry.states.update(saved)
+            sockets.connections.pop(sock, None)
         sock.send_json.assert_not_called()
 
 
@@ -5074,7 +5393,7 @@ class TestNotifyServiceHealthForwarding:
         app_state.state.sockets.connections[sock] = conn
         return conn
 
-    def test_forwards_death_frame_fields(self, app_state):
+    async def test_forwards_death_frame_fields(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         # A container-death call passes running=False + a seq; the frame
@@ -5082,7 +5401,8 @@ class TestNotifyServiceHealthForwarding:
         sock = _mock_sock()
         try:
             self._register(sock, {"id": "uid-1", "email": "a@x"}, app_state)
-            sockets.notify_service_health(
+            await _grant_monitor(app_state, "uid-1", "ws-9")
+            await sockets.notify_service_health(
                 "ws-9",
                 healthy=False,
                 running=False,
@@ -5110,7 +5430,7 @@ class TestServiceHealthSnapshotFields:
         cs.health_seq = seq
         return cs
 
-    def test_snapshot_frame_carries_live_fields(self, app_state):
+    async def test_snapshot_frame_carries_live_fields(self, app_state):
         app_state = _make_app_state()
         sockets = app_state.state.sockets
         registry = app_state.state.container_registry
@@ -5121,10 +5441,18 @@ class TestServiceHealthSnapshotFields:
             registry.states["ws-1"] = self._state(
                 "ws-1", registry=registry, checked_at=1_700_000_000.0, seq=5
             )
-            sockets.send_service_health_snapshot(sock)
+            conn = _base_conn(
+                user={"id": "uid-1", "email": "a@x"},
+                ws=sock,
+                app_state=app_state,
+            )
+            sockets.connections[sock] = conn
+            await _grant_monitor(app_state, "uid-1", "ws-1")
+            await sockets.send_service_health_snapshot(sock)
         finally:
             registry.states.clear()
             registry.states.update(saved)
+            sockets.connections.pop(sock, None)
         frame = sock.send_json.call_args[0][0]
         # A snapshot is a live-container replay: running=True.
         assert frame["running"] is True
