@@ -79,24 +79,28 @@ async def test_start_disabled_is_noop(tmp_path):
 async def test_start_fallback_when_watcher_missing(tmp_path, caplog):
     app, _ = _app(tmp_path)  # watcher path absent
     led = pl.ProcessLedger(app)
-    await led.start()
+    with caplog.at_level("INFO", logger="klangk.process_ledger"):
+        await led.start()
     assert led.backend == "python-fallback"
     assert led.effective_interval_ms == pytest.approx(50.0)
     assert led.started_at is not None
+    assert "capture running — Python poller" in caplog.text
     await led.stop()
     assert led._task is None
 
 
 @pytest.mark.asyncio
-async def test_start_with_watcher_and_event_flow(tmp_path):
+async def test_start_with_watcher_and_event_flow(tmp_path, caplog):
     wpath = tmp_path / "fakewatcher"
     wpath.write_text(FAKE_WATCHER)
     wpath.chmod(0o755)
     app, rec = _app(tmp_path, watcher=str(wpath))
     led = pl.ProcessLedger(app)
     led.set_root(WS, 100)
-    await led.start()
+    with caplog.at_level("INFO", logger="klangk.process_ledger"):
+        await led.start()
     assert led.backend == "c-watcher"
+    assert "capture running — C watcher pid" in caplog.text
     # push an event through the reader
     proc = led._watcher_proc
     assert proc is not None

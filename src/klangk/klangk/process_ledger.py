@@ -367,9 +367,20 @@ class ProcessLedger:
         self.started_at = time.time()
         if await self._start_watcher():
             self.backend = "c-watcher"
+            logger.info(
+                "process-ledger: capture running — C watcher pid %s, "
+                "target interval %.0f ms",
+                self._watcher_proc.pid,
+                self.interval_target_s * 1000.0,
+            )
         else:
             self.backend = "python-fallback"
             self.effective_interval_ms = self.fallback_interval_s * 1000.0
+            logger.info(
+                "process-ledger: capture running — Python poller, "
+                "effective interval ~%.1fs (degraded)",
+                self.fallback_interval_s,
+            )
         self._task = asyncio.create_task(self._run(), name="process-ledger")
 
     async def stop(self) -> None:
