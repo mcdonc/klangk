@@ -1569,14 +1569,8 @@ class SharedTerminalController:
         """Create a new shared terminal (legacy API — creates a new window
         and marks it shared)."""
 
-        if not self._conn.container_id or not self._conn._user_home:
-            return
-        if not await self._conn._has_perm("share-terminals"):
-            send_error(self._conn.sock, "Permission denied")
-            return
-        name = msg.get("name", "").strip()
-        if not name:
-            send_error(self._conn.sock, "Name required")
+        name = await self._share_terminals_name(msg)
+        if name is None:
             return
         session_name = self._conn.tmux_session_name()
         try:
@@ -1599,6 +1593,99 @@ class SharedTerminalController:
         # Sync with tmux to get proper window_id, then mark the new
         # window as shared.
         self._conn.sync_terminal_windows(windows)
+        self._mark_window_shared(new_id)
+
+    async def _resolve_shared_terminal(self, msg: dict) -> tuple | None:
+        """Validate the delete-shared-terminal request and resolve it to
+        (ws_session, owner_user_id, window_id, window_name); None after
+        sending the refusal. Only the terminal's owner — or the workspace
+        owner — may delete it: the owner_user_id comes from the client and
+        must not be trusted blindly, otherwise any collaborator with the
+        share-terminals permission could close other users' windows."""
+        if not self._conn.container_id:
+            return None
+        if not await self._conn._has_perm("share-terminals"):
+            send_error(self._conn.sock, "Permission denied")
+            return None
+
+        owner_user_id = msg.get("user_id", "").strip()
+        window_id = msg.get("window_id", "").strip()
+        if not owner_user_id or not window_id:
+            send_error(self._conn.sock, "user_id and window_id required")
+            return None
+        if not await self._may_delete_shared_terminal(owner_user_id):
+            return None
+        ws_session = self._conn.app.state.sockets.get_session(
+            self._conn.workspace_id
+        )
+        if not ws_session:
+            return None
+        match = self.find_window(
+            ws_session,
+            owner_user_id,
+            window_id,
+            error_msg="Terminal not found",
+        )
+        if match is None:
+            return None
+        return ws_session, owner_user_id, window_id, match["name"]
+
+    async def _close_shared_window(
+        self, owner_user_id: str, window_id: str
+    ) -> bool:
+        """Close the window (and its joiner sessions); False (after sending
+        the error frame) on failure."""
+        try:
+            await self._conn.app.state.terminal.kill_joiner_sessions(
+                self._conn.container_id,
+                owner_user_id,
+            )
+            await self._conn.app.state.terminal.close_window(
+                self._conn.container_id,
+                owner_user_id,
+                window_id,
+            )
+            return True
+        except Exception as e:
+            logger.exception("Failed to delete shared terminal: %s", e)
+            send_error(self._conn.sock, "Failed to delete shared terminal")
+            return False
+
+    async def _may_delete_shared_terminal(self, owner_user_id: str) -> bool:
+        """The terminal's owner — or the workspace owner — may delete it;
+        sends "Permission denied" when neither."""
+        if owner_user_id == self._conn.user["id"]:
+            return True
+        workspace = (
+            await self._conn.app.state.model.workspaces.get_workspace_by_id(
+                self._conn.workspace_id
+            )
+        )
+        if (
+            workspace is not None
+            and workspace["user_id"] == self._conn.user["id"]
+        ):
+            return True
+        send_error(self._conn.sock, "Permission denied")
+        return False
+
+    async def _share_terminals_name(self, msg: dict) -> str | None:
+        """Guard the create-shared-terminal preconditions; the stripped
+        name, or None after sending the refusal."""
+        if not self._conn.container_id or not self._conn._user_home:
+            return None
+        if not await self._conn._has_perm("share-terminals"):
+            send_error(self._conn.sock, "Permission denied")
+            return None
+        name = msg.get("name", "").strip()
+        if not name:
+            send_error(self._conn.sock, "Name required")
+            return None
+        return name
+
+    def _mark_window_shared(self, new_id) -> None:
+        """Mark the freshly-created window shared (if found) and broadcast
+        the updated shared-terminal list."""
         ws_session = self._conn.app.state.sockets.get_session(
             self._conn.workspace_id
         )
@@ -1616,58 +1703,11 @@ class SharedTerminalController:
         """Delete a shared terminal (legacy API — unshares and closes
         the window)."""
 
-        if not self._conn.container_id:
+        resolved = await self._resolve_shared_terminal(msg)
+        if resolved is None:
             return
-        if not await self._conn._has_perm("share-terminals"):
-            send_error(self._conn.sock, "Permission denied")
-            return
-
-        owner_user_id = msg.get("user_id", "").strip()
-        window_id = msg.get("window_id", "").strip()
-        if not owner_user_id or not window_id:
-            send_error(self._conn.sock, "user_id and window_id required")
-            return
-        # Only the terminal's owner — or the workspace owner — may
-        # delete it. The owner_user_id comes from the client and must
-        # not be trusted blindly, otherwise any collaborator with the
-        # share-terminals permission could close other users' windows.
-        if owner_user_id != self._conn.user["id"]:
-            workspace = await self._conn.app.state.model.workspaces.get_workspace_by_id(
-                self._conn.workspace_id
-            )
-            if (
-                workspace is None
-                or workspace["user_id"] != self._conn.user["id"]
-            ):
-                send_error(self._conn.sock, "Permission denied")
-                return
-        ws_session = self._conn.app.state.sockets.get_session(
-            self._conn.workspace_id
-        )
-        if not ws_session:
-            return
-        match = self.find_window(
-            ws_session,
-            owner_user_id,
-            window_id,
-            error_msg="Terminal not found",
-        )
-        if match is None:
-            return
-        window_name = match["name"]
-        try:
-            await self._conn.app.state.terminal.kill_joiner_sessions(
-                self._conn.container_id,
-                owner_user_id,
-            )
-            await self._conn.app.state.terminal.close_window(
-                self._conn.container_id,
-                owner_user_id,
-                window_id,
-            )
-        except Exception as e:
-            logger.exception("Failed to delete shared terminal: %s", e)
-            send_error(self._conn.sock, "Failed to delete shared terminal")
+        ws_session, owner_user_id, window_id, window_name = resolved
+        if not await self._close_shared_window(owner_user_id, window_id):
             return
         owner_windows = ws_session.terminal_windows.get(owner_user_id, [])
         owner_windows[:] = [

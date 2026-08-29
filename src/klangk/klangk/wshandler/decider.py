@@ -197,6 +197,73 @@ async def _dispatch_decider_message(
         await _handle_unpause(app, safe_ws, workspace, principals)
 
 
+async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
+    """Validate the decider socket's token; refuse + None on failure."""
+    token = websocket.query_params.get("token")
+    if not token:
+        await _refuse(websocket, 4001, "Missing token")
+        return None
+    result = await app.state.auth.get_user_from_token(token)
+    _hs_mark("token")
+    if result is auth.Auth.TOKEN_EXPIRED:
+        await _refuse(websocket, 4002, "Token expired")
+        return None
+    if result is None:
+        await _refuse(websocket, 4001, "Invalid token")
+        return None
+    return result
+
+
+async def _decider_receive_loop(
+    app,
+    registry,
+    safe_ws,
+    workspace,
+    user: dict,
+    decider_id: str,
+    principals,
+) -> None:
+    """Receive + dispatch decider frames until the socket drops or the
+    client falls behind."""
+    while True:
+        # Starlette raises RuntimeError ("WebSocket is not connected...")
+        # on a client disconnect during receive_text(); treat it the same
+        # as WebSocketDisconnect.
+        try:
+            raw = await safe_ws.receive_text()
+        except (WebSocketDisconnect, RuntimeError):
+            break
+        try:
+            msg = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(msg, dict):
+            continue
+        mtype = msg.get("type")
+        try:
+            await _dispatch_decider_message(
+                app,
+                registry,
+                safe_ws,
+                msg,
+                workspace,
+                user["id"],
+                decider_id,
+                principals,
+            )
+        except SlowClientError:
+            # Outbound queue full -- the client can't keep up. Drop it
+            # (matches the main /ws handler's slow-client handling).
+            break
+        except Exception:
+            # A single bad verdict or transient send error must not tear
+            # down the whole connection (and every other in-flight prompt
+            # on it). Log + keep going.
+            logger.exception(
+                "consent decider: error handling %r message", mtype
+            )
+
+
 async def handle_consent_decider(websocket: WebSocket, app) -> None:
     """Register a consent decider for its connection lifetime + act on holds."""
     # #2420: time the pre-accept steps so an intermittent opening-handshake
@@ -210,19 +277,9 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     def _hs_mark(label: str) -> None:
         _hs_marks.append((label, time.monotonic()))
 
-    token = websocket.query_params.get("token")
-    if not token:
-        await _refuse(websocket, 4001, "Missing token")
+    user = await _decider_authenticate(websocket, app, _hs_mark)
+    if user is None:
         return
-    result = await app.state.auth.get_user_from_token(token)
-    _hs_mark("token")
-    if result is auth.Auth.TOKEN_EXPIRED:
-        await _refuse(websocket, 4002, "Token expired")
-        return
-    if result is None:
-        await _refuse(websocket, 4001, "Invalid token")
-        return
-    user = result
     workspace = websocket.query_params.get("workspace")  # None = deploy-wide
 
     refused, principals = await _refuse_invalid_handshake(
@@ -256,43 +313,9 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         rules = await app.state.consent_coordinator.rules_frame(workspace)
         if rules is not None:
             safe_ws.send_json(rules)
-        while True:
-            # Starlette raises RuntimeError ("WebSocket is not connected...")
-            # on a client disconnect during receive_text(); treat it the same
-            # as WebSocketDisconnect.
-            try:
-                raw = await safe_ws.receive_text()
-            except (WebSocketDisconnect, RuntimeError):
-                break
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(msg, dict):
-                continue
-            mtype = msg.get("type")
-            try:
-                await _dispatch_decider_message(
-                    app,
-                    registry,
-                    safe_ws,
-                    msg,
-                    workspace,
-                    user["id"],
-                    decider_id,
-                    principals,
-                )
-            except SlowClientError:
-                # Outbound queue full -- the client can't keep up. Drop it
-                # (matches the main /ws handler's slow-client handling).
-                break
-            except Exception:
-                # A single bad verdict or transient send error must not tear
-                # down the whole connection (and every other in-flight prompt
-                # on it). Log + keep going.
-                logger.exception(
-                    "consent decider: error handling %r message", mtype
-                )
+        await _decider_receive_loop(
+            app, registry, safe_ws, workspace, user, decider_id, principals
+        )
     finally:
         # Connection gone (clean disconnect, error, or crash) -> drop the
         # registration so the workspace reverts to static (#2308).
