@@ -29,7 +29,7 @@ normally — the error is logged loudly (a WARNING with the hook source,
 workspace id, and the exception) so partial effects are visible.
 """
 
-import asyncio
+import inspect
 import copy
 import importlib.util
 import logging
@@ -401,7 +401,7 @@ class Hooks:
                 f" or not callable in {path!r}"
             )
         self.workspace_created_hook = hook
-        self.workspace_created_hook_is_async = asyncio.iscoroutinefunction(
+        self.workspace_created_hook_is_async = inspect.iscoroutinefunction(
             hook
         )
         self.workspace_created_hook_source = raw
