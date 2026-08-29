@@ -246,6 +246,118 @@ def sandbox(
     )
 
 
+async def mark_setup_state(client, workspace_id: str, new_state: str) -> None:
+    """Best-effort setup_state update with a warning on failure (#1033)."""
+    if client is None:
+        return
+    try:
+        await asyncio.to_thread(
+            client.set_setup_state, workspace_id, new_state
+        )
+    except Exception as e:  # pragma: no cover
+        context._err.print(
+            f"[yellow]Warning: could not mark setup_state"
+            f" = {new_state}: {e}[/yellow]"
+        )
+
+
+async def decide_egress_reset(config, client) -> tuple[bool, str | None]:
+    """#2404: choose the post-install egress posture.
+
+    The workspace was created in 'allow' so setup.sh could egress without
+    a decider; now drop to the safe 'interactive' default -- but only when
+    that is safe and meaningful:
+
+      - auto-start workspaces boot unattended (no decider connected),
+        and interactive DENIES egress with no decider, so their service
+        command could never reach its upstream. Leave them in allow.
+      - interactive is fail-closed: start_container refuses to start
+        unfiltered when no network sidecar is configured. So only reset
+        when the server can actually enforce it (netfilter_enabled).
+
+    When neither skip applies, reset egress_mode to interactive and
+    stop the container; egress_mode is applied by the sidecar at
+    container START (not on the live container), so the stop forces the
+    next start -- the user's `klangk shell` -- up in interactive mode.
+    The service command is not fired in that case: it re-fires at the
+    create choke point on that next start. Returns (reset, skipped_reason).
+    """
+    if config.auto_start:
+        return False, "auto-start workspace boots unattended"
+    if client is None:
+        return False, None
+    try:
+        cfg = await asyncio.to_thread(client.config)
+    except Exception as e:  # pragma: no cover
+        cfg = {}
+        context._err.print(
+            "[yellow]Warning: could not read server config"
+            f" ({e}); leaving workspace in allow[/yellow]"
+        )
+    if not cfg.get("netfilter_enabled"):
+        return False, "no network sidecar on this server"
+    return True, None
+
+
+async def reset_egress_and_stop(client, workspace_id: str) -> None:
+    """Drop to the safe interactive default and stop the container.
+
+    egress_mode applies at the next container START (not on the live
+    container), so the stop forces the next `klangk shell` up in
+    consent-gated mode. The service command is NOT fired here -- the
+    container is being stopped, and it re-fires at the create choke
+    point on that next start.
+    """
+    try:
+        await asyncio.to_thread(
+            client.update_workspace,
+            workspace_id,
+            egress_mode="interactive",
+        )
+    except Exception as e:  # pragma: no cover
+        context._err.print(
+            "[yellow]Warning: could not reset egress_mode"
+            f" to interactive: {e}[/yellow]"
+        )
+    try:
+        await asyncio.to_thread(client.stop_workspace_by_id, workspace_id)
+    except Exception as e:  # pragma: no cover
+        context._err.print(
+            f"[yellow]Warning: could not stop container"
+            f" after setup: {e}[/yellow]"
+        )
+    context._err.print(
+        "[dim]Workspace stopped; egress reset to interactive"
+        " for the next start.[/dim]"
+    )
+
+
+async def fire_service_command(ws, config, setup_ok: bool) -> None:
+    """Fire the service command via terminal_start so it's up (#1033:
+    deferred until setup_state is complete, then launched in the
+    dedicated service-cmd tmux window). Skipped on setup failure -- the
+    service command's prerequisites are not met.
+    """
+    if not (config.service_command and setup_ok):
+        return
+    await ws.send(
+        json.dumps({"cmd": "terminal_start", "cols": 80, "rows": 24})
+    )
+    # Wait (bounded) for the terminal to start so the command actually
+    # runs before we disconnect. Other messages are ignored.
+    deadline = asyncio.get_event_loop().time() + 30
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:  # pragma: no cover
+            break
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        except (asyncio.TimeoutError, websockets.ConnectionClosed):
+            break
+        if json.loads(raw).get("type") == "terminal_started":
+            break
+
+
 async def sandbox_setup_only(
     server_spec,
     token,
@@ -285,131 +397,27 @@ async def sandbox_setup_only(
         # re-setup it may be 'complete'/'failed'; either way this is
         # idempotent and ensures a visitor during (re-)setup is blocked
         # from firing the service command prematurely.
-        if client is not None:
-            try:
-                await asyncio.to_thread(
-                    client.set_setup_state, workspace_id, "pending"
-                )
-            except Exception as e:  # pragma: no cover
-                context._err.print(
-                    f"[yellow]Warning: could not mark setup_state"
-                    f" = pending: {e}[/yellow]"
-                )
+        await mark_setup_state(client, workspace_id, "pending")
         exit_code = await sandbox_setup(ws, config, sandbox_root, handle)
 
         # Mark setup_state before anything else (#1033). 'complete'
         # when setup ran and returned 0, or when there was no setup
         # command at all (nothing to fail); 'failed' otherwise.
         setup_ok = exit_code is None or exit_code == 0
-        new_state = "complete" if setup_ok else "failed"
-        if client is not None:
-            try:
-                await asyncio.to_thread(
-                    client.set_setup_state, workspace_id, new_state
-                )
-            except Exception as e:  # pragma: no cover
-                context._err.print(
-                    f"[yellow]Warning: could not mark setup_state"
-                    f" = {new_state}: {e}[/yellow]"
-                )
+        await mark_setup_state(
+            client, workspace_id, "complete" if setup_ok else "failed"
+        )
 
-        # #2404: choose the post-install egress posture. The workspace was
-        # created in 'allow' so setup.sh could egress without a decider; now
-        # drop to the safe 'interactive' default -- but only when that is
-        # safe and meaningful:
-        #   - auto-start workspaces boot unattended (no decider connected),
-        #     and interactive DENIES egress with no decider, so their service
-        #     command could never reach its upstream. Leave them in allow.
-        #   - interactive is fail-closed: start_container refuses to start
-        #     unfiltered when no network sidecar is configured. So only reset
-        #     when the server can actually enforce it (netfilter_enabled).
-        # When neither skip applies, reset egress_mode to interactive and
-        # stop the container. egress_mode is applied by the sidecar at
-        # container START (not on the live container), so the stop forces the
-        # next start -- the user's `klangk shell` -- up in interactive mode.
-        # The service command is not fired here: it re-fires at the create
-        # choke point on that next start.
-        reset_to_interactive = False
-        skipped_reason = None
-        if config.auto_start:
-            skipped_reason = "auto-start workspace boots unattended"
-        elif client is not None:
-            try:
-                cfg = await asyncio.to_thread(client.config)
-            except Exception as e:  # pragma: no cover
-                cfg = {}
-                context._err.print(
-                    "[yellow]Warning: could not read server config"
-                    f" ({e}); leaving workspace in allow[/yellow]"
-                )
-            if not cfg.get("netfilter_enabled"):
-                skipped_reason = "no network sidecar on this server"
-            else:
-                reset_to_interactive = True
-
+        reset_to_interactive, skipped_reason = await decide_egress_reset(
+            config, client
+        )
         if reset_to_interactive and client is not None:
-            # Drop to the safe interactive default and stop the container.
-            # egress_mode applies at the next container START (not on the
-            # live container), so the stop forces the next `klangk shell`
-            # up in consent-gated mode. The service command is NOT fired
-            # here -- the container is being stopped, and it re-fires at
-            # the create choke point on that next start.
-            try:
-                await asyncio.to_thread(
-                    client.update_workspace,
-                    workspace_id,
-                    egress_mode="interactive",
-                )
-            except Exception as e:  # pragma: no cover
-                context._err.print(
-                    "[yellow]Warning: could not reset egress_mode"
-                    f" to interactive: {e}[/yellow]"
-                )
-            try:
-                await asyncio.to_thread(
-                    client.stop_workspace_by_id, workspace_id
-                )
-            except Exception as e:  # pragma: no cover
-                context._err.print(
-                    "[yellow]Warning: could not stop container"
-                    f" after setup: {e}[/yellow]"
-                )
-            context._err.print(
-                "[dim]Workspace stopped; egress reset to interactive"
-                " for the next start.[/dim]"
-            )
+            await reset_egress_and_stop(client, workspace_id)
         else:
             # Stay in allow (auto-start, no sidecar, or no client to
             # decide). The container keeps running, so fire the service
-            # command now so it's up (#1033: deferred until setup_state is
-            # complete, then launched via terminal_start in the dedicated
-            # service-cmd tmux window). Skipped on setup failure -- the
-            # service command's prerequisites are not met.
-            if config.service_command and setup_ok:
-                await ws.send(
-                    json.dumps(
-                        {"cmd": "terminal_start", "cols": 80, "rows": 24}
-                    )
-                )
-                # Wait (bounded) for the terminal to start so the command
-                # actually runs before we disconnect. Other messages are
-                # ignored.
-                deadline = asyncio.get_event_loop().time() + 30
-                while True:
-                    remaining = deadline - asyncio.get_event_loop().time()
-                    if remaining <= 0:  # pragma: no cover
-                        break
-                    try:
-                        raw = await asyncio.wait_for(
-                            ws.recv(), timeout=remaining
-                        )
-                    except (
-                        asyncio.TimeoutError,
-                        websockets.ConnectionClosed,
-                    ):
-                        break
-                    if json.loads(raw).get("type") == "terminal_started":
-                        break
+            # command now so it's up.
+            await fire_service_command(ws, config, setup_ok)
             if client is not None:
                 context._err.print(
                     "[dim]Workspace left in allow mode"

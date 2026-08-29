@@ -67,21 +67,11 @@ def logout(
     do_logout(resolved_url)
 
 
-@context.app.command()
-def status(
-    plain: bool = typer.Option(False, "--plain", help="Plain text output"),
-) -> None:
-    """Show connection info (server, user, admin status)."""
-    # status works even with no active server (unlike other commands).
-    url = context._server_override or context._state().active_server
-    state = context._state()
-    token = state.get_token(url) if url else None
-    email = state.get_email(url) if url else None
-    user_id = decode_token_claims(token).get("sub") if token else None
-    # Admin status comes from /my-permissions (the canonical source the
-    # frontend uses for isAdmin). Best-effort: if the probe fails (offline,
-    # token expired, old server without /admin in the static set) status
-    # still reports everything else rather than erroring out.
+def admin_status(token: str | None) -> bool | None:
+    """Admin status from /my-permissions (the canonical source the
+    frontend uses for isAdmin). Best-effort: if the probe fails (offline,
+    token expired, old server without /admin in the static set) status
+    still reports everything else rather than erroring out."""
     is_admin: bool | None = None
     if token:
         try:
@@ -93,17 +83,22 @@ def status(
                 is_admin = "*" in perms.get("/admin", [])
         except Exception:
             is_admin = None
-    if plain:
-        print(f"server={url or '(none)'}")
-        if token:
-            print(f"user={email or 'unknown'}")
-            print(f"user_id={user_id or 'unknown'}")
-            print("status=logged_in")
-            if is_admin is not None:
-                print(f"admin={'yes' if is_admin else 'no'}")
-        else:
-            print("status=not_logged_in")
-        return
+    return is_admin
+
+
+def print_status_plain(url, token, email, user_id, is_admin) -> None:
+    print(f"server={url or '(none)'}")
+    if token:
+        print(f"user={email or 'unknown'}")
+        print(f"user_id={user_id or 'unknown'}")
+        print("status=logged_in")
+        if is_admin is not None:
+            print(f"admin={'yes' if is_admin else 'no'}")
+    else:
+        print("status=not_logged_in")
+
+
+def print_status_table(url, token, email, user_id, is_admin) -> None:
     console = Console()
     table = Table(show_header=False, box=None, pad_edge=False)
     table.add_column(style="bold")
@@ -120,6 +115,24 @@ def status(
     else:
         table.add_row("Status", "[yellow]not logged in[/yellow]")
     console.print(table)
+
+
+@context.app.command()
+def status(
+    plain: bool = typer.Option(False, "--plain", help="Plain text output"),
+) -> None:
+    """Show connection info (server, user, admin status)."""
+    # status works even with no active server (unlike other commands).
+    url = context._server_override or context._state().active_server
+    state = context._state()
+    token = state.get_token(url) if url else None
+    email = state.get_email(url) if url else None
+    user_id = decode_token_claims(token).get("sub") if token else None
+    is_admin = admin_status(token)
+    if plain:
+        print_status_plain(url, token, email, user_id, is_admin)
+        return
+    print_status_table(url, token, email, user_id, is_admin)
 
 
 # ---------------------------------------------------------------------
