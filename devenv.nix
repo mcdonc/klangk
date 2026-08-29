@@ -294,7 +294,10 @@ in
   # *remote* mode against the VM, which has its own policy, so leave this empty
   # there.
   env.CONTAINERS_SIGNATURE_POLICY = lib.mkOverride 1500 (
-    if pkgs.stdenv.hostPlatform.isDarwin then "" else config.devenv.state + "/klangk/podman/policy.json"
+    if pkgs.stdenv.hostPlatform.isDarwin then
+      ""
+    else
+      config.devenv.state + "/klangk/podman/policy.json"
   );
   # Same story for registries.conf (#286): rootless podman from nix ships
   # none, so any build whose Dockerfile uses a short image name (alpine:3.21,
@@ -602,12 +605,15 @@ in
     # or better (complexity <= 20); module/average gates are off (rank F)
     # because they flap when only a few files are staged. The F/E/D-ranked
     # legacy blocks were refactored down (#2800-#2803, #2808-#2814), so the
-    # excludes are gone — every production .py file is checked.
+    # excludes are gone — every production .py file is checked (klangkd +
+    # CLI under src/klangk/klangk/, the network sidecar under
+    # src/klangksidecar/klangksidecar/ — already C-clean when gated — and
+    # scripts/).
     xenon = {
       enable = true;
       name = "xenon";
       entry = "${pkgs.xenon}/bin/xenon --max-absolute C --max-modules F --max-average F";
-      files = "^src/klangk/klangk/.*\\.py$|^scripts/.*\\.py$";
+      files = "^src/klangk/klangk/.*\\.py$|^src/klangksidecar/klangksidecar/.*\\.py$|^scripts/.*\\.py$";
       language = "system";
       pass_filenames = true;
     };
