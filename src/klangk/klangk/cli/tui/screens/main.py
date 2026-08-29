@@ -1282,6 +1282,58 @@ class MainScreen(StatusScreen):
         waiter.cancel()
         return False
 
+    def _status_loop_creds(self) -> tuple[str, str] | None:
+        """The freshest (url, token) for the next dial, or None when either
+        is gone (session expired) or the screen was popped (logout / server
+        switch — stop reconnecting)."""
+        state = self.app.tui_state
+        url = state.current_url()
+        token = state.token()
+        if not url or not token:
+            self.app.session_expired()
+            return None
+        if self not in self.app.screen_stack:
+            return None
+        return url, token
+
+    async def _run_status_listener(self, url: str, token: str) -> str:
+        """Spawn one status-WS listener and await its end. Returns
+        "switched" (a server switch dropped it — re-dial immediately,
+        #2704), "expired" (auth failure — session expired), or "closed"
+        (connection over: clean close or error)."""
+        listener = asyncio.create_task(
+            listen_for_status(
+                url,
+                token,
+                on_event=self._on_status_event,
+                on_connect=self._on_ws_connected,
+            )
+        )
+        try:
+            if await self._wait_drop_or(listener):
+                # Server switch: the old connection is torn down
+                # (#2704). Re-dial against the new server on the next
+                # iteration — this is not an outage, so no attempt
+                # accounting, no overlay, no backoff.
+                self._ws_connected = False
+                return "switched"
+            exc = listener.exception()
+            if isinstance(exc, AuthError):
+                self.app.session_expired()
+                return "expired"
+            if exc is not None:
+                logger.debug(
+                    "Status WS error (attempt %d): %s",
+                    self._reconnect_attempt + 1,
+                    exc,
+                )
+            return "closed"
+        finally:
+            # Loop cancelled outright (app shutdown) with the listener
+            # still running: don't leave the WS dangling.
+            if not listener.done():
+                listener.cancel()
+
     async def _status_loop(self) -> None:
         """Single reachability signal: maintain the status WS and drive the
         unreachable overlay from its lifecycle (#2052).
@@ -1308,88 +1360,74 @@ class MainScreen(StatusScreen):
             # auth rejection, 25 reconnect attempts, and a false "server
             # down" overlay while REST on the new server worked fine
             # (#2029 audit).
-            url = state.current_url()
-            token = state.token()
-            if not url or not token:
-                self.app.session_expired()
+            creds = self._status_loop_creds()
+            if creds is None:
                 return
-            # Screen popped (logout / server switch) — stop reconnecting.
-            if self not in self.app.screen_stack:
-                return
+            url, token = creds
             # Consume any drop request still set from a previous iteration
             # *after* the URL/token re-read above: a stale drop's only
             # purpose was interruption, and the freshest config was just
             # captured, so clearing it here keeps the new connection from
             # being torn down the instant it is made.
             self._ws_drop.clear()
-            listener = asyncio.create_task(
-                listen_for_status(
-                    url,
-                    token,
-                    on_event=self._on_status_event,
-                    on_connect=self._on_ws_connected,
-                )
-            )
-            try:
-                if await self._wait_drop_or(listener):
-                    # Server switch: the old connection is torn down
-                    # (#2704). Re-dial against the new server on the next
-                    # iteration — this is not an outage, so no attempt
-                    # accounting, no overlay, no backoff.
-                    self._ws_connected = False
-                    continue
-                exc = listener.exception()
-                if isinstance(exc, AuthError):
-                    self.app.session_expired()
-                    return
-                if exc is not None:
-                    logger.debug(
-                        "Status WS error (attempt %d): %s",
-                        self._reconnect_attempt + 1,
-                        exc,
-                    )
-            finally:
-                # Loop cancelled outright (app shutdown) with the listener
-                # still running: don't leave the WS dangling.
-                if not listener.done():
-                    listener.cancel()
+            outcome = await self._run_status_listener(url, token)
+            if outcome == "switched":
+                continue
+            if outcome == "expired":
+                return
             # The connection is over (clean close or error) — the backend is
             # no longer WS-reachable from this screen's point of view.
             self._ws_connected = False
             # Connection lost (clean close or error). Reconnect with bounded
             # backoff; the top-of-iteration guard catches a screen pop that
             # lands during the backoff sleep.
-            if self not in self.app.screen_stack:
-                return
-            self._reconnect_attempt += 1
-            if self._reconnect_attempt > _MAX_RECONNECT_ATTEMPTS:
-                self._gave_up = True
-                self._server_unreachable = False
-                self._render_unreachable(
-                    "(server down — switch server or restart to reconnect)"
-                )
-                self.app.live_extra = "server: down (gave up reconnecting)"
-                self._refresh_status()
-                self.app.set_server_down(
-                    self._down_overlay_message(gave_up=True)
-                )
-                return
-            delay = _reconnect_backoff(self._reconnect_attempt)
-            if self._reconnect_attempt == 1:
-                # Grace: a transient drop / clean close (server restart, idle
-                # timeout) gets one silent quick retry before the overlay
-                # appears, so a healthy restart doesn't flash "server down".
-                self.app.live_extra = "status: reconnecting…"
-                self._refresh_status()
-            else:
-                self._enter_unreachable()
-                self._refresh_unreachable_display()
-            if await self._wait_drop_or(
-                asyncio.create_task(_reconnect_sleep(delay))
-            ):
+            delay_outcome = await self._wait_reconnect_delay()
+            if delay_outcome == "switched":
                 # Switch during the backoff sleep: skip the rest of the
                 # delay and re-dial the new server now (#2704).
                 continue
+            if delay_outcome == "exit":
+                return
+
+    async def _wait_reconnect_delay(self) -> str:
+        """Account the reconnect attempt, render the retry/gave-up state,
+        and sleep the backoff delay. Returns "switched" (a server switch
+        dropped the sleep — re-dial the new server now, #2704), "exit"
+        (gave up or the screen was popped), or "elapsed" (retry)."""
+        # Screen popped (logout / server switch) — stop reconnecting.
+        if self not in self.app.screen_stack:
+            return "exit"
+        self._reconnect_attempt += 1
+        if self._reconnect_attempt > _MAX_RECONNECT_ATTEMPTS:
+            self._give_up_reconnect()
+            return "exit"
+        delay = _reconnect_backoff(self._reconnect_attempt)
+        if self._reconnect_attempt == 1:
+            # Grace: a transient drop / clean close (server restart, idle
+            # timeout) gets one silent quick retry before the overlay
+            # appears, so a healthy restart doesn't flash "server down".
+            self.app.live_extra = "status: reconnecting…"
+            self._refresh_status()
+        else:
+            self._enter_unreachable()
+            self._refresh_unreachable_display()
+        if await self._wait_drop_or(
+            asyncio.create_task(_reconnect_sleep(delay))
+        ):
+            return "switched"
+        return "elapsed"
+
+    def _give_up_reconnect(self) -> None:
+        """The reconnect cap was hit: render the gave-up state and tell the
+        app the server is down."""
+        self._gave_up = True
+        self._server_unreachable = False
+        self._render_unreachable(
+            "(server down — switch server or restart to reconnect)"
+        )
+        self.app.live_extra = "server: down (gave up reconnecting)"
+        self._refresh_status()
+        self.app.set_server_down(self._down_overlay_message(gave_up=True))
 
     def _on_ws_connected(self) -> None:
         """The status WS (re)connected — the backend is reachable again.
@@ -1410,17 +1448,17 @@ class MainScreen(StatusScreen):
         if result in ("expired", "no_token"):
             self.app.session_expired()
 
-    def _on_status_event(self, event: dict) -> None:
-        etype = event.get("type", "event")
-        # #2527: host lifecycle notices become a human-readable status
-        # line; notification only — the reconnect loop (silent first retry,
-        # backoff, unreachable overlay) is untouched, so a restart/shutdown
-        # never visually impedes reconnection.
+    def _apply_server_lifecycle_event(self, etype: str, event: dict) -> bool:
+        """#2527/#2661: host lifecycle notices become a human-readable
+        status line; notification only — the reconnect loop (silent first
+        retry, backoff, unreachable overlay) is untouched, so a
+        restart/shutdown never visually impedes reconnection. Returns True
+        when the event was consumed."""
         if etype == "host_shutdown":
             self.app.live_extra = "server: shutting down"
             self._refresh_status()
             self.app.notify("Server is shutting down", severity="warning")
-            return
+            return True
         if etype == "server_recycle":
             phase = str(event.get("phase") or "")
             word = {
@@ -1430,28 +1468,14 @@ class MainScreen(StatusScreen):
             self.app.live_extra = f"server: {word}"
             self._refresh_status()
             self.app.notify(f"Server is {word}")
-            return
+            return True
         if etype == "host_started":
             self.app.live_extra = "server: back up"
             self._refresh_status()
-            return
+            return True
         if etype == "server_schedule":
-            # #2661: pending server stop/recycle — show the next one as
-            # a status line with fire time + remaining. The countdown text
-            # is refreshed by the scheduler's periodic snapshot (every
-            # ~30s); precise-enough ticking without a local timer.
-            schedules = event.get("schedules") or []
-            if not schedules:
-                if self.app.live_extra and self.app.live_extra.startswith(
-                    "server:"
-                ):
-                    self.app.live_extra = ""
-                    self._refresh_status()
-                return
-            next_up = schedules[0]
-            self.app.live_extra = _server_schedule_line(next_up)
-            self._refresh_status()
-            return
+            self._apply_server_schedule_event(event)
+            return True
         if etype == "server_schedule_fired":
             action = str(event.get("action") or "action")
             self.app.live_extra = f"server: scheduled {action} running"
@@ -1460,6 +1484,29 @@ class MainScreen(StatusScreen):
                 f"Scheduled server {action} is happening now",
                 severity="warning",
             )
+            return True
+        return False
+
+    def _apply_server_schedule_event(self, event: dict) -> None:
+        """#2661: pending server stop/recycle — show the next one as
+        a status line with fire time + remaining. The countdown text
+        is refreshed by the scheduler's periodic snapshot (every
+        ~30s); precise-enough ticking without a local timer."""
+        schedules = event.get("schedules") or []
+        if not schedules:
+            if self.app.live_extra and self.app.live_extra.startswith(
+                "server:"
+            ):
+                self.app.live_extra = ""
+                self._refresh_status()
+            return
+        next_up = schedules[0]
+        self.app.live_extra = _server_schedule_line(next_up)
+        self._refresh_status()
+
+    def _on_status_event(self, event: dict) -> None:
+        etype = event.get("type", "event")
+        if self._apply_server_lifecycle_event(etype, event):
             return
         # #2690: silent types keep the current segment (a pending #2661
         # countdown survives routine container_status traffic); only
