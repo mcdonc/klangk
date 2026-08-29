@@ -24,10 +24,21 @@ import tempfile
 import time
 from collections.abc import AsyncGenerator
 
-from .container.spec import SHARED_HOME
 from .util import BoundedOutputQueue
 
 logger = logging.getLogger(__name__)
+
+# The shared-home path inside workspace containers. Defined here — the
+# lowest-level module that needs it (the ``work_dir`` default below) —
+# because ``podman`` sits *below* the ``container`` package and must not
+# import from it (that drags ``container/__init__`` in while this module
+# is still initializing: the podman↔container.sidecar/registry import
+# cycle). ``container.spec`` re-exports both so the workspaces /
+# wshandler / health import sites keep working; the agent identity's
+# handle is fixed to this name (#2718, immutable), one source of truth
+# for the shared-layout home and the agent/service-session home (#2720).
+SHARED_HOME_NAME = "klangk"
+SHARED_HOME = f"/home/{SHARED_HOME_NAME}"
 
 
 def subprocess_env() -> dict[str, str]:
@@ -263,6 +274,106 @@ class Podman:
         rc, out, _err = await self.run(["logs", container_id], check=False)
         return out if rc == 0 else ""
 
+    @staticmethod
+    def _create_base_args(
+        name: str,
+        pull: str,
+        replace: bool,
+        init: bool,
+        interactive: bool,
+        userns: str | None,
+    ) -> list[str]:
+        """``create`` subcommand + name/pull/mode/userns flags."""
+        args = ["create", f"--pull={pull}", "--name", name]
+        if replace:
+            args.append("--replace")
+        if init:
+            args.append("--init")
+        if interactive:
+            args.append("-i")
+        if userns:
+            args += ["--userns", userns]
+        return args
+
+    @staticmethod
+    def _create_capability_args(
+        cap_drop: list[str] | None, cap_add: list[str] | None
+    ) -> list[str]:
+        """One ``--cap-drop`` / ``--cap-add`` flag per entry."""
+        args: list[str] = []
+        for cap in cap_drop or []:
+            args += ["--cap-drop", cap]
+        for cap in cap_add or []:
+            args += ["--cap-add", cap]
+        return args
+
+    @staticmethod
+    def _create_resource_args(
+        cpus: float | None, memory: str | None, pids_limit: int | None
+    ) -> list[str]:
+        """Deploy-wide resource caps (#34) — each flag only when non-None,
+        so an unset limit = no flag = no behavior change."""
+        args: list[str] = []
+        if cpus is not None:
+            args += ["--cpus", str(cpus)]
+        if memory is not None:
+            args += ["--memory", memory]
+        if pids_limit is not None:
+            args += ["--pids-limit", str(pids_limit)]
+        return args
+
+    @staticmethod
+    def _create_label_args(
+        labels: dict[str, str] | None, annotations: dict[str, str] | None
+    ) -> list[str]:
+        """``--label`` / ``--annotation`` flags (per-workspace OCI-hook
+        annotations, #1770)."""
+        args: list[str] = []
+        for key, value in (labels or {}).items():
+            args += ["--label", f"{key}={value}"]
+        for key, value in (annotations or {}).items():
+            args += ["--annotation", f"{key}={value}"]
+        return args
+
+    @staticmethod
+    def _create_storage_args(
+        binds: list[str] | None,
+        tmpfs: dict[str, str] | None,
+        publish: list[tuple[int, int] | tuple[str, int, int]] | None,
+    ) -> list[str]:
+        """Volume / tmpfs / port-publish flags (``publish`` entries are
+        ``(host_port, container_port)`` or ``(bind_addr, host_port,
+        container_port)``)."""
+        args: list[str] = []
+        for bind in binds or []:
+            args += ["-v", bind]
+        for path, opts in (tmpfs or {}).items():
+            args += ["--tmpfs", f"{path}:{opts}"]
+        for entry in publish or []:
+            if len(entry) == 3:
+                bind, host_port, container_port = entry
+                args += ["-p", f"{bind}:{host_port}:{container_port}"]
+            else:
+                host_port, container_port = entry
+                args += ["-p", f"{host_port}:{container_port}"]
+        return args
+
+    @staticmethod
+    def _create_dns_args(
+        add_hosts: list[str] | None,
+        dns: list[str] | None,
+        dns_search: list[str] | None,
+    ) -> list[str]:
+        """Hosts-file / DNS server / DNS search flags."""
+        args: list[str] = []
+        for host in add_hosts or []:
+            args += ["--add-host", host]
+        for server in dns or []:
+            args += ["--dns", server]
+        for domain in dns_search or []:
+            args += ["--dns-search", domain]
+        return args
+
     async def create_container(
         self,
         name: str,
@@ -324,48 +435,16 @@ class Podman:
         args: list[str] = []
         for d in hooks_dir or []:
             args += ["--hooks-dir", d]
-        args += ["create", f"--pull={pull}", "--name", name]
-        if replace:
-            args.append("--replace")
-        if init:
-            args.append("--init")
-        if interactive:
-            args.append("-i")
-        if userns:
-            args += ["--userns", userns]
-        for cap in cap_drop or []:
-            args += ["--cap-drop", cap]
-        for cap in cap_add or []:
-            args += ["--cap-add", cap]
-        if cpus is not None:
-            args += ["--cpus", str(cpus)]
-        if memory is not None:
-            args += ["--memory", memory]
-        if pids_limit is not None:
-            args += ["--pids-limit", str(pids_limit)]
+        args += self._create_base_args(
+            name, pull, replace, init, interactive, userns
+        )
+        args += self._create_capability_args(cap_drop, cap_add)
+        args += self._create_resource_args(cpus, memory, pids_limit)
         if network:
             args += ["--network", network]
-        for key, value in (labels or {}).items():
-            args += ["--label", f"{key}={value}"]
-        for key, value in (annotations or {}).items():
-            args += ["--annotation", f"{key}={value}"]
-        for bind in binds or []:
-            args += ["-v", bind]
-        for path, opts in (tmpfs or {}).items():
-            args += ["--tmpfs", f"{path}:{opts}"]
-        for entry in publish or []:
-            if len(entry) == 3:
-                bind, host_port, container_port = entry
-                args += ["-p", f"{bind}:{host_port}:{container_port}"]
-            else:
-                host_port, container_port = entry
-                args += ["-p", f"{host_port}:{container_port}"]
-        for host in add_hosts or []:
-            args += ["--add-host", host]
-        for server in dns or []:
-            args += ["--dns", server]
-        for domain in dns_search or []:
-            args += ["--dns-search", domain]
+        args += self._create_label_args(labels, annotations)
+        args += self._create_storage_args(binds, tmpfs, publish)
+        args += self._create_dns_args(add_hosts, dns, dns_search)
         for entry in env or []:
             args += ["-e", entry]
         args.append(image)

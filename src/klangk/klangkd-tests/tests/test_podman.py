@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import subprocess
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -64,6 +66,28 @@ def _exec(*results):
 def _args(mock_exec, call_index=0):
     """The podman args (sans binary) from the Nth create_subprocess_exec."""
     return list(mock_exec.call_args_list[call_index].args[1:])
+
+
+# --- import order (podman ↔ container cycle) ---
+
+
+@pytest.mark.parametrize(
+    "stmt",
+    [
+        "from klangk import podman",
+        "import klangk.container",
+        "from klangk.container.sidecar import NetworkSidecarMixin",
+        "from klangk.container.registry import ContainerRegistry",
+    ],
+)
+def test_importable_first_in_fresh_interpreter(stmt):
+    # Regression: importing ``klangk.podman`` first used to raise
+    # AttributeError/ImportError — podman.py imported
+    # ``container.spec`` for SHARED_HOME, which executes
+    # ``container/__init__`` while ``klangk.podman`` is still partially
+    # initialized, and registry/sidecar import names from it. Each import
+    # order must succeed standalone (#2794).
+    subprocess.run([sys.executable, "-c", stmt], check=True)
 
 
 # --- classify ---
@@ -266,6 +290,85 @@ class TestCreateContainer:
         ]
         assert ["-e", "K=V"] == args[args.index("-e") : args.index("-e") + 2]
         assert args[-1] == "img"
+
+    async def test_full_argv_order(self):
+        # Exact ordered argv with every option set — guards the flag-group
+        # order through refactors of the assembly code (#2794).
+        with patch(EXEC, _exec(("id\n", "", 0))) as m:
+            await _p.create_container(
+                "n",
+                "img",
+                hooks_dir=["/hk1", "/hk2"],
+                labels={"a": "1"},
+                annotations={"klangk.x": "v"},
+                binds=["/h:/c"],
+                tmpfs={"/tmp": "rw,size=2g"},
+                publish=[("127.0.0.1", 4000, 4000), (9000, 8000)],
+                add_hosts=["h:host-gateway"],
+                dns=["8.8.8.8"],
+                dns_search=["corp.example"],
+                env=["K=V"],
+                init=True,
+                interactive=True,
+                userns="keep-id",
+                cap_drop=["NET_RAW"],
+                cap_add=["NET_ADMIN"],
+                cpus=2.0,
+                memory="512m",
+                pids_limit=512,
+                command=["--config", "/app/config.yaml"],
+                network="container:abc",
+            )
+        assert _args(m) == [
+            "--hooks-dir",
+            "/hk1",
+            "--hooks-dir",
+            "/hk2",
+            "create",
+            "--pull=never",
+            "--name",
+            "n",
+            "--replace",
+            "--init",
+            "-i",
+            "--userns",
+            "keep-id",
+            "--cap-drop",
+            "NET_RAW",
+            "--cap-add",
+            "NET_ADMIN",
+            "--cpus",
+            "2.0",
+            "--memory",
+            "512m",
+            "--pids-limit",
+            "512",
+            "--network",
+            "container:abc",
+            "--label",
+            "a=1",
+            "--annotation",
+            "klangk.x=v",
+            "-v",
+            "/h:/c",
+            "--tmpfs",
+            "/tmp:rw,size=2g",
+            "-p",
+            "127.0.0.1:4000:4000",
+            "-p",
+            "9000:8000",
+            "--add-host",
+            "h:host-gateway",
+            "--dns",
+            "8.8.8.8",
+            "--dns-search",
+            "corp.example",
+            "-e",
+            "K=V",
+            "img",
+            "--config",
+            "/app/config.yaml",
+        ]
 
     async def test_publish_with_bind_address(self):
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
