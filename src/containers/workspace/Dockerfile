@@ -1,9 +1,29 @@
-ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base:2026.08.26-6fbab1f
+# Base image is pinned by IMMUTABLE DIGEST (#2063): a mutable tag lets the
+# registry serve different content for the same reference. The reference is
+# the multi-arch manifest (amd64 + arm64); build-workspace-image.sh selects
+# the platform via --platform. Bumped automatically by the auto-PR opened by
+# .github/workflows/image-workspace-base.yml after each base-image build
+# (the PR rewrites this line with the new repo@digest reference).
+ARG WORKSPACE_BASE_IMAGE=ghcr.io/mcdonc/klangk/klangk-workspace-base@sha256:1f05ee5e8579507c710ab2b9e7c27536ce008cff12644f2329b9a97a9d94dc02
 FROM $WORKSPACE_BASE_IMAGE
 
-# Install Pi coding agent globally. This layer is expensive (~30s) and
+# Install Pi coding agent globally. The tarball is fetched directly from the
+# npm registry and its SHA-512 verified against a pin before install (#2063):
+# `npm install pkg@version` alone accepts whatever the registry serves for
+# the version, with no pinned integrity. This layer is expensive (~30s) and
 # rarely changes, so it goes first.
-RUN npm install -g @earendil-works/pi-coding-agent@0.83.0 \
+#
+# Bump: set PI_AGENT_VERSION, then refresh PI_AGENT_SHA512 from the
+# registry's own integrity record:
+#   npm view @earendil-works/pi-coding-agent@<version> dist.integrity
+# (base64 sha512 -> hex), or sha512sum of the fetched tarball.
+ARG PI_AGENT_VERSION=0.83.0
+ARG PI_AGENT_SHA512=b98845f85b19c68828497fc0c4171476263e66496e6f0697c80a04180d9e430b077321008546082a1fd62d77bf6bcfa4f1e4c29b16fe64dd99a3d9b342dcdb5b
+RUN curl -fsSL -o /tmp/pi-agent.tgz \
+      "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-${PI_AGENT_VERSION}.tgz" \
+    && echo "${PI_AGENT_SHA512}  /tmp/pi-agent.tgz" | sha512sum -c - \
+    && npm install -g /tmp/pi-agent.tgz \
+    && rm -f /tmp/pi-agent.tgz \
     && mkdir -p /opt/klangk/pi-agent/extensions /opt/klangk/pi-agent/skills
 
 # Copy full feature repos and symlink discoverable pieces into central dirs.
@@ -32,19 +52,55 @@ RUN mkdir -p /opt/klangk/bin /opt/klangk/pi-agent/extensions \
        done
 COPY builtin-extensions/ /opt/klangk/pi-agent/extensions/
 
-# Install uv (fast Python package manager)
-RUN curl -LsSf https://astral.sh/uv/0.11.23/install.sh | sh \
-    && mv /root/.local/bin/uv /usr/local/bin/uv \
-    && mv /root/.local/bin/uvx /usr/local/bin/uvx
+# Install uv (fast Python package manager). The GitHub release tarball is
+# fetched directly and its SHA-256 verified per architecture before
+# extraction (#2063) — no piped installer script: `curl | sh` executes
+# whatever the URL serves, and the uv binary the installer then fetched was
+# equally unverified.
+#
+# Bump: set UV_VERSION, then refresh both pins with sha256sum of each arch
+# tarball (or the .sha256 sidecar files published alongside the release).
+ARG UV_VERSION=0.11.23
+ARG UV_SHA256_AMD64=e12c4cda2fe8c305510a78380a88f2c32a27e90cdcd123cefd2873388f0ebb5f
+ARG UV_SHA256_ARM64=1873a77350f6621279ae1a0d2227f2bd8b67131598f14a7eb0ba2215d3da2c98
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) target=x86_64-unknown-linux-gnu; sha="$UV_SHA256_AMD64" ;; \
+      arm64) target=aarch64-unknown-linux-gnu; sha="$UV_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for uv: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/uv.tar.gz \
+      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.tar.gz"; \
+    echo "${sha}  /tmp/uv.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/uv.tar.gz -C /tmp "uv-${target}"; \
+    install -m 0755 "/tmp/uv-${target}/uv" /usr/local/bin/uv; \
+    install -m 0755 "/tmp/uv-${target}/uvx" /usr/local/bin/uvx; \
+    rm -rf /tmp/uv.tar.gz "/tmp/uv-${target}"; \
+    uv --version && uvx --version
 
 # Install process-compose supervisor (standalone Go binary, arch-aware).
 # Extracts the single binary from the release tarball into /usr/local/bin
-# so it is on PATH for all login and non-login shells.
+# so it is on PATH for all login and non-login shells. The tarball's
+# SHA-256 is verified against a pin before extraction (#2063).
+#
+# Bump: set PROCESS_COMPOSE_VERSION, then refresh both pins with sha256sum
+# of each arch tarball.
 ARG PROCESS_COMPOSE_VERSION=1.120.0
-RUN ARCH="$(dpkg --print-architecture)" \
-    && curl -fsSL "https://github.com/F1bonacc1/process-compose/releases/download/v${PROCESS_COMPOSE_VERSION}/process-compose_linux_${ARCH}.tar.gz" \
-       | tar -xz -C /usr/local/bin process-compose \
-    && chmod +x /usr/local/bin/process-compose
+ARG PROCESS_COMPOSE_SHA256_AMD64=3792e1ed9f383832eb2362154444e8564fbc8e7e8e7cff8754c68aea5eca086e
+ARG PROCESS_COMPOSE_SHA256_ARM64=c5f4fcfc63e849279ac531bce2394a918fb28746339088a7d3d02bb5fb218a68
+RUN set -eu; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "$ARCH" in \
+      amd64) sha="$PROCESS_COMPOSE_SHA256_AMD64" ;; \
+      arm64) sha="$PROCESS_COMPOSE_SHA256_ARM64" ;; \
+      *) echo "unsupported arch for process-compose: $ARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/process-compose.tar.gz \
+      "https://github.com/F1bonacc1/process-compose/releases/download/v${PROCESS_COMPOSE_VERSION}/process-compose_linux_${ARCH}.tar.gz"; \
+    echo "${sha}  /tmp/process-compose.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/process-compose.tar.gz -C /usr/local/bin process-compose; \
+    chmod +x /usr/local/bin/process-compose; \
+    process-compose version
 
 # Entrypoint, agent context file, bash defaults (change frequently during dev)
 COPY agent-context.md /opt/klangk/agent-context.md

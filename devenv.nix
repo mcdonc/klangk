@@ -324,7 +324,8 @@ in
   # the YAML (#1788).
   # Docker build platform for klangk images. On Linux, default to the host
   # architecture so arm64 machines build/run natively instead of under amd64
-  # emulation. The published GHCR base (klangk-workspace-base:latest) is
+  # emulation. The published GHCR base (klangk-workspace-base, pulled by the
+  # digest pinned in the workspace Dockerfile, #2063) is
   # multi-arch (amd64 + arm64), so we default to the host's native
   # architecture on all platforms. Override via devenv.local.nix.
   env.KLANGKBUILD_PLATFORM = lib.mkOverride 1500 (

@@ -10,9 +10,11 @@
 # It is a BUILD SANDBOX, not a workspace image: nothing here is baked into a
 # running workspace. The seed store is content-addressed, so the base image
 # choice (debian:trixie-slim) only affects the build environment, not the
-# resulting /nix content.
+# resulting /nix content. Still pinned by digest (same manifest as
+# src/containers/workspace/Dockerfile.base, #2063) so the sandbox itself
+# cannot silently change under a mutable tag.
 
-FROM debian:trixie-slim
+FROM debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
 
 ARG NIX_INSTALL_URL=https://nixos.org/nix/install
 ARG DEVENV_FLAKE=github:cachix/devenv/latest

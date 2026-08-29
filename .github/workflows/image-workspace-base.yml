@@ -44,8 +44,14 @@ jobs:
             -t "$REPO:$VERSION" \
             --push \
             src/containers/workspace/
+          # Pin the workspace build to the immutable manifest digest (#2063):
+          # a tag reference could be re-served with different content. NOTE:
+          # the json form is required — buildx special-cases plain
+          # '{{.Manifest…}}' formats into printing the full table.
+          DIGEST="$(docker buildx imagetools inspect "$REPO:$VERSION" \
+            --format '{{json .Manifest.Digest}}' | tr -d '"')"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "image=$REPO:$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=$REPO@$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Open PR to update workspace base image pin
         env:

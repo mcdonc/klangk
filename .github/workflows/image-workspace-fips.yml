@@ -14,7 +14,7 @@ name: FIPS Workspace Image Check
 # Publishes to GHCR (#2631): the self-hosted e2e runners pull this image
 # instead of compiling OpenSSL per-PR on the shared host (which starved
 # sibling suites' podman execs). Tags: :<calver>-<commit> plus a floating
-# :latest (the same convention pull-base-image.sh relies on). ONE-TIME
+# :latest. ONE-TIME
 # setup: flip the new ghcr package's visibility to public so anonymous
 # pulls work (as klangk-workspace-base already is); until then the e2e
 # pull falls back to a local, parallelism-capped build.
