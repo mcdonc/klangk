@@ -565,3 +565,15 @@ class TestParseModelEntry:
             result["litellm_params"]["api_base"] == "https://api.openai.com/v1"
         )
         assert result["litellm_params"]["api_key"] == "sk-xxx"
+
+
+class TestParseModelEntryBranchGaps2834:
+    def test_entry_without_api_base_omits_it(self):
+        # A bare provider/model with no api_base and no provider default:
+        # the params dict carries no api_base key.
+        from klangk.llm_router import parse_model_entry
+
+        entry = parse_model_entry("my-gateway/model-x")
+        params = entry["litellm_params"]
+        assert params["model"] == "my-gateway/model-x"
+        assert "api_base" not in params

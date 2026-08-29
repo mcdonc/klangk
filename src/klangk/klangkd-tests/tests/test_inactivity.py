@@ -157,3 +157,42 @@ class TestInactivitySweeper:
 
 def await_count(mock) -> int:
     return mock.await_count if hasattr(mock, "await_count") else 0
+
+
+class TestInactivityBranchGaps2834:
+    """#2834 branch gate: a loop tick that wakes BEFORE the sweep interval
+    (scheduler jitter) re-sleeps without sweeping."""
+
+    async def test_early_wake_resleeps_without_sweeping(self, monkeypatch):
+        app = _app(disable_inactive=AsyncMock(return_value=[]))
+        sw = inactivity.InactivitySweeper(app)
+        real_sleep = asyncio.sleep
+        prune_done = asyncio.Event()
+        sleeps = {"n": 0}
+
+        async def _jittered_sleep(_s):
+            # Wakes instantly: no wall time passes, so the next tick's
+            # `now >= next_sweep` is False (the early-wake arm).
+            sleeps["n"] += 1
+            if sleeps["n"] >= 3:
+                sw._task.cancel()  # unwinds cleanly via the CancelledError arm
+            await real_sleep(0)
+
+        real_sweep = sw._sweep
+
+        async def _sweep_once():
+            prune_done.set()
+            await real_sweep()
+
+        monkeypatch.setattr(sw, "_sweep", _sweep_once)
+        monkeypatch.setattr(asyncio, "sleep", _jittered_sleep)
+        sw.start()
+        await prune_done.wait()
+        for _ in range(200):
+            if sw._task.done() or sleeps["n"] >= 3:
+                break
+            await real_sleep(0.01)
+        await sw._task
+        # The sweeper swept once at startup, then re-slept on the early
+        # ticks (2+ early wakes exercised the not-yet arm).
+        assert app.state.model.users.disable_inactive_users.await_count == 1

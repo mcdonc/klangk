@@ -866,3 +866,57 @@ class TestFireWorkspaceCreated:
             f"/workspaces/{ws['id']}"
         )
         assert any(e["permission"] == "*" for e in entries)
+
+
+class TestHooksBranchGaps2834:
+    """#2834 branch gate: hook-field diff and created_at carry-over
+    outcomes."""
+
+    def test_changed_fields_absent_everywhere_is_no_change(self):
+        # A field deleted from the handle whose column was never set on
+        # the row: nothing to clear, nothing to write.
+        changed = hooks_mod._hook_field_changes(
+            {"name": "x"},  # no mutable fields present
+            {"name": "x"},
+        )
+        assert changed == {}
+
+    async def test_fire_created_at_already_present_kept(self, app_state):
+        # get_workspace returning created_at itself: the carry-over is a
+        # no-op (the hook response keeps the refreshed value).
+        from unittest.mock import AsyncMock
+
+        hooks = _hooks()
+
+        def _rename(handle, actor):
+            handle["name"] = "renamed-ws"
+
+        hooks.workspace_created_hook = _rename
+        hooks.workspace_created_hook_source = "test-noop"
+        hooks.workspace_created_hook_is_async = False
+        workspace = {
+            "id": "ws-1",
+            "name": "w",
+            "created_at": "t0",
+            "user_id": "u1",
+        }
+        hooks.app.state.model = types.SimpleNamespace(
+            workspaces=types.SimpleNamespace(
+                get_workspace=AsyncMock(
+                    return_value={
+                        "id": "ws-1",
+                        "name": "renamed-ws",
+                        "created_at": "t1",
+                        "user_id": "u1",
+                    }
+                ),
+                update_workspace=AsyncMock(),
+            )
+        )
+        # The hook made no attribute change, but the row was re-read and
+        # ALREADY carries created_at: the carry-over is skipped and the
+        # refreshed value wins.
+        out = await hooks.fire_workspace_created(
+            workspace, {"id": "u1", "email": "a@b"}
+        )
+        assert out["created_at"] == "t1"

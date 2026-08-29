@@ -3719,3 +3719,116 @@ async def test_request_recycle_ignored_when_shutting_down(app_state, caplog):
         lc.request_recycle(source="scheduled recycle")
     assert not lc._recycle_tasks
     assert any("recycle ignored" in r.message for r in caplog.records)
+
+
+class TestLifecycleBranchGaps2834:
+    """#2834 branch gate: the shutdown-owned drain flag and the
+    no-caddy-watchdog apply path."""
+
+    async def test_restart_during_shutdown_keeps_draining(self, app_state):
+        # A shutdown owning the process when the restart's finally runs:
+        # the drain flag must stay set (clearing it would lift the
+        # shutdown's start-refusal while exiting, #2527 review).
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        lc._recycle_lock = None
+        registry = app_state.state.container_registry
+
+        async def _startup_sees_shutdown():
+            # A shutdown lands after the abort checkpoints (during the
+            # runtime recycle): the restart completes normally, and the
+            # finally must NOT lift the shutdown's start-refusal.
+            lc.shutting_down = True
+
+        with (
+            patch.object(
+                lc,
+                "_reload_settings",
+                return_value=(
+                    make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"}),
+                    None,
+                ),
+            ),
+            patch.object(
+                registry,
+                "drain_all_containers",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch.object(
+                app_state.state.inflight_requests,
+                "wait_for_idle",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch.object(
+                lc, "_apply_reloaded_settings", new_callable=AsyncMock
+            ),
+            patch.object(lc, "runtime_shutdown", new_callable=AsyncMock),
+            patch.object(lc, "startup", side_effect=_startup_sees_shutdown),
+        ):
+            await lc.recycle_runtime()
+        assert registry.draining is True
+
+    async def test_apply_reloaded_settings_without_caddy_watchdog(
+        self, app_state
+    ):
+        # No caddy watchdog (nginx engine / proxy disabled) and an
+        # unchanged frontend_dir: no reload applied, no remount.
+        app_state = _make_app_state()
+        lc = app_state.state.lifecycle
+        app_state.state.proxy_watchdog = None
+        new = make_settings({"KLANGKD_DEFAULT_PASSWORD": "test"})
+        remount = MagicMock()
+        with patch.object(lc, "_remount_frontend", remount):
+            await lc._apply_reloaded_settings(new)
+        remount.assert_not_called()
+        assert app_state.state.settings is new
+
+
+class TestGracefulExitBranchGaps2834:
+    def _server_cls(self, app_state):
+        from klangk.main import make_graceful_exit_server
+
+        return make_graceful_exit_server(app_state)
+
+    async def test_cancelled_hook_task_still_hands_exit_to_uvicorn(
+        self, app_state
+    ):
+        """#2834: a hook task CANCELLED before finishing must not hit
+        Task.exception() (which raises for cancelled tasks) -- the
+        done-callback skips the log and still calls uvicorn's exit."""
+        import types as types_mod
+
+        app_state = _make_app_state()
+        cls = self._server_cls(app_state)
+        server = types_mod.SimpleNamespace(
+            handle_exit=MagicMock(),
+            _captured_signals=[],
+            force_exit=False,
+        )
+        lc = app_state.state.lifecycle
+        started = asyncio.Event()
+
+        async def slow_hook(*, signal_num):
+            started.set()
+            await asyncio.Event().wait()  # park until cancelled
+
+        with patch.object(lc, "graceful_shutdown", side_effect=slow_hook):
+            hooked = None
+
+            def grab(sig, handler):
+                nonlocal hooked
+                hooked = handler
+                return MagicMock()
+
+            with patch("signal.signal", side_effect=grab):
+                with cls.capture_signals(server):
+                    hooked(15, None)
+                    await asyncio.wait_for(started.wait(), 5)
+                    task = next(iter(lc._shutdown_tasks))
+                    task.cancel()
+                    for _ in range(5):
+                        await asyncio.sleep(0)
+        server.handle_exit.assert_called_once_with(15, None)
+        assert lc._shutdown_tasks == set()

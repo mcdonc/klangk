@@ -1011,3 +1011,79 @@ async def test_replace_acl_entries_rejects_cross_workspace_role_group(
         f"/workspaces/{ws_a['id']}"
     )
     assert all(e["group_id"] != owners_b["id"] for e in entries)
+
+
+class TestWorkspacesModelBranchGaps2834:
+    """#2834 branch gate: ownership transfer without an owners group, and
+    the domain-list CAS retry under a losing race."""
+
+    async def test_transfer_ownership_without_owners_group(
+        self, ws, user, app_state
+    ):
+        # A workspace with no role groups (created before #2750): the
+        # transfer swaps the row + owner ACE and skips the group swap.
+        other = await app_state.state.model.users.create_user(
+            "newowner@example.com", "hash", verified=True
+        )
+        row = await ws.create_workspace(user["id"], "no-group-ws")
+        result = await ws.transfer_workspace(row["id"], other["id"])
+        assert result["user_id"] == other["id"]
+
+    async def test_domain_list_cas_retries_after_losing_race(
+        self, ws, user, app_state, monkeypatch
+    ):
+        # A concurrent writer flips the column between our SELECT and
+        # UPDATE: the CAS WHERE misses (rowcount 0) and the mutation
+        # retries against the fresh value instead of losing it.
+        row = await ws.create_workspace(user["id"], "cas-race-ws")
+        real_db = app_state.state.db
+        raced = [False]
+
+        class _RacingTx:
+            def __init__(self, cm):
+                self._cm = cm
+                self._inner = None
+
+            async def __aenter__(self):
+                self._inner = await self._cm.__aenter__()
+                return self
+
+            async def __aexit__(self, *exc):
+                return await self._cm.__aexit__(*exc)
+
+            async def execute(self, sql, params=()):
+                if (
+                    sql.startswith("UPDATE workspaces SET allowed_domains")
+                    and not raced[0]
+                ):
+                    raced[0] = True
+                    async with real_db.transaction() as other:
+                        await other.execute(
+                            "UPDATE workspaces SET allowed_domains = ?"
+                            " WHERE id = ?",
+                            ('["racing.example:443"]', params[1]),
+                        )
+                return await self._inner.execute(sql, params)
+
+        class _RacingDB:
+            def transaction(self):
+                return _RacingTx(real_db.transaction())
+
+        monkeypatch.setattr(app_state.state, "db", _RacingDB(), raising=True)
+        try:
+            assert (
+                await ws.add_allowed_domain(row["id"], "github.com:443")
+                is True
+            )
+        finally:
+            monkeypatch.undo()
+        refreshed = await ws.get_workspace_by_id(row["id"])
+        import json as _json
+
+        val = refreshed["allowed_domains"]
+        entries = val if isinstance(val, list) else _json.loads(val or "[]")
+        names = [
+            e if isinstance(e, str) else e.get("host", "") for e in entries
+        ]
+        assert any("github.com" in n for n in names)
+        assert any("racing.example" in n for n in names)

@@ -551,3 +551,18 @@ async def test_update_group_rejects_workspace_role_rename(
     # Manual groups rename freely.
     manual = await users.create_group("free-to-rename")
     assert await users.update_group(manual["id"], name="renamed") is True
+
+
+class TestUsersBranchGaps2834:
+    async def test_backfill_no_handleless_rows_commits_nothing(
+        self, user, app_state
+    ):
+        # Every user already has a handle: the model's backfill runs zero
+        # UPDATEs and skips the (empty) commit entirely.
+        handle_before = user["handle"]
+        async with app_state.state.db.transaction() as tx:
+            await app_state.state.model.users.backfill_handles(tx)
+        refreshed = await app_state.state.model.users.get_user_by_email(
+            user["email"]
+        )
+        assert refreshed["handle"] == handle_before

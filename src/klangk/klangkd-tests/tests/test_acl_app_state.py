@@ -198,3 +198,23 @@ async def test_has_permission_denies_via_resource_fn(ac, user):
     _res, _principals, _perm = ac.check_permission.call_args.args
     assert _res == "/custom-resource"
     assert _perm == "share"
+
+
+class TestAceMatchBranchGaps2834:
+    def test_unknown_system_principal_denies(self):
+        # A SYSTEM ace whose principal is neither everyone nor
+        # authenticated (a future/unknown token) matches nothing:
+        # fail-closed, not fail-open.
+        from klangk import model as model_mod
+        from klangk.acl import ace_matches_principals
+
+        assert (
+            ace_matches_principals(
+                {
+                    "principal_type": model_mod.PRINCIPAL_SYSTEM,
+                    "system_principal": "bogus",
+                },
+                {"authenticated": True, "user_id": "u", "group_ids": []},
+            )
+            is False
+        )

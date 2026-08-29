@@ -2326,3 +2326,47 @@ class TestServiceSessionHelpers:
 
         assert should_fire_service_command(None, "complete") is False
         assert should_fire_service_command("", "complete") is False
+
+
+class TestTerminalBranchGaps2834:
+    """#2834 branch gate: malformed window lines and the read loop's
+    condition-exit + tail flush."""
+
+    def test_parse_windows_skips_malformed_line(self):
+        from klangk.terminal import _parse_windows
+
+        windows = _parse_windows(
+            "@0|||1|||main|||1\nbroken-line-without-separators\n"
+        )
+        assert len(windows) == 1
+        assert windows[0]["id"] == "@0"
+        assert windows[0]["active"] is True
+
+    async def test_read_loop_exits_via_flag_and_flushes_tail(self):
+        # _running cleared while parked in read(): the loop re-checks the
+        # condition (not EOF) and still flushes the decoder's tail.
+
+        class _ControlledShell(FakeShell):
+            def __init__(self):
+                super().__init__(chunks=[])
+                self._gate = asyncio.Event()
+                self._pending = [b"ok"]
+
+            async def read(self):
+                if self._pending:
+                    return self._pending.pop(0)
+                await self._gate.wait()
+                return b"\xe2\x94"  # incomplete multibyte, then loop exits
+
+        fake = _ControlledShell()
+        with _patch(fake):
+            s = TerminalSession("cid", terminal=_terminal)
+            await s.start()
+        await asyncio.sleep(0.05)
+        s._running = False  # cleared while the loop is parked in read()
+        fake._gate.set()
+        await asyncio.sleep(0.05)
+        # The incomplete trailing sequence was flushed as one replacement
+        # char (not dropped) on the condition-exit path.
+        assert _drain_text(s) == "ok\ufffd"
+        await s.stop()

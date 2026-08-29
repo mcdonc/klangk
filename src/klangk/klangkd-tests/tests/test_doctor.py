@@ -547,3 +547,73 @@ class TestRunDoctor:
         r = results[0]
         assert not r.ok
         assert r.is_warning
+
+
+class TestDoctorBranchGaps2834:
+    """#2834 branch gate: non-brew failure hints, the macOS skips in
+    run_doctor, and the hintless failure-block line."""
+
+    def test_non_brew_tar_failure_keeps_generic_hint(self):
+        # A non-GNU tar on a non-brew system: the generic hint (no
+        # brew-specific gnubin line).
+        with (
+            patch("shutil.which", return_value="/usr/bin/tar"),
+            patch(
+                "klangk.doctor._run",
+                return_value=(0, "bsdtar 3.6.2", ""),
+            ),
+        ):
+            r = check_gnu_tar("apt")
+            assert not r.ok
+            assert "gnubin" not in (r.hint or "")
+
+    def test_non_brew_du_failure_keeps_generic_hint(self):
+        from klangk.doctor import check_gnu_du
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/du"),
+            patch(
+                "klangk.doctor._run",
+                return_value=(1, "", ""),
+            ),
+        ):
+            r = check_gnu_du("apt")
+            assert not r.ok
+            assert "gnubin" not in (r.hint or "")
+
+    def test_darwin_skips_linux_only_checks(self):
+        # On macOS the stat + ip checks are skipped entirely (a Darwin
+        # report has neither).
+        from klangk import doctor
+
+        names = []
+
+        class _RecordingReport(doctor.DoctorReport):
+            def add(self, r):
+                names.append(r.name)
+                return super().add(r)
+
+        real_report = doctor.DoctorReport
+        doctor.DoctorReport = _RecordingReport
+        try:
+            with patch("klangk.doctor.platform.system", return_value="Darwin"):
+                doctor.run_doctor()
+        finally:
+            doctor.DoctorReport = real_report
+        assert not any("stat" in n.lower() for n in names)
+
+    def test_failure_block_without_hint(self):
+        # A hintless failing result renders without a "Run:" line.
+        from klangk.doctor import CheckResult, _append_failure_block
+
+        lines: list[str] = []
+        _append_failure_block(
+            lines,
+            [CheckResult(name="x", ok=False, message="broke")],
+            "-",
+            "Failures",
+        )
+        text = "\n".join(lines)
+        assert "Failures" in text
+        assert "x: broke" in text
+        assert "Run:" not in text

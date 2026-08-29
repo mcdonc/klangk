@@ -918,3 +918,18 @@ class TestConsentDeciderRegistryReconfigure:
         )
         reg.reconfigure(new_app)
         assert reg.timeout == 99.0
+
+
+class TestDeciderRegistryBranchGaps2834:
+    """#2834 branch gate: start() is idempotent (a second start must not
+    spawn a second reaper task)."""
+
+    async def test_start_twice_keeps_single_reaper(self):
+        reg = ConsentDeciderRegistry(_app())
+        reg.start()
+        first = reg._reaper
+        assert first is not None
+        reg.start()
+        assert reg._reaper is first
+        await reg.stop()
+        assert reg._reaper is None

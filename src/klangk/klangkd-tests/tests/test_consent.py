@@ -151,3 +151,35 @@ class TestEgressConsentSweeper:
         app2 = _app()
         sw.reconfigure(app2)
         assert sw.app is app2
+
+
+class TestEgressSweeperBranchGaps2834:
+    """#2834 branch gate: a retention tick that wakes BEFORE the prune
+    interval (scheduler jitter) re-sleeps without pruning."""
+
+    async def test_early_wake_resleeps_without_pruning(self, monkeypatch):
+        app = _app()
+        sw = consent.EgressConsentSweeper(app)
+        real_sleep = asyncio.sleep
+        pruned = asyncio.Event()
+        sleeps = {"n": 0}
+
+        async def _jittered_sleep(_s):
+            sleeps["n"] += 1
+            if sleeps["n"] >= 3:
+                sw._task.cancel()
+            await real_sleep(0)
+
+        async def _prune_once():
+            pruned.set()
+
+        monkeypatch.setattr(sw, "_prune", _prune_once)
+        monkeypatch.setattr(asyncio, "sleep", _jittered_sleep)
+        sw.start()
+        await pruned.wait()
+        for _ in range(200):
+            if sw._task.done() or sleeps["n"] >= 3:
+                break
+            await real_sleep(0.01)
+        await sw._task
+        app.state.model.egress_consent.prune.assert_not_awaited()
