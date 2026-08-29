@@ -240,9 +240,10 @@ the limit, extract a helper instead of growing it. Never add noqa-style
 escapes or re-widen the gate to make a commit pass.
 
 The legacy F/E/D blocks were already refactored down to C
-(#2800–#2803, #2808–#2814) and the excludes are gone. #2817 is ratcheting
-the worst files to **B** (≤ 10) one PR at a time, so target rank B for new
-code where practical — it will otherwise have to be refactored again when
+(#2800–#2803, #2808–#2814) and the excludes are gone. The ratchet then
+tightens to **B** (≤ 10) (#2817) and ultimately to **A** (≤ 5) in
+subsequent tranches, one PR per file/subsystem. Target rank **A** for new
+code where practical — anything looser will only be refactored again as
 the gate tightens.
 
 ## Process manager: devenv 2.x native (not process-compose)
