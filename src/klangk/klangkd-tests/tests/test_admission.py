@@ -511,8 +511,18 @@ class TestChokePoint:
         ws = await app_state.state.workspaces.create_workspace(
             user["id"], "gate-open"
         )
-        with patch.object(
-            app_state.state.settings, "admission_memory_enabled", True
+        with (
+            patch.object(
+                app_state.state.settings, "admission_memory_enabled", True
+            ),
+            # Stub the measurement: this test asserts the GATE lets an
+            # admissible start through, not that the CI host happens to
+            # have >9 GB free (the macOS runners have 7 GB and would
+            # legitimately refuse the default 8g limit + 1g margin).
+            patch(
+                "klangk.container.admission.available_memory_bytes",
+                return_value=100 * GIB,
+            ),
         ):
             try:
                 await registry.start_container(_spec(ws["id"]))
