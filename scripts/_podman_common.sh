@@ -45,7 +45,7 @@ if [ -n "${CONTAINERS_SIGNATURE_POLICY:-}" ]; then
 fi
 
 # Rootless podman from nix ships no registries.conf either, so short image
-# names in our Dockerfiles (alpine:3.21, python:3.13-slim, …) fail to resolve
+# names in our Dockerfiles (alpine:3.21, python:3.14-slim, …) fail to resolve
 # (#286). Unlike the policy, podman reads CONTAINERS_REGISTRIES_CONF
 # directly, so no flag is passed — every podman call in the environment
 # inherits it. The scripts only ensure the file exists: podman hard-fails

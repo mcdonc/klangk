@@ -124,7 +124,7 @@ workspace containers are gated. Boundary notes for this deployment:
 
 | Component in the host container                     | Covered? | Why                                                                                                                                   |
 | --------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| klangkd's python crypto (PBKDF2, JWT, outbound TLS) | **Yes**  | python:3.13-slim's `_hashlib`/`_ssl` link the distro libcrypto, which loads the validated provider via `OPENSSL_CONF`.                |
+| klangkd's python crypto (PBKDF2, JWT, outbound TLS) | **Yes**  | python:3.14-slim's `_hashlib`/`_ssl` link the distro libcrypto, which loads the validated provider via `OPENSSL_CONF`.                |
 | Embedded workspace + sidecar images                 | **Yes**  | The workspace tar embedded by this variant IS the FIPS workspace image; the sidecar makes no crypto choices of its own.               |
 | Caddy (reverse proxy)                               | **No**   | Go binary with statically linked crypto — never routes through libcrypto. TLS termination at the proxy is already out of scope below. |
 | Podman / passt inside the container                 | **No**   | Go/Rust static crypto (registry pulls over TLS). Pull integrity is governed by the signature policy, not the FIPS module.             |

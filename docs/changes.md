@@ -1189,6 +1189,11 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **Host image base is `python:3.14-slim` (#2844).** The host and FIPS
+  host container images now run CPython 3.14 (digest-pinned, OpenSSL
+  3.5). Workspaces are unaffected; operators should rebuild the host
+  and FIPS images to pick up the new base.
+
 - **`nix_enabled` — the per-workspace `/nix` feature is now off by default
   (#2560).** A new master switch (`KLANGKD_NIX_ENABLED` / `nix_enabled` in
   `klangkd.yaml`, reloadable on SIGHUP) gates the whole feature. While off,

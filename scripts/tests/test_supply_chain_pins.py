@@ -21,7 +21,7 @@ rotation procedures):
     - debian:trixie-slim: digest (pre-existing, #2432)
     - nodesource + github-cli repo keys: SHA-256 of the fetched key file
 - ``src/containers/host/Dockerfile``
-    - python:3.13-slim: digest
+    - python:3.14-slim: digest
     - Caddy Cloudsmith repo key: SHA-256 of the fetched key file
 - ``src/containers/network/Dockerfile`` — alpine:3.21: digest
 - ``src/containers/{workspace,host}/Dockerfile.fips`` and

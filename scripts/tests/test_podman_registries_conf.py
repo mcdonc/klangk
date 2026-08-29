@@ -2,7 +2,7 @@
 
 Rootless podman from nix ships no ``containers-registries.conf(5)``, so any
 image build whose Dockerfile references a short image name
-(``alpine:3.21``, ``python:3.13-slim``, ``debian:trixie-slim``,
+(``alpine:3.21``, ``python:3.14-slim``, ``debian:trixie-slim``,
 ``node:26-slim``) fails with:
 
     Error: creating build container: short-name "alpine:3.21" did not

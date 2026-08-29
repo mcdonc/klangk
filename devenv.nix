@@ -310,7 +310,7 @@ in
   );
   # Same story for registries.conf (#286): rootless podman from nix ships
   # none, so any build whose Dockerfile uses a short image name (alpine:3.21,
-  # python:3.13-slim, debian:trixie-slim, node:26-slim) fails with "short-name
+  # python:3.14-slim, debian:trixie-slim, node:26-slim) fails with "short-name
   # ... did not resolve to an alias and no containers-registries-conf(5) was
   # found". Unlike the policy, podman DOES read this env var directly (no CLI
   # flag needed), so every podman invocation in the shell — including ones
