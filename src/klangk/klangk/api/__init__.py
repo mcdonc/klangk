@@ -7,10 +7,10 @@ submodules, each mounting its own sub-router:
 
     _common.py         shared helpers / constants / request models
     auth.py            register/login/logout + password/email/handle changes
-    oidc_auth.py       OIDC login + callback
+                       + OIDC login/callback (merged from oidc_auth)
     workspaces.py      CRUD + members + roles + groups + ACL + import/export
-    files.py           file navigation / operations
-    images.py          image + volume listing
+    resources.py       workspace files + image/volume listings (merged from
+                       files + images)
     browser_delegate.py  browser bridge
     admin.py           users / groups / invitations / ACL admin
 
@@ -59,10 +59,8 @@ from . import (
     admin as _admin_routes,
     auth as _auth_routes,
     browser_delegate as _browser_routes,
-    files as _files_routes,
-    images as _images_routes,
     llm_proxy as _llm_proxy_routes,
-    oidc_auth as _oidc_routes,
+    resources as _resources_routes,
     workspaces as _workspace_routes,
 )
 from .auth import (
@@ -353,10 +351,8 @@ async def my_permissions(
 
 # --- Mount per-domain sub-routers (no prefix: paths are already full) ---
 router.include_router(_auth_routes.router)
-router.include_router(_oidc_routes.router)
 router.include_router(_workspace_routes.router)
-router.include_router(_files_routes.router)
-router.include_router(_images_routes.router)
+router.include_router(_resources_routes.router)
 router.include_router(_browser_routes.router)
 router.include_router(_admin_routes.router)
 

@@ -41,11 +41,9 @@ EXPECTED_ROUTE_COUNT = 96
 # + 3 routes defined directly on the main router (version, config,
 # my-permissions) + 2 on the root router (health, empty) == 96.
 SUBMODULE_ROUTES = {
-    "auth": 15,
-    "oidc_auth": 2,
+    "auth": 17,  # 15 + the 2 OIDC login/callback routes (merged from oidc_auth)
     "workspaces": 27,
-    "files": 6,
-    "images": 4,
+    "resources": 10,  # 6 files + 4 images/volumes (merged submodules)
     "browser_delegate": 2,
     "admin": 33,
     "llm_proxy": 2,
@@ -66,7 +64,6 @@ REPRESENTATIVE_PATHS = [
     f"{API_PREFIX}/auth/login",
     f"{API_PREFIX}/auth/verify-workspace-token",
     f"{API_PREFIX}/auth/accept-invite",
-    # oidc_auth
     f"{API_PREFIX}/auth/oidc/{{provider_id}}/login",
     f"{API_PREFIX}/auth/oidc/{{provider_id}}/callback",
     # workspaces (CRUD + members + roles + groups + acl + import/export)
@@ -77,10 +74,9 @@ REPRESENTATIVE_PATHS = [
     f"{API_PREFIX}/workspaces/{{workspace_id}}/roles",
     f"{API_PREFIX}/workspaces/{{workspace_id}}/acl",
     f"{API_PREFIX}/users/search",
-    # files
+    # files (resources)
     f"{API_PREFIX}/workspaces/{{workspace_id}}/files",
     f"{API_PREFIX}/workspaces/{{workspace_id}}/files/upload",
-    # images / volumes
     f"{API_PREFIX}/images",
     f"{API_PREFIX}/volumes",
     # browser bridge
