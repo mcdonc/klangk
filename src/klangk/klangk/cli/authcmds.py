@@ -67,7 +67,6 @@ def logout(
     do_logout(resolved_url)
 
 
-@context.app.command()
 def admin_status(token: str | None) -> bool | None:
     """Admin status from /my-permissions (the canonical source the
     frontend uses for isAdmin). Best-effort: if the probe fails (offline,
@@ -118,6 +117,7 @@ def print_status_table(url, token, email, user_id, is_admin) -> None:
     console.print(table)
 
 
+@context.app.command()
 def status(
     plain: bool = typer.Option(False, "--plain", help="Plain text output"),
 ) -> None:
