@@ -220,10 +220,10 @@ are fine too (`KLANGKD` = daemon, `KLANGKC` = CLI).
 
 Every function, method, and block in `src/klangk/klangk/**/*.py`,
 `src/klangksidecar/klangksidecar/**/*.py`, and
-`scripts/**/*.py` must be xenon rank **C or better** (cyclomatic complexity
-≤ 20). The gate runs as the `xenon` pre-commit hook defined in `devenv.nix`
-(`--max-absolute C --max-modules F --max-average F` — module/average gates
-are off because they flap when only a few files are staged); it checks the
+`scripts/**/*.py` must be xenon rank **B or better** (cyclomatic complexity
+≤ 10), and the per-module and codebase **averages** must also stay rank B
+(≤ 10). The gate runs as the `xenon` pre-commit hook defined in `devenv.nix`
+(`--max-absolute B --max-modules B --max-average B`); it checks the
 staged `.py` files on every commit made through the devenv shell. Nothing
 in CI enforces it yet — the hook is the only gate, so do not bypass it
 with `--no-verify`.
@@ -241,11 +241,12 @@ the limit, extract a helper instead of growing it. Never add noqa-style
 escapes or re-widen the gate to make a commit pass.
 
 The legacy F/E/D blocks were already refactored down to C
-(#2800–#2803, #2808–#2814) and the excludes are gone. The ratchet then
-tightens to **B** (≤ 10) (#2817) and ultimately to **A** (≤ 5) in
-subsequent tranches, one PR per file/subsystem. Target rank **A** for new
-code where practical — anything looser will only be refactored again as
-the gate tightens.
+(#2800–#2803, #2808–#2814) and the C blocks to B
+(#2817, #2818–#2842); the module and codebase averages came under the gate
+at the same threshold (#2846). The ratchet ultimately tightens to **A**
+(≤ 5) in subsequent tranches, one PR per file/subsystem. Target rank **A**
+for new code where practical — anything looser will only be refactored
+again as the gate tightens.
 
 ## Process manager: devenv 2.x native (not process-compose)
 
