@@ -126,6 +126,39 @@ def _display(row: sqlite3.Row) -> None:
     console.print(Panel(table, title=f"[bold]{row['id'][:8]}[/bold]", expand=False))
 
 
+def _prompt_and_decide(conn, ws: str, row, user_id: str, seen: set) -> None:
+    """Show one pending request, prompt for a/d/s, and apply the verdict."""
+    _display(row)
+    choice = (
+        console.input(
+            "[bold][[a]][/bold]ccept / [bold][[d]][/bold]eny / [bold][[s]][/bold]kip > "
+        )
+        .strip()
+        .lower()
+    )
+    if choice == "a":
+        _decide(conn, row["id"], "allowed", user_id, "workspace")
+        added = _allow_destination(conn, ws, row)
+        conn.commit()
+        seen.add(row["id"])
+        console.print(
+            f"[green]allowed[/green] {_dest(row)}"
+            + (
+                " (added to allow-list; recreate the workspace to apply)"
+                if added
+                else " (already in allow-list)"
+            )
+        )
+    elif choice == "d":
+        _decide(conn, row["id"], "denied", user_id)
+        conn.commit()
+        seen.add(row["id"])
+        console.print(f"[red]denied[/red] {_dest(row)}")
+    else:
+        seen.add(row["id"])
+        console.print("skipped")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("workspace_id", help="workspace id (full or prefix)")
@@ -164,37 +197,7 @@ def main() -> None:
                 continue
             sys.stdout.write("\r" + " " * 50 + "\r")
             for row in pending:
-                _display(row)
-                choice = (
-                    console.input(
-                        "[bold][[a]][/bold]ccept / "
-                        "[bold][[d]][/bold]eny / "
-                        "[bold][[s]][/bold]kip > "
-                    )
-                    .strip()
-                    .lower()
-                )
-                if choice == "a":
-                    _decide(conn, row["id"], "allowed", user_id, "workspace")
-                    added = _allow_destination(conn, ws, row)
-                    conn.commit()
-                    seen.add(row["id"])
-                    console.print(
-                        f"[green]allowed[/green] {_dest(row)}"
-                        + (
-                            " (added to allow-list; recreate the workspace to apply)"
-                            if added
-                            else " (already in allow-list)"
-                        )
-                    )
-                elif choice == "d":
-                    _decide(conn, row["id"], "denied", user_id)
-                    conn.commit()
-                    seen.add(row["id"])
-                    console.print(f"[red]denied[/red] {_dest(row)}")
-                else:
-                    seen.add(row["id"])
-                    console.print("skipped")
+                _prompt_and_decide(conn, ws, row, user_id, seen)
     except KeyboardInterrupt:
         console.print("\nbye.")
     finally:

@@ -4,14 +4,9 @@
 import sys
 
 
-def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "coverage/lcov.info"
-    try:
-        with open(path) as f:
-            lines = f.readlines()
-    except FileNotFoundError:
-        return
-
+def parse_lcov(lines: list[str]) -> tuple[dict, dict]:
+    """(per-file {hit, total}, per-file uncovered line numbers) from an lcov
+    tracefile."""
     files = {}
     uncovered_lines: dict[str, list[int]] = {}
     current = None
@@ -27,10 +22,11 @@ def main():
             files.setdefault(current, {})["hit"] = int(line[3:])
         elif line.startswith("LF:"):
             files.setdefault(current, {})["total"] = int(line[3:])
+    return files, uncovered_lines
 
-    if not files:
-        return
 
+def print_file_table(files: dict) -> float:
+    """The per-file coverage table; returns the total percentage."""
     total_hit = total_lines = 0
     print()
     print(f"{'File':<55} {'Lines':>6} {'Hit':>6} {'Cov':>6}")
@@ -46,22 +42,25 @@ def main():
     pct = (total_hit / total_lines * 100) if total_lines else 0
     print("-" * 75)
     print(f"{'TOTAL':<55} {total_lines:>6} {total_hit:>6} {pct:>5.1f}%")
+    return pct
 
+
+def main():
+    path = sys.argv[1] if len(sys.argv) > 1 else "coverage/lcov.info"
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        return
+
+    files, uncovered_lines = parse_lcov(lines)
+    if not files:
+        return
+
+    pct = print_file_table(files)
     required = 100.0
     if pct < required:
-        missing = [
-            (f, d)
-            for f, d in sorted(files.items())
-            if d.get("hit", 0) < d.get("total", 0)
-        ]
-        for f, d in missing:
-            short = f.replace("lib/", "")
-            hit, total = d.get("hit", 0), d.get("total", 0)
-            line_nums = uncovered_lines.get(f, [])
-            if line_nums:
-                print(f"  {short}: {total - hit} lines uncovered: {line_nums}")
-            else:
-                print(f"  {short}: {total - hit} lines uncovered")
+        print_uncovered(files, uncovered_lines)
         print(
             f"\nFAIL Required test coverage of {required}% "
             f"not reached. Total coverage: {pct:.2f}%"
@@ -72,6 +71,22 @@ def main():
             f"\nRequired test coverage of {required}% reached. "
             f"Total coverage: {pct:.2f}%"
         )
+
+
+def print_uncovered(files: dict, uncovered_lines: dict) -> None:
+    """Each file with missing lines, with the uncovered line numbers when
+    known."""
+    missing = [
+        (f, d) for f, d in sorted(files.items()) if d.get("hit", 0) < d.get("total", 0)
+    ]
+    for f, d in missing:
+        short = f.replace("lib/", "")
+        hit, total = d.get("hit", 0), d.get("total", 0)
+        line_nums = uncovered_lines.get(f, [])
+        if line_nums:
+            print(f"  {short}: {total - hit} lines uncovered: {line_nums}")
+        else:
+            print(f"  {short}: {total - hit} lines uncovered")
 
 
 if __name__ == "__main__":
