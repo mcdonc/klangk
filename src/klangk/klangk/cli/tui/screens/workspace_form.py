@@ -39,6 +39,37 @@ from ._base import (
 )
 
 
+def _int_setting(
+    screen: Screen, input_id: str, error_template: str
+) -> int | None:
+    """Read an integer input; the templated ValueError on junk input."""
+    raw = screen.query_one(f"#{input_id}", Input).value.strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(error_template.format(raw=raw)) from None
+
+
+def _cpu_setting(screen: Screen) -> float | None:
+    """Read the CPU-limit input; rejects NaN/Inf (#2029 review)."""
+    raw = screen.query_one("#cpu_limit", Input).value.strip()
+    if not raw:
+        return None
+    try:
+        cpu = float(raw)
+    except ValueError:
+        raise ValueError(
+            f"CPU limit must be a number (e.g. 2.0): {raw!r}"
+        ) from None
+    if not math.isfinite(cpu):
+        raise ValueError(
+            f"CPU limit must be a finite number (e.g. 2.0): {raw!r}"
+        )
+    return cpu
+
+
 def _collect_settings(screen: Screen) -> dict | None:
     """Read the resource-limit inputs and return a settings dict, or None.
 
@@ -50,42 +81,51 @@ def _collect_settings(screen: Screen) -> dict | None:
     container start with a cryptic error long after submit (#2029 review).
     """
     settings: dict = {}
-    raw = screen.query_one("#idle_timeout", Input).value.strip()
-    if raw:
-        try:
-            settings["idle_timeout"] = int(raw)
-        except ValueError:
-            raise ValueError(
-                f"Idle timeout must be a whole number of seconds: {raw!r}"
-            ) from None
-    raw = screen.query_one("#cpu_limit", Input).value.strip()
-    if raw:
-        try:
-            cpu = float(raw)
-        except ValueError:
-            raise ValueError(
-                f"CPU limit must be a number (e.g. 2.0): {raw!r}"
-            ) from None
-        if not math.isfinite(cpu):
-            raise ValueError(
-                f"CPU limit must be a finite number (e.g. 2.0): {raw!r}"
-            )
+    idle = _int_setting(
+        screen,
+        "idle_timeout",
+        "Idle timeout must be a whole number of seconds: {raw!r}",
+    )
+    if idle is not None:
+        settings["idle_timeout"] = idle
+    cpu = _cpu_setting(screen)
+    if cpu is not None:
         settings["cpu_limit"] = cpu
     raw = screen.query_one("#memory_limit", Input).value.strip()
     if raw:
         settings["memory_limit"] = raw
-    raw = screen.query_one("#pids_limit", Input).value.strip()
-    if raw:
-        try:
-            settings["pids_limit"] = int(raw)
-        except ValueError:
-            raise ValueError(
-                f"PIDs limit must be a whole number: {raw!r}"
-            ) from None
+    pids = _int_setting(
+        screen,
+        "pids_limit",
+        "PIDs limit must be a whole number: {raw!r}",
+    )
+    if pids is not None:
+        settings["pids_limit"] = pids
     raw = screen.query_one("#tmp_size", Input).value.strip()
     if raw:
         settings["tmp_size"] = raw
     return settings or None
+
+
+# Shared add/remove editor buttons for both form screens (#1891); the
+# handler name strings dispatch like _PANE_LIST_HANDLER does.
+_EDITOR_BUTTON_HANDLERS = {
+    "add_mount": "_add_mount",
+    "rm_mount": "_remove_mount",
+    "add_env": "_add_env",
+    "rm_env": "_remove_env",
+    "add_allow": "_add_allowed_domain",
+    "rm_allow": "_remove_allowed_domain",
+    "add_reject": "_add_rejected_domain",
+    "rm_reject": "_remove_rejected_domain",
+}
+
+
+def dispatch_editor_button(screen, bid: str) -> None:
+    """Run the shared editor button handler, if bid names one."""
+    handler = _EDITOR_BUTTON_HANDLERS.get(bid)
+    if handler:
+        getattr(screen, handler)()
 
 
 # Egress-mode picker options for the create/edit Netfilter tab (#2409).
@@ -605,23 +645,26 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
 
     # --- create ---
 
-    def _create_payload(self) -> dict:
-        """Gather the non-name form fields into create-workspace values
-        (empty strings/lists -> None, matching the Flutter dialog)."""
-        sel = self.query_one("#image", Select)
-        val = sel.value
-        # Send only a real, non-default selection. When the server's default
-        # isn't in the allowed list we start unselected (Select.BLANK), so an
-        # untouched picker omits the image — matching the Flutter dialog.
+    def _selected_image(self) -> str | None:
+        """The image picker's value, or None for no real selection.
+
+        Send only a real, non-default selection. When the server's default
+        isn't in the allowed list we start unselected (Select.BLANK), so an
+        untouched picker omits the image — matching the Flutter dialog.
+        """
+        val = self.query_one("#image", Select).value
         if (
             val is Select.BLANK
             or val is Select.NULL
             or not self._allowed
             or val == self._default
         ):
-            image = None
-        else:
-            image = val
+            return None
+        return val
+
+    def _create_payload(self) -> dict:
+        """Gather the non-name form fields into create-workspace values
+        (empty strings/lists -> None, matching the Flutter dialog)."""
         command = self.query_one("#command", Input).value.strip() or None
         health_check = (
             self.query_one("#health_check", Input).value.strip() or None
@@ -643,7 +686,7 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
             or None
         )
         return {
-            "image": image,
+            "image": self._selected_image(),
             "command": command,
             "health_check": health_check,
             "auto": auto,
@@ -750,24 +793,11 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         bid = event.button.id
         if bid == "cancel":
             self.dismiss(None)
-        elif bid == "create":
+            return
+        if bid == "create":
             self._create()
-        elif bid == "add_mount":
-            self._add_mount()
-        elif bid == "rm_mount":
-            self._remove_mount()
-        elif bid == "add_env":
-            self._add_env()
-        elif bid == "rm_env":
-            self._remove_env()
-        elif bid == "add_allow":
-            self._add_allowed_domain()
-        elif bid == "rm_allow":
-            self._remove_allowed_domain()
-        elif bid == "add_reject":
-            self._add_rejected_domain()
-        elif bid == "rm_reject":
-            self._remove_rejected_domain()
+            return
+        dispatch_editor_button(self, bid)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         eid = event.input.id
@@ -791,6 +821,44 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
             "tmp_size",
         ):
             self._create()
+
+
+def _edit_picker_options(
+    allowed: list[str], workspace: Workspace
+) -> tuple[list, str | None]:
+    """Image-picker (options, preselected value) for the edit form.
+
+    Includes the workspace's current image even if it isn't in the
+    server's allowed list, pre-selected (untouched = no change). Prompts
+    are rich Text so bracket-laden names can't crash.
+    """
+    cur = workspace.image or ""
+    opts = list(allowed)
+    if cur and cur not in opts:
+        opts.append(cur)
+    if opts:
+        return (
+            [(Text(i), i) for i in opts],
+            cur if cur in opts else (opts[0] if opts else None),
+        )
+    return [(Text("(none)"), "(none)")], "(none)"
+
+
+def _seeded_setting_values(settings: dict) -> dict[str, str]:
+    """Resource-input seed strings from the settings bag (absent = '')."""
+    return {
+        "idle_timeout": str(settings["idle_timeout"])
+        if "idle_timeout" in settings
+        else "",
+        "cpu_limit": str(settings["cpu_limit"])
+        if "cpu_limit" in settings
+        else "",
+        "memory_limit": str(settings.get("memory_limit", "")),
+        "pids_limit": str(settings["pids_limit"])
+        if "pids_limit" in settings
+        else "",
+        "tmp_size": str(settings.get("tmp_size", "")),
+    }
 
 
 class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
@@ -910,18 +978,9 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         # Image picker: include the workspace's current image even if it
         # isn't in the server's allowed list, pre-selected (untouched = no
         # change). Prompts are rich Text so bracket-laden names can't crash.
-        cur = workspace.image or ""
-        opts = list(allowed)
-        if cur and cur not in opts:
-            opts.append(cur)
-        if opts:
-            self._select_options = [(Text(i), i) for i in opts]
-            self._select_value = (
-                cur if cur in opts else (opts[0] if opts else None)
-            )
-        else:
-            self._select_options = [(Text("(none)"), "(none)")]
-            self._select_value = "(none)"
+        self._select_options, self._select_value = _edit_picker_options(
+            allowed, workspace
+        )
 
     def compose(self) -> ComposeResult:
         # Header / status dock (StatusBar + Footer) come from StatusScreen
@@ -1026,13 +1085,11 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                     )
                     yield OptionList(id="reject_list", classes="editor-list")
                 with TabPane("Resources", id="resources_pane"):
-                    _s = self._ws.settings or {}
+                    seeded = _seeded_setting_values(self._ws.settings or {})
                     yield Horizontal(
                         Static("Idle timeout (s)"),
                         Input(
-                            value=str(_s["idle_timeout"])
-                            if "idle_timeout" in _s
-                            else "",
+                            value=seeded["idle_timeout"],
                             id="idle_timeout",
                             placeholder="seconds (0 = never)",
                         ),
@@ -1041,9 +1098,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                     yield Horizontal(
                         Static("CPU limit"),
                         Input(
-                            value=str(_s["cpu_limit"])
-                            if "cpu_limit" in _s
-                            else "",
+                            value=seeded["cpu_limit"],
                             id="cpu_limit",
                             placeholder="e.g. 2.0",
                         ),
@@ -1052,7 +1107,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                     yield Horizontal(
                         Static("Memory limit"),
                         Input(
-                            value=str(_s.get("memory_limit", "")),
+                            value=seeded["memory_limit"],
                             id="memory_limit",
                             placeholder="e.g. 4g, 512m",
                         ),
@@ -1061,9 +1116,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                     yield Horizontal(
                         Static("PIDs limit"),
                         Input(
-                            value=str(_s["pids_limit"])
-                            if "pids_limit" in _s
-                            else "",
+                            value=seeded["pids_limit"],
                             id="pids_limit",
                             placeholder="e.g. 512",
                         ),
@@ -1072,7 +1125,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
                     yield Horizontal(
                         Static("/tmp size"),
                         Input(
-                            value=str(_s.get("tmp_size", "")),
+                            value=seeded["tmp_size"],
                             id="tmp_size",
                             placeholder="e.g. 2g, 512m",
                         ),
@@ -1433,48 +1486,46 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
 
     # --- save ---
 
-    def _save_body(self, name: str) -> dict | None:
-        """Gather the form fields into a PUT body; None on invalid input
-        (the error has already been shown via ``_msg``)."""
-        sel = self.query_one("#image", Select)
-        val = sel.value
-        image = val if (val and val != "(none)") else None
-        command = self.query_one("#command", Input).value.strip() or None
-        health_check = (
-            self.query_one("#health_check", Input).value.strip() or None
-        )
-        auto = (
-            self._allow_autostart
-            and self.query_one("#auto_start", Checkbox).value
-        )
-        mounts = list(self._mounts) or None
-        env = dict(self._env) or None
-        allowed_domains = list(self._allowed_domains) or None
-        rejected_domains = list(self._rejected_domains) or None
-        egress_mode = self.query_one("#egress_mode", Select).value
-        # #2721: home layout is mutable and applies from the next
-        # connect/start — never a restart-needed field (open sessions
-        # keep their layout until they end).
-        per_handle_home = self.query_one("#per_handle_home", Checkbox).value
-        # #2768: classification marking. Always sent (full-replace like
-        # the other PUT fields): an emptied field clears the override so
-        # the workspace inherits the deploy default again. Display-time
-        # only — never a restart-needed field.
-        classification_banner = (
-            self.query_one("#classification_banner", Input).value.strip()
-            or None
-        )
-        try:
-            settings = _collect_settings(self)
-        except ValueError as exc:
-            self._msg(str(exc), error=True)
-            return None
+    def _save_field_values(self) -> dict:
+        """The scalar widget reads for the PUT body (empties -> None)."""
+        image = self.query_one("#image", Select).value
+        return {
+            "image": image if (image and image != "(none)") else None,
+            "service_command": self.query_one("#command", Input).value.strip()
+            or None,
+            "health_check": self.query_one(
+                "#health_check", Input
+            ).value.strip()
+            or None,
+            "auto_start": self._allow_autostart
+            and self.query_one("#auto_start", Checkbox).value,
+            # #2721: home layout is mutable and applies from the next
+            # connect/start — never a restart-needed field (open sessions
+            # keep their layout until they end).
+            "per_handle_home": self.query_one(
+                "#per_handle_home", Checkbox
+            ).value,
+            # #2768: classification marking. Always sent (full-replace like
+            # the other PUT fields): an emptied field clears the override so
+            # the workspace inherits the deploy default again. Display-time
+            # only — never a restart-needed field.
+            "classification_banner": self.query_one(
+                "#classification_banner", Input
+            ).value.strip()
+            or None,
+            "egress_mode": self.query_one("#egress_mode", Select).value,
+        }
+
+    def _merged_save_settings(self) -> dict:
+        """The settings bag for the PUT body: _collect_settings merged over
+        the existing bag, plus the shown nix/sudo toggles."""
+        settings = _collect_settings(self)
         # PUT settings is a full-replace bag, so seed from the existing
         # bag unconditionally — API-only keys the form does not represent
         # (e.g. bridge_timeout) and toggle-gated keys (nix, allow_sudo)
         # whose toggles are hidden on this deploy must survive the save
         # instead of being silently wiped (#2017 review).
-        merged_settings = {
+        merged = {
             **(self._ws.settings or {}),
             **(settings or {}),
         }
@@ -1482,70 +1533,95 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         # including False, to actually turn the mount off (omitting the
         # key would leave the stale bag untouched).
         if self._nix_available:
-            merged_settings["nix"] = bool(
-                self.query_one("#nix", Checkbox).value
-            )
+            merged["nix"] = bool(self.query_one("#nix", Checkbox).value)
         # #2017: same for the sudo posture — an explicit value whenever
         # the toggle is shown, so an uncheck-to-revert actually clears a
         # stored lock-down. True follows the deploy posture (the server
         # setting stays the ceiling).
         if self._sudo_available:
-            merged_settings["allow_sudo"] = bool(
+            merged["allow_sudo"] = bool(
                 self.query_one("#allow_sudo", Checkbox).value
             )
+        return merged
+
+    def _save_body(self, name: str) -> dict | None:
+        """Gather the form fields into a PUT body; None on invalid input
+        (the error has already been shown via ``_msg``)."""
+        try:
+            merged_settings = self._merged_save_settings()
+        except ValueError as exc:
+            self._msg(str(exc), error=True)
+            return None
         body = {
             "name": name,
-            "image": image,
-            "service_command": command,
-            "health_check": health_check,
-            "auto_start": auto,
-            "mounts": mounts,
-            "env": env,
-            "allowed_domains": allowed_domains,
-            "rejected_domains": rejected_domains,
-            "egress_mode": egress_mode,
-            "per_handle_home": per_handle_home,
-            "classification_banner": classification_banner,
+            **self._save_field_values(),
+            "mounts": list(self._mounts) or None,
+            "env": dict(self._env) or None,
+            "allowed_domains": list(self._allowed_domains) or None,
+            "rejected_domains": list(self._rejected_domains) or None,
         }
         if merged_settings:
             body["settings"] = merged_settings
         return body
+
+    @staticmethod
+    def _orig_list_fields(ws) -> dict:
+        """The workspace's list fields, normalized the way the body
+        represents them (empty -> None) so a plain != detects a change."""
+        return {
+            "mounts": list(ws.mounts or []) or None,
+            "env": dict(ws.env or {}) or None,
+            "allowed_domains": list(ws.allowed_domains or []) or None,
+            "rejected_domains": list(ws.rejected_domains or []) or None,
+        }
+
+    def _create_time_fields_changed(self, body: dict, ws) -> bool:
+        """Whether any top-level create-time field differs (#1778, #1749).
+
+        image / service_command normalize both sides to None-when-empty;
+        the list fields compare against their normalized snapshot."""
+        orig = self._orig_list_fields(ws)
+        return any(
+            [
+                (body["image"] or None) != (ws.image or None),
+                body["mounts"] != orig["mounts"],
+                body["env"] != orig["env"],
+                (body["service_command"] or None)
+                != (ws.service_command or None),
+                body["allowed_domains"] != orig["allowed_domains"],
+                body["rejected_domains"] != orig["rejected_domains"],
+                # #2409: egress_mode is a container-create-time field (it sets
+                # up --network container:<sidecar>), so a change needs a restart.
+                body["egress_mode"] != (ws.egress_mode or EGRESS_MODE_DEFAULT),
+            ]
+        )
+
+    def _settings_changed_since_create(self, body: dict, ws) -> bool:
+        """Whether a create-time settings-bag key differs.
+
+        #2233: the per-workspace /nix mount is set up at create time, so
+        toggling it on a running workspace needs a restart. #2017: the
+        sudoers rule is written at container-create time, so a posture
+        flip needs a restart to take effect."""
+        settings = body.get("settings") or {}
+        old = ws.settings or {}
+        return (
+            self._nix_available
+            and settings.get("nix", False) != bool(old.get("nix"))
+        ) or (
+            self._sudo_available
+            and settings.get("allow_sudo", True)
+            != bool(old.get("allow_sudo", True))
+        )
 
     def _restart_needed_after_save(self, body: dict) -> bool:
         """True if a create-time field changed on a running workspace."""
         ws = self._ws
         if not ws.running:
             return False
-        settings = body.get("settings") or {}
-        old = ws.settings or {}
-        return any(
-            [
-                # Top-level create-time fields (#1778, #1749): image /
-                # service_command normalize both sides to None-when-empty,
-                # the list fields compare against their normalized snapshot.
-                (body["image"] or None) != (ws.image or None),
-                body["mounts"] != (list(ws.mounts or []) or None),
-                body["env"] != (dict(ws.env or {}) or None),
-                (body["service_command"] or None)
-                != (ws.service_command or None),
-                body["allowed_domains"]
-                != (list(ws.allowed_domains or []) or None),
-                body["rejected_domains"]
-                != (list(ws.rejected_domains or []) or None),
-                # #2409: egress_mode is a container-create-time field (it sets
-                # up --network container:<sidecar>), so a change needs a restart.
-                body["egress_mode"] != (ws.egress_mode or EGRESS_MODE_DEFAULT),
-                # #2233: the per-workspace /nix mount is set up at create
-                # time, so toggling it on a running workspace needs a restart.
-                self._nix_available
-                and settings.get("nix", False) != bool(old.get("nix")),
-                # #2017: the sudoers rule is written at container-create time,
-                # so a posture flip needs a restart to take effect.
-                self._sudo_available
-                and settings.get("allow_sudo", True)
-                != bool(old.get("allow_sudo", True)),
-            ]
-        )
+        return self._create_time_fields_changed(
+            body, ws
+        ) or self._settings_changed_since_create(body, ws)
 
     def _save(self) -> None:
         name = self.query_one("#name", Input).value.strip()
@@ -1633,24 +1709,11 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         bid = event.button.id
         if bid == "cancel":
             self.dismiss(False)
-        elif bid == "save":
+            return
+        if bid == "save":
             self._save()
-        elif bid == "add_mount":
-            self._add_mount()
-        elif bid == "rm_mount":
-            self._remove_mount()
-        elif bid == "add_env":
-            self._add_env()
-        elif bid == "rm_env":
-            self._remove_env()
-        elif bid == "add_allow":
-            self._add_allowed_domain()
-        elif bid == "rm_allow":
-            self._remove_allowed_domain()
-        elif bid == "add_reject":
-            self._add_rejected_domain()
-        elif bid == "rm_reject":
-            self._remove_rejected_domain()
+            return
+        dispatch_editor_button(self, bid)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         eid = event.input.id
