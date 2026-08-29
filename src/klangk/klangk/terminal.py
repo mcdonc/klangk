@@ -128,6 +128,55 @@ def should_fire_service_command(
     return setup_state == SETUP_STATE_COMPLETE
 
 
+def _sensitive_env_unsets() -> list[str]:
+    """``env -u`` args stripping sensitive host env from the container."""
+    unset_args: list[str] = []
+    for key in os.environ:
+        if key.startswith(_SENSITIVE_ENV_PREFIXES):
+            unset_args.extend(["-u", key])
+    return unset_args
+
+
+def _tmux_env_args(
+    user_home: str | None,
+    ssh_agent_socket: str | None,
+    user_id: str | None,
+    user_handle: str | None,
+) -> list[str]:
+    """``-e`` args for the tmux session's environment."""
+    tmux_env: list[str] = []
+    if user_home is not None:
+        tmux_env = ["-e", f"HOME={user_home}"]
+    if ssh_agent_socket is not None:
+        tmux_env += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
+    if user_id is not None:
+        tmux_env += ["-e", f"KLANGKWS_USER_ID={user_id}"]
+    if user_handle is not None:
+        tmux_env += ["-e", f"KLANGKWS_USER_HANDLE={user_handle}"]
+    return tmux_env
+
+
+def _session_args(
+    session_name: str | None, join_session: str | None
+) -> tuple[list[str], str | None]:
+    """``new-session`` targeting args plus the unique grouped-session name
+    (set only for grouped/joined sessions)."""
+    if session_name is None:
+        return [], None
+    if join_session is not None:
+        # Join an existing session group.  Use a unique session name
+        # so rapid re-joins don't collide with a stale session.
+        unique = f"{session_name}-{uuid.uuid4().hex[:8]}"
+        return ["-t", join_session, "-s", unique], unique
+    # Each connection gets a grouped session so that
+    # select-window only affects this client.  The base
+    # session is created detached if it doesn't exist yet
+    # (via ensure_base_session), then we always create a
+    # grouped session targeting it.
+    unique = f"{session_name}-{uuid.uuid4().hex[:8]}"
+    return ["-t", session_name, "-s", unique], unique
+
+
 def build_shell_command(
     session_name: str | None = None,
     user_home: str | None = None,
@@ -155,10 +204,7 @@ def build_shell_command(
     session inside the container (preventing stale clients that deadlock
     the tmux server).
     """
-    unset_args: list[str] = []
-    for key in os.environ:
-        if key.startswith(_SENSITIVE_ENV_PREFIXES):
-            unset_args.extend(["-u", key])
+    unset_args = _sensitive_env_unsets()
 
     # Plain-shell mode: drop straight into a login shell (sources
     # /etc/profile -> /etc/bash.bashrc, same init path tmux's login shell
@@ -167,34 +213,11 @@ def build_shell_command(
         cmd = ["env", *unset_args, "bash", "-l"]
         return cmd, None
 
-    tmux_env: list[str] = []
-    session_args: list[str] = []
-    socket_args: list[str] = []
-    unique: str | None = None
-    if socket_path is not None:
-        socket_args = ["-S", socket_path]
-    if user_home is not None:
-        tmux_env = ["-e", f"HOME={user_home}"]
-    if ssh_agent_socket is not None:
-        tmux_env += ["-e", f"SSH_AUTH_SOCK={ssh_agent_socket}"]
-    if user_id is not None:
-        tmux_env += ["-e", f"KLANGKWS_USER_ID={user_id}"]
-    if user_handle is not None:
-        tmux_env += ["-e", f"KLANGKWS_USER_HANDLE={user_handle}"]
-    if session_name is not None:
-        if join_session is not None:
-            # Join an existing session group.  Use a unique session name
-            # so rapid re-joins don't collide with a stale session.
-            unique = f"{session_name}-{uuid.uuid4().hex[:8]}"
-            session_args = ["-t", join_session, "-s", unique]
-        else:
-            # Each connection gets a grouped session so that
-            # select-window only affects this client.  The base
-            # session is created detached if it doesn't exist yet
-            # (via ensure_base_session), then we always create a
-            # grouped session targeting it.
-            unique = f"{session_name}-{uuid.uuid4().hex[:8]}"
-            session_args = ["-t", session_name, "-s", unique]
+    socket_args = ["-S", socket_path] if socket_path is not None else []
+    tmux_env = _tmux_env_args(
+        user_home, ssh_agent_socket, user_id, user_handle
+    )
+    session_args, unique = _session_args(session_name, join_session)
     cmd = [
         "env",
         *unset_args,
@@ -609,110 +632,123 @@ class Terminal:
                 )
                 return
             if exists:
-                if self.registry.service_fire_pending(container_id):
-                    # A previous fire half-completed and its cleanup failed:
-                    # the window exists but the command was (probably)
-                    # never typed. Retry only the send -- recreating the
-                    # window would lose the settled shell (#2740).
-                    if await self._send_service_command(
-                        container_id, service_command
-                    ):
-                        self.registry.clear_service_fire_pending(container_id)
-                        self.registry.mark_service_started(container_id)
-                    else:
-                        logger.warning(
-                            "Service command retry failed for %s; "
-                            "will retry on next terminal_start",
-                            container_id,
-                        )
-                return
-            # Fresh fire. Any stale pending flag (e.g. the window died some
-            # other way) is moot once this sequence runs.
-            self.registry.clear_service_fire_pending(container_id)
-            try:
-                try:
-                    rc, _, _ = await self.podman.exec_container(
-                        container_id,
-                        [
-                            "tmux",
-                            "new-window",
-                            "-d",
-                            "-t",
-                            SERVICE_SESSION,
-                            "-n",
-                            SERVICE_CMD_WINDOW,
-                        ],
-                        user=CONTAINER_USER,
-                        timeout=SERVICE_EXEC_TIMEOUT,
-                    )
-                except Exception:
-                    rc = -1
-                if rc != 0:
-                    logger.warning(
-                        "Failed to create %s window in %s",
-                        SERVICE_CMD_WINDOW,
-                        SERVICE_SESSION,
-                    )
-                    # The exec may have been killed client-side while the
-                    # container side created the window -- clean it up so
-                    # the next fire re-runs the whole sequence instead of
-                    # suppressing on a command-less window (#2740).
-                    self.registry.mark_service_fire_pending(container_id)
-                    if await self.kill_service_cmd_window(container_id):
-                        self.registry.clear_service_fire_pending(container_id)
-                    else:
-                        logger.warning(
-                            "Failed to clean up %s window in %s",
-                            SERVICE_CMD_WINDOW,
-                            SERVICE_SESSION,
-                        )
-                    return
-                # The new window's shell needs a moment to source
-                # .profile / .bashrc before it can resolve PATH-dependent
-                # commands (nvm, openclaw, ...). Same race as #1030.
-                await asyncio.sleep(1)
-                if await self._send_service_command(
+                await self._retry_pending_service_send(
                     container_id, service_command
-                ):
-                    # The service command just fired -- reset the
-                    # health-check startup-grace anchor so the monitor
-                    # gives the service time to boot before a failing poll
-                    # can flag it unhealthy (e.g. a gateway that isn't
-                    # accepting connections yet). Only on a clean send:
-                    # the failure paths never launched the command, so they
-                    # must not start the grace window.
-                    self.registry.mark_service_started(container_id)
-                    return
-                logger.warning(
-                    "Failed to send service command to %s", SERVICE_SESSION
                 )
-                # The window was created above but the command never
-                # landed in it. Kill it so the next fire re-runs the whole
-                # sequence instead of no-op'ing forever on the
-                # half-created window (#1186). If the cleanup itself
-                # fails, leave the fire pending so the next call retries
-                # the send into the surviving window (#2740).
+                return
+            await self._fire_service_command(container_id, service_command)
+
+    async def _retry_pending_service_send(
+        self, container_id: str, service_command: str
+    ) -> None:
+        """Retry only the send for a half-completed fire (#2740).
+
+        The window exists and the fire flag is pending: a previous fire's
+        cleanup failed, so the command was (probably) never typed. Retry
+        only the send -- recreating the window would lose the settled
+        shell."""
+        if not self.registry.service_fire_pending(container_id):
+            return
+        if await self._send_service_command(container_id, service_command):
+            self.registry.clear_service_fire_pending(container_id)
+            self.registry.mark_service_started(container_id)
+        else:
+            logger.warning(
+                "Service command retry failed for %s; "
+                "will retry on next terminal_start",
+                container_id,
+            )
+
+    async def _fire_service_command(
+        self, container_id: str, service_command: str
+    ) -> None:
+        """Fresh fire: create the window, send the command; clean up (and
+        mark pending) on failure (see ensure_service_session's docstring
+        for the recovery states)."""
+        # Fresh fire. Any stale pending flag (e.g. the window died some
+        # other way) is moot once this sequence runs.
+        self.registry.clear_service_fire_pending(container_id)
+        try:
+            try:
+                rc, _, _ = await self.podman.exec_container(
+                    container_id,
+                    [
+                        "tmux",
+                        "new-window",
+                        "-d",
+                        "-t",
+                        SERVICE_SESSION,
+                        "-n",
+                        SERVICE_CMD_WINDOW,
+                    ],
+                    user=CONTAINER_USER,
+                    timeout=SERVICE_EXEC_TIMEOUT,
+                )
+            except Exception:
+                rc = -1
+            if rc != 0:
+                logger.warning(
+                    "Failed to create %s window in %s",
+                    SERVICE_CMD_WINDOW,
+                    SERVICE_SESSION,
+                )
+                # The exec may have been killed client-side while the
+                # container side created the window -- clean it up so
+                # the next fire re-runs the whole sequence instead of
+                # suppressing on a command-less window (#2740).
                 self.registry.mark_service_fire_pending(container_id)
                 if await self.kill_service_cmd_window(container_id):
                     self.registry.clear_service_fire_pending(container_id)
                 else:
                     logger.warning(
-                        "Failed to clean up %s window in %s; "
-                        "fire marked pending",
+                        "Failed to clean up %s window in %s",
                         SERVICE_CMD_WINDOW,
                         SERVICE_SESSION,
                     )
-            except asyncio.CancelledError:
-                # The caller (e.g. the _start_terminal task on a client WS
-                # drop) went away mid-sequence. The synchronous pending
-                # flag lands BEFORE the cleanup await, so even a second
-                # cancellation during cleanup leaves a recoverable state:
-                # the next terminal_start sees window + pending and retries
-                # the send (#2740).
-                self.registry.mark_service_fire_pending(container_id)
-                with contextlib.suppress(Exception):
-                    await self.kill_service_cmd_window(container_id)
-                raise
+                return
+            # The new window's shell needs a moment to source
+            # .profile / .bashrc before it can resolve PATH-dependent
+            # commands (nvm, openclaw, ...). Same race as #1030.
+            await asyncio.sleep(1)
+            if await self._send_service_command(container_id, service_command):
+                # The service command just fired -- reset the
+                # health-check startup-grace anchor so the monitor
+                # gives the service time to boot before a failing poll
+                # can flag it unhealthy (e.g. a gateway that isn't
+                # accepting connections yet). Only on a clean send:
+                # the failure paths never launched the command, so they
+                # must not start the grace window.
+                self.registry.mark_service_started(container_id)
+                return
+            logger.warning(
+                "Failed to send service command to %s", SERVICE_SESSION
+            )
+            # The window was created above but the command never
+            # landed in it. Kill it so the next fire re-runs the whole
+            # sequence instead of no-op'ing forever on the
+            # half-created window (#1186). If the cleanup itself
+            # fails, leave the fire pending so the next call retries
+            # the send into the surviving window (#2740).
+            self.registry.mark_service_fire_pending(container_id)
+            if await self.kill_service_cmd_window(container_id):
+                self.registry.clear_service_fire_pending(container_id)
+            else:
+                logger.warning(
+                    "Failed to clean up %s window in %s; fire marked pending",
+                    SERVICE_CMD_WINDOW,
+                    SERVICE_SESSION,
+                )
+        except asyncio.CancelledError:
+            # The caller (e.g. the _start_terminal task on a client WS
+            # drop) went away mid-sequence. The synchronous pending
+            # flag lands BEFORE the cleanup await, so even a second
+            # cancellation during cleanup leaves a recoverable state:
+            # the next terminal_start sees window + pending and retries
+            # the send (#2740).
+            self.registry.mark_service_fire_pending(container_id)
+            with contextlib.suppress(Exception):
+                await self.kill_service_cmd_window(container_id)
+            raise
 
     # --- container-side helpers ---
 
@@ -1123,6 +1159,36 @@ class TerminalSession:
         """Reach podman via the Terminal instance (#1480)."""
         return self._terminal.podman
 
+    async def _ensure_base_tmux_session(self) -> None:
+        """Ensure the base tmux session exists before building a grouped
+        session command that targets it.  Only needed for own sessions
+        (not joins/shared, which target a different session)."""
+        if (
+            not self.session_name
+            or self.join_session
+            or self.socket_path
+            or not self._terminal.tmux_enabled()
+        ):
+            return
+        await self._terminal.ensure_base_session(
+            self.container_id,
+            self.session_name,
+            user_home=self.user_home,
+            ssh_agent_socket=self.ssh_agent_socket,
+            user_id=self.user_id,
+            user_handle=self.user_handle,
+        )
+
+    async def _refresh_workspace_status_name(self) -> None:
+        """Set @workspace_name globally so every grouped session's status
+        bar picks it up.  Runs on every terminal_start (idempotent)
+        because the base session may have been created by older code
+        that didn't set it (#1880)."""
+        if self.workspace_name and self._terminal.tmux_enabled():
+            await self._terminal.set_workspace_name(
+                self.container_id, self.workspace_name
+            )
+
     async def start(
         self,
         cols: int = 80,
@@ -1130,31 +1196,8 @@ class TerminalSession:
     ) -> None:
         """Start a shell session via ``podman exec`` over a PTY."""
         self._running = True
-        # Ensure the base tmux session exists before building a grouped
-        # session command that targets it.  Only needed for own sessions
-        # (not joins/shared, which target a different session).
-        if (
-            self.session_name
-            and not self.join_session
-            and not self.socket_path
-            and self._terminal.tmux_enabled()
-        ):
-            await self._terminal.ensure_base_session(
-                self.container_id,
-                self.session_name,
-                user_home=self.user_home,
-                ssh_agent_socket=self.ssh_agent_socket,
-                user_id=self.user_id,
-                user_handle=self.user_handle,
-            )
-        # Set @workspace_name globally so every grouped session's status
-        # bar picks it up.  Runs on every terminal_start (idempotent)
-        # because the base session may have been created by older code
-        # that didn't set it (#1880).
-        if self.workspace_name and self._terminal.tmux_enabled():
-            await self._terminal.set_workspace_name(
-                self.container_id, self.workspace_name
-            )
+        await self._ensure_base_tmux_session()
+        await self._refresh_workspace_status_name()
         env = build_environment(
             self.user_home,
             user_id=self.user_id,
@@ -1209,6 +1252,21 @@ class TerminalSession:
             except OSError as e:  # pragma: no cover
                 logger.warning("Failed to set SSH_AUTH_SOCK in tmux: %s", e)
 
+    async def _log_exec_exit_code(self) -> None:  # pragma: no cover
+        """Best-effort: log the podman-exec exit code behind the EOF."""
+        _p = getattr(self._shell, "_proc", None)
+        if _p is None:
+            return
+        try:
+            _rc = await asyncio.wait_for(_p.wait(), timeout=2)
+            logger.info(
+                "Terminal exec exited rc=%s "
+                "(nonzero = tmux/podman error; 0 = clean detach)",
+                _rc,
+            )
+        except Exception:
+            pass
+
     async def _read_loop(self) -> None:
         """Read PTY output and queue it as text.
 
@@ -1224,17 +1282,7 @@ class TerminalSession:
                 data = await self._shell.read()
                 if not data:
                     logger.info("Terminal read loop: EOF from PTY")
-                    _p = getattr(self._shell, "_proc", None)
-                    if _p is not None:  # pragma: no cover
-                        try:
-                            _rc = await asyncio.wait_for(_p.wait(), timeout=2)
-                            logger.info(
-                                "Terminal exec exited rc=%s "
-                                "(nonzero = tmux/podman error; 0 = clean detach)",
-                                _rc,
-                            )
-                        except Exception:
-                            pass
+                    await self._log_exec_exit_code()
                     break
                 text = decoder.decode(data)
                 if text:
