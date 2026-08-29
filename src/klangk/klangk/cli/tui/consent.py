@@ -331,6 +331,58 @@ class ConsentDeciderController:
         # renders an empty state until then.
         self.rules: EgressRules | None = None
 
+    def _apply_request(self, msg: dict) -> tuple[str, object]:
+        req = _parse_request(msg.get("request"))
+        if req is None:
+            return IGNORED, None
+        self.pending[req.id] = req
+        return ADDED, req
+
+    def _apply_resolved(self, msg: dict) -> tuple[str, object]:
+        rid = msg.get("request_id")
+        if isinstance(rid, str):
+            self.pending.pop(rid, None)
+        return RESOLVED, (rid, msg.get("decision"))
+
+    def _apply_rules(self, msg: dict) -> tuple[str, object]:
+        rules = _parse_rules(msg)
+        if rules is None:
+            return IGNORED, None
+        self.rules = rules
+        return RULES, rules
+
+    def _apply_revoke_ack(self, msg: dict) -> tuple[str, object]:
+        # #2341: server confirmed a revoke. On success drop the row from the
+        # cached snapshot (idempotent -- the server also pushes a refreshed
+        # ``egress_rules``); on failure leave it enforced. ``request_id`` may
+        # be absent on a malformed frame -> rid None, no mutation.
+        rid = msg.get("request_id")
+        ok = bool(msg.get("ok"))
+        if ok and isinstance(rid, str) and self.rules is not None:
+            self.rules = replace(
+                self.rules,
+                allowed=tuple(r for r in self.rules.allowed if r.id != rid),
+                denied=tuple(r for r in self.rules.denied if r.id != rid),
+            )
+        return REVOKE_ACK, (
+            rid if isinstance(rid, str) else None,
+            ok,
+        )
+
+    def _apply_pause_ack(self, msg: dict) -> tuple[str, object]:
+        # #2332: server replied to a pause/unpause. The pause window itself
+        # arrives in the subsequent refreshed ``egress_rules`` frame (the
+        # server broadcasts one on every pause/unpause); this ack only
+        # signals success/failure so the view can flash on a nack. ``until``
+        # is None for an unpause or a failed pause.
+        until = msg.get("until")
+        return PAUSE_ACK, (
+            bool(msg.get("ok")),
+            float(until)
+            if isinstance(until, (int, float)) and not isinstance(until, bool)
+            else None,
+        )
+
     def apply_frame(self, raw: str) -> tuple[str, object]:
         """Parse + apply one inbound server frame.
 
@@ -348,55 +400,15 @@ class ConsentDeciderController:
             return IGNORED, None
         mtype = msg.get("type")
         if mtype == "egress_request":
-            req = _parse_request(msg.get("request"))
-            if req is None:
-                return IGNORED, None
-            self.pending[req.id] = req
-            return ADDED, req
+            return self._apply_request(msg)
         if mtype == "egress_resolved":
-            rid = msg.get("request_id")
-            if isinstance(rid, str):
-                self.pending.pop(rid, None)
-            return RESOLVED, (rid, msg.get("decision"))
+            return self._apply_resolved(msg)
         if mtype == "egress_rules":
-            rules = _parse_rules(msg)
-            if rules is None:
-                return IGNORED, None
-            self.rules = rules
-            return RULES, rules
+            return self._apply_rules(msg)
         if mtype == "revoke_ack":
-            # #2341: server confirmed a revoke. On success drop the row from the
-            # cached snapshot (idempotent -- the server also pushes a refreshed
-            # ``egress_rules``); on failure leave it enforced. ``request_id`` may
-            # be absent on a malformed frame -> rid None, no mutation.
-            rid = msg.get("request_id")
-            ok = bool(msg.get("ok"))
-            if ok and isinstance(rid, str) and self.rules is not None:
-                self.rules = replace(
-                    self.rules,
-                    allowed=tuple(
-                        r for r in self.rules.allowed if r.id != rid
-                    ),
-                    denied=tuple(r for r in self.rules.denied if r.id != rid),
-                )
-            return REVOKE_ACK, (
-                rid if isinstance(rid, str) else None,
-                ok,
-            )
+            return self._apply_revoke_ack(msg)
         if mtype == "pause_ack":
-            # #2332: server replied to a pause/unpause. The pause window itself
-            # arrives in the subsequent refreshed ``egress_rules`` frame (the
-            # server broadcasts one on every pause/unpause); this ack only
-            # signals success/failure so the view can flash on a nack. ``until``
-            # is None for an unpause or a failed pause.
-            until = msg.get("until")
-            return PAUSE_ACK, (
-                bool(msg.get("ok")),
-                float(until)
-                if isinstance(until, (int, float))
-                and not isinstance(until, bool)
-                else None,
-            )
+            return self._apply_pause_ack(msg)
         if mtype == "pong":
             return PONG, None
         if mtype == "error":
