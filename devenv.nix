@@ -602,17 +602,17 @@ in
       pass_filenames = true;
     };
     # Python: cyclomatic-complexity gate (#2794). Blocks must stay rank C
-    # or better (complexity <= 20); module/average gates are off (rank F)
+    # or better (complexity <= 10); module/average gates are off (rank F)
     # because they flap when only a few files are staged. The F/E/D-ranked
-    # legacy blocks were refactored down (#2800-#2803, #2808-#2814), so the
+    # legacy blocks were refactored down (#2800-#2803, #2808-#2814), the
+    # C-ranked ones in the B-ratchet (#2818-#2842), so the
     # excludes are gone — every production .py file is checked (klangkd +
     # CLI under src/klangk/klangk/, the network sidecar under
-    # src/klangksidecar/klangksidecar/ — already C-clean when gated — and
-    # scripts/).
+    # src/klangksidecar/klangksidecar/, and scripts/).
     xenon = {
       enable = true;
       name = "xenon";
-      entry = "${pkgs.xenon}/bin/xenon --max-absolute C --max-modules F --max-average F";
+      entry = "${pkgs.xenon}/bin/xenon --max-absolute B --max-modules F --max-average F";
       files = "^src/klangk/klangk/.*\\.py$|^src/klangksidecar/klangksidecar/.*\\.py$|^scripts/.*\\.py$";
       language = "system";
       pass_filenames = true;
