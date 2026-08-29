@@ -1,13 +1,12 @@
 """CLI unit test configuration."""
 
-import os
-
 import pytest
 
-# Use sysmon coverage engine for pytest-xdist compatibility — mirrors the
-# server suite's conftest (src/klangk/klangkd-tests/tests/conftest.py) so
-# coverage is tracked correctly across xdist workers (#1526).
-os.environ.setdefault("COVERAGE_CORE", "sysmon")
+# No COVERAGE_CORE pin: branch coverage (#2834) requires the C tracer
+# core (Python 3.13's sys.monitoring has no branch events, so sysmon
+# can't measure branches and falls back with a warning that
+# filterwarnings=error turns fatal). See the repo-root pyproject's
+# [tool.coverage.run] for the full rationale.
 
 
 @pytest.fixture(autouse=True)

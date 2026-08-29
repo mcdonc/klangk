@@ -37,19 +37,29 @@ test = [
     "pytest-asyncio>=0.24.0",
     "pytest-xdist>=3.0.0",
     "pytest-timeout>=2.3.0",
+    "pytest-cov>=6.0.0",
+    # Not used by the sidecar itself: the shared [tool.coverage.run] in
+    # the repo-root pyproject.toml (which every from-root pytest-cov run
+    # reads, CWD-relative) sets concurrency=["greenlet", "thread"] for
+    # the klangk suite, and coverage refuses to start with a greenlet
+    # concurrency it can't import. Test-only; the sidecar image installs
+    # no [test] extra (#2834).
+    "greenlet>=3.1",
 ]
 
-# No coverage gate here, by design: app.main()'s signal-handler/real-socket
-# paths only run as PID 1 of the sidecar and are exercised end-to-end by the
-# real-podman e2e (src/klangk/klangkd-tests/e2e-tests/
-# test_network_sidecar_e2e.py), not by this unit suite (mirrors how the klangk
-# suite treats the proxy today — it was never part of the klangk package, so
-# never coverage-gated). The unit suite pins the proxy's logic (spec parsing,
-# ports_for, allow/sweep, the consent state machine).
+# Coverage gate (#2834): branch coverage at 100%, mirroring the klangk
+# suite's gate, over the unit-testable proxy logic (spec parsing,
+# ports_for, allow/sweep, the consent state machine, and app.py's
+# orchestration helpers driven via asyncio tasks). The only lines outside
+# the gate are the PID-1-only entry paths (`python -m klangksidecar` ->
+# app.main -> asyncio.run(_async_main)) — those run as PID 1 of the
+# sidecar and are exercised end-to-end by the real-podman e2e
+# (src/klangk/klangkd-tests/e2e-tests/test_network_sidecar_e2e.py), so
+# they carry `# pragma: no cover` rather than unit-test scaffolding.
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--capture=no --timeout=60"
+addopts = "--capture=no --cov=klangksidecar --cov-branch --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100 --timeout=60"
 # Mirror the klangk suite's mock-induced GC warning ignores.
 filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",

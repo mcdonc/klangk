@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import socket
 import sys
 import time
 import types
@@ -3285,3 +3286,1412 @@ class TestSigtermShutdown:
         nfq.unbind.assert_called_once()  # teardown was NOT aborted
         sock.close.assert_called_once()
         assert sweep.cancelled()
+
+
+# --- branch-coverage gap tests (#2834) ----------------------------------------
+#
+# The 100% branch gate requires every branch OUTCOME exercised, not just every
+# line. These classes drive the paths the original suites reached only via
+# monkeypatched inner helpers (the real forward/respond/nxdomain wire paths,
+# the consent client's connect loop, the best-effort exception swallows) or
+# not at all (query_name/nxdomain_for, _resolve_ws_host, main). Where an
+# outcome is structurally unreachable in-process (PID-1-only entry,
+# never-exiting sweeper loops) the source carries `# pragma: no branch` /
+# `# pragma: no cover` with a comment instead.
+
+
+class _FakeQueryName:
+    """Stub ``dns.message.from_wire`` to return a query ``msg`` for
+    query_name/nxdomain_for tests (the dnspython stub module is the shared
+    mutable surface the suite patches, per TestARecordsWithTtl)."""
+
+    def __init__(self, proxy, monkeypatch, question=None, resp=None):
+        self.resp = resp or types.SimpleNamespace(
+            set_rcode=MagicMock(), to_wire=lambda: b"WIRE"
+        )
+        msg = types.SimpleNamespace(question=question if question is not None else [])
+        monkeypatch.setattr(proxy.dns.message, "from_wire", lambda wire: msg)
+        monkeypatch.setattr(proxy.dns.message, "make_response", lambda q: self.resp)
+
+
+class TestWireHelpers:
+    """query_name / nxdomain_for / _send_nxdomain (#2834): the wire-level
+    helpers the routing tests monkeypatch away, driven directly."""
+
+    def test_query_name_lowercases_and_strips_dot(self, proxy, monkeypatch):
+        name = types.SimpleNamespace(
+            name=types.SimpleNamespace(to_text=lambda: "Example.COM.")
+        )
+        _FakeQueryName(proxy, monkeypatch, question=[name])
+        assert proxy.query_name(b"wire") == "example.com"
+
+    def test_query_name_empty_question(self, proxy, monkeypatch):
+        # A question-less DNS message (e.g. some resolver probes) -> "" (the
+        # _decision gate then denies it, fail-closed).
+        _FakeQueryName(proxy, monkeypatch, question=[])
+        assert proxy.query_name(b"wire") == ""
+
+    def test_nxdomain_for_sets_rcode(self, proxy, monkeypatch):
+        fake = _FakeQueryName(proxy, monkeypatch)
+        assert proxy.nxdomain_for(b"query") == b"WIRE"
+        fake.resp.set_rcode.assert_called_once_with(proxy.dns.rcode.NXDOMAIN)
+
+    def test_send_nxdomain_swallows_sendto_failure(self, proxy, monkeypatch):
+        # Best-effort: a vanished client must not raise out of the recv loop.
+        _FakeQueryName(proxy, monkeypatch)
+        s = MagicMock()
+        s.sendto.side_effect = OSError("client gone")
+        proxy._send_nxdomain(s, b"q", ("127.0.0.1", 53))  # must not raise
+
+    def test_send_nxdomain_sends_wire(self, proxy, monkeypatch):
+        _FakeQueryName(proxy, monkeypatch)
+        s = MagicMock()
+        proxy._send_nxdomain(s, b"q", ("127.0.0.1", 53))
+        s.sendto.assert_called_once_with(b"WIRE", ("127.0.0.1", 53))
+
+
+class _FakeUpstreamSock:
+    """A socket.socket stand-in for _forward_marked: records the MARK
+    setsockopt + the blocking mode, closed by the caller's finally."""
+
+    def __init__(self):
+        self.opts = []
+        self.blocking = None
+        self.closed = False
+
+    def setsockopt(self, level, opt, val):
+        self.opts.append((level, opt, val))
+
+    def setblocking(self, flag):
+        self.blocking = flag
+
+    def close(self):
+        self.closed = True
+
+
+class TestForwardMarked:
+    """_forward_marked / _forward_and_learn / _forward_and_record (#2834):
+    the real upstream-forward preamble (MARK'd non-blocking socket + bounded
+    send/recv on the loop), driven with a fake socket + loop helpers."""
+
+    async def test_success_returns_response_and_closes(self, proxy, monkeypatch):
+        sock = _FakeUpstreamSock()
+        monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: sock)
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(loop, "sock_sendto", AsyncMock(return_value=len(b"q")))
+        monkeypatch.setattr(
+            loop, "sock_recvfrom", AsyncMock(return_value=(b"resp", ("9.9.9.9", 53)))
+        )
+        assert await proxy._forward_marked(b"q") == b"resp"
+        # The loop-avoidance mark + non-blocking mode were applied, and the
+        # socket was closed on success (the finally runs on every path).
+        assert (socket.SOL_SOCKET, socket.SO_MARK, proxy.MARK) in [o for o in sock.opts]
+        assert sock.blocking is False
+        assert sock.closed
+
+    async def test_upstream_failure_returns_none(self, proxy, monkeypatch):
+        # Any upstream failure/timeout -> None (the caller then just drops
+        # the query; the client's resolver retransmits).
+        sock = _FakeUpstreamSock()
+        monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: sock)
+
+        async def _boom(*a, **k):
+            raise OSError("upstream unreachable")
+
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(loop, "sock_sendto", _boom)
+        assert await proxy._forward_marked(b"q") is None
+        assert sock.closed  # closed on error too
+
+    async def test_forward_and_learn_none_resp_skips_respond(self, proxy, monkeypatch):
+        # Upstream failure: _forward_and_learn returns without touching the
+        # client-facing socket.
+        monkeypatch.setattr(
+            proxy.resolve, "_forward_marked", AsyncMock(return_value=None)
+        )
+        respond = AsyncMock()
+        monkeypatch.setattr(proxy.resolve, "_respond_allowed", respond)
+        await proxy._forward_and_learn(MagicMock(), b"q", ("c", 1), "q.name", {443})
+        respond.assert_not_awaited()
+
+    async def test_forward_and_learn_resp_answers(self, proxy, monkeypatch):
+        monkeypatch.setattr(
+            proxy.resolve, "_forward_marked", AsyncMock(return_value=b"resp")
+        )
+        respond = AsyncMock()
+        monkeypatch.setattr(proxy.resolve, "_respond_allowed", respond)
+        s = MagicMock()
+        await proxy._forward_and_learn(s, b"q", ("c", 1), "q.name", {443})
+        respond.assert_awaited_once_with(s, b"resp", ("c", 1), "q.name", {443})
+
+    async def test_forward_and_record_none_resp_skips_respond(self, proxy, monkeypatch):
+        monkeypatch.setattr(
+            proxy.resolve, "_forward_marked", AsyncMock(return_value=None)
+        )
+        respond = AsyncMock()
+        monkeypatch.setattr(proxy.resolve, "_respond_recorded", respond)
+        await proxy._forward_and_record(MagicMock(), b"q", ("c", 1), "q.name")
+        respond.assert_not_awaited()
+
+    async def test_forward_and_record_resp_answers(self, proxy, monkeypatch):
+        monkeypatch.setattr(
+            proxy.resolve, "_forward_marked", AsyncMock(return_value=b"resp")
+        )
+        respond = AsyncMock()
+        monkeypatch.setattr(proxy.resolve, "_respond_recorded", respond)
+        s = MagicMock()
+        await proxy._forward_and_record(s, b"q", ("c", 1), "q.name")
+        respond.assert_awaited_once_with(s, b"resp", ("c", 1), "q.name")
+
+
+class TestRespondEdgePaths:
+    """_respond_allowed / _respond_recorded edge outcomes (#2834): a
+    response with no A records learns/records nothing but still answers, a
+    parsing failure degrades to the same, and DEBUG prints the allow/resolve
+    line."""
+
+    async def test_no_a_records_still_sends(self, proxy, monkeypatch):
+        monkeypatch.setattr(proxy.resolve, "a_records_with_ttl", lambda wire: [])
+        learn = MagicMock()
+        monkeypatch.setattr(proxy.rules, "_learn_all", learn)
+        s = MagicMock()
+        await proxy._respond_allowed(s, b"resp", ("c", 1), "q", {443})
+        learn.assert_not_called()
+        s.sendto.assert_called_once()
+
+    async def test_unparseable_response_degrades_to_no_records(
+        self, proxy, monkeypatch
+    ):
+        def _boom(wire):
+            raise ValueError("garbage wire")
+
+        monkeypatch.setattr(proxy.resolve, "a_records_with_ttl", _boom)
+        learn = MagicMock()
+        monkeypatch.setattr(proxy.rules, "_learn_all", learn)
+        s = MagicMock()
+        await proxy._respond_allowed(s, b"resp", ("c", 1), "q", {443})
+        learn.assert_not_called()
+        s.sendto.assert_called_once()
+
+    async def test_recorded_no_a_records_still_sends(self, proxy, monkeypatch):
+        monkeypatch.setattr(proxy.resolve, "a_records_with_ttl", lambda wire: [])
+        record = MagicMock()
+        monkeypatch.setattr(proxy.rules, "_record_hosts", record)
+        s = MagicMock()
+        await proxy._respond_recorded(s, b"resp", ("c", 1), "q")
+        record.assert_not_called()
+        s.sendto.assert_called_once()
+
+    async def test_recorded_unparseable_response_degrades(self, proxy, monkeypatch):
+        def _boom(wire):
+            raise ValueError("garbage wire")
+
+        monkeypatch.setattr(proxy.resolve, "a_records_with_ttl", _boom)
+        record = MagicMock()
+        monkeypatch.setattr(proxy.rules, "_record_hosts", record)
+        s = MagicMock()
+        await proxy._respond_recorded(s, b"resp", ("c", 1), "q")
+        record.assert_not_called()
+        s.sendto.assert_called_once()
+
+    async def test_debug_prints_allow_line(self, proxy, monkeypatch, capsys):
+        monkeypatch.setattr(proxy.resolve, "DEBUG", True)
+        monkeypatch.setattr(
+            proxy.resolve, "a_records_with_ttl", lambda w: [("1.2.3.4", 60)]
+        )
+        monkeypatch.setattr(proxy.rules, "_learn_all", lambda *a: None)
+        await proxy._respond_allowed(MagicMock(), b"r", ("c", 1), "q.name", {443})
+        assert "allow q.name" in capsys.readouterr().out
+
+    async def test_debug_prints_resolve_line(self, proxy, monkeypatch, capsys):
+        monkeypatch.setattr(proxy.resolve, "DEBUG", True)
+        monkeypatch.setattr(
+            proxy.resolve, "a_records_with_ttl", lambda w: [("1.2.3.4", 60)]
+        )
+        monkeypatch.setattr(proxy.rules, "_record_hosts", lambda *a: None)
+        await proxy._respond_recorded(MagicMock(), b"r", ("c", 1), "q.name")
+        assert "resolve q.name" in capsys.readouterr().out
+
+    async def test_handle_packet_debug_prints_reject_line(
+        self, proxy, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(proxy.resolve, "DEBUG", True)
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "evil.test")
+        monkeypatch.setattr(
+            proxy.allowlist, "REJECT_SPECS", [("evil.test", None, proxy._EXACT)]
+        )
+        _FakeQueryName(proxy, monkeypatch)  # nxdomain_for wire
+        await proxy._handle_packet(MagicMock(), b"q", ("c", 1), None)
+        assert "reject evil.test" in capsys.readouterr().out
+
+    async def test_handle_packet_debug_prints_deny_line(
+        self, proxy, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(proxy.resolve, "DEBUG", True)
+        monkeypatch.setattr(proxy.resolve, "query_name", lambda wire: "other.test")
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+        monkeypatch.setattr(proxy.allowlist, "REJECT_SPECS", [])
+        _FakeQueryName(proxy, monkeypatch)  # nxdomain_for wire
+        await proxy._handle_packet(MagicMock(), b"q", ("c", 1), None)
+        assert "deny  other.test" in capsys.readouterr().out
+
+
+class TestAppTeardownHelpers:
+    """app.py's best-effort teardown helpers (#2834): each swallows its
+    resource's failure so one bad close can't abort the rest of _shutdown."""
+
+    async def test_cancel_task_swallows_task_exception(self, proxy):
+        async def _boom():
+            raise ValueError("task blew up")
+
+        t = asyncio.create_task(_boom())
+        await proxy._cancel_task(t)  # must not raise
+        assert t.done()
+
+    async def test_cancel_task_none_is_noop(self, proxy):
+        await proxy._cancel_task(None)  # no task (not started) -> no-op
+
+    async def test_unbind_nfq_swallows_remove_reader_failure(self, proxy, monkeypatch):
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(
+            loop, "remove_reader", MagicMock(side_effect=RuntimeError("no reader"))
+        )
+        nfq = MagicMock()
+        proxy._unbind_nfq(nfq)  # sync + must not raise
+        nfq.unbind.assert_called_once()  # teardown continued
+
+    async def test_unbind_nfq_swallows_unbind_failure(self, proxy):
+        nfq = MagicMock()
+        nfq.get_fd = MagicMock(return_value=7)
+        nfq.unbind = MagicMock(side_effect=RuntimeError("already unbound"))
+        proxy._unbind_nfq(nfq)  # must not raise
+
+    async def test_unbind_nfq_none_is_noop(self, proxy):
+        proxy._unbind_nfq(None)  # no queue (static mode) -> no-op
+
+    def test_close_quietly_swallows_close_failure(self, proxy):
+        sock = MagicMock()
+        sock.close = MagicMock(side_effect=OSError("already closed"))
+        proxy._close_quietly(sock)  # must not raise
+
+    async def test_close_quietly_closes(self, proxy):
+        sock = MagicMock()
+        proxy._close_quietly(sock)
+        sock.close.assert_called_once()
+
+
+class TestResolveWsHost:
+    """_resolve_ws_host (#2485, #2834): the klangkd WS host resolved to an IP
+    so the egress-accounting rule can exclude it; any failure returns None
+    (printed) -- which defeats the idle timeout, so it is loud."""
+
+    def test_resolves_host_to_ip(self, proxy, monkeypatch):
+        monkeypatch.setattr(proxy.app.socket, "gethostbyname", lambda host: "10.1.2.3")
+        assert proxy._resolve_ws_host("http://klangkd:8443/ws/x") == "10.1.2.3"
+
+    def test_unresolvable_host_returns_none_and_prints(
+        self, proxy, monkeypatch, capsys
+    ):
+        def _boom(host):
+            raise OSError("no such host")
+
+        monkeypatch.setattr(proxy.app.socket, "gethostbyname", _boom)
+        assert proxy._resolve_ws_host("http://klangkd/ws") is None
+        assert "could not resolve the klangkd WS host" in capsys.readouterr().out
+
+    def test_hostless_url_returns_none_and_prints(self, proxy, monkeypatch, capsys):
+        # A URL with no host (e.g. a bare path) -> None, same loud warning.
+        monkeypatch.setattr(proxy.app.socket, "gethostbyname", lambda host: "10.1.2.3")
+        assert proxy._resolve_ws_host("not-a-url") is None
+        assert "could not resolve the klangkd WS host" in capsys.readouterr().out
+
+
+class TestAsyncMainLoopPaths:
+    """_async_main's in-loop paths the SIGTERM tests don't reach (#2834):
+    the recv->handle happy path, the unsupported-signal-backend fallback,
+    the DEBUG shutdown line, and main()'s KeyboardInterrupt swallow."""
+
+    def _stub_static_startup(self, proxy, monkeypatch, fake_sock):
+        # Static mode (no consent URL) + stubbed iptables probes/sockets so
+        # _async_main reaches its recv loop without real kernel access.
+        monkeypatch.setattr(proxy.config, "CONSENT_URL", "")
+        monkeypatch.setattr(proxy.rules, "check_mark", lambda: None)
+        monkeypatch.setattr(proxy.socket, "socket", lambda *a, **k: fake_sock)
+
+    async def test_recv_loop_dispatches_to_handle_packet(self, proxy, monkeypatch):
+        # One received datagram is handed to _handle_packet, then the loop
+        # parks again (the gate hang doubles as the "parked" state).
+        fake_sock = MagicMock()
+        self._stub_static_startup(proxy, monkeypatch, fake_sock)
+        loop = asyncio.get_running_loop()
+        gate = asyncio.Event()
+        served = asyncio.Event()
+
+        async def recvfrom(*a, **k):
+            if not served.is_set():
+                served.set()
+                return b"q", ("127.0.0.1", 40000)
+            await gate.wait()
+            return b"", ("127.0.0.1", 0)
+
+        monkeypatch.setattr(loop, "sock_recvfrom", recvfrom)
+        handled = AsyncMock()
+        monkeypatch.setattr(proxy.resolve, "_handle_packet", handled)
+        task = asyncio.create_task(proxy._async_main())
+        for _ in range(100):
+            if served.is_set():
+                break
+            await asyncio.sleep(0.01)
+        handled.assert_awaited_once_with(fake_sock, b"q", ("127.0.0.1", 40000), None)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_recv_failure_continues_loop(self, proxy, monkeypatch):
+        # A transient recv error is swallowed and the loop keeps serving.
+        fake_sock = MagicMock()
+        self._stub_static_startup(proxy, monkeypatch, fake_sock)
+        loop = asyncio.get_running_loop()
+        calls = {"n": 0}
+        gate = asyncio.Event()
+
+        async def recvfrom(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("transient recv failure")
+            await gate.wait()
+            return b"", ("127.0.0.1", 0)
+
+        monkeypatch.setattr(loop, "sock_recvfrom", recvfrom)
+        task = asyncio.create_task(proxy._async_main())
+        for _ in range(100):
+            if calls["n"] >= 1:
+                break
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)
+        assert calls["n"] >= 2  # the loop continued past the failure
+        assert not task.done()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_unsupported_signal_backend_still_serves(self, proxy, monkeypatch):
+        # add_signal_handler raising (non-main thread / unsupported loop)
+        # must not stop the proxy from serving.
+        fake_sock = MagicMock()
+        self._stub_static_startup(proxy, monkeypatch, fake_sock)
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(
+            loop,
+            "add_signal_handler",
+            MagicMock(side_effect=NotImplementedError("no signals")),
+        )
+        gate = asyncio.Event()
+        parked = asyncio.Event()
+
+        async def recvfrom(*a, **k):
+            parked.set()
+            await gate.wait()
+            return b"", ("127.0.0.1", 0)
+
+        monkeypatch.setattr(loop, "sock_recvfrom", recvfrom)
+        task = asyncio.create_task(proxy._async_main())
+        for _ in range(100):
+            if parked.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert parked.is_set() and not task.done()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_sigterm_debug_line(self, proxy, monkeypatch, capsys):
+        # DEBUG on: the CancelledError unwind prints the shutdown line.
+        fake_sock = MagicMock()
+        self._stub_static_startup(proxy, monkeypatch, fake_sock)
+        monkeypatch.setattr(proxy.app, "DEBUG", True)
+        loop = asyncio.get_running_loop()
+        handlers = {}
+        monkeypatch.setattr(
+            loop,
+            "add_signal_handler",
+            lambda sig, cb, *a: handlers.__setitem__(sig, cb),
+        )
+        gate = asyncio.Event()
+        monkeypatch.setattr(loop, "sock_recvfrom", lambda *a, **k: gate.wait())
+        task = asyncio.create_task(proxy._async_main())
+        for _ in range(100):
+            if signal.SIGTERM in handlers:
+                break
+            await asyncio.sleep(0.01)
+        handlers[signal.SIGTERM]()
+        await asyncio.wait_for(task, timeout=2)
+        assert "stop signal received, shutting down" in capsys.readouterr().out
+
+    def test_main_runs_and_returns(self, proxy, monkeypatch):
+        # main() is the PID-1 asyncio.run wrapper; driven with a no-op body.
+        ran = []
+
+        async def _noop():
+            ran.append(True)
+
+        monkeypatch.setattr(proxy.app, "_async_main", _noop)
+        proxy.app.main()  # must return cleanly
+        assert ran
+
+    def test_main_swallows_keyboard_interrupt(self, proxy, monkeypatch):
+        # Ctrl-C at the console (before podman's SIGTERM) exits quietly.
+        async def _interrupt():
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(proxy.app, "_async_main", _interrupt)
+        proxy.app.main()  # must not raise
+
+
+class _FakeConsentWS:
+    """A websockets connection stand-in: async-context manager + async
+    iterator over scripted frames, recording sends."""
+
+    def __init__(self, frames=()):
+        self._frames = list(frames)
+        self.sent = []
+
+    async def send(self, data):
+        self.sent.append(data)
+
+    async def close(self):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def __aiter__(self):
+        async def _gen():
+            for frame in self._frames:
+                yield frame
+
+        return _gen()
+
+
+class TestConsentClientRunLoop:
+    """SidecarConsentClient._run / stop / request edge outcomes (#2834): the
+    connect-dispatch-reconnect loop (stubbed websockets.connect), the no-token
+    retry, the fail-close exception paths, and stop()'s guarded teardown."""
+
+    @staticmethod
+    def _client(proxy, url="http://klangkd/ws", hold=60.0):
+        return proxy.consent.SidecarConsentClient(url, "/nonexistent-token", hold)
+
+    async def test_run_no_token_warns_and_retries(self, proxy, monkeypatch, capsys):
+        c = self._client(proxy)
+        monkeypatch.setattr(c, "_read_token", lambda: "")
+        monkeypatch.setattr(proxy.consent, "DEBUG", True)
+
+        # Fast-forward the 1s retry sleep and stop after the first retry.
+        async def _fast_sleep(_s):
+            c._stop = True
+
+        monkeypatch.setattr(proxy.consent.asyncio, "sleep", _fast_sleep)
+        await c._run()
+        assert "workspace token not yet present" in capsys.readouterr().out
+
+    async def test_run_connects_dispatches_and_resolves_verdict(
+        self, proxy, monkeypatch
+    ):
+        # The happy path: connect (with the bearer header), receive a verdict
+        # frame for a pending request, then stop between frames.
+        c = self._client(proxy)
+        monkeypatch.setattr(c, "_read_token", lambda: "tok")
+        connect_args = []
+        ws = _FakeConsentWS(
+            frames=[
+                json.dumps(
+                    {
+                        "type": "verdict",
+                        "id": "v1",
+                        "decision": "allow",
+                        "duration": "5m",
+                    }
+                )
+            ]
+        )
+
+        def _connect(*a, **k):
+            connect_args.append((a, k))
+            return ws
+
+        monkeypatch.setattr(proxy.consent.websockets, "connect", _connect)
+        fut = asyncio.get_running_loop().create_future()
+        c._pending["v1"] = fut
+        real_dispatch = c._dispatch
+
+        async def _dispatch_then_stop(raw):
+            await real_dispatch(raw)
+            c._stop = True  # exit after the last frame instead of reconnecting
+
+        monkeypatch.setattr(c, "_dispatch", _dispatch_then_stop)
+        await c._run()
+        assert connect_args[0][1]["additional_headers"] == {
+            "Authorization": "Bearer tok"
+        }
+        assert fut.result() == ("allow", "5m")
+        assert not c.connected  # finally cleared the connection state
+
+    async def test_run_connect_error_backs_off_and_reconnects(self, proxy, monkeypatch):
+        # klangkd down: the exception path logs the TYPE only, the finally
+        # fail-closes pending requests, and the loop reconnects after backoff.
+        c = self._client(proxy)
+        monkeypatch.setattr(c, "_read_token", lambda: "tok")
+        monkeypatch.setattr(proxy.consent, "DEBUG", True)
+        attempts = {"n": 0}
+
+        def _connect(*a, **k):
+            attempts["n"] += 1
+            raise OSError("klangkd down")
+
+        monkeypatch.setattr(proxy.consent.websockets, "connect", _connect)
+        sleeps = []
+
+        async def _fast_sleep(s):
+            sleeps.append(s)
+            if len(sleeps) >= 2:
+                c._stop = True  # exits via the while condition (post-backoff)
+
+        monkeypatch.setattr(proxy.consent.asyncio, "sleep", _fast_sleep)
+        await c._run()
+        assert attempts["n"] >= 2  # reconnected after the backoff sleep
+        assert sleeps[0] == 1.0  # initial backoff
+        assert sleeps[1] == 2.0  # capped exponential backoff
+
+    async def test_stop_swallows_ws_close_failure(self, proxy):
+        # A wedged close handshake must not abort the rest of teardown.
+        c = self._client(proxy)
+        ws = MagicMock()
+        ws.close = AsyncMock(side_effect=RuntimeError("wedged"))
+        c._ws = ws
+        await c.stop()  # must not raise
+        ws.close.assert_awaited_once()
+
+    async def test_stop_without_task_is_inert(self, proxy):
+        c = self._client(proxy)
+        await c.stop()  # never started -> no task to cancel, no raise
+
+    async def test_dispatch_ignores_bad_payloads(self, proxy):
+        c = self._client(proxy)
+        await c._dispatch(b"\xff\xfe not json")  # unparseable -> ignored
+        await c._dispatch(json.dumps([1, 2, 3]))  # not an object -> ignored
+        assert c._pending == {}
+
+    async def test_request_send_failure_fail_closes(self, proxy):
+        # The WS dropped between the connected check and the send -> deny at
+        # once (never hang the held SYN).
+        c = self._client(proxy)
+        c._connected.set()
+        ws = MagicMock()
+        ws.send = AsyncMock(side_effect=RuntimeError("socket gone"))
+        c._ws = ws
+        assert await c.request("evil.test", 443) == ("deny", "once")
+        assert not c._pending  # the failed request was reaped
+
+    async def test_request_timeout_fail_closes(self, proxy):
+        c = self._client(proxy, hold=0.01)
+        c._connected.set()
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        c._ws = ws
+        # No verdict frame ever arrives -> the hold timeout denies.
+        assert await c.request("evil.test", 443) == ("deny", "once")
+        assert not c._pending
+
+    def test_bump_activity_off_loop_is_noop(self, proxy):
+        # Called from a non-async context (defensive): nothing to schedule.
+        c = self._client(proxy)
+        c._connected.set()  # pretend connected so the gate is reached
+        c.bump_activity()  # no running loop -> silent return
+
+    async def test_send_activity_without_ws_is_noop(self, proxy):
+        c = self._client(proxy)
+        c._ws = None
+        await c._send_activity()  # WS dropped between gate and send -> return
+
+    async def test_send_activity_swallows_send_failure(self, proxy):
+        c = self._client(proxy)
+        ws = MagicMock()
+        ws.send = AsyncMock(side_effect=RuntimeError("socket gone"))
+        c._ws = ws
+        await c._send_activity()  # best-effort: must not raise
+
+    async def test_sampler_swallows_tick_failure(self, proxy):
+        # One bad tick (here: the bump itself raising) defers to the next
+        # interval instead of killing the sampler task.
+        import itertools
+
+        class _BoomBump:
+            def bump_activity(self):
+                raise RuntimeError("bump exploded")
+
+        counter = itertools.count()
+
+        def get_bytes():
+            return next(counter)
+
+        task = asyncio.create_task(
+            proxy._activity_sampler(_BoomBump(), get_bytes, 0.01)
+        )
+        await asyncio.sleep(0.08)  # several ticks
+        assert not task.done()  # the failure was swallowed, sampling continues
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_handle_drop_rule_bad_host_acks_not_ok(self, proxy, monkeypatch):
+        # A malformed revoke (no host / bad decision) acks ok=False so
+        # klangkd can retry rather than consider it applied.
+        c = self._client(proxy)
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        c._ws = ws
+        await c._handle_drop_rule({"type": "drop_rule", "id": "r1"})
+        sent = json.loads(ws.send.await_args.args[0])
+        assert sent == {"type": "drop_ack", "id": "r1", "ok": False}
+
+    async def test_handle_drop_rule_drop_failure_acks_not_ok(self, proxy, monkeypatch):
+        c = self._client(proxy)
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        c._ws = ws
+        monkeypatch.setattr(
+            proxy.rules,
+            "drop_for_host",
+            lambda host, decision: (_ for _ in ()).throw(RuntimeError("iptables")),
+        )
+        await c._handle_drop_rule(
+            {
+                "type": "drop_rule",
+                "id": "r2",
+                "host": "evil.test",
+                "decision": "allowed",
+            }
+        )
+        sent = json.loads(ws.send.await_args.args[0])
+        assert sent["ok"] is False
+
+    async def test_handle_drop_rule_ack_send_failure_is_silent(
+        self, proxy, monkeypatch
+    ):
+        # Best-effort ack: a dropped ack must not raise into _run's loop.
+        c = self._client(proxy)
+        ws = MagicMock()
+        ws.send = AsyncMock(side_effect=RuntimeError("socket gone"))
+        c._ws = ws
+        monkeypatch.setattr(proxy.rules, "drop_for_host", lambda h, d: set())
+        await c._handle_drop_rule(
+            {"type": "drop_rule", "id": "r3", "host": "evil.test", "decision": "denied"}
+        )
+
+
+class TestNfqueueEdgePaths:
+    """nfqueue.py branch outcomes (#2834): the transient drain failure, the
+    non-TCP classification, the expired-verdict fallthrough, the deny-side
+    session memory, and the verdict-application failure swallows."""
+
+    async def test_drain_swallows_transient_failure(self, proxy):
+        nfq = MagicMock()
+        nfq.run = MagicMock(side_effect=RuntimeError("netlink hiccup"))
+        proxy.nfqueue._drain(nfq)  # must not raise
+
+    def test_classify_non_tcp_uses_destination_granularity(self, proxy):
+        # A queued UDP packet (no SYN tuple) falls back to (dst, dport); the
+        # source end is empty (parse_syn_tuple is TCP-only).
+        payload = _ip_payload("10.2.3.4", 53, proto=17)
+        assert proxy.nfqueue._classify_packet(payload) == (
+            "",
+            0,
+            "10.2.3.4",
+            53,
+        )
+
+    def test_classify_unparseable_returns_none(self, proxy):
+        assert proxy.nfqueue._classify_packet(b"\x00" * 8) is None
+
+    async def test_expired_cached_verdict_re_prompts(self, proxy, monkeypatch):
+        # A cache entry past its TTL must NOT be reused: the SYN proceeds to
+        # a fresh consent request (the cache only covers retransmits).
+        proxy.state._VERDICT_CACHE.clear()
+        proxy.nfqueue._INFLIGHT.clear()
+        try:
+            payload = _syn_payload("172.16.0.9", 40000, "10.2.3.4", 443, 7)
+            flow = ("172.16.0.9", 40000, "10.2.3.4", 443)
+            # Expired entry: verdict time in the past.
+            proxy.state._VERDICT_CACHE[flow] = ("deny", time.time() - 1)
+            client = MagicMock()
+            client.connected = True
+            client.request = AsyncMock(return_value=("deny", "once"))
+            monkeypatch.setattr(proxy.nfqueue, "_host_for", lambda ip: "evil.test")
+            monkeypatch.setattr(
+                proxy.nfqueue, "_session_host_allows_ttl", lambda h, p: None
+            )
+            monkeypatch.setattr(
+                proxy.nfqueue, "_session_host_denies_ttl", lambda h, p: None
+            )
+            monkeypatch.setattr(proxy.nfqueue.rules, "reject", lambda *a: None)
+            pkt = MagicMock()
+            pkt.get_payload = MagicMock(return_value=payload)
+            proxy.nfqueue._cb(pkt, client)
+            for _ in range(50):
+                if pkt.drop.called:
+                    break
+                await asyncio.sleep(0.01)
+            client.request.assert_called_once()  # fresh prompt, not the cache
+            pkt.drop.assert_called_once()
+        finally:
+            proxy.state._VERDICT_CACHE.clear()
+            proxy.nfqueue._INFLIGHT.clear()
+
+    async def test_deny_session_verdict_is_remembered(self, proxy):
+        # A timed deny adds an in-session host DENY (auto-deny retries).
+        proxy.state._SESSION_HOST_DENIES.clear()
+        try:
+            proxy.nfqueue._remember_session_verdict("deny", "evil.test", 443, 300.0)
+            assert proxy.state._SESSION_HOST_DENIES
+            host, port, mode, _exp = proxy.state._SESSION_HOST_DENIES[0]
+            assert (host, port, mode) == ("evil.test", 443, proxy._EXACT)
+        finally:
+            proxy.state._SESSION_HOST_DENIES.clear()
+
+    async def test_remember_session_verdict_once_adds_nothing(self, proxy):
+        # `once` is per-connection: no host memory.
+        proxy.state._SESSION_HOST_ALLOWS.clear()
+        proxy.state._SESSION_HOST_DENIES.clear()
+        proxy.nfqueue._remember_session_verdict("allow", "ok.test", 443, None)
+        proxy.nfqueue._remember_session_verdict("deny", "evil.test", 443, None)
+        assert not proxy.state._SESSION_HOST_ALLOWS
+        assert not proxy.state._SESSION_HOST_DENIES
+
+    async def test_remember_session_verdict_non_tcp_adds_nothing(self, proxy):
+        proxy.state._SESSION_HOST_ALLOWS.clear()
+        try:
+            proxy.nfqueue._remember_session_verdict("allow", "ok.test", 0, 300.0)
+            assert not proxy.state._SESSION_HOST_ALLOWS
+        finally:
+            proxy.state._SESSION_HOST_ALLOWS.clear()
+
+    async def test_apply_verdict_allow_learn_failure_still_accepts(
+        self, proxy, monkeypatch
+    ):
+        # A transient iptables failure installing the ACCEPT must not strand
+        # the held SYN: the verdict still accepts this connection.
+        monkeypatch.setattr(
+            proxy.nfqueue.rules,
+            "allow",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("iptables")),
+        )
+        pkt = MagicMock()
+        await proxy.nfqueue._apply_verdict(
+            pkt,
+            ("s", 1, "d", 2),
+            "10.2.3.4",
+            443,
+            "allow",
+            300.0,
+            asyncio.get_running_loop(),
+        )
+        pkt.accept.assert_called_once()
+
+    async def test_apply_verdict_deny_non_tcp_just_drops(self, proxy):
+        # port 0 (non-TCP): no RST to forge, no reject rule -- plain drop.
+        pkt = MagicMock()
+        await proxy.nfqueue._apply_verdict(
+            pkt,
+            ("s", 0, "d", 0),
+            "10.2.3.4",
+            0,
+            "deny",
+            300.0,
+            asyncio.get_running_loop(),
+        )
+        pkt.drop.assert_called_once()
+
+    async def test_apply_verdict_deny_rst_failure_still_drops(self, proxy, monkeypatch):
+        monkeypatch.setattr(
+            proxy.nfqueue.packets,
+            "_send_rst",
+            lambda payload: (_ for _ in ()).throw(RuntimeError("no raw sock")),
+        )
+        monkeypatch.setattr(proxy.nfqueue.rules, "reject", lambda *a: None)
+        pkt = MagicMock()
+        pkt.get_payload = MagicMock(return_value=b"x")
+        await proxy.nfqueue._apply_verdict(
+            pkt,
+            ("s", 1, "d", 2),
+            "10.2.3.4",
+            443,
+            "deny",
+            300.0,
+            asyncio.get_running_loop(),
+        )
+        pkt.drop.assert_called_once()
+
+    async def test_apply_verdict_deny_reject_failure_still_drops(
+        self, proxy, monkeypatch
+    ):
+        monkeypatch.setattr(proxy.nfqueue.packets, "_send_rst", lambda payload: None)
+        monkeypatch.setattr(
+            proxy.nfqueue.rules,
+            "reject",
+            lambda *a: (_ for _ in ()).throw(RuntimeError("iptables")),
+        )
+        pkt = MagicMock()
+        pkt.get_payload = MagicMock(return_value=b"x")
+        await proxy.nfqueue._apply_verdict(
+            pkt,
+            ("s", 1, "d", 2),
+            "10.2.3.4",
+            443,
+            "deny",
+            None,
+            asyncio.get_running_loop(),
+        )
+        pkt.drop.assert_called_once()
+
+    async def test_decide_and_verdict_bounds_the_cache(self, proxy, monkeypatch):
+        # A denied-flow flood must not grow the cache unbounded: past 4096
+        # entries the whole cache is dropped (allowed flows stop arriving).
+        proxy.state._VERDICT_CACHE.clear()
+        proxy.nfqueue._INFLIGHT.clear()
+        try:
+            flow = ("172.16.0.9", 40000, "10.2.3.4", 443)
+            for i in range(4100):
+                proxy.state._VERDICT_CACHE[("10.0.0.1", i, "d", 443)] = (
+                    "deny",
+                    time.time() + 60,
+                )
+            client = MagicMock()
+            client.request = AsyncMock(return_value=("deny", "once"))
+            monkeypatch.setattr(
+                proxy.nfqueue, "_remember_session_verdict", lambda *a: None
+            )
+            monkeypatch.setattr(
+                proxy.nfqueue,
+                "_apply_verdict",
+                AsyncMock(),
+            )
+            pkt = MagicMock()
+            await proxy.nfqueue._decide_and_verdict(
+                pkt, flow, "10.2.3.4", 443, "evil.test", client
+            )
+            assert len(proxy.state._VERDICT_CACHE) == 1  # cleared + this verdict
+        finally:
+            proxy.state._VERDICT_CACHE.clear()
+            proxy.nfqueue._INFLIGHT.clear()
+
+    async def test_deny_session_host_swallows_rst_failure(self, proxy, monkeypatch):
+        monkeypatch.setattr(
+            proxy.nfqueue.packets,
+            "_send_rst",
+            lambda payload: (_ for _ in ()).throw(RuntimeError("no raw sock")),
+        )
+        monkeypatch.setattr(proxy.nfqueue.rules, "reject", lambda *a: None)
+        proxy.state._VERDICT_CACHE.clear()
+        try:
+            pkt = MagicMock()
+            proxy.nfqueue._deny_session_host(
+                pkt,
+                ("s", 1, "d", 2),
+                b"payload",
+                "10.2.3.4",
+                443,
+                time.time(),
+                30.0,
+            )
+            pkt.drop.assert_called_once()
+        finally:
+            proxy.state._VERDICT_CACHE.clear()
+
+
+class TestRulesEdgePaths:
+    """rules.py branch outcomes (#2834): the best-effort iptables swallows,
+    the sweeper loop, the idempotent installs, and the startup probes."""
+
+    def test_allow_all_ports_clears_stale_rejects(self, proxy, monkeypatch):
+        # An all-ports allow supersedes per-port REJECTs; a failed remove
+        # drops one rule, not the allow.
+        proxy.rules._REJECTED.clear()
+        proxy.rules._LEARNED.clear()
+        try:
+            monkeypatch.setattr(proxy.rules, "_remove_reject", MagicMock())
+            monkeypatch.setattr(proxy.rules, "_install", lambda ip, port: None)
+            proxy.rules._REJECTED[("1.2.3.4", 443, 0)] = time.time() + 60
+            proxy.rules.allow("1.2.3.4", None, 60)
+            assert not proxy.rules._REJECTED  # superseded reject reaped
+        finally:
+            proxy.rules._REJECTED.clear()
+            proxy.rules._LEARNED.clear()
+
+    def test_allow_all_ports_swallows_reject_remove_failure(self, proxy, monkeypatch):
+        proxy.rules._REJECTED.clear()
+        proxy.rules._LEARNED.clear()
+        try:
+            monkeypatch.setattr(
+                proxy.rules,
+                "_remove_reject",
+                MagicMock(side_effect=RuntimeError("iptables")),
+            )
+            monkeypatch.setattr(proxy.rules, "_install", lambda ip, port: None)
+            proxy.rules._REJECTED[("1.2.3.4", 443, 0)] = time.time() + 60
+            proxy.rules.allow("1.2.3.4", None, 60)  # must not raise
+        finally:
+            proxy.rules._REJECTED.clear()
+            proxy.rules._LEARNED.clear()
+
+    def test_install_reject_skipped_when_rule_exists(self, proxy, monkeypatch):
+        runs = []
+        monkeypatch.setattr(
+            proxy.rules.subprocess, "run", lambda *a, **k: runs.append(a)
+        )
+        monkeypatch.setattr(
+            proxy.rules, "_reject_rule_exists", lambda ip, port, sport: True
+        )
+        proxy.rules._install_reject("1.2.3.4", 443)
+        assert not runs  # no iptables fork for an existing rule
+
+    def test_install_skipped_when_rule_exists(self, proxy, monkeypatch):
+        runs = []
+        monkeypatch.setattr(
+            proxy.rules.subprocess, "run", lambda *a, **k: runs.append(a)
+        )
+        monkeypatch.setattr(proxy.rules, "_rule_exists", lambda ip, port: True)
+        proxy.rules._install("1.2.3.4", 443)
+        assert not runs  # no iptables fork for an existing rule
+
+    def test_drop_for_host_swallows_remove_failure(self, proxy, monkeypatch):
+        proxy.rules._LEARNED.clear()
+        try:
+            proxy.rules._LEARNED["1.2.3.4"] = {
+                "expire": time.time() + 60,
+                "rule_expire": time.time() + 60,
+                "ports": {443},
+                "host": "evil.test",
+            }
+            monkeypatch.setattr(
+                proxy.rules,
+                "_remove",
+                MagicMock(side_effect=RuntimeError("iptables")),
+            )
+            targets = proxy.rules.drop_for_host("evil.test", "allowed")
+            assert "1.2.3.4" in targets
+            assert "evil.test" in targets
+            assert not proxy.rules._LEARNED  # record dropped anyway
+        finally:
+            proxy.rules._LEARNED.clear()
+
+    def test_drop_for_host_denied_swallows_reject_remove_failure(
+        self, proxy, monkeypatch
+    ):
+        proxy.rules._REJECTED.clear()
+        try:
+            proxy.rules._REJECTED[("1.2.3.4", 443, 0)] = time.time() + 60
+            monkeypatch.setattr(
+                proxy.rules,
+                "_remove_reject",
+                MagicMock(side_effect=RuntimeError("iptables")),
+            )
+            proxy.rules.drop_for_host("1.2.3.4", "denied")  # must not raise
+            assert not proxy.rules._REJECTED
+        finally:
+            proxy.rules._REJECTED.clear()
+
+    def test_sweep_swallows_remove_failure(self, proxy, monkeypatch):
+        proxy.rules._LEARNED.clear()
+        try:
+            now = time.time()
+            proxy.rules._LEARNED["1.2.3.4"] = {
+                "expire": now - 1,
+                "rule_expire": now - 1,
+                "ports": {443},
+                "host": "x.test",
+            }
+            monkeypatch.setattr(
+                proxy.rules,
+                "_remove",
+                MagicMock(side_effect=RuntimeError("iptables")),
+            )
+            assert proxy.rules.sweep_once(now) == [("1.2.3.4", {443})]
+        finally:
+            proxy.rules._LEARNED.clear()
+
+    def test_sweep_defaults_to_wall_clock(self, proxy):
+        proxy.rules._LEARNED.clear()
+        proxy.rules._REJECTED.clear()
+        assert proxy.rules.sweep_once() == []
+
+    def test_sweep_reject_remove_failure(self, proxy, monkeypatch):
+        proxy.rules._REJECTED.clear()
+        try:
+            now = time.time()
+            proxy.rules._REJECTED[("1.2.3.4", 443, 0)] = now - 1
+            monkeypatch.setattr(
+                proxy.rules,
+                "_remove_reject",
+                MagicMock(side_effect=RuntimeError("iptables")),
+            )
+            proxy.rules.sweep_once(now)  # must not raise
+            assert not proxy.rules._REJECTED
+        finally:
+            proxy.rules._REJECTED.clear()
+
+    async def test_async_sweeper_swallows_sweep_failure(self, proxy, monkeypatch):
+        # One failed sweep defers cleanup to the next tick; the task lives on.
+        monkeypatch.setattr(proxy.rules, "SWEEP_INTERVAL", 0.01)
+        monkeypatch.setattr(
+            proxy.rules,
+            "sweep_once",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("iptables")),
+        )
+        task = asyncio.create_task(proxy.rules._async_sweeper())
+        await asyncio.sleep(0.08)
+        assert not task.done()  # swallowed, kept sweeping
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    def test_fmt_ports_all_when_none_present(self, proxy):
+        assert proxy.rules._fmt_ports({None}) == "all"
+        assert proxy.rules._fmt_ports({443, None}) == "all"  # None dominates
+        assert proxy.rules._fmt_ports({443, 8443}) == "443,8443"
+
+    def test_check_mark_passes_when_mark_settable(self, proxy, monkeypatch):
+        fake = MagicMock()
+        monkeypatch.setattr(proxy.rules.socket, "socket", lambda *a, **k: fake)
+        proxy.rules.check_mark()  # must not raise
+        fake.close.assert_called_once()
+
+    def test_check_mark_exits_without_cap_net_admin(self, proxy, monkeypatch):
+        # No CAP_NET_ADMIN -> SO_MARK fails -> fail loud at startup (the
+        # proxy's upstream forwards would loop back into itself).
+        fake = MagicMock()
+        fake.setsockopt = MagicMock(side_effect=OSError(1, "Operation not permitted"))
+        monkeypatch.setattr(proxy.rules.socket, "socket", lambda *a, **k: fake)
+        with pytest.raises(SystemExit) as exc:
+            proxy.rules.check_mark()
+        assert "CAP_NET_ADMIN" in str(exc.value)
+        fake.close.assert_called_once()  # the probe socket was still closed
+
+
+class TestAllowlistEntryTtls:
+    """allowlist.py loop outcomes (#2834): empty-host guards and the
+    just-expired race the belt-and-suspenders continue exists for."""
+
+    def test_entry_ttl_empty_host_is_none(self, proxy):
+        assert proxy._session_entry_ttl([], "", 443) is None
+
+    def test_entry_ttl_skips_just_expired_entry(self, proxy):
+        # The prune ran, but the entry expired in the microseconds between
+        # its `now` and this read: skipped, not matched.
+        lst = [("h", 443, proxy._EXACT, -1.0)]
+        assert proxy._session_entry_ttl(lst, "h", 443) is None
+
+    def test_rule_cap_skips_just_expired_allow(self, proxy, monkeypatch):
+        # Same race on the cap path: an expired session allow contributes no
+        # cap (None -> the DNS TTL is used).
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+        monkeypatch.setattr(
+            proxy.allowlist.time,
+            "time",
+            lambda: 100.0,
+        )
+        # Entry expires at 100.5 -- survives the prune's read at 100.0...
+        proxy.state._SESSION_HOST_ALLOWS[:] = [("h", 443, proxy._EXACT, 100.5)]
+        # ...but the cap loop's read happens "later": advance the clock.
+        clock = iter([100.0, 101.0])
+        monkeypatch.setattr(proxy.allowlist.time, "time", lambda: next(clock))
+        try:
+            assert proxy._session_allow_rule_cap("h") is None
+        finally:
+            proxy.state._SESSION_HOST_ALLOWS[:] = []
+
+
+class TestPacketHelpers:
+    """packets.py edge outcomes (#2834): non-IPv4/short payloads, the
+    odd-length checksum pad, and the RST socket probe."""
+
+    def test_ipv4_offsets_rejects_non_ipv4(self, proxy):
+        assert proxy.packets._ipv4_offsets(b"\x55" + b"\x00" * 30) is None
+
+    def test_ipv4_offsets_rejects_short_payload(self, proxy):
+        assert proxy.packets._ipv4_offsets(b"\x45\x00") is None
+
+    def test_ones_checksum_pads_odd_length(self, proxy):
+        # RFC 1071: odd data is zero-padded; 3 bytes behave as 4.
+        assert proxy.packets._ones_checksum(b"\x01\x02\x03") == (
+            proxy.packets._ones_checksum(b"\x01\x02\x03\x00")
+        )
+
+    def test_check_rst_socket_opens_hdrincl_socket(self, proxy, monkeypatch):
+        fake = MagicMock()
+        monkeypatch.setattr(proxy.packets.socket, "socket", lambda *a, **k: fake)
+        monkeypatch.setattr(proxy.packets, "_RST_SOCK", None)
+        try:
+            proxy.packets.check_rst_socket()
+            assert proxy.packets._RST_SOCK is fake
+            fake.setblocking.assert_called_once_with(False)
+        finally:
+            monkeypatch.setattr(proxy.packets, "_RST_SOCK", None)
+
+    def test_check_rst_socket_degrades_without_net_raw(
+        self, proxy, monkeypatch, capsys
+    ):
+        # Best-effort: no raw socket -> REJECT-only fast-refuse, logged.
+        def _boom(*a, **k):
+            raise OSError(1, "Operation not permitted")
+
+        monkeypatch.setattr(proxy.packets.socket, "socket", _boom)
+        monkeypatch.setattr(proxy.packets, "_RST_SOCK", None)
+        try:
+            proxy.packets.check_rst_socket()  # must not raise
+            assert "cannot open RST socket" in capsys.readouterr().out
+        finally:
+            monkeypatch.setattr(proxy.packets, "_RST_SOCK", None)
+
+
+class TestBranchArcs:
+    """The remaining single-arc gaps (#2834): each false/negative outcome of
+    a guard the mainline tests only ever take the true side of."""
+
+    # --- allowlist.parse_specs grammar edges ---
+
+    def test_parse_specs_non_digit_port_is_host_part(self, proxy, monkeypatch):
+        # "host:x" -- a non-digit port is not a port; the spec is kept
+        # verbatim as the host (an all-ports EXACT entry).
+        monkeypatch.setattr(proxy.allowlist, "SPECS", [])
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", "example.com:x")
+        assert proxy.parse_specs() == [("example.com:x", None, proxy._EXACT)]
+
+    def test_parse_specs_empty_after_strip_is_skipped(self, proxy, monkeypatch):
+        # "." reduces to the empty host (INCLUSIVE strip) -> skipped; later
+        # specs still parse.
+        monkeypatch.setenv("KLANGKNETWORK_EGRESS_ALLOW", ".,ok.com")
+        assert proxy.parse_specs() == [("ok.com", None, proxy._EXACT)]
+
+    def test_entry_ttl_keeps_max_across_matching_entries(self, proxy):
+        # Two matching entries: the second (smaller) remaining TTL must not
+        # lower the best -- the max is what gates on.
+        now = time.time()
+        lst = [
+            ("h", 443, proxy._EXACT, now + 100),
+            ("h", 443, proxy._EXACT, now + 50),
+        ]
+        assert 99 < proxy._session_entry_ttl(lst, "h", 443) <= 100
+
+    # --- nfqueue port-0 (non-TCP) outcomes ---
+
+    async def test_fail_fast_no_consent_non_tcp_just_drops(self, proxy, monkeypatch):
+        # No port to RST/reject (non-TCP): the plain drop still fails fast
+        # for the caller via the connection error, not a kernel retransmit.
+        pkt = MagicMock()
+        proxy.nfqueue._fail_fast_no_consent(pkt, b"payload", "10.2.3.4", 0)
+        pkt.drop.assert_called_once()
+
+    def test_apply_cached_deny_non_tcp_skips_rst(self, proxy):
+        # A cached deny for a non-TCP flow: no RST to forge, just drop.
+        pkt = MagicMock()
+        proxy.nfqueue._apply_cached_verdict(pkt, ("deny", time.time() + 60), b"p", 0)
+        pkt.drop.assert_called_once()
+
+    async def test_deny_session_host_non_tcp_just_drops(self, proxy, monkeypatch):
+        pkt = MagicMock()
+        proxy.state._VERDICT_CACHE.clear()
+        try:
+            proxy.nfqueue._deny_session_host(
+                pkt,
+                ("s", 0, "d", 0),
+                b"payload",
+                "10.2.3.4",
+                0,
+                time.time(),
+                30.0,
+            )
+            pkt.drop.assert_called_once()
+        finally:
+            proxy.state._VERDICT_CACHE.clear()
+
+    def test_cb_without_client_drops(self, proxy, monkeypatch):
+        # Pure-static mode (no consent configured): every queued SYN drops
+        # (nothing to prompt; the allow-list ACCEPTs sit above NFQUEUE).
+        pkt = MagicMock()
+        pkt.get_payload = MagicMock(
+            return_value=_syn_payload("172.16.0.9", 40000, "10.2.3.4", 443, 7)
+        )
+        proxy.nfqueue._cb(pkt, None)
+        pkt.drop.assert_called_once()
+
+    def test_remember_session_verdict_unknown_decision_adds_nothing(self, proxy):
+        # Neither allow nor deny (a future/unknown verdict token): no host
+        # memory is installed.
+        proxy.state._SESSION_HOST_ALLOWS.clear()
+        proxy.state._SESSION_HOST_DENIES.clear()
+        try:
+            proxy.nfqueue._remember_session_verdict("bogus", "h", 443, 300.0)
+            assert not proxy.state._SESSION_HOST_ALLOWS
+            assert not proxy.state._SESSION_HOST_DENIES
+        finally:
+            proxy.state._SESSION_HOST_ALLOWS.clear()
+            proxy.state._SESSION_HOST_DENIES.clear()
+
+    # --- packets IHL edge ---
+
+    def test_ipv4_offsets_rejects_bad_ihl(self, proxy):
+        # Version 4 but IHL < 5 (a malformed header): unparseable.
+        assert proxy.packets._ipv4_offsets(b"\x41" + b"\x00" * 30) is None
+
+    # --- consent client remaining arcs ---
+
+    async def test_run_debug_prints_connected_line(self, proxy, monkeypatch, capsys):
+        c = TestConsentClientRunLoop._client(proxy)
+        monkeypatch.setattr(c, "_read_token", lambda: "tok")
+        monkeypatch.setattr(proxy.consent, "DEBUG", True)
+        ws = _FakeConsentWS(frames=[])
+
+        async def _stop_after_connect():
+            c._stop = True
+
+        # Stop inside aiter exhaustion via a dispatch hook is unnecessary
+        # here: zero frames -> the async for ends at once.
+        monkeypatch.setattr(proxy.consent.websockets, "connect", lambda *a, **k: ws)
+        real_sleep = asyncio.sleep
+
+        async def _fast_sleep(s):
+            if s >= 1.0:  # the reconnect backoff, not a tick
+                c._stop = True
+            await real_sleep(0)
+
+        monkeypatch.setattr(proxy.consent.asyncio, "sleep", _fast_sleep)
+        await c._run()
+        assert "consent: connected to" in capsys.readouterr().out
+
+    async def test_run_connect_error_without_debug(self, proxy, monkeypatch, capsys):
+        # The exception path with DEBUG off: silent retry (no type leak).
+        c = TestConsentClientRunLoop._client(proxy)
+        monkeypatch.setattr(c, "_read_token", lambda: "tok")
+        monkeypatch.setattr(
+            proxy.consent.websockets,
+            "connect",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("down")),
+        )
+        real_sleep = asyncio.sleep
+        sleeps = {"n": 0}
+
+        async def _fast_sleep(s):
+            sleeps["n"] += 1
+            if sleeps["n"] >= 2:
+                c._stop = True
+            await real_sleep(0)
+
+        monkeypatch.setattr(proxy.consent.asyncio, "sleep", _fast_sleep)
+        await c._run()
+        assert "connection error" not in capsys.readouterr().out
+
+    async def test_handle_drop_rule_unknown_decision_skips_drop(
+        self, proxy, monkeypatch
+    ):
+        # A well-formed host with an unknown decision token: no drop call,
+        # no session-memory clear -- just the not-ok ack.
+        c = TestConsentClientRunLoop._client(proxy)
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        c._ws = ws
+        dropped = []
+        monkeypatch.setattr(
+            proxy.consent.rules, "drop_for_host", lambda h, d: dropped.append(h)
+        )
+        await c._handle_drop_rule(
+            {"type": "drop_rule", "id": "r4", "host": "evil.test", "decision": "bogus"}
+        )
+        assert not dropped
+        sent = json.loads(ws.send.await_args.args[0])
+        assert sent["ok"] is False
+
+    async def test_handle_drop_rule_without_ws_skips_ack(self, proxy, monkeypatch):
+        # WS down when the revoke lands: the drop still runs (it is the
+        # side effect), the ack is skipped.
+        c = TestConsentClientRunLoop._client(proxy)
+        c._ws = None
+        dropped = []
+        monkeypatch.setattr(
+            proxy.consent.rules,
+            "drop_for_host",
+            lambda h, d: dropped.append(h) or set(),
+        )
+        await c._handle_drop_rule(
+            {
+                "type": "drop_rule",
+                "id": "r5",
+                "host": "evil.test",
+                "decision": "allowed",
+            }
+        )  # must not raise on the skipped ack
+
+    async def test_handle_drop_rule_success_acks_ok(self, proxy, monkeypatch):
+        # The applied revoke acks ok=True exactly once the rules are gone.
+        c = TestConsentClientRunLoop._client(proxy)
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        c._ws = ws
+        monkeypatch.setattr(
+            proxy.consent.rules, "drop_for_host", lambda h, d: {"1.2.3.4"}
+        )
+        await c._handle_drop_rule(
+            {
+                "type": "drop_rule",
+                "id": "r6",
+                "host": "evil.test",
+                "decision": "allowed",
+            }
+        )
+        sent = json.loads(ws.send.await_args.args[0])
+        assert sent == {"type": "drop_ack", "id": "r6", "ok": True}
+
+    def test_bump_activity_off_loop_is_noop_after_gate(self, proxy):
+        # Past the connected+ws gate with no running loop: silent return
+        # (the NFQUEUE callback is sync; defensive only).
+        c = TestConsentClientRunLoop._client(proxy)
+        c._connected.set()
+        c._ws = MagicMock()  # past the first guard
+        c.bump_activity()  # no running loop -> nothing scheduled
+
+    async def test_fail_close_skips_done_futures(self, proxy):
+        # An already-resolved pending (a verdict raced the disconnect) is
+        # left alone; only the still-open one is fail-closed.
+        c = proxy.consent.SidecarConsentClient(
+            "http://klangkd/ws", "/nonexistent-token", 60.0
+        )
+        loop = asyncio.get_running_loop()
+        done = loop.create_future()
+        done.set_result(("deny", "once"))
+        open_ = loop.create_future()
+        c._pending["a"] = done
+        c._pending["b"] = open_
+        c._fail_close_pending()
+        assert open_.result() == ("deny", "once")
+        assert not c._pending
+
+    async def test_send_activity_success(self, proxy):
+        c = TestConsentClientRunLoop._client(proxy)
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        c._ws = ws
+        await c._send_activity()
+        ws.send.assert_awaited_once_with(json.dumps({"type": "activity"}))

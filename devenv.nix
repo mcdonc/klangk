@@ -417,9 +417,10 @@ in
 
   # Network sidecar unit suite — the standalone klangksidecar package
   # (#2450). Separate invocation (not folded into test-backend) because it
-  # has its own rootdir (src/klangksidecar/pyproject.toml) with NO coverage
-  # gate — proxy.py's main()/signal paths are exercised by the real-podman
-  # e2e, not here. CI mirrors this via .github/workflows/sidecar-tests.yml.
+  # has its own rootdir (src/klangksidecar/pyproject.toml) with its own
+  # coverage gate (branch coverage, 100% — #2834; the PID-1-only entry
+  # paths carry pragmas, exercised instead by the real-podman e2e). CI
+  # mirrors this via .github/workflows/sidecar-tests.yml.
   scripts.test-sidecar.exec = ''
     cd $DEVENV_ROOT
     exec ${venvPython} -m pytest src/klangksidecar/tests -v -n auto "$@"

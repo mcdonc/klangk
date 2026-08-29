@@ -27,3 +27,19 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
     "ignore:coroutine .* was never awaited:RuntimeWarning",
 ]
+
+# Shared coverage config for every pytest-cov run whose CWD is the repo
+# root — coverage discovers [tool.coverage.run] relative to the CWD, not
+# the pytest rootdir, and the documented invocations (CI, devenv tasks)
+# all run from here. Branch measurement (#2834) requires the C tracer
+# core: Python 3.13's sys.monitoring has no branch events, so the sysmon
+# core can't measure branches (it silently falls back with a warning the
+# klangk suite escalates to an error). The C tracer alone under-counts
+# code executed inside SQLAlchemy's greenlet context (#456/#1393), which
+# concurrency=["greenlet", "thread"] restores. This is why neither
+# klangk conftest pins COVERAGE_CORE=sysmon anymore. Revisit sysmon
+# (branch support lands with Python 3.14's BRANCH_LEFT/RIGHT events)
+# once the toolchain moves past 3.13.
+[tool.coverage.run]
+branch = true
+concurrency = ["greenlet", "thread"]

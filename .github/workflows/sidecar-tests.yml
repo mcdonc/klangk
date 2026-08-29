@@ -41,9 +41,9 @@ jobs:
 
       - name: Run tests
         if: steps.filter.outputs.sidecar == 'true'
-        # -n auto: run tests in parallel across CPUs (pytest-xdist). No
-        # coverage gate here (see src/klangksidecar/pyproject.toml): proxy.py's
-        # main()/signal paths run as PID 1 of the sidecar and are exercised
+        # -n auto: run tests in parallel across CPUs (pytest-xdist). Branch
+        # coverage gate at 100% lives in src/klangksidecar/pyproject.toml
+        # (#2834); the PID-1-only entry paths carry pragmas and are exercised
         # end-to-end by test_network_sidecar_e2e.py, not by this unit suite.
         run: python -m pytest src/klangksidecar/tests -v -n auto --durations=20
 

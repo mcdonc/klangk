@@ -199,7 +199,10 @@ async def _async_main() -> None:
         if stopping:
             return
         stopping = True
-        if main_task is not None:
+        # Captured from asyncio.current_task() inside _async_main, so never
+        # None -- the guard only satisfies the type-checker (a plain loop
+        # callback would see None; _on_sigterm is registered from a task).
+        if main_task is not None:  # pragma: no branch
             main_task.cancel()
 
     try:
@@ -207,7 +210,9 @@ async def _async_main() -> None:
     except (NotImplementedError, RuntimeError):
         pass  # signal handlers need the main thread + a supported loop backend
     try:
-        while True:
+        # Exits only via the SIGTERM CancelledError above, never by falling
+        # through the condition -- the arc to loop exit is unreachable.
+        while True:  # pragma: no branch
             try:
                 data, addr = await loop.sock_recvfrom(s, 65535)
             except Exception:

@@ -3,9 +3,12 @@
 import os
 import sys
 
-# Must be set before coverage.py initialises in each xdist worker so that
-# code executed inside SQLAlchemy's greenlet context is tracked.
-os.environ.setdefault("COVERAGE_CORE", "sysmon")
+# No COVERAGE_CORE pin: branch coverage (#2834) requires the C tracer
+# core (Python 3.13's sys.monitoring has no branch events, so sysmon
+# can't measure branches and falls back with a warning that
+# filterwarnings=error turns fatal). Greenlet-executed code is tracked
+# via concurrency=["greenlet", "thread"] in the repo-root pyproject's
+# [tool.coverage.run] instead — see there for the full rationale.
 
 import types
 
