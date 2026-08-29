@@ -68,6 +68,8 @@ import uuid
 from dataclasses import dataclass, field
 
 import httpx
+
+from fuzzlib import configure_logging, draw_seed
 import websockets
 
 logger = logging.getLogger("fuzz-idle")
@@ -1401,8 +1403,7 @@ def main() -> None:
         help="Directory for server.log + scenarios.json (default: tempdir)",
     )
     args = parser.parse_args()
-    if args.seed is None:
-        args.seed = random.randint(0, 2**32)
+    args.seed = draw_seed(args.seed)
 
     # Line-buffered stdout so a killed run (CI timeout) still shows its
     # progress; SIGTERM -> SystemExit so the finally-teardown (server stop,
@@ -1414,12 +1415,8 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, _on_sigterm)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    configure_logging()
+    # websockets handshake noise is idle-specific (the sidecar WS loop).
     logging.getLogger("websockets").setLevel(logging.WARNING)
 
     sys.exit(asyncio.run(run(args)))

@@ -19,27 +19,16 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
-import os
 import sqlite3
 import sys
 import time
-from pathlib import Path
+from consentlib import data_dir
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 console = Console()
-
-
-def _data_dir(arg: str | None) -> Path:
-    path = arg or os.environ.get("KLANGKD_DATA_DIR")
-    if not path:
-        sys.exit(
-            "data dir not set: pass --data-dir or export KLANGKD_DATA_DIR "
-            "(the klangkd dir containing klangk.db)"
-        )
-    return Path(path)
 
 
 def _resolve_user(conn: sqlite3.Connection, email: str) -> str:
@@ -175,7 +164,7 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    db_path = _data_dir(args.data_dir) / "klangk.db"
+    db_path = data_dir(args.data_dir) / "klangk.db"
     if not db_path.exists():
         sys.exit(f"DB not found: {db_path}")
     conn = sqlite3.connect(f"file:{db_path}?mode=rw", uri=True, timeout=10)
