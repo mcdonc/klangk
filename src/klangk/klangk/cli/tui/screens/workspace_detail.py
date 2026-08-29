@@ -58,46 +58,61 @@ def format_uptime(elapsed: int) -> str:
 def optional_detail_rows(ws, deploy_banner: str) -> list[tuple[str, str]]:
     """The conditional (label, value) rows for the workspace detail table."""
     rows: list[tuple[str, str]] = []
-    if ws.health_message:
-        rows.append(("health note", ws.health_message))
-    if ws.image:
-        rows.append(("image", ws.image))
-    if ws.service_command:
-        rows.append(("service command", ws.service_command))
-    if ws.health_check:
-        rows.append(("health check", ws.health_check))
+    _append_str_rows(
+        rows,
+        ws,
+        [
+            ("health note", "health_message"),
+            ("image", "image"),
+            ("service command", "service_command"),
+            ("health check", "health_check"),
+        ],
+    )
     rows.append(("auto-start", "on" if ws.auto_start else "off"))
     banner = effective_marking(
         getattr(ws, "classification_banner", None), deploy_banner
     )
     if banner:
         rows.append(("classification", banner))
-    if ws.mounts:
-        rows.append(("mounts", "\n".join(str(m) for m in ws.mounts)))
-    if ws.env:
-        rows.append(
-            (
-                "environment",
-                "\n".join(f"{k}={v}" for k, v in ws.env.items()),
-            )
-        )
-    if ws.allowed_domains:
-        rows.append(
-            (
-                "allowed domains",
-                "\n".join(str(d) for d in ws.allowed_domains),
-            )
-        )
-    if ws.rejected_domains:
-        rows.append(
-            (
-                "rejected domains",
-                "\n".join(str(d) for d in ws.rejected_domains),
-            )
-        )
-    if ws.owner_email:
-        rows.append(("owner", ws.owner_email))
+    _append_joined_rows(
+        rows,
+        ws,
+        [
+            ("mounts", "mounts"),
+            ("environment", "env"),
+            ("allowed domains", "allowed_domains"),
+            ("rejected domains", "rejected_domains"),
+        ],
+    )
+    _append_str_rows(rows, ws, [("owner", "owner_email")])
     return rows
+
+
+def _append_str_rows(
+    rows: list[tuple[str, str]], ws, fields: list[tuple[str, str]]
+) -> None:
+    """One row per truthy plain-string field."""
+    for label, attr in fields:
+        value = getattr(ws, attr)
+        if value:
+            rows.append((label, value))
+
+
+def _append_joined_rows(
+    rows: list[tuple[str, str]], ws, fields: list[tuple[str, str]]
+) -> None:
+    """One newline-joined row per truthy list/dict field (a dict renders
+    as ``k=v`` lines)."""
+    for label, attr in fields:
+        value = getattr(ws, attr)
+        if not value:
+            continue
+        if isinstance(value, dict):
+            rows.append(
+                (label, "\n".join(f"{k}={v}" for k, v in value.items()))
+            )
+        else:
+            rows.append((label, "\n".join(str(v) for v in value)))
 
 
 class WorkspaceDetailScreen(StatusScreen):
@@ -591,65 +606,78 @@ class WorkspaceDetailScreen(StatusScreen):
         re-fetches. User-derived text is rendered via ``Text`` so bracket
         characters in names/messages never trigger markup parsing.
         """
-        if self._ws is None:
+        if not self._status_event_applies(event):
             return
         etype = event.get("type")
-        ws_id = str(getattr(self._ws, "id", "") or "")
-        eid = str(event.get("workspace_id") or "")
-        if eid and ws_id and eid != ws_id:
-            return  # event for a different workspace
         if etype == "workspaces_changed":
             self.run_worker(self._reload_on_status, exit_on_error=False)
             return
         if etype == "terminals_changed":
-            # A terminal was added / removed / renamed from another surface.
-            # The event carries the window list (like the Flutter UI's
-            # terminal_windows push), so update directly instead of
-            # re-enumerating via a terminal_start round-trip (#1894).
-            windows = event.get("windows")
-            if isinstance(windows, list):
-                # Adopt the pushed list verbatim. Events are serialized
-                # per status-WS connection, so out-of-order arrival (a
-                # close broadcast beating its create) is not expected;
-                # the payload type check above also makes the push path
-                # resilient to a malformed payload (fall back to fetch).
-                self._terminals = windows
-                self.run_worker(self._render_terminals(), exit_on_error=False)
-            else:
-                # No payload (older server) or malformed -- fall back to a
-                # fetch, preserving the resilience of the old poll path.
-                self.run_worker(self._load_terminals, exit_on_error=False)
+            self._apply_terminals_changed(event)
             return
         if etype == "container_status":
-            was_running = self._ws.running
-            old_started = self._ws.service_started_at
-            self._ws.running = bool(event.get("running"))
-            # Type-check before adopting: a malformed payload (string stamp)
-            # would crash _tick_uptime's ``time.time() - started`` math
-            # later (#2029 audit).
-            started = event.get("service_started_at")
-            if isinstance(started, (int, float)) and not isinstance(
-                started, bool
-            ):
-                self._ws.service_started_at = started
-            # A container start or restart invalidates everything — uptime
-            # resets, health resets, terminal sessions are gone. Do a full
-            # reload so all detail-screen items reflect the new state (#1924).
-            if self._ws.running and (
-                not was_running or self._ws.service_started_at != old_started
-            ):
-                self.run_worker(self._reload_on_restart, exit_on_error=False)
+            self._apply_container_status(event)
         elif etype == "service_health":
-            self._ws.running = bool(event.get("running", self._ws.running))
-            self._ws.health = (
-                "healthy" if event.get("healthy") else "unhealthy"
-            )
-            msg = event.get("health_message")
-            if msg is not None:
-                self._ws.health_message = msg
+            self._apply_service_health(event)
         else:
             return
         self._display()
+
+    def _status_event_applies(self, event: dict) -> bool:
+        """False when no workspace is mounted or the event is for a
+        different workspace."""
+        if self._ws is None:
+            return False
+        ws_id = str(getattr(self._ws, "id", "") or "")
+        eid = str(event.get("workspace_id") or "")
+        return not (eid and ws_id and eid != ws_id)
+
+    def _apply_terminals_changed(self, event: dict) -> None:
+        """A terminal was added / removed / renamed from another surface.
+        The event carries the window list (like the Flutter UI's
+        terminal_windows push), so update directly instead of
+        re-enumerating via a terminal_start round-trip (#1894)."""
+        windows = event.get("windows")
+        if isinstance(windows, list):
+            # Adopt the pushed list verbatim. Events are serialized
+            # per status-WS connection, so out-of-order arrival (a
+            # close broadcast beating its create) is not expected;
+            # the payload type check above also makes the push path
+            # resilient to a malformed payload (fall back to fetch).
+            self._terminals = windows
+            self.run_worker(self._render_terminals(), exit_on_error=False)
+        else:
+            # No payload (older server) or malformed -- fall back to a
+            # fetch, preserving the resilience of the old poll path.
+            self.run_worker(self._load_terminals, exit_on_error=False)
+
+    def _apply_container_status(self, event: dict) -> None:
+        """Running flag + start-stamp adoption from a container_status
+        event; a (re)start triggers the full reload (#1924)."""
+        was_running = self._ws.running
+        old_started = self._ws.service_started_at
+        self._ws.running = bool(event.get("running"))
+        # Type-check before adopting: a malformed payload (string stamp)
+        # would crash _tick_uptime's ``time.time() - started`` math
+        # later (#2029 audit).
+        started = event.get("service_started_at")
+        if isinstance(started, (int, float)) and not isinstance(started, bool):
+            self._ws.service_started_at = started
+        # A container start or restart invalidates everything — uptime
+        # resets, health resets, terminal sessions are gone. Do a full
+        # reload so all detail-screen items reflect the new state (#1924).
+        if self._ws.running and (
+            not was_running or self._ws.service_started_at != old_started
+        ):
+            self.run_worker(self._reload_on_restart, exit_on_error=False)
+
+    def _apply_service_health(self, event: dict) -> None:
+        """Health state from a service_health event."""
+        self._ws.running = bool(event.get("running", self._ws.running))
+        self._ws.health = "healthy" if event.get("healthy") else "unhealthy"
+        msg = event.get("health_message")
+        if msg is not None:
+            self._ws.health_message = msg
 
     async def _reload_on_status(self) -> None:
         # A workspaces_changed push re-resolves the marking (the workspace
