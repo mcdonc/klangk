@@ -120,6 +120,19 @@ container_pids_limit: 16384
 # sizes /tmp at half of RAM).
 container_tmp_size: 2g
 #
+# --- Admission control (#2525; defaults shown) ---
+# Refuse workspace starts the host cannot serve, instead of deferring
+# the failure to the kernel OOM killer. Both gates run at every start
+# path (API start/restart, WS connect, create eager start, boot
+# auto-start, crash-recovery restart) and fail with a clear 503 /
+# WebSocket error.
+# admission_memory_enabled: false  # check available host memory vs. the
+#                                  # workspace's resolved memory limit +
+#                                  # margin before creating the container
+# admission_memory_margin: 1g      # reserve kept for the server itself
+# max_running_workspaces_per_user: 0  # per-user cap on concurrently
+#                                     # RUNNING workspaces (0 = unlimited)
+#
 # Full settings reference:
 #   https://mcdonc.github.io/klangk/reference/klangkd-config/
 """

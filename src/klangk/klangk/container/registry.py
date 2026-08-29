@@ -22,6 +22,7 @@ from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
 from ..workspace_settings import parse_allow_sudo, resolve_allow_sudo
+from .admission import AdmissionControl
 from .browsers import BrowserRouter
 from .crash import CrashRecoveryMonitor
 from .health import HealthMonitor
@@ -197,6 +198,10 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.idle = IdleMonitor(app)
         self.health = HealthMonitor(app)
         self.crash = CrashRecoveryMonitor(app)
+        # Admission control (#2525): host-capacity fit + per-user quota,
+        # checked at the start choke point below. A registry collaborator
+        # (like idle/health/crash) — no independent lifespan of its own.
+        self.admission = AdmissionControl(app)
 
         # The Podman instance is reached via self.app.state.podman (owned
         # instance, #1426) — no post-construction wiring needed.
@@ -207,6 +212,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         self.idle.reconfigure(app)
         self.health.reconfigure(app)
         self.crash.reconfigure(app)
+        self.admission.reconfigure(app)
 
     # --- settings-derived config (read live off app_state, #1608) ---
 
@@ -1306,6 +1312,18 @@ class ContainerRegistry(NetworkSidecarMixin):
         blocked_reason = self.new_starts_blocked_reason()
         if blocked_reason:
             raise NodeDrainingError(blocked_reason)
+
+        # Admission control (#2525): host-memory fit + per-user running
+        # quota, checked at this single choke point so every start path
+        # (API start/restart, WS connect, create eager start, boot
+        # auto-start, crash-recovery restart) is covered. Like the drain
+        # gate it sits after the running-container adoption check above —
+        # a workspace that is already running keeps its committed
+        # capacity and is never re-admitted on reconnect. Raises
+        # WorkspaceCapacityError (503 / WS error frame upstream) with an
+        # actionable message instead of deferring the failure to the
+        # kernel OOM killer.
+        await self.admission.admit(spec)
 
         # A fresh container (re)start means no `restart`-duration consent
         # verdict can still be in effect -- the sidecar's in-memory rules

@@ -49,3 +49,20 @@ class NodeDrainingError(RuntimeError):
     start paths send an error frame, and the crash restart loop
     abandons quietly.
     """
+
+
+class WorkspaceCapacityError(RuntimeError):
+    """New workspace starts are refused: host capacity is exhausted (#2525).
+
+    Raised at the container-start choke point by admission control —
+    either the host-memory fit check (available memory below the
+    workspace's resolved memory limit plus the reserve) or the per-user
+    running-workspace quota. Like :class:`NodeDrainingError` it is a
+    *deterministic, operator-actionable* refusal rather than a runtime
+    failure: the API layer translates it to a 503 with a clear detail
+    and the WS start paths send an error frame, so clients can render
+    "stop a workspace first / free host memory" instead of an opaque
+    start failure. The crash-restart loop treats it like any other
+    start failure (bounded retries) — capacity may recover on its own
+    (the memory-pressure evictor frees idle workspaces, #2526).
+    """

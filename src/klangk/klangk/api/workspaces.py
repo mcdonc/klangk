@@ -31,7 +31,7 @@ from .. import (
     netfilter as netfilter_mod,
     wshandler,
 )
-from ..exceptions import NodeDrainingError
+from ..exceptions import NodeDrainingError, WorkspaceCapacityError
 from ..workspace_settings import (
     validate_settings,
     validate_settings_patch,
@@ -372,6 +372,16 @@ async def create_workspace(
                 "created but not started",
                 ws["id"],
             )
+        except WorkspaceCapacityError as exc:
+            # Admission control refused the eager start (#2525): the
+            # workspace row exists (creation is not capacity-gated —
+            # only starts are); it runs once capacity frees up. Logged
+            # as a clear warning rather than a traceback-level failure.
+            logger.warning(
+                "Capacity refused eager start of workspace %s: %s",
+                ws["id"],
+                exc,
+            )
         except Exception:
             logger.warning(
                 "Eager start failed for workspace %s",
@@ -704,6 +714,14 @@ async def restart_workspace(
         # A draining node refuses fresh starts (#2527); the stop above
         # already happened, so the workspace is simply left stopped.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except WorkspaceCapacityError as exc:
+        # Admission control refused the restart (#2525) — host memory
+        # or the per-user quota. 503 (not 400/500) so clients can tell
+        # a deterministic, operator-actionable capacity refusal apart
+        # from config errors and runtime failures. The stop above
+        # already happened, so the workspace is left stopped; capacity
+        # is re-checked on every start.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         # User-config error (e.g. a bind-mount source path that doesn't
         # exist) — surface as a 400, not an unhandled 500 (#2157).
@@ -784,6 +802,10 @@ async def start_workspace(
     except NodeDrainingError as exc:
         # Draining node (#2527): clear 503 so clients/CLI can distinguish
         # "temporarily disabled by a restart" from a config error.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except WorkspaceCapacityError as exc:
+        # Capacity refusal (#2525): distinguishable 503 with an
+        # actionable "stop a workspace / free memory" detail.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         # User-config error (e.g. a bind-mount source path that doesn't

@@ -228,6 +228,24 @@ async def _run_command(*cmd: str) -> str:
     return out.decode(errors="replace")
 
 
+async def macos_measure(runner=None) -> tuple[int, int]:
+    """``(total, available)`` memory bytes on macOS (#2525).
+
+    The shared body of :func:`macos_available_fraction` (eviction) and
+    the admission check's absolute-bytes measurement
+    (:func:`klangk.container.admission.available_memory_bytes`): two
+    short subprocesses (``sysctl -n hw.memsize``, ``vm_stat``), with
+    *runner* injecting the command transport for tests. Any failure
+    raises — callers treat unmeasurable as "skip" / "fail open".
+    """
+    if runner is None:
+        runner = _run_command
+    total = int((await runner("sysctl", "-n", "hw.memsize")).strip())
+    vm_stat = await runner("vm_stat")
+    fraction = parse_vm_stat(vm_stat, vm_stat_page_size(vm_stat), total)
+    return total, int(fraction * total)
+
+
 async def macos_available_fraction(runner=None) -> float:
     """Measure availability on macOS via ``sysctl`` + ``vm_stat``.
 
@@ -237,11 +255,10 @@ async def macos_available_fraction(runner=None) -> float:
     :func:`_run_command`. Any failure raises — the caller treats
     unmeasurable as "skip this cycle".
     """
-    if runner is None:
-        runner = _run_command
-    total = int((await runner("sysctl", "-n", "hw.memsize")).strip())
-    vm_stat = await runner("vm_stat")
-    return parse_vm_stat(vm_stat, vm_stat_page_size(vm_stat), total)
+    total, available = await macos_measure(runner)
+    if total <= 0:  # pragma: no cover — parse_vm_stat already raises
+        raise ValueError("sysctl returned a non-positive hw.memsize")
+    return available / total
 
 
 async def measure_available_fraction() -> float:

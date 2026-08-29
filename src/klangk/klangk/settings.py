@@ -1099,6 +1099,40 @@ class KlangkSettings(BaseSettings):
     container_cpu_limit: float | None = 2.0
     container_memory_limit: str | None = "8g"
     container_pids_limit: int | None = 16384
+    # --- Admission control (#2525) ---
+    # Start-time host-capacity fit + per-user running quota, the
+    # k8s-scheduler/ResourceQuota analogue. Both gates run at the
+    # container-start choke point (every start path: API start/restart,
+    # WS connect, create eager start, boot auto-start, crash-recovery
+    # restart) and raise WorkspaceCapacityError (API 503 / WS error
+    # frame) with an actionable message when they refuse.
+    #
+    # admission_memory_enabled: compare available host memory
+    # (MemAvailable, platform-aware — same measurement family as the
+    # #2526 eviction loop) against the workspace's resolved
+    # container_memory_limit + admission_memory_margin before creating
+    # the container, refusing the start when it does not fit. Default
+    # OFF: the check is advisory against the *limit*, and the default
+    # 8g limit exceeds what small dev/CI hosts have available —
+    # defaulting it on would refuse every start there. Multi-user
+    # deployments (the motivation, #34) should set it with limits sized
+    # to the host. Skipped when no memory limit is configured; fails
+    # open (start allowed, one-time warning) when memory cannot be
+    # measured. Read live (SIGHUP reload-safe).
+    admission_memory_enabled: bool = False
+    # admission_memory_margin: the reserve kept for the server itself
+    # (klangkd, the proxy, page cache) when fitting a workspace's
+    # memory limit against available host memory. Podman size-string
+    # grammar (same as container_memory_limit); unset/empty = no
+    # reserve (fit against the bare limit). Malformed aborts startup
+    # (and is denied on SIGHUP). Read live (SIGHUP reload-safe).
+    admission_memory_margin: str | None = "1g"
+    # max_running_workspaces_per_user: deploy-wide cap on concurrently
+    # RUNNING workspaces per owner, checked at start time. 0 (the
+    # default) = unlimited. Workspaces mid-start/stop count too (the
+    # per-workspace operation lock), which closes the concurrent-start
+    # race. Read live (SIGHUP reload-safe).
+    max_running_workspaces_per_user: int = 0
     # #2378: per-workspace /tmp tmpfs size (``--tmpfs /tmp:...,size=<n>``).
     # Default ``2g`` preserves the pre-#2378 hardcoded mount size; a
     # workspace may override it via its settings bag (``settings.tmp_size``).
@@ -1415,6 +1449,7 @@ class KlangkSettings(BaseSettings):
         "file_upload_size_max",
         "hosted_ports_per_workspace",
         "memory_eviction_sustain_polls",
+        "max_running_workspaces_per_user",
         mode="before",
     )
     @classmethod
@@ -1448,6 +1483,8 @@ class KlangkSettings(BaseSettings):
             "hosted_ports_per_workspace",
             "password_history_count",
             "inactivity_disable_days",
+            # Disables the per-user running-workspace cap (#2525).
+            "max_running_workspaces_per_user",
         }
         minimum = 0 if info.field_name in _ZERO_MEANINGFUL else 1
         return _coerce_setting_int(
@@ -1768,6 +1805,21 @@ class KlangkSettings(BaseSettings):
         startup, same posture as the other container limits (#34).
         """
         return _coerce_podman_size(v, "KLANGKD_CONTAINER_TMP_SIZE")
+
+    @field_validator("admission_memory_margin", mode="before")
+    @classmethod
+    def _coerce_admission_memory_margin(cls, v):
+        """Coerce + validate ``KLANGKD_ADMISSION_MEMORY_MARGIN`` (#2525).
+
+        Accepts the same podman size-string grammar as
+        ``container_memory_limit`` (``1g`` / ``512m`` / ``1024`` …);
+        ``None`` / empty -> ``None`` (no reserve — fit against the bare
+        memory limit). A malformed or ``<= 0`` value raises and aborts
+        startup, same strict-on-malformed posture as the other safety
+        knobs (#34: a control that silently disables itself on a typo is
+        worse than none).
+        """
+        return _coerce_podman_size(v, "KLANGKD_ADMISSION_MEMORY_MARGIN")
 
     @field_validator("container_restart_enabled", mode="before")
     @classmethod

@@ -463,6 +463,54 @@ class TestConfigFile:
         with pytest.raises(Exception, match="must be > 0"):
             make_settings({"KLANGKD_CONTAINER_TMP_SIZE": "0"})
 
+    # --- Admission control (#2525) ---
+
+    def test_admission_defaults_off_and_unlimited(self):
+        # Out of the box nothing changes: the memory fit check is off
+        # (the default 8g limit would refuse every start on small
+        # dev/CI hosts) and the per-user running cap is unlimited.
+        s = make_settings({})
+        assert s.admission_memory_enabled is False
+        assert s.admission_memory_margin == "1g"
+        assert s.max_running_workspaces_per_user == 0
+
+    def test_admission_memory_enabled_from_env(self):
+        s = make_settings({"KLANGKD_ADMISSION_MEMORY_ENABLED": "true"})
+        assert s.admission_memory_enabled is True
+
+    def test_admission_memory_margin_from_env(self):
+        s = make_settings({"KLANGKD_ADMISSION_MEMORY_MARGIN": "512m"})
+        assert s.admission_memory_margin == "512m"
+
+    def test_admission_memory_margin_empty_string_is_none(self):
+        # No reserve — fit against the bare memory limit.
+        s = make_settings({"KLANGKD_ADMISSION_MEMORY_MARGIN": ""})
+        assert s.admission_memory_margin is None
+
+    def test_admission_memory_margin_malformed_aborts(self):
+        with pytest.raises(Exception, match="Expected a positive size"):
+            make_settings({"KLANGKD_ADMISSION_MEMORY_MARGIN": "2gib"})
+
+    def test_admission_memory_margin_zero_aborts(self):
+        with pytest.raises(Exception, match="must be > 0"):
+            make_settings({"KLANGKD_ADMISSION_MEMORY_MARGIN": "0"})
+
+    def test_max_running_workspaces_per_user_from_env(self):
+        s = make_settings({"KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER": "3"})
+        assert s.max_running_workspaces_per_user == 3
+
+    def test_max_running_workspaces_per_user_zero_is_unlimited(self):
+        s = make_settings({"KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER": "0"})
+        assert s.max_running_workspaces_per_user == 0
+
+    def test_max_running_workspaces_per_user_malformed_aborts(self):
+        with pytest.raises(Exception):
+            make_settings({"KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER": "many"})
+
+    def test_max_running_workspaces_per_user_negative_aborts(self):
+        with pytest.raises(Exception):
+            make_settings({"KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER": "-1"})
+
     def test_container_pids_limit_from_env(self):
         s = make_settings({"KLANGKD_CONTAINER_PIDS_LIMIT": "512"})
         assert s.container_pids_limit == 512

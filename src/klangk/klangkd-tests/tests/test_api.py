@@ -2445,6 +2445,102 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 503
         assert "draining" in resp.json()["detail"]
 
+    async def test_start_refused_503_on_capacity(
+        self, client, app, user, registry, ws_admin
+    ):
+        """POST /start under a capacity refusal returns a clear,
+        distinguishable 503 (#2525)."""
+        from klangk.exceptions import WorkspaceCapacityError
+
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "cap-ws"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        with patch.object(
+            app.state.workspaces,
+            "start_workspace",
+            new_callable=AsyncMock,
+            side_effect=WorkspaceCapacityError(
+                "host at capacity: 1.2 GB available, workspace wants "
+                "9.0 GB (memory limit 8.0 GB + 1.0 GB reserve). Stop an "
+                "idle workspace, free host memory, or lower the workspace "
+                "memory limit (KLANGKD_CONTAINER_MEMORY_LIMIT)."
+            ),
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/start", headers=headers
+            )
+        assert resp.status_code == 503
+        assert "host at capacity" in resp.json()["detail"]
+
+    async def test_restart_capacity_refusal_503(
+        self, client, app, user, registry, ws_admin
+    ):
+        """POST /restart surfaces a capacity refusal as 503 — the stop
+        already happened, so the workspace is left stopped and capacity
+        is re-checked on the next start (#2525)."""
+        from klangk.exceptions import WorkspaceCapacityError
+
+        headers = await _auth_headers(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "cap-r"}
+        )
+        assert create_resp.status_code == 200, create_resp.text
+        ws_id = create_resp.json()["id"]
+        with (
+            patch.object(
+                registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ),
+            patch.object(
+                app.state.workspaces,
+                "start_workspace",
+                new_callable=AsyncMock,
+                side_effect=WorkspaceCapacityError(
+                    "workspace quota reached: 2 of this user's workspaces "
+                    "are already running and the server caps it at 2 "
+                    "(KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER). Stop a "
+                    "workspace first, or ask the operator to raise the cap."
+                ),
+            ),
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/restart", headers=headers
+            )
+        assert resp.status_code == 503
+        assert "quota" in resp.json()["detail"]
+
+    async def test_create_eager_start_capacity_refusal_not_failed(
+        self, client, app, user
+    ):
+        """A capacity refusal on create's eager start degrades to a
+        warning — the workspace row exists and runs once capacity frees
+        (#2525; creation is not capacity-gated, only starts are)."""
+        from klangk.exceptions import WorkspaceCapacityError
+
+        headers = await _auth_headers(client)
+        with (
+            patch.object(app.state.settings, "allow_autostart", "1"),
+            patch.object(
+                app.state.workspaces,
+                "start_workspace",
+                new_callable=AsyncMock,
+                side_effect=WorkspaceCapacityError(
+                    "host at capacity: 1.2 GB available, workspace wants "
+                    "9.0 GB (memory limit 8.0 GB + 1.0 GB reserve)."
+                ),
+            ),
+        ):
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={"name": "cap-create-ws", "auto_start": True},
+            )
+        assert resp.status_code == 200
+
     async def test_create_auto_start_eager_failure_logged(
         self, client, app, user
     ):
