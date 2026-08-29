@@ -602,6 +602,77 @@ def wave_tick_bound(specs: list[WsSpec], global_timeout: int) -> int:
     return max(bounds)
 
 
+def draw_override(rng: random.Random, bogus_global: bool) -> int | None:
+    """Draw the per-workspace override. With a bogus global (falls back to
+    3600s) a "none" override can never reap inside a run, so force an
+    override there."""
+    if bogus_global:
+        return rng.choice([*SHORT_OVERRIDES, *LONG_OVERRIDES, 0])
+    draw = rng.choices([None, "short", "long", 0], weights=[3, 3, 2, 1])[0]
+    if draw == "short":
+        return rng.choice(SHORT_OVERRIDES)
+    if draw == "long":
+        return rng.choice(LONG_OVERRIDES)
+    return draw  # None or 0
+
+
+def draw_runtime_change(rng: random.Random, pattern: str):
+    """Draw the mid-flight change, only where the outcome stays
+    deterministic: no-activity patterns may shorten (reap sooner must be
+    observed); activity patterns may only lengthen/zero (activity keeps
+    flowing, so a shorten would race the driver's own cadence)."""
+    if pattern in ("idle", "quiet_ws"):
+        kind = rng.choices([None, "shorten", "lengthen", "zero"], weights=[6, 2, 1, 1])[
+            0
+        ]
+    elif pattern in ("term_under", "egress"):
+        kind = rng.choices([None, "lengthen", "zero"], weights=[7, 1, 1])[0]
+    else:
+        kind = None
+    if kind == "shorten":
+        return ("shorten", 3)
+    if kind == "lengthen":
+        return ("lengthen", 30)
+    if kind == "zero":
+        return ("zero", 0)
+    return None
+
+
+def apply_effective_timeout(
+    spec: WsSpec, pattern: str, override: int | None, global_timeout: int
+) -> int:
+    """Set spec.eff_timeout (and floor tiny activity timeouts)."""
+    eff = spec.override if spec.override is not None else global_timeout
+    if (
+        pattern in ("term_under", "egress", "mixed")
+        and override is not None
+        and 0 < eff < 6
+    ):
+        # A tiny timeout on an activity pattern gets reaped during the
+        # harness's own bringup (terminal start, first status polls)
+        # before the pattern can drive keep-alive -- floor it so the
+        # "active workspace stays alive" invariant is testable.
+        eff = 6
+        spec.override = 6
+    spec.eff_timeout = eff
+    return eff
+
+
+def expected_outcome(spec: WsSpec, pattern: str, eff: int) -> str:
+    """The observable expectation for the drawn spec."""
+    if spec.override == 0 or eff >= 60:
+        spec.loose_alive = eff >= 60
+        return "alive"
+    if pattern in ("term_under", "egress", "mixed"):
+        return "alive"
+    if spec.runtime_change is not None and spec.runtime_change[0] in (
+        "lengthen",
+        "zero",
+    ):
+        return "alive"  # must not be reaped in-window
+    return "reap"
+
+
 def draw_wave(
     rng: random.Random,
     *,
@@ -614,68 +685,16 @@ def draw_wave(
     specs = []
     for _ in range(n):
         pattern = rng.choice(PATTERNS)
-        # Override draw. With a bogus global (falls back to 3600s) a "none"
-        # override can never reap inside a run, so force an override there.
-        if bogus_global:
-            override: int | None = rng.choice([*SHORT_OVERRIDES, *LONG_OVERRIDES, 0])
-        else:
-            draw = rng.choices([None, "short", "long", 0], weights=[3, 3, 2, 1])[0]
-            if draw == "short":
-                override = rng.choice(SHORT_OVERRIDES)
-            elif draw == "long":
-                override = rng.choice(LONG_OVERRIDES)
-            else:
-                override = draw  # None or 0
+        override = draw_override(rng, bogus_global)
         spec = WsSpec(
             name=f"idlefuzz-{uuid.uuid4().hex[:6]}",
             pattern=pattern,
             override=override,
             invalid_patch=rng.random() < 0.25,
         )
-        # Runtime changes only where the outcome stays deterministic:
-        # no-activity patterns may shorten (reap sooner must be observed);
-        # activity patterns may only lengthen/zero (activity keeps flowing,
-        # so a shorten would race the driver's own cadence).
-        if pattern in ("idle", "quiet_ws"):
-            kind = rng.choices(
-                [None, "shorten", "lengthen", "zero"], weights=[6, 2, 1, 1]
-            )[0]
-        elif pattern in ("term_under", "egress"):
-            kind = rng.choices([None, "lengthen", "zero"], weights=[7, 1, 1])[0]
-        else:
-            kind = None
-        if kind == "shorten":
-            spec.runtime_change = ("shorten", 3)
-        elif kind == "lengthen":
-            spec.runtime_change = ("lengthen", 30)
-        elif kind == "zero":
-            spec.runtime_change = ("zero", 0)
-
-        eff = spec.override if spec.override is not None else global_timeout
-        if (
-            pattern in ("term_under", "egress", "mixed")
-            and override is not None
-            and 0 < eff < 6
-        ):
-            # A tiny timeout on an activity pattern gets reaped during the
-            # harness's own bringup (terminal start, first status polls)
-            # before the pattern can drive keep-alive -- floor it so the
-            # "active workspace stays alive" invariant is testable.
-            eff = 6
-            spec.override = 6
-        spec.eff_timeout = eff
-        if override == 0 or eff >= 60:
-            spec.expect = "alive"
-            spec.loose_alive = eff >= 60
-        elif pattern in ("term_under", "egress", "mixed"):
-            spec.expect = "alive"
-        elif spec.runtime_change is not None and spec.runtime_change[0] in (
-            "lengthen",
-            "zero",
-        ):
-            spec.expect = "alive"  # must not be reaped in-window
-        else:
-            spec.expect = "reap"
+        spec.runtime_change = draw_runtime_change(rng, pattern)
+        eff = apply_effective_timeout(spec, pattern, override, global_timeout)
+        spec.expect = expected_outcome(spec, pattern, eff)
         specs.append(spec)
     return specs
 
@@ -801,6 +820,138 @@ async def start_scenario_workspace(
     return term, st
 
 
+async def cancel_scenario_tasks(
+    pattern_task: asyncio.Task, change_task: asyncio.Task | None
+) -> None:
+    """Cancel (and await) the pattern and runtime-change tasks."""
+    pattern_task.cancel()
+    if change_task is not None:
+        change_task.cancel()
+    for t in (pattern_task, change_task):
+        if t is not None:
+            with contextlib.suppress(BaseException):
+                await t
+
+
+async def apply_runtime_change(ctx: Ctx, api, spec: WsSpec, state: dict) -> None:
+    """Apply the mid-flight idle-timeout change and update the expected
+    outcome (shorten -> reap restarts the deadline; lengthen/zero -> the
+    workspace must stay alive)."""
+    kind, value = spec.runtime_change
+    await asyncio.sleep(max(1.0, spec.eff_timeout * 0.5))
+    resp = await api.test_set_idle_timeout(spec.ws_id, value)
+    if resp.status_code != 200:
+        ctx.anomalies.add(
+            "runtime-change",
+            f"{spec.name}: /test/set-idle-timeout {value} -> {resp.status_code}",
+        )
+        return
+    spec.note(f"runtime-change->{kind}:{value}")
+    if kind == "shorten":
+        # No-activity pattern: the reap deadline restarts from
+        # the change (the wake event fires immediately).
+        state["eff"] = value
+        state["expect"] = "reap"
+        state["last_activity"] = time.monotonic()
+    elif kind == "lengthen":
+        state["eff"] = spec.eff_timeout + value
+    else:  # zero: never idle out
+        state["eff"] = 0
+        state["expect"] = "alive"
+
+
+async def send_keepalive(
+    ctx: Ctx, spec: WsSpec, state: dict, term, cid: str, seq: int
+) -> None:
+    """One iteration's keep-alive work (terminal input / egress DNS)."""
+    if spec.pattern in ("term_under", "stops_mid", "mixed"):
+        if term is not None:
+            await term.send_input(" ")
+        state["last_activity"] = time.monotonic()
+    if spec.pattern in ("egress", "mixed"):
+        # Blocking podman call off the loop: with up to
+        # --max-concurrent workspaces a 20s exec timeout
+        # must not stall the other scenarios.
+        await asyncio.to_thread(
+            podman_exec,
+            cid,
+            f"getent hosts f{seq}-{spec.name}.idlefuzz.invalid || true",
+        )
+        state["last_activity"] = time.monotonic()
+
+
+async def pattern_sleep(
+    spec: WsSpec,
+    state: dict,
+    term,
+    seq: int,
+    gap_under: int,
+    gap_over: int,
+    cadence: int,
+) -> bool:
+    """Sleep per pattern; False when the driver goes silent (stops_mid)."""
+    if spec.pattern in ("idle", "quiet_ws"):
+        await asyncio.sleep(3600)  # silence is the point
+    elif spec.pattern == "term_under":
+        await asyncio.sleep(gap_under)
+    elif spec.pattern == "term_over":
+        # The next burst lands beyond timeout+tick: the
+        # reaper must reap between bursts (timer reset).
+        await asyncio.sleep(gap_over)
+        if term is not None:
+            await term.send_input(" ")
+        state["last_activity"] = time.monotonic()
+    elif spec.pattern == "stops_mid":
+        bursts = max(2, int(spec.eff_timeout * 1.5 / gap_under))
+        if seq >= bursts:
+            spec.note("gone-silent")
+            return False  # silence -> reap expected
+        await asyncio.sleep(gap_under)
+    else:  # egress / mixed
+        await asyncio.sleep(cadence)
+    return True
+
+
+async def run_activity_pattern(
+    ctx: Ctx,
+    spec: WsSpec,
+    state: dict,
+    term: WsTerminal | None,
+    cid: str,
+    gone: asyncio.Event,
+    stop_pattern: asyncio.Event,
+    tick: int,
+) -> None:
+    """Drive the scenario's keep-alive / silence pattern until stopped,
+    the container vanishes, or a podman-exec error lands."""
+    eff0 = spec.eff_timeout
+    gap_under = max(1, eff0 - 2) if eff0 > 3 else 1
+    gap_over = eff0 + tick + 6
+    cadence = max(1, min(2, eff0 // 3)) if eff0 > 0 else 2
+    seq = 0
+    try:
+        while not stop_pattern.is_set():
+            seq += 1
+            try:
+                await send_keepalive(ctx, spec, state, term, cid, seq)
+            except subprocess.CalledProcessError as exc:
+                if is_container_gone_error(exc):
+                    gone.set()
+                    return  # container vanished mid-pattern
+                ctx.anomalies.add(
+                    "pattern-error",
+                    f"{spec.name}: podman exec rc={exc.returncode}",
+                    scenario=spec.scenario_json(),
+                )
+                return
+            if not await pattern_sleep(
+                spec, state, term, seq, gap_under, gap_over, cadence
+            ):
+                return  # gone-silent (stops_mid)
+    except asyncio.CancelledError:
+        raise
+
+
 async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
     """One workspace lifecycle: create -> configure -> start -> activity
     pattern -> invariants -> restart check -> cleanup."""
@@ -825,99 +976,16 @@ async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
         # -- optional runtime change, applied mid-flight ----------------------
         change_task: asyncio.Task | None = None
         if spec.runtime_change is not None:
-            kind, value = spec.runtime_change
-
-            async def _apply_change() -> None:
-                await asyncio.sleep(max(1.0, spec.eff_timeout * 0.5))
-                resp = await api.test_set_idle_timeout(spec.ws_id, value)
-                if resp.status_code != 200:
-                    ctx.anomalies.add(
-                        "runtime-change",
-                        f"{spec.name}: /test/set-idle-timeout {value} -> "
-                        f"{resp.status_code}",
-                    )
-                    return
-                spec.note(f"runtime-change->{kind}:{value}")
-                if kind == "shorten":
-                    # No-activity pattern: the reap deadline restarts from
-                    # the change (the wake event fires immediately).
-                    state["eff"] = value
-                    state["expect"] = "reap"
-                    state["last_activity"] = time.monotonic()
-                elif kind == "lengthen":
-                    state["eff"] = spec.eff_timeout + value
-                else:  # zero: never idle out
-                    state["eff"] = 0
-                    state["expect"] = "alive"
-
-            change_task = asyncio.create_task(_apply_change())
+            change_task = asyncio.create_task(
+                apply_runtime_change(ctx, api, spec, state)
+            )
 
         # -- activity pattern -------------------------------------------------
         gone = asyncio.Event()
         stop_pattern = asyncio.Event()
-        eff0 = spec.eff_timeout
-        gap_under = max(1, eff0 - 2) if eff0 > 3 else 1
-        gap_over = eff0 + tick + 6
-        cadence = max(1, min(2, eff0 // 3)) if eff0 > 0 else 2
-
-        async def _pattern() -> None:
-            seq = 0
-            try:
-                while not stop_pattern.is_set():
-                    seq += 1
-                    try:
-                        if spec.pattern in (
-                            "term_under",
-                            "stops_mid",
-                            "mixed",
-                        ):
-                            if term is not None:
-                                await term.send_input(" ")
-                            state["last_activity"] = time.monotonic()
-                        if spec.pattern in ("egress", "mixed"):
-                            # Blocking podman call off the loop: with up to
-                            # --max-concurrent workspaces a 20s exec timeout
-                            # must not stall the other scenarios.
-                            await asyncio.to_thread(
-                                podman_exec,
-                                cid,
-                                f"getent hosts f{seq}-{spec.name}"
-                                ".idlefuzz.invalid || true",
-                            )
-                            state["last_activity"] = time.monotonic()
-                    except subprocess.CalledProcessError as exc:
-                        if is_container_gone_error(exc):
-                            gone.set()
-                            return  # container vanished mid-pattern
-                        ctx.anomalies.add(
-                            "pattern-error",
-                            f"{spec.name}: podman exec rc={exc.returncode}",
-                            scenario=spec.scenario_json(),
-                        )
-                        return
-                    if spec.pattern in ("idle", "quiet_ws"):
-                        await asyncio.sleep(3600)  # silence is the point
-                    elif spec.pattern == "term_under":
-                        await asyncio.sleep(gap_under)
-                    elif spec.pattern == "term_over":
-                        # The next burst lands beyond timeout+tick: the
-                        # reaper must reap between bursts (timer reset).
-                        await asyncio.sleep(gap_over)
-                        if term is not None:
-                            await term.send_input(" ")
-                        state["last_activity"] = time.monotonic()
-                    elif spec.pattern == "stops_mid":
-                        bursts = max(2, int(eff0 * 1.5 / gap_under))
-                        if seq >= bursts:
-                            spec.note("gone-silent")
-                            return  # silence -> reap expected
-                        await asyncio.sleep(gap_under)
-                    else:  # egress / mixed
-                        await asyncio.sleep(cadence)
-            except asyncio.CancelledError:
-                raise
-
-        pattern_task = asyncio.create_task(_pattern())
+        pattern_task = asyncio.create_task(
+            run_activity_pattern(ctx, spec, state, term, cid, gone, stop_pattern, tick)
+        )
 
         # -- observation ------------------------------------------------------
         # A runtime change can flip the expected outcome mid-flight
@@ -934,13 +1002,7 @@ async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
                     break
         finally:
             stop_pattern.set()
-            pattern_task.cancel()
-            if change_task is not None:
-                change_task.cancel()
-            for t in (pattern_task, change_task):
-                if t is not None:
-                    with contextlib.suppress(BaseException):
-                        await t
+            await cancel_scenario_tasks(pattern_task, change_task)
     except Exception as exc:  # noqa: BLE001
         ctx.anomalies.add(
             "scenario-error",
@@ -954,6 +1016,60 @@ async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
         if spec.ws_id:
             await api.delete(spec.ws_id)
             spec.note("deleted")
+
+
+async def confirm_reap_cleanup(ctx: Ctx, spec: WsSpec, cid: str) -> None:
+    """After the reap: the container is fully removed and the row survives."""
+    if cid:
+        removed_by = time.monotonic() + REMOVE_GRACE
+        while time.monotonic() < removed_by:
+            if not await container_exists(cid):
+                break
+            await asyncio.sleep(2)
+        else:
+            ctx.anomalies.add(
+                "not-removed",
+                f"{spec.name}: container {cid[:12]} still in podman "
+                f"ps -a {REMOVE_GRACE}s after running=false "
+                "(stopped-but-not-removed leak)",
+                scenario=spec.scenario_json(),
+            )
+    # The row must survive the reap...
+    if not await ctx.api.workspace_row_exists(spec.ws_id):
+        ctx.anomalies.add(
+            "row-gone",
+            f"{spec.name}: workspace row missing after reap (must survive)",
+            scenario=spec.scenario_json(),
+        )
+
+
+async def confirm_restart(ctx: Ctx, spec: WsSpec) -> None:
+    """...and the workspace restarts cleanly after the reap."""
+    api = ctx.api
+    resp = await api.start(spec.ws_id)
+    if resp.status_code != 200:
+        ctx.anomalies.add(
+            "restart-failed",
+            f"{spec.name}: POST /start after reap -> {resp.status_code}",
+            scenario=spec.scenario_json(),
+        )
+        return
+    deadline = time.monotonic() + RESTART_TIMEOUT
+    restarted = False
+    while time.monotonic() < deadline:
+        st = await api.status(spec.ws_id)
+        if st is not None and st.get("running"):
+            restarted = True
+            break
+        await asyncio.sleep(2)
+    if restarted:
+        spec.note("restarted-ok")
+    else:
+        ctx.anomalies.add(
+            "restart-failed",
+            f"{spec.name}: not running within {RESTART_TIMEOUT}s of restart after reap",
+            scenario=spec.scenario_json(),
+        )
 
 
 async def _observe_reap(
@@ -993,53 +1109,8 @@ async def _observe_reap(
             continue
         # running=false (or gone): reaped. Confirm full removal.
         spec.note("reaped")
-        if cid:
-            removed_by = time.monotonic() + REMOVE_GRACE
-            while time.monotonic() < removed_by:
-                if not await container_exists(cid):
-                    break
-                await asyncio.sleep(2)
-            else:
-                ctx.anomalies.add(
-                    "not-removed",
-                    f"{spec.name}: container {cid[:12]} still in podman "
-                    f"ps -a {REMOVE_GRACE}s after running=false "
-                    "(stopped-but-not-removed leak)",
-                    scenario=spec.scenario_json(),
-                )
-        # The row must survive the reap...
-        if not await api.workspace_row_exists(spec.ws_id):
-            ctx.anomalies.add(
-                "row-gone",
-                f"{spec.name}: workspace row missing after reap (must survive)",
-                scenario=spec.scenario_json(),
-            )
-        # ...and restart cleanly.
-        resp = await api.start(spec.ws_id)
-        if resp.status_code != 200:
-            ctx.anomalies.add(
-                "restart-failed",
-                f"{spec.name}: POST /start after reap -> {resp.status_code}",
-                scenario=spec.scenario_json(),
-            )
-            return True
-        deadline = time.monotonic() + RESTART_TIMEOUT
-        restarted = False
-        while time.monotonic() < deadline:
-            st = await api.status(spec.ws_id)
-            if st is not None and st.get("running"):
-                restarted = True
-                break
-            await asyncio.sleep(2)
-        if restarted:
-            spec.note("restarted-ok")
-        else:
-            ctx.anomalies.add(
-                "restart-failed",
-                f"{spec.name}: not running within {RESTART_TIMEOUT}s of "
-                "restart after reap",
-                scenario=spec.scenario_json(),
-            )
+        await confirm_reap_cleanup(ctx, spec, cid)
+        await confirm_restart(ctx, spec)
         return True
 
 
@@ -1121,6 +1192,85 @@ def est_wave_cost(specs: list[WsSpec], tick: int) -> float:
     return bringup + obs + 90  # + restart/delete headroom
 
 
+def draw_global_timeout(rng: random.Random) -> tuple[bool, str, int]:
+    """Draw the deploy-wide idle timeout (sometimes bogus: unparseable
+    values fall back to the 3600s default)."""
+    bogus_global = rng.random() < BOGUS_GLOBAL_P
+    global_raw = (
+        rng.choice(["twelve", "10s", ""])
+        if bogus_global
+        else str(rng.choice(GLOBAL_TIMEOUTS))
+    )
+    global_timeout = 3600 if bogus_global else int(global_raw)
+    return bogus_global, global_raw, global_timeout
+
+
+def report_anomalies(anomalies: Anomalies) -> int:
+    """Print the anomaly verdict; the exit code (0 clean / 1 anomalies)."""
+    if not anomalies:
+        print("\nANOMALIES: 0")
+        return 0
+    print(f"\nANOMALIES: {len(anomalies.items)}")
+    for item in anomalies.items[:50]:
+        print(f"  [{item['kind']}] {item['detail']}")
+    if len(anomalies.items) > 50:
+        print(f"  ... and {len(anomalies.items) - 50} more")
+    print("\nRESULT: ANOMALIES FOUND")
+    print("=" * 60)
+    return 1
+
+
+async def run_wave(
+    server: Server,
+    anomalies: Anomalies,
+    rng: random.Random,
+    args,
+    global_timeout: int,
+    bogus_global: bool,
+    waves_run: int,
+    deadline: float,
+    scenario_log: list[dict],
+) -> Ctx | None:
+    """Draw + run one wave; returns the fresh per-wave Ctx (fresh client +
+    token per wave, mirroring fuzz-api.py), or None when the time budget
+    says stop."""
+    ctx = Ctx(server, Api(server, anomalies), anomalies)
+    await ctx.api.login()
+    specs = draw_wave(
+        rng,
+        global_timeout=global_timeout,
+        bogus_global=bogus_global,
+        max_concurrent=args.max_concurrent,
+    )
+    tick = wave_tick_bound(specs, global_timeout)
+    cost = est_wave_cost(specs, tick)
+    if not args.waves and time.monotonic() + cost > deadline:
+        print(
+            f"stopping: next wave (~{cost:.0f}s) would exceed the "
+            f"{args.duration}m budget"
+        )
+        return None
+    scenario_log.append(
+        {
+            "wave": waves_run,
+            "tick_bound": tick,
+            "specs": [spec.scenario_json() for spec in specs],
+        }
+    )
+    print(f"-- wave {waves_run} (tick bound {tick}s)")
+    for spec in specs:
+        print(
+            f"   {spec.name}: pattern={spec.pattern} "
+            f"override={spec.override} eff={spec.eff_timeout}s "
+            f"change={spec.runtime_change} -> {spec.expect}"
+        )
+    await asyncio.gather(*(run_ws_scenario(ctx, spec, tick) for spec in specs))
+    for hit in server.scan_log_anomalies():
+        anomalies.add("server-log", hit, wave=waves_run)
+    await ctx.api.aclose()
+    return Ctx(server, Api(server, anomalies), anomalies)
+
+
 async def run(args) -> int:
     rng = random.Random(args.seed)
     anomalies = Anomalies()
@@ -1135,13 +1285,7 @@ async def run(args) -> int:
         log_path=os.path.join(log_dir, "server.log"),
     )
 
-    bogus_global = rng.random() < BOGUS_GLOBAL_P
-    global_raw = (
-        rng.choice(["twelve", "10s", ""])
-        if bogus_global
-        else str(rng.choice(GLOBAL_TIMEOUTS))
-    )
-    global_timeout = 3600 if bogus_global else int(global_raw)
+    bogus_global, global_raw, global_timeout = draw_global_timeout(rng)
 
     server_env = {"KLANGKD_IDLE_TIMEOUT_SECONDS": global_raw}
     # Image default: the ambient KLANGKD_IMAGE_NAME (forwarded by clean_env
@@ -1164,50 +1308,24 @@ async def run(args) -> int:
     try:
         server.start(**server_env)
         print("klangkd is up")
-        api = Api(server, anomalies)
-        await api.login()
-        ctx = Ctx(server, api, anomalies)
 
         while True:
             if args.waves and waves_run >= args.waves:
                 break
-            specs = draw_wave(
+            ctx = await run_wave(
+                server,
+                anomalies,
                 rng,
-                global_timeout=global_timeout,
-                bogus_global=bogus_global,
-                max_concurrent=args.max_concurrent,
+                args,
+                global_timeout,
+                bogus_global,
+                waves_run,
+                deadline,
+                scenario_log,
             )
-            tick = wave_tick_bound(specs, global_timeout)
-            cost = est_wave_cost(specs, tick)
-            if not args.waves and time.monotonic() + cost > deadline:
-                print(
-                    f"stopping: next wave (~{cost:.0f}s) would exceed the "
-                    f"{args.duration}m budget"
-                )
+            if ctx is None:
                 break
-            scenario_log.append(
-                {
-                    "wave": waves_run,
-                    "tick_bound": tick,
-                    "specs": [s.scenario_json() for s in specs],
-                }
-            )
-            print(f"-- wave {waves_run} (tick bound {tick}s)")
-            for s in specs:
-                print(
-                    f"   {s.name}: pattern={s.pattern} "
-                    f"override={s.override} eff={s.eff_timeout}s "
-                    f"change={s.runtime_change} -> {s.expect}"
-                )
-            await asyncio.gather(*(run_ws_scenario(ctx, s, tick) for s in specs))
             waves_run += 1
-            for hit in server.scan_log_anomalies():
-                anomalies.add("server-log", hit, wave=waves_run - 1)
-            # Fresh client + token per wave (mirrors fuzz-api.py).
-            await api.aclose()
-            api = Api(server, anomalies)
-            await api.login()
-            ctx = Ctx(server, api, anomalies)
         for hit in server.scan_log_anomalies():
             anomalies.add("server-log", hit, wave="final")
     finally:
@@ -1234,16 +1352,7 @@ async def run(args) -> int:
     print(f"waves run: {waves_run}")
     print(f"scenario log: {os.path.join(log_dir, 'scenarios.json')}")
     print(f"server log:   {server.log_path}")
-    if anomalies:
-        print(f"\nANOMALIES: {len(anomalies.items)}")
-        for item in anomalies.items[:50]:
-            print(f"  [{item['kind']}] {item['detail']}")
-        if len(anomalies.items) > 50:
-            print(f"  ... and {len(anomalies.items) - 50} more")
-        print("\nRESULT: ANOMALIES FOUND")
-        print("=" * 60)
-        return 1
-    print("\nANOMALIES: 0")
+    return report_anomalies(anomalies)
     print("RESULT: CLEAN")
     print("=" * 60)
     return 0
