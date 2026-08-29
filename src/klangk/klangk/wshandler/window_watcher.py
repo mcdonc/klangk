@@ -17,7 +17,7 @@ import asyncio
 import logging
 import uuid
 
-from .podman import Podman, subprocess_env
+from ..podman import Podman, subprocess_env
 
 logger = logging.getLogger(__name__)
 

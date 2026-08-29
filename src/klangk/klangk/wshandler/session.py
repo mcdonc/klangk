@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from .. import model
 from ..acl import check_permission_inmemory, resource_ancestors
 from ..terminal import SERVICE_CMD_WINDOW
-from ..window_watcher import WindowEventWatcher
+from .window_watcher import WindowEventWatcher
 from .safe_websocket import SafeWebSocket, WS_ERRORS, broadcast_to_set
 from .constants import log_ws_msg
 

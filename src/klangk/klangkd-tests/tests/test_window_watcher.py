@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from klangk.window_watcher import WindowEventWatcher, is_window_event
+from klangk.wshandler.window_watcher import WindowEventWatcher, is_window_event
 
 
 def test_is_window_event_matches_relevant_events():
