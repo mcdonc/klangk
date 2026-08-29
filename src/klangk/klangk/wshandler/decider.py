@@ -81,6 +81,122 @@ async def _refuse(
     await websocket.close(code=code, reason=reason)
 
 
+async def _refuse_invalid_handshake(
+    websocket: WebSocket, app, workspace: str | None, user: dict
+) -> bool:
+    """Authorization + static-mode gate for a consent decider.
+
+    Workspace-scoped deciders need terminal access to the workspace (owner
+    or member); deploy-wide deciders need admin. Mirrors the main /ws
+    handler's workspace gate (wshandler/connection.py).
+
+    #2394: a static-mode workspace never holds egress for a human decision
+    (its non-allow-listed egress is denied immediately with a static
+    verdict). Refuse a workspace-scoped decider at registration so the
+    static/interactive boundary is structural (enforced here), not just
+    behavioral (the coordinator's hold-time ``_is_interactive`` gate stays
+    as defense-in-depth). Reads the same egress_mode the coordinator does.
+    Deploy-wide deciders (workspace None) are unaffected -- they cover
+    interactive workspaces without flipping a static one.
+
+    NB: these closes run before websocket.accept(), so the ASGI server
+    (uvicorn) answers the handshake with a bare HTTP 403 -- the close code
+    and reason are NOT transmitted to the client (same as the authz close
+    above). _refuse() therefore also logs the reason server-side (#2490):
+    the log line is the only place a 403 storm is attributable.
+
+    Returns (refused, principals) — principals (needed by the pause /
+    unpause handlers) is only meaningful when not refused."""
+    principals = await app.state.acl.get_principals(user["id"])
+    if workspace is not None:
+        allowed = await app.state.acl.check_permission(
+            f"/workspaces/{workspace}", principals, "terminal"
+        )
+    else:
+        allowed = await app.state.acl.check_permission(
+            "/admin", principals, "admin"
+        )
+    if not allowed:
+        await _refuse(websocket, 4003, "Forbidden", user.get("email"))
+        return True, principals
+    if workspace is not None:
+        ws = await app.state.model.workspaces.get_workspace(workspace)
+        if ws is None:
+            # Vanished between the authz check and now (a delete race) -- the
+            # workspace authz just passed against can no longer be registered.
+            await _refuse(websocket, 4003, "Forbidden", user.get("email"))
+            return True, principals
+        if ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
+            await _refuse(
+                websocket,
+                4003,
+                "workspace egress mode is not interactive",
+                user.get("email"),
+            )
+            return True, principals
+    return False, principals
+
+
+def _log_handshake_timing(t0: float, marks: list[tuple[str, float]]) -> None:
+    """#2420: log the pre-accept step timings (see handle_consent_decider)."""
+    prev = t0
+    parts: list[str] = []
+    for label, t in marks:
+        parts.append(f"{label}={(t - prev) * 1000:.0f}ms")
+        prev = t
+    logger.info(
+        "consent decider handshake accepted: %.0fms (%s)",
+        (marks[-1][1] - t0) * 1000,
+        " ".join(parts),
+    )
+
+
+async def _dispatch_decider_message(
+    app,
+    registry,
+    safe_ws,
+    msg: dict,
+    workspace: str | None,
+    user_id: str,
+    decider_id: str,
+    principals,
+) -> None:
+    """Act on one parsed decider frame by its ``type``.
+
+    Unknown types are ignored. Raises whatever the per-type handler raises
+    (SlowClientError from sends is handled by the receive loop)."""
+    mtype = msg.get("type")
+    if mtype == "ping":
+        registry.touch(decider_id)
+        safe_ws.send_json({"type": "pong"})
+    elif mtype == "verdict":
+        await _handle_verdict(app, safe_ws, msg, workspace, user_id)
+    elif mtype == "revoke":
+        # #2339: drop the sidecar rule + mark the verdict revoked.
+        # ok=False if it's not an active verdict, is outside this
+        # decider's workspace, or the sidecar never acked the drop.
+        ok = await app.state.consent_coordinator.revoke(
+            msg.get("request_id"),
+            user_id,
+            decider_workspace=workspace,
+        )
+        safe_ws.send_json(
+            {
+                "type": "revoke_ack",
+                "request_id": msg.get("request_id"),
+                "ok": ok,
+            }
+        )
+    elif mtype == "pause":
+        # #2332: pause interactive consent prompting for this
+        # decider's workspace for a window. A deploy-wide decider
+        # (workspace None) has no single workspace to pause -> nack.
+        await _handle_pause(app, safe_ws, msg, workspace, principals)
+    elif mtype == "unpause":
+        # #2332: clear an active pause for this decider's workspace.
+        await _handle_unpause(app, safe_ws, workspace, principals)
+
+
 async def handle_consent_decider(websocket: WebSocket, app) -> None:
     """Register a consent decider for its connection lifetime + act on holds."""
     # #2420: time the pre-accept steps so an intermittent opening-handshake
@@ -109,66 +225,16 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
     user = result
     workspace = websocket.query_params.get("workspace")  # None = deploy-wide
 
-    # Authorization: workspace-scoped deciders need terminal access to the
-    # workspace (owner or member); deploy-wide deciders need admin. Mirrors the
-    # main /ws handler's workspace gate (wshandler/connection.py).
-    principals = await app.state.acl.get_principals(user["id"])
-    if workspace is not None:
-        allowed = await app.state.acl.check_permission(
-            f"/workspaces/{workspace}", principals, "terminal"
-        )
-    else:
-        allowed = await app.state.acl.check_permission(
-            "/admin", principals, "admin"
-        )
-    if not allowed:
-        await _refuse(websocket, 4003, "Forbidden", user.get("email"))
+    refused, principals = await _refuse_invalid_handshake(
+        websocket, app, workspace, user
+    )
+    if refused:
         return
     _hs_mark("authz")
-
-    # #2394: a static-mode workspace never holds egress for a human decision
-    # (its non-allow-listed egress is denied immediately with a static
-    # verdict). Refuse a workspace-scoped decider at registration so the
-    # static/interactive boundary is structural (enforced here), not just
-    # behavioral (the coordinator's hold-time ``_is_interactive`` gate stays
-    # as defense-in-depth). Reads the same egress_mode the coordinator does.
-    # Deploy-wide deciders (workspace None) are unaffected -- they cover
-    # interactive workspaces without flipping a static one.
-    #
-    # NB: these closes run before websocket.accept(), so the ASGI server
-    # (uvicorn) answers the handshake with a bare HTTP 403 -- the close code
-    # and reason are NOT transmitted to the client (same as the authz close
-    # above). _refuse() therefore also logs the reason server-side (#2490):
-    # the log line is the only place a 403 storm is attributable.
-    if workspace is not None:
-        ws = await app.state.model.workspaces.get_workspace(workspace)
-        if ws is None:
-            # Vanished between the authz check and now (a delete race) -- the
-            # workspace authz just passed against can no longer be registered.
-            await _refuse(websocket, 4003, "Forbidden", user.get("email"))
-            return
-        if ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
-            await _refuse(
-                websocket,
-                4003,
-                "workspace egress mode is not interactive",
-                user.get("email"),
-            )
-            return
-
     _hs_mark("workspace")
     await websocket.accept()
     _hs_mark("accept")
-    _prev = _hs_t0
-    _parts: list[str] = []
-    for label, t in _hs_marks:
-        _parts.append(f"{label}={(t - _prev) * 1000:.0f}ms")
-        _prev = t
-    logger.info(
-        "consent decider handshake accepted: %.0fms (%s)",
-        (_hs_marks[-1][1] - _hs_t0) * 1000,
-        " ".join(_parts),
-    )
+    _log_handshake_timing(_hs_t0, _hs_marks)
     safe_ws = SafeWebSocket(websocket)
     safe_ws.start_sender()
     registry = app.state.consent_deciders
@@ -206,40 +272,16 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
                 continue
             mtype = msg.get("type")
             try:
-                if mtype == "ping":
-                    registry.touch(decider_id)
-                    safe_ws.send_json({"type": "pong"})
-                elif mtype == "verdict":
-                    await _handle_verdict(
-                        app, safe_ws, msg, workspace, user["id"]
-                    )
-                elif mtype == "revoke":
-                    # #2339: drop the sidecar rule + mark the verdict revoked.
-                    # ok=False if it's not an active verdict, is outside this
-                    # decider's workspace, or the sidecar never acked the drop.
-                    ok = await app.state.consent_coordinator.revoke(
-                        msg.get("request_id"),
-                        user["id"],
-                        decider_workspace=workspace,
-                    )
-                    safe_ws.send_json(
-                        {
-                            "type": "revoke_ack",
-                            "request_id": msg.get("request_id"),
-                            "ok": ok,
-                        }
-                    )
-                elif mtype == "pause":
-                    # #2332: pause interactive consent prompting for this
-                    # decider's workspace for a window. A deploy-wide decider
-                    # (workspace None) has no single workspace to pause -> nack.
-                    await _handle_pause(
-                        app, safe_ws, msg, workspace, principals
-                    )
-                elif mtype == "unpause":
-                    # #2332: clear an active pause for this decider's workspace.
-                    await _handle_unpause(app, safe_ws, workspace, principals)
-                # unknown types are ignored
+                await _dispatch_decider_message(
+                    app,
+                    registry,
+                    safe_ws,
+                    msg,
+                    workspace,
+                    user["id"],
+                    decider_id,
+                    principals,
+                )
             except SlowClientError:
                 # Outbound queue full -- the client can't keep up. Drop it
                 # (matches the main /ws handler's slow-client handling).
