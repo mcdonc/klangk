@@ -27,6 +27,20 @@ def _rst_debug(msg: str) -> None:
         print(msg, flush=True)
 
 
+def _ipv4_offsets(payload: bytes) -> tuple[int, int] | None:
+    """(header_offset, ihl) for the IPv4 header, or None when the payload is
+    not IPv4 (bare L3 or with a 14-byte Ethernet prefix) or too short."""
+    off = 0
+    if len(payload) > 14 and (payload[0] >> 4) != 4 and (payload[14] >> 4) == 4:
+        off = 14  # Ethernet header
+    if off + 20 > len(payload) or (payload[off] >> 4) != 4:
+        return None
+    ihl = (payload[off] & 0x0F) * 4
+    if ihl < 20 or off + ihl > len(payload):
+        return None
+    return off, ihl
+
+
 def parse_dest(payload: bytes) -> tuple[str, int]:
     """``(dst_ip, dst_port)`` from an IPv4 packet payload, or ``("", 0)``.
 
@@ -34,14 +48,10 @@ def parse_dest(payload: bytes) -> tuple[str, int]:
     header; detect the IPv4 version nibble. Port is 0 for non-TCP/UDP. Pure
     so it can be unit-tested with synthetic bytes.
     """
-    off = 0
-    if len(payload) > 14 and (payload[0] >> 4) != 4 and (payload[14] >> 4) == 4:
-        off = 14  # Ethernet header
-    if off + 20 > len(payload) or (payload[off] >> 4) != 4:
+    hdr = _ipv4_offsets(payload)
+    if hdr is None:
         return "", 0
-    ihl = (payload[off] & 0x0F) * 4
-    if ihl < 20 or off + ihl > len(payload):
-        return "", 0
+    off, ihl = hdr
     proto = payload[off + 9]
     dst = ".".join(str(b) for b in payload[off + 16 : off + 20])
     port = 0
@@ -61,14 +71,10 @@ def parse_syn_tuple(payload: bytes) -> tuple[str, int, str, int, int]:
     Pure (mirrors :func:`parse_dest`'s L3/L4 offset logic) so it can be
     unit-tested with synthetic bytes.
     """
-    off = 0
-    if len(payload) > 14 and (payload[0] >> 4) != 4 and (payload[14] >> 4) == 4:
-        off = 14  # Ethernet header
-    if off + 20 > len(payload) or (payload[off] >> 4) != 4:
+    hdr = _ipv4_offsets(payload)
+    if hdr is None:
         return "", 0, "", 0, 0
-    ihl = (payload[off] & 0x0F) * 4
-    if ihl < 20 or off + ihl > len(payload):
-        return "", 0, "", 0, 0
+    off, ihl = hdr
     if payload[off + 9] != 6:  # TCP only
         return "", 0, "", 0, 0
     l4 = off + ihl
