@@ -520,37 +520,30 @@ class KlangkClient:
         classification_banner: str | None = None,
     ) -> Workspace:
         body: dict = {"name": name}
-        if image:
-            body["image"] = image
-        if service_command:
-            body["service_command"] = service_command
-        if auto_start:
-            body["auto_start"] = True
-        if mounts:
-            body["mounts"] = mounts
-        if env:
-            body["env"] = env
-        if setup_state:
-            body["setup_state"] = setup_state
-        if health_check:
-            body["health_check"] = health_check
-        if allowed_domains:
-            body["allowed_domains"] = allowed_domains
-        if egress_mode:
-            body["egress_mode"] = egress_mode
-        if rejected_domains:
-            body["rejected_domains"] = rejected_domains
-        if settings:
-            body["settings"] = settings
+        optional = {
+            "image": image,
+            "service_command": service_command,
+            "auto_start": auto_start,
+            "mounts": mounts,
+            "env": env,
+            "setup_state": setup_state,
+            "health_check": health_check,
+            "allowed_domains": allowed_domains,
+            "egress_mode": egress_mode,
+            "rejected_domains": rejected_domains,
+            "settings": settings,
+            # Empty/None = inherit the deploy default marking
+            # (KLANGKD_CLASSIFICATION_BANNER); only a non-empty label sets
+            # the per-workspace override (#2768).
+            "classification_banner": classification_banner,
+        }
+        for key, value in optional.items():
+            if value:
+                body[key] = value
         # None = not chosen: the server applies the deploy default
         # (KLANGKD_PER_HANDLE_HOME) — same convention as egress_mode.
         if per_handle_home is not None:
             body["per_handle_home"] = per_handle_home
-        # Empty/None = inherit the deploy default marking
-        # (KLANGKD_CLASSIFICATION_BANNER); only a non-empty label sets the
-        # per-workspace override (#2768).
-        if classification_banner:
-            body["classification_banner"] = classification_banner
         resp = self.post("/api/v1/workspaces", json=body)
         self.check_auth(resp)
         self._raise_for_status(resp)
@@ -1201,38 +1194,7 @@ async def join_shared_terminal(
     Names are not unique — dups are allowed (#2192) — so a name matching
     several windows under one owner is an error, not a silent first match.
     """
-    owner_handle, win_ref = window.split(":", 1)
-    if win_ref.startswith("@"):
-        match = next(
-            (
-                t
-                for t in shared_terminals
-                if t.get("handle") == owner_handle
-                and t.get("window_id") == win_ref
-            ),
-            None,
-        )
-    else:
-        matches = [
-            t
-            for t in shared_terminals
-            if t.get("handle") == owner_handle
-            and t.get("window_name") == win_ref
-        ]
-        if len(matches) > 1:
-            ids = ", ".join(
-                t["window_id"] for t in matches if t.get("window_id")
-            )
-            raise ConnectionError(
-                f"Multiple shared terminals named "
-                f"'{win_ref}' under '{owner_handle}'; "
-                f"specify one by id (e.g. "
-                f"{owner_handle}:{matches[0].get('window_id')}): "
-                f"{ids}"
-            )
-        match = matches[0] if matches else None
-    if match is None:
-        raise ConnectionError(f"Shared terminal '{window}' not found")
+    match = match_shared_terminal(window, shared_terminals)
     await ws.send(
         json.dumps(
             {
@@ -1259,6 +1221,113 @@ async def join_shared_terminal(
             raise ConnectionError(f"Failed to join: {msg.get('message')}")
 
 
+def _shared_matches(
+    shared_terminals: list[dict], owner_handle: str, key: str, win_ref: str
+) -> list[dict]:
+    """Shared terminals under one owner whose *key* matches *win_ref*."""
+    return [
+        t
+        for t in shared_terminals
+        if t.get("handle") == owner_handle and t.get(key) == win_ref
+    ]
+
+
+def _raise_ambiguous_shared(
+    owner_handle: str, win_ref: str, matches: list[dict]
+) -> None:
+    ids = ", ".join(t["window_id"] for t in matches if t.get("window_id"))
+    raise ConnectionError(
+        f"Multiple shared terminals named "
+        f"'{win_ref}' under '{owner_handle}'; "
+        f"specify one by id (e.g. "
+        f"{owner_handle}:{matches[0].get('window_id')}): "
+        f"{ids}"
+    )
+
+
+def starts_disconnect_sequence(data: bytes, after_newline: bool) -> bool:
+    """A ``~`` right after a newline starts the ~. disconnect sequence."""
+    return data == b"~" and after_newline
+
+
+def match_shared_terminal(window: str, shared_terminals: list[dict]) -> dict:
+    """Resolve "handle:window_name" (or "handle:@N") to one shared
+    terminal; ConnectionError when absent or ambiguous."""
+    owner_handle, win_ref = window.split(":", 1)
+    if win_ref.startswith("@"):
+        by_id = _shared_matches(
+            shared_terminals, owner_handle, "window_id", win_ref
+        )
+        match = by_id[0] if by_id else None
+    else:
+        by_name = _shared_matches(
+            shared_terminals, owner_handle, "window_name", win_ref
+        )
+        if len(by_name) > 1:
+            _raise_ambiguous_shared(owner_handle, win_ref, by_name)
+        match = by_name[0] if by_name else None
+    if match is None:
+        raise ConnectionError(f"Shared terminal '{window}' not found")
+    return match
+
+
+def _raise_ambiguous_own(window: str, name_matches: list[dict]) -> None:
+    ids = ", ".join(w["id"] for w in name_matches if w.get("id"))
+    raise ConnectionError(
+        f"Multiple terminals named '{window}'; specify one by id: {ids}"
+    )
+
+
+def match_own_window(window: str, own_windows: list[dict]) -> dict | None:
+    """Resolve a @N id or name to an existing own window (None = absent)."""
+    if window.startswith("@"):
+        by_id = [w for w in own_windows if w.get("id") == window]
+        if not by_id:
+            raise ConnectionError(f"Window '{window}' no longer exists")
+        return by_id[0]
+    name_matches = [w for w in own_windows if w.get("name") == window]
+    if len(name_matches) > 1:
+        _raise_ambiguous_own(window, name_matches)
+    return name_matches[0] if name_matches else None
+
+
+async def create_own_window(
+    ws, window: str, buffered_output: list[str]
+) -> dict:
+    """Create a named window and resolve it from the refreshed list."""
+    await ws.send(
+        json.dumps(
+            {
+                "cmd": "terminal_new_window",
+                "name": window,
+            }
+        )
+    )
+    deadline = asyncio.get_event_loop().time() + 10
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:  # pragma: no cover
+            raise asyncio.TimeoutError
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        msg = json.loads(raw)
+        if msg.get("type") == "terminal_windows":
+            new_windows = msg.get("windows", [])
+            match = next(
+                (w for w in new_windows if w.get("name") == window),
+                None,
+            )
+            break
+        if msg.get("type") == "terminal_output":
+            buffered_output.append(msg.get("data", ""))
+        if msg.get("type") == "error":
+            raise ConnectionError(
+                f"Failed to create window: {msg.get('message')}"
+            )
+    if match is None:  # pragma: no cover
+        raise ConnectionError(f"Window '{window}' not created")
+    return match
+
+
 async def select_own_window(
     ws, window: str, own_windows: list[dict], buffered_output: list[str]
 ) -> None:
@@ -1270,54 +1339,10 @@ async def select_own_window(
     several windows is an error rather than a silent first match —
     disambiguate with @N.
     """
-    if window.startswith("@"):
-        match = next(
-            (w for w in own_windows if w.get("id") == window),
-            None,
-        )
-        if match is None:
-            raise ConnectionError(f"Window '{window}' no longer exists")
-    else:
-        name_matches = [w for w in own_windows if w.get("name") == window]
-        if len(name_matches) > 1:
-            ids = ", ".join(w["id"] for w in name_matches if w.get("id"))
-            raise ConnectionError(
-                f"Multiple terminals named '{window}'; "
-                f"specify one by id: {ids}"
-            )
-        match = name_matches[0] if name_matches else None
+    match = match_own_window(window, own_windows)
     if match is None:
         # Name with no match — create the window.
-        await ws.send(
-            json.dumps(
-                {
-                    "cmd": "terminal_new_window",
-                    "name": window,
-                }
-            )
-        )
-        deadline = asyncio.get_event_loop().time() + 10
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:  # pragma: no cover
-                raise asyncio.TimeoutError
-            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-            msg = json.loads(raw)
-            if msg.get("type") == "terminal_windows":
-                new_windows = msg.get("windows", [])
-                match = next(
-                    (w for w in new_windows if w.get("name") == window),
-                    None,
-                )
-                break
-            if msg.get("type") == "terminal_output":
-                buffered_output.append(msg.get("data", ""))
-            if msg.get("type") == "error":
-                raise ConnectionError(
-                    f"Failed to create window: {msg.get('message')}"
-                )
-        if match is None:  # pragma: no cover
-            raise ConnectionError(f"Window '{window}' not created")
+        match = await create_own_window(ws, window, buffered_output)
     await ws.send(
         json.dumps(
             {
@@ -1571,37 +1596,16 @@ class TerminalSession(_ShellSession):
                     return
                 if saw_tilde:
                     saw_tilde = False
-                    if data == b".":
-                        self.stdout.write("\r\nDisconnected.\r\n")
-                        self.stdout.flush()
-                        self.stop.set()
-                        await self.ws.close()
+                    if await self._tilde_key(data):
                         return
-                    await self.ws.send(
-                        json.dumps({"cmd": "terminal_input", "data": "~"})
-                    )
-                if data == b"~" and after_newline:
+                if starts_disconnect_sequence(data, after_newline):
                     saw_tilde = True
                     after_newline = False
                     continue
                 after_newline = data in (b"\r", b"\n")
                 if data == b"\x1b":
-                    if select.select([fd], [], [], 0.05)[0]:
-                        more = await self._loop.run_in_executor(
-                            None, os.read, fd, 32
-                        )
-                        if more:
-                            data += more
-                    if is_terminal_response(data):
-                        for _ in range(10):
-                            if not select.select([fd], [], [], 0.02)[0]:
-                                break
-                            try:
-                                await self._loop.run_in_executor(
-                                    None, os.read, fd, 256
-                                )
-                            except OSError:  # pragma: no cover
-                                break
+                    data = await self._extend_escape_sequence(fd, data)
+                    if data is None:
                         continue
             except (OSError, io.UnsupportedOperation):  # pragma: no cover
                 return
@@ -1613,6 +1617,36 @@ class TerminalSession(_ShellSession):
                     }
                 )
             )
+
+    async def _tilde_key(self, data: bytes) -> bool:
+        """Consume the pending ``~`` after a newline; True when the ~.
+        disconnect sequence fired (caller returns)."""
+        if data == b".":
+            self.stdout.write("\r\nDisconnected.\r\n")
+            self.stdout.flush()
+            self.stop.set()
+            await self.ws.close()
+            return True
+        await self.ws.send(json.dumps({"cmd": "terminal_input", "data": "~"}))
+        return False
+
+    async def _extend_escape_sequence(self, fd, data: bytes) -> bytes | None:
+        """Extend a pending ESC into its full sequence; None when it is a
+        terminal query response that gets drained locally instead of sent."""
+        if select.select([fd], [], [], 0.05)[0]:
+            more = await self._loop.run_in_executor(None, os.read, fd, 32)
+            if more:
+                data += more
+        if not is_terminal_response(data):
+            return data
+        for _ in range(10):
+            if not select.select([fd], [], [], 0.02)[0]:
+                break
+            try:
+                await self._loop.run_in_executor(None, os.read, fd, 256)
+            except OSError:  # pragma: no cover
+                break
+        return None
 
     async def stdout_loop(self) -> None:
         try:
@@ -1642,34 +1676,39 @@ class TerminalSession(_ShellSession):
                         self.stop.set()
                         break
         except websockets.ConnectionClosed as exc:
-            if not self.stop.is_set():
-                _code = exc.rcvd.code if exc.rcvd else None
-                if _code == 4002 and self.token:
-                    new = _refresh_token(self.server_url, self.token)
-                    if not new and _server_mode_is_none(self.server_url):
-                        try:
-                            _email, new = _local_login(self.server_url)
-                        except SystemExit:
-                            new = None
-                    if new:
-                        self.stdout.write(
-                            "\r\nSession refreshed."
-                            " Run your command again to reconnect.\r\n"
-                        )
-                    else:
-                        self.stdout.write(
-                            "\r\nSession expired. Run `klangk login`"
-                            " to re-authenticate.\r\n"
-                        )
-                elif _code in (4001, 4002):
-                    self.stdout.write(
-                        "\r\nSession expired. Run `klangk login` to"
-                        " re-authenticate.\r\n"
-                    )
-                else:
-                    self.stdout.write("\r\nServer disconnected.\r\n")
-                self.stdout.flush()
+            self._handle_disconnect(exc)
         self.stop.set()
+
+    def _handle_disconnect(self, exc) -> None:
+        """Explain an unexpected close (and try a token refresh on 4002)."""
+        if self.stop.is_set():
+            return
+        _code = exc.rcvd.code if exc.rcvd else None
+        if _code == 4002 and self.token:
+            new = _refresh_token(self.server_url, self.token)
+            if not new and _server_mode_is_none(self.server_url):
+                try:
+                    _email, new = _local_login(self.server_url)
+                except SystemExit:
+                    new = None
+            if new:
+                self.stdout.write(
+                    "\r\nSession refreshed."
+                    " Run your command again to reconnect.\r\n"
+                )
+            else:
+                self.stdout.write(
+                    "\r\nSession expired. Run `klangk login`"
+                    " to re-authenticate.\r\n"
+                )
+        elif _code in (4001, 4002):
+            self.stdout.write(
+                "\r\nSession expired. Run `klangk login` to"
+                " re-authenticate.\r\n"
+            )
+        else:
+            self.stdout.write("\r\nServer disconnected.\r\n")
+        self.stdout.flush()
 
     async def resize_loop(self) -> None:
         while not self.stop.is_set():
