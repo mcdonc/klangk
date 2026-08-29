@@ -605,11 +605,9 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
 
     # --- create ---
 
-    def _create(self) -> None:
-        name = self.query_one("#name", Input).value.strip()
-        if not name:
-            self._msg("Name is required.", error=True)
-            return
+    def _create_payload(self) -> dict:
+        """Gather the non-name form fields into create-workspace values
+        (empty strings/lists -> None, matching the Flutter dialog)."""
         sel = self.query_one("#image", Select)
         val = sel.value
         # Send only a real, non-default selection. When the server's default
@@ -644,11 +642,26 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
             self.query_one("#classification_banner", Input).value.strip()
             or None
         )
-        mounts = list(self._mounts) or None
-        env = dict(self._env) or None
-        allowed_domains = list(self._allowed_domains) or None
-        rejected_domains = list(self._rejected_domains) or None
-        egress_mode = self.query_one("#egress_mode", Select).value
+        return {
+            "image": image,
+            "command": command,
+            "health_check": health_check,
+            "auto": auto,
+            "per_handle_home": per_handle_home,
+            "classification_banner": classification_banner,
+            "mounts": list(self._mounts) or None,
+            "env": dict(self._env) or None,
+            "allowed_domains": list(self._allowed_domains) or None,
+            "rejected_domains": list(self._rejected_domains) or None,
+            "egress_mode": self.query_one("#egress_mode", Select).value,
+        }
+
+    def _create(self) -> None:
+        name = self.query_one("#name", Input).value.strip()
+        if not name:
+            self._msg("Name is required.", error=True)
+            return
+        p = self._create_payload()
         try:
             settings = _collect_settings(self)
         except ValueError as exc:
@@ -667,18 +680,18 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         self.run_worker(
             self._do_create_workspace(
                 name,
-                image,
-                command,
-                auto,
-                mounts,
-                env,
-                health_check,
-                allowed_domains,
-                rejected_domains,
+                p["image"],
+                p["command"],
+                p["auto"],
+                p["mounts"],
+                p["env"],
+                p["health_check"],
+                p["allowed_domains"],
+                p["rejected_domains"],
                 settings,
-                egress_mode,
-                per_handle_home,
-                classification_banner,
+                p["egress_mode"],
+                p["per_handle_home"],
+                p["classification_banner"],
             ),
             exit_on_error=False,
         )
@@ -1501,36 +1514,37 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
     def _restart_needed_after_save(self, body: dict) -> bool:
         """True if a create-time field changed on a running workspace."""
         ws = self._ws
+        if not ws.running:
+            return False
         settings = body.get("settings") or {}
-        orig_mounts = list(ws.mounts or []) or None
-        orig_env = dict(ws.env or {}) or None
-        orig_domains = list(ws.allowed_domains or []) or None
-        orig_rejected = list(ws.rejected_domains or []) or None
-        return bool(ws.running) and (
-            (body["image"] or None) != (ws.image or None)
-            or body["mounts"] != orig_mounts
-            or body["env"] != orig_env
-            or (body["service_command"] or None)
-            != (ws.service_command or None)
-            or body["allowed_domains"] != orig_domains
-            or body["rejected_domains"] != orig_rejected
-            # #2409: egress_mode is a container-create-time field (it sets
-            # up --network container:<sidecar>), so a change needs a restart.
-            or body["egress_mode"] != (ws.egress_mode or EGRESS_MODE_DEFAULT)
-            # #2233: the per-workspace /nix mount is set up at create
-            # time, so toggling it on a running workspace needs a restart.
-            or (
+        old = ws.settings or {}
+        return any(
+            [
+                # Top-level create-time fields (#1778, #1749): image /
+                # service_command normalize both sides to None-when-empty,
+                # the list fields compare against their normalized snapshot.
+                (body["image"] or None) != (ws.image or None),
+                body["mounts"] != (list(ws.mounts or []) or None),
+                body["env"] != (dict(ws.env or {}) or None),
+                (body["service_command"] or None)
+                != (ws.service_command or None),
+                body["allowed_domains"]
+                != (list(ws.allowed_domains or []) or None),
+                body["rejected_domains"]
+                != (list(ws.rejected_domains or []) or None),
+                # #2409: egress_mode is a container-create-time field (it sets
+                # up --network container:<sidecar>), so a change needs a restart.
+                body["egress_mode"] != (ws.egress_mode or EGRESS_MODE_DEFAULT),
+                # #2233: the per-workspace /nix mount is set up at create
+                # time, so toggling it on a running workspace needs a restart.
                 self._nix_available
-                and settings.get("nix", False)
-                != bool((ws.settings or {}).get("nix"))
-            )
-            # #2017: the sudoers rule is written at container-create time,
-            # so a posture flip needs a restart to take effect.
-            or (
+                and settings.get("nix", False) != bool(old.get("nix")),
+                # #2017: the sudoers rule is written at container-create time,
+                # so a posture flip needs a restart to take effect.
                 self._sudo_available
                 and settings.get("allow_sudo", True)
-                != bool((ws.settings or {}).get("allow_sudo", True))
-            )
+                != bool(old.get("allow_sudo", True)),
+            ]
         )
 
     def _save(self) -> None:

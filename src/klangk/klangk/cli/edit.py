@@ -170,9 +170,12 @@ def has_any_flags(
     )
 
 
-def interactive_edit_body(ws) -> dict:
-    """Prompt for each field (Enter keeps the current value) and build the
-    PATCH body from the answers."""
+def prompted_edit_fields(ws):
+    """Prompt for the scalar fields (Enter keeps the current value).
+
+    Returns (name, image, command, health_check, banner) — each either
+    the typed value or the ``_SENTINEL`` meaning "unchanged".
+    """
     new_name = _prompt("Name", ws.name)
     new_image = _prompt("Container Image", ws.image)
     new_command = _prompt("Service shell command", ws.service_command)
@@ -181,7 +184,21 @@ def interactive_edit_body(ws) -> dict:
     # value (the [(none)] display shows it); typing whitespace clears
     # the override back to the deploy default (#2768).
     new_banner = _prompt("Classification banner", ws.classification_banner)
+    return (
+        new_name,
+        new_image,
+        new_command,
+        new_health_check,
+        new_banner,
+    )
 
+
+def edit_lists_interactively(ws):
+    """Run the four list editors against the workspace's current lists.
+
+    Returns (mounts, mounts_changed, env, env_changed, domains,
+    domains_changed, rejected, rejected_changed).
+    """
     current_mounts = list(ws.mounts or [])
     mounts_changed = edit_list_interactively(
         current_mounts,
@@ -217,6 +234,38 @@ def interactive_edit_body(ws) -> dict:
             spec, allow_cidr=False
         ),
     )
+    return (
+        current_mounts,
+        mounts_changed,
+        current_env,
+        env_changed,
+        current_domains,
+        domains_changed,
+        current_rejected,
+        rejected_changed,
+    )
+
+
+def interactive_edit_body(ws) -> dict:
+    """Prompt for each field (Enter keeps the current value) and build the
+    PATCH body from the answers."""
+    (
+        new_name,
+        new_image,
+        new_command,
+        new_health_check,
+        new_banner,
+    ) = prompted_edit_fields(ws)
+    (
+        current_mounts,
+        mounts_changed,
+        current_env,
+        env_changed,
+        current_domains,
+        domains_changed,
+        current_rejected,
+        rejected_changed,
+    ) = edit_lists_interactively(ws)
 
     body: dict = {}
     if new_name is not _SENTINEL:
@@ -237,6 +286,89 @@ def interactive_edit_body(ws) -> dict:
         body["allowed_domains"] = current_domains or None
     if rejected_changed:
         body["rejected_domains"] = current_rejected or None
+    return body
+
+
+def validated_specs_or_exit(values: list[str], validate) -> list[str]:
+    """Validate each repeatable-flag value; exit(1) on the first bad one."""
+    for v in values:
+        err = validate(v)
+        if err:
+            context._err.print(f"[red]{err}[/red]")
+            raise typer.Exit(code=1)
+    return values
+
+
+def flag_scalar_body(
+    *,
+    name: str | None,
+    image: str | None,
+    command: str | None,
+    auto_start: bool | None,
+    per_handle_home: bool | None,
+    health_check: str | None,
+    classification_banner: str | None,
+) -> dict:
+    """Body fields for the scalar (non-repeatable) flags."""
+    body: dict = {}
+    if name is not None:
+        body["name"] = name
+    if image is not None:
+        body["image"] = image or None
+    if command is not None:
+        body["service_command"] = command or None
+    if auto_start is not None:
+        body["auto_start"] = auto_start
+    if per_handle_home is not None:
+        # Mutable (#2719); takes effect on the next connect/start —
+        # never a restart-prompt field (existing sessions keep their
+        # layout until they end).
+        body["per_handle_home"] = per_handle_home
+    if health_check is not None:
+        body["health_check"] = health_check or None
+    if classification_banner is not None:
+        body["classification_banner"] = classification_banner or None
+    return body
+
+
+def flag_list_body(
+    ws,
+    *,
+    mount: list[str] | None,
+    env: list[str] | None,
+    allow: list[str] | None,
+    reject: list[str] | None,
+    idle_timeout: int | None,
+    cpu_limit: float | None,
+    memory_limit: str | None,
+    pids_limit: int | None,
+    allow_sudo: bool | None,
+) -> dict:
+    """Body fields for the repeatable list flags and the settings bag."""
+    body: dict = {}
+    if isinstance(mount, list):
+        validated_specs_or_exit(mount, validate_mount_spec)
+        body["mounts"] = mount or None
+    if isinstance(env, list):
+        body["env"] = _parse_env_list(env) or None
+    if isinstance(allow, list):
+        validated_specs_or_exit(allow, validate_allowed_domain_spec)
+        body["allowed_domains"] = allow or None
+    if isinstance(reject, list):
+        # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+        validated_specs_or_exit(
+            reject,
+            lambda spec: validate_allowed_domain_spec(spec, allow_cidr=False),
+        )
+        body["rejected_domains"] = reject or None
+    edit_settings = _build_settings(
+        idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
+    )
+    if edit_settings:
+        # Merge with existing settings so unspecified keys are preserved.
+        merged = dict(ws.settings or {})
+        merged.update(edit_settings)
+        body["settings"] = merged
     return body
 
 
@@ -261,56 +393,29 @@ def flag_edit_body(
     allow_sudo: bool | None,
 ) -> dict:
     """Build the PATCH body from only the flags the user provided."""
-    body: dict = {}
-    if name is not None:
-        body["name"] = name
-    if image is not None:
-        body["image"] = image or None
-    if command is not None:
-        body["service_command"] = command or None
-    if auto_start is not None:
-        body["auto_start"] = auto_start
-    if per_handle_home is not None:
-        # Mutable (#2719); takes effect on the next connect/start —
-        # never a restart-prompt field (existing sessions keep their
-        # layout until they end).
-        body["per_handle_home"] = per_handle_home
-    if health_check is not None:
-        body["health_check"] = health_check or None
-    if classification_banner is not None:
-        body["classification_banner"] = classification_banner or None
-    if isinstance(mount, list):
-        for m in mount:
-            err = validate_mount_spec(m)
-            if err:
-                context._err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
-        body["mounts"] = mount or None
-    if isinstance(env, list):
-        body["env"] = _parse_env_list(env) or None
-    if isinstance(allow, list):
-        for spec in allow:
-            err = validate_allowed_domain_spec(spec)
-            if err:
-                context._err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
-        body["allowed_domains"] = allow or None
-    if isinstance(reject, list):
-        for spec in reject:
-            # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
-            err = validate_allowed_domain_spec(spec, allow_cidr=False)
-            if err:
-                context._err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
-        body["rejected_domains"] = reject or None
-    edit_settings = _build_settings(
-        idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
+    body = flag_scalar_body(
+        name=name,
+        image=image,
+        command=command,
+        auto_start=auto_start,
+        per_handle_home=per_handle_home,
+        health_check=health_check,
+        classification_banner=classification_banner,
     )
-    if edit_settings:
-        # Merge with existing settings so unspecified keys are preserved.
-        merged = dict(ws.settings or {})
-        merged.update(edit_settings)
-        body["settings"] = merged
+    body.update(
+        flag_list_body(
+            ws,
+            mount=mount,
+            env=env,
+            allow=allow,
+            reject=reject,
+            idle_timeout=idle_timeout,
+            cpu_limit=cpu_limit,
+            memory_limit=memory_limit,
+            pids_limit=pids_limit,
+            allow_sudo=allow_sudo,
+        )
+    )
     return body
 
 
