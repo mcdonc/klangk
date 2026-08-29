@@ -1410,12 +1410,6 @@ class ContainerRegistry(NetworkSidecarMixin):
         # allow-listed one asked for filtering), so a missing/unstartable
         # network sidecar raises instead. Static mode with no lists is the
         # one case that starts unrestricted (no filtering requested) (#2325).
-        # #2276 (B): whether net_raw must be dropped for this workspace. A
-        # sidecar'd workspace whose user can sudo to root would let root use the
-        # net_raw that enable_ping grants to setsockopt(SO_MARK) and bypass the
-        # egress filter; dropping net_raw (from the bounding set) closes that
-        # for root too. Applied in the cap_add/cap_drop logic after this branch.
-        drop_net_raw = False
         if needs_sidecar:
             # Interactive / list-declaring workspaces REQUEST filtering, so a
             # missing/unstartable sidecar is fail-closed (silently starting
@@ -1486,60 +1480,26 @@ class ContainerRegistry(NetworkSidecarMixin):
             # Remember this workspace has a live network sidecar so its stop
             # tears the network sidecar down (#2254).
             self._ws_with_network_sidecar.add(workspace_id)
-            # #2276 (B): defense-in-depth for the filtered+sudo case. The
-            # PRIMARY guard against the #2264 SO_MARK bypass is user-namespace
-            # isolation (see the enable_ping note below): the workspace's keep-id
-            # userns differs from the one that owns the network sidecar's netns,
-            # so its caps are not valid there and setsockopt(SO_MARK) EPERMs even
-            # though the klangk user has net_raw effective. If that isolation
-            # ever does not hold (e.g. KLANGKD_USERNS unset so the workspace
-            # shares the sidecar's userns — guarded above), dropping net_raw
-            # from the bounding set removes the one cap SO_MARK can use
-            # (NET_ADMIN is never granted), so sudo->root still can't mark.
-            # podman rejects a cap in both --cap-add and --cap-drop, so this
-            # also suppresses the enable_ping net_raw add below. Cost: the
-            # setuid-ping bridge breaks for this workspace (ping disabled).
-            if allow_sudo:
-                drop_net_raw = True
-                logger.info(
-                    "workspace %s is egress-filtered with allow_sudo on; "
-                    "dropping net_raw as defense-in-depth (userns isolation "
-                    "is the primary SO_MARK guard) — ping (setuid) is "
-                    "disabled for this workspace (#2276)",
-                    workspace_id[:8],
-                )
 
-        # #2045: grant the container CAP_NET_RAW so unprivileged ``ping`` works
-        # (a setuid ping binary in the base image bridges the cap to the non-root
-        # klangk user). The ping_group_range / setcap alternatives don't work
-        # rootless — see #2045 for the full analysis.
-        #
-        # Why this is safe for a *filtered* workspace (#2276; review #1 of the
-        # egress stack): the guard against the #2264 SO_MARK bypass is
-        # USER-NAMESPACE ISOLATION, not cap effectiveness. The workspace runs in
-        # its own keep-id userns (``settings.userns``, default
-        # ``keep-id:uid=1000,gid=1000``), distinct from the userns that owns the
-        # network sidecar's netns. SO_MARK needs CAP_NET_RAW/NET_ADMIN in the
-        # userns that OWNS the destination netns, so the workspace's caps —
-        # which ARE effective here (podman promotes --cap-add caps to ambient for
-        # a non-root init; the old "caps are effective only for uid 0" rationale
-        # was wrong) — do not authorize it, and setsockopt(SO_MARK) EPERMs. ping
-        # still works because the setuid ping binary is root-owned. This is
-        # contingent on the workspace userns differing from the sidecar's
-        # (enforced above + pinned by test_filtered_workspace_userns_isolates_netns);
-        # an empty KLANGKD_USERNS would collapse them and reopen the bypass
-        # (review #2, guarded above).
-        #
-        # #2276 (B): for a filtered+sudo workspace, drop net_raw instead of
-        # adding it (see drop_net_raw above) as defense-in-depth.
-        #
-        # Applies to newly-created containers only: a SIGHUP reload changes the
-        # setting for future workspaces. Read live off settings (the app-ownership
-        # rule). Default on.
-        if self.app.state.settings.enable_ping and not drop_net_raw:
-            create_kwargs["cap_add"] = ["net_raw"]
-        if drop_net_raw:
-            create_kwargs["cap_drop"] = ["net_raw"]
+        # #2347: the workspace never holds CAP_NET_RAW, under any
+        # configuration. The old enable_ping grant (#2045) — cap_add net_raw
+        # so a setuid ping binary could bridge the cap to the non-root klangk
+        # user — is removed: the workspace is where untrusted user code runs,
+        # and CAP_NET_RAW there lets it open raw/packet sockets in the netns
+        # (forge packets, emit arbitrary ICMP). The #2276 (B) filtered+sudo
+        # drop is folded into this unconditional cap_drop. Unprivileged
+        # ``ping`` stops working as a result (the setuid-ping /
+        # ping_group_range / setcap alternatives all fail rootless, #2045);
+        # the egress sidecar owns the netns plumbing. NET_ADMIN is never
+        # granted either, so dropping net_raw alone also closes
+        # setsockopt(SO_MARK) (which needs NET_ADMIN or NET_RAW) even for
+        # root-in-workspace — a defense-in-depth second line behind the
+        # PRIMARY guard, user-namespace isolation (the workspace's keep-id
+        # userns differs from the netns-owning userns, #2264; enforced above
+        # and pinned by test_filtered_workspace_userns_isolates_netns).
+        # Applied to newly-created containers only: a container already
+        # running keeps its existing cap set until recreated.
+        create_kwargs["cap_drop"] = ["net_raw"]
 
         logger.info(
             "workspace-open: build env vars, volumes, and "

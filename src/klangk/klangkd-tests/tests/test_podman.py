@@ -410,7 +410,8 @@ class TestCreateContainer:
         assert "--pids-limit" not in args
 
     async def test_cap_add_emitted(self):
-        # #2045: each cap_add entry becomes a --cap-add flag.
+        # Each cap_add entry becomes a --cap-add flag (the network sidecar
+        # uses this for NET_ADMIN/NET_RAW; workspaces never do — #2347).
         with patch(EXEC, _exec(("id\n", "", 0))) as m:
             await _p.create_container(
                 "n", "img", cap_add=["net_raw"], replace=False

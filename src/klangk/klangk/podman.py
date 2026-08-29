@@ -308,10 +308,12 @@ class Podman:
         set no hooks omit the flag entirely (no behavior change). (The
         egress filter moved to the network sidecar and no longer uses
         these, #2255; they remain for general OCI-hook consumers.) ``cap_drop``
-        becomes one ``--cap-drop`` flag each. ``cap_add`` becomes one
-        ``--cap-add`` flag
-        each (used to grant ``NET_RAW`` so unprivileged ``ping`` works,
-        #2045). ``cpus``/``memory``/``pids_limit`` are the
+        becomes one ``--cap-drop`` flag each (the workspace container
+        always drops ``net_raw``, #2347). ``cap_add`` becomes one
+        ``--cap-add`` flag each (the network sidecar uses it for
+        ``NET_ADMIN``/``NET_RAW`` — RST forging and the egress ruleset,
+        #2345; workspaces never pass it, #2347). ``cpus``/``memory``/
+        ``pids_limit`` are the
         deploy-wide resource caps (#34): each emits its flag **only when
         non-None**, so an unset limit = no flag = no behavior change — the
         same omit-when-unset posture as ``cap_drop``/``userns``.

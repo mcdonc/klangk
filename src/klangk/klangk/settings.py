@@ -971,22 +971,6 @@ class KlangkSettings(BaseSettings):
     # selection is always the user's; this never overrides it.
     nix_seed: NixSeedConfig = Field(default_factory=NixSeedConfig)
     userns: str = "keep-id:uid=1000,gid=1000"
-    # enable_ping: allow unprivileged ICMP echo (``ping``) inside workspace
-    # containers (#2045) by granting the container CAP_NET_RAW; a setuid
-    # ping binary in the base image bridges the cap to the non-root klangk
-    # user. The alternatives (widening net.ipv4.ping_group_range, or a
-    # setcap'd ping binary) are both rejected under rootless podman, so
-    # the capability is the only working path in klangk's (rootless)
-    # deployment; its cost is low rootless (private netns behind pasta/
-    # slirp, no shared L2 bridge → no sniffing/ARP; raw-socket packets
-    # still traverse the netfilter OUTPUT default-DROP egress allowlist).
-    # Applies to newly-created containers only: a SIGHUP reload changes
-    # the setting for future workspaces, but a container already running
-    # keeps its existing cap set until recreated. Defaults to True: a
-    # fresh install can ``ping`` out of the box. Set False for locked-down
-    # deploys that want to deny ICMP echo. Read at boot and on SIGHUP
-    # (reloadable).
-    enable_ping: bool = True
     podman_bin: str | None = "podman"
     disable_tmux: str = ""
     # browser_delegate_enabled: master switch for the browser-delegate

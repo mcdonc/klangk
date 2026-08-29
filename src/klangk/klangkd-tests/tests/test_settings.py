@@ -263,14 +263,6 @@ class TestConfigFile:
         s = make_settings({"KLANGKD_BROWSER_DELEGATE_ENABLED": "false"})
         assert s.browser_delegate_enabled is False
 
-    def test_enable_ping_defaults_true(self):
-        # #2045: unprivileged ping is enabled out of the box.
-        assert make_settings({}).enable_ping is True
-
-    def test_enable_ping_env_override(self):
-        s = make_settings({"KLANGKD_ENABLE_PING": "false"})
-        assert s.enable_ping is False
-
     def test_per_handle_home_defaults_shared(self):
         # #2723 (#2169 chunk 5, Breaking): shared is the deploy default
         # for new workspaces; per-handle is opt-in (env or create flag).

@@ -32,6 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`enable_ping` is removed; workspaces never hold `CAP_NET_RAW` (#2347).**
+  The `KLANGKD_ENABLE_PING` setting is gone (ignored on an existing config)
+  and every newly created workspace container launches with
+  `--cap-drop net_raw`; unprivileged `ping` inside a workspace no longer
+  works (the setuid-ping / `ping_group_range` / `setcap` alternatives all
+  fail under rootless podman, #2045). Applies to containers started after
+  the upgrade; rebuild the workspace image to also shed the now-useless
+  setuid `ping` binary baked into older ones.
+
 - **`GET /api/v1/groups` now returns a paged envelope (#2750).** The
   response is `{groups, page, page_size, total}` (same shape as
   `GET /api/v1/admin/groups`) instead of a bare list that was silently
@@ -93,9 +102,10 @@ operators or integrators to act when upgrading.
   existing interactive workspace's next start requires a configured
   `network_sidecar_image` and a non-empty `KLANGKD_USERNS`; if either is
   missing it **fails closed** (refuses to start) instead of egressing
-  unrestricted. An interactive workspace with `allow_sudo` also has `net_raw`
-  dropped (defense-in-depth against the SO_MARK bypass), disabling setuid
-  `ping` for it. Static workspaces with no allow/reject lists are unaffected.
+  unrestricted. An interactive workspace with `allow_sudo` also had `net_raw`
+  dropped (defense-in-depth against the SO_MARK bypass) — since #2347 the
+  drop applies to every workspace. Static workspaces with no allow/reject
+  lists are otherwise unaffected.
 
 - **(#1653)** Environment variables renamed to `KLANGKD_*` / `KLANGKBUILD_*` /
   `KLANGKWS_*` / `KLANGK_*`. Old `KLANGK_*` names are not accepted. Update
