@@ -57,9 +57,10 @@ def merge_window_entries(old: list[dict], windows: list[dict]) -> list[dict]:
     return entries
 
 
-def get_shared_terminals(ws_session, sockets: "WebSocketState") -> list[dict]:
-    """Collect all shared windows across all users in a workspace."""
-    # Build viewer map: (owner_user_id, window_id) -> [{user_id, email}]
+def _shared_viewer_map(
+    ws_session, sockets: "WebSocketState"
+) -> dict[tuple[str, str], list[dict]]:
+    """(owner_user_id, window_id) -> [{user_id, email}] for shared viewers."""
     viewer_map: dict[tuple[str, str], list[dict]] = {}
     for sock in ws_session.subscribers:
         conn = sockets.connections.get(sock)
@@ -72,22 +73,32 @@ def get_shared_terminals(ws_session, sockets: "WebSocketState") -> list[dict]:
         viewer_map.setdefault(key, []).append(
             {"user_id": conn.user["id"], "email": conn.user.get("email", "")}
         )
+    return viewer_map
 
+
+def _session_user_handle(
+    ws_session, sockets: "WebSocketState", user_id: str
+) -> str | None:
+    """The user's handle from any active connection.
+
+    The agent (AGENT_USER_ID) has no WS connection, so its handle is the
+    cached ``agent_handle`` populated by ``_sync_service_windows`` -- the
+    agent is always attributable, never "offline" (#1133)."""
+    if user_id == model.AGENT_USER_ID:
+        return ws_session.agent_handle
+    for sock in ws_session.subscribers:
+        conn = sockets.connections.get(sock)
+        if conn and conn.user.get("id") == user_id:
+            return conn.user.get("handle")
+    return None
+
+
+def get_shared_terminals(ws_session, sockets: "WebSocketState") -> list[dict]:
+    """Collect all shared windows across all users in a workspace."""
+    viewer_map = _shared_viewer_map(ws_session, sockets)
     terminals = []
     for user_id, windows in ws_session.terminal_windows.items():
-        # Look up the user's handle from any active connection. The
-        # agent (AGENT_USER_ID) has no WS connection, so its handle is
-        # the cached ``agent_handle`` populated by ``_sync_service_windows``
-        # -- the agent is always attributable, never "offline" (#1133).
-        handle = None
-        if user_id == model.AGENT_USER_ID:
-            handle = ws_session.agent_handle
-        else:
-            for sock in ws_session.subscribers:
-                conn = sockets.connections.get(sock)
-                if conn and conn.user.get("id") == user_id:
-                    handle = conn.user.get("handle")
-                    break
+        handle = _session_user_handle(ws_session, sockets, user_id)
         if not handle:
             continue
         for w in windows:
@@ -108,6 +119,36 @@ def get_shared_terminals(ws_session, sockets: "WebSocketState") -> list[dict]:
                     }
                 )
     return terminals
+
+
+def _shared_id_sets(
+    old: list[dict], new_entries: list[dict]
+) -> tuple[set, set]:
+    """(old, new) sets of shared-window ids."""
+    old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
+    new_shared = {w["id"] for w in new_entries if w.get("shared")}
+    return old_shared, new_shared
+
+
+def _shared_name_sets(
+    old: list[dict], new_entries: list[dict]
+) -> tuple[set, set]:
+    """(old, new) sets of (id, name) pairs for shared windows."""
+    old_shared_names = {
+        (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
+    }
+    new_shared_names = {
+        (w["id"], w["name"]) for w in new_entries if w.get("shared")
+    }
+    return old_shared_names, new_shared_names
+
+
+def _shared_set_changed(old: list[dict], new_entries: list[dict]) -> bool:
+    """Broadcast-worthy delta: shared set changed (a shared window was
+    added or closed) or any shared window was renamed."""
+    old_shared, new_shared = _shared_id_sets(old, new_entries)
+    old_shared_names, new_shared_names = _shared_name_sets(old, new_entries)
+    return old_shared != new_shared or old_shared_names != new_shared_names
 
 
 def _iso_utc(ts: float | None) -> str | None:
@@ -301,17 +342,7 @@ class WorkspaceSession:
         self._window_generations[user_id] = (
             self._window_generations.get(user_id, 0) + 1
         )
-        # Broadcast-worthy delta: shared set changed (a shared window
-        # was added or closed) or any shared window was renamed.
-        old_shared = {w["id"] for w in old if w.get("shared") and "id" in w}
-        new_shared = {w["id"] for w in new_entries if w.get("shared")}
-        old_shared_names = {
-            (w["id"], w["name"]) for w in old if w.get("shared") and "id" in w
-        }
-        new_shared_names = {
-            (w["id"], w["name"]) for w in new_entries if w.get("shared")
-        }
-        return old_shared != new_shared or old_shared_names != new_shared_names
+        return _shared_set_changed(old, new_entries)
 
     def broadcast_shared_terminals(self) -> None:
         """Send the current shared-terminal list to all subscribers."""
@@ -354,6 +385,29 @@ class WorkspaceSession:
             0.15, self._dispatch_window_sync
         )
 
+    def _connected_user_ids(self, sockets) -> set[str]:
+        """Ids of the connected non-agent subscribers."""
+        user_ids: set[str] = set()
+        for sock in list(self.subscribers):
+            conn = sockets.connections.get(sock)
+            uid = conn.user.get("id") if conn else None
+            if uid and uid != model.AGENT_USER_ID:
+                user_ids.add(uid)
+        return user_ids
+
+    def _send_windows_to_user(
+        self, sockets, user_id: str, windows: list[dict]
+    ) -> None:
+        """Broadcast one user's terminal_windows frame to just their sockets."""
+        msg = {"type": "terminal_windows", "windows": windows}
+        for sock in list(self.subscribers):
+            conn = sockets.connections.get(sock)
+            if conn and conn.user.get("id") == user_id:
+                try:
+                    sock.send_json(msg)
+                except WS_ERRORS:
+                    pass
+
     def _dispatch_window_sync(self) -> None:
         self._window_sync_handle = None
         asyncio.create_task(self._sync_windows_once())  # pragma: no cover
@@ -366,12 +420,7 @@ class WorkspaceSession:
             return
         sockets = self.app.state.sockets
         terminal = self.app.state.terminal
-        user_ids: set[str] = set()
-        for sock in list(self.subscribers):
-            conn = sockets.connections.get(sock)
-            uid = conn.user.get("id") if conn else None
-            if uid and uid != model.AGENT_USER_ID:
-                user_ids.add(uid)
+        user_ids = self._connected_user_ids(sockets)
         for uid in user_ids:
             # Stamp the apply generation before the exec (#2653): the
             # list_windows below is a podman round-trip that can straddle
@@ -401,14 +450,7 @@ class WorkspaceSession:
             # ``klangk terminal share`` blind-timed-out on the missing
             # window.
             shared_changed = self.apply_window_list(uid, windows)
-            msg = {"type": "terminal_windows", "windows": windows}
-            for sock in list(self.subscribers):
-                conn = sockets.connections.get(sock)
-                if conn and conn.user.get("id") == uid:
-                    try:
-                        sock.send_json(msg)
-                    except WS_ERRORS:
-                        pass
+            self._send_windows_to_user(sockets, uid, windows)
             # A rename/close/add that touched a shared window must also
             # reach shared-terminal viewers: this path can be the first
             # to apply the change (under load its list_windows exec can
@@ -1075,32 +1117,9 @@ class WebSocketState:
             resources, principals, ["monitor"]
         )
         for cs, seq in candidates:
-            if f"/workspaces/{cs.workspace_id}" not in allowed:
-                continue
-            if registry.states.get(cs.workspace_id) is not cs:
-                # Died (state removed) or was re-bound while the ACL
-                # pass was in flight — its terminal/death frame already
-                # went to this member; don't replay over it.
-                continue
-            if cs.health_seq != seq:
-                # A transition fired mid-snapshot; its delta frame
-                # already went out — replaying the older status over it
-                # would flip the client backwards.
-                continue
-            try:
-                sock.send_json(
-                    _service_health_frame(
-                        cs.workspace_id,
-                        healthy=cs.health_status == "healthy",
-                        message=cs.health_message,
-                        running=True,
-                        health_checked_at=cs.health_checked_at,
-                        seq=cs.health_seq,
-                    )
-                )
-            except WS_ERRORS:
-                # The just-registered socket is already gone; nothing to
-                # snapshot to.  dispatch.py owns cleanup on disconnect.
+            if not self._replay_service_health(
+                sock, registry, cs, seq, allowed
+            ):
                 break
 
     def send_health_heartbeats(self) -> None:
@@ -1201,6 +1220,52 @@ class WebSocketState:
         for sock, _ in dead:
             self.connections.pop(sock, None)
 
+    def _replay_service_health(
+        self, sock, registry, cs, seq: int, allowed: set
+    ) -> bool:
+        """Replay one workspace's health frame; False when the socket died
+        (caller stops). Stale/died/moved-on candidates are skipped."""
+        if f"/workspaces/{cs.workspace_id}" not in allowed:
+            return True
+        if registry.states.get(cs.workspace_id) is not cs:
+            # Died (state removed) or was re-bound while the ACL
+            # pass was in flight — its terminal/death frame already
+            # went to this member; don't replay over it.
+            return True
+        if cs.health_seq != seq:
+            # A transition fired mid-snapshot; its delta frame
+            # already went out — replaying the older status over it
+            # would flip the client backwards.
+            return True
+        try:
+            sock.send_json(
+                _service_health_frame(
+                    cs.workspace_id,
+                    healthy=cs.health_status == "healthy",
+                    message=cs.health_message,
+                    running=True,
+                    health_checked_at=cs.health_checked_at,
+                    seq=cs.health_seq,
+                )
+            )
+        except WS_ERRORS:
+            # The just-registered socket is already gone; nothing to
+            # snapshot to.  dispatch.py owns cleanup on disconnect.
+            return False
+        return True
+
+    @staticmethod
+    def _wrong_connection(request_id, expected_sock, sender) -> bool:
+        """Whether a browser response came from other than the dispatched
+        connection (dispatched requests accept only their addressee)."""
+        if expected_sock is None or sender is expected_sock:
+            return False
+        logger.warning(
+            "Browser response from wrong connection for request %s",
+            request_id,
+        )
+        return True
+
     def handle_browser_response(
         self, msg: dict, sender: SafeWebSocket | None = None
     ) -> None:
@@ -1216,11 +1281,7 @@ class WebSocketState:
         stream_entry = self.streaming_browser_requests.get(request_id)
         if stream_entry is not None:
             queue, expected_sock = stream_entry
-            if expected_sock is not None and sender is not expected_sock:
-                logger.warning(
-                    "Browser response from wrong connection for request %s",
-                    request_id,
-                )
+            if self._wrong_connection(request_id, expected_sock, sender):
                 return
             result = {
                 k: v for k, v in msg.items() if k not in ("id", "cmd", "type")
@@ -1235,11 +1296,7 @@ class WebSocketState:
             )
             return
         future, expected_sock = entry
-        if expected_sock is not None and sender is not expected_sock:
-            logger.warning(
-                "Browser response from wrong connection for request %s",
-                request_id,
-            )
+        if self._wrong_connection(request_id, expected_sock, sender):
             return
         self.pending_browser_requests.pop(request_id, None)
         if not future.done():
