@@ -46,7 +46,7 @@ jobs:
       - uses: actions/setup-python@v6
         if: steps.filter.outputs.backend == 'true'
         with:
-          python-version: "3.13"
+          python-version: "3.14"
           cache: pip
 
       - name: Install podman & GNU coreutils/tar (Homebrew)
