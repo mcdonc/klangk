@@ -3482,28 +3482,38 @@ class TestFinalBranchGaps2834:
         # rebuilding rows (rules is None -> the 1731 arm), and the
         # deferred focus-restore then finds no children, skipping the
         # index clamp (the 1749 arm) instead of crashing or jumping.
-        from textual.widgets import ListView
+        # Driven against a stub list view so the clear()'s child removal
+        # and the deferred callback are synchronous, not scheduler-bound
+        # (textual schedules both, which is flaky under xdist load).
+        from klangk.cli.tui.consent import RulesScreen
+
+        class _StubLV:
+            def __init__(self):
+                self.children = [
+                    types.SimpleNamespace(rule_id="a1"),
+                    types.SimpleNamespace(rule_id="a2"),
+                ]
+                self.index = 1
+                self.highlighted_child = self.children[1]
+                self.captured = []
+
+            def clear(self):
+                self.children = []
+
+            def call_after_refresh(self, cb):
+                self.captured.append(cb)
 
         app = _make_app()
         async with app.run_test() as pilot:
-            app.controller.apply_frame(
-                _rules_frame(allowed=[_rule("a1"), _rule("a2")])
-            )
-            app.action_rules()
             await pilot.pause()
-            screen = app.screen
-            lv = screen.query_one("#rules-list", ListView)
-            lv.index = 1  # focus a2
+            screen = RulesScreen()
+            app.push_screen(screen)
             await pilot.pause()
-            assert list(lv.children)  # rows seeded
-            # Capture (not schedule) the deferred restore, then run it
-            # by hand once the clear has landed: deterministic under any
-            # scheduler load.
-            captured = []
-            lv.call_after_refresh = captured.append
+            stub = _StubLV()
+            screen.query_one = lambda selector, cls=None: stub
             screen._rebuild_rule_list(None)
-            for _ in range(10):
-                await pilot.pause()
-            assert list(lv.children) == []
-            for cb in captured:
+            assert stub.children == []  # cleared, no rows rebuilt
+            assert stub.captured  # the restore was scheduled
+            for cb in stub.captured:
                 cb()  # no children: the clamp is skipped, nothing raises
+            assert stub.index == 1  # untouched by the skipped clamp
