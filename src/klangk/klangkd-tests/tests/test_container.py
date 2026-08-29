@@ -6549,7 +6549,17 @@ class TestHealthMonitorDeath:
                 task = asyncio.create_task(reg.cleanup_idle_containers())
                 await asyncio.sleep(0.05)
                 reg.get_cleanup_wake().set()
-                await asyncio.sleep(0.05)
+                # The notify chain between the wake and send_json has
+                # several awaits (idle callbacks, the real ACL fetch in
+                # _send_to_workspace_members) -- a fixed sleep races
+                # task.cancel() against them under CI load (#2806).
+                # Poll with a generous deadline instead; a genuine
+                # regression still fails, just 5s later.
+                deadline = time.monotonic() + 5.0
+                while (
+                    not sock.send_json.called and time.monotonic() < deadline
+                ):
+                    await asyncio.sleep(0.01)
                 task.cancel()
                 try:
                     await task
