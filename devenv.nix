@@ -294,10 +294,7 @@ in
   # *remote* mode against the VM, which has its own policy, so leave this empty
   # there.
   env.CONTAINERS_SIGNATURE_POLICY = lib.mkOverride 1500 (
-    if pkgs.stdenv.hostPlatform.isDarwin then
-      ""
-    else
-      config.devenv.state + "/klangk/podman/policy.json"
+    if pkgs.stdenv.hostPlatform.isDarwin then "" else config.devenv.state + "/klangk/podman/policy.json"
   );
   # Same story for registries.conf (#286): rootless podman from nix ships
   # none, so any build whose Dockerfile uses a short image name (alpine:3.21,
@@ -601,21 +598,16 @@ in
       language = "system";
       pass_filenames = true;
     };
-    # Python: cyclomatic-complexity gate (#2794). Blocks must stay rank E
-    # or better (complexity <= 40); module/average gates are off (rank F)
-    # because they flap when only a few files are staged. Baselined to the
-    # tree at introduction: the three legacy F-ranked blocks below are
-    # excluded until refactored — shrink the excludes as they are fixed.
+    # Python: cyclomatic-complexity gate (#2794). Blocks must stay rank C
+    # or better (complexity <= 20); module/average gates are off (rank F)
+    # because they flap when only a few files are staged. The F/E/D-ranked
+    # legacy blocks were refactored down (#2800-#2803, #2808-#2814), so the
+    # excludes are gone — every production .py file is checked.
     xenon = {
       enable = true;
       name = "xenon";
-      entry = "${pkgs.xenon}/bin/xenon --max-absolute E --max-modules F --max-average F";
+      entry = "${pkgs.xenon}/bin/xenon --max-absolute C --max-modules F --max-average F";
       files = "^src/klangk/klangk/.*\\.py$|^scripts/.*\\.py$";
-      excludes = [
-        "^src/klangk/klangk/cli/edit\\.py$"
-        "^src/klangk/klangk/cli/client\\.py$"
-        "^src/klangk/klangk/cli/tui/screens/workspace_form\\.py$"
-      ];
       language = "system";
       pass_filenames = true;
     };
