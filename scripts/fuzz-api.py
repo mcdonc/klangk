@@ -821,6 +821,177 @@ class AnomalyTracker:
 # ---------------------------------------------------------------------------
 
 
+def create_fixture_id(
+    uds_path: str,
+    headers: dict,
+    url: str,
+    payload: dict,
+    ok_codes: tuple[int, ...] = (200,),
+) -> str | None:
+    """POST one fixture (workspace / user / group); its id, or None."""
+    try:
+        with httpx.Client(
+            transport=httpx.HTTPTransport(uds=uds_path),
+            base_url="http://klangkd",
+            timeout=10,
+        ) as c:
+            r = c.post(url, json=payload, headers=headers)
+            if r.status_code in ok_codes:
+                return r.json()["id"]
+    except Exception:
+        pass
+    return None
+
+
+def seed_fuzz_fixtures(
+    uds_path: str, token: str
+) -> tuple[list[str], list[str], list[str]]:
+    """Pre-create workspaces / users / groups so fuzzed paths have real
+    ids to target. Returns (workspace_ids, user_ids, group_ids)."""
+    headers = {"Authorization": f"Bearer {token}"}
+    workspace_ids: list[str] = []
+    user_ids: list[str] = []
+    group_ids: list[str] = []
+
+    # Pre-create a couple of workspaces
+    for i in range(2):
+        wid = create_fixture_id(
+            uds_path,
+            headers,
+            "/api/v1/workspaces",
+            {"name": f"fuzz-ws-{i}"},
+        )
+        if wid:
+            workspace_ids.append(wid)
+
+    # Also create some users and groups to have IDs for fuzzing
+    for i in range(3):
+        uid = create_fixture_id(
+            uds_path,
+            headers,
+            "/api/v1/admin/users",
+            {
+                "email": f"fuzzuser{i}@example.com",
+                "password": "fuzzpass",
+            },
+        )
+        if uid:
+            user_ids.append(uid)
+    for i in range(2):
+        gid = create_fixture_id(
+            uds_path,
+            headers,
+            "/api/v1/admin/groups",
+            {"name": f"fuzz-group-{i}"},
+            ok_codes=(200, 201),
+        )
+        if gid:
+            group_ids.append(gid)
+
+    return workspace_ids, user_ids, group_ids
+
+
+def fill_path_params(
+    rng: random.Random,
+    path_template: str,
+    workspace_ids: list[str],
+    user_ids: list[str],
+    group_ids: list[str],
+) -> str:
+    """Substitute fuzzed values for the ``{param}`` placeholders."""
+    path = path_template
+    if "{workspace_id}" in path:
+        path = path.replace(
+            "{workspace_id}",
+            rng.choice(workspace_ids + [fuzz_uuid(rng)])
+            if workspace_ids
+            else fuzz_uuid(rng),
+        )
+    if "{member_id}" in path:
+        path = path.replace(
+            "{member_id}",
+            rng.choice(user_ids + [fuzz_uuid(rng)]) if user_ids else fuzz_uuid(rng),
+        )
+    if "{user_id}" in path:
+        path = path.replace(
+            "{user_id}",
+            rng.choice(user_ids + [fuzz_uuid(rng)]) if user_ids else fuzz_uuid(rng),
+        )
+    if "{group_id}" in path:
+        path = path.replace(
+            "{group_id}",
+            rng.choice(group_ids + [fuzz_uuid(rng)]) if group_ids else fuzz_uuid(rng),
+        )
+    if "{role}" in path:
+        path = path.replace("{role}", rng.choice(ROLES))
+    if "{invitation_id}" in path:
+        path = path.replace("{invitation_id}", fuzz_uuid(rng))
+    if "{name}" in path:
+        path = path.replace("{name}", fuzz_string(rng))
+    if "{random_path}" in path:
+        segments = rng.randint(1, 4)
+        path = "/" + "/".join(fuzz_string(rng) for _ in range(segments))
+    if "{provider_id}" in path:
+        path = path.replace("{provider_id}", fuzz_string(rng))
+    return path
+
+
+def fuzz_request_headers(rng: random.Random, headers: dict) -> dict:
+    """Decide auth: sometimes send no token, bad token, or valid token,
+    and sometimes a garbage content-type."""
+    auth_choice = rng.random()
+    if auth_choice < 0.1:
+        req_headers = {}
+    elif auth_choice < 0.2:
+        req_headers = {"Authorization": "Bearer invalid-token-xxx"}
+    else:
+        req_headers = headers
+
+    # Sometimes send garbage content-type
+    if rng.random() < 0.05:
+        req_headers["Content-Type"] = rng.choice(
+            [
+                "text/plain",
+                "application/xml",
+                "multipart/form-data",
+                "",
+            ]
+        )
+    return req_headers
+
+
+async def send_fuzz_request(
+    client: httpx.AsyncClient,
+    tracker: AnomalyTracker,
+    method: str,
+    path: str,
+    body,
+    params,
+    req_headers: dict,
+) -> None:
+    """Fire one fuzzed request and record the outcome."""
+    try:
+        r = await client.request(
+            method,
+            path,
+            json=body if body and "Content-Type" not in req_headers else None,
+            content=json.dumps(body).encode()
+            if body and "Content-Type" in req_headers
+            else None,
+            params=params,
+            headers=req_headers,
+        )
+        tracker.record(method, path, r.status_code, body=body)
+    except httpx.TimeoutException:
+        tracker.record(method, path, None, error="timeout", body=body)
+    except httpx.ConnectError:
+        tracker.record(method, path, None, error="connection", body=body)
+        # Server might have crashed — wait a bit
+        await asyncio.sleep(2)
+    except Exception as exc:
+        tracker.record(method, path, None, error=str(exc), body=body)
+
+
 async def run_fuzz(
     uds_path: str,
     token: str,
@@ -831,70 +1002,10 @@ async def run_fuzz(
     rng = random.Random(seed)
     deadline = time.monotonic() + duration_minutes * 60
 
-    # Create a workspace for endpoints that need one
     headers = {"Authorization": f"Bearer {token}"}
-    workspace_ids: list[str] = []
+    workspace_ids, user_ids, group_ids = seed_fuzz_fixtures(uds_path, token)
 
     transport = httpx.AsyncHTTPTransport(uds=uds_path)
-
-    # Pre-create a couple of workspaces
-    for i in range(2):
-        try:
-            with httpx.Client(
-                transport=httpx.HTTPTransport(uds=uds_path),
-                base_url="http://klangkd",
-                timeout=10,
-            ) as c:
-                r = c.post(
-                    "/api/v1/workspaces",
-                    json={"name": f"fuzz-ws-{i}"},
-                    headers=headers,
-                )
-                if r.status_code == 200:
-                    workspace_ids.append(r.json()["id"])
-        except Exception:
-            pass
-
-    # Also create some users and groups to have IDs for fuzzing
-    user_ids: list[str] = []
-    group_ids: list[str] = []
-    for i in range(3):
-        try:
-            with httpx.Client(
-                transport=httpx.HTTPTransport(uds=uds_path),
-                base_url="http://klangkd",
-                timeout=10,
-            ) as c:
-                r = c.post(
-                    "/api/v1/admin/users",
-                    json={
-                        "email": f"fuzzuser{i}@example.com",
-                        "password": "fuzzpass",
-                    },
-                    headers=headers,
-                )
-                if r.status_code == 200:
-                    user_ids.append(r.json()["id"])
-        except Exception:
-            pass
-    for i in range(2):
-        try:
-            with httpx.Client(
-                transport=httpx.HTTPTransport(uds=uds_path),
-                base_url="http://klangkd",
-                timeout=10,
-            ) as c:
-                r = c.post(
-                    "/api/v1/admin/groups",
-                    json={"name": f"fuzz-group-{i}"},
-                    headers=headers,
-                )
-                if r.status_code in (200, 201):
-                    group_ids.append(r.json()["id"])
-        except Exception:
-            pass
-        except Exception:
-            pass
 
     logger.info(
         "Fuzzing with seed=%d, workspaces=%d, users=%d, groups=%d",
@@ -912,46 +1023,9 @@ async def run_fuzz(
             method, path_template, body_schema, query_schema = rng.choice(ENDPOINTS)
 
             # Fill in path parameters
-            path = path_template
-            if "{workspace_id}" in path:
-                path = path.replace(
-                    "{workspace_id}",
-                    rng.choice(workspace_ids + [fuzz_uuid(rng)])
-                    if workspace_ids
-                    else fuzz_uuid(rng),
-                )
-            if "{member_id}" in path:
-                path = path.replace(
-                    "{member_id}",
-                    rng.choice(user_ids + [fuzz_uuid(rng)])
-                    if user_ids
-                    else fuzz_uuid(rng),
-                )
-            if "{user_id}" in path:
-                path = path.replace(
-                    "{user_id}",
-                    rng.choice(user_ids + [fuzz_uuid(rng)])
-                    if user_ids
-                    else fuzz_uuid(rng),
-                )
-            if "{group_id}" in path:
-                path = path.replace(
-                    "{group_id}",
-                    rng.choice(group_ids + [fuzz_uuid(rng)])
-                    if group_ids
-                    else fuzz_uuid(rng),
-                )
-            if "{role}" in path:
-                path = path.replace("{role}", rng.choice(ROLES))
-            if "{invitation_id}" in path:
-                path = path.replace("{invitation_id}", fuzz_uuid(rng))
-            if "{name}" in path:
-                path = path.replace("{name}", fuzz_string(rng))
-            if "{random_path}" in path:
-                segments = rng.randint(1, 4)
-                path = "/" + "/".join(fuzz_string(rng) for _ in range(segments))
-            if "{provider_id}" in path:
-                path = path.replace("{provider_id}", fuzz_string(rng))
+            path = fill_path_params(
+                rng, path_template, workspace_ids, user_ids, group_ids
+            )
 
             # Build body
             body = fuzz_body(rng, body_schema) if body_schema else None
@@ -959,46 +1033,11 @@ async def run_fuzz(
             # Build query params
             params = fuzz_query(rng, query_schema) if query_schema else None
 
-            # Decide auth: sometimes send no token, bad token, or valid token
-            auth_choice = rng.random()
-            if auth_choice < 0.1:
-                req_headers = {}
-            elif auth_choice < 0.2:
-                req_headers = {"Authorization": "Bearer invalid-token-xxx"}
-            else:
-                req_headers = headers
+            req_headers = fuzz_request_headers(rng, headers)
 
-            # Sometimes send garbage content-type
-            if rng.random() < 0.05:
-                req_headers["Content-Type"] = rng.choice(
-                    [
-                        "text/plain",
-                        "application/xml",
-                        "multipart/form-data",
-                        "",
-                    ]
-                )
-
-            try:
-                r = await client.request(
-                    method,
-                    path,
-                    json=body if body and "Content-Type" not in req_headers else None,
-                    content=json.dumps(body).encode()
-                    if body and "Content-Type" in req_headers
-                    else None,
-                    params=params,
-                    headers=req_headers,
-                )
-                tracker.record(method, path, r.status_code, body=body)
-            except httpx.TimeoutException:
-                tracker.record(method, path, None, error="timeout", body=body)
-            except httpx.ConnectError:
-                tracker.record(method, path, None, error="connection", body=body)
-                # Server might have crashed — wait a bit
-                await asyncio.sleep(2)
-            except Exception as exc:
-                tracker.record(method, path, None, error=str(exc), body=body)
+            await send_fuzz_request(
+                client, tracker, method, path, body, params, req_headers
+            )
 
             # Small delay to avoid overwhelming
             await asyncio.sleep(rng.uniform(0.01, 0.1))
