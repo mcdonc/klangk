@@ -54,9 +54,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # #2347: ping stays NON-setuid. klangkd drops CAP_NET_RAW from every
 # workspace container, so there is no cap for a setuid ping to bridge
 # (#2045's grant is removed); an unused setuid-root binary would only be
-# attack surface. The iputils-ping package stays installed for its
-# non-raw diagnostics output (error messages), but `ping` itself cannot
-# work without the cap.
+# attack surface. The iputils-ping package stays installed so `ping`
+# fails with a clear "Operation not permitted" instead of "command not
+# found".
 
 # Generate UTF-8 locale — required for tmux to handle unicode/wide
 # characters correctly (e.g. tools that emit ASCII art / box-drawing).

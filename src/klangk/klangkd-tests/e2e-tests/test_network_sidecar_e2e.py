@@ -14,7 +14,7 @@ outcomes are deterministic (no internet dependency):
 
 A "workspace" container shares the network sidecar's netns
 (``--network container:<network-sidecar>``, launched with
-``--cap-drop net_raw`` and gosu-dropped to the non-root klangk user —
+``--cap-drop net_raw`` and dropped in-process to the non-root klangk user —
 exactly how klangk launches a filtered workspace since #2347 removed
 the enable_ping cap grant) and must:
 
@@ -26,7 +26,7 @@ the enable_ping cap grant) and must:
     access to the proxy; the workspace does not hold net_raw at all (#2347
     drops it unconditionally), so it cannot ``setsockopt(SO_MARK)`` to skip
     the REDIRECT, and all its :53 traffic is forced through the allow-listing
-    proxy. (#2276 — see test_somark_bypass_blocked_under_production_caps.)
+    proxy. (#2276 — see test_somark_bypass_blocked_under_production_userns.)
 
 Requires: ``podman`` + Linux (NET_ADMIN netns + iptables). Skips otherwise.
 
@@ -532,9 +532,10 @@ def _probe_somark(
       (those model the legacy default-userns sudo case).
     * ``as_root``: stay root in the probe (simulate ``sudo``->root) instead of
       dropping to uid 1000 (the legacy default-userns non-root repro).
-    * ``cap_drop``: launch with ``--cap-drop net_raw`` — the production
-      launch for every workspace since #2347 (previously the filtered+sudo
-      config, #2276 B).
+    * ``cap_drop``: launch with ``--cap-drop net_raw`` — the production CAP
+      POSTURE for every workspace since #2347 (previously the filtered+sudo
+      config, #2276 B). Production also passes ``--userns`` (see ``keep_id``),
+      which these legacy default-userns probes omit.
     """
     _, network_sidecar = stack
     if keep_id:
