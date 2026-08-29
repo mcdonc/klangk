@@ -150,23 +150,23 @@ def has_any_flags(
     allow_sudo: bool | None,
     classification_banner: str | None,
 ) -> bool:
-    return (
-        name is not None
-        or image is not None
-        or command is not None
-        or auto_start is not None
-        or per_handle_home is not None
-        or health_check is not None
-        or isinstance(mount, list)
-        or isinstance(env, list)
-        or isinstance(allow, list)
-        or isinstance(reject, list)
-        or idle_timeout is not None
-        or cpu_limit is not None
-        or memory_limit is not None
-        or pids_limit is not None
-        or allow_sudo is not None
-        or classification_banner is not None
+    scalars = (
+        name,
+        image,
+        command,
+        auto_start,
+        per_handle_home,
+        health_check,
+        idle_timeout,
+        cpu_limit,
+        memory_limit,
+        pids_limit,
+        allow_sudo,
+        classification_banner,
+    )
+    lists = (mount, env, allow, reject)
+    return any(v is not None for v in scalars) or any(
+        isinstance(v, list) for v in lists
     )
 
 
@@ -267,17 +267,56 @@ def interactive_edit_body(ws) -> dict:
         rejected_changed,
     ) = edit_lists_interactively(ws)
 
+    body = prompted_body_fields(
+        ws, new_name, new_image, new_command, new_health_check, new_banner
+    )
+    body.update(
+        edited_list_body(
+            current_mounts,
+            mounts_changed,
+            current_env,
+            env_changed,
+            current_domains,
+            domains_changed,
+            current_rejected,
+            rejected_changed,
+        )
+    )
+    return body
+
+
+def prompted_body_fields(
+    ws, new_name, new_image, new_command, new_health_check, new_banner
+) -> dict:
+    """Body fields from the scalar prompts (sentinel = leave unchanged)."""
     body: dict = {}
     if new_name is not _SENTINEL:
         body["name"] = new_name or ws.name  # don't allow empty name
-    if new_image is not _SENTINEL:
-        body["image"] = new_image or None
-    if new_command is not _SENTINEL:
-        body["service_command"] = new_command or None
-    if new_health_check is not _SENTINEL:
-        body["health_check"] = new_health_check or None
-    if new_banner is not _SENTINEL:
-        body["classification_banner"] = new_banner or None
+    # A cleared (whitespace) answer maps to None on the wire (#2768).
+    clearable = {
+        "image": new_image,
+        "service_command": new_command,
+        "health_check": new_health_check,
+        "classification_banner": new_banner,
+    }
+    for key, value in clearable.items():
+        if value is not _SENTINEL:
+            body[key] = value or None
+    return body
+
+
+def edited_list_body(
+    current_mounts,
+    mounts_changed,
+    current_env,
+    env_changed,
+    current_domains,
+    domains_changed,
+    current_rejected,
+    rejected_changed,
+) -> dict:
+    """Body fields from the interactive list editors (changed lists only)."""
+    body: dict = {}
     if mounts_changed:
         body["mounts"] = current_mounts or None
     if env_changed:
@@ -313,10 +352,16 @@ def flag_scalar_body(
     body: dict = {}
     if name is not None:
         body["name"] = name
-    if image is not None:
-        body["image"] = image or None
-    if command is not None:
-        body["service_command"] = command or None
+    # '' clears these back to the deploy default (None on the wire).
+    clearable = {
+        "image": image,
+        "service_command": command,
+        "health_check": health_check,
+        "classification_banner": classification_banner,
+    }
+    for key, value in clearable.items():
+        if value is not None:
+            body[key] = value or None
     if auto_start is not None:
         body["auto_start"] = auto_start
     if per_handle_home is not None:
@@ -324,10 +369,6 @@ def flag_scalar_body(
         # never a restart-prompt field (existing sessions keep their
         # layout until they end).
         body["per_handle_home"] = per_handle_home
-    if health_check is not None:
-        body["health_check"] = health_check or None
-    if classification_banner is not None:
-        body["classification_banner"] = classification_banner or None
     return body
 
 
@@ -361,15 +402,33 @@ def flag_list_body(
             lambda spec: validate_allowed_domain_spec(spec, allow_cidr=False),
         )
         body["rejected_domains"] = reject or None
+    merged = merged_flag_settings(
+        ws, idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
+    )
+    if merged:
+        body["settings"] = merged
+    return body
+
+
+def merged_flag_settings(
+    ws,
+    idle_timeout: int | None,
+    cpu_limit: float | None,
+    memory_limit: str | None,
+    pids_limit: int | None,
+    allow_sudo: bool | None,
+) -> dict | None:
+    """Flag-provided settings merged over the existing bag so unspecified
+    keys are preserved; None when no settings flag was given (the key is
+    then omitted entirely)."""
     edit_settings = _build_settings(
         idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
     )
-    if edit_settings:
-        # Merge with existing settings so unspecified keys are preserved.
-        merged = dict(ws.settings or {})
-        merged.update(edit_settings)
-        body["settings"] = merged
-    return body
+    if not edit_settings:
+        return None
+    merged = dict(ws.settings or {})
+    merged.update(edit_settings)
+    return merged
 
 
 def flag_edit_body(
