@@ -5,10 +5,9 @@ single-responsibility modules; this package ``__init__`` re-exports the
 previous public surface (plus the private names tests and sibling modules
 patch/import) so callers keep working unchanged:
 
-- :mod:`.naming`   - container-name helpers
 - :mod:`.state`    - ``ContainerState``
 - :mod:`.ports`    - ``PortAllocator`` + port constants
-- :mod:`.browsers` - ``BrowserRouter``
+- :mod:`.identity` - container-name helpers + ``BrowserRouter``
 - :mod:`.idle`     - ``IdleMonitor``
 - :mod:`.eviction` - ``MemoryPressureEvictor`` (host memory-pressure
   eviction, #2526) + ``read_meminfo``/``available_fraction``
@@ -28,7 +27,6 @@ here are bindings, not live cells.
 
 from ..ssl_trust import ssl_env_vars as ssl_env_vars
 from .admission import AdmissionControl as AdmissionControl
-from .browsers import BrowserRouter as BrowserRouter
 from .eviction import (
     MemoryPressureEvictor as MemoryPressureEvictor,
     available_fraction as available_fraction,
@@ -46,9 +44,10 @@ from .health import (
     unhealthy_message as unhealthy_message,
 )
 from .idle import IdleMonitor as IdleMonitor
-from .naming import (
+from .identity import (
     _workspace_container_name as _workspace_container_name,
     _workspace_name_slug as _workspace_name_slug,
+    BrowserRouter as BrowserRouter,
 )
 from .ports import (
     CONTAINER_PORT_START as CONTAINER_PORT_START,
