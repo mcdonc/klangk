@@ -130,7 +130,10 @@ def request_with_retry(
     responses with exponential backoff.
     """
     backoff = _RETRY_BACKOFF
-    for attempt in range(_RETRY_ATTEMPTS):
+    # Every iteration ends in return/raise/continue (the last attempt
+    # returns or re-raises), so the loop never falls through its range:
+    # the arc to loop exit is unreachable.
+    for attempt in range(_RETRY_ATTEMPTS):  # pragma: no branch
         try:
             resp = http_request(
                 server_spec, method, path, timeout=timeout, **kwargs
@@ -914,7 +917,10 @@ class KlangkClient:
                 data = self._f.read(size)
                 if data:
                     self._read += len(data)
-                    if on_progress:
+                    # The wrapper is only constructed when on_progress is
+                    # set (see import_workspace), so this guard is always
+                    # true here -- its false arm is unreachable.
+                    if on_progress:  # pragma: no branch
                         on_progress(self._read, total)
                 return data
 

@@ -1110,8 +1110,8 @@ class TestBridgeIdleTimeout:
 
 
 class TestPeerTrustedBranchGaps2834:
-    def test_unlisted_ip_iterates_every_entry(self):
-        # The loop-continue arm: an IP matching NO entry (the configured
-        # one or the defaults) walks the whole set and returns False.
-        u = _util({"KLANGKD_TRUSTED_PROXY_CIDRS": "203.0.113.9"})
-        assert u.peer_trusted("8.8.8.8") is False
+    def test_unlisted_ip_iterates_every_network(self):
+        # The CIDR loop-continue arm: an IP matching NO network walks
+        # them all (no short-circuit) and returns False.
+        u = _util({"KLANGKD_TRUSTED_PROXY_CIDRS": "10.0.0.0/8, 172.16.0.0/12"})
+        assert u.peer_trusted("203.0.113.9") is False

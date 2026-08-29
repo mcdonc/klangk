@@ -1204,6 +1204,14 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   info). Set it with a `nix_seed` block to arm the feature — see
   [Nix workspaces](../features/nix.md).
 
+- **Branch coverage in the Python 100% gates (#2834).** Both the
+  `klangk` and `klangksidecar` unit suites now measure branch coverage
+  (`--cov-branch`) and require every branch outcome exercised, not just
+  every line — structurally unreachable arms carry documented
+  `# pragma: no branch` comments. The sidecar suite gains a coverage gate
+  at all (previously none); contributors adding an `if` with only one
+  side tested will now fail the build until the other outcome is tested.
+
 - **`host_restart` WS event renamed to `server_recycle` (#2661).** The
   graceful recycle path (SIGHUP and scheduled `recycle`) now broadcasts
   `server_recycle {phase: draining | recycling}` instead of
