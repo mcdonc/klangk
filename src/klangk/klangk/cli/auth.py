@@ -184,36 +184,33 @@ margin:0;background:#1a1a2e;color:#e0e0e0">
         raise SystemExit(1)
 
 
-def login(
-    server_url: str,
-    email: str | None = None,
-    password: str | None = None,
-) -> None:
-    """Prompt for credentials, store JWT in state."""
-    state = CLIState.load()
+def already_logged_in(state, server_url: str, email: str) -> bool:
+    """True (and prints) when a cached token for *email* still works."""
+    ss = state.servers.get(server_url)
+    cached = ss.users.get(email) if ss else None
+    if not (cached and cached.token):
+        return False
+    try:
+        resp = http_request(
+            server_url,
+            "GET",
+            "/api/v1/workspaces",
+            headers={"Authorization": f"Bearer {cached.token}"},
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            state.set_credentials(server_url, email, cached.token)
+            state.save()
+            _out.print(f"Already logged in as [bold]{email}[/bold]")
+            return True
+    except httpx.HTTPError:
+        pass  # Token invalid or server unreachable — fall through
+    return False
 
-    # If we already have a cached token for this user, verify it.
-    if email:
-        ss = state.servers.get(server_url)
-        cached = ss.users.get(email) if ss else None
-        if cached and cached.token:
-            try:
-                resp = http_request(
-                    server_url,
-                    "GET",
-                    "/api/v1/workspaces",
-                    headers={"Authorization": f"Bearer {cached.token}"},
-                    timeout=5.0,
-                )
-                if resp.status_code == 200:
-                    state.set_credentials(server_url, email, cached.token)
-                    state.save()
-                    _out.print(f"Already logged in as [bold]{email}[/bold]")
-                    return
-            except httpx.HTTPError:
-                pass  # Token invalid or server unreachable — fall through
 
-    # Probe the server to verify it's a klangk instance
+def fetch_config_or_exit(server_url: str):
+    """Probe the server; exit(1) with a hint if it isn't a klangk instance
+    or is unreachable."""
     config = fetch_config(server_url)
     if config is None:
         _err.print(
@@ -228,50 +225,65 @@ def login(
     if config == _UNREACHABLE:
         _err.print(f"[red]Error:[/red] could not reach {server_url}")
         raise SystemExit(1)
+    return config
 
-    # Default-safe per #1374: a missing/unparseable auth_modes field falls
-    # back to password so an old server never routes to the /auth/local arm.
-    auth_modes = "password"
-    if config:
-        providers = config.get("oidc_providers", [])
-        auth_modes = config.get("auth_modes", "password")
 
-        if auth_modes == "none":
-            email, token = local_login(server_url)
-            state.set_credentials(server_url, email, token)
-            state.save()
-            seed_config(server_url, email)
-            _out.print(f"Logged in as [bold]{email}[/bold] (no-auth mode)")
-            return
+def select_oidc_provider(providers: list) -> dict:
+    """The single provider, or prompt when several are configured."""
+    if len(providers) == 1:
+        return providers[0]
+    _out.print("Select an SSO provider:")
+    for i, p in enumerate(providers, 1):
+        _out.print(f"  {i}. {p['display_name']}")
+    choice = Prompt.ask(
+        "[bold]Provider[/bold]",
+        default="1",
+    )
+    try:
+        idx = int(choice) - 1
+        return providers[idx]
+    except (ValueError, IndexError):
+        _err.print("[red]Invalid choice[/red]")
+        raise SystemExit(1)
 
-        if providers and auth_modes in ("oidc", "both"):
-            # Use OIDC if password login is disabled, or if the user
-            # didn't explicitly provide email/password credentials
-            use_oidc = auth_modes == "oidc" or (
-                email is None and password is None
-            )
-            if use_oidc:
-                if len(providers) == 1:
-                    provider = providers[0]
-                else:
-                    _out.print("Select an SSO provider:")
-                    for i, p in enumerate(providers, 1):
-                        _out.print(f"  {i}. {p['display_name']}")
-                    choice = Prompt.ask(
-                        "[bold]Provider[/bold]",
-                        default="1",
-                    )
-                    try:
-                        idx = int(choice) - 1
-                        provider = providers[idx]
-                    except (ValueError, IndexError):
-                        _err.print("[red]Invalid choice[/red]")
-                        raise SystemExit(1)
 
-                _oidc_browser_login(server_url, provider["id"], state)
-                return
+def try_oidc_login(server_url, email, password, config, state) -> bool:
+    """Run the OIDC browser flow when the server config calls for it.
 
-    # Fall through to password login (accepts an email or a handle, #616)
+    Uses OIDC if password login is disabled, or if the user didn't
+    explicitly provide email/password credentials. Returns True when the
+    flow ran (login is then complete)."""
+    providers = config.get("oidc_providers", [])
+    auth_modes = config.get("auth_modes", "password")
+    if not (providers and auth_modes in ("oidc", "both")):
+        return False
+    use_oidc = auth_modes == "oidc" or (email is None and password is None)
+    if not use_oidc:
+        return False
+    provider = select_oidc_provider(providers)
+    _oidc_browser_login(server_url, provider["id"], state)
+    return True
+
+
+def print_login_failure(resp) -> None:
+    """Explain a non-200 login response (redirect hint or server detail)."""
+    if resp.status_code in (301, 302, 307, 308):
+        location = resp.headers.get("location", "")
+        _err.print(f"[red]Login failed:[/red] server redirected to {location}")
+        if location.startswith("https://"):
+            _err.print("[yellow]Hint:[/yellow] use https:// in the server URL")
+    else:
+        try:
+            detail = resp.json().get("detail", f"HTTP {resp.status_code}")
+        except Exception:
+            detail = f"HTTP {resp.status_code}"
+        _err.print(f"[red]Login failed:[/red] {detail}")
+    raise SystemExit(1)
+
+
+def password_login(server_url, email, password, state) -> None:
+    """Prompt for credentials (accepts an email or a handle, #616), POST
+    them, and persist the returned token."""
     email = email or Prompt.ask("[bold]Email or handle[/bold]")
     password = password or Prompt.ask("[bold]Password[/bold]", password=True)
 
@@ -283,22 +295,7 @@ def login(
         timeout=15.0,
     )
     if resp.status_code != 200:
-        if resp.status_code in (301, 302, 307, 308):
-            location = resp.headers.get("location", "")
-            _err.print(
-                f"[red]Login failed:[/red] server redirected to {location}"
-            )
-            if location.startswith("https://"):
-                _err.print(
-                    "[yellow]Hint:[/yellow] use https:// in the server URL"
-                )
-        else:
-            try:
-                detail = resp.json().get("detail", f"HTTP {resp.status_code}")
-            except Exception:
-                detail = f"HTTP {resp.status_code}"
-            _err.print(f"[red]Login failed:[/red] {detail}")
-        raise SystemExit(1)
+        print_login_failure(resp)
 
     token = resp.json()["access_token"]
 
@@ -306,6 +303,41 @@ def login(
     state.save()
     seed_config(server_url, email)
     _out.print(f"Logged in as [bold]{email}[/bold]")
+
+
+def login(
+    server_url: str,
+    email: str | None = None,
+    password: str | None = None,
+) -> None:
+    """Prompt for credentials, store JWT in state."""
+    state = CLIState.load()
+
+    # If we already have a cached token for this user, verify it.
+    if email and already_logged_in(state, server_url, email):
+        return
+
+    # Probe the server to verify it's a klangk instance
+    config = fetch_config_or_exit(server_url)
+
+    # Default-safe per #1374: a missing/unparseable auth_modes field falls
+    # back to password so an old server never routes to the /auth/local arm.
+    auth_modes = "password"
+    if config:
+        auth_modes = config.get("auth_modes", "password")
+
+        if auth_modes == "none":
+            email, token = local_login(server_url)
+            state.set_credentials(server_url, email, token)
+            state.save()
+            seed_config(server_url, email)
+            _out.print(f"Logged in as [bold]{email}[/bold] (no-auth mode)")
+            return
+
+        if try_oidc_login(server_url, email, password, config, state):
+            return
+
+    password_login(server_url, email, password, state)
 
 
 def refresh_token(server_url: str, token: str) -> str | None:
