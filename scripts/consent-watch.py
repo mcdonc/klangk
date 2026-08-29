@@ -16,11 +16,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 import sqlite3
 import sys
 import time
-from pathlib import Path
+from consentlib import data_dir
 
 from rich.console import Console
 from rich.live import Live
@@ -33,16 +32,6 @@ _DECISION_STYLE = {
     "denied": "bold red",
     "expired": "dim",
 }
-
-
-def _data_dir(arg: str | None) -> Path:
-    path = arg or os.environ.get("KLANGKD_DATA_DIR")
-    if not path:
-        sys.exit(
-            "data dir not set: pass --data-dir or export KLANGKD_DATA_DIR "
-            "(the klangkd dir containing klangk.db)"
-        )
-    return Path(path)
 
 
 def _fetch(conn: sqlite3.Connection, ws: str) -> list[tuple]:
@@ -98,7 +87,7 @@ def main() -> None:
     ap.add_argument("--interval", type=float, default=1.0, help="refresh seconds")
     args = ap.parse_args()
 
-    db_path = _data_dir(args.data_dir) / "klangk.db"
+    db_path = data_dir(args.data_dir) / "klangk.db"
     if not db_path.exists():
         sys.exit(f"DB not found: {db_path}")
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)

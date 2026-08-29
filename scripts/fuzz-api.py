@@ -42,6 +42,8 @@ import uuid
 
 import httpx
 
+from fuzzlib import configure_logging, draw_seed, uds_login
+
 logger = logging.getLogger("fuzz")
 
 # ---------------------------------------------------------------------------
@@ -675,21 +677,6 @@ def wait_for_server(uds_path: str, timeout: float = 30) -> None:
     raise TimeoutError("Server did not start in time")
 
 
-def login(uds_path: str) -> str:
-    """Log in as admin and return the access token (over the UDS)."""
-    with httpx.Client(
-        transport=httpx.HTTPTransport(uds=uds_path),
-        base_url="http://klangkd",
-        timeout=10,
-    ) as c:
-        r = c.post(
-            "/api/v1/auth/login",
-            json={"email": "admin@example.com", "password": "admin"},
-        )
-        r.raise_for_status()
-        return r.json()["access_token"]
-
-
 # ---------------------------------------------------------------------------
 # Anomaly tracking
 # ---------------------------------------------------------------------------
@@ -1070,7 +1057,7 @@ async def run_fuzz(
             # Periodically re-login in case the token was invalidated
             if tracker.requests_sent % 200 == 0:
                 try:
-                    new_token = login(uds_path)
+                    new_token = uds_login(uds_path, "admin@example.com", "admin")
                     headers["Authorization"] = f"Bearer {new_token}"
                 except Exception:
                     pass  # will continue with old or no token
@@ -1173,18 +1160,12 @@ def main():
     )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    # Suppress noisy per-request httpx logging
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    configure_logging()
 
     if args.check:
         sys.exit(check_endpoints())
 
-    seed = args.seed if args.seed is not None else random.randint(0, 2**32)
+    seed = draw_seed(args.seed)
 
     tracker = AnomalyTracker()
 
@@ -1196,7 +1177,7 @@ def main():
             wait_for_server(uds_path)
             logger.info("Server is up")
 
-            token = login(uds_path)
+            token = uds_login(uds_path, "admin@example.com", "admin")
             logger.info("Logged in as admin")
 
             logger.info(
