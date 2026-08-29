@@ -218,7 +218,8 @@ are fine too (`KLANGKD` = daemon, `KLANGKC` = CLI).
 
 ## Python complexity gate (xenon)
 
-Every function, method, and block in `src/klangk/klangk/**/*.py` and
+Every function, method, and block in `src/klangk/klangk/**/*.py`,
+`src/klangksidecar/klangksidecar/**/*.py`, and
 `scripts/**/*.py` must be xenon rank **C or better** (cyclomatic complexity
 ≤ 20). The gate runs as the `xenon` pre-commit hook defined in `devenv.nix`
 (`--max-absolute C --max-modules F --max-average F` — module/average gates
