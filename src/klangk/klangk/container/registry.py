@@ -135,6 +135,39 @@ async def safe_remove(podman_inst, container_id: str, *, what: str) -> bool:
         return False
 
 
+def host_bound_ports(info: dict) -> set[int]:
+    """Host ports published by an inspected container (from HostConfig
+    PortBindings)."""
+    bindings = info.get("HostConfig", {}).get("PortBindings") or {}
+    bound = set()
+    for ports_list in bindings.values():
+        for entry in ports_list or []:
+            try:
+                bound.add(int(entry["HostPort"]))
+            except (KeyError, ValueError, TypeError):
+                pass
+    return bound
+
+
+async def remove_stale_container(
+    podman, stale_id: str, bound: set[int], wanted_ports: set[int]
+) -> None:
+    """Remove a stale container holding a wanted port; best-effort."""
+    try:
+        await podman.remove_container(stale_id)
+        logger.info(
+            "Removed stale container %s (ports %s)",
+            stale_id[:12],
+            bound & wanted_ports,
+        )
+    except PodmanError as del_exc:
+        logger.warning(
+            "Could not remove stale container %s: %s",
+            stale_id[:12],
+            del_exc,
+        )
+
+
 class ContainerRegistry(NetworkSidecarMixin):
     """Manages all container state and podman interactions.
 
@@ -293,23 +326,28 @@ class ContainerRegistry(NetworkSidecarMixin):
             for opt in options.split(","):
                 if opt and opt not in _VALID_MOUNT_OPTIONS:
                     return f"Invalid mount {spec!r}: unknown option {opt!r}"
-        if not _is_named_volume(source):
-            if self._is_protected(source):
-                return (
-                    f"Invalid mount {spec!r}: source is a protected host path"
-                )
-            if self.allowed_mount_roots:
-                resolved = os.path.realpath(source)
-                if not any(
-                    resolved == root or resolved.startswith(root + "/")
-                    for root in self.allowed_mount_roots
-                ):
-                    allowed = ", ".join(self.allowed_mount_roots)
-                    return (
-                        f"Invalid mount {spec!r}: bind mount source must be "
-                        f"under an allowed root ({allowed})"
-                    )
-        return None
+        if _is_named_volume(source):
+            return None
+        return self._validate_bind_source(spec, source)
+
+    def _validate_bind_source(self, spec: str, source: str) -> str | None:
+        """A non-named-volume source must not be a protected host path and
+        (when allowed roots are configured) must live under one."""
+        if self._is_protected(source):
+            return f"Invalid mount {spec!r}: source is a protected host path"
+        if not self.allowed_mount_roots:
+            return None
+        resolved = os.path.realpath(source)
+        if any(
+            resolved == root or resolved.startswith(root + "/")
+            for root in self.allowed_mount_roots
+        ):
+            return None
+        allowed = ", ".join(self.allowed_mount_roots)
+        return (
+            f"Invalid mount {spec!r}: bind mount source must be "
+            f"under an allowed root ({allowed})"
+        )
 
     def validate_mounts(self, mounts: list[str]) -> str | None:
         """Validate a list of mount specs. Returns first error or None."""
@@ -1142,28 +1180,11 @@ class ContainerRegistry(NetworkSidecarMixin):
             info = await podman.inspect_container(stale_id)
             if info is None:
                 continue
-            bindings = info.get("HostConfig", {}).get("PortBindings") or {}
-            bound = set()
-            for ports_list in bindings.values():
-                for entry in ports_list or []:
-                    try:
-                        bound.add(int(entry["HostPort"]))
-                    except (KeyError, ValueError, TypeError):
-                        pass
+            bound = host_bound_ports(info)
             if bound & wanted_ports:
-                try:
-                    await podman.remove_container(stale_id)
-                    logger.info(
-                        "Removed stale container %s (ports %s)",
-                        stale_id[:12],
-                        bound & wanted_ports,
-                    )
-                except PodmanError as del_exc:
-                    logger.warning(
-                        "Could not remove stale container %s: %s",
-                        stale_id[:12],
-                        del_exc,
-                    )
+                await remove_stale_container(
+                    podman, stale_id, bound, wanted_ports
+                )
 
     async def _start_with_port_conflict_retry(
         self,
@@ -1881,33 +1902,6 @@ class ContainerRegistry(NetworkSidecarMixin):
         a racing re-bind — is logged and not counted).
         """
 
-        async def drain_one(ws_id: str, cid: str) -> bool:
-            await self.notify_workspace_killed(ws_id, container_id=cid)
-            ok = await self.stop_and_remove_container(cid, workspace_id=ws_id)
-            if not ok:
-                logger.warning(
-                    "Drain: workspace %s container %s not stopped "
-                    "(failed or re-bound by a racing start)",
-                    ws_id,
-                    cid[:12],
-                )
-                return False
-            # Same "stopped on purpose" broadcast as the /stop endpoint:
-            # clients re-render as stopped, not disconnected.
-            session = self.app.state.sockets.get_session(ws_id)
-            if session:
-                session.broadcast(
-                    {
-                        "type": "event",
-                        "event": {
-                            "type": "CUSTOM",
-                            "name": "container_stopped",
-                            "value": {"reason": reason},
-                        },
-                    }
-                )
-            return True
-
         # Snapshot so a container exiting mid-drain cannot mutate the
         # dict under us.
         tracked = [
@@ -1916,9 +1910,46 @@ class ContainerRegistry(NetworkSidecarMixin):
             if state.container_id
         ]
         results = await asyncio.gather(
-            *(drain_one(ws_id, cid) for ws_id, cid in tracked),
+            *(self._drain_one(ws_id, cid, reason) for ws_id, cid in tracked),
             return_exceptions=True,
         )
+        stopped = self._count_drained(tracked, results)
+        # Label sweep: catch starts that raced the gate (created after
+        # the snapshot) and anything else instance-labelled still alive.
+        stopped += await self._sweep_drain_leftovers()
+        return stopped
+
+    async def _drain_one(self, ws_id: str, cid: str, reason: str) -> bool:
+        """Notify + stop one workspace for a drain, with the same
+        "stopped on purpose" broadcast as the /stop endpoint (clients
+        re-render as stopped, not disconnected)."""
+        await self.notify_workspace_killed(ws_id, container_id=cid)
+        ok = await self.stop_and_remove_container(cid, workspace_id=ws_id)
+        if not ok:
+            logger.warning(
+                "Drain: workspace %s container %s not stopped "
+                "(failed or re-bound by a racing start)",
+                ws_id,
+                cid[:12],
+            )
+            return False
+        session = self.app.state.sockets.get_session(ws_id)
+        if session:
+            session.broadcast(
+                {
+                    "type": "event",
+                    "event": {
+                        "type": "CUSTOM",
+                        "name": "container_stopped",
+                        "value": {"reason": reason},
+                    },
+                }
+            )
+        return True
+
+    @staticmethod
+    def _count_drained(tracked: list[tuple[str, str]], results: list) -> int:
+        """Count the successful drains; log the raising ones."""
         stopped = 0
         for (ws_id, _cid), result in zip(tracked, results, strict=True):
             if isinstance(result, BaseException):
@@ -1927,8 +1958,12 @@ class ContainerRegistry(NetworkSidecarMixin):
                 )
             elif result:
                 stopped += 1
-        # Label sweep: catch starts that raced the gate (created after
-        # the snapshot) and anything else instance-labelled still alive.
+        return stopped
+
+    async def _sweep_drain_leftovers(self) -> int:
+        """Label sweep: catch starts that raced the drain gate (created
+        after the snapshot) and anything else instance-labelled still
+        alive. Returns the count additionally stopped."""
         try:
             leftovers = await self.app.state.podman.list_containers(
                 f"klangk.instance={self.app.state.util.instance_id()}"
@@ -1936,6 +1971,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         except (podman.PodmanError, OSError) as e:
             logger.warning("Drain: error sweeping leftover containers: %s", e)
             leftovers = []
+        stopped = 0
         for c in leftovers:
             cid = container_ident(c)
             if not cid:
