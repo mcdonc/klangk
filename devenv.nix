@@ -10,8 +10,16 @@ let
   # is collapsed into this single entry. Dev config lives in klangkd.yaml
   # (gitignored);
   # seeded from klangkd.yaml.devenv on first shell entry if missing.
+  # Task, process, and script exec environments do NOT include the
+  # uv-managed venv (.devenv/state/venv) on PATH — `python3` resolves to
+  # the bare nix interpreter from languages.python.package, which carries
+  # none of the project's dependencies. On 3.13 the ambient interpreter
+  # happened to see some propagated nix packages (pyyaml, via pyaml), which
+  # masked this for update-features; pinning 3.14 made it fail loudly.
+  # Every exec that needs project deps invokes this interpreter explicitly.
+  venvPython = config.devenv.state + "/venv/bin/python";
   backendCmd = ''
-    python3 -m klangk.main --config="$DEVENV_ROOT/klangkd.yaml"
+    ${venvPython} -m klangk.main --config="$DEVENV_ROOT/klangkd.yaml"
   '';
   featuresDir = config.devenv.root + "/.devenv/state/klangk/features";
   dataDir = config.devenv.root + "/.devenv/state/klangk/data";
@@ -262,7 +270,7 @@ in
       exec = ''
         cd $DEVENV_ROOT
         bash scripts/stub_dart_features.sh
-        exec python3 scripts/update_features.py --payload-dir "${featuresDir}"
+        exec ${venvPython} scripts/update_features.py --payload-dir "${featuresDir}"
       '';
       before = [ "klangk:flutter-build" ];
       showOutput = true;
@@ -292,7 +300,7 @@ in
   };
 
   env.SOURCE_DATE_EPOCH = "";
-  env.UV_PYTHON = config.devenv.state + "/venv/bin/python";
+  env.UV_PYTHON = venvPython;
 
   # --- Devenv-only env vars (used by shell hooks and scripts, NOT by the
   # backend — backend config lives in klangkd.yaml). ---
@@ -364,11 +372,11 @@ in
   # Live, rich-rendered view of a workspace's egress-consent history (#2242).
   # The dev klangkd's DB (klangk.db) lives under $dataDir.
   scripts.consent-watch.exec = ''
-    exec python3 "$DEVENV_ROOT/scripts/consent-watch.py" --data-dir "${dataDir}" "$@"
+    exec ${venvPython} "$DEVENV_ROOT/scripts/consent-watch.py" --data-dir "${dataDir}" "$@"
   '';
   # Interactive accept/deny of a workspace's pending consent requests (#2242).
   scripts.consent-decide.exec = ''
-    exec python3 "$DEVENV_ROOT/scripts/consent-decide.py" --data-dir "${dataDir}" "$@"
+    exec ${venvPython} "$DEVENV_ROOT/scripts/consent-decide.py" --data-dir "${dataDir}" "$@"
   '';
   scripts.trivy-host.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-host.sh" "$@"'';
   scripts.trivy-workspace.exec = ''exec bash "$DEVENV_ROOT/scripts/trivy-workspace.sh" "$@"'';
@@ -377,13 +385,13 @@ in
     if [ "$#" -eq 0 ]; then
       echo "Scanning workspace image and rendering no-fix report..." >&2
       exec bash "$DEVENV_ROOT/scripts/trivy-workspace.sh" --severity CRITICAL,HIGH --format json \
-        | python3 "$DEVENV_ROOT/scripts/trivy-report-nofix.py" -
+        | ${venvPython} "$DEVENV_ROOT/scripts/trivy-report-nofix.py" -
     fi
-    exec python3 "$DEVENV_ROOT/scripts/trivy-report-nofix.py" "$@"'';
+    exec ${venvPython} "$DEVENV_ROOT/scripts/trivy-report-nofix.py" "$@"'';
 
   scripts.update-features.exec = ''
     cd $DEVENV_ROOT
-    python3 scripts/update_features.py "$@"
+    ${venvPython} scripts/update_features.py "$@"
   '';
 
   # -n auto: run tests in parallel across CPUs (pytest-xdist)
@@ -396,7 +404,7 @@ in
     # local run catches guard-test breakage the way CI's separate
     # "build-pipeline tests" step does (#2629) — the two klangk suites
     # alone missed it.
-    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests scripts/tests \
+    exec ${venvPython} -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests scripts/tests \
       -v -n auto "$@"
   '';
 
@@ -404,7 +412,7 @@ in
   # the server corpus (#1606).
   scripts.test-cli.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/klangk/klangkc-tests/tests -v -n auto "$@"
+    exec ${venvPython} -m pytest src/klangk/klangkc-tests/tests -v -n auto "$@"
   '';
 
   # Network sidecar unit suite — the standalone klangksidecar package
@@ -414,14 +422,14 @@ in
   # e2e, not here. CI mirrors this via .github/workflows/sidecar-tests.yml.
   scripts.test-sidecar.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/klangksidecar/tests -v -n auto "$@"
+    exec ${venvPython} -m pytest src/klangksidecar/tests -v -n auto "$@"
   '';
 
   # Both unit suites, no coverage gate — the fast "does it all pass?"
   # smoke.
   scripts.test-unit.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+    exec ${venvPython} -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
       -v -n auto --no-cov "$@"
   '';
 
@@ -435,7 +443,7 @@ in
   # re-baseline.
   scripts.testmon.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+    exec ${venvPython} -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
       -v -n auto --no-cov --testmon "$@"
   '';
 
@@ -454,13 +462,13 @@ in
   # contention (TUI and terminal-windows tests are latency-sensitive). #2059
   scripts.test-cli-e2e.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/klangk/klangkc-tests/e2e-tests \
+    exec ${venvPython} -m pytest src/klangk/klangkc-tests/e2e-tests \
       -v --no-cov -n 2 --dist=loadscope "$@"
   '';
 
   scripts.test-terminal-windows-e2e.exec = ''
     cd $DEVENV_ROOT
-    exec python -m pytest src/klangk/klangkc-tests/e2e-tests/test_terminal_windows_e2e.py \
+    exec ${venvPython} -m pytest src/klangk/klangkc-tests/e2e-tests/test_terminal_windows_e2e.py \
       -v --no-cov "$@"
   '';
 
@@ -475,7 +483,7 @@ in
       export PYTEST_PLUGINS=klangk_podman_stderr
       export PYTHONPATH="${podmanStderrPlugin}''${PYTHONPATH:+:$PYTHONPATH}"
     fi
-    exec python -m pytest src/klangk/klangkd-tests/e2e-tests \
+    exec ${venvPython} -m pytest src/klangk/klangkd-tests/e2e-tests \
       -v --no-cov -n 2 --dist=loadscope "$@"
   '';
 
@@ -489,15 +497,15 @@ in
     cd $DEVENV_ROOT
     set -e
     echo "=== unit (server + client, parallel) ==="
-    python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+    ${venvPython} -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
       -v -n auto --no-cov "$@"
     echo "=== sidecar unit ==="
-    python -m pytest src/klangksidecar/tests -v -n auto --no-cov "$@"
+    ${venvPython} -m pytest src/klangksidecar/tests -v -n auto --no-cov "$@"
     echo "=== server e2e ==="
-    python -m pytest src/klangk/klangkd-tests/e2e-tests \
+    ${venvPython} -m pytest src/klangk/klangkd-tests/e2e-tests \
       -v --no-cov -n 2 --dist=loadscope "$@"
     echo "=== client e2e ==="
-    python -m pytest src/klangk/klangkc-tests/e2e-tests \
+    ${venvPython} -m pytest src/klangk/klangkc-tests/e2e-tests \
       -v --no-cov -n 2 --dist=loadscope "$@"
     echo "=== all green ==="
   '';
