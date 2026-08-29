@@ -1304,6 +1304,10 @@ async def import_workspace(
         # the current deploy rejects. Validate rather than persist blindly.
         try:
             settings = validate_settings(meta.get("settings"))
+            # #2560: import is a create path (no previous bag) — the archive
+            # is user-supplied, editable input, so a nix=true opt-in rejects
+            # while the feature is off, exactly like POST /workspaces.
+            validate_nix_optin(settings, nix_available=app.state.nix.available)
         except ValueError as exc:
             raise HTTPException(
                 status_code=400,

@@ -3398,6 +3398,30 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json()["classification_banner"] == "SECRET"
 
+    async def test_duplicate_carries_stored_nix_while_off(
+        self, client, user, app
+    ):
+        # #2560 decision pin: duplicate carries the source's settings bag
+        # verbatim — a stored nix=true is persisted state, not a new
+        # opt-in, so it is NOT rejected while the feature is off (it stays
+        # inert exactly like the source's).
+        self._arm_nix(app, True)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "dup-nix-src", "settings": {"nix": True}},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        self._arm_nix(app, False)
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/duplicate",
+            json={"name": "dup-nix-clone"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["settings"] == {"nix": True}
+
     async def test_update_workspace_allowed_domains(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -10109,6 +10133,35 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 200
         assert resp.json()["per_handle_home"] is False
+
+    async def test_import_rejects_nix_optin_while_disabled(self, client, user):
+        """#2560: the archive is user-supplied, editable input — import is a
+        create path (no previous bag to echo), so a nix=true opt-in rejects
+        while the feature is off, exactly like POST /workspaces."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                self._meta(name="stranded-nix", settings={"nix": True})
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+        assert "nix feature" in resp.json()["detail"]
 
     async def test_import_round_trips_per_handle_layout(
         self, client, admin_user, user, app, monkeypatch

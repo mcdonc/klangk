@@ -41,7 +41,7 @@ from .exceptions import ConfigurationError
 from .model import EGRESS_MODES, SETUP_STATES
 from .model.workspaces import normalize_classification_banner
 from .netfilter import parse_allowed_domains
-from .workspace_settings import validate_settings
+from .workspace_settings import validate_nix_optin, validate_settings
 
 logger = logging.getLogger(__name__)
 
@@ -162,11 +162,18 @@ def _hook_field_changes(handle, workspace: dict) -> dict:
     return changed
 
 
-def _validate_hook_lists(changed: dict) -> str | None:
+def _validate_hook_lists(app, changed: dict) -> str | None:
     """Settings bag and domain lists: parsed/normalized in place."""
     if "settings" in changed and changed["settings"] is not None:
         try:
             changed["settings"] = validate_settings(changed["settings"])
+            # #2560: the hook fires at create (a fresh bag, no previous) —
+            # mirror POST /workspaces and reject a nix=true opt-in while
+            # the feature is off.
+            validate_nix_optin(
+                changed["settings"],
+                nix_available=app.state.nix.available,
+            )
         except ValueError as exc:
             return f"invalid settings: {exc}"
     if "allowed_domains" in changed and changed["allowed_domains"] is not None:
@@ -212,16 +219,18 @@ def _validate_hook_changes(app, changed: dict) -> str | None:
     ``update_workspace``), the settings-bag schema
     (:func:`klangk.workspace_settings.validate_settings`), the image
     allowlist, the mount-spec policy
-    (:meth:`ContainerRegistry.validate_mounts`), and the domain-list
+    (:meth:`ContainerRegistry.validate_mounts`), the domain-list
     grammar (:func:`klangk.netfilter.parse_allowed_domains`, plus the
-    rejected-domains no-CIDR rule). Validated lists/bags are normalized
+    rejected-domains no-CIDR rule), and the nix opt-in gate
+    (:func:`klangk.workspace_settings.validate_nix_optin`, #2560).
+    Validated lists/bags are normalized
     in place in ``changed`` (de-duplicated / coerced), exactly as the
     API persists them.
     """
     return (
         _validate_hook_enums(changed)
         or _validate_hook_strings(app, changed)
-        or _validate_hook_lists(changed)
+        or _validate_hook_lists(app, changed)
     )
 
 

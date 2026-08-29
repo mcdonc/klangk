@@ -388,7 +388,8 @@ async def nix_binds(
     """Bind specs + env for the workspace's per-workspace /nix (#2201), or ([], []).
 
     Only when the workspace has its per-workspace ``nix`` setting enabled
-    (#2202) AND a nix backend is configured (``nix_seed``, #2219/#2220) does
+    (#2202) AND the feature is armed — a backend configured (``nix_seed``,
+    #2219/#2220) and ``nix_enabled`` on (#2560) — does
     ensure_workspace_nix provision the per-workspace
     /nix and return a mountpoint; the mountpoint's /nix + nix.conf are
     bind-mounted into the container, and KLANGKWS_NIX=1 is set so the
