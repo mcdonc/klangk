@@ -198,6 +198,52 @@ def _workspace_row_to_dict(row, *, auto_start=True) -> dict:
     }
 
 
+def coerce_workspace_field(key: str, value) -> object:
+    """Coerce one workspace-update field to its stored representation.
+
+    Raises ``ValueError`` on invalid enum values (checked before any
+    write)."""
+    if key == "setup_state":
+        if value not in SETUP_STATES:
+            raise ValueError(f"Invalid setup_state: {value!r}")
+        return value
+    if key == "egress_mode":
+        if value not in EGRESS_MODES:
+            raise ValueError(f"Invalid egress_mode: {value!r}")
+        return value
+    if key == "classification_banner":
+        # Empty/whitespace text clears the override (back to
+        # inheriting the deploy default); the validator raises
+        # on control characters / oversize values.
+        return normalize_classification_banner(value)
+    if key in (
+        "mounts",
+        "env",
+        "allowed_domains",
+        "rejected_domains",
+        "settings",
+    ):
+        return json.dumps(value) if value is not None else None
+    if key in ("auto_start", "per_handle_home"):
+        return 1 if value else 0
+    return value
+
+
+def mutate_domain_entries(current: list, spec: str, add: bool) -> bool:
+    """Apply the add/remove to *current* in place; True when it was a
+    no-op (entry already present for an add / absent for a remove)."""
+    if add:
+        if spec in (s.lower() for s in current):
+            return True
+        current.append(spec)
+        return False
+    idx = next((i for i, s in enumerate(current) if s.lower() == spec), None)
+    if idx is None:
+        return True
+    current.pop(idx)
+    return False
+
+
 class WorkspacesModel:
     """Workspace CRUD/members/listings, resolved through ``app_state.db``.
 
@@ -579,22 +625,18 @@ class WorkspacesModel:
             "next_offset": offset + limit if has_more else None,
         }
 
-    async def list_shared_workspaces(
+    async def _shared_workspace_rows(
         self,
         user_id: str,
-        limit: int = 10,
-        offset: int = 0,
-        sort: str = "created",
-        order: str = "desc",
-        q: str | None = None,
-    ) -> dict:
-        """List a page of workspaces shared with (not owned by) this user.
-
-        Access is granted through either a direct user-level ACE or a
-        group-level ACE on ``/workspaces/{id}``. Returns a pagination
-        envelope: ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
-        ``sort``/``order``/``q`` as in :meth:`list_workspaces`.
-        """
+        sort: str,
+        order: str,
+        q: str | None,
+        limit: int,
+        offset: int,
+    ) -> list:
+        """Rows for workspaces shared with (not owned by) *user_id*, via
+        a direct user-level ACE or a group-level ACE on
+        ``/workspaces/{id}``."""
         order_by = sort_order_clause(sort, order, prefix="w")
         name_filter = " AND w.name LIKE '%' || ? || '%'" if q else ""
         # The group-ids read runs on its own connection (it did before
@@ -637,35 +679,59 @@ class WorkspacesModel:
                 offset,
             ),
         )
-        items = [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "container_id": row["container_id"],
-                "image": row["image"],
-                "service_command": row["service_command"],
-                "auto_start": bool(row["auto_start"]),
-                "setup_state": row["setup_state"],
-                "health_check": row["health_check"],
-                "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
-                "env": json.loads(row["env"]) if row["env"] else None,
-                "allowed_domains": json.loads(row["allowed_domains"])
-                if row["allowed_domains"]
-                else None,
-                "rejected_domains": json.loads(row["rejected_domains"])
-                if row["rejected_domains"]
-                else None,
-                "settings": json.loads(row["settings"])
-                if row["settings"]
-                else None,
-                "egress_mode": row["egress_mode"],
-                "per_handle_home": bool(row["per_handle_home"]),
-                "classification_banner": row["classification_banner"],
-                "created_at": row["created_at"],
-                "owner_email": row["owner_email"],
-            }
-            for row in rows
-        ]
+        return rows
+
+    @staticmethod
+    def _shared_workspace_item(row) -> dict:
+        """One shared-workspaces row as an API item (JSON columns
+        parsed)."""
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "container_id": row["container_id"],
+            "image": row["image"],
+            "service_command": row["service_command"],
+            "auto_start": bool(row["auto_start"]),
+            "setup_state": row["setup_state"],
+            "health_check": row["health_check"],
+            "mounts": json.loads(row["mounts"]) if row["mounts"] else None,
+            "env": json.loads(row["env"]) if row["env"] else None,
+            "allowed_domains": json.loads(row["allowed_domains"])
+            if row["allowed_domains"]
+            else None,
+            "rejected_domains": json.loads(row["rejected_domains"])
+            if row["rejected_domains"]
+            else None,
+            "settings": json.loads(row["settings"])
+            if row["settings"]
+            else None,
+            "egress_mode": row["egress_mode"],
+            "per_handle_home": bool(row["per_handle_home"]),
+            "classification_banner": row["classification_banner"],
+            "created_at": row["created_at"],
+            "owner_email": row["owner_email"],
+        }
+
+    async def list_shared_workspaces(
+        self,
+        user_id: str,
+        limit: int = 10,
+        offset: int = 0,
+        sort: str = "created",
+        order: str = "desc",
+        q: str | None = None,
+    ) -> dict:
+        """List a page of workspaces shared with (not owned by) this user.
+
+        Access is granted through either a direct user-level ACE or a
+        group-level ACE on ``/workspaces/{id}``. Returns a pagination
+        envelope: ``{"items": [...], "has_more": bool, "next_offset": int | None}``.
+        ``sort``/``order``/``q`` as in :meth:`list_workspaces`.
+        """
+        rows = await self._shared_workspace_rows(
+            user_id, sort, order, q, limit, offset
+        )
+        items = [self._shared_workspace_item(row) for row in rows]
         has_more = len(items) > limit
         items = items[:limit]
         return {
@@ -877,35 +943,11 @@ class WorkspacesModel:
             "per_handle_home",
             "classification_banner",
         }
-        to_set = {}
-        for k, v in fields.items():
-            if k not in allowed:
-                continue
-            if k == "setup_state":
-                if v not in SETUP_STATES:
-                    raise ValueError(f"Invalid setup_state: {v!r}")
-                to_set[k] = v
-            elif k == "egress_mode":
-                if v not in EGRESS_MODES:
-                    raise ValueError(f"Invalid egress_mode: {v!r}")
-                to_set[k] = v
-            elif k == "classification_banner":
-                # Empty/whitespace text clears the override (back to
-                # inheriting the deploy default); the validator raises
-                # on control characters / oversize values.
-                to_set[k] = normalize_classification_banner(v)
-            elif k in (
-                "mounts",
-                "env",
-                "allowed_domains",
-                "rejected_domains",
-                "settings",
-            ):
-                to_set[k] = json.dumps(v) if v is not None else None
-            elif k in ("auto_start", "per_handle_home"):
-                to_set[k] = 1 if v else 0
-            else:
-                to_set[k] = v
+        to_set = {
+            k: coerce_workspace_field(k, v)
+            for k, v in fields.items()
+            if k in allowed
+        }
         if not to_set:
             return False
         set_clause = ", ".join(f"{k} = ?" for k in to_set)
@@ -985,22 +1027,8 @@ class WorkspacesModel:
                     return False
                 old_blob = row[column]
                 current = json.loads(old_blob) if old_blob else []
-                if add:
-                    if spec in (s.lower() for s in current):
-                        return True  # already present (idempotent)
-                    current.append(spec)
-                else:
-                    idx = next(
-                        (
-                            i
-                            for i, s in enumerate(current)
-                            if s.lower() == spec
-                        ),
-                        None,
-                    )
-                    if idx is None:
-                        return True  # already absent (idempotent)
-                    current.pop(idx)
+                if mutate_domain_entries(current, spec, add):
+                    return True  # already present/absent (idempotent)
                 new_blob = json.dumps(current)
                 cursor = await db.execute(
                     f"UPDATE workspaces SET {column} = ?"
