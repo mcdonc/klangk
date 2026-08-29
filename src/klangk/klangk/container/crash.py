@@ -291,8 +291,21 @@ class CrashRecoveryMonitor:
         would (a) restart a workspace the user just stopped, or (b) tear
         down the freshly-started container — both demonstrated in review.
         """
+        snapshot = self._liveness_snapshot()
+        if not snapshot:
+            return
+        liveness = await self._listed_liveness()
+        if liveness is None:
+            return
+        for ws_id, state, cid, epoch in snapshot:
+            await self._sweep_one(ws_id, state, cid, epoch, liveness)
+
+    def _liveness_snapshot(self) -> list:
+        """(ws_id, state, container_id, stop_epoch) for every container to
+        check, excluding in-flight expected stops and pending restarts —
+        captured BEFORE any await (review #2625)."""
         registry = self.app.state.container_registry
-        snapshot = [
+        return [
             (
                 ws_id,
                 state,
@@ -302,51 +315,63 @@ class CrashRecoveryMonitor:
             for ws_id, state in registry.states.items()
             if ws_id not in registry.stopping and ws_id not in self.pending
         ]
-        if not snapshot:
-            return
+
+    async def _listed_liveness(self) -> dict | None:
+        """container ident -> ps State for this instance, or None when the
+        batched listing failed."""
         try:
             listed = await self.app.state.podman.list_containers(
                 f"klangk.instance={self.app.state.util.instance_id()}"
             )
         except (podman.PodmanError, OSError) as e:
             logger.debug("Crash-recovery liveness listing failed: %s", e)
+            return None
+        return {container_ident(c): (c.get("State") or "") for c in listed}
+
+    async def _sweep_one(
+        self,
+        ws_id: str,
+        state,
+        cid: str,
+        epoch: int,
+        liveness: dict,
+    ) -> None:
+        """Revalidate one snapshot row post-await, then classify a death or
+        reset the tracker of a stable survivor."""
+        registry = self.app.state.container_registry
+        # Post-await revalidation: skip anything the world moved under.
+        if registry.states.get(ws_id) is not state:
+            return  # state replaced/removed (rebind, user start/stop)
+        if state.container_id != cid:
+            return  # rebound to a fresh container — not our death
+        if ws_id in registry.stopping:
+            return  # an expected stop is now in flight
+        if registry.stop_epoch.get(ws_id, 0) != epoch:
+            return  # a stop began AND completed during the listing
+        observed = liveness.get(cid)
+        if observed is not None and observed not in _DEAD_STATES:
+            # Alive (running / created / paused / ...): nothing to do.
+            self.maybe_reset_tracker(ws_id)
             return
-        liveness = {container_ident(c): (c.get("State") or "") for c in listed}
-        for ws_id, state, cid, epoch in snapshot:
-            # Post-await revalidation: skip anything the world moved under.
-            if registry.states.get(ws_id) is not state:
-                continue  # state replaced/removed (rebind, user start/stop)
-            if state.container_id != cid:
-                continue  # rebound to a fresh container — not our death
-            if ws_id in registry.stopping:
-                continue  # an expected stop is now in flight
-            if registry.stop_epoch.get(ws_id, 0) != epoch:
-                continue  # a stop began AND completed during the listing
-            observed = liveness.get(cid)
-            if observed is not None and observed not in _DEAD_STATES:
-                # Alive (running / created / paused / ...): nothing to do.
-                self.maybe_reset_tracker(ws_id)
-                continue
-            # Absent from the listing (removed externally) or listed in
-            # a dead state — classify via one per-container inspect.
-            try:
-                info = await self.app.state.podman.inspect_container(cid)
-            except (podman.PodmanError, OSError) as e:
-                logger.debug(
-                    "Crash-recovery inspect failed for workspace %s: %s",
-                    ws_id,
-                    e,
-                )
-                continue
-            try:
-                await self.handle_death(ws_id, cid, info, epoch=epoch)
-            except Exception as e:  # pragma: no cover - defensive
-                logger.error(
-                    "Crash-recovery death handling failed for workspace "
-                    "%s: %s",
-                    ws_id,
-                    e,
-                )
+        # Absent from the listing (removed externally) or listed in
+        # a dead state — classify via one per-container inspect.
+        try:
+            info = await self.app.state.podman.inspect_container(cid)
+        except (podman.PodmanError, OSError) as e:
+            logger.debug(
+                "Crash-recovery inspect failed for workspace %s: %s",
+                ws_id,
+                e,
+            )
+            return
+        try:
+            await self.handle_death(ws_id, cid, info, epoch=epoch)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.error(
+                "Crash-recovery death handling failed for workspace %s: %s",
+                ws_id,
+                e,
+            )
 
     def maybe_reset_tracker(self, ws_id: str) -> None:
         """Drop the retry counter once a restarted container is stable.
@@ -396,12 +421,10 @@ class CrashRecoveryMonitor:
         # Entry guards: if the world moved between the sweep's detection
         # and now, this death is not ours to handle.
         state = registry.states.get(ws_id)
-        if state is None or state.container_id != container_id:
-            return  # workspace state gone or rebound (user action raced)
-        if ws_id in registry.stopping:
-            return  # an expected stop is in flight
-        if epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch:
-            return  # a stop began and completed during detection
+        if not self._death_guards_pass(
+            registry, ws_id, state, container_id, epoch
+        ):
+            return
         memory_limit = await self._effective_memory_limit(ws_id)
         # Re-validate after the await (#331): a user-driven reconnect
         # (start_container -> _handle_existing_container removes the dead
@@ -411,14 +434,10 @@ class CrashRecoveryMonitor:
         # in flight. The entry guards above ran before that await; acting
         # on the post-await state would tear down the freshly-started
         # container's registry state and network sidecar.
-        if registry.states.get(ws_id) is not state:
-            return  # state replaced/removed (a user start re-bound it)
-        if state.container_id != container_id:
-            return  # rebound to a fresh container — not our death
-        if ws_id in registry.stopping:
-            return  # an expected stop is now in flight
-        if epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch:
-            return  # a stop began and completed during the limit read
+        if not self._death_guards_pass(
+            registry, ws_id, state, container_id, epoch
+        ):
+            return  # the world moved during the limit read (#331)
         cause, message = classify_death(info, memory_limit)
         tracker = self.trackers.get(ws_id) or RestartTracker()
         tracker.last_cause = message
@@ -449,6 +468,19 @@ class CrashRecoveryMonitor:
         # both cases the user action owns the workspace now — record the
         # death event for viewers, but drop the tracker and never
         # restart.
+        self._finalize_death(registry, ws_id, cause, message, tracker, epoch)
+
+    def _finalize_death(
+        self,
+        registry,
+        ws_id: str,
+        cause,
+        message: str,
+        tracker: RestartTracker,
+        epoch: int | None,
+    ) -> None:
+        """Post-teardown disposition: interleaved user action wins (no
+        restart), else disabled-recovery / crash-loop / schedule-restart."""
         if (
             epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch
         ) or registry.states.get(ws_id) is not None:
@@ -480,6 +512,22 @@ class CrashRecoveryMonitor:
             return
         self.schedule_restart(ws_id, tracker)
         self.broadcast_death_event(ws_id, cause, message, tracker)
+
+    @staticmethod
+    def _death_guards_pass(
+        registry, ws_id: str, state, container_id: str, epoch: int | None
+    ) -> bool:
+        """Whether the death is still ours to handle: the registry state is
+        present and bound to this container, no expected stop is in flight,
+        and no stop began-and-completed since the epoch was captured
+        (review #2625). ``state`` may be None (already gone)."""
+        if state is None or state.container_id != container_id:
+            return False  # workspace state gone or rebound (user action raced)
+        if ws_id in registry.stopping:
+            return False  # an expected stop is in flight
+        if epoch is not None and registry.stop_epoch.get(ws_id, 0) != epoch:
+            return False  # a stop began and completed during detection
+        return True
 
     async def _effective_memory_limit(self, ws_id: str) -> str | None:
         """The workspace's effective ``--memory`` (bag override or deploy)."""

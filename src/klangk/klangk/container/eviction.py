@@ -109,44 +109,14 @@ def cgroup_memory_headroom(
     page cache is excluded), the same approximation k8s uses for node
     pressure. A limit smaller than the floor is ignored.
     """
-    v2_max = None
     try:
-        text = open(f"{cgroup_dir}/memory.max").read().strip()
-        if text != "max":
-            v2_max = int(text)
-    except (OSError, ValueError):
-        pass
-    try:
+        v2_max = _v2_memory_limit(cgroup_dir)
         if v2_max is not None:
-            limit = v2_max
-            current = _read_int_file(f"{cgroup_dir}/memory.current")
-            inactive_file = 0
-            try:
-                for line in open(f"{cgroup_dir}/memory.stat"):
-                    name, _, value = line.partition(" ")
-                    if name == "inactive_file":
-                        inactive_file = int(value)
-                        break
-            except (OSError, ValueError):
-                pass
+            limit, current, inactive_file = _cgroup_v2_usage(
+                cgroup_dir, v2_max
+            )
         else:
-            limit = _read_int_file(
-                f"{cgroup_dir}/memory/memory.limit_in_bytes"
-            )
-            if limit >= _CGROUP_LIMIT_UNLIMITED:
-                return None
-            current = _read_int_file(
-                f"{cgroup_dir}/memory/memory.usage_in_bytes"
-            )
-            inactive_file = 0
-            try:
-                for line in open(f"{cgroup_dir}/memory/memory.stat"):
-                    name, _, value = line.partition(" ")
-                    if name in ("total_inactive_file", "inactive_file"):
-                        inactive_file = int(value)
-                        break
-            except (OSError, ValueError):
-                pass
+            limit, current, inactive_file = _cgroup_v1_usage(cgroup_dir)
     except (OSError, ValueError):
         return None
     # "0" (or a bogus negative) is not a limit — e.g. a transient
@@ -158,6 +128,54 @@ def cgroup_memory_headroom(
         # Over the ceiling (limit hit, accounted with lag): no headroom.
         return limit, limit
     return limit, working_set
+
+
+def _v2_memory_limit(cgroup_dir: str) -> int | None:
+    """The finite cgroup-v2 ``memory.max``, or None when unlimited
+    (``max``) / unreadable."""
+    try:
+        text = open(f"{cgroup_dir}/memory.max").read().strip()
+        if text != "max":
+            return int(text)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _cgroup_v2_usage(cgroup_dir: str, limit: int) -> tuple[int, int, int]:
+    """(limit, current, inactive_file) from cgroup-v2 files."""
+    current = _read_int_file(f"{cgroup_dir}/memory.current")
+    inactive_file = _stat_value(
+        f"{cgroup_dir}/memory.stat", ("inactive_file",)
+    )
+    return limit, current, inactive_file
+
+
+def _cgroup_v1_usage(cgroup_dir: str) -> tuple[int, int, int]:
+    """(limit, current, inactive_file) from cgroup-v1 files; raises
+    ValueError when the limit is unlimited (no finite ceiling)."""
+    limit = _read_int_file(f"{cgroup_dir}/memory/memory.limit_in_bytes")
+    if limit >= _CGROUP_LIMIT_UNLIMITED:
+        raise ValueError("unlimited cgroup v1 memory limit")
+    current = _read_int_file(f"{cgroup_dir}/memory/memory.usage_in_bytes")
+    inactive_file = _stat_value(
+        f"{cgroup_dir}/memory/memory.stat",
+        ("total_inactive_file", "inactive_file"),
+    )
+    return limit, current, inactive_file
+
+
+def _stat_value(stat_path: str, names: tuple[str, ...]) -> int:
+    """The value of the first matching counter in a memory.stat file, 0 when
+    absent or unreadable."""
+    try:
+        for line in open(stat_path):
+            name, _, value = line.partition(" ")
+            if name in names:
+                return int(value)
+    except (OSError, ValueError):
+        pass
+    return 0
 
 
 def parse_vm_stat(

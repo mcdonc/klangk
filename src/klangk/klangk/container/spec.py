@@ -184,6 +184,73 @@ def resolve_tmp_size(app, workspace_settings: dict | None) -> str | None:
     )
 
 
+def _hosting_floor(
+    app,
+    hosting_hostname: str | None,
+    hosting_proto: str | None,
+    hosting_base_path: str | None,
+) -> tuple[str, str, str]:
+    """Fill any omitted hosting value with the resolver's floor
+    (``derive_hosting_info`` with no request)."""
+    if (
+        hosting_hostname is None
+        or hosting_proto is None
+        or hosting_base_path is None
+    ):
+        h, p, b = app.state.util.derive_hosting_info(None, None)
+        # Use ``is None`` (not ``or``): an explicit empty base_path
+        # (root deployment) is a legitimate value that must survive,
+        # not be clobbered by the resolved floor.
+        if hosting_hostname is None:
+            hosting_hostname = h
+        if hosting_proto is None:
+            hosting_proto = p
+        if hosting_base_path is None:
+            hosting_base_path = b
+    return hosting_hostname, hosting_proto, hosting_base_path
+
+
+def _append_hosted_env(
+    app,
+    env_vars: list[str],
+    host_ports: list[int],
+    hosting_hostname: str,
+    hosting_proto: str,
+    hosting_base_path: str,
+) -> None:
+    """Hosted-app serving env. Omitted entirely when the workspace has
+    no host ports (KLANGKD_HOSTED_PORTS_PER_WORKSPACE=0, or a
+    per-workspace value of 0): KLANGKWS_PORT_MAPPINGS absent makes
+    klangk-hosted-url / get_hosted_url error out cleanly, and the
+    KLANGKWS_HOSTING_* vars are meaningless without hosting. #1237
+    Also omitted in headless deployments (KLANGKD_PORT unset, #2732):
+    /hosted/ is served by the browser listener, which headless mode
+    does not render, so any hosted URL baked now would be dead on
+    arrival — the same clean-error outcome as the cap-0 case."""
+    if host_ports and app.state.settings.port is not None:
+        mappings = [
+            f"{CONTAINER_PORT_START + i}:{hp}"
+            for i, hp in enumerate(host_ports)
+        ]
+        env_vars.append(f"KLANGKWS_PORT_MAPPINGS={','.join(mappings)}")
+        env_vars.append(f"KLANGKWS_HOSTING_HOSTNAME={hosting_hostname}")
+        env_vars.append(f"KLANGKWS_HOSTING_PROTO={hosting_proto}")
+        env_vars.append(f"KLANGKWS_HOSTING_BASE_PATH={hosting_base_path}")
+
+
+def _append_feature_env(
+    app, env_vars: list[str], extra_env: dict[str, str] | None
+) -> None:
+    """Feature flags, then caller extras (an extra wins by appending
+    later)."""
+    for k, v in app.state.features.container_env().items():
+        env_vars.append(f"{k}={v}")
+
+    if extra_env:
+        for k, v in extra_env.items():
+            env_vars.append(f"{k}={v}")
+
+
 def build_env(
     app,
     workspace_id: str,
@@ -207,21 +274,9 @@ def build_env(
     (the same resolver the request paths use), so a deployer's
     ``KLANGKD_HOSTING_HOSTNAME`` is honored on every start — eager or not.
     """
-    if (
-        hosting_hostname is None
-        or hosting_proto is None
-        or hosting_base_path is None
-    ):
-        h, p, b = app.state.util.derive_hosting_info(None, None)
-        # Use ``is None`` (not ``or``): an explicit empty base_path
-        # (root deployment) is a legitimate value that must survive,
-        # not be clobbered by the resolved floor.
-        if hosting_hostname is None:
-            hosting_hostname = h
-        if hosting_proto is None:
-            hosting_proto = p
-        if hosting_base_path is None:
-            hosting_base_path = b
+    hosting_hostname, hosting_proto, hosting_base_path = _hosting_floor(
+        app, hosting_hostname, hosting_proto, hosting_base_path
+    )
     env_vars: list[str] = []
     egress_port = app.state.settings.egress_port
     proxy_url = f"http://host.containers.internal:{egress_port}/llm-proxy"
@@ -238,15 +293,14 @@ def build_env(
     # /hosted/ is served by the browser listener, which headless mode
     # does not render, so any hosted URL baked now would be dead on
     # arrival — the same clean-error outcome as the cap-0 case.
-    if host_ports and app.state.settings.port is not None:
-        mappings = [
-            f"{CONTAINER_PORT_START + i}:{hp}"
-            for i, hp in enumerate(host_ports)
-        ]
-        env_vars.append(f"KLANGKWS_PORT_MAPPINGS={','.join(mappings)}")
-        env_vars.append(f"KLANGKWS_HOSTING_HOSTNAME={hosting_hostname}")
-        env_vars.append(f"KLANGKWS_HOSTING_PROTO={hosting_proto}")
-        env_vars.append(f"KLANGKWS_HOSTING_BASE_PATH={hosting_base_path}")
+    _append_hosted_env(
+        app,
+        env_vars,
+        host_ports,
+        hosting_hostname,
+        hosting_proto,
+        hosting_base_path,
+    )
     env_vars.append(f"KLANGKWS_WORKSPACE_ID={workspace_id}")
     env_vars.append(f"KLANGKWS_AGENT_HOME={agent_home}")
     env_vars.append(
@@ -267,13 +321,7 @@ def build_env(
     # ever needed. Emitted only when a trustable cert dir is present.
     env_vars.extend(ssl_env_vars(ssl_dir))
 
-    for k, v in app.state.features.container_env().items():
-        env_vars.append(f"{k}={v}")
-
-    if extra_env:
-        for k, v in extra_env.items():
-            env_vars.append(f"{k}={v}")
-
+    _append_feature_env(app, env_vars, extra_env)
     return env_vars
 
 
@@ -294,6 +342,29 @@ def build_mounts(
     return binds
 
 
+async def _ensure_named_volume(app, user_id, podman, source: str) -> None:
+    """Create a missing named volume (instance-labelled, owner-tagged) or
+    validate an existing one belongs to this instance and user."""
+    info = await podman.inspect_volume(source)
+    if info is None:
+        labels = {
+            "klangk.managed": "true",
+            "klangk.instance": app.state.util.instance_id(),
+        }
+        if user_id:
+            labels["klangk.user-id"] = user_id
+        await podman.create_volume(source, labels)
+        return
+    vol_labels = info.get("Labels") or {}
+    if vol_labels.get("klangk.instance") != app.state.util.instance_id():
+        raise ValueError(
+            f"Volume {source!r} is not managed by this klangk instance"
+        )
+    vol_owner = vol_labels.get("klangk.user-id")
+    if vol_owner and user_id and vol_owner != user_id:
+        raise ValueError(f"Volume {source!r} belongs to another user")
+
+
 async def ensure_volumes(
     app,
     extra_mounts: list[str] | None,
@@ -306,30 +377,7 @@ async def ensure_volumes(
     for mount_spec in extra_mounts:
         source = mount_spec.split(":")[0]
         if _is_named_volume(source):
-            info = await podman.inspect_volume(source)
-            if info is None:
-                labels = {
-                    "klangk.managed": "true",
-                    "klangk.instance": app.state.util.instance_id(),
-                }
-                if user_id:
-                    labels["klangk.user-id"] = user_id
-                await podman.create_volume(source, labels)
-            else:
-                vol_labels = info.get("Labels") or {}
-                if (
-                    vol_labels.get("klangk.instance")
-                    != app.state.util.instance_id()
-                ):
-                    raise ValueError(
-                        f"Volume {source!r} is not managed "
-                        "by this klangk instance"
-                    )
-                vol_owner = vol_labels.get("klangk.user-id")
-                if vol_owner and user_id and vol_owner != user_id:
-                    raise ValueError(
-                        f"Volume {source!r} belongs to another user"
-                    )
+            await _ensure_named_volume(app, user_id, podman, source)
         elif not os.path.exists(source):
             raise ValueError(f"Bind mount source does not exist: {source}")
 

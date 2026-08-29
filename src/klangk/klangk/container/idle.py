@@ -64,36 +64,16 @@ class IdleMonitor:
         registry = self.app.state.container_registry
         last_token_sweep = 0.0
         while True:
-            timeouts = [
-                s.idle_timeout
-                for s in registry.states.values()
-                if s.idle_timeout is not None
-            ]
-            if timeouts:
-                interval = max(2, min(timeouts) // 2)
-            else:
-                interval = registry.check_interval_seconds
             wake = self.get_cleanup_wake()
             wake.clear()
             try:
-                await asyncio.wait_for(wake.wait(), timeout=interval)
+                await asyncio.wait_for(
+                    wake.wait(), timeout=self._cleanup_interval()
+                )
             except asyncio.TimeoutError:
                 pass
             now = time.time()
-            to_stop = []
-            for ws_id, state in list(registry.states.items()):
-                timeout = state.get_idle_timeout()
-                idle_secs = now - state.last_activity
-                logger.debug(
-                    "Idle check: %s idle %.0fs / %ds",
-                    state.container_id[:12],
-                    idle_secs,
-                    timeout,
-                )
-                if timeout > 0 and idle_secs > timeout:
-                    to_stop.append((state.container_id, ws_id))
-
-            for cid, wid in to_stop:
+            for cid, wid in self._idle_overdue(now):
                 logger.info(
                     "Stopping idle container %s (workspace %s)",
                     cid,
@@ -101,11 +81,7 @@ class IdleMonitor:
                 )
                 state = registry.states.get(wid)
                 if state:
-                    for cb in list(state.idle_callbacks):
-                        try:
-                            await cb(wid)
-                        except Exception as e:
-                            logger.error("Idle callback error: %s", e)
+                    await self._run_idle_callbacks(state, wid)
                 await registry.notify_workspace_killed(wid, container_id=cid)
                 await registry.stop_and_remove_container(cid)
 
@@ -119,6 +95,46 @@ class IdleMonitor:
                     await registry._sweep_orphaned_sidecar_tokens()
                 except Exception as e:
                     logger.warning("Orphan sidecar-token sweep failed: %s", e)
+
+    def _cleanup_interval(self) -> float:
+        """Half the smallest active idle timeout (floor 2s), else the
+        configured check interval."""
+        registry = self.app.state.container_registry
+        timeouts = [
+            s.idle_timeout
+            for s in registry.states.values()
+            if s.idle_timeout is not None
+        ]
+        if timeouts:
+            return max(2, min(timeouts) // 2)
+        return registry.check_interval_seconds
+
+    def _idle_overdue(self, now: float) -> list[tuple[str, str]]:
+        """(container_id, ws_id) for workspaces idle past their timeout."""
+        registry = self.app.state.container_registry
+        to_stop = []
+        for ws_id, state in list(registry.states.items()):
+            timeout = state.get_idle_timeout()
+            idle_secs = now - state.last_activity
+            logger.debug(
+                "Idle check: %s idle %.0fs / %ds",
+                state.container_id[:12],
+                idle_secs,
+                timeout,
+            )
+            if timeout > 0 and idle_secs > timeout:
+                to_stop.append((state.container_id, ws_id))
+        return to_stop
+
+    @staticmethod
+    async def _run_idle_callbacks(state, wid: str) -> None:
+        """Fire a workspace's idle callbacks; one raising callback must not
+        block the rest or the stop itself."""
+        for cb in list(state.idle_callbacks):
+            try:
+                await cb(wid)
+            except Exception as e:
+                logger.error("Idle callback error: %s", e)
 
     def start_cleanup_loop(self) -> None:
         registry = self.app.state.container_registry
