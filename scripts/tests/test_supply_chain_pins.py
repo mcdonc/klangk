@@ -199,7 +199,7 @@ class TestWorkspaceTarballPins:
             ), f"PROCESS_COMPOSE_SHA256_{arch} must be a 64-hex-char sha256"
 
     def test_no_unverified_curl_pipes(self):
-        """No `curl ... | sh` / `curl ... | tar` piping in the image
+        r"""No `curl ... | sh` / `curl ... | tar` piping in the image
         Dockerfiles whose installs are fully pinned (workspace, host, base) —
         download-to-file, verify, then act. The regex `curl[^|]*\|` matches
         any line with `curl` followed later by a pipe (a `\S*`-anchored form

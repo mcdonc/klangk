@@ -99,6 +99,7 @@ in
       sqlite.bin
       rsync
       twine
+      xenon # cyclomatic-complexity gate tool (#2828): same pinned build as the hook
       zensical
     ]
     ++ (
@@ -166,6 +167,14 @@ in
       '';
       after = [ "devenv:python:virtualenv" ];
       before = [ "devenv:enterShell" ];
+    };
+    # The complexity gate as a one-word task (#2828): the exact hook
+    # invocation over the exact hook file set, so `devenv shell -- xenon`
+    # (ad hoc) and `pre-commit run xenon` (staged) can't drift. Note the
+    # hook grades the STAGED subset; this task grades the whole tree —
+    # stricter or equal, never more lenient.
+    "klangk:xenon" = {
+      exec = "xenon --max-absolute B --max-modules B --max-average B $(git ls-files 'src/klangk/klangk/*.py' 'src/klangksidecar/klangksidecar/*.py' 'scripts/*.py')";
     };
     "klangk:flutter-build" = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/flutterbuildweb.sh"'';
