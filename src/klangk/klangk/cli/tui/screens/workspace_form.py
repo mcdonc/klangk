@@ -1420,11 +1420,9 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
 
     # --- save ---
 
-    def _save(self) -> None:
-        name = self.query_one("#name", Input).value.strip()
-        if not name:
-            self._msg("Name is required.", error=True)
-            return
+    def _save_body(self, name: str) -> dict | None:
+        """Gather the form fields into a PUT body; None on invalid input
+        (the error has already been shown via ``_msg``)."""
         sel = self.query_one("#image", Select)
         val = sel.value
         image = val if (val and val != "(none)") else None
@@ -1457,7 +1455,7 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
             settings = _collect_settings(self)
         except ValueError as exc:
             self._msg(str(exc), error=True)
-            return
+            return None
         # PUT settings is a full-replace bag, so seed from the existing
         # bag unconditionally — API-only keys the form does not represent
         # (e.g. bridge_timeout) and toggle-gated keys (nix, allow_sudo)
@@ -1498,38 +1496,56 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         }
         if merged_settings:
             body["settings"] = merged_settings
+        return body
+
+    def _restart_needed_after_save(self, body: dict) -> bool:
+        """True if a create-time field changed on a running workspace."""
         ws = self._ws
+        settings = body.get("settings") or {}
         orig_mounts = list(ws.mounts or []) or None
         orig_env = dict(ws.env or {}) or None
         orig_domains = list(ws.allowed_domains or []) or None
         orig_rejected = list(ws.rejected_domains or []) or None
-        restart_needed = bool(ws.running) and (
-            (image or None) != (ws.image or None)
-            or mounts != orig_mounts
-            or env != orig_env
-            or (command or None) != (ws.service_command or None)
-            or allowed_domains != orig_domains
-            or rejected_domains != orig_rejected
+        return bool(ws.running) and (
+            (body["image"] or None) != (ws.image or None)
+            or body["mounts"] != orig_mounts
+            or body["env"] != orig_env
+            or (body["service_command"] or None)
+            != (ws.service_command or None)
+            or body["allowed_domains"] != orig_domains
+            or body["rejected_domains"] != orig_rejected
             # #2409: egress_mode is a container-create-time field (it sets
             # up --network container:<sidecar>), so a change needs a restart.
-            or egress_mode != (ws.egress_mode or EGRESS_MODE_DEFAULT)
+            or body["egress_mode"] != (ws.egress_mode or EGRESS_MODE_DEFAULT)
             # #2233: the per-workspace /nix mount is set up at create
             # time, so toggling it on a running workspace needs a restart.
             or (
                 self._nix_available
-                and merged_settings.get("nix", False)
+                and settings.get("nix", False)
                 != bool((ws.settings or {}).get("nix"))
             )
             # #2017: the sudoers rule is written at container-create time,
             # so a posture flip needs a restart to take effect.
             or (
                 self._sudo_available
-                and merged_settings.get("allow_sudo", True)
+                and settings.get("allow_sudo", True)
                 != bool((ws.settings or {}).get("allow_sudo", True))
             )
         )
+
+    def _save(self) -> None:
+        name = self.query_one("#name", Input).value.strip()
+        if not name:
+            self._msg("Name is required.", error=True)
+            return
+        body = self._save_body(name)
+        if body is None:
+            return
+        ws = self._ws
         self.run_worker(
-            self._do_save(name, body, ws, restart_needed),
+            self._do_save(
+                name, body, ws, self._restart_needed_after_save(body)
+            ),
             exit_on_error=False,
         )
 
