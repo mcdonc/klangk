@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from .. import container, model
 from ..container.spec import SHARED_HOME
-from ..exceptions import NodeDrainingError
+from ..exceptions import NodeDrainingError, WorkspaceCapacityError
 from ..terminal import TerminalSession
 from ..podman import ExecSession, PodmanError
 from .safe_websocket import SafeWebSocket, WS_ERRORS
@@ -386,6 +386,16 @@ class Connection:
             # running. Error frame, not a drop.
             send_error(self.sock, str(exc))
             return
+        except WorkspaceCapacityError as exc:
+            # Capacity refusal (#2525): the host cannot fit the
+            # workspace's memory limit or the user hit the running
+            # quota. Error frame with the actionable message ("stop a
+            # workspace first / free host memory") and a machine-
+            # readable ``code`` so the UI can render it as a capacity
+            # refusal rather than a generic failure — not a drop; the
+            # client stays connected and can retry once capacity frees.
+            send_error(self.sock, str(exc), code="capacity")
+            return
         logger.info(
             "workspace-open: start or reuse container "
             "(see breakdown above): %.3fs",
@@ -489,6 +499,12 @@ class Connection:
             # Draining node (#2527) — same clear refusal on the WS restart
             # path as the API's 503.
             send_error(self.sock, str(exc))
+            return
+        except WorkspaceCapacityError as exc:
+            # Capacity refusal (#2525) — same clear refusal on the WS
+            # restart path as the API's 503, with the machine-readable
+            # capacity code.
+            send_error(self.sock, str(exc), code="capacity")
             return
         except (PodmanError, ValueError) as exc:
             # A failed (re)start must not drop the whole WebSocket with a

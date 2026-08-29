@@ -12,6 +12,8 @@ patch/import) so callers keep working unchanged:
 - :mod:`.idle`     - ``IdleMonitor``
 - :mod:`.eviction` - ``MemoryPressureEvictor`` (host memory-pressure
   eviction, #2526) + ``read_meminfo``/``available_fraction``
+- :mod:`.admission` — ``AdmissionControl`` (start-time host-capacity /
+  per-user quota admission, #2525)
 - :mod:`.health`   - ``HealthMonitor`` + ``unhealthy_message``
 - :mod:`.sidecar`  - network sidecar lifecycle (mixin + constants)
 - :mod:`.spec`    - container spec assembly (``ContainerStartSpec``, env/
@@ -25,12 +27,14 @@ here are bindings, not live cells.
 """
 
 from ..ssl_trust import ssl_env_vars as ssl_env_vars
+from .admission import AdmissionControl as AdmissionControl
 from .browsers import BrowserRouter as BrowserRouter
 from .eviction import (
     MemoryPressureEvictor as MemoryPressureEvictor,
     available_fraction as available_fraction,
     cgroup_memory_headroom as cgroup_memory_headroom,
     macos_available_fraction as macos_available_fraction,
+    macos_measure as macos_measure,
     measure_available_fraction as measure_available_fraction,
     parse_vm_stat as parse_vm_stat,
     read_meminfo as read_meminfo,

@@ -340,7 +340,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
             );
         }
       },
-      onPermissionError: (error) {
+      onPageError: (error) {
         if (mounted) setState(() => _error = error);
       },
     );

@@ -107,7 +107,18 @@ def format_container_info(
     return name, ports_str
 
 
-def send_error(sock: SafeWebSocket, message: str) -> None:
+def send_error(
+    sock: SafeWebSocket, message: str, code: str | None = None
+) -> None:
+    """Send an error frame; *code* adds a machine-readable kind.
+
+    The optional ``code`` (e.g. ``"capacity"``, #2525) lets clients tell
+    a *class* of failure apart from other start errors without parsing
+    the message text — the WS counterpart of the API's 503. Omitted for
+    legacy callers; unknown codes are ignorable by old clients.
+    """
     msg = {"type": "error", "message": message}
+    if code is not None:
+        msg["code"] = code
     log_ws_msg("SEND", msg)
     sock.send_json(msg)

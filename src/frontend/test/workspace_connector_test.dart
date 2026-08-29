@@ -90,7 +90,7 @@ void main() {
         },
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -118,7 +118,7 @@ void main() {
         },
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -145,7 +145,7 @@ void main() {
         },
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -170,7 +170,7 @@ void main() {
         onConnected: ({required connected, error}) {},
         onContainerEvent: (name, value) => events.add(name),
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -200,7 +200,7 @@ void main() {
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (msg) => deletions.add(msg),
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -230,7 +230,7 @@ void main() {
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (e) => errors.add(e),
+        onPageError: (e) => errors.add(e),
       );
 
       await connector.connect();
@@ -261,7 +261,7 @@ void main() {
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
         onRestartError: (e) => restartErrors.add(e),
       );
 
@@ -274,11 +274,59 @@ void main() {
 
       expect(restartErrors, ['Container restart failed: dependent containers']);
 
-      // …but permission errors do not (they stay on onPermissionError).
+      // …but permission errors do not (they stay on onPageError).
       ws.emitError('Permission denied');
       await Future<void>.delayed(Duration.zero);
 
       expect(restartErrors, hasLength(1));
+
+      connector.dispose();
+      ws.close();
+    });
+
+    test('capacity refusals surface as page errors (#2525)', () async {
+      final ws = _MockWsClient();
+      final pageErrors = <String>[];
+      final restartErrors = <String>[];
+
+      final connector = WorkspaceConnector(
+        wsClient: ws,
+        workspaceId: 'ws-1',
+        featureRegistry: ToolPluginRegistry(),
+        onConnected: ({required connected, error}) {},
+        onContainerEvent: (_, __) {},
+        onSharedTerminalDeleted: (_) {},
+        onPageError: (e) => pageErrors.add(e),
+        onRestartError: (e) => restartErrors.add(e),
+      );
+
+      await connector.connect();
+
+      // A host-capacity refusal (the server's error frame carries the
+      // machine-readable code `capacity`; the stream carries the
+      // message) must reach the page-error hook — including on an
+      // initial connect where no restart is in flight — instead of
+      // being silently dropped.
+      ws.emitError(
+        'host at capacity: 1.2 GB available, workspace wants 9.0 GB '
+        '(memory limit 8.0 GB + 1.0 GB reserve)',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(pageErrors, hasLength(1));
+      expect(pageErrors.first, contains('host at capacity'));
+      expect(restartErrors, isEmpty);
+
+      // Same for a per-user quota refusal.
+      ws.emitError(
+        'workspace quota reached: 2 of this user\'s workspaces are '
+        'already running',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(pageErrors, hasLength(2));
+      expect(pageErrors.last, contains('quota reached'));
+      expect(restartErrors, isEmpty);
 
       connector.dispose();
       ws.close();
@@ -294,7 +342,7 @@ void main() {
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -319,7 +367,7 @@ void main() {
         },
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -354,7 +402,7 @@ void main() {
         },
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       // Fire two connects concurrently
@@ -382,7 +430,7 @@ void main() {
         },
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -412,7 +460,7 @@ void main() {
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();
@@ -434,7 +482,7 @@ void main() {
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
         browserDelegateEnabled: false,
       );
 
@@ -459,7 +507,7 @@ void main() {
         onConnected: ({required connected, error}) {},
         onContainerEvent: (_, __) {},
         onSharedTerminalDeleted: (_) {},
-        onPermissionError: (_) {},
+        onPageError: (_) {},
       );
 
       await connector.connect();

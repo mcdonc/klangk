@@ -663,6 +663,18 @@ async def test_get_user_workspaces_with_containers(ws, user):
     assert [w["container_id"] for w in result] == ["cid-x"]
 
 
+async def test_get_user_workspace_ids_includes_never_started(ws, user):
+    """#2525: the admission quota counts in-flight starts, whose
+    container_id is only persisted after podman create — so the id
+    listing must NOT prefilter on container_id."""
+    fresh = await ws.create_workspace(user["id"], "never-started")
+    started = await ws.create_workspace(user["id"], "started")
+    await ws.update_workspace_container(started["id"], "cid-y")
+    ids = await ws.get_user_workspace_ids(user["id"])
+    assert set(ids) == {fresh["id"], started["id"]}
+    assert await ws.get_user_workspace_ids("nobody") == []
+
+
 async def test_list_auto_start_workspaces(ws, user):
     await ws.create_workspace(user["id"], "manual")
     # auto_start lives on the container/image config; set it via update.

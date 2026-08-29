@@ -476,6 +476,19 @@ class TestSendError:
             {"type": "error", "message": "bad thing"}
         )
 
+    def test_code_field_added_when_given(self):
+        """#2525: a machine-readable ``code`` rides the frame so clients
+        can class the failure without parsing the message text."""
+        sock = _mock_sock()
+        send_error(sock, "host at capacity: ...", code="capacity")
+        sock.send_json.assert_called_once_with(
+            {
+                "type": "error",
+                "message": "host at capacity: ...",
+                "code": "capacity",
+            }
+        )
+
 
 # Proxy-trust, hosting-info, and client_is_loopback tests moved to
 # test_util.py now that those helpers are Util(app_state) methods (#1503).
@@ -2092,6 +2105,45 @@ class TestHandleWorkspaceConnect:
         errors = [c for c in calls if c.get("type") == "error"]
         assert len(errors) == 1
         assert "does not exist" in errors[0]["message"]
+
+    async def test_connect_capacity_refusal_error_frame(
+        self, user, agent_user, app_state
+    ):
+        """#2525: an admission-control refusal (host memory / user quota)
+        is sent as a clear error frame — the actionable message, not a
+        dropped socket — so the client can surface 'stop a workspace
+        first / free host memory' and retry."""
+        from klangk.exceptions import WorkspaceCapacityError
+
+        sock = _mock_sock()
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "cap-ws"
+        )
+        conn = _base_conn(user=user, ws=sock)
+
+        with patch.object(
+            Connection,
+            "start_workspace_container",
+            side_effect=WorkspaceCapacityError(
+                "host at capacity: 1.2 GB available, workspace wants "
+                "9.0 GB (memory limit 8.0 GB + 1.0 GB reserve). Stop an "
+                "idle workspace, free host memory, or lower the workspace "
+                "memory limit (KLANGKD_CONTAINER_MEMORY_LIMIT)."
+            ),
+        ):
+            await conn.handle_workspace_connect(
+                {"workspaceId": workspace["id"]}
+            )
+
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        errors = [c for c in calls if c.get("type") == "error"]
+        assert len(errors) == 1
+        assert "host at capacity" in errors[0]["message"]
+        # Machine-readable class so the UI can render it as a capacity
+        # refusal without parsing the message (#2525).
+        assert errors[0]["code"] == "capacity"
+        # The socket stays open — a refusal is not a disconnect.
+        sock.close.assert_not_awaited()
 
 
 class TestHandleWorkspaceDisconnect:
@@ -6019,6 +6071,56 @@ class TestHandleRestartContainer:
         assert len(errors) == 1
         assert "Container restart failed" in errors[0]["message"]
         assert "network sidecar" in errors[0]["message"]
+
+    async def test_restart_capacity_refusal_error_frame(self, user, app_state):
+        """#2525: an admission-control refusal on the WS restart path is
+        a clear error frame (same as the API's 503), not a drop."""
+        from klangk.exceptions import WorkspaceCapacityError
+
+        app_state = _make_app_state()
+        registry = app_state.state.container_registry
+        sock = _mock_sock(headers={"host": "localhost:8997"})
+        workspace = await _create_workspace_with_acl(
+            app_state, user["id"], "restart-cap"
+        )
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        conn.workspace_id = workspace["id"]
+        conn.container_id = "cid-cap"
+        conn.workspace = workspace
+
+        with (
+            patch.object(
+                Connection,
+                "start_workspace_container",
+                AsyncMock(
+                    side_effect=WorkspaceCapacityError(
+                        "workspace quota reached: 2 of this user's "
+                        "workspaces are already running and the server "
+                        "caps it at 2 "
+                        "(KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER). "
+                        "Stop a workspace first, or ask the operator to "
+                        "raise the cap."
+                    )
+                ),
+            ),
+            patch.object(
+                registry,
+                "stop_and_remove_container",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await conn.handle_restart_container()
+
+        calls = [c[0][0] for c in sock.send_json.call_args_list]
+        errors = [
+            c
+            for c in calls
+            if isinstance(c, dict) and c.get("type") == "error"
+        ]
+        assert len(errors) == 1
+        assert "quota" in errors[0]["message"]
+        assert errors[0]["code"] == "capacity"
+        sock.close.assert_not_awaited()
 
     async def test_restart_fractional_timeout(
         self, user, monkeypatch, app_state
