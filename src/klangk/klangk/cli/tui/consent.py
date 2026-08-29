@@ -505,6 +505,17 @@ def _parse_request(obj: object) -> ConsentRequest | None:
     )
 
 
+def _parse_rule_rows(raw) -> list[ConsentRule]:
+    """Parse one frame's rule rows, skipping rows that fail to parse.
+
+    Newest-decided-first (matches backend list_active ORDER BY decided_at
+    DESC); rows with no decided_at sort last. Stable for ties.
+    """
+    rows = [r for r in (_parse_rule(o) for o in raw or []) if r]
+    rows.sort(key=_rule_sort_key)
+    return rows
+
+
 def _parse_rules(msg: dict) -> EgressRules | None:
     """Build an :class:`EgressRules` from an ``egress_rules`` frame (#2335).
 
@@ -519,21 +530,11 @@ def _parse_rules(msg: dict) -> EgressRules | None:
     allow_list = (
         tuple(str(d) for d in raw_allow) if isinstance(raw_allow, list) else ()
     )
-    allowed = [
-        r for r in (_parse_rule(o) for o in msg.get("allowed") or []) if r
-    ]
-    denied = [
-        r for r in (_parse_rule(o) for o in msg.get("denied") or []) if r
-    ]
-    # Newest-decided-first (matches backend list_active ORDER BY decided_at
-    # DESC); rows with no decided_at sort last. Stable for ties.
-    allowed.sort(key=_rule_sort_key)
-    denied.sort(key=_rule_sort_key)
     return EgressRules(
         workspace_id=wid,
         allow_list=allow_list,
-        allowed=tuple(allowed),
-        denied=tuple(denied),
+        allowed=tuple(_parse_rule_rows(msg.get("allowed"))),
+        denied=tuple(_parse_rule_rows(msg.get("denied"))),
         paused=_parse_pause(msg.get("paused")),
     )
 
@@ -783,6 +784,38 @@ class ConsentDeciderApp(App):
 
     # -- WS worker ---------------------------------------------------------
 
+    async def _rotate_token(self) -> None:
+        """Refresh the JWT and adopt it when a fresh one comes back."""
+        new = await self._refresh_token()
+        if new:
+            self.token = new
+
+    async def _recover_after_refusal(self, refusals: int) -> int:
+        """Handle a refused (403) handshake; returns the new refusal count.
+
+        First refusal: maybe just an expired token (its 4002 close code is
+        lost pre-accept) -- refresh and retry fast once. Repeated refusal:
+        registration cannot succeed right now (see _ws_loop) -- log once,
+        then fall back to the slow interval, not a tight loop and not a
+        dead stop (#2490 review: a mid-session flip back to interactive
+        must self-heal without restarting the shell)."""
+        refusals += 1
+        if refusals >= 2:
+            if not self._refused:
+                self._refused = True
+                logger.warning(
+                    "consent-decide: registration refused (403) "
+                    "repeatedly; retrying every %.0fs",
+                    _REFUSED_RETRY_INTERVAL,
+                )
+            delay = _REFUSED_RETRY_INTERVAL
+        else:
+            delay = self._backoff(1)
+        await self._rotate_token()
+        await asyncio.sleep(delay)
+        self._refresh()
+        return refusals
+
     async def _ws_loop(self) -> None:
         """Connect -> pump -> reconnect loop, until :attr:`_stop` is set.
 
@@ -841,38 +874,12 @@ class ConsentDeciderApp(App):
                 self._ws = None
                 self._connected = False
             if refused:
-                refusals += 1
-                if refusals >= 2:
-                    # Repeated refusal: registration cannot succeed right
-                    # now (see docstring). Log once, then fall back to the
-                    # slow interval -- not a tight loop, not a dead stop
-                    # (#2490 review: a mid-session flip back to interactive
-                    # must self-heal without restarting the shell).
-                    if not self._refused:
-                        self._refused = True
-                        logger.warning(
-                            "consent-decide: registration refused (403) "
-                            "repeatedly; retrying every %.0fs",
-                            _REFUSED_RETRY_INTERVAL,
-                        )
-                    delay = _REFUSED_RETRY_INTERVAL
-                else:
-                    # First refusal: maybe just an expired token (its 4002
-                    # close code is lost pre-accept) -- refresh and retry
-                    # fast once.
-                    delay = self._backoff(1)
-                new = await self._refresh_token()
-                if new:
-                    self.token = new
-                await asyncio.sleep(delay)
-                self._refresh()
+                refusals = await self._recover_after_refusal(refusals)
                 continue
             if self._stop:
                 break
             if auth_close:
-                new = await self._refresh_token()
-                if new:
-                    self.token = new
+                await self._rotate_token()
             attempt += 1
             await asyncio.sleep(self._backoff(attempt))
             self._refresh()
@@ -923,45 +930,7 @@ class ConsentDeciderApp(App):
                     auth_close = code in (4001, 4002)
                     break
                 action, payload = self.controller.apply_frame(raw)
-                if action == ADDED:
-                    # A held request arrived: surface it as the popup over the
-                    # shell (no-op in standalone, skipped if already shown).
-                    # Scheduled OFF the event loop (#2699): the show is
-                    # synchronous tmux subprocess work and must never gate
-                    # the render below — inline, the Allow/Deny row only
-                    # appeared ~seconds after the popup wrapper, because a
-                    # `display-popup` blocks until dismissed and always
-                    # outlives its 3 s timeout. The task starts on the next
-                    # loop tick, so in practice the row paints before the
-                    # viewer attaches (worst case it shows a tick later —
-                    # never seconds).
-                    self._schedule_popup_show()
-                try:
-                    if action == ERROR:
-                        self._flash(str(payload))
-                    elif action == REVOKE_ACK:
-                        # payload = (request_id, ok). A failed revoke (not an
-                        # active verdict, wrong workspace, or the sidecar never
-                        # acked the drop) leaves the row enforced -- flash so
-                        # the decider knows it is still in effect, never silent.
-                        # Success needs no flash; the controller already dropped
-                        # the row and the refresh re-renders the list without it.
-                        _rid, ok = payload  # type: ignore[misc]
-                        if not ok:
-                            self._flash("revoke failed — still in effect")
-                        self._refresh()
-                    elif action == PAUSE_ACK:
-                        # payload = (ok, until). A failed pause/unpause flashes;
-                        # success is reflected by the refreshed egress_rules
-                        # frame the server broadcasts (no flash needed).
-                        ok, _until = payload  # type: ignore[misc]
-                        if not ok:
-                            self._flash("pause failed")
-                        self._refresh()
-                    else:
-                        self._refresh()
-                except Exception:
-                    logger.exception("consent-decide render failed")
+                self._react(action, payload)
         finally:
             ping.cancel()
             try:
@@ -969,6 +938,48 @@ class ConsentDeciderApp(App):
             except (asyncio.CancelledError, Exception):
                 pass
         return auth_close
+
+    def _react(self, action: str, payload) -> None:
+        """React to one parsed frame outcome (isolated render; see _pump)."""
+        if action == ADDED:
+            # A held request arrived: surface it as the popup over the
+            # shell (no-op in standalone, skipped if already shown).
+            # Scheduled OFF the event loop (#2699): the show is
+            # synchronous tmux subprocess work and must never gate
+            # the render below — inline, the Allow/Deny row only
+            # appeared ~seconds after the popup wrapper, because a
+            # `display-popup` blocks until dismissed and always
+            # outlives its 3 s timeout. The task starts on the next
+            # loop tick, so in practice the row paints before the
+            # viewer attaches (worst case it shows a tick later —
+            # never seconds).
+            self._schedule_popup_show()
+        try:
+            if action == ERROR:
+                self._flash(str(payload))
+            elif action == REVOKE_ACK:
+                # payload = (request_id, ok). A failed revoke (not an
+                # active verdict, wrong workspace, or the sidecar never
+                # acked the drop) leaves the row enforced -- flash so
+                # the decider knows it is still in effect, never silent.
+                # Success needs no flash; the controller already dropped
+                # the row and the refresh re-renders the list without it.
+                _rid, ok = payload  # type: ignore[misc]
+                if not ok:
+                    self._flash("revoke failed — still in effect")
+                self._refresh()
+            elif action == PAUSE_ACK:
+                # payload = (ok, until). A failed pause/unpause flashes;
+                # success is reflected by the refreshed egress_rules
+                # frame the server broadcasts (no flash needed).
+                ok, _until = payload  # type: ignore[misc]
+                if not ok:
+                    self._flash("pause failed")
+                self._refresh()
+            else:
+                self._refresh()
+        except Exception:
+            logger.exception("consent-decide render failed")
 
     async def _ping_loop(self, ws) -> None:
         """Send a liveness ping every ``ping_interval`` to stay registered."""
@@ -988,20 +999,10 @@ class ConsentDeciderApp(App):
 
     # -- rendering ---------------------------------------------------------
 
-    def _refresh(self) -> None:
-        """Sync the list to controller state WITHOUT a full rebuild.
-
-        A clear+rebuild every tick flickered badly. Instead we remove only
-        resolved/expired rows, repaint the countdown text of survivors in
-        place, and append genuinely-new ones. Order is stable (oldest-first
-        by requested_at), so we never have to reorder.
-
-        Also keeps the rules screen live when it is the active screen, so its
-        countdowns tick and a freshly-arrived ``egress_rules`` frame shows up
-        without waiting for its own timer (#2335 slice B).
-        """
-        # Refresh the rules screen first (if up) so a queue-query hiccup can
-        # never starve it -- the WS worker is shared across the switch.
+    def _refresh_rules_screen(self) -> None:
+        """Keep the rules screen live when it is the active screen (#2335
+        slice B); refreshed first so a queue-query hiccup can never starve
+        it -- the WS worker is shared across the switch."""
         try:
             screen = self.screen
         except Exception:
@@ -1011,16 +1012,11 @@ class ConsentDeciderApp(App):
                 screen.refresh_rules()
             except Exception:
                 logger.exception("consent-decide rules render failed")
-        try:
-            lv = self.query_one("#requests", ListView)
-            status = self.query_one("#status", Static)
-            empty = self.query_one("#empty", Static)
-        except Exception:
-            return  # not mounted yet (pre-mount call)
-        ordered = self.controller.ordered()
+
+    def _sync_request_rows(self, lv, ordered) -> list[str]:
+        """Drop resolved/expired rows, repaint survivors in place, append
+        new ones (stable order). Returns the ids of the appended rows."""
         current_ids = {req.id for req in ordered}
-        focused_id = self._focused_request_id()
-        focused_index = lv.index  # to refocus above a resolved hold
         # Drop resolved/expired rows (leave survivors untouched -> no flicker).
         for child in list(lv.children):
             rid = getattr(child, "request_id", None)
@@ -1036,33 +1032,67 @@ class ConsentDeciderApp(App):
                 new_ids.append(req.id)
             else:
                 self._update_item(item, req)
-        # Focus policy (#2383): a newly-arrived hold grabs focus; else keep
-        # focus on the previously-focused survivor; else (the focused hold was
-        # just resolved) move focus to the hold above it (or the new top) so
-        # deciding doesn't strand the user on an unfocused list.
+        return new_ids
+
+    def _apply_focus_policy(
+        self, new_ids, current_ids, focused_id, focused_index
+    ) -> None:
+        """Focus policy (#2383): a newly-arrived hold grabs focus; else keep
+        focus on the previously-focused survivor; else (the focused hold was
+        just resolved) move focus to the hold above it (or the new top) so
+        deciding doesn't strand the user on an unfocused list."""
         if new_ids:
             self._select_by_id(new_ids[0])
         elif focused_id is not None and focused_id in current_ids:
             self._select_by_id(focused_id)
         elif focused_id is not None:
             self._select_index((focused_index or 0) - 1)
+
+    def _status_line(self, ordered) -> str:
+        """The connection/status line (flash message takes precedence)."""
+        if self._connected:
+            conn = "connected"
+        elif self._refused:
+            conn = f"refused — retrying every {int(_REFUSED_RETRY_INTERVAL)}s"
+        else:
+            conn = "reconnecting"
+        return (
+            f" {escape(self.workspace_name)}  ·  {conn}"
+            f"  ·  {len(ordered)} held"
+        )
+
+    def _refresh(self) -> None:
+        """Sync the list to controller state WITHOUT a full rebuild.
+
+        A clear+rebuild every tick flickered badly. Instead we remove only
+        resolved/expired rows, repaint the countdown text of survivors in
+        place, and append genuinely-new ones. Order is stable (oldest-first
+        by requested_at), so we never have to reorder.
+
+        Also keeps the rules screen live when it is the active screen, so its
+        countdowns tick and a freshly-arrived ``egress_rules`` frame shows up
+        without waiting for its own timer (#2335 slice B).
+        """
+        self._refresh_rules_screen()
+        try:
+            lv = self.query_one("#requests", ListView)
+            status = self.query_one("#status", Static)
+            empty = self.query_one("#empty", Static)
+        except Exception:
+            return  # not mounted yet (pre-mount call)
+        ordered = self.controller.ordered()
+        current_ids = {req.id for req in ordered}
+        focused_id = self._focused_request_id()
+        focused_index = lv.index  # to refocus above a resolved hold
+        new_ids = self._sync_request_rows(lv, ordered)
+        self._apply_focus_policy(
+            new_ids, current_ids, focused_id, focused_index
+        )
         empty.display = not ordered
         if self._flash_until > time.time():
             status.update(self._flash_msg)
         else:
-            if self._connected:
-                conn = "connected"
-            elif self._refused:
-                conn = (
-                    f"refused — retrying every {int(_REFUSED_RETRY_INTERVAL)}s"
-                )
-            else:
-                conn = "reconnecting"
-            line = (
-                f" {escape(self.workspace_name)}  ·  {conn}"
-                f"  ·  {len(ordered)} held"
-            )
-            status.update(line)
+            status.update(self._status_line(ordered))
         # Pause state + countdown live on the pause bar (next to the buttons).
         self._refresh_pause_highlight()
 
@@ -1646,6 +1676,27 @@ class RulesScreen(Screen):
         content.update(self._render_body(rules, controller))
         self._rebuild_rule_list(rules)
 
+    def _capture_focused_rule_id(self, lv) -> str | None:
+        """The focused rule id before ``lv.clear()`` resets the highlight.
+
+        When ``highlighted_child`` is already None (a first rebuild in the
+        same refresh cycle cleared it and its deferred restore has not
+        landed), fall back to the id remembered from the last
+        ``Highlighted`` event (:attr:`_last_focused_rule_id`), which a
+        ``clear()`` cannot clobber -- so two rule-set changes inside one
+        refresh cycle still restore the focused row (#2362)."""
+        focused = (
+            getattr(lv.highlighted_child, "rule_id", None)
+            if lv.highlighted_child is not None
+            else None
+        )
+        if focused is None:
+            # Burst window: a prior rebuild in this same refresh cycle
+            # cleared the highlight and its restore has not landed yet --
+            # the remembered id is the decider's actual focus (#2362).
+            focused = self._last_focused_rule_id
+        return focused
+
     def _rebuild_rule_list(self, rules: EgressRules | None) -> None:
         """Rebuild the revoke selector from the controller's rules (#2341).
 
@@ -1675,16 +1726,7 @@ class RulesScreen(Screen):
         current = [getattr(c, "rule_id", None) for c in lv.children]
         if current == desired:
             return  # unchanged -> no flicker
-        focused = (
-            getattr(lv.highlighted_child, "rule_id", None)
-            if lv.highlighted_child is not None
-            else None
-        )
-        if focused is None:
-            # Burst window: a prior rebuild in this same refresh cycle
-            # cleared the highlight and its restore has not landed yet --
-            # the remembered id is the decider's actual focus (#2362).
-            focused = self._last_focused_rule_id
+        focused = self._capture_focused_rule_id(lv)
         lv.clear()
         if rules is not None:
             for r in rules.allowed:
@@ -1724,13 +1766,10 @@ class RulesScreen(Screen):
         item.rule_id = rule.id  # type: ignore[attr-defined]
         return item
 
-    def _render_body(self, rules: EgressRules | None, controller) -> str:
-        """Build the grouped rich-markup body (allow-list, allows, denies, pause)."""
-        lines: list[str] = []
-        n_allowed = len(rules.allowed) if rules else 0
-        n_denied = len(rules.denied) if rules else 0
-
-        lines.append("[bold]Static allow-list[/bold]")
+    @staticmethod
+    def _allow_list_section(rules: EgressRules | None) -> list[str]:
+        """The static allow-list block (raw host specs, no countdown)."""
+        lines = ["[bold]Static allow-list[/bold]"]
         if rules is None:
             lines.append("  [dim](no rules received yet)[/dim]")
         elif rules.allow_list:
@@ -1738,44 +1777,57 @@ class RulesScreen(Screen):
                 lines.append(f"  {escape(d)}")
         else:
             lines.append("  [dim](none)[/dim]")
-        lines.append("")
+        return lines
 
-        lines.append(f"[bold]Active allows ({n_allowed})[/bold]")
-        if rules and rules.allowed:
-            for r in rules.allowed:
-                lines.append("  " + self._rule_line(r, controller, deny=False))
+    def _rules_section(
+        self, title: str, rules: EgressRules | None, controller, *, deny: bool
+    ) -> list[str]:
+        """One active-verdicts block (allows or denies) with its count."""
+        rows = (rules.denied if deny else rules.allowed) if rules else []
+        lines = [f"[bold]{title} ({len(rows)})[/bold]"]
+        if rows:
+            for r in rows:
+                lines.append("  " + self._rule_line(r, controller, deny=deny))
         else:
             lines.append("  [dim](none)[/dim]")
-        lines.append("")
+        return lines
 
-        lines.append(f"[bold]Active denies ({n_denied})[/bold]")
-        if rules and rules.denied:
-            for r in rules.denied:
-                lines.append("  " + self._rule_line(r, controller, deny=True))
-        else:
-            lines.append("  [dim](none)[/dim]")
-
-        # Pause window (#2332; absent today -> section hidden). A finite
-        # window that already elapsed renders nothing (#2498): the 1s
-        # refresh clears the stale section locally until the next frame
-        # confirms the server's post-expiry state.
+    @staticmethod
+    def _pause_section(rules: EgressRules | None, controller) -> list[str]:
+        """The pause-window block (#2332; absent -> nothing). A finite
+        window that already elapsed renders nothing (#2498): the 1s
+        refresh clears the stale section locally until the next frame
+        confirms the server's post-expiry state."""
         if (
-            rules is not None
-            and rules.paused is not None
-            and not controller.pause_expired(rules)
+            rules is None
+            or rules.paused is None
+            or controller.pause_expired(rules)
         ):
-            lines.append("")
-            lines.append("[bold]Pause[/bold]")
-            rem = controller.pause_remaining(rules)
-            if rem is None:
-                lines.append(
-                    "  [yellow]Filtering paused until restart[/yellow]"
-                )
-            else:
-                lines.append(
-                    "  [yellow]Filtering paused "
-                    f"(resumes in {_fmt_duration(rem)})[/yellow]"
-                )
+            return []
+        lines = ["", "[bold]Pause[/bold]"]
+        rem = controller.pause_remaining(rules)
+        if rem is None:
+            lines.append("  [yellow]Filtering paused until restart[/yellow]")
+        else:
+            lines.append(
+                "  [yellow]Filtering paused "
+                f"(resumes in {_fmt_duration(rem)})[/yellow]"
+            )
+        return lines
+
+    def _render_body(self, rules: EgressRules | None, controller) -> str:
+        """Build the grouped rich-markup body (allow-list, allows, denies, pause)."""
+        lines: list[str] = []
+        lines += self._allow_list_section(rules)
+        lines.append("")
+        lines += self._rules_section(
+            "Active allows", rules, controller, deny=False
+        )
+        lines.append("")
+        lines += self._rules_section(
+            "Active denies", rules, controller, deny=True
+        )
+        lines += self._pause_section(rules, controller)
         return "\n".join(lines)
 
     @staticmethod
