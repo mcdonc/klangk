@@ -39,9 +39,9 @@ from klangk.cli.tui import screens as scr
 from klangk.cli.tui.screens import main as scr_main
 from klangk.cli.tui.screens import workspace_detail as scr_detail
 from klangk.cli.tui import state as tui_state_mod
-from klangk.cli.tui import ws as ws_mod
+from klangk.cli.tui.screens import main as ws_mod
 from klangk.cli.tui.app import KlangkApp, run_tui
-from klangk.cli.tui.widgets import StatusBar
+from klangk.cli.tui.screens._base import StatusBar
 from klangk.cli.config import (
     AliasConflictError,
     CLIConfig,
@@ -70,7 +70,7 @@ from klangk.cli.tui.screens import (
     WorkspaceDetailScreen,
 )
 from klangk.cli.tui.state import LoginError, TuiState
-from klangk.cli.tui.ws import listen_for_status
+from klangk.cli.tui.screens.main import listen_for_status
 
 
 # ---------------------------------------------------------------------------
@@ -5337,7 +5337,7 @@ async def test_detail_renders_allowed_domains(monkeypatch):
 async def test_detail_marking_bar_workspace_override(monkeypatch):
     """#2768: the workspace's own classification_banner renders as the
     persistent top marking line, color-coded, plus a detail-table row."""
-    from klangk.cli.tui.marking import marking_background
+    from klangk.cli.tui.screens.workspace_detail import marking_background
 
     async def noop(*a, **k):
         return None
@@ -10420,7 +10420,7 @@ def test_tui_state_default_classification_banner(monkeypatch, redirect_xdg):
 
 def test_marking_helpers():
     """#2768: color convention + effective-marking resolution."""
-    from klangk.cli.tui.marking import (
+    from klangk.cli.tui.screens.workspace_detail import (
         effective_marking,
         marking_background,
         marking_style,

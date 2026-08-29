@@ -23,11 +23,14 @@ from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
 from ..workspace_settings import parse_allow_sudo, resolve_allow_sudo
 from .admission import AdmissionControl
-from .browsers import BrowserRouter
 from .crash import CrashRecoveryMonitor
 from .health import HealthMonitor
 from .idle import IdleMonitor
-from .naming import _workspace_container_name, _workspace_name_slug
+from .identity import (
+    _workspace_container_name,
+    _workspace_name_slug,
+    BrowserRouter,
+)
 from .ports import (
     CONTAINER_PORT_START,
     DEFAULT_PORTS_PER_WORKSPACE,

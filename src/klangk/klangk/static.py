@@ -78,7 +78,5 @@ def remove_static_mounts(app: FastAPI) -> None:
     app.routes[:] = [
         r
         for r in app.routes
-        if not (
-            hasattr(r, "name") and r.name in ("frontend", "branding")
-        )
+        if not (hasattr(r, "name") and r.name in ("frontend", "branding"))
     ]
