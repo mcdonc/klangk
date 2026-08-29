@@ -1117,6 +1117,258 @@ def reset_terminal() -> None:
     sys.stdout.flush()
 
 
+async def start_ssh_agent_forward(
+    ws, forward_agent: bool
+) -> tuple[bool, str | None]:
+    """2a. Start SSH agent forwarding if requested and available.
+
+    Waits for confirmation before the terminal starts so SSH_AUTH_SOCK
+    is included in the shell environment. Returns (active, local_sock).
+    """
+    ssh_agent_active = False
+    local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
+    if forward_agent and local_agent_sock and os.path.exists(local_agent_sock):
+        await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
+        try:
+            deadline = asyncio.get_event_loop().time() + 10
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:  # pragma: no cover
+                    break
+                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                msg = json.loads(raw)
+                if msg.get("type") == "ssh_agent_started":
+                    ssh_agent_active = True
+                    break
+                if msg.get("type") == "error":
+                    break
+        except asyncio.TimeoutError:
+            pass  # proceed without agent forwarding
+    return ssh_agent_active, local_agent_sock
+
+
+async def drain_terminal_startup(
+    ws, needs_shared: bool
+) -> tuple[list[dict], list[dict], list[str]]:
+    """3. Drain messages until window selection has what it needs.
+
+    terminal_output may arrive before terminal_windows due to async
+    output forwarding, so we buffer early output and don't stop until
+    the window list is in. When joining a shared terminal
+    (``handle:window_name``) we must ALSO wait for shared_terminals,
+    which the server sends AFTER terminal_windows (see #1208):
+    breaking on terminal_windows alone leaves shared_terminals empty
+    and the join fails with "Shared terminal not found".
+    """
+    own_windows: list[dict] = []
+    shared_terminals: list[dict] = []
+    buffered_output: list[str] = []
+    try:
+        deadline = asyncio.get_event_loop().time() + 30
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:  # pragma: no cover
+                raise asyncio.TimeoutError
+            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+            msg = json.loads(raw)
+            if msg.get("type") == "terminal_windows":
+                own_windows = msg.get("windows", [])
+                if not needs_shared:
+                    break
+            elif msg.get("type") == "shared_terminals":
+                shared_terminals = msg.get("terminals", [])
+                if needs_shared:
+                    break
+            elif msg.get("type") == "terminal_output":
+                buffered_output.append(msg.get("data", ""))
+            elif msg.get("type") == "error":  # pragma: no cover
+                raise ConnectionError(
+                    f"Server error: {msg.get('message', 'unknown')}"
+                )
+    except asyncio.TimeoutError:  # pragma: no cover
+        raise ConnectionError(
+            "Terminal did not start within 30 seconds"
+        ) from None
+    return own_windows, shared_terminals, buffered_output
+
+
+async def join_shared_terminal(
+    ws, window: str, shared_terminals: list[dict]
+) -> None:
+    """3b (shared). Join "handle:window_name" (or "handle:@N" for an
+    exact id).
+
+    Names are not unique — dups are allowed (#2192) — so a name matching
+    several windows under one owner is an error, not a silent first match.
+    """
+    owner_handle, win_ref = window.split(":", 1)
+    if win_ref.startswith("@"):
+        match = next(
+            (
+                t
+                for t in shared_terminals
+                if t.get("handle") == owner_handle
+                and t.get("window_id") == win_ref
+            ),
+            None,
+        )
+    else:
+        matches = [
+            t
+            for t in shared_terminals
+            if t.get("handle") == owner_handle
+            and t.get("window_name") == win_ref
+        ]
+        if len(matches) > 1:
+            ids = ", ".join(
+                t["window_id"] for t in matches if t.get("window_id")
+            )
+            raise ConnectionError(
+                f"Multiple shared terminals named "
+                f"'{win_ref}' under '{owner_handle}'; "
+                f"specify one by id (e.g. "
+                f"{owner_handle}:{matches[0].get('window_id')}): "
+                f"{ids}"
+            )
+        match = matches[0] if matches else None
+    if match is None:
+        raise ConnectionError(f"Shared terminal '{window}' not found")
+    await ws.send(
+        json.dumps(
+            {
+                "cmd": "join_shared_terminal",
+                "user_id": match["user_id"],
+                "window_id": match["window_id"],
+            }
+        )
+    )
+    # Wait for terminal_started confirmation
+    deadline = asyncio.get_event_loop().time() + 10
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:  # pragma: no cover
+            raise asyncio.TimeoutError
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        msg = json.loads(raw)
+        if msg.get("type") == "terminal_started":
+            break
+        if msg.get("type") == "terminal_output":
+            sys.stdout.write(msg.get("data", ""))
+            sys.stdout.flush()
+        if msg.get("type") == "error":
+            raise ConnectionError(f"Failed to join: {msg.get('message')}")
+
+
+async def select_own_window(
+    ws, window: str, own_windows: list[dict], buffered_output: list[str]
+) -> None:
+    """3b (own). Select a window by id (@N) or by name.
+
+    An id targets the exact tmux window and must never create a new one
+    (#1954); a name selects an existing window or creates one with that
+    name. Names are not unique (dups allowed, #2192), so a name matching
+    several windows is an error rather than a silent first match —
+    disambiguate with @N.
+    """
+    if window.startswith("@"):
+        match = next(
+            (w for w in own_windows if w.get("id") == window),
+            None,
+        )
+        if match is None:
+            raise ConnectionError(f"Window '{window}' no longer exists")
+    else:
+        name_matches = [w for w in own_windows if w.get("name") == window]
+        if len(name_matches) > 1:
+            ids = ", ".join(w["id"] for w in name_matches if w.get("id"))
+            raise ConnectionError(
+                f"Multiple terminals named '{window}'; "
+                f"specify one by id: {ids}"
+            )
+        match = name_matches[0] if name_matches else None
+    if match is None:
+        # Name with no match — create the window.
+        await ws.send(
+            json.dumps(
+                {
+                    "cmd": "terminal_new_window",
+                    "name": window,
+                }
+            )
+        )
+        deadline = asyncio.get_event_loop().time() + 10
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:  # pragma: no cover
+                raise asyncio.TimeoutError
+            raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+            msg = json.loads(raw)
+            if msg.get("type") == "terminal_windows":
+                new_windows = msg.get("windows", [])
+                match = next(
+                    (w for w in new_windows if w.get("name") == window),
+                    None,
+                )
+                break
+            if msg.get("type") == "terminal_output":
+                buffered_output.append(msg.get("data", ""))
+            if msg.get("type") == "error":
+                raise ConnectionError(
+                    f"Failed to create window: {msg.get('message')}"
+                )
+        if match is None:  # pragma: no cover
+            raise ConnectionError(f"Window '{window}' not created")
+    await ws.send(
+        json.dumps(
+            {
+                "cmd": "terminal_select_window",
+                "window_id": match["id"],
+            }
+        )
+    )
+
+
+async def run_terminal_session(
+    ws,
+    server_spec: str,
+    token: str,
+    raw_mode: bool,
+    ssh_agent_active: bool,
+    local_agent_sock: str | None,
+    cols: int,
+    rows: int,
+) -> None:
+    """4. Put terminal in raw mode, run shell, restore.
+
+    raw_mode path: tcgetattr + tty.setraw + _raw_mode_exit +
+    terminal_stop  # pragma: no cover
+    """
+    if raw_mode:
+        old_settings = _raw_mode_enter()
+        tty.setraw(sys.stdin)
+    # Use the original server spec for token refresh (works for both
+    # TCP URLs and UDS socket paths).
+    try:
+        await run_shell(
+            ws,
+            cols,
+            rows,
+            ssh_agent_sock=local_agent_sock if ssh_agent_active else None,
+            server_url=server_spec,
+            token=token,
+        )
+    finally:
+        if raw_mode:
+            _raw_mode_exit(old_settings)
+            reset_terminal()
+        # Drain any terminal query responses still buffered in stdin
+        # so they don't leak to the host shell after exit.
+        drain_stdin()
+        if ssh_agent_active:
+            await send_ignore_closed(ws, json.dumps({"cmd": "ssh_agent_stop"}))
+        await send_ignore_closed(ws, json.dumps({"cmd": "terminal_stop"}))
+
+
 async def ws_shell(
     server_spec: str,
     token: str,
@@ -1142,31 +1394,9 @@ async def ws_shell(
         await wait_container_ready(ws, workspace_id)
 
         # 2a. Start SSH agent forwarding if requested and available.
-        ssh_agent_active = False
-        local_agent_sock = os.environ.get("SSH_AUTH_SOCK")
-        if (
-            forward_agent
-            and local_agent_sock
-            and os.path.exists(local_agent_sock)
-        ):
-            await ws.send(json.dumps({"cmd": "ssh_agent_start"}))
-            # Wait for confirmation before starting the terminal so
-            # SSH_AUTH_SOCK is included in the shell environment.
-            try:
-                deadline = asyncio.get_event_loop().time() + 10
-                while True:
-                    remaining = deadline - asyncio.get_event_loop().time()
-                    if remaining <= 0:  # pragma: no cover
-                        break
-                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                    msg = json.loads(raw)
-                    if msg.get("type") == "ssh_agent_started":
-                        ssh_agent_active = True
-                        break
-                    if msg.get("type") == "error":
-                        break
-            except asyncio.TimeoutError:
-                pass  # proceed without agent forwarding
+        ssh_agent_active, local_agent_sock = await start_ssh_agent_forward(
+            ws, forward_agent
+        )
 
         # 2b. Run pre-shell hook (sandbox setup) after agent forwarding
         # is active so that setup scripts can use SSH (e.g. git clone).
@@ -1187,188 +1417,21 @@ async def ws_shell(
         )
 
         # 3. Drain messages until we have what window selection needs.
-        # terminal_output may arrive before terminal_windows due to async
-        # output forwarding, so we buffer early output and don't stop until
-        # the window list is in. When joining a shared terminal
-        # (``handle:window_name``) we must ALSO wait for shared_terminals,
-        # which the server sends AFTER terminal_windows (see #1208):
-        # breaking on terminal_windows alone leaves shared_terminals empty
-        # and the join fails with "Shared terminal not found".
-        own_windows: list[dict] = []
-        shared_terminals: list[dict] = []
-        buffered_output: list[str] = []
-        needs_shared = window is not None and ":" in window
-        try:
-            deadline = asyncio.get_event_loop().time() + 30
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:  # pragma: no cover
-                    raise asyncio.TimeoutError
-                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                msg = json.loads(raw)
-                if msg.get("type") == "terminal_windows":
-                    own_windows = msg.get("windows", [])
-                    if not needs_shared:
-                        break
-                elif msg.get("type") == "shared_terminals":
-                    shared_terminals = msg.get("terminals", [])
-                    if needs_shared:
-                        break
-                elif msg.get("type") == "terminal_output":
-                    buffered_output.append(msg.get("data", ""))
-                elif msg.get("type") == "error":  # pragma: no cover
-                    raise ConnectionError(
-                        f"Server error: {msg.get('message', 'unknown')}"
-                    )
-        except asyncio.TimeoutError:  # pragma: no cover
-            raise ConnectionError(
-                "Terminal did not start within 30 seconds"
-            ) from None
+        (
+            own_windows,
+            shared_terminals,
+            buffered_output,
+        ) = await drain_terminal_startup(
+            ws, needs_shared=window is not None and ":" in window
+        )
 
         # 3b. Select window if requested.
         if window is not None:
             if ":" in window:
-                # Shared terminal: "handle:window_name" (or "handle:@N" for
-                # an exact id). Names are not unique — dups are allowed
-                # (#2192) — so a name matching several windows under one
-                # owner is an error, not a silent first match.
-                owner_handle, win_ref = window.split(":", 1)
-                if win_ref.startswith("@"):
-                    match = next(
-                        (
-                            t
-                            for t in shared_terminals
-                            if t.get("handle") == owner_handle
-                            and t.get("window_id") == win_ref
-                        ),
-                        None,
-                    )
-                else:
-                    matches = [
-                        t
-                        for t in shared_terminals
-                        if t.get("handle") == owner_handle
-                        and t.get("window_name") == win_ref
-                    ]
-                    if len(matches) > 1:
-                        ids = ", ".join(
-                            t["window_id"]
-                            for t in matches
-                            if t.get("window_id")
-                        )
-                        raise ConnectionError(
-                            f"Multiple shared terminals named "
-                            f"'{win_ref}' under '{owner_handle}'; "
-                            f"specify one by id (e.g. "
-                            f"{owner_handle}:{matches[0].get('window_id')}): "
-                            f"{ids}"
-                        )
-                    match = matches[0] if matches else None
-                if match is None:
-                    raise ConnectionError(
-                        f"Shared terminal '{window}' not found"
-                    )
-                await ws.send(
-                    json.dumps(
-                        {
-                            "cmd": "join_shared_terminal",
-                            "user_id": match["user_id"],
-                            "window_id": match["window_id"],
-                        }
-                    )
-                )
-                # Wait for terminal_started confirmation
-                deadline = asyncio.get_event_loop().time() + 10
-                while True:
-                    remaining = deadline - asyncio.get_event_loop().time()
-                    if remaining <= 0:  # pragma: no cover
-                        raise asyncio.TimeoutError
-                    raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
-                    msg = json.loads(raw)
-                    if msg.get("type") == "terminal_started":
-                        break
-                    if msg.get("type") == "terminal_output":
-                        sys.stdout.write(msg.get("data", ""))
-                        sys.stdout.flush()
-                    if msg.get("type") == "error":
-                        raise ConnectionError(
-                            f"Failed to join: {msg.get('message')}"
-                        )
+                await join_shared_terminal(ws, window, shared_terminals)
             else:
-                # Own window: by id (@N) or by name. An id targets the
-                # exact tmux window and must never create a new one
-                # (#1954); a name selects an existing window or creates
-                # one with that name. Names are not unique (dups allowed,
-                # #2192), so a name matching several windows is an error
-                # rather than a silent first match — disambiguate with @N.
-                if window.startswith("@"):
-                    match = next(
-                        (w for w in own_windows if w.get("id") == window),
-                        None,
-                    )
-                    if match is None:
-                        raise ConnectionError(
-                            f"Window '{window}' no longer exists"
-                        )
-                else:
-                    name_matches = [
-                        w for w in own_windows if w.get("name") == window
-                    ]
-                    if len(name_matches) > 1:
-                        ids = ", ".join(
-                            w["id"] for w in name_matches if w.get("id")
-                        )
-                        raise ConnectionError(
-                            f"Multiple terminals named '{window}'; "
-                            f"specify one by id: {ids}"
-                        )
-                    match = name_matches[0] if name_matches else None
-                if match is None:
-                    # Name with no match — create the window.
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "cmd": "terminal_new_window",
-                                "name": window,
-                            }
-                        )
-                    )
-                    deadline = asyncio.get_event_loop().time() + 10
-                    while True:
-                        remaining = deadline - asyncio.get_event_loop().time()
-                        if remaining <= 0:  # pragma: no cover
-                            raise asyncio.TimeoutError
-                        raw = await asyncio.wait_for(
-                            ws.recv(), timeout=remaining
-                        )
-                        msg = json.loads(raw)
-                        if msg.get("type") == "terminal_windows":
-                            new_windows = msg.get("windows", [])
-                            match = next(
-                                (
-                                    w
-                                    for w in new_windows
-                                    if w.get("name") == window
-                                ),
-                                None,
-                            )
-                            break
-                        if msg.get("type") == "terminal_output":
-                            buffered_output.append(msg.get("data", ""))
-                        if msg.get("type") == "error":
-                            raise ConnectionError(
-                                f"Failed to create window: "
-                                f"{msg.get('message')}"
-                            )
-                    if match is None:  # pragma: no cover
-                        raise ConnectionError(f"Window '{window}' not created")
-                await ws.send(
-                    json.dumps(
-                        {
-                            "cmd": "terminal_select_window",
-                            "window_id": match["id"],
-                        }
-                    )
+                await select_own_window(
+                    ws, window, own_windows, buffered_output
                 )
 
         # Flush buffered terminal output from the startup drain.
@@ -1377,33 +1440,16 @@ async def ws_shell(
         sys.stdout.flush()
 
         # 4. Put terminal in raw mode, run shell, restore
-        # raw_mode path: tcgetattr + tty.setraw + _raw_mode_exit + terminal_stop  # pragma: no cover
-        if raw_mode:
-            old_settings = _raw_mode_enter()
-            tty.setraw(sys.stdin)
-        # Use the original server spec for token refresh (works for both
-        # TCP URLs and UDS socket paths).
-        try:
-            await run_shell(
-                ws,
-                cols,
-                rows,
-                ssh_agent_sock=local_agent_sock if ssh_agent_active else None,
-                server_url=server_spec,
-                token=token,
-            )
-        finally:
-            if raw_mode:
-                _raw_mode_exit(old_settings)
-                reset_terminal()
-            # Drain any terminal query responses still buffered in stdin
-            # so they don't leak to the host shell after exit.
-            drain_stdin()
-            if ssh_agent_active:
-                await send_ignore_closed(
-                    ws, json.dumps({"cmd": "ssh_agent_stop"})
-                )
-            await send_ignore_closed(ws, json.dumps({"cmd": "terminal_stop"}))
+        await run_terminal_session(
+            ws,
+            server_spec,
+            token,
+            raw_mode,
+            ssh_agent_active,
+            local_agent_sock,
+            cols,
+            rows,
+        )
 
 
 class _ShellSession:
