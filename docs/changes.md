@@ -266,19 +266,21 @@ sync` report a clear permission-denied error.
 ### Added
 
 - **Admission control: `KLANGKD_ADMISSION_MEMORY_ENABLED`,
-  `KLANGKD_ADMISSION_MEMORY_MARGIN` (#2525).** Opt-in start-time
-  host-capacity check: before a workspace container is created,
-  klangkd compares available host memory (`MemAvailable`, plus the
-  cgroup limit when klangkd itself is memory-capped; `vm_stat` on
-  macOS, capped by the podman machine's configured memory — containers
-  run in that VM, whose default 2048 MiB is far below the Mac's RAM)
-  against the workspace's resolved memory limit plus a deploy-wide
-  reserve (default `1g`). A start that does not fit fails
-  fast with a distinguishable 503 / WebSocket error ("host at capacity:
-  1.2 GB available, workspace wants 4 GB") instead of deferring the
-  failure to the kernel OOM killer. Default off (with the default 8g
-  limit, small hosts would be refused every start); skipped when no
-  memory limit is configured. Reloadable on SIGHUP.
+  `KLANGKD_ADMISSION_MEMORY_MARGIN` (#2525).** On-by-default start-time
+  host-capacity check: before a workspace container is created, klangkd
+  compares available host memory (`MemAvailable`, plus the cgroup limit
+  when klangkd itself is memory-capped; `vm_stat` on macOS, capped by
+  the podman machine's configured memory — containers run in that VM,
+  whose default 2048 MiB is far below the Mac's RAM) against the
+  workspace's resolved memory limit plus a deploy-wide reserve (default
+  `1g`). A start that does not fit fails fast with a distinguishable
+  503 / WebSocket error ("host at capacity: 1.2 GB available, workspace
+  wants 4 GB") instead of deferring the failure to the kernel OOM
+  killer. With the default 8g limit + 1g reserve, a host with under
+  ~9 GB available (including a default 2048 MiB podman machine on
+  macOS) refuses starts — lower the limit, size the host / machine, or
+  set `KLANGKD_ADMISSION_MEMORY_ENABLED=0`. Skipped when no memory
+  limit is configured. Reloadable on SIGHUP.
 - **`KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER` (#2525).** Deploy-wide
   cap on concurrently running workspaces per user, checked at start
   time (the k8s ResourceQuota analogue). A user at the cap gets a

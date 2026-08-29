@@ -42,6 +42,12 @@ def _disable_proxy(monkeypatch):
 @pytest.fixture(autouse=True)
 def temp_data_dir(tmp_path, monkeypatch):
     """Point KLANGKD_DATA_DIR / KLANGKD_STATE_DIR / KLANGKD_CUSTOMIZE_DIR at temp dirs per test."""
+    # #2525: admission's memory gate defaults ON; without this the
+    # suite's container starts would measure the REAL host memory and
+    # flake on pressed runners. The admission tests opt back in
+    # explicitly (patch.object(settings, "admission_memory_enabled",
+    # True)); test_settings deletes this var to pin the shipped default.
+    monkeypatch.setenv("KLANGKD_ADMISSION_MEMORY_ENABLED", "false")
     monkeypatch.setenv("KLANGKD_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("KLANGKD_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("KLANGKD_CUSTOMIZE_DIR", str(tmp_path / "customize"))

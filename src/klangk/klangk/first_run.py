@@ -126,7 +126,7 @@ container_tmp_size: 2g
 # path (API start/restart, WS connect, create eager start, boot
 # auto-start, crash-recovery restart) and fail with a clear 503 /
 # WebSocket error.
-# admission_memory_enabled: false  # check available host memory vs. the
+# admission_memory_enabled: true  # check available host memory vs. the
 #                                  # workspace's resolved memory limit +
 #                                  # margin before creating the container
 # admission_memory_margin: 1g      # reserve kept for the server itself

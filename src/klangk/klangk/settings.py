@@ -1109,17 +1109,19 @@ class KlangkSettings(BaseSettings):
     #
     # admission_memory_enabled: compare available host memory
     # (MemAvailable, platform-aware — same measurement family as the
-    # #2526 eviction loop) against the workspace's resolved
+    # #2526 eviction loop; on macOS capped by the podman machine's
+    # configured memory) against the workspace's resolved
     # container_memory_limit + admission_memory_margin before creating
     # the container, refusing the start when it does not fit. Default
-    # OFF: the check is advisory against the *limit*, and the default
-    # 8g limit exceeds what small dev/CI hosts have available —
-    # defaulting it on would refuse every start there. Multi-user
-    # deployments (the motivation, #34) should set it with limits sized
-    # to the host. Skipped when no memory limit is configured; fails
-    # open (start allowed, one-time warning) when memory cannot be
-    # measured. Read live (SIGHUP reload-safe).
-    admission_memory_enabled: bool = False
+    # ON: failing fast with an actionable message beats deferring the
+    # failure to the kernel OOM killer. Consequence for small hosts:
+    # with the default 8g limit + 1g reserve, a host with under ~9 GB
+    # available (including a default 2048 MiB podman machine on macOS)
+    # refuses starts — lower container_memory_limit, size the host /
+    # podman machine, or set this to false. Skipped when no memory
+    # limit is configured; fails open (start allowed, one-time warning)
+    # when memory cannot be measured. Read live (SIGHUP reload-safe).
+    admission_memory_enabled: bool = True
     # admission_memory_margin: the reserve kept for the server itself
     # (klangkd, the proxy, page cache) when fitting a workspace's
     # memory limit against available host memory. Podman size-string
