@@ -216,6 +216,36 @@ pick one category word and concatenate it onto `KLANGK` so `grep -E
 '^KLANGK<WORD>_'` matches the whole family exactly. Single-letter categories
 are fine too (`KLANGKD` = daemon, `KLANGKC` = CLI).
 
+## Python complexity gate (xenon)
+
+Every function, method, and block in `src/klangk/klangk/**/*.py` and
+`scripts/**/*.py` must be xenon rank **C or better** (cyclomatic complexity
+≤ 20). The gate runs as the `xenon` pre-commit hook defined in `devenv.nix`
+(`--max-absolute C --max-modules F --max-average F` — module/average gates
+are off because they flap when only a few files are staged); it checks the
+staged `.py` files on every commit made through the devenv shell. Nothing
+in CI enforces it yet — the hook is the only gate, so do not bypass it
+with `--no-verify`.
+
+Check locally before committing:
+
+```bash
+devenv --quiet -O dotenv.enable:bool false shell -- pre-commit run xenon --all-files
+```
+
+Keep new functions and extracted helpers small; the established patterns
+are extract-function and dispatch tables (see `_EDITOR_BUTTON_HANDLERS` in
+`cli/tui/screens/workspace_form.py`). When extending a block already near
+the limit, extract a helper instead of growing it. Never add noqa-style
+escapes or re-widen the gate to make a commit pass.
+
+The legacy F/E/D blocks were already refactored down to C
+(#2800–#2803, #2808–#2814) and the excludes are gone. The ratchet then
+tightens to **B** (≤ 10) (#2817) and ultimately to **A** (≤ 5) in
+subsequent tranches, one PR per file/subsystem. Target rank **A** for new
+code where practical — anything looser will only be refactored again as
+the gate tightens.
+
 ## Process manager: devenv 2.x native (not process-compose)
 
 `devenv processes up` / `devenv up` use **devenv 2.x's built-in process manager**,
