@@ -126,17 +126,17 @@ class TestInactivitySweeper:
         model — read live each pass, so a SIGHUP flip applies next sweep."""
         app = _app(days=0)
         sw = inactivity.InactivitySweeper(app)
-        await sw._sweep()
+        await sw.sweep()
         assert await_count(app.state.model.users.disable_inactive_users) == 0
 
     async def test_days_passed_live_from_settings(self):
         """The sweep reads settings each pass (SIGHUP reload-safe)."""
         app = _app(days=7)
         mock = app.state.model.users.disable_inactive_users
-        await inactivity.InactivitySweeper(app)._sweep()
+        await inactivity.InactivitySweeper(app).sweep()
         mock.assert_awaited_once_with(7)
         app.state.settings.inactivity_disable_days = 3
-        await inactivity.InactivitySweeper(app)._sweep()
+        await inactivity.InactivitySweeper(app).sweep()
         assert mock.await_args_list[-1] == ((3,), {})
 
     async def test_disabled_users_are_logged_and_kicked(self, caplog):
@@ -148,7 +148,7 @@ class TestInactivitySweeper:
             )
         )
         with caplog.at_level("INFO", logger="klangk.inactivity"):
-            await inactivity.InactivitySweeper(app)._sweep()
+            await inactivity.InactivitySweeper(app).sweep()
         assert "gone@example.com" in caplog.text
         app.state.sockets.disconnect_user.assert_awaited_once_with(
             "u1", code=4001, reason="Account disabled"

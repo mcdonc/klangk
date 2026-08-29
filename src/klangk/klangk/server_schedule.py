@@ -24,10 +24,10 @@ The schedule is persisted in the DB, so it survives a klangkd restart:
 on boot the loop simply re-reads the pending rows.
 """
 
-import asyncio
 import logging
 import os
 import signal
+from klangk.interval import IntervalWorker
 from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
@@ -46,36 +46,30 @@ _MAX_IN_SECONDS = 1e10
 _BROADCAST_INTERVAL_SECONDS = 30.0
 
 
-class ServerScheduler:
+class ServerScheduler(IntervalWorker):
     """Owns the scheduled server-action loop (app-only ownership, #1563)."""
 
+    # Live-read (a property, not a captured constant) so tests can patch
+    # the module global and SIGHUP-adjacent changes apply next cycle.
+    @property
+    def interval(self) -> float:
+        return _POLL_INTERVAL_SECONDS
+
+    log_label = "Server scheduler tick"
+
     def __init__(self, app) -> None:
-        self.app = app
-        self._task: asyncio.Task | None = None
+        super().__init__(app)
         self._last_broadcast: datetime | None = None
         self._last_snapshot: list[dict] | None = None
 
-    def reconfigure(self, app) -> None:
-        self.app = app
-
-    # --- lifecycle ---
-
     def start(self) -> None:
-        """Launch the schedule loop (idempotent)."""
-        if self._task is not None and not self._task.done():
-            return
-        self._task = asyncio.get_event_loop().create_task(self._run())
+        """Launch the schedule loop (idempotent); logs the start."""
+        if self._task is None:
+            logger.info("Server scheduler loop started")
+        super().start()
 
-    async def stop(self) -> None:
-        """Cancel the loop and wait for it."""
-        task = self._task
-        self._task = None
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+    def on_stopped(self) -> None:
+        logger.info("Server scheduler loop stopped")
 
     # --- snapshot / broadcast ---
 
@@ -114,26 +108,7 @@ class ServerScheduler:
             # owns cleanup on disconnect.
             pass
 
-    # --- loop ---
-
-    async def _run(self) -> None:
-        logger.info("Server scheduler loop started")
-        try:
-            while True:
-                try:
-                    await self._tick()
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    # One bad tick (DB hiccup, podman error) must not kill
-                    # the loop — the schedule stays armed for the next one.
-                    logger.exception("Server scheduler tick failed")
-                await asyncio.sleep(_POLL_INTERVAL_SECONDS)
-        except asyncio.CancelledError:
-            logger.info("Server scheduler loop stopped")
-            raise
-
-    async def _tick(self) -> None:
+    async def sweep(self) -> None:
         schedules = await self.snapshot()
         now = datetime.now(timezone.utc)
         # 7: a malformed fire_at row (manual DB edit) must not kill the

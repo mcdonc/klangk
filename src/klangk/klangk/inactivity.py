@@ -14,18 +14,17 @@ correctness path.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 
 from klangk import wshandler
+from klangk.interval import IntervalWorker
 
 logger = logging.getLogger(__name__)
 
 SWEEP_INTERVAL = 3600.0
 
 
-class InactivitySweeper:
+class InactivitySweeper(IntervalWorker):
     """Disable dormant accounts on a wall-clock interval (#2588).
 
     Constructed once in :func:`klangk.main.build_app` and stored on
@@ -36,50 +35,15 @@ class InactivitySweeper:
     ``app``).
     """
 
-    def __init__(self, app) -> None:
-        self.app = app
-        self._task: asyncio.Task | None = None
+    # Live-read (a property, not a captured constant) so a patched/test
+    # module global applies on the next cycle.
+    @property
+    def interval(self) -> float:
+        return SWEEP_INTERVAL
 
-    def reconfigure(self, app) -> None:
-        self.app = app
+    log_label = "inactivity: dormant-account sweep"
 
-    def start(self) -> None:
-        """Start the sweep loop (idempotent). Runs until :meth:`stop`."""
-        if self._task is None:
-            self._task = asyncio.create_task(self._run())
-
-    async def stop(self) -> None:
-        """Cancel the sweep loop."""
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-
-    async def _run(self) -> None:
-        # 0.0 sweeps once immediately on startup, then every
-        # SWEEP_INTERVAL.
-        next_sweep = 0.0
-        try:
-            while True:
-                if time.monotonic() >= next_sweep:
-                    try:
-                        await self._sweep()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.warning(
-                            "inactivity: dormant-account sweep failed",
-                            exc_info=True,
-                        )
-                    next_sweep = time.monotonic() + SWEEP_INTERVAL
-                await asyncio.sleep(max(0.0, next_sweep - time.monotonic()))
-        except asyncio.CancelledError:
-            pass
-
-    async def _sweep(self) -> None:
+    async def sweep(self) -> None:
         """One sweep: disable accounts past the inactivity window."""
         days = self.app.state.settings.inactivity_disable_days
         if days <= 0:
