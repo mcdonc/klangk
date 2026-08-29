@@ -257,7 +257,7 @@ class TestServerScheduler:
             created_by="u1",
         )
         with patch("klangk.server_schedule.os.kill") as mock_kill:
-            await scheduler._tick()
+            await scheduler.sweep()
         mock_kill.assert_called_once()
         args = mock_kill.call_args[0]
         assert args[1] is signal.SIGTERM
@@ -276,7 +276,7 @@ class TestServerScheduler:
             datetime.now(timezone.utc) - timedelta(seconds=1),
             created_by="u1",
         )
-        await scheduler._tick()
+        await scheduler.sweep()
         lifecycle.request_recycle.assert_called_once_with(
             source="scheduled recycle"
         )
@@ -298,7 +298,7 @@ class TestServerScheduler:
             created_by="u1",
         )
         with patch("klangk.server_schedule.os.kill") as mock_kill:
-            await scheduler._tick()
+            await scheduler.sweep()
         mock_kill.assert_not_called()
         # The row was still consumed — it must not re-fire on a restart.
         assert await app.state.model.server_schedules.pending_schedules() == []
@@ -348,7 +348,7 @@ class TestServerScheduler:
                 ),
             )
         with patch("klangk.server_schedule.os.kill"):
-            await scheduler._tick()  # must not raise
+            await scheduler.sweep()  # must not raise
         # The healthy row still broadcasts; the bad one is carried in the
         # pending list (never fired) so clients see it exists.
         snapshot = [m for m in sent if m["type"] == "server_schedule"]
@@ -369,7 +369,7 @@ class TestServerScheduler:
             datetime.now(timezone.utc) - timedelta(seconds=1),
             created_by="u1",
         )
-        await scheduler._tick()
+        await scheduler.sweep()
         lifecycle.request_recycle.assert_not_called()
         # The row was still consumed — it must not re-fire on a restart.
         assert await app.state.model.server_schedules.pending_schedules() == []
@@ -383,7 +383,7 @@ class TestServerScheduler:
                 datetime.now(timezone.utc) + timedelta(hours=1),
                 created_by="u1",
             )
-            await scheduler._tick()
+            await scheduler.sweep()
         mock_kill.assert_not_called()
         assert "server_schedule_fired" not in [m["type"] for m in sent]
         assert sent and sent[-1]["type"] == "server_schedule"
@@ -397,16 +397,16 @@ class TestServerScheduler:
             datetime.now(timezone.utc) + timedelta(hours=1),
             created_by="u1",
         )
-        await scheduler._tick()
+        await scheduler.sweep()
         first = len(sent)
-        await scheduler._tick()  # immediately again: set unchanged, cadence
+        await scheduler.sweep()  # immediately again: set unchanged, cadence
         # not elapsed -> no second broadcast.
         assert len(sent) == first
         # Pretend the cadence window elapsed.
         scheduler._last_broadcast = datetime.now(timezone.utc) - timedelta(
             seconds=31
         )
-        await scheduler._tick()
+        await scheduler.sweep()
         assert len(sent) == first + 1
 
     async def test_start_stop_idempotent(self, sched_app):
@@ -433,7 +433,7 @@ class TestLoop:
             # Second tick: stop the loop.
             asyncio.current_task().cancel()
 
-        scheduler._tick = flaky_tick
+        scheduler.sweep = flaky_tick
         with patch("klangk.server_schedule._POLL_INTERVAL_SECONDS", 0.01):
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(scheduler._run(), timeout=5)

@@ -18,10 +18,9 @@ predicate the coordinator gate-checks with.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 
+from ..interval import IntervalWorker
 from ..model.workspaces import EGRESS_MODE_INTERACTIVE
 
 logger = logging.getLogger(__name__)
@@ -46,7 +45,7 @@ async def workspace_is_interactive(app, workspace_id: str) -> bool:
     return app.state.consent_deciders.has_decider(workspace_id)
 
 
-class EgressConsentSweeper:
+class EgressConsentSweeper(IntervalWorker):
     """Prune the egress_consent retention table on a wall-clock interval.
 
     Constructed once in :func:`build_app` and stored on ``app.state``;
@@ -60,51 +59,15 @@ class EgressConsentSweeper:
     ``app``).
     """
 
-    def __init__(self, app) -> None:
-        self.app = app
-        self._task: asyncio.Task | None = None
+    # Live-read (a property, not a captured constant) so a patched/test
+    # module global applies on the next cycle.
+    @property
+    def interval(self) -> float:
+        return PRUNE_INTERVAL
 
-    def reconfigure(self, app) -> None:
-        self.app = app
+    log_label = "egress consent: retention sweep"
 
-    def start(self) -> None:
-        """Start the sweep loop (idempotent). Runs until :meth:`stop`."""
-        if self._task is None:
-            self._task = asyncio.create_task(self._run())
-
-    async def stop(self) -> None:
-        """Cancel the sweep loop."""
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-
-    async def _run(self) -> None:
-        # 0.0 sweeps once immediately on startup (a prior run may have left
-        # the table past the window / over the cap), then every
-        # PRUNE_INTERVAL.
-        next_prune = 0.0
-        try:
-            while True:
-                if time.monotonic() >= next_prune:
-                    try:
-                        await self._prune()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.warning(
-                            "egress consent: retention sweep failed",
-                            exc_info=True,
-                        )
-                    next_prune = time.monotonic() + PRUNE_INTERVAL
-                await asyncio.sleep(max(0.0, next_prune - time.monotonic()))
-        except asyncio.CancelledError:
-            pass
-
-    async def _prune(self) -> None:
+    async def sweep(self) -> None:
         """One retention sweep: prune rows past retention / over the cap.
 
         Settings are read live inside the model call (SIGHUP reload-safe:
