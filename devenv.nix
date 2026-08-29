@@ -601,18 +601,23 @@ in
       language = "system";
       pass_filenames = true;
     };
-    # Python: cyclomatic-complexity gate (#2794). Blocks must stay rank C
-    # or better (complexity <= 10); module/average gates are off (rank F)
-    # because they flap when only a few files are staged. The F/E/D-ranked
-    # legacy blocks were refactored down (#2800-#2803, #2808-#2814), the
-    # C-ranked ones in the B-ratchet (#2818-#2842), so the
-    # excludes are gone — every production .py file is checked (klangkd +
-    # CLI under src/klangk/klangk/, the network sidecar under
-    # src/klangksidecar/klangksidecar/, and scripts/).
+    # Python: cyclomatic-complexity gate (#2794). Blocks must stay rank B
+    # or better (complexity <= 10) — the F/E/D legacy blocks were refactored
+    # down (#2800-#2803, #2808-#2814), the C-ranked ones in the B-ratchet
+    # (#2818-#2842), so the excludes are gone — every production .py file is
+    # checked (klangkd + CLI under src/klangk/klangk/, the network sidecar
+    # under src/klangksidecar/klangksidecar/, and scripts/).
+    # Module and codebase averages are also gated at B (#2846): --max-modules
+    # grades each staged module on its own average, so partial staging cannot
+    # cause false failures; --max-average used to flap pre-ratchet (a global
+    # average over only the staged files), but with every block <= 10 no
+    # subset's average can exceed 10, so B-level flapping is impossible. That
+    # returns only if averages are ratcheted to A — then grade the full tree
+    # (pass_filenames = false) instead of the staged subset.
     xenon = {
       enable = true;
       name = "xenon";
-      entry = "${pkgs.xenon}/bin/xenon --max-absolute B --max-modules F --max-average F";
+      entry = "${pkgs.xenon}/bin/xenon --max-absolute B --max-modules B --max-average B";
       files = "^src/klangk/klangk/.*\\.py$|^src/klangksidecar/klangksidecar/.*\\.py$|^scripts/.*\\.py$";
       language = "system";
       pass_filenames = true;
