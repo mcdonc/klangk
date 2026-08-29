@@ -206,6 +206,14 @@ def _resolve_own_window(
         if match is None:
             return None, f"Window '{terminal}' no longer exists"
         return match, None
+    return _resolve_window_by_name(own_windows, terminal)
+
+
+def _resolve_window_by_name(
+    own_windows: list[dict], terminal: str
+) -> tuple[dict | None, str | None]:
+    """A name reference: names are not unique (#2192), so several matches
+    are an error rather than a silent first match."""
     name_matches = [w for w in own_windows if w.get("name") == terminal]
     if len(name_matches) > 1:
         ids = ", ".join(w["id"] for w in name_matches if w.get("id"))

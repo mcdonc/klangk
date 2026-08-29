@@ -84,19 +84,29 @@ async def monitor_connection(
     ws_filter = {w for w in workspaces}
     async with ws_connect(server_spec, token=token, max_size=max_size) as conn:
         async for raw in conn:
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            etype = msg.get("type")
-            if etype is None:
-                continue  # control/ack messages aren't events
-            if type_filter and etype not in type_filter:
-                continue
-            wid = msg.get("workspace_id")
-            if ws_filter and (wid is None or wid not in ws_filter):
-                continue
-            _dispatch_monitor_event(msg, command)
+            msg = parse_monitor_event(raw, type_filter, ws_filter)
+            if msg is not None:
+                _dispatch_monitor_event(msg, command)
+
+
+def parse_monitor_event(
+    raw: str, type_filter: set, ws_filter: set
+) -> dict | None:
+    """One socket frame as a dispatchable event, or None when it is not an
+    event / fails the type / workspace filters."""
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    etype = msg.get("type")
+    if etype is None:
+        return None  # control/ack messages aren't events
+    if type_filter and etype not in type_filter:
+        return None
+    wid = msg.get("workspace_id")
+    if ws_filter and (wid is None or wid not in ws_filter):
+        return None
+    return msg
 
 
 def monitor_backoff(attempt: int, max_delay: float) -> float:

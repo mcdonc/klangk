@@ -129,21 +129,7 @@ def list_workspaces(
         typer.echo("No workspaces found.")
         return
     if plain:
-        for ws in workspaces:
-            status, _ = workspace_status(ws)
-            typer.echo(
-                f"  {ws.name}  ({short_id(ws.id)})  "
-                f"{status}  {ws.created_at[:10]}"
-            )
-        if shared_workspaces:
-            typer.echo("Shared with me:")
-            for ws in shared_workspaces:
-                status, _ = workspace_status(ws)
-                owner = f"  by {ws.owner_email}" if ws.owner_email else ""
-                typer.echo(
-                    f"  {ws.name}  ({short_id(ws.id)})  "
-                    f"{status}  {ws.created_at[:10]}{owner}"
-                )
+        _print_plain_listing(workspaces, shared_workspaces)
         return
     console = Console()
     table = Table(box=None, pad_edge=False)
@@ -170,6 +156,48 @@ def list_workspaces(
         ]
         table.add_row(*row)
     console.print(table)
+
+
+def _print_plain_listing(workspaces, shared_workspaces) -> None:
+    """The --plain text listing (owned workspaces, then shared-with-me)."""
+    for ws in workspaces:
+        status, _ = workspace_status(ws)
+        typer.echo(
+            f"  {ws.name}  ({short_id(ws.id)})  {status}  {ws.created_at[:10]}"
+        )
+    if shared_workspaces:
+        typer.echo("Shared with me:")
+        for ws in shared_workspaces:
+            status, _ = workspace_status(ws)
+            owner = f"  by {ws.owner_email}" if ws.owner_email else ""
+            typer.echo(
+                f"  {ws.name}  ({short_id(ws.id)})  "
+                f"{status}  {ws.created_at[:10]}{owner}"
+            )
+
+
+def _validate_create_specs(mount, allow, reject) -> None:
+    """Validate repeatable create options up front; exits 1 on the first
+    invalid spec."""
+    if isinstance(mount, list):
+        for m in mount:
+            err = validate_mount_spec(m)
+            if err:
+                context._err.print(f"[red]{err}[/red]")
+                raise typer.Exit(code=1)
+    if isinstance(allow, list):
+        for spec in allow:
+            err = validate_allowed_domain_spec(spec)
+            if err:
+                context._err.print(f"[red]{err}[/red]")
+                raise typer.Exit(code=1)
+    if isinstance(reject, list):
+        for spec in reject:
+            # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
+            err = validate_allowed_domain_spec(spec, allow_cidr=False)
+            if err:
+                context._err.print(f"[red]{err}[/red]")
+                raise typer.Exit(code=1)
 
 
 @context.app.command()
@@ -265,25 +293,7 @@ def create(
 ) -> None:
     """Create a new workspace."""
     context.require_auth()
-    if isinstance(mount, list):
-        for m in mount:
-            err = validate_mount_spec(m)
-            if err:
-                context._err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
-    if isinstance(allow, list):
-        for spec in allow:
-            err = validate_allowed_domain_spec(spec)
-            if err:
-                context._err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
-    if isinstance(reject, list):
-        for spec in reject:
-            # CIDR is meaningless for a name-level NXDOMAIN deny-list (#2367).
-            err = validate_allowed_domain_spec(spec, allow_cidr=False)
-            if err:
-                context._err.print(f"[red]{err}[/red]")
-                raise typer.Exit(code=1)
+    _validate_create_specs(mount, allow, reject)
     env_dict = _parse_env_list(env) if isinstance(env, list) else None
     settings = _build_settings(
         idle_timeout, cpu_limit, memory_limit, pids_limit, allow_sudo
