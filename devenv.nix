@@ -72,6 +72,10 @@ in
   };
   languages.python = {
     enable = true;
+    # Pinned to the channel's python314 rather than the `python3` alias — the
+    # toolchain version is a project decision (#2844), not an accident of
+    # whichever minor the pinned nixpkgs channel defaults to (26.05 → 3.13).
+    package = pkgs.python314;
     venv.enable = true;
     uv = {
       enable = true;
