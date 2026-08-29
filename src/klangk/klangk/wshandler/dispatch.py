@@ -62,22 +62,59 @@ _WS_STATE_COMMANDS: dict[str, str] = {
 }
 
 
-async def handle_websocket(websocket: WebSocket, app) -> None:
-    """Main WebSocket handler."""
-    # Authenticate via query param
+async def ws_authenticate(websocket: WebSocket, app):
+    """Validate the socket's token; close and return None on failure."""
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4001, reason="Missing token")
-        return
+        return None
 
     result = await app.state.auth.get_user_from_token(token)
     if result is auth.Auth.TOKEN_EXPIRED:
         await websocket.close(code=4002, reason="Token expired")
-        return
+        return None
     if result is None:
         await websocket.close(code=4001, reason="Invalid token")
+        return None
+    return result
+
+
+async def dispatch_ws_loop(conn, safe_ws, user: dict, app) -> None:
+    """Receive/dispatch frames until the socket drops. Connection-command
+    table first, then state-command table, else an error frame."""
+    while True:
+        raw = await safe_ws.receive_text()
+        try:
+            msg = json.loads(raw)
+        except json.JSONDecodeError:
+            send_error(safe_ws, "Invalid JSON")
+            continue
+
+        log_ws_msg("RECV", msg, user)
+
+        cmd = msg.get("cmd")
+        entry = _WS_CONNECTION_COMMANDS.get(cmd)
+        if entry is not None:
+            method_name, takes_msg = entry
+            method = getattr(conn, method_name)
+            if takes_msg:
+                await method(msg)
+            else:
+                await method()
+        else:
+            state_method = _WS_STATE_COMMANDS.get(cmd)
+            if state_method is not None:
+                getattr(app.state.sockets, state_method)(msg, safe_ws)
+            else:
+                send_error(safe_ws, f"Unknown command: {cmd}")
+
+
+async def handle_websocket(websocket: WebSocket, app) -> None:
+    """Main WebSocket handler."""
+    # Authenticate via query param
+    user = await ws_authenticate(websocket, app)
+    if user is None:
         return
-    user = result
 
     await websocket.accept()
     safe_ws = SafeWebSocket(websocket)
@@ -103,31 +140,7 @@ async def handle_websocket(websocket: WebSocket, app) -> None:
         if server_scheduler is not None:
             await server_scheduler.send_snapshot_to(safe_ws)
 
-        while True:
-            raw = await safe_ws.receive_text()
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                send_error(safe_ws, "Invalid JSON")
-                continue
-
-            log_ws_msg("RECV", msg, user)
-
-            cmd = msg.get("cmd")
-            entry = _WS_CONNECTION_COMMANDS.get(cmd)
-            if entry is not None:
-                method_name, takes_msg = entry
-                method = getattr(conn, method_name)
-                if takes_msg:
-                    await method(msg)
-                else:
-                    await method()
-            else:
-                state_method = _WS_STATE_COMMANDS.get(cmd)
-                if state_method is not None:
-                    getattr(app.state.sockets, state_method)(msg, safe_ws)
-                else:
-                    send_error(safe_ws, f"Unknown command: {cmd}")
+        await dispatch_ws_loop(conn, safe_ws, user, app)
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for user %s", user["email"])

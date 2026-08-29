@@ -512,6 +512,11 @@ class Connection:
             # the error frame surfaces the actionable podman message.
             send_error(self.sock, f"Container restart failed: {exc}")
             return
+        await self._announce_restarted_container(workspace_id)
+
+    async def _announce_restarted_container(self, workspace_id) -> None:
+        """Record activity, re-bind sibling connections to the new
+        container, and send the container_ready frame."""
         self.app.state.container_registry.record_activity(self.container_id)
 
         # Update container_id on ALL connections to this workspace
