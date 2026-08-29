@@ -91,21 +91,31 @@ def system_ca_bundle(self_bundle: str | None = None) -> str | None:
     back to ``certifi`` (an httpx dependency).
     """
     dvp = ssl.get_default_verify_paths()
+    self_real = os.path.realpath(self_bundle) if self_bundle else None
+    cand = _first_existing_ca(_openssl_ca_candidates(dvp), self_real)
+    if cand is not None:
+        return cand
+    return _first_existing_ca([certifi.where()], self_real)
+
+
+def _openssl_ca_candidates(dvp) -> list[str]:
+    """The compiled-in OpenSSL default CA file (preferred — not influenced
+    by ``SSL_CERT_FILE``) and the env-derived one, de-duplicated."""
     candidates: list[str] = []
     if dvp.openssl_cafile:
         candidates.append(dvp.openssl_cafile)
     if dvp.cafile and dvp.cafile != dvp.openssl_cafile:
         candidates.append(dvp.cafile)
-    self_real = os.path.realpath(self_bundle) if self_bundle else None
+    return candidates
+
+
+def _first_existing_ca(candidates: list[str], self_real) -> str | None:
+    """The first candidate that exists and is not the bundle being built."""
     for cand in candidates:
         if self_real and os.path.realpath(cand) == self_real:
             continue
         if os.path.isfile(cand):
             return cand
-    where = certifi.where()
-    if where and (not self_real or os.path.realpath(where) != self_real):
-        if os.path.isfile(where):
-            return where
     return None
 
 

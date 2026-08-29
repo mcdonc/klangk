@@ -59,6 +59,86 @@ def validate_path(path: str) -> str:
     return normalized
 
 
+def classify_find_errors(
+    container_id: str, path: str, err: str, rc: int
+) -> None:
+    """Act on find's stderr diagnostics: start-point failures raise (or
+    list empty for ENOENT), child-entry failures only warn (the readable
+    entries survive), and a total lack of diagnostics surfaces as a
+    generic OSError."""
+    start_errors = []
+    child_errors = []
+    for line in err.splitlines():
+        if not line.strip():
+            continue
+        m = _FIND_ERROR_PATH_RE.match(line)
+        if m and m.group(1) == path:
+            start_errors.append(line)
+        else:
+            child_errors.append(line)
+    if child_errors:
+        logger.warning(
+            "list_files: skipped unreadable entries under %s in "
+            "container %s: %s",
+            path,
+            container_id,
+            " | ".join(child_errors),
+        )
+    if start_errors:
+        message = " ".join(" ".join(start_errors).split())
+        if "No such file or directory" in message:
+            # ENOENT lists as empty (a missing directory is not
+            # an error — matches stat_path/read_file).
+            return
+        logger.warning(
+            "list_files failed for %s in container %s: %s",
+            path,
+            container_id,
+            message,
+        )
+        if "Permission denied" in message:
+            # A permission-denied volume root rendered as a
+            # mysterious "Empty directory" (#2766) — surfaced,
+            # not swallowed.
+            raise PermissionError(message)
+        raise OSError(message)
+    if not child_errors:
+        # rc != 0 with no diagnostics at all: cannot classify —
+        # surface it rather than guess.
+        raise OSError(f"find exited with status {rc}")
+
+
+def _parse_find_line(line: str, path: str) -> dict | None:
+    """One ``find -printf`` line as an entry dict, or None for a
+    malformed/short line."""
+    parts = line.split("\t")
+    if len(parts) != 5:
+        return None
+    name, ftype, size_str, mtime_str, ctime_str = parts
+    is_dir = ftype == "d"
+    entry_path = path.rstrip("/") + "/" + name if path != "/" else "/" + name
+    try:
+        size = int(size_str) if not is_dir else None
+    except ValueError:
+        size = None
+    try:
+        mtime = float(mtime_str)
+    except ValueError:
+        mtime = 0.0
+    try:
+        ctime = float(ctime_str)
+    except ValueError:
+        ctime = 0.0
+    return {
+        "name": name,
+        "path": entry_path,
+        "is_dir": is_dir,
+        "size": size,
+        "mtime": mtime,
+        "ctime": ctime,
+    }
+
+
 class Files:
     """File operations inside workspace containers via ``podman exec``.
 
@@ -106,78 +186,15 @@ class Files:
             # prints the readable entries on stdout. Only a start-point
             # failure fails the listing; child failures degrade to a
             # logged warning plus the surviving entries (#2769 review).
-            start_errors = []
-            child_errors = []
-            for line in err.splitlines():
-                if not line.strip():
-                    continue
-                m = _FIND_ERROR_PATH_RE.match(line)
-                if m and m.group(1) == path:
-                    start_errors.append(line)
-                else:
-                    child_errors.append(line)
-            if child_errors:
-                logger.warning(
-                    "list_files: skipped unreadable entries under %s in "
-                    "container %s: %s",
-                    path,
-                    container_id,
-                    " | ".join(child_errors),
-                )
-            if start_errors:
-                message = " ".join(" ".join(start_errors).split())
-                if "No such file or directory" in message:
-                    # ENOENT lists as empty (a missing directory is not
-                    # an error — matches stat_path/read_file).
-                    return []
-                logger.warning(
-                    "list_files failed for %s in container %s: %s",
-                    path,
-                    container_id,
-                    message,
-                )
-                if "Permission denied" in message:
-                    # A permission-denied volume root rendered as a
-                    # mysterious "Empty directory" (#2766) — surfaced,
-                    # not swallowed.
-                    raise PermissionError(message)
-                raise OSError(message)
-            if not child_errors:
-                # rc != 0 with no diagnostics at all: cannot classify —
-                # surface it rather than guess.
-                raise OSError(f"find exited with status {rc}")
-        entries = []
-        for line in out.strip().splitlines():
-            parts = line.split("\t")
-            if len(parts) != 5:
-                continue
-            name, ftype, size_str, mtime_str, ctime_str = parts
-            is_dir = ftype == "d"
-            entry_path = (
-                path.rstrip("/") + "/" + name if path != "/" else "/" + name
+            classify_find_errors(container_id, path, err, rc)
+        entries = [
+            e
+            for e in (
+                _parse_find_line(line, path)
+                for line in out.strip().splitlines()
             )
-            try:
-                size = int(size_str) if not is_dir else None
-            except ValueError:
-                size = None
-            try:
-                mtime = float(mtime_str)
-            except ValueError:
-                mtime = 0.0
-            try:
-                ctime = float(ctime_str)
-            except ValueError:
-                ctime = 0.0
-            entries.append(
-                {
-                    "name": name,
-                    "path": entry_path,
-                    "is_dir": is_dir,
-                    "size": size,
-                    "mtime": mtime,
-                    "ctime": ctime,
-                }
-            )
+            if e is not None
+        ]
         entries.sort(key=lambda e: e["name"])
         return entries
 

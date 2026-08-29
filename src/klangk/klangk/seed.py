@@ -151,6 +151,20 @@ async def _build_image(
         await _run(podman_bin, args, timeout=2400.0)
 
 
+def _extract_seed_members(tar, out: str) -> None:
+    """Extract only ``nix`` + ``etc/nix/nix.conf`` members (every member is
+    a whitelisted relative path; ``filter="fully_trusted"`` preserves the
+    seed's uid-1000 ownership — the workspace klangk user)."""
+    for member in tar:
+        name = member.name[2:] if member.name.startswith("./") else member.name
+        if (
+            name == "nix"
+            or name.startswith("nix/")
+            or name == "etc/nix/nix.conf"
+        ):
+            tar.extract(member, out, filter="fully_trusted")
+
+
 def _export_to_dir_sync(podman_bin: str, cid: str, out: str) -> None:
     """Stream ``podman export <cid>`` into :mod:`tarfile`, extracting only
     ``nix`` + ``etc/nix/nix.conf`` into *out*.
@@ -171,18 +185,7 @@ def _export_to_dir_sync(podman_bin: str, cid: str, out: str) -> None:
     extracted = False
     try:
         with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
-            for member in tar:
-                name = (
-                    member.name[2:]
-                    if member.name.startswith("./")
-                    else member.name
-                )
-                if (
-                    name == "nix"
-                    or name.startswith("nix/")
-                    or name == "etc/nix/nix.conf"
-                ):
-                    tar.extract(member, out, filter="fully_trusted")
+            _extract_seed_members(tar, out)
             extracted = True
     except tarfile.TarError:
         # Empty / truncated stream — checked against proc.returncode below.

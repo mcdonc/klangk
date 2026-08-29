@@ -987,55 +987,7 @@ class CaddyWatchdog:
                 os.unlink(self.admin_socket)
             except FileNotFoundError:
                 pass
-            self._proc = await asyncio.create_subprocess_exec(
-                bin_path,
-                "run",
-                "--config",
-                str(bootstrap_cfg),
-                "--adapter",
-                "caddyfile",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                preexec_fn=_proxy_preexec,
-            )
-            stderr_task = asyncio.create_task(
-                self._relay_stderr(self._proc.stderr)
-            )
-            logger.info(
-                "caddy started (pid %d), admin UDS %s",
-                self._proc.pid,
-                self.admin_socket,
-            )
-            load_ok = False
-            if await self._wait_for_admin():
-                try:
-                    await self.load_config()
-                    load_ok = True
-                    self._log_listeners()
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "caddy POST /load failed (killing for respawn): %s",
-                        exc,
-                    )
-            else:
-                logger.error(
-                    "caddy admin UDS never came up at %s", self.admin_socket
-                )
-            if not load_ok and self._proc and self._proc.returncode is None:
-                # A failed /load leaves Caddy serving a *blank* config (no
-                # sites) — a healthy process doing nothing, which would never
-                # exit and so never respawn. Kill it so the backoff loop
-                # retries, mirroring nginx's fail-fast-on-bad-config behavior.
-                try:
-                    self._proc.terminate()
-                except ProcessLookupError:
-                    pass
-            rc = await self._proc.wait()
-            stderr_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await stderr_task
-            self._proc = None
+            rc = await self._watch_once(bin_path, bootstrap_cfg, env)
             if self._stopping:
                 return
             if self._bind_fatal:
@@ -1052,6 +1004,67 @@ class CaddyWatchdog:
             )
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
+
+    async def _watch_once(
+        self, bin_path: str, bootstrap_cfg: Path, env: dict
+    ) -> int:  # pragma: no cover – covered by the e2e suite
+        """One spawn -> admin-wait -> config-push -> wait cycle; returns
+        caddy's exit code."""
+        self._proc = await asyncio.create_subprocess_exec(
+            bin_path,
+            "run",
+            "--config",
+            str(bootstrap_cfg),
+            "--adapter",
+            "caddyfile",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            preexec_fn=_proxy_preexec,
+        )
+        stderr_task = asyncio.create_task(
+            self._relay_stderr(self._proc.stderr)
+        )
+        logger.info(
+            "caddy started (pid %d), admin UDS %s",
+            self._proc.pid,
+            self.admin_socket,
+        )
+        await self._load_or_kill()
+        rc = await self._proc.wait()
+        stderr_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stderr_task
+        self._proc = None
+        return rc
+
+    async def _load_or_kill(self) -> None:  # pragma: no cover – e2e
+        """Push the real config over the admin API once the admin UDS is up;
+        when that fails (or the UDS never came up), kill Caddy so the backoff
+        loop retries. A failed /load leaves Caddy serving a *blank* config
+        (no sites) — a healthy process doing nothing, which would never exit
+        and so never respawn, mirroring nginx's fail-fast-on-bad-config
+        behavior."""
+        load_ok = False
+        if await self._wait_for_admin():
+            try:
+                await self.load_config()
+                load_ok = True
+                self._log_listeners()
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "caddy POST /load failed (killing for respawn): %s",
+                    exc,
+                )
+        else:
+            logger.error(
+                "caddy admin UDS never came up at %s", self.admin_socket
+            )
+        if not load_ok and self._proc and self._proc.returncode is None:
+            try:
+                self._proc.terminate()
+            except ProcessLookupError:
+                pass
 
     async def start(self) -> None:
         """Bootstrap Caddy (admin on a UDS, no config) and start the watchdog.

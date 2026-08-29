@@ -41,6 +41,21 @@ from klangk.model.migrations.base import Migration
 _RESOURCE = "/groups"
 
 
+def _is_seeded_shape(rows) -> bool:
+    """Whether the /groups ACL still holds exactly the single
+    system-authenticated create entry the seed wrote."""
+    return bool(
+        len(rows) == 1
+        and rows[0][0] == 0  # position
+        and rows[0][1] == ACTION_ALLOW
+        and rows[0][2] == PRINCIPAL_SYSTEM
+        and rows[0][3] is None  # user_id
+        and rows[0][4] is None  # group_id
+        and rows[0][5] == SYSTEM_AUTHENTICATED
+        and rows[0][6] == "create"
+    )
+
+
 async def apply(db) -> None:
     cursor = await db.execute(
         "SELECT position, action, principal_type, user_id, group_id,"
@@ -51,17 +66,7 @@ async def apply(db) -> None:
     rows = await cursor.fetchall()
     if not rows:
         return  # nothing seeded on /groups — fresh/pre-seed deployment
-    seeded_shape = (
-        len(rows) == 1
-        and rows[0][0] == 0  # position
-        and rows[0][1] == ACTION_ALLOW
-        and rows[0][2] == PRINCIPAL_SYSTEM
-        and rows[0][3] is None  # user_id
-        and rows[0][4] is None  # group_id
-        and rows[0][5] == SYSTEM_AUTHENTICATED
-        and rows[0][6] == "create"
-    )
-    if not seeded_shape:
+    if not _is_seeded_shape(rows):
         return  # operator-customized — leave for the manual step
     await db.execute(
         "DELETE FROM acl_entries WHERE resource = ?", (_RESOURCE,)

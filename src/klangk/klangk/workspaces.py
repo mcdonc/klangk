@@ -118,6 +118,14 @@ async def _async_rmtree(path: Path | str, label: str = "") -> None:
     await asyncio.to_thread(rmtree, path, label)
 
 
+def _unlink_stale_handle_symlink(workspace_home, target: str) -> None:
+    """Remove any existing symlink for this user (handle rename)."""
+    for entry in workspace_home.iterdir():
+        if entry.is_symlink() and os.readlink(entry) == target:
+            entry.unlink()
+            break
+
+
 def _ensure_home_symlink_sync(
     workspace_home: Path,
     handle: str,
@@ -150,10 +158,7 @@ def _ensure_home_symlink_sync(
         return f"/home/{handle}", created
 
     # Remove any existing symlink for this user (handle rename).
-    for entry in workspace_home.iterdir():
-        if entry.is_symlink() and os.readlink(entry) == target:
-            entry.unlink()
-            break
+    _unlink_stale_handle_symlink(workspace_home, target)
 
     # The handle path may already exist — e.g., a symlink pointing to a
     # different user's directory from a workspace import.  Adopt the old

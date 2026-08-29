@@ -148,6 +148,20 @@ def _validate_hook_strings(app, changed: dict) -> str | None:
     return None
 
 
+def _hook_field_changes(handle, workspace: dict) -> dict:
+    """The mutable fields a hook actually changed: deleted-from-handle means
+    clear-the-column, a differing value means replace it."""
+    changed = {}
+    for field in _HOOK_MUTABLE_FIELDS:
+        if field not in handle:
+            # Deleted from the handle → clear the column.
+            if field in workspace:
+                changed[field] = None
+        elif handle[field] != workspace.get(field):
+            changed[field] = handle[field]
+    return changed
+
+
 def _validate_hook_lists(changed: dict) -> str | None:
     """Settings bag and domain lists: parsed/normalized in place."""
     if "settings" in changed and changed["settings"] is not None:
@@ -166,19 +180,25 @@ def _validate_hook_lists(changed: dict) -> str | None:
         "rejected_domains" in changed
         and changed["rejected_domains"] is not None
     ):
-        for spec in changed["rejected_domains"]:
-            if spec.strip() and "/" in spec:
-                return (
-                    "invalid rejected_domains: no CIDR specs (a rejected"
-                    f" name is NXDOMAIN'd before resolution): {spec!r}"
-                )
-        try:
-            changed["rejected_domains"] = parse_allowed_domains(
-                changed["rejected_domains"], label="rejected_domains"
-            )
-        except ValueError as exc:
-            return f"invalid rejected_domains: {exc}"
+        return _validate_hook_rejected_domains(changed)
     return None
+
+
+def _validate_hook_rejected_domains(changed: dict) -> str | None:
+    """The rejected-domains list: no CIDR specs (a rejected name is
+    NXDOMAIN'd before resolution), then parsed/normalized in place."""
+    for spec in changed["rejected_domains"]:
+        if spec.strip() and "/" in spec:
+            return (
+                "invalid rejected_domains: no CIDR specs (a rejected"
+                f" name is NXDOMAIN'd before resolution): {spec!r}"
+            )
+    try:
+        changed["rejected_domains"] = parse_allowed_domains(
+            changed["rejected_domains"], label="rejected_domains"
+        )
+    except ValueError as exc:
+        return f"invalid rejected_domains: {exc}"
 
 
 def _validate_hook_changes(app, changed: dict) -> str | None:
@@ -424,14 +444,7 @@ class Hooks:
                 exc_info=True,
             )
             return workspace
-        changed = {}
-        for field in _HOOK_MUTABLE_FIELDS:
-            if field not in handle:
-                # Deleted from the handle → clear the column.
-                if field in workspace:
-                    changed[field] = None
-            elif handle[field] != workspace.get(field):
-                changed[field] = handle[field]
+        changed = _hook_field_changes(handle, workspace)
         if not changed:
             return workspace
         invalid = _validate_hook_changes(self.app, changed)

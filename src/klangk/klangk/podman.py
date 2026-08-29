@@ -97,6 +97,62 @@ class Podman:
         """The resolved podman binary path (for ``ExecSession`` etc.)."""
         return self._bin
 
+    @staticmethod
+    async def _wait_podman(
+        proc, timeout: float | None, cmd_label: str
+    ) -> bool:
+        """Wait for a podman process, killing it on timeout; returns whether
+        it timed out."""
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+            return False
+        except asyncio.TimeoutError:
+            logger.warning(
+                "podman-timeout: %s exceeded %.1fs — killing",
+                cmd_label,
+                timeout,
+            )
+            proc.kill()
+            await proc.wait()
+            return True
+
+    @staticmethod
+    def _finish_podman_run(
+        proc,
+        timed_out: bool,
+        err: str,
+        cmd_label: str,
+        timeout: float | None,
+        args: list[str],
+        check: bool,
+        timings: tuple[float, float, float, float],
+    ) -> tuple[int, str]:
+        """Apply the timeout override, log timings, and enforce *check*."""
+        rc = proc.returncode or 0
+        if timed_out:
+            rc = -1
+            err = err or f"{cmd_label} timed out after {timeout}s"
+        t0, t1, t2, t3 = timings
+        elapsed = t3 - t0
+        logger.debug(
+            "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs"
+            " total=%.3fs",
+            cmd_label,
+            t1 - t0,
+            t2 - t1,
+            t3 - t2,
+            elapsed,
+        )
+        if elapsed > 2.0 and err.strip():  # pragma: no cover
+            logger.debug(
+                "podman-timing: %s stderr: %s", cmd_label, err.strip()
+            )
+        if check and rc != 0:
+            raise PodmanError(
+                classify(err), err.strip() or f"podman {args[0]}"
+            )
+        return rc, err
+
     async def run(
         self,
         args: list[str],
@@ -138,45 +194,22 @@ class Podman:
                 proc.stdin.write(stdin_data)
                 await proc.stdin.drain()
                 proc.stdin.close()
-            timed_out = False
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
-                timed_out = True
-                logger.warning(
-                    "podman-timeout: %s exceeded %.1fs — killing",
-                    cmd_label,
-                    timeout,
-                )
-                proc.kill()
-                await proc.wait()
+            timed_out = await self._wait_podman(proc, timeout, cmd_label)
             t3 = time.monotonic()
             out_f.seek(0)
             err_f.seek(0)
             out = out_f.read().decode("utf-8", errors="replace")
             err = err_f.read().decode("utf-8", errors="replace")
-        rc = proc.returncode or 0
-        if timed_out:
-            rc = -1
-            err = err or f"{cmd_label} timed out after {timeout}s"
-        elapsed = t3 - t0
-        logger.debug(
-            "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs"
-            " total=%.3fs",
+        rc, err = self._finish_podman_run(
+            proc,
+            timed_out,
+            err,
             cmd_label,
-            t1 - t0,
-            t2 - t1,
-            t3 - t2,
-            elapsed,
+            timeout,
+            args,
+            check,
+            (t0, t1, t2, t3),
         )
-        if elapsed > 2.0 and err.strip():  # pragma: no cover
-            logger.debug(
-                "podman-timing: %s stderr: %s", cmd_label, err.strip()
-            )
-        if check and rc != 0:
-            raise PodmanError(
-                classify(err), err.strip() or f"podman {args[0]}"
-            )
         return rc, out, err
 
     async def run_raw(
@@ -210,45 +243,22 @@ class Podman:
                 proc.stdin.write(stdin_data)
                 await proc.stdin.drain()
                 proc.stdin.close()
-            timed_out = False
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
-                timed_out = True
-                logger.warning(
-                    "podman-timeout: %s exceeded %.1fs — killing",
-                    cmd_label,
-                    timeout,
-                )
-                proc.kill()
-                await proc.wait()
+            timed_out = await self._wait_podman(proc, timeout, cmd_label)
             t3 = time.monotonic()
             out_f.seek(0)
             err_f.seek(0)
             out_bytes = out_f.read()
             err = err_f.read().decode("utf-8", errors="replace")
-        rc = proc.returncode or 0
-        if timed_out:
-            rc = -1
-            err = err or f"{cmd_label} timed out after {timeout}s"
-        elapsed = t3 - t0
-        logger.debug(
-            "podman-timing: %s tempfile=%.3fs spawn=%.3fs wait=%.3fs"
-            " total=%.3fs",
+        rc, err = self._finish_podman_run(
+            proc,
+            timed_out,
+            err,
             cmd_label,
-            t1 - t0,
-            t2 - t1,
-            t3 - t2,
-            elapsed,
+            timeout,
+            args,
+            check,
+            (t0, t1, t2, t3),
         )
-        if elapsed > 2.0 and err.strip():  # pragma: no cover
-            logger.debug(
-                "podman-timing: %s stderr: %s", cmd_label, err.strip()
-            )
-        if check and rc != 0:
-            raise PodmanError(
-                classify(err), err.strip() or f"podman {args[0]}"
-            )
         return rc, out_bytes, err
 
     # --- Containers ---

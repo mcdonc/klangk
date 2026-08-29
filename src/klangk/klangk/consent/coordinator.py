@@ -64,6 +64,40 @@ _REVOKE_ACK_TIMEOUT = 5.0
 _PAUSE_SECONDS = {"15m": 900, "1h": 3600, "1d": 86400}
 
 
+def _build_verdict(
+    row: dict | None, decision: str, duration: str
+) -> tuple[dict, str, dict | None, dict | None]:
+    """(verdict, resolved_label, forever_allow_row, forever_deny_row) for a
+    decided request. A `forever` verdict additionally captures its row for
+    persistence: the allow mutates the workspace's allow-list (#2368) and the
+    deny its deny-list (#2369) so either survives a container/sidecar restart;
+    captured here, persisted after the Future is resolved (the deciding
+    connection gets its in-memory ACCEPT first) and before the rules refresh
+    (so the view reflects the new entry)."""
+    if row is None:
+        return (
+            {"decision": VERDICT_DENY, "reason": "gone"},
+            "expired",
+            None,
+            None,
+        )
+    if decision == "allowed":
+        verdict = {
+            "decision": VERDICT_ALLOW,
+            "reason": "decided",
+            "duration": duration,
+        }
+        forever_allow = row if duration == DURATION_FOREVER else None
+        return verdict, "allowed", forever_allow, None
+    verdict = {
+        "decision": VERDICT_DENY,
+        "reason": "decided",
+        "duration": duration,
+    }
+    forever_deny = row if duration == DURATION_FOREVER else None
+    return verdict, "denied", None, forever_deny
+
+
 class ConsentCoordinator:
     """In-process holds for egress requests awaiting a verdict (#2311).
 
@@ -330,35 +364,12 @@ class ConsentCoordinator:
             verdict = {"decision": VERDICT_DENY, "reason": "error"}
             resolved = "expired"
         else:
-            if row is None:
-                verdict = {"decision": VERDICT_DENY, "reason": "gone"}
-                resolved = "expired"
-            elif decision == "allowed":
-                verdict = {
-                    "decision": VERDICT_ALLOW,
-                    "reason": "decided",
-                    "duration": duration,
-                }
-                resolved = "allowed"
-                # A `forever` allow persists by mutating the workspace's
-                # allow-list (#2368) so it survives a container/sidecar
-                # restart. Captured here, persisted after the Future is
-                # resolved (the deciding connection gets its in-memory ACCEPT
-                # first) and before the rules refresh (so the view reflects
-                # the new entry).
-                if duration == DURATION_FOREVER:
-                    forever_allow_row = row
-            else:
-                verdict = {
-                    "decision": VERDICT_DENY,
-                    "reason": "decided",
-                    "duration": duration,
-                }
-                resolved = "denied"
-                # A `forever` deny persists by mutating the workspace's
-                # deny-list (#2369) -- the mirror of the allow side above.
-                if duration == DURATION_FOREVER:
-                    forever_deny_row = row
+            (
+                verdict,
+                resolved,
+                forever_allow_row,
+                forever_deny_row,
+            ) = _build_verdict(row, decision, duration)
         if not hold["future"].done():
             hold["future"].set_result(verdict)
         self._broadcast_resolved(request_id, hold["workspace_id"], resolved)
@@ -719,6 +730,12 @@ class ConsentCoordinator:
         ws = await self.app.state.model.workspaces.get_workspace(workspace_id)
         if ws is None:
             return None
+        return await self._rules_frame_for(ws, workspace_id)
+
+    async def _rules_frame_for(self, ws: dict, workspace_id: str) -> dict:
+        """The assembled frame: static lists, grouped in-effect verdicts,
+        and the live pause window (#2332, read fresh so a self-expired pause
+        shows as cleared)."""
         rows = await self.app.state.model.egress_consent.list_active(
             workspace_id
         )
@@ -739,8 +756,6 @@ class ConsentCoordinator:
             "reject_list": ws.get("rejected_domains") or [],
             "allowed": [r for r in rows if r["decision"] == DECISION_ALLOWED],
             "denied": [r for r in rows if r["decision"] == DECISION_DENIED],
-            # #2332 (pause control): the live pause window, or None when not
-            # paused (read fresh so a self-expired pause shows as cleared).
             "paused": paused,
         }
 
