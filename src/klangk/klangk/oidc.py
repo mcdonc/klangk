@@ -1,6 +1,6 @@
 """OIDC client for external Identity Provider authentication."""
 
-import asyncio
+import inspect
 import base64
 import hashlib
 import importlib.util
@@ -481,7 +481,7 @@ class OIDC:
                 f"callable in {path!r}"
             )
         self.login_hook = hook
-        self.login_hook_is_async = asyncio.iscoroutinefunction(hook)
+        self.login_hook_is_async = inspect.iscoroutinefunction(hook)
         logger.info("OIDC login hook loaded: %s", raw)
 
     async def call_login_hook(
