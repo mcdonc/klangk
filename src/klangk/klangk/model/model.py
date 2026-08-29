@@ -16,18 +16,143 @@ reached via the module-level free functions + the
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from .acl import ACLModel
 from .egress_consent import EgressConsentModel
 from .server_schedules import ServerSchedulesModel
 from .ports import PortsModel
 from .sessions import SessionsModel
-from .tokens import TokensModel
-from .login_attempts import LoginAttemptsModel
 from .invitations import InvitationsModel
 from .users import UsersModel
 from .workspaces import WorkspacesModel
 from .schema import init_db
+
+
+# ---------------------------------------------------------------------------
+# The two trivial domains (moved verbatim from the former tokens and
+# login_attempts submodules — their only importer was this composition
+# root; #2858).
+# ---------------------------------------------------------------------------
+
+
+class TokensModel:
+    """Token-blocklist operations, resolved through ``app_state.db``.
+
+    Constructed by :class:`~klangk.model.model.Model` and reached
+    via ``app_state.model.tokens``. Reaches the DB through
+    ``self.app.state.db`` (the single DB instance for the whole app).
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    def reconfigure(self, app) -> None:
+        self.app = app
+
+    async def blocklist_token(
+        self, jti: str, expires_at: str, new_token: str | None = None
+    ) -> None:
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO token_blocklist"
+                " (jti, expires_at, new_token) VALUES (?, ?, ?)",
+                (jti, expires_at, new_token),
+            )
+
+    async def is_token_blocklisted(self, jti: str) -> bool:
+        row = await self.app.state.db.fetchone(
+            "SELECT 1 FROM token_blocklist WHERE jti = ?",
+            (jti,),
+        )
+        return row is not None
+
+    async def get_refreshed_token(self, jti: str) -> str | None:
+        """Return the replacement token for a refreshed JTI.
+
+        The returned token is a full JWT whose own ``exp`` claim governs
+        its validity — no additional expiry check is needed here.
+        """
+        row = await self.app.state.db.fetchone(
+            "SELECT new_token FROM token_blocklist"
+            " WHERE jti = ? AND new_token IS NOT NULL",
+            (jti,),
+        )
+        return row[0] if row else None
+
+
+class LoginAttemptsModel:
+    """Login-attempt storage, resolved through ``app_state.db``.
+
+    Reached via ``app_state.model.login_attempts``. Reaches the DB through
+    ``self.app.state.db`` (the single DB instance for the whole app).
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    def reconfigure(self, app) -> None:
+        self.app = app
+
+    async def record_failed_login(
+        self, email: str, *, reset: bool = False
+    ) -> None:
+        """Record a failed login attempt for an email.
+
+        Storage only; the sliding-window *decision* lives in ``auth.py``.
+        """
+        async with self.app.state.db.transaction() as db:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if reset:
+                await db.execute(
+                    """INSERT INTO login_attempts
+                       (email, attempt_count, first_attempt_at)
+                       VALUES (?, 1, ?)
+                       ON CONFLICT(email) DO UPDATE SET
+                       attempt_count = 1,
+                       first_attempt_at = excluded.first_attempt_at,
+                       locked_until = NULL""",
+                    (email, now_iso),
+                )
+            else:
+                await db.execute(
+                    """INSERT INTO login_attempts (email, attempt_count, first_attempt_at)
+                       VALUES (?, 1, ?) ON CONFLICT(email) DO UPDATE SET
+                       attempt_count = attempt_count + 1""",
+                    (email, now_iso),
+                )
+
+    async def get_login_attempt_info(
+        self, email: str
+    ) -> dict[str, int | str | None] | None:
+        """Return login attempt info for an email, or None if no attempts tracked."""
+        row = await self.app.state.db.fetchone(
+            "SELECT attempt_count, first_attempt_at, locked_until"
+            " FROM login_attempts WHERE email = ?",
+            (email,),
+        )
+        if row is None:
+            return None
+        return {
+            "attempt_count": row["attempt_count"],
+            "first_attempt_at": row["first_attempt_at"],
+            "locked_until": row["locked_until"],
+        }
+
+    async def set_login_lockout(self, email: str, locked_until: str) -> None:
+        """Set the lockout time for an email after too many failed attempts."""
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "UPDATE login_attempts SET locked_until = ? WHERE email = ?",
+                (locked_until, email),
+            )
+
+    async def clear_login_attempts(self, email: str) -> None:
+        """Clear all login attempts for an email (on successful login)."""
+        async with self.app.state.db.transaction() as db:
+            await db.execute(
+                "DELETE FROM login_attempts WHERE email = ?", (email,)
+            )
 
 
 class Model:
