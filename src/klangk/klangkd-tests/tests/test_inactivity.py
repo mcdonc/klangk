@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import types
+import pytest
 from unittest.mock import AsyncMock
 
 from klangk import inactivity
@@ -164,35 +165,46 @@ class TestInactivityBranchGaps2834:
     (scheduler jitter) re-sleeps without sweeping."""
 
     async def test_early_wake_resleeps_without_sweeping(self, monkeypatch):
+        import klangk.interval as iv
+
         app = _app(disable_inactive=AsyncMock(return_value=[]))
         sw = inactivity.InactivitySweeper(app)
-        real_sleep = asyncio.sleep
-        prune_done = asyncio.Event()
-        sleeps = {"n": 0}
+        real_sweep = sw.sweep
+        swept = []
 
-        async def _jittered_sleep(_s):
-            # Wakes instantly: no wall time passes, so the next tick's
-            # `now >= next_sweep` is False (the early-wake arm).
-            sleeps["n"] += 1
-            if sleeps["n"] >= 3:
-                sw._task.cancel()  # unwinds cleanly via the CancelledError arm
-            await real_sleep(0)
-
-        real_sweep = sw._sweep
-
-        async def _sweep_once():
-            prune_done.set()
+        async def counting_sweep():
+            swept.append(1)
             await real_sweep()
 
-        monkeypatch.setattr(sw, "_sweep", _sweep_once)
-        monkeypatch.setattr(asyncio, "sleep", _jittered_sleep)
+        monkeypatch.setattr(sw, "sweep", counting_sweep)
+        clock = types.SimpleNamespace(t=1000.0)
+        monkeypatch.setattr(
+            iv, "time", types.SimpleNamespace(monotonic=lambda: clock.t)
+        )
+        sleeps = {"n": 0}
+
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(_s):
+            sleeps["n"] += 1
+            if sleeps["n"] >= 3:
+                sw._task.cancel()
+            await real_sleep(0)  # yield: the awaiting test interleaves
+
+        # Delegate everything to the real asyncio except sleep, scoped
+        # to the IntervalWorker module's namespace only.
+        stub = types.SimpleNamespace(
+            **{
+                n: getattr(asyncio, n)
+                for n in dir(asyncio)
+                if not n.startswith("__")
+            }
+        )
+        stub.sleep = fake_sleep
+        monkeypatch.setattr(iv, "asyncio", stub)
         sw.start()
-        await prune_done.wait()
-        for _ in range(200):
-            if sw._task.done() or sleeps["n"] >= 3:
-                break
-            await real_sleep(0.01)
-        await sw._task
-        # The sweeper swept once at startup, then re-slept on the early
-        # ticks (2+ early wakes exercised the not-yet arm).
+        with pytest.raises(asyncio.CancelledError):
+            await sw._task
+        # The startup sweep ran once; the frozen clock makes every later
+        # tick an early wake, so the users sweep saw one pass only.
         assert app.state.model.users.disable_inactive_users.await_count == 1

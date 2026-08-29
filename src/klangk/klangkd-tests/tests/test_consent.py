@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import types
+import pytest
 from unittest.mock import AsyncMock
 
 from klangk import consent
@@ -154,32 +155,54 @@ class TestEgressConsentSweeper:
 
 
 class TestEgressSweeperBranchGaps2834:
-    """#2834 branch gate: a retention tick that wakes BEFORE the prune
-    interval (scheduler jitter) re-sleeps without pruning."""
+    """#2834 branch gate: a retention tick that wakes BEFORE the interval
+    (scheduler jitter) re-sleeps without sweeping."""
 
     async def test_early_wake_resleeps_without_pruning(self, monkeypatch):
+        import klangk.interval as iv
+
         app = _app()
         sw = consent.EgressConsentSweeper(app)
-        real_sleep = asyncio.sleep
-        pruned = asyncio.Event()
+        real_sweep = sw.sweep
+        swept = []
+
+        async def counting_sweep():
+            swept.append(1)
+            await real_sweep()
+
+        monkeypatch.setattr(sw, "sweep", counting_sweep)
+
+        # Freeze the clock and no-op the sleep, both scoped to the
+        # IntervalWorker module's namespace (a global asyncio patch would
+        # leak into same-worker neighbors under xdist).
+        clock = types.SimpleNamespace(t=1000.0)
+        monkeypatch.setattr(
+            iv, "time", types.SimpleNamespace(monotonic=lambda: clock.t)
+        )
         sleeps = {"n": 0}
 
-        async def _jittered_sleep(_s):
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(_s):
             sleeps["n"] += 1
             if sleeps["n"] >= 3:
                 sw._task.cancel()
-            await real_sleep(0)
+            await real_sleep(0)  # yield: the awaiting test interleaves
 
-        async def _prune_once():
-            pruned.set()
-
-        monkeypatch.setattr(sw, "_prune", _prune_once)
-        monkeypatch.setattr(asyncio, "sleep", _jittered_sleep)
+        # Delegate everything to the real asyncio except sleep, scoped
+        # to the IntervalWorker module's namespace only.
+        stub = types.SimpleNamespace(
+            **{
+                n: getattr(asyncio, n)
+                for n in dir(asyncio)
+                if not n.startswith("__")
+            }
+        )
+        stub.sleep = fake_sleep
+        monkeypatch.setattr(iv, "asyncio", stub)
         sw.start()
-        await pruned.wait()
-        for _ in range(200):
-            if sw._task.done() or sleeps["n"] >= 3:
-                break
-            await real_sleep(0.01)
-        await sw._task
-        app.state.model.egress_consent.prune.assert_not_awaited()
+        with pytest.raises(asyncio.CancelledError):
+            await sw._task
+        # Swept once at startup; the frozen clock makes every later tick
+        # an early wake (the not-yet arm), so no second prune ran.
+        app.state.model.egress_consent.prune.assert_awaited_once()
