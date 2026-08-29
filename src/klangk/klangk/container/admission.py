@@ -7,7 +7,9 @@ is created, klangkd checks that the start is *admissible* —
    available host memory (``MemAvailable`` from ``/proc/meminfo`` on
    Linux — plus the cgroup limit when klangkd itself runs in a
    memory-limited container; ``sysctl``/``vm_stat`` on macOS, shared
-   with the eviction measurement, #2526) against the workspace's
+   with the eviction measurement, #2526, and capped by the podman
+   machine's configured memory — containers live in that VM, whose
+   default 2048 MiB is far below the Mac's RAM) against the workspace's
    resolved ``container_memory_limit`` (#34 / #864) plus a deploy-wide
    reserve for the server itself. A start that does not fit fails fast
    with a clear operator- and user-facing message instead of deferring
@@ -40,9 +42,12 @@ All settings are read live off ``app.state.settings`` so a SIGHUP
 reload (#1587) re-arms the gates without a restart.
 """
 
+import asyncio
+import json
 import logging
 import platform
 import re
+import time
 
 from ..exceptions import WorkspaceCapacityError
 from .eviction import (
@@ -105,7 +110,119 @@ def format_size(num_bytes: int) -> str:
     return f"{max(0, num_bytes) / (1024**2):.0f} MB"
 
 
-async def available_memory_bytes() -> int:
+# A podman machine with a configured memory below this (as parsed
+# bytes) is treated as unparseable rather than a real ceiling: no real
+# machine ships with < 64 MiB, and a MiB-scale integer (2048, 4096, …)
+# is exactly what a unit mismatch would look like — capping
+# availability to ~2 KB would refuse every start (#2525).
+_MIN_MACHINE_MEMORY_BYTES = 64 * 1024 * 1024
+
+# How long a parsed podman-machine memory cap stays fresh. The value
+# only changes via ``podman machine set`` / re-init — rare enough that
+# a 5-minute cache keeps the per-start cost at one ``vm_stat`` pair
+# plus an occasional short ``podman machine ls``.
+_MACHINE_MEMORY_TTL_SECONDS = 300.0
+
+# (podman_bin) -> (monotonic_ts, cap_bytes | None); None results are
+# cached too (a machine-less Mac shouldn't shell out per start).
+_machine_memory_cache: dict[str, tuple[float, int | None]] = {}
+
+
+def _pick_machine_memory(machines) -> int | None:
+    """Pick the machine whose configured memory caps the measurement.
+
+    Prefers the entry flagged ``"Default": true`` (what podman talks to
+    without a ``--connection``), then the canonical default name, then
+    exactly-one-machine. An ambiguous multi-machine setup with no
+    default returns None (no cap) rather than guessing wrong. Memory
+    is bytes in the ``machine ls --format json`` output (the
+    podman-machine-list(1) example ships 2048 MiB as 2147483648).
+    """
+    if not isinstance(machines, list) or not machines:
+        return None
+
+    def memory_of(entry) -> int | None:
+        try:
+            value = int(entry["Memory"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if value < _MIN_MACHINE_MEMORY_BYTES:
+            return None
+        return value
+
+    for entry in machines:
+        if entry.get("Default") is True:
+            mem = memory_of(entry)
+            if mem is not None:
+                return mem
+    for entry in machines:
+        if entry.get("Name") == "podman-machine-default":
+            mem = memory_of(entry)
+            if mem is not None:
+                return mem
+    if len(machines) == 1:
+        return memory_of(machines[0])
+    return None
+
+
+async def _run_podman_json(*cmd: str):
+    """Run a short podman command, return parsed JSON stdout.
+
+    Raises ``OSError`` on a spawn failure / non-zero exit and
+    ``ValueError`` on non-JSON output, so
+    :func:`podman_machine_memory_bytes` can treat both as "no cap".
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _err = await proc.communicate()
+    if proc.returncode != 0:
+        raise OSError(f"{' '.join(cmd)} exited {proc.returncode}")
+    return json.loads(out.decode(errors="replace"))
+
+
+async def podman_machine_memory_bytes(
+    podman_bin: str = "podman", *, runner=None, _now=None
+) -> int | None:
+    """Configured memory of the podman machine VM, in bytes, or None.
+
+    On macOS, containers do not run on the Mac — they run inside a
+    podman machine Linux VM whose memory is configured at
+    ``podman machine init`` time and defaults to a tiny 2048 MiB,
+    regardless of the Mac's RAM (#2525). Admission must fit the
+    workspace where containers actually live, so the macOS measurement
+    is capped by the machine's ceiling. Read via
+    ``<podman_bin> machine ls --format json`` (works while the machine
+    is stopped; does not start it) and cached for
+    :data:`_MACHINE_MEMORY_TTL_SECONDS`.
+
+    *runner* injects the command transport (tests; the real one is
+    :func:`_run_podman_json`). Any failure — no podman, no machine,
+    unparseable output — returns None: no cap, the Mac measurement
+    governs (the gate's fail-open posture at large).
+    """
+    if _now is None:
+        _now = time.monotonic
+    cached = _machine_memory_cache.get(podman_bin)
+    if cached is not None and _now() - cached[0] < _MACHINE_MEMORY_TTL_SECONDS:
+        return cached[1]
+    if runner is None:
+        runner = _run_podman_json
+    try:
+        machines = await runner(
+            podman_bin, "machine", "ls", "--format", "json"
+        )
+    except (OSError, ValueError):
+        cap = None
+    else:
+        cap = _pick_machine_memory(machines)
+    _machine_memory_cache[podman_bin] = (_now(), cap)
+    return cap
+
+
+async def available_memory_bytes(podman_bin: str = "podman") -> int:
     """Absolute host memory bytes immediately available (#2525).
 
     The bytes-based sibling of the eviction loop's
@@ -119,13 +236,22 @@ async def available_memory_bytes() -> int:
       finite memory limit (Docker ``-m``), the cgroup's own headroom
       (``limit - working set``) is measured too and the **smaller**
       absolute value wins — meminfo inside a container shows the host.
-    - **macOS**: ``sysctl`` + ``vm_stat`` (shared with eviction).
+    - **macOS**: ``sysctl`` + ``vm_stat`` (shared with eviction),
+      **capped by the podman machine's configured memory** — containers
+      live in that VM (default 2048 MiB, far below the Mac's RAM), so
+      fitting a workspace against the Mac's free memory alone would
+      admit starts that cannot fit where containers actually run. The
+      VM's *usage* is not measurable from the Mac, so the cap is its
+      total — a ceiling, not a live gauge.
 
     Raises ``OSError``/``ValueError`` when nothing is measurable —
     callers treat that as fail-open.
     """
     if platform.system() == "Darwin":
         _total, available = await macos_measure()
+        machine_cap = await podman_machine_memory_bytes(podman_bin)
+        if machine_cap is not None:
+            available = min(available, machine_cap)
         return available
     meminfo = read_meminfo()
     total = meminfo.get("MemTotal", 0)
@@ -328,7 +454,9 @@ class AdmissionControl:
         # is a config error (surfaced as such), not "unmeasurable".
         limit_bytes = parse_size_bytes(limit)
         try:
-            available = await available_memory_bytes()
+            available = await available_memory_bytes(
+                self.app.state.settings.podman_bin or "podman"
+            )
         except (OSError, ValueError) as e:
             if not self._warned_unmeasurable:
                 self._warned_unmeasurable = True
