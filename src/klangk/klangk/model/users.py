@@ -234,6 +234,21 @@ def parse_user_ts(value: str | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
+def _user_is_inactive(row, cutoff) -> bool:
+    """Whether a user's newest of last_activity/last_login/created (a
+    never-used account ages from creation) predates *cutoff*."""
+    stamps = [
+        ts
+        for ts in (
+            parse_user_ts(row["last_activity_at"]),
+            parse_user_ts(row["last_login_at"]),
+            parse_user_ts(row["created_at"]),
+        )
+        if ts is not None
+    ]
+    return bool(stamps) and max(stamps) < cutoff
+
+
 class UsersModel:
     """User/group/handle operations, resolved through ``app_state.db``.
 
@@ -983,16 +998,7 @@ class UsersModel:
             for row in await cursor.fetchall():
                 if row["id"] == AGENT_USER_ID or row["id"] in admin_ids:
                     continue
-                stamps = [
-                    ts
-                    for ts in (
-                        parse_user_ts(row["last_activity_at"]),
-                        parse_user_ts(row["last_login_at"]),
-                        parse_user_ts(row["created_at"]),
-                    )
-                    if ts is not None
-                ]
-                if not stamps or max(stamps) >= cutoff:
+                if not _user_is_inactive(row, cutoff):
                     continue
                 await db.execute(
                     "UPDATE users SET disabled = 1 WHERE id = ?",

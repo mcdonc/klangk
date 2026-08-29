@@ -646,15 +646,7 @@ def main(  # pragma: no cover
     # ERROR per retry. A different winner PID is reported fresh.
     existing = check_pid_preflight(settings)
     if existing is not None:
-        marker = refusal_marker_path(settings)
-        if marker is None or not refusal_already_reported(marker, existing):
-            logger.error(
-                "Another klangk instance (PID %d) is already running — "
-                "refusing to start",
-                existing,
-            )
-            if marker is not None:
-                mark_refusal_reported(marker, existing)
+        _report_pid_collision(settings, existing)
         sys.exit(1)
 
     # Port-probe check: catch cross-deploy collisions the PID-file
@@ -665,25 +657,7 @@ def main(  # pragma: no cover
     # through Caddy — probe those before starting. The proxy hasn't
     # started yet, so a live listener on our configured port means
     # another klangkd (or its proxy) already owns it.
-    for port_str, label in (
-        (settings.port, "browser"),
-        (settings.egress_port, "egress"),
-    ):
-        if port_str is None:
-            continue
-        port_int = int(port_str)
-        listen_host = (
-            settings.listen if label == "browser" else settings.egress_listen
-        )
-        if check_port_preflight(listen_host, port_int):
-            logger.error(
-                "Another process is already listening on %s:%d (%s port) "
-                "— refusing to start. Is another klangkd running?",
-                listen_host,
-                port_int,
-                label,
-            )
-            sys.exit(1)
+    _check_port_collisions(settings)
 
     # Bind the UDS. A stale socket from a kill -9'd process makes the
     # bind fail with EADDRINUSE — unlink first (the pidfile guard in the
@@ -885,6 +859,52 @@ from .api._common import get_app_dep  # noqa: F401, E402
 # passed to uvicorn. The E2E suites launch real ``klangkd``
 # (``python -m klangk.main``) and contact it over its UDS — no
 # ``module:app`` string import anywhere (#1525).
+
+
+def _report_pid_collision(settings, existing: int) -> None:  # pragma: no cover
+    """Report the losing PID-collision refusal, de-duplicated against the
+    live winner PID (#2021): a supervisor's restart loop logs the refusal
+    once (first collision) and then stays quiet for retries against the
+    same winner, instead of spamming one ERROR per retry. A different
+    winner PID is reported fresh."""
+    marker = refusal_marker_path(settings)
+    if marker is None or not refusal_already_reported(marker, existing):
+        logger.error(
+            "Another klangk instance (PID %d) is already running — "
+            "refusing to start",
+            existing,
+        )
+        if marker is not None:
+            mark_refusal_reported(marker, existing)
+
+
+def _check_port_collisions(settings) -> None:  # pragma: no cover
+    """Port-probe check: catch cross-deploy collisions the PID-file guard
+    misses (#2211). Two klangkd instances from different checkouts
+    (different $DEVENV_STATE → different state_dir → separate instance-id /
+    PID files) never see each other's PID file. But they share the same TCP
+    ports (browser + egress) through Caddy — probe those before starting.
+    The proxy hasn't started yet, so a live listener on our configured port
+    means another klangkd (or its proxy) already owns it."""
+    for port_str, label in (
+        (settings.port, "browser"),
+        (settings.egress_port, "egress"),
+    ):
+        if port_str is None:
+            continue
+        port_int = int(port_str)
+        listen_host = (
+            settings.listen if label == "browser" else settings.egress_listen
+        )
+        if check_port_preflight(listen_host, port_int):
+            logger.error(
+                "Another process is already listening on %s:%d (%s port) "
+                "— refusing to start. Is another klangkd running?",
+                listen_host,
+                port_int,
+                label,
+            )
+            sys.exit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover

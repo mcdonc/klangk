@@ -103,6 +103,35 @@ def is_valid_container_env_key(key: str) -> bool:
     return key.startswith(_CONTAINER_ENV_KEY_PREFIX)
 
 
+def _deploy_feature_names(raw: str) -> set[str]:
+    """Parse the deploy-chosen comma-separated list: trimmed, empties
+    dropped (e.g. "a,,b", a trailing comma)."""
+    return {
+        part for part in (entry.strip() for entry in raw.split(",")) if part
+    }
+
+
+def _manifest_default_names(manifest: dict) -> set[str]:
+    """The manifest's ``defaults`` list as a name set; empty when absent or
+    malformed."""
+    defaults = manifest.get("defaults", [])
+    if isinstance(defaults, list):
+        return {d for d in defaults if isinstance(d, str)}
+    return set()
+
+
+def _all_manifest_feature_names(manifest: dict) -> set[str]:
+    """Every compiled-in feature name. Skip non-dict entries, missing names,
+    and empty names."""
+    return {
+        name
+        for f in manifest.get("features", [])
+        if isinstance(f, dict)
+        and isinstance((name := f.get("name")), str)
+        and name
+    }
+
+
 class Features:
     """Feature manifest reader + config-key bridge.
 
@@ -231,27 +260,14 @@ class Features:
         if raw is not None and raw.strip():
             # Explicit deploy-chosen list: exact comma-separated membership.
             # Trim each entry and drop empties (e.g. "a,,b", a trailing comma).
-            return {
-                part
-                for part in (entry.strip() for entry in raw.split(","))
-                if part
-            }
-        defaults = self._manifest.get("defaults", [])
-        if isinstance(defaults, list):
-            names = {d for d in defaults if isinstance(d, str)}
-            if names:
-                return names
+            return _deploy_feature_names(raw)
+        names = _manifest_default_names(self._manifest)
+        if names:
+            return names
         # No deploy list and no usable defaults → every compiled-in feature
         # active (back-compat, mirroring the frontend's step-3 fallback for
-        # a source deploy with no built manifest). Skip non-dict entries,
-        # missing names, and empty names.
-        return {
-            name
-            for f in self._manifest.get("features", [])
-            if isinstance(f, dict)
-            and isinstance((name := f.get("name")), str)
-            and name
-        }
+        # a source deploy with no built manifest).
+        return _all_manifest_feature_names(self._manifest)
 
     def container_env(self) -> dict[str, str]:
         """Return env vars to inject into workspace containers.

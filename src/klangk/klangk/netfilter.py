@@ -63,21 +63,34 @@ def _valid_domain_spec(spec: str) -> bool:
     # leading ``.`` is INCLUSIVE (apex + subdomains); ``*.`` is SUBDOMAINS only.
     # Strip the sigil and validate the remaining ``host[:port]`` grammar; a bare
     # ``*``, ``*.``, or ``.`` has no matchable base (#2256).
-    if spec.startswith("*."):
-        spec = spec[2:]
-        if not spec:
-            return False
-    elif spec.startswith("."):
-        spec = spec[1:]
-        if not spec:
-            return False
+    spec = _strip_host_sigil(spec)
+    if not spec:
+        return False
     if not _DOMAIN_RE.match(spec):
         return False
-    # The regex accepts up to 5 digits; additionally reject ports > 65535.
-    if ":" in spec:
-        port_str = spec.rsplit(":", 1)[1]
-        if port_str and port_str.isdigit() and int(port_str) > 65535:
-            return False
+    return _valid_spec_port(spec)
+
+
+def _strip_host_sigil(spec: str) -> str:
+    """Strip an nginx-style host-scope sigil (#2377): a bare host is EXACT
+    (apex only); a leading ``.`` is INCLUSIVE (apex + subdomains); ``*.`` is
+    SUBDOMAINS only. A bare ``*``, ``*.``, or ``.`` has no matchable base
+    (#2256) and strips to the empty string."""
+    if spec.startswith("*."):
+        return spec[2:]
+    if spec.startswith("."):
+        return spec[1:]
+    return spec
+
+
+def _valid_spec_port(spec: str) -> bool:
+    """The regex accepts up to 5 digits; additionally reject ports
+    > 65535."""
+    if ":" not in spec:
+        return True
+    port_str = spec.rsplit(":", 1)[1]
+    if port_str and port_str.isdigit() and int(port_str) > 65535:
+        return False
     return True
 
 

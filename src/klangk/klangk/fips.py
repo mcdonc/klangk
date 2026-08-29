@@ -289,17 +289,29 @@ async def probe_container(podman, container_id: str) -> tuple[bool, str]:
     except Exception as e:  # podman-level failure — treat as no-python
         rc, out, err = -1, "", f"{type(e).__name__}: {e}"
     if rc == 0:
-        line = out.strip().splitlines()[-1] if out.strip() else ""
-        if line.startswith("ok:"):
-            return True, line[3:]
-        if line.startswith("fail:"):
-            return False, line[5:]
-        if line.startswith("unknown:"):
-            return False, line[8:]
-        return False, f"probe-output-unparseable: {line[:120]!r}"
+        return _parse_probe_output(out)
     # No usable python3 in the image — try the openssl CLI directly.
     if not _missing_binary(err):
         return False, f"probe-exec-failed rc={rc}: {err.strip()[:120]}"
+    return await _probe_via_openssl_cli(podman, container_id)
+
+
+def _parse_probe_output(out: str) -> tuple[bool, str]:
+    """The python probe script's last-line verdict (ok:/fail:/unknown:)."""
+    line = out.strip().splitlines()[-1] if out.strip() else ""
+    if line.startswith("ok:"):
+        return True, line[3:]
+    if line.startswith("fail:"):
+        return False, line[5:]
+    if line.startswith("unknown:"):
+        return False, line[8:]
+    return False, f"probe-output-unparseable: {line[:120]!r}"
+
+
+async def _probe_via_openssl_cli(
+    podman, container_id: str
+) -> tuple[bool, str]:
+    """The openssl-CLI fallback probe for images without python3."""
     try:
         rc, out, err = await podman.exec_container(
             container_id, _cli_probe_cmd(), timeout=30

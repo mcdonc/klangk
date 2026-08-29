@@ -285,56 +285,7 @@ class Lifecycle:
         # (the same default oidc.auth_modes() applies).
         auth_modes = settings.auth_modes or "none"
 
-        if auth_modes in ("password", "both"):
-            # Password mode: require a staged password. Fail-fast if unset —
-            # auto-generation was removed to prevent lockout on detached
-            # deployments (#1645).
-            password = settings.default_password
-            if password is None:
-                raise ConfigurationError(
-                    f"auth_modes={auth_modes} requires KLANGKD_DEFAULT_PASSWORD "
-                    "(set it in klangkd.yaml or the env). Refusing to boot "
-                    "without a known admin password."
-                )
-            # The default admin password must satisfy the same policy every
-            # other password setter enforces (#2581). Fail fast at startup —
-            # seeding a non-compliant password and letting it fail at first
-            # change would strand deployments whose policy was tightened
-            # after the seed ran.
-            _policy_errors = []
-            min_len = int(settings.min_password_length or "8")
-            if len(password) < min_len:
-                _policy_errors.append(
-                    f"is shorter than KLANGKD_MIN_PASSWORD_LENGTH={min_len}"
-                )
-            _counts = password_class_counts(password)
-            for _key, _name in _PASSWORD_CLASSES:
-                _need = getattr(settings, f"password_require_{_key}")
-                if _need > 0 and _counts[_key] < _need:
-                    _policy_errors.append(
-                        f"lacks the {_need} required {_name}"
-                        f"{'s' if _need != 1 else ''} "
-                        f"(KLANGKD_PASSWORD_REQUIRE_{_key.upper()}={_need})"
-                    )
-            if _policy_errors:
-                raise ConfigurationError(
-                    "KLANGKD_DEFAULT_PASSWORD violates the configured "
-                    f"password policy: it {_policy_errors[0]}"
-                    + (
-                        f" (and {len(_policy_errors) - 1} more issue(s))"
-                        if len(_policy_errors) > 1
-                        else ""
-                    )
-                    + ". Fix the password or loosen the policy; refusing to "
-                    "boot with a seeded admin that already violates it."
-                )
-            password_hash = await asyncio.to_thread(
-                auth.hash_password, password
-            )
-        else:
-            # none / oidc: seed with null password. The row exists for
-            # /auth/local token minting; no endpoint checks the hash.
-            password_hash = None
+        password_hash = await self._default_admin_password_hash(auth_modes)
 
         user = await self.app.state.model.users.create_user(
             email, password_hash, verified=True
@@ -351,6 +302,62 @@ class Lifecycle:
                 "Created default admin user '%s' (no password — auth_modes=%s)",
                 email,
                 auth_modes,
+            )
+
+    async def _default_admin_password_hash(self, auth_modes: str):
+        """The default admin's password hash for the mode: hashed
+        KLANGKD_DEFAULT_PASSWORD (validated against the policy, #2581,
+        fail-fast) for password/both; None for none/oidc (the row exists for
+        /auth/local token minting; no endpoint checks the hash)."""
+        settings = self.app.state.settings
+        if auth_modes not in ("password", "both"):
+            return None
+        # Password mode: require a staged password. Fail-fast if unset —
+        # auto-generation was removed to prevent lockout on detached
+        # deployments (#1645).
+        password = settings.default_password
+        if password is None:
+            raise ConfigurationError(
+                f"auth_modes={auth_modes} requires KLANGKD_DEFAULT_PASSWORD "
+                "(set it in klangkd.yaml or the env). Refusing to boot "
+                "without a known admin password."
+            )
+        self._validate_default_password_policy(settings, password)
+        return await asyncio.to_thread(auth.hash_password, password)
+
+    @staticmethod
+    def _validate_default_password_policy(settings, password: str) -> None:
+        """The default admin password must satisfy the same policy every
+        other password setter enforces (#2581). Fail fast at startup —
+        seeding a non-compliant password and letting it fail at first
+        change would strand deployments whose policy was tightened
+        after the seed ran."""
+        _policy_errors = []
+        min_len = int(settings.min_password_length or "8")
+        if len(password) < min_len:
+            _policy_errors.append(
+                f"is shorter than KLANGKD_MIN_PASSWORD_LENGTH={min_len}"
+            )
+        _counts = password_class_counts(password)
+        for _key, _name in _PASSWORD_CLASSES:
+            _need = getattr(settings, f"password_require_{_key}")
+            if _need > 0 and _counts[_key] < _need:
+                _policy_errors.append(
+                    f"lacks the {_need} required {_name}"
+                    f"{'s' if _need != 1 else ''} "
+                    f"(KLANGKD_PASSWORD_REQUIRE_{_key.upper()}={_need})"
+                )
+        if _policy_errors:
+            raise ConfigurationError(
+                "KLANGKD_DEFAULT_PASSWORD violates the configured "
+                f"password policy: it {_policy_errors[0]}"
+                + (
+                    f" (and {len(_policy_errors) - 1} more issue(s))"
+                    if len(_policy_errors) > 1
+                    else ""
+                )
+                + ". Fix the password or loosen the policy; refusing to "
+                "boot with a seeded admin that already violates it."
             )
 
     async def _enforce_password_mode_has_hashed_admin(

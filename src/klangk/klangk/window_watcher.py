@@ -40,6 +40,24 @@ def is_window_event(line: str) -> bool:
     return line.startswith(_WINDOW_EVENT_PREFIXES)
 
 
+async def _terminate_watcher_proc(proc) -> None:  # pragma: no cover
+    """Terminate the watcher subprocess: TERM, a 3s grace, then KILL
+    (both racing a process that is already gone)."""
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=3)
+    except (asyncio.TimeoutError, ProcessLookupError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
 class WindowEventWatcher:
     """A long-lived ``tmux -C`` control client for one container.
 
@@ -107,23 +125,17 @@ class WindowEventWatcher:
         self._task = None
         proc = self._proc
         self._proc = None
-        if proc is not None and proc.returncode is None:
-            try:
-                proc.terminate()
-            except ProcessLookupError:
-                pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=3)
-            except (asyncio.TimeoutError, ProcessLookupError):
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
         if proc is not None:
-            try:
-                await self._podman.exec_container(
-                    self._container_id,
-                    ["tmux", "kill-session", "-t", self._ctrl_session],
-                )
-            except Exception:  # pragma: no cover
-                pass
+            await _terminate_watcher_proc(proc)
+            await self._kill_ctrl_session()
+
+    async def _kill_ctrl_session(
+        self,
+    ) -> None:  # pragma: no cover - subprocess
+        try:
+            await self._podman.exec_container(
+                self._container_id,
+                ["tmux", "kill-session", "-t", self._ctrl_session],
+            )
+        except Exception:  # pragma: no cover
+            pass

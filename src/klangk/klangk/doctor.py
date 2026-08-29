@@ -588,6 +588,35 @@ def run_doctor(*, verbose: bool = False) -> DoctorReport:
     return report
 
 
+def _append_result_line(lines: list[str], r) -> None:
+    """One result with its ✓/⚠/✗ marker, plus the fix hint when present."""
+    if r.ok:
+        lines.append(f"  ✓ {r.name}: {r.message}")
+    elif r.is_warning:
+        lines.append(f"  ⚠ {r.name}: {r.message}")
+    else:
+        lines.append(f"  ✗ {r.name}: {r.message}")
+    if r.hint:
+        lines.append("")
+        lines.append(f"    Run:  {r.hint}")
+        lines.append("")
+
+
+def _append_failure_block(
+    lines: list[str], results: list, marker: str, heading: str
+) -> None:
+    """A repeated failure block with fix hints (#1968)."""
+    if not results:
+        return
+    lines.append(heading)
+    lines.append("")
+    for r in results:
+        lines.append(f"  {marker} {r.name}: {r.message}")
+        if r.hint:
+            lines.append(f"    Run:  {r.hint}")
+        lines.append("")
+
+
 def format_report(report: DoctorReport) -> str:
     """Format a doctor report for terminal output."""
     lines: list[str] = []
@@ -602,16 +631,7 @@ def format_report(report: DoctorReport) -> str:
     lines.append("")
 
     for r in report.results:
-        if r.ok:
-            lines.append(f"  ✓ {r.name}: {r.message}")
-        elif r.is_warning:
-            lines.append(f"  ⚠ {r.name}: {r.message}")
-        else:
-            lines.append(f"  ✗ {r.name}: {r.message}")
-        if r.hint:
-            lines.append("")
-            lines.append(f"    Run:  {r.hint}")
-            lines.append("")
+        _append_result_line(lines, r)
 
     lines.append("")
     errors = report.errors
@@ -631,23 +651,12 @@ def format_report(report: DoctorReport) -> str:
     # Repeat each failure with its fix so the user doesn't have to
     # scroll back up through a long check list (#1968).
     lines.append("")
-    if errors:
-        lines.append("Errors (must fix before starting klangkd):")
-        lines.append("")
-        for r in errors:
-            lines.append(f"  ✗ {r.name}: {r.message}")
-            if r.hint:
-                lines.append(f"    Run:  {r.hint}")
-            lines.append("")
-
-    if warnings:
-        lines.append("Warnings (recommended but not required):")
-        lines.append("")
-        for r in warnings:
-            lines.append(f"  ⚠ {r.name}: {r.message}")
-            if r.hint:
-                lines.append(f"    Run:  {r.hint}")
-            lines.append("")
+    _append_failure_block(
+        lines, errors, "✗", "Errors (must fix before starting klangkd):"
+    )
+    _append_failure_block(
+        lines, warnings, "⚠", "Warnings (recommended but not required):"
+    )
 
     return "\n".join(lines)
 

@@ -186,6 +186,13 @@ async def init_workspaces_table(db) -> None:
     # Migration: add auto_start column to existing workspaces tables
     cursor = await db.execute("PRAGMA table_info(workspaces)")
     ws_cols = {row[1] for row in await cursor.fetchall()}
+    await migrate_workspaces_columns(db, ws_cols)
+
+
+async def migrate_workspaces_columns(db, ws_cols: set) -> None:
+    """Every workspaces-table column migration for databases created
+    before the column shipped (ADD COLUMN, plus the legacy rename)."""
+
     # Migration: rename default_command -> service_command (#1203).
     # The on-disk column is renamed in place (SQLite >= 3.25 supports
     # ALTER TABLE ... RENAME COLUMN). Fresh installs already create the
@@ -196,68 +203,73 @@ async def init_workspaces_table(db) -> None:
             "ALTER TABLE workspaces"
             " RENAME COLUMN default_command TO service_command"
         )
-    if "auto_start" not in ws_cols:
-        await db.execute(
+    adds = [
+        # Migration: add auto_start column to existing workspaces tables
+        (
+            "auto_start",
             "ALTER TABLE workspaces"
-            " ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0"
-        )
-    # Migration: add setup_state column (#1033). Defaults to
-    # 'complete' so existing workspaces (already set up in their
-    # persisted volumes) keep firing their service command.
-    if "setup_state" not in ws_cols:
-        await db.execute(
+            " ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 0",
+        ),
+        # Migration: add setup_state column (#1033). Defaults to
+        # 'complete' so existing workspaces (already set up in their
+        # persisted volumes) keep firing their service command.
+        (
+            "setup_state",
             "ALTER TABLE workspaces"
-            " ADD COLUMN setup_state TEXT NOT NULL DEFAULT 'complete'"
-        )
-    # Migration: add health_check column (#1015). NULL by default
-    # so existing workspaces keep the no-health-monitoring behavior.
-    if "health_check" not in ws_cols:
-        await db.execute("ALTER TABLE workspaces ADD COLUMN health_check TEXT")
-    # Migration: add mounts/env columns (#1264). These are in the
-    # CREATE TABLE above but had no ADD COLUMN migration, so DBs
-    # created before they shipped lacked them and errored on any
-    # read/write of mounts/env. NULL by default (no mounts/overrides).
-    if "mounts" not in ws_cols:
-        await db.execute("ALTER TABLE workspaces ADD COLUMN mounts TEXT")
-    if "env" not in ws_cols:
-        await db.execute("ALTER TABLE workspaces ADD COLUMN env TEXT")
-    # Migration: add allowed_domains column (#1365). NULL by default
-    # so existing workspaces keep unrestricted outbound networking;
-    # the filter is opt-in per workspace AND per deploy.
-    if "allowed_domains" not in ws_cols:
-        await db.execute(
-            "ALTER TABLE workspaces ADD COLUMN allowed_domains TEXT"
-        )
-    # Migration: add rejected_domains column (#2367). NULL by default
-    # so existing workspaces keep no static deny-list; the operator opts
-    # in per workspace.
-    if "rejected_domains" not in ws_cols:
-        await db.execute(
-            "ALTER TABLE workspaces ADD COLUMN rejected_domains TEXT"
-        )
-    # Migration: add settings column (#864). NULL by default so
-    # existing workspaces keep inheriting every deploy-wide default
-    # (no per-workspace overrides). One JSON bag holds every
-    # behavioral override (idle_timeout, bridge_timeout, cpu_limit,
-    # memory_limit, pids_limit, ...) so future settings need no new
-    # column/migration. Structural fields stay as dedicated columns.
-    if "settings" not in ws_cols:
-        await db.execute("ALTER TABLE workspaces ADD COLUMN settings TEXT")
-    # Migration: add egress_mode column (#2239). 'static' = immutable
-    # allow-list at create time (today's behavior); 'interactive' =
-    # prompt on first connection to unknown host.
-    if "egress_mode" not in ws_cols:
-        await db.execute(
+            " ADD COLUMN setup_state TEXT NOT NULL DEFAULT 'complete'",
+        ),
+        # Migration: add health_check column (#1015). NULL by default
+        # so existing workspaces keep the no-health-monitoring behavior.
+        (
+            "health_check",
+            "ALTER TABLE workspaces ADD COLUMN health_check TEXT",
+        ),
+        # Migration: add mounts/env columns (#1264). These are in the
+        # CREATE TABLE above but had no ADD COLUMN migration, so DBs
+        # created before they shipped lacked them and errored on any
+        # read/write of mounts/env. NULL by default (no mounts/overrides).
+        ("mounts", "ALTER TABLE workspaces ADD COLUMN mounts TEXT"),
+        ("env", "ALTER TABLE workspaces ADD COLUMN env TEXT"),
+        # Migration: add allowed_domains column (#1365). NULL by default
+        # so existing workspaces keep unrestricted outbound networking;
+        # the filter is opt-in per workspace AND per deploy.
+        (
+            "allowed_domains",
+            "ALTER TABLE workspaces ADD COLUMN allowed_domains TEXT",
+        ),
+        # Migration: add rejected_domains column (#2367). NULL by default
+        # so existing workspaces keep no static deny-list; the operator opts
+        # in per workspace.
+        (
+            "rejected_domains",
+            "ALTER TABLE workspaces ADD COLUMN rejected_domains TEXT",
+        ),
+        # Migration: add settings column (#864). NULL by default so
+        # existing workspaces keep inheriting every deploy-wide default
+        # (no per-workspace overrides). One JSON bag holds every
+        # behavioral override (idle_timeout, bridge_timeout, cpu_limit,
+        # memory_limit, pids_limit, ...) so future settings need no new
+        # column/migration. Structural fields stay as dedicated columns.
+        ("settings", "ALTER TABLE workspaces ADD COLUMN settings TEXT"),
+        # Migration: add egress_mode column (#2239). 'static' = immutable
+        # allow-list at create time (today's behavior); 'interactive' =
+        # prompt on first connection to unknown host.
+        (
+            "egress_mode",
             "ALTER TABLE workspaces"
-            " ADD COLUMN egress_mode TEXT NOT NULL DEFAULT 'static'"
-        )
-    # Migration: add consent_paused_until column (#2332). NULL by default
-    # so existing workspaces keep prompting normally; the pause is opt-in
-    # via the decider TUI control.
-    if "consent_paused_until" not in ws_cols:
-        await db.execute(
-            "ALTER TABLE workspaces ADD COLUMN consent_paused_until REAL"
-        )
+            " ADD COLUMN egress_mode TEXT NOT NULL DEFAULT 'static'",
+        ),
+        # Migration: add consent_paused_until column (#2332). NULL by default
+        # so existing workspaces keep prompting normally; the pause is opt-in
+        # via the decider TUI control.
+        (
+            "consent_paused_until",
+            "ALTER TABLE workspaces ADD COLUMN consent_paused_until REAL",
+        ),
+    ]
+    for column, ddl in adds:
+        if column not in ws_cols:
+            await db.execute(ddl)
 
 
 async def init_core_tables(db) -> None:

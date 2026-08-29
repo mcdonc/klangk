@@ -646,62 +646,78 @@ class EgressConsentModel:
         deleted = 0
 
         if retention_days > 0:
-            cutoff = now - retention_days * 86400.0
+            deleted += await self._prune_retention(
+                now - retention_days * 86400.0, now
+            )
+        if row_cap > 0:
+            deleted += await self._prune_row_cap(row_cap, now)
+        return deleted
+
+    async def _prune_retention(self, cutoff: float, now: float) -> int:
+        """Delete rows whose terminal timestamp predates *cutoff*.
+
+        TOCTOU guard: the snapshot and the deletes run in separate
+        transactions, so a row snapshotted as pending may have been
+        decided in between -- deleting it would silently drop a fresh
+        verdict. Pending candidates are therefore re-checked against
+        their decision at DELETE time. Non-pending candidates need no
+        re-check: their eligibility is monotonic (allowed/denied can
+        only transition to revoked, still eligible; expired/revoked/
+        static rows never change decision).
+        """
+        rows = await self.app.state.db.fetchall(
+            "SELECT id, decision, duration, decided_at, decided_by"
+            " FROM egress_consent"
+            " WHERE COALESCE(revoked_at, decided_at, requested_at) < ?",
+            (cutoff,),
+        )
+        pending_ids = [
+            r["id"]
+            for r in rows
+            if r["decision"] == DECISION_PENDING
+            and self._prune_eligible(r, now)
+        ]
+        other_ids = [
+            r["id"]
+            for r in rows
+            if r["decision"] != DECISION_PENDING
+            and self._prune_eligible(r, now)
+        ]
+        deleted = await self._delete_ids(
+            pending_ids, require_decision=DECISION_PENDING
+        )
+        deleted += await self._delete_ids(other_ids)
+        return deleted
+
+    async def _prune_row_cap(self, row_cap: int, now: float) -> int:
+        """Per workspace over the cap, delete the oldest eligible rows down
+        to it (belt-and-suspenders against a flood of decided requests
+        outpacing age-based pruning; live ``pending`` rows are never deleted
+        by this pass)."""
+        over = await self.app.state.db.fetchall(
+            "SELECT workspace_id, COUNT(*) AS cnt"
+            " FROM egress_consent GROUP BY workspace_id HAVING cnt > ?",
+            (row_cap,),
+        )
+        deleted = 0
+        for entry in over:
+            excess = entry["cnt"] - row_cap
             rows = await self.app.state.db.fetchall(
                 "SELECT id, decision, duration, decided_at, decided_by"
                 " FROM egress_consent"
-                " WHERE COALESCE(revoked_at, decided_at, requested_at) < ?",
-                (cutoff,),
+                " WHERE workspace_id = ? AND decision != ?"
+                " ORDER BY COALESCE(revoked_at, decided_at,"
+                " requested_at) ASC",
+                (entry["workspace_id"], DECISION_PENDING),
             )
-            # TOCTOU guard: the snapshot and the deletes run in separate
-            # transactions, so a row snapshotted as pending may have been
-            # decided in between -- deleting it would silently drop a fresh
-            # verdict. Pending candidates are therefore re-checked against
-            # their decision at DELETE time. Non-pending candidates need no
-            # re-check: their eligibility is monotonic (allowed/denied can
-            # only transition to revoked, still eligible; expired/revoked/
-            # static rows never change decision).
-            pending_ids = [
-                r["id"]
-                for r in rows
-                if r["decision"] == DECISION_PENDING
-                and self._prune_eligible(r, now)
-            ]
-            other_ids = [
-                r["id"]
-                for r in rows
-                if r["decision"] != DECISION_PENDING
-                and self._prune_eligible(r, now)
-            ]
-            deleted += await self._delete_ids(
-                pending_ids, require_decision=DECISION_PENDING
-            )
-            deleted += await self._delete_ids(other_ids)
-
-        if row_cap > 0:
-            over = await self.app.state.db.fetchall(
-                "SELECT workspace_id, COUNT(*) AS cnt"
-                " FROM egress_consent GROUP BY workspace_id HAVING cnt > ?",
-                (row_cap,),
-            )
-            for entry in over:
-                excess = entry["cnt"] - row_cap
-                rows = await self.app.state.db.fetchall(
-                    "SELECT id, decision, duration, decided_at, decided_by"
-                    " FROM egress_consent"
-                    " WHERE workspace_id = ? AND decision != ?"
-                    " ORDER BY COALESCE(revoked_at, decided_at,"
-                    " requested_at) ASC",
-                    (entry["workspace_id"], DECISION_PENDING),
-                )
-                ids = []
-                for r in rows:
-                    if excess <= 0:
-                        break
-                    if self._prune_eligible(r, now):
-                        ids.append(r["id"])
-                        excess -= 1
-                deleted += await self._delete_ids(ids)
+            ids = []
+            for r in rows:
+                if excess <= 0:
+                    break
+                if self._prune_eligible(r, now):
+                    ids.append(r["id"])
+                    excess -= 1
+            deleted += await self._delete_ids(ids)
         return deleted
 
     async def _delete_ids(
