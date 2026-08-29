@@ -228,21 +228,60 @@ def drop_for_host(host: str, decision: str) -> set[str]:
         targets.add(host_l)
         targets.add(host)
         if decision == "allowed":
-            for ip in [i for i in targets if i in _LEARNED]:
-                for port in list(_LEARNED[ip]["ports"]):
-                    try:
-                        _remove(ip, port)
-                    except Exception:
-                        pass
-                del _LEARNED[ip]
+            _drop_learned_rules(targets)
         elif decision == "denied":
-            for key in [k for k in _REJECTED if k[0] in targets]:
-                try:
-                    _remove_reject(*key)
-                except Exception:
-                    pass
-                del _REJECTED[key]
+            _drop_reject_rules(targets)
     return targets
+
+
+def _drop_learned_rules(targets: set[str]) -> None:
+    """Remove the learned ACCEPT rules (+ ``_LEARNED`` records) for the
+    target IPs (best-effort: a failed delete drops one rule, not the whole
+    revoke). Caller holds ``_LOCK``."""
+    for ip in [i for i in targets if i in _LEARNED]:
+        for port in list(_LEARNED[ip]["ports"]):
+            try:
+                _remove(ip, port)
+            except Exception:
+                pass
+        del _LEARNED[ip]
+
+
+def _drop_reject_rules(targets: set[str]) -> None:
+    """Remove the temporary REJECT rules for the target IPs (best-effort).
+    Caller holds ``_LOCK``."""
+    for key in [k for k in _REJECTED if k[0] in targets]:
+        try:
+            _remove_reject(*key)
+        except Exception:
+            pass
+        del _REJECTED[key]
+
+
+def _sweep_learned_record(
+    ip: str, rec: dict, now: float, expired: list[tuple[str, set]]
+) -> None:
+    """Sweep one learned-IP record in place (caller holds ``_LOCK``):
+
+    rule sweep -- the ACCEPT rule's lifetime is rule_expire when set (a
+    consent allow, whose verdict must outlive the host-mapping's DNS TTL,
+    #2408), else expire (static re-learn / backward compat); record sweep --
+    drop the host mapping once its own expire elapses and no ACCEPT rule
+    remains."""
+    rule_expire = rec.get("rule_expire", rec["expire"])
+    if rec["ports"] and rule_expire <= now:
+        ports = set(rec["ports"])
+        for port in ports:
+            try:
+                _remove(ip, port)
+            except Exception:
+                pass  # a transient failure drops one rule, not the sweep
+        expired.append((ip, ports))
+        rec["ports"] = set()  # rule gone; keep record for naming
+    # Record sweep: drop the host mapping once its own expire elapses
+    # and no ACCEPT rule remains.
+    if rec["expire"] <= now and not rec["ports"]:
+        del _LEARNED[ip]
 
 
 def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
@@ -271,23 +310,7 @@ def sweep_once(now: float | None = None) -> list[tuple[str, set]]:
     expired: list[tuple[str, set]] = []
     with _LOCK:
         for ip, rec in list(_LEARNED.items()):
-            # Rule sweep: the ACCEPT rule's lifetime is rule_expire when set
-            # (a consent allow, whose verdict must outlive the host-mapping's
-            # DNS TTL, #2408), else expire (static re-learn / backward compat).
-            rule_expire = rec.get("rule_expire", rec["expire"])
-            if rec["ports"] and rule_expire <= now:
-                ports = set(rec["ports"])
-                for port in ports:
-                    try:
-                        _remove(ip, port)
-                    except Exception:
-                        pass  # a transient failure drops one rule, not the sweep
-                expired.append((ip, ports))
-                rec["ports"] = set()  # rule gone; keep record for naming
-            # Record sweep: drop the host mapping once its own expire elapses
-            # and no ACCEPT rule remains.
-            if rec["expire"] <= now and not rec["ports"]:
-                del _LEARNED[ip]
+            _sweep_learned_record(ip, rec, now, expired)
         # also sweep temporary REJECT (tcp-reset) rules for denied connections
         for key in [k for k, exp in _REJECTED.items() if exp <= now]:
             try:

@@ -28,6 +28,40 @@ if TYPE_CHECKING:
 _SHUTDOWN_CLIENT_TIMEOUT = 2.0
 
 
+async def _cancel_task(task: asyncio.Task | None) -> None:
+    """Cancel a background task and swallow its end (best-effort teardown;
+    process exit reaps whatever remains)."""
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+def _unbind_nfq(nfq) -> None:
+    """Remove the NFQUEUE reader and unbind (each best-effort)."""
+    if nfq is None:
+        return
+    try:
+        asyncio.get_running_loop().remove_reader(nfq.get_fd())
+    except Exception:
+        pass
+    try:
+        nfq.unbind()
+    except Exception:
+        pass
+
+
+def _close_quietly(sock: socket.socket) -> None:
+    """Close a socket, swallowing errors."""
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+
 async def _shutdown(
     client: SidecarConsentClient | None,
     nfq,
@@ -58,31 +92,10 @@ async def _shutdown(
             # rest of teardown -- the exact failure mode the sweep/sampler
             # guards below already widen against.
             pass
-    if sweep is not None:
-        sweep.cancel()
-        try:
-            await sweep
-        except (asyncio.CancelledError, Exception):
-            pass
-    if sampler is not None:
-        sampler.cancel()
-        try:
-            await sampler
-        except (asyncio.CancelledError, Exception):
-            pass
-    if nfq is not None:
-        try:
-            asyncio.get_running_loop().remove_reader(nfq.get_fd())
-        except Exception:
-            pass
-        try:
-            nfq.unbind()
-        except Exception:
-            pass
-    try:
-        sock.close()
-    except Exception:
-        pass
+    await _cancel_task(sweep)
+    await _cancel_task(sampler)
+    _unbind_nfq(nfq)
+    _close_quietly(sock)
 
 
 def _resolve_ws_host(consent_url: str) -> str | None:
