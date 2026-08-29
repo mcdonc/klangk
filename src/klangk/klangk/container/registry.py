@@ -1214,59 +1214,31 @@ class ContainerRegistry(NetworkSidecarMixin):
             if last_exc is not None:
                 raise last_exc
 
-    async def _start_container_inner(
-        self, spec: ContainerStartSpec
-    ) -> tuple[str, str]:
-        """Inner implementation of start_container (called under lock).
+    def _sidecar_requirements(
+        self,
+        egress_mode: str,
+        allowed_domains: list[str] | None,
+        rejected_domains: list[str] | None,
+    ) -> tuple[bool, bool]:
+        """(sidecar_required, needs_sidecar) for a start (#2325, #2406).
 
-        Unpacks the spec once (#2566); the body reads plain locals, same
-        as the pre-spec signature. Mounts are driven by
-        ``home_path`` / ``config_path`` / ``extra_mounts`` — the
-        pre-#2725 ``host_path`` (the ``home/work`` subtree) is gone.
+        #2325: a workspace needs the FQDN network sidecar whenever it is
+        egress-filtered. That's either (a) it declares an allow/reject list
+        (the sidecar NXDOMAINs/holds those names), or (b) it is in
+        interactive mode, which holds EVERY not-yet-approved egress for a
+        consent decision even with empty lists (the "ask first" default
+        posture). Static mode with no lists stays unrestricted (no point
+        filtering nothing). Used by both the reconnect re-track in
+        _start_container_inner and the create-path sidecar start.
+
+        #2406: ``allow`` mode requests permissiveness, not filtering -- it
+        runs the sidecar WHEN one is configured (so off-list egress is logged
+        via the consent pipeline and ``rejected_domains`` is enforced at the
+        sidecar DNS layer), but degrades to unrestricted when filtering isn't
+        set up. Fail-closing an allow-mode workspace would be wrong (it never
+        asked to be locked down), so allow is best-effort, not mandatory --
+        unlike interactive / list-declaring workspaces, which fail-closed.
         """
-        workspace_id = spec.workspace_id
-        home_path = spec.home_path
-        existing_container_id = spec.existing_container_id
-        num_ports = spec.num_ports
-        hosting_hostname = spec.hosting_hostname
-        hosting_proto = spec.hosting_proto
-        hosting_base_path = spec.hosting_base_path
-        image = spec.image
-        config_path = spec.config_path
-        extra_mounts = spec.extra_mounts
-        extra_env = spec.extra_env
-        user_id = spec.user_id
-        health_check = spec.health_check
-        setup_state = spec.setup_state
-        service_command = spec.service_command
-        allowed_domains = spec.allowed_domains
-        rejected_domains = spec.rejected_domains
-        workspace_settings = spec.workspace_settings
-        egress_mode = spec.egress_mode
-        t_start = time.monotonic()
-        resolved_image = image or self.image_name
-        if resolved_image not in self.allowed_images:
-            raise ValueError(
-                f"Image {resolved_image!r} is not in the allowed "
-                f"list: {sorted(self.allowed_images)}"
-            )
-
-        # #2325: a workspace needs the FQDN network sidecar whenever it is
-        # egress-filtered. That's either (a) it declares an allow/reject list
-        # (the sidecar NXDOMAINs/holds those names), or (b) it is in
-        # interactive mode, which holds EVERY not-yet-approved egress for a
-        # consent decision even with empty lists (the "ask first" default
-        # posture). Static mode with no lists stays unrestricted (no point
-        # filtering nothing). Used by both the reconnect re-track below and
-        # the create-path sidecar start further down.
-        #
-        # #2406: ``allow`` mode requests permissiveness, not filtering -- it
-        # runs the sidecar WHEN one is configured (so off-list egress is logged
-        # via the consent pipeline and ``rejected_domains`` is enforced at the
-        # sidecar DNS layer), but degrades to unrestricted when filtering isn't
-        # set up. Fail-closing an allow-mode workspace would be wrong (it never
-        # asked to be locked down), so allow is best-effort, not mandatory --
-        # unlike interactive / list-declaring workspaces, which fail-closed.
         sidecar_required = egress_mode == EGRESS_MODE_INTERACTIVE or bool(
             allowed_domains or rejected_domains
         )
@@ -1276,7 +1248,261 @@ class ContainerRegistry(NetworkSidecarMixin):
             and self._network_sidecar_enabled()
             and bool(self.app.state.settings.userns)
         )
-        needs_sidecar = sidecar_required or sidecar_optional
+        return sidecar_required, sidecar_required or sidecar_optional
+
+    async def _build_start_config(
+        self, spec: ContainerStartSpec, host_ports: list[int]
+    ) -> tuple[dict, str, bool]:
+        """Build the create kwargs (+ slug and sudo posture) for a start.
+
+        Returns (create_kwargs, slug, allow_sudo)."""
+        # Build environment and mounts.
+        # Every exec process inherits KLANGKWS_AGENT_HOME (#1157). The
+        # agent home is the constant shared home (#2720): the agent's
+        # handle is fixed (#2718), so this is no longer resolved from the
+        # DB at this seam.
+        agent_home = SHARED_HOME
+        ssl_dir = self.app.state.ssl_trust.ssl_cert_dir()
+        if ssl_dir:
+            logger.info(
+                "Runtime SSL trust enabled: mounting %s at %s",
+                ssl_dir,
+                _SSL_MOUNT_DEST,
+            )
+        env_vars = build_env(
+            self.app,
+            spec.workspace_id,
+            host_ports,
+            spec.hosting_hostname,
+            spec.hosting_proto,
+            spec.hosting_base_path,
+            agent_home,
+            spec.extra_env,
+            ssl_dir,
+        )
+        await ensure_volumes(
+            self.app, spec.extra_mounts, spec.user_id, self.app.state.podman
+        )
+        binds = build_mounts(
+            spec.home_path, spec.config_path, spec.extra_mounts, ssl_dir
+        )
+        # #2201: when nix is enabled, bind the workspace's btrfs-snapshot /nix
+        # (and the seed's nix.conf) into the container, and signal the baked
+        # /etc/profile.d activation (KLANGKWS_NIX) so nix is on PATH by default.
+        nix_bind_specs, nix_env = await nix_binds(
+            self.app, spec.workspace_id, spec.workspace_settings
+        )
+        binds += nix_bind_specs
+        env_vars += nix_env
+
+        iid = self.app.state.util.instance_id()
+        # #2286: embed the slugified workspace name in the container + sidecar
+        # names so `podman ps | grep <partial-name>` finds a workspace and its
+        # sidecar together. The slug is decorative (uniqueness is iid + id); a
+        # missing/empty name falls back to an id-only name. Both names use the
+        # same workspace_id[:8] tail so an id-prefix grep matches the pair.
+        ws_row = await self.app.state.model.workspaces.get_workspace_by_id(
+            spec.workspace_id
+        )
+        slug = _workspace_name_slug((ws_row or {}).get("name") or "")
+        # #2017: sudo posture. The deploy-wide allow_sudo is a ceiling; a
+        # per-workspace settings-bag override (allow_sudo: false) may only
+        # lock the workspace down further, never enable sudo on a deploy
+        # that forbids it. Read live off settings (the app-ownership rule);
+        # applies to newly-created containers.
+        allow_sudo = resolve_allow_sudo(
+            ws_row, parse_allow_sudo(self.app.state.settings.allow_sudo)
+        )
+        publish = [
+            (host_port, CONTAINER_PORT_START + i)
+            for i, host_port in enumerate(host_ports)
+        ]
+        create_kwargs = build_create_kwargs(
+            self.app,
+            workspace_id=spec.workspace_id,
+            iid=iid,
+            slug=slug,
+            binds=binds,
+            env_vars=env_vars,
+            publish=publish,
+            workspace_settings=spec.workspace_settings,
+        )
+        return create_kwargs, slug, allow_sudo
+
+    async def _attach_network_sidecar(
+        self,
+        spec: ContainerStartSpec,
+        sidecar_required: bool,
+        publish: list,
+        slug: str,
+        create_kwargs: dict,
+    ) -> None:
+        """Egress filtering (#1365): start the FQDN network sidecar and
+        rewire create_kwargs onto its netns.
+
+        The FQDN network sidecar is the only egress model. The OCI-hook
+        "static" model was dropped (#2254 review) -- maintaining two
+        complete models was more complexity than value. A sidecar'd
+        workspace (needs_sidecar: interactive mode, or an allow/reject list
+        set) runs --network container:<network sidecar> (the network
+        sidecar's proxy owns the rules; the workspace is unprivileged).
+        Fail-CLOSED (#2254 review B2): a workspace that needs filtering
+        never starts unrestricted -- silently ignoring it would disable a
+        security control the user requested (an interactive workspace asked
+        for "ask first"; an allow-listed one asked for filtering), so a
+        missing/unstartable network sidecar raises instead. Static mode
+        with no lists is the one case that starts unrestricted (no
+        filtering requested) (#2325)."""
+        workspace_id = spec.workspace_id
+        # Interactive / list-declaring workspaces REQUEST filtering, so a
+        # missing/unstartable sidecar is fail-closed (silently starting
+        # unrestricted would disable a security control the user asked
+        # for). ``allow`` mode is best-effort (sidecar_optional already
+        # gated on these), so it never reaches this fail-close (#2406).
+        if sidecar_required:
+            if not self._network_sidecar_enabled():
+                raise podman.PodmanError(
+                    500,
+                    f"workspace {workspace_id[:8]} is egress-filtered "
+                    "(interactive mode, or allowed_domains/rejected_domains "
+                    "set) but egress filtering is disabled "
+                    "(netfilter_enabled is off or network_sidecar_image is "
+                    "unset); refusing to start "
+                    "unfiltered. Switch the workspace to static mode with no "
+                    "lists, or enable egress filtering.",
+                )
+            # The #2264 SO_MARK-bypass guard is user-namespace isolation: the
+            # workspace must run in a user namespace DISTINCT from the one that
+            # owns the network sidecar's netns. The sidecar is launched with no
+            # --userns (podman's default), so an empty KLANGKD_USERNS here would
+            # emit no --userns either, putting the workspace in that same default
+            # userns and reopening the bypass (review #2). Fail-closed: require
+            # an explicit, non-empty userns. (Default keep-id:uid=1000,gid=1000
+            # satisfies this; pinned by test_filtered_workspace_userns_isolates_netns.)
+            if not self.app.state.settings.userns:
+                raise podman.PodmanError(
+                    500,
+                    f"workspace {workspace_id[:8]} is egress-filtered "
+                    "(interactive mode, or allowed_domains/rejected_domains "
+                    "set), which requires a "
+                    "non-empty "
+                    "KLANGKD_USERNS so the workspace runs in a user namespace "
+                    "distinct from the network sidecar's. An empty userns would "
+                    "share the sidecar's userns and reopen the SO_MARK egress "
+                    "bypass. Set KLANGKD_USERNS (default "
+                    "keep-id:uid=1000,gid=1000) or switch the workspace to "
+                    "static mode with no lists.",
+                )
+        network_sidecar_id = await self._start_network_sidecar(
+            workspace_id,
+            spec.allowed_domains,
+            spec.egress_mode,
+            rejected_domains=spec.rejected_domains,
+            publish=publish,
+            slug=slug,
+        )
+        create_kwargs["network"] = f"container:{network_sidecar_id}"
+        # --dns/--dns-search, --add-host, and --publish are all invalid
+        # under --network container: podman rejects --add-host outright
+        # ("cannot set extra host entries when ... joined to another
+        # containers network namespace"), dns/dns-search are
+        # incompatible, and --publish is silently discarded. The workspace
+        # still resolves host.containers.internal via the network sidecar's
+        # /etc/hosts (podman populates it), and the network sidecar's iptables
+        # statically allow-lists the backend port (entrypoint.sh, B1).
+        # #2267: the workspace's host ports are instead published on the
+        # network sidecar (passed to _start_network_sidecar above). The
+        # workspace shares the sidecar's netns, so the sidecar's --publish
+        # forwards into that netns and reaches the workspace's listener,
+        # letting filtered workspaces host apps (which --publish on the
+        # workspace itself cannot, under --network container:).
+        create_kwargs.pop("dns", None)
+        create_kwargs.pop("dns_search", None)
+        create_kwargs.pop("add_hosts", None)
+        create_kwargs.pop("publish", None)
+        # Remember this workspace has a live network sidecar so its stop
+        # tears the network sidecar down (#2254).
+        self._ws_with_network_sidecar.add(workspace_id)
+
+    async def _create_start_shielded(
+        self,
+        spec: ContainerStartSpec,
+        container_name: str,
+        resolved_image: str,
+        allow_sudo: bool,
+        create_kwargs: dict,
+    ) -> str:
+        """Create + start the workspace container, shielded from
+        cancellation so a dropped WebSocket doesn't orphan a running
+        container; tears a just-started sidecar down on failure (#2255)."""
+        workspace_id = spec.workspace_id
+        try:
+            container_id = await asyncio.shield(
+                self._create_and_start(
+                    container_name,
+                    resolved_image,
+                    workspace_id,
+                    # The workspace's OWN publish (what _resolve_port_conflict
+                    # scans for stale holders). A filtered workspace publishes
+                    # nothing (its ports moved to the sidecar, #2267), so pass
+                    # create_kwargs's actual publish (empty for filtered) rather
+                    # than the stale local -- otherwise a conflict on a filtered
+                    # workspace would scan the sidecar's ports and tear the
+                    # sidecar (and its netns) down.
+                    create_kwargs.get("publish", []),
+                    allow_sudo,
+                    create_kwargs,
+                    health_check=spec.health_check,
+                    owner_id=spec.user_id,
+                    setup_state=spec.setup_state,
+                    per_handle_home=spec.per_handle_home,
+                )
+            )
+        except BaseException:
+            # If the workspace container fails to create/start after a
+            # network sidecar was started for it, tear the sidecar down so
+            # it doesn't leak (NET_ADMIN + proxy) until the next startup
+            # reap. The klangk.instance label would eventually cull it, but
+            # cleaning up immediately matches how workspace containers are
+            # treated and avoids an unfiltered netns lingering (#2255).
+            if workspace_id in self._ws_with_network_sidecar:
+                await self._stop_network_sidecar(workspace_id)
+                self._ws_with_network_sidecar.discard(workspace_id)
+            raise
+        return container_id
+
+    async def _start_container_inner(
+        self, spec: ContainerStartSpec
+    ) -> tuple[str, str]:
+        """Inner implementation of start_container (called under lock).
+
+        Unpacks the spec once (#2566); the body reads plain locals, same
+        as the pre-spec signature. Mounts/env building reads the spec
+        directly in _build_start_config; only the locals this body uses
+        are unpacked.
+        """
+        workspace_id = spec.workspace_id
+        existing_container_id = spec.existing_container_id
+        num_ports = spec.num_ports
+        image = spec.image
+        user_id = spec.user_id
+        health_check = spec.health_check
+        setup_state = spec.setup_state
+        service_command = spec.service_command
+        allowed_domains = spec.allowed_domains
+        rejected_domains = spec.rejected_domains
+        egress_mode = spec.egress_mode
+        t_start = time.monotonic()
+        resolved_image = image or self.image_name
+        if resolved_image not in self.allowed_images:
+            raise ValueError(
+                f"Image {resolved_image!r} is not in the allowed "
+                f"list: {sorted(self.allowed_images)}"
+            )
+
+        sidecar_required, needs_sidecar = self._sidecar_requirements(
+            egress_mode, allowed_domains, rejected_domains
+        )
 
         # Reuse a running container or remove a stopped one.
         if existing_container_id:
@@ -1343,161 +1569,19 @@ class ContainerRegistry(NetworkSidecarMixin):
             time.monotonic() - t_ports,
         )
 
-        # Build environment and mounts.
         t_env = time.monotonic()
-        # Every exec process inherits KLANGKWS_AGENT_HOME (#1157). The
-        # agent home is the constant shared home (#2720): the agent's
-        # handle is fixed (#2718), so this is no longer resolved from
-        # the DB at this seam.
-        agent_home = SHARED_HOME
-        ssl_dir = self.app.state.ssl_trust.ssl_cert_dir()
-        if ssl_dir:
-            logger.info(
-                "Runtime SSL trust enabled: mounting %s at %s",
-                ssl_dir,
-                _SSL_MOUNT_DEST,
-            )
-        env_vars = build_env(
-            self.app,
-            workspace_id,
-            host_ports,
-            hosting_hostname,
-            hosting_proto,
-            hosting_base_path,
-            agent_home,
-            extra_env,
-            ssl_dir,
+        create_kwargs, slug, allow_sudo = await self._build_start_config(
+            spec, host_ports
         )
-        await ensure_volumes(
-            self.app, extra_mounts, user_id, self.app.state.podman
-        )
-        binds = build_mounts(home_path, config_path, extra_mounts, ssl_dir)
-        # #2201: when nix is enabled, bind the workspace's btrfs-snapshot /nix
-        # (and the seed's nix.conf) into the container, and signal the baked
-        # /etc/profile.d activation (KLANGKWS_NIX) so nix is on PATH by default.
-        nix_bind_specs, nix_env = await nix_binds(
-            self.app, workspace_id, workspace_settings
-        )
-        binds += nix_bind_specs
-        env_vars += nix_env
-
         publish = [
             (host_port, CONTAINER_PORT_START + i)
             for i, host_port in enumerate(host_ports)
         ]
-        iid = self.app.state.util.instance_id()
-        # #2286: embed the slugified workspace name in the container + sidecar
-        # names so `podman ps | grep <partial-name>` finds a workspace and its
-        # sidecar together. The slug is decorative (uniqueness is iid + id); a
-        # missing/empty name falls back to an id-only name. Both names use the
-        # same workspace_id[:8] tail so an id-prefix grep matches the pair.
-        ws_row = await self.app.state.model.workspaces.get_workspace_by_id(
-            workspace_id
-        )
-        slug = _workspace_name_slug((ws_row or {}).get("name") or "")
-        container_name = _workspace_container_name(iid, workspace_id, slug)
-        # #2017: sudo posture. The deploy-wide allow_sudo is a ceiling; a
-        # per-workspace settings-bag override (allow_sudo: false) may only
-        # lock the workspace down further, never enable sudo on a deploy
-        # that forbids it. Read live off settings (the app-ownership rule);
-        # applies to newly-created containers.
-        allow_sudo = resolve_allow_sudo(
-            ws_row, parse_allow_sudo(self.app.state.settings.allow_sudo)
-        )
-        create_kwargs = build_create_kwargs(
-            self.app,
-            workspace_id=workspace_id,
-            iid=iid,
-            slug=slug,
-            binds=binds,
-            env_vars=env_vars,
-            publish=publish,
-            workspace_settings=workspace_settings,
-        )
 
-        # Egress filtering (#1365): the FQDN network sidecar is the only egress
-        # model. The OCI-hook "static" model was dropped (#2254 review) —
-        # maintaining two complete models was more complexity than value. A
-        # sidecar'd workspace (needs_sidecar: interactive mode, or an
-        # allow/reject list set) runs
-        # --network container:<network sidecar> (the network sidecar's proxy owns the rules;
-        # the workspace is unprivileged). Fail-CLOSED (#2254 review B2): a
-        # workspace that needs filtering never starts unrestricted —
-        # silently ignoring it would disable a security control the user
-        # requested (an interactive workspace asked for "ask first"; an
-        # allow-listed one asked for filtering), so a missing/unstartable
-        # network sidecar raises instead. Static mode with no lists is the
-        # one case that starts unrestricted (no filtering requested) (#2325).
         if needs_sidecar:
-            # Interactive / list-declaring workspaces REQUEST filtering, so a
-            # missing/unstartable sidecar is fail-closed (silently starting
-            # unrestricted would disable a security control the user asked
-            # for). ``allow`` mode is best-effort (sidecar_optional already
-            # gated on these), so it never reaches this fail-close (#2406).
-            if sidecar_required:
-                if not self._network_sidecar_enabled():
-                    raise podman.PodmanError(
-                        500,
-                        f"workspace {workspace_id[:8]} is egress-filtered "
-                        "(interactive mode, or allowed_domains/rejected_domains "
-                        "set) but egress filtering is disabled "
-                        "(netfilter_enabled is off or network_sidecar_image is "
-                        "unset); refusing to start "
-                        "unfiltered. Switch the workspace to static mode with no "
-                        "lists, or enable egress filtering.",
-                    )
-                # The #2264 SO_MARK-bypass guard is user-namespace isolation: the
-                # workspace must run in a user namespace DISTINCT from the one that
-                # owns the network sidecar's netns. The sidecar is launched with no
-                # --userns (podman's default), so an empty KLANGKD_USERNS here would
-                # emit no --userns either, putting the workspace in that same default
-                # userns and reopening the bypass (review #2). Fail-closed: require
-                # an explicit, non-empty userns. (Default keep-id:uid=1000,gid=1000
-                # satisfies this; pinned by test_filtered_workspace_userns_isolates_netns.)
-                if not self.app.state.settings.userns:
-                    raise podman.PodmanError(
-                        500,
-                        f"workspace {workspace_id[:8]} is egress-filtered "
-                        "(interactive mode, or allowed_domains/rejected_domains "
-                        "set), which requires a "
-                        "non-empty "
-                        "KLANGKD_USERNS so the workspace runs in a user namespace "
-                        "distinct from the network sidecar's. An empty userns would "
-                        "share the sidecar's userns and reopen the SO_MARK egress "
-                        "bypass. Set KLANGKD_USERNS (default "
-                        "keep-id:uid=1000,gid=1000) or switch the workspace to "
-                        "static mode with no lists.",
-                    )
-            network_sidecar_id = await self._start_network_sidecar(
-                workspace_id,
-                allowed_domains,
-                egress_mode,
-                rejected_domains=rejected_domains,
-                publish=publish,
-                slug=slug,
+            await self._attach_network_sidecar(
+                spec, sidecar_required, publish, slug, create_kwargs
             )
-            create_kwargs["network"] = f"container:{network_sidecar_id}"
-            # --dns/--dns-search, --add-host, and --publish are all invalid
-            # under --network container: podman rejects --add-host outright
-            # ("cannot set extra host entries when ... joined to another
-            # containers network namespace"), dns/dns-search are
-            # incompatible, and --publish is silently discarded. The workspace
-            # still resolves host.containers.internal via the network sidecar's
-            # /etc/hosts (podman populates it), and the network sidecar's iptables
-            # statically allow-lists the backend port (entrypoint.sh, B1).
-            # #2267: the workspace's host ports are instead published on the
-            # network sidecar (passed to _start_network_sidecar above). The
-            # workspace shares the sidecar's netns, so the sidecar's --publish
-            # forwards into that netns and reaches the workspace's listener,
-            # letting filtered workspaces host apps (which --publish on the
-            # workspace itself cannot, under --network container:).
-            create_kwargs.pop("dns", None)
-            create_kwargs.pop("dns_search", None)
-            create_kwargs.pop("add_hosts", None)
-            create_kwargs.pop("publish", None)
-            # Remember this workspace has a live network sidecar so its stop
-            # tears the network sidecar down (#2254).
-            self._ws_with_network_sidecar.add(workspace_id)
 
         # #2347: the workspace never holds CAP_NET_RAW, under any
         # configuration. The old enable_ping grant (#2045) — cap_add net_raw
@@ -1525,41 +1609,13 @@ class ContainerRegistry(NetworkSidecarMixin):
             time.monotonic() - t_env,
         )
 
-        # Shield create+start from cancellation so a dropped
-        # WebSocket doesn't orphan a running container.
-        try:
-            container_id = await asyncio.shield(
-                self._create_and_start(
-                    container_name,
-                    resolved_image,
-                    workspace_id,
-                    # The workspace's OWN publish (what _resolve_port_conflict
-                    # scans for stale holders). A filtered workspace publishes
-                    # nothing (its ports moved to the sidecar, #2267), so pass
-                    # create_kwargs's actual publish (empty for filtered) rather
-                    # than the stale local -- otherwise a conflict on a filtered
-                    # workspace would scan the sidecar's ports and tear the
-                    # sidecar (and its netns) down.
-                    create_kwargs.get("publish", []),
-                    allow_sudo,
-                    create_kwargs,
-                    health_check=health_check,
-                    owner_id=user_id,
-                    setup_state=setup_state,
-                    per_handle_home=spec.per_handle_home,
-                )
-            )
-        except BaseException:
-            # If the workspace container fails to create/start after a
-            # network sidecar was started for it, tear the sidecar down so
-            # it doesn't leak (NET_ADMIN + proxy) until the next startup
-            # reap. The klangk.instance label would eventually cull it, but
-            # cleaning up immediately matches how workspace containers are
-            # treated and avoids an unfiltered netns lingering (#2255).
-            if workspace_id in self._ws_with_network_sidecar:
-                await self._stop_network_sidecar(workspace_id)
-                self._ws_with_network_sidecar.discard(workspace_id)
-            raise
+        container_name = _workspace_container_name(
+            self.app.state.util.instance_id(), workspace_id, slug
+        )
+
+        container_id = await self._create_start_shielded(
+            spec, container_name, resolved_image, allow_sudo, create_kwargs
+        )
 
         # Fresh create: provision the agent home and fire the service
         # command (#1244). This is the single choke point -- every
