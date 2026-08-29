@@ -420,14 +420,9 @@ class UpdateWorkspaceRequest(BaseModel):
     classification_banner: str | None = None
 
 
-@router.put("/workspaces/{workspace_id}")
-async def update_workspace(
-    workspace_id: str,
-    body: UpdateWorkspaceRequest,
-    user: dict = Depends(acl.has_permission("edit", workspace_resource)),
-    app=Depends(get_app_dep),
-):
-    fields = body.model_dump(exclude_unset=True)
+def _validate_update_fields(app, fields: dict) -> None:
+    """Validate the PUT body's fields (mirrors the create API); mutates
+    ``fields`` in place (normalized domain lists / settings / banner)."""
     if fields.get("auto_start") and not autostart_allowed(app):
         raise HTTPException(
             status_code=400,
@@ -470,6 +465,65 @@ async def update_workspace(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+async def _notify_marking_change(
+    app, user: dict, workspace: dict, fields: dict
+) -> None:
+    """#2768: a marking change re-renders the persistent banner, so push
+    the workspaces-changed notification to every client that can view
+    the workspace — the owner, the editor (a shared member with the
+    edit ACE may not be the owner), and every ACL-shared member (they
+    view the same page via /workspaces/shared and re-resolve the
+    effective marking on this push; without it they keep viewing the
+    old, lower marking until a manual reload)."""
+    if "classification_banner" not in fields:
+        return
+    members = await app.state.model.workspaces.get_workspace_members(
+        workspace["id"]
+    )
+    member_ids = {m["id"] for m in members}
+    member_ids.update({user["id"], workspace["user_id"]})
+    for uid in member_ids:
+        app.state.sockets.notify_user_workspaces_changed(uid)
+
+
+async def _apply_live_state_updates(
+    app, workspace_id: str, fields: dict
+) -> None:
+    """Propagate health-relevant config changes to the live container
+    state (#1015) so HealthMonitor picks them up without a container
+    restart: setup_state may flip to "complete" after setup finishes,
+    and health_check may be edited at any time."""
+    live_state = app.state.container_registry.get_state(workspace_id)
+    if live_state is None:
+        return
+    if "setup_state" in fields:
+        live_state.setup_state = fields["setup_state"]
+    if "health_check" in fields:
+        live_state.health_check = fields["health_check"] or None
+        # Reset the cached status so the next poll re-broadcasts.
+        live_state.health_status = None
+        live_state.health_checked_at = None
+        live_state.health_message = None
+    # Keep the tmux status bar in sync when the workspace is renamed
+    # (#1880): open terminals would otherwise keep showing the old
+    # name until a new terminal_start fires. Idempotent + non-fatal.
+    if "name" in fields and app.state.terminal.tmux_enabled():
+        await app.state.terminal.set_workspace_name(
+            live_state.container_id, fields["name"]
+        )
+
+
+@router.put("/workspaces/{workspace_id}")
+async def update_workspace(
+    workspace_id: str,
+    body: UpdateWorkspaceRequest,
+    user: dict = Depends(acl.has_permission("edit", workspace_resource)),
+    app=Depends(get_app_dep),
+):
+    fields = body.model_dump(exclude_unset=True)
+    _validate_update_fields(app, fields)
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
@@ -481,43 +535,8 @@ async def update_workspace(
     if not updated:
         raise HTTPException(status_code=404, detail="Workspace not found")
 
-    # #2768: a marking change re-renders the persistent banner, so push
-    # the workspaces-changed notification to every client that can view
-    # the workspace — the owner, the editor (a shared member with the
-    # edit ACE may not be the owner), and every ACL-shared member (they
-    # view the same page via /workspaces/shared and re-resolve the
-    # effective marking on this push; without it they keep viewing the
-    # old, lower marking until a manual reload).
-    if "classification_banner" in fields:
-        members = await app.state.model.workspaces.get_workspace_members(
-            workspace_id
-        )
-        member_ids = {m["id"] for m in members}
-        member_ids.update({user["id"], workspace["user_id"]})
-        for uid in member_ids:
-            app.state.sockets.notify_user_workspaces_changed(uid)
-
-    # Propagate health-relevant config changes to the live container
-    # state (#1015) so HealthMonitor picks them up without a container
-    # restart: setup_state may flip to "complete" after setup finishes,
-    # and health_check may be edited at any time.
-    live_state = app.state.container_registry.get_state(workspace_id)
-    if live_state is not None:
-        if "setup_state" in fields:
-            live_state.setup_state = fields["setup_state"]
-        if "health_check" in fields:
-            live_state.health_check = fields["health_check"] or None
-            # Reset the cached status so the next poll re-broadcasts.
-            live_state.health_status = None
-            live_state.health_checked_at = None
-            live_state.health_message = None
-        # Keep the tmux status bar in sync when the workspace is renamed
-        # (#1880): open terminals would otherwise keep showing the old
-        # name until a new terminal_start fires. Idempotent + non-fatal.
-        if "name" in fields and app.state.terminal.tmux_enabled():
-            await app.state.terminal.set_workspace_name(
-                live_state.container_id, fields["name"]
-            )
+    await _notify_marking_change(app, user, workspace, fields)
+    await _apply_live_state_updates(app, workspace_id, fields)
 
     return {"status": "updated"}
 

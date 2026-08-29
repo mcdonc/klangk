@@ -109,23 +109,8 @@ def _coerce_acl_int(value: Any, field: str) -> int:
         ) from exc
 
 
-def _validate_hook_changes(app, changed: dict) -> str | None:
-    """Validate a hook's row mutations — the create API's checks.
-
-    Returns ``None`` when every changed field is valid, else an error
-    message describing the first invalid field. Mirrors what
-    ``POST /workspaces`` validates before persisting: the enum/bool
-    constraints of ``create_workspace_with_acl`` (enforced *before* the
-    write, so a bad value is dropped rather than coerced by
-    ``update_workspace``), the settings-bag schema
-    (:func:`klangk.workspace_settings.validate_settings`), the image
-    allowlist, the mount-spec policy
-    (:meth:`ContainerRegistry.validate_mounts`), and the domain-list
-    grammar (:func:`klangk.netfilter.parse_allowed_domains`, plus the
-    rejected-domains no-CIDR rule). Validated lists/bags are normalized
-    in place in ``changed`` (de-duplicated / coerced), exactly as the
-    API persists them.
-    """
+def _validate_hook_enums(changed: dict) -> str | None:
+    """Enum / bool fields: a bad value is rejected, not coerced."""
     if "setup_state" in changed and changed["setup_state"] not in SETUP_STATES:
         return f"invalid setup_state: {changed['setup_state']!r}"
     if "egress_mode" in changed and changed["egress_mode"] not in EGRESS_MODES:
@@ -134,6 +119,11 @@ def _validate_hook_changes(app, changed: dict) -> str | None:
         changed["per_handle_home"], bool
     ):
         return f"invalid per_handle_home: {changed['per_handle_home']!r}"
+    return None
+
+
+def _validate_hook_strings(app, changed: dict) -> str | None:
+    """Banner / image / mounts: normalization and registry policy."""
     if (
         "classification_banner" in changed
         and changed["classification_banner"] is not None
@@ -155,6 +145,11 @@ def _validate_hook_changes(app, changed: dict) -> str | None:
         error = app.state.container_registry.validate_mounts(changed["mounts"])
         if error:
             return f"invalid mounts: {error}"
+    return None
+
+
+def _validate_hook_lists(changed: dict) -> str | None:
+    """Settings bag and domain lists: parsed/normalized in place."""
     if "settings" in changed and changed["settings"] is not None:
         try:
             changed["settings"] = validate_settings(changed["settings"])
@@ -184,6 +179,30 @@ def _validate_hook_changes(app, changed: dict) -> str | None:
         except ValueError as exc:
             return f"invalid rejected_domains: {exc}"
     return None
+
+
+def _validate_hook_changes(app, changed: dict) -> str | None:
+    """Validate a hook's row mutations — the create API's checks.
+
+    Returns ``None`` when every changed field is valid, else an error
+    message describing the first invalid field. Mirrors what
+    ``POST /workspaces`` validates before persisting: the enum/bool
+    constraints of ``create_workspace_with_acl`` (enforced *before* the
+    write, so a bad value is dropped rather than coerced by
+    ``update_workspace``), the settings-bag schema
+    (:func:`klangk.workspace_settings.validate_settings`), the image
+    allowlist, the mount-spec policy
+    (:meth:`ContainerRegistry.validate_mounts`), and the domain-list
+    grammar (:func:`klangk.netfilter.parse_allowed_domains`, plus the
+    rejected-domains no-CIDR rule). Validated lists/bags are normalized
+    in place in ``changed`` (de-duplicated / coerced), exactly as the
+    API persists them.
+    """
+    return (
+        _validate_hook_enums(changed)
+        or _validate_hook_strings(app, changed)
+        or _validate_hook_lists(changed)
+    )
 
 
 class WorkspaceHookHandle(dict):
