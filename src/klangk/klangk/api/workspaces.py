@@ -291,6 +291,48 @@ async def create_workspace(
     ),
     app=Depends(get_app_dep),
 ):
+    fields = _validate_create_fields(body, app)
+    try:
+        ws = await app.state.workspaces.create_workspace(
+            user["id"],
+            body.name,
+            image=body.image,
+            service_command=body.service_command,
+            auto_start=body.auto_start,
+            mounts=body.mounts,
+            env=body.env,
+            setup_state=body.setup_state or "complete",
+            health_check=body.health_check,
+            allowed_domains=fields["allowed_domains"],
+            rejected_domains=fields["rejected_domains"],
+            settings=fields["settings"],
+            egress_mode=body.egress_mode,
+            per_handle_home=fields["per_handle_home"],
+            classification_banner=fields["classification_banner"],
+        )
+    except SAIntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A workspace named {body.name!r} already exists",
+        )
+    except OSError as e:  # pragma: no cover
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Eagerly start the container so it's running by the time the
+    # user connects.  Errors are logged but don't fail the create.
+    # The service command fires at the create choke point inside
+    # start_container (see ContainerRegistry._bringup, #1244), gated on
+    # setup_state so workspaces whose setup.sh hasn't run yet defer until
+    # complete.
+    await _eager_start(app, body, ws)
+
+    app.state.sockets.notify_user_workspaces_changed(user["id"])
+    return ws
+
+
+def _validate_create_fields(body, app) -> dict:
+    """Validate the POST body (400s raise); returns the derived
+    allowed/rejected domains, settings, per_handle_home, and banner."""
     if body.auto_start and not autostart_allowed(app):
         raise HTTPException(
             status_code=400,
@@ -310,87 +352,66 @@ async def create_workspace(
         mount_err = app.state.container_registry.validate_mounts(body.mounts)
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
-    allowed_domains = _validate_allowed_domains(body.allowed_domains, app)
-    rejected_domains = _validate_rejected_domains(body.rejected_domains, app)
     try:
         settings = validate_settings(body.settings)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    per_handle_home = (
-        body.per_handle_home
-        if body.per_handle_home is not None
-        else app.state.settings.per_handle_home
-    )
     try:
         classification_banner = normalize_classification_banner(
             body.classification_banner
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "allowed_domains": _validate_allowed_domains(
+            body.allowed_domains, app
+        ),
+        "rejected_domains": _validate_rejected_domains(
+            body.rejected_domains, app
+        ),
+        "settings": settings,
+        "per_handle_home": (
+            body.per_handle_home
+            if body.per_handle_home is not None
+            else app.state.settings.per_handle_home
+        ),
+        "classification_banner": classification_banner,
+    }
+
+
+async def _eager_start(app, body, ws) -> None:
+    """Eagerly start the container when the body asked for it; errors are
+    logged but never fail the create."""
+    if not body.auto_start:
+        return
     try:
-        ws = await app.state.workspaces.create_workspace(
-            user["id"],
-            body.name,
-            image=body.image,
-            service_command=body.service_command,
-            auto_start=body.auto_start,
-            mounts=body.mounts,
-            env=body.env,
-            setup_state=body.setup_state or "complete",
-            health_check=body.health_check,
-            allowed_domains=allowed_domains,
-            rejected_domains=rejected_domains,
-            settings=settings,
-            egress_mode=body.egress_mode,
-            per_handle_home=per_handle_home,
-            classification_banner=classification_banner,
+        await app.state.workspaces.start_workspace(ws)
+    except NodeDrainingError:
+        # A graceful-restart drain raced the create (#2527): the
+        # workspace row exists but no container may start. Not worth
+        # failing the create — it simply won't run until the restart
+        # completes (a start then succeeds).
+        logger.warning(
+            "Node refuses new starts mid-create: workspace %s "
+            "created but not started",
+            ws["id"],
         )
-    except SAIntegrityError:
-        raise HTTPException(
-            status_code=409,
-            detail=f"A workspace named {body.name!r} already exists",
+    except WorkspaceCapacityError as exc:
+        # Admission control refused the eager start (#2525): the
+        # workspace row exists (creation is not capacity-gated —
+        # only starts are); it runs once capacity frees up. Logged
+        # as a clear warning rather than a traceback-level failure.
+        logger.warning(
+            "Capacity refused eager start of workspace %s: %s",
+            ws["id"],
+            exc,
         )
-    except OSError as e:  # pragma: no cover
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # Eagerly start the container so it's running by the time the
-    # user connects.  Errors are logged but don't fail the create.
-    # The service command fires at the create choke point inside
-    # start_container (see ContainerRegistry._bringup, #1244), gated on
-    # setup_state so workspaces whose setup.sh hasn't run yet defer until
-    # complete.
-    if body.auto_start:
-        try:
-            await app.state.workspaces.start_workspace(ws)
-        except NodeDrainingError:
-            # A graceful-restart drain raced the create (#2527): the
-            # workspace row exists but no container may start. Not worth
-            # failing the create — it simply won't run until the restart
-            # completes (a start then succeeds).
-            logger.warning(
-                "Node refuses new starts mid-create: workspace %s "
-                "created but not started",
-                ws["id"],
-            )
-        except WorkspaceCapacityError as exc:
-            # Admission control refused the eager start (#2525): the
-            # workspace row exists (creation is not capacity-gated —
-            # only starts are); it runs once capacity frees up. Logged
-            # as a clear warning rather than a traceback-level failure.
-            logger.warning(
-                "Capacity refused eager start of workspace %s: %s",
-                ws["id"],
-                exc,
-            )
-        except Exception:
-            logger.warning(
-                "Eager start failed for workspace %s",
-                ws["id"],
-                exc_info=True,
-            )
-
-    app.state.sockets.notify_user_workspaces_changed(user["id"])
-    return ws
+    except Exception:
+        logger.warning(
+            "Eager start failed for workspace %s",
+            ws["id"],
+            exc_info=True,
+        )
 
 
 class UpdateWorkspaceRequest(BaseModel):
@@ -423,6 +444,13 @@ class UpdateWorkspaceRequest(BaseModel):
 def _validate_update_fields(app, fields: dict) -> None:
     """Validate the PUT body's fields (mirrors the create API); mutates
     ``fields`` in place (normalized domain lists / settings / banner)."""
+    _validate_update_core(app, fields)
+    _normalize_update_fields(app, fields)
+
+
+def _validate_update_core(app, fields: dict) -> None:
+    """The 400-raising checks: autostart enablement, image allow-list,
+    mount validity."""
     if fields.get("auto_start") and not autostart_allowed(app):
         raise HTTPException(
             status_code=400,
@@ -442,6 +470,10 @@ def _validate_update_fields(app, fields: dict) -> None:
         )
         if mount_err:
             raise HTTPException(status_code=400, detail=mount_err)
+
+
+def _normalize_update_fields(app, fields: dict) -> None:
+    """Normalize in place: domain lists, settings, classification banner."""
     if "allowed_domains" in fields:
         fields["allowed_domains"] = _validate_allowed_domains(
             fields["allowed_domains"], app
@@ -1037,6 +1069,33 @@ async def _extract_archive_metadata(
     archive_path: str, name: str | None, app
 ) -> dict:
     """Read workspace.json from the archive and return sanitized metadata."""
+    metadata = await _read_archive_metadata(archive_path)
+    ws_name = _archive_ws_name(metadata, name)
+    _validate_archive_provenance(metadata, app)
+    return {
+        "name": ws_name,
+        "image": _archive_image(metadata.get("image"), app),
+        "service_command": metadata.get("service_command"),
+        "auto_start": metadata.get("auto_start", False),
+        "mounts": _archive_mounts(metadata.get("mounts"), app),
+        "env": _sanitize_archive_env(metadata.get("env")),
+        "health_check": metadata.get("health_check"),
+        "allowed_domains": metadata.get("allowed_domains"),
+        "rejected_domains": metadata.get("rejected_domains"),
+        "settings": metadata.get("settings"),
+        "egress_mode": _archive_egress_mode(metadata.get("egress_mode")),
+        "per_handle_home": _archive_per_handle_home(
+            metadata.get("per_handle_home")
+        ),
+        "classification_banner": _archive_banner(
+            metadata.get("classification_banner")
+        ),
+    }
+
+
+async def _read_archive_metadata(archive_path: str) -> dict:
+    """Run the tar extract of workspace.json and parse it; 400 on a missing
+    entry or corrupt JSON."""
     result = await asyncio.to_thread(
         subprocess.run,
         ["tar", "xzf", archive_path, "-O", "workspace.json"],
@@ -1049,30 +1108,45 @@ async def _extract_archive_metadata(
             detail="Archive missing workspace.json or is corrupt",
         )
     try:
-        metadata = json.loads(result.stdout)
+        return json.loads(result.stdout)
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(
             status_code=400,
             detail="workspace.json is corrupt or contains invalid JSON",
         )
 
+
+def _archive_ws_name(metadata: dict, name: str | None) -> str:
+    """The workspace name: an explicit request name wins, else the
+    archive's."""
     ws_name = name or metadata.get("name")
     if not ws_name:
         raise HTTPException(
             status_code=400,
             detail="No workspace name in archive or request",
         )
+    return ws_name
 
-    image = metadata.get("image")
+
+def _archive_image(image, app) -> str | None:
+    """The archived image, dropped when not in this instance's allow
+    list."""
     if image and image not in app.state.container_registry.allowed_images:
-        image = None
+        return None
+    return image
 
-    mounts = metadata.get("mounts")
+
+def _archive_mounts(mounts, app):
+    """The archived mounts, dropped when they fail this instance's mount
+    validation."""
     if mounts and app.state.container_registry.validate_mounts(mounts):
-        mounts = None
+        return None
+    return mounts
 
-    # Validate provenance: reject archives without instance_id or from a
-    # different instance.
+
+def _validate_archive_provenance(metadata: dict, app) -> None:
+    """Validate provenance: reject archives without instance_id or from a
+    different instance."""
     archive_instance_id = metadata.get("instance_id")
     if archive_instance_id is None:
         raise HTTPException(
@@ -1086,76 +1160,51 @@ async def _extract_archive_metadata(
             detail="Archive was exported from a different Klangk instance",
         )
 
-    raw_env = metadata.get("env")
-    if isinstance(raw_env, dict):
-        blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
-        # Strip every klangk-namespaced env var from the archived snapshot:
-        # server settings (KLANGKD_), container-injected vars (KLANGKWS_),
-        # build knobs (KLANGKBUILD_), and CLI vars (KLANGK_) are all
-        # re-derived for the new container. `extra_env` is appended last in
-        # the container env (last wins at the podman layer), so a stale value
-        # from the exporting instance must not leak through and clobber the
-        # live injection (#1740).
-        env = {
-            k: v
-            for k, v in raw_env.items()
-            if not k.startswith(
-                ("KLANGKD_", "KLANGKWS_", "KLANGKBUILD_", "KLANGK_")
-            )
-            and k not in blocked
-        }
-    else:
-        env = None
 
-    # Preserve egress posture across export -> import (#2402). Validate
-    # against the allowed EGRESS_MODES; an unknown/missing value falls back
-    # to the deploy default so a tampered or stale archive cannot smuggle in
-    # a less restrictive posture than the instance ships with.
-    egress_mode = metadata.get("egress_mode")
-    if egress_mode not in EGRESS_MODES:
-        egress_mode = EGRESS_MODE_DEFAULT
-
-    # Preserve the home layout across export -> import (#2722). Import IS
-    # a creation, and the archive's explicit layout wins over the deploy
-    # default (KLANGKD_PER_HANDLE_HOME) — a per-handle workspace must stay
-    # per-handle on the destination instance or members' /home/<handle>
-    # symlinks land in an unrelated shared home. Legacy archives without
-    # the field import as per-handle (True): every pre-#2169 workspace was
-    # per-user-homed. Only an explicit bool is honored — anything else
-    # (tampered, garbage) also falls back to True, matching the model's
-    # strict bool validation (it would reject non-bools anyway).
-    per_handle_home = metadata.get("per_handle_home")
-    if not isinstance(per_handle_home, bool):
-        per_handle_home = True
-
-    # Preserve the classification marking across export -> import (#2768).
-    # An archive is re-validated like every other field: a malformed
-    # marking (wrong type, control characters, oversize) drops to the
-    # inherit default rather than failing the whole import — the home
-    # tree is the payload; the banner is a label.
-    classification_banner = metadata.get("classification_banner")
-    try:
-        classification_banner = normalize_classification_banner(
-            classification_banner
-        )
-    except ValueError:
-        classification_banner = None
-
+def _sanitize_archive_env(raw_env) -> dict | None:
+    """The archived env, stripped of klangk-namespaced and injection-capable
+    vars (stale server/container values are re-derived for the new
+    container; ``extra_env`` is appended last so a stale value would clobber
+    the live injection, #1740)."""
+    if not isinstance(raw_env, dict):
+        return None
+    blocked = {"LD_PRELOAD", "LD_LIBRARY_PATH", "PATH"}
     return {
-        "name": ws_name,
-        "image": image,
-        "service_command": metadata.get("service_command"),
-        "auto_start": metadata.get("auto_start", False),
-        "mounts": mounts,
-        "env": env,
-        "health_check": metadata.get("health_check"),
-        "allowed_domains": metadata.get("allowed_domains"),
-        "rejected_domains": metadata.get("rejected_domains"),
-        "settings": metadata.get("settings"),
-        "egress_mode": egress_mode,
-        "per_handle_home": per_handle_home,
-        "classification_banner": classification_banner,
+        k: v
+        for k, v in raw_env.items()
+        if not k.startswith(
+            ("KLANGKD_", "KLANGKWS_", "KLANGKBUILD_", "KLANGK_")
+        )
+        and k not in blocked
     }
+
+
+def _archive_egress_mode(egress_mode) -> str:
+    """Preserve egress posture across export -> import (#2402); an
+    unknown/missing value falls back to the deploy default so a tampered or
+    stale archive cannot smuggle in a less restrictive posture."""
+    if egress_mode not in EGRESS_MODES:
+        return EGRESS_MODE_DEFAULT
+    return egress_mode
+
+
+def _archive_per_handle_home(per_handle_home) -> bool:
+    """Preserve the home layout across export -> import (#2722): only an
+    explicit bool is honored, anything else imports as per-handle (every
+    pre-#2169 workspace was per-user-homed)."""
+    if not isinstance(per_handle_home, bool):
+        return True
+    return per_handle_home
+
+
+def _archive_banner(classification_banner) -> str | None:
+    """Preserve the classification marking across export -> import (#2768);
+    a malformed marking drops to the inherit default rather than failing
+    the import — the home tree is the payload; the banner is a label."""
+    try:
+        return normalize_classification_banner(classification_banner)
+    except ValueError:
+        return None
 
 
 async def _extract_home_directory(

@@ -44,6 +44,43 @@ class SendInviteRequest(BaseModel):
     email: str
 
 
+def _validate_root_acl(entries, resource: str) -> None:
+    """Root ACL must keep Authenticated view access."""
+    if resource != "/":
+        return
+    has_auth_view = any(
+        e.action == ACTION_ALLOW
+        and e.principal_type == PRINCIPAL_SYSTEM
+        and e.system_principal == SYSTEM_AUTHENTICATED
+        and e.permission in ("view", "*")
+        for e in entries
+    )
+    if not has_auth_view:
+        raise HTTPException(
+            status_code=400,
+            detail="Root ACL must include Allow Authenticated view "
+            "to prevent locking out all users",
+        )
+
+
+def _validate_admin_acl(entries, resource: str) -> None:
+    """/admin ACL must keep admin group access."""
+    if resource != "/admin":
+        return
+    has_admin_group = any(
+        e.action == ACTION_ALLOW
+        and e.principal_type == PRINCIPAL_GROUP
+        and e.permission in ("*", "admin")
+        for e in entries
+    )
+    if not has_admin_group:
+        raise HTTPException(
+            status_code=400,
+            detail="Admin ACL must include at least one Allow "
+            "group entry to prevent locking out all admins",
+        )
+
+
 @router.post("/admin/invitations")
 async def send_invitation(
     req: SendInviteRequest,
@@ -350,36 +387,44 @@ async def update_user(
             app.state.sockets, user_id, req.handle
         )
     if req.disabled is not None:
-        # An admin must not disable their own account (#2588) — the
-        # only accounts that can re-enable are the admin group's.
-        if req.disabled and user_id == admin["id"]:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot disable your own account",
-            )
-        try:
-            updated = await app.state.model.users.set_user_disabled(
-                user_id, req.disabled
-            )
-        except AgentPrincipalError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        if not updated:  # pragma: no cover — race between get and update
-            raise HTTPException(status_code=404, detail="User not found")
-        if req.disabled:
-            # Cut the user's live connections too (#2588 review): the
-            # WS is the terminal/control data plane, and a disabled
-            # account must not keep it. 4001 -> the client logs out
-            # rather than reconnect-looping.
-            kicked = await wshandler.disconnect_user(
-                app.state.sockets, user_id, reason="Account disabled"
-            )
-            if kicked:
-                logger.info(
-                    "admin: disabled user %s; closed %d live connection(s)",
-                    user_id,
-                    kicked,
-                )
+        await _update_user_disabled(app, req, user_id, admin)
     return {"status": "updated"}
+
+
+async def _update_user_disabled(
+    app, req: UpdateUserRequest, user_id: str, admin: dict
+) -> None:
+    """Apply a disabled flag: guard self-disable, persist, and cut the
+    user's live connections when disabling (#2588)."""
+    # An admin must not disable their own account (#2588) — the
+    # only accounts that can re-enable are the admin group's.
+    if req.disabled and user_id == admin["id"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot disable your own account",
+        )
+    try:
+        updated = await app.state.model.users.set_user_disabled(
+            user_id, req.disabled
+        )
+    except AgentPrincipalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not updated:  # pragma: no cover — race between get and update
+        raise HTTPException(status_code=404, detail="User not found")
+    if req.disabled:
+        # Cut the user's live connections too (#2588 review): the
+        # WS is the terminal/control data plane, and a disabled
+        # account must not keep it. 4001 -> the client logs out
+        # rather than reconnect-looping.
+        kicked = await wshandler.disconnect_user(
+            app.state.sockets, user_id, reason="Account disabled"
+        )
+        if kicked:
+            logger.info(
+                "admin: disabled user %s; closed %d live connection(s)",
+                user_id,
+                kicked,
+            )
 
 
 @router.post("/admin/users/{user_id}/unlockout")
@@ -781,36 +826,8 @@ async def replace_resource_acl(
     app=Depends(get_app_dep),
 ):
     """Replace ACL entries for any resource (admin only)."""
-    # Validate: root ACL must keep Authenticated view access
-    if resource == "/":
-        has_auth_view = any(
-            e.action == ACTION_ALLOW
-            and e.principal_type == PRINCIPAL_SYSTEM
-            and e.system_principal == SYSTEM_AUTHENTICATED
-            and e.permission in ("view", "*")
-            for e in entries
-        )
-        if not has_auth_view:
-            raise HTTPException(
-                status_code=400,
-                detail="Root ACL must include Allow Authenticated view "
-                "to prevent locking out all users",
-            )
-
-    # Validate: /admin ACL must keep admin group access
-    if resource == "/admin":
-        has_admin_group = any(
-            e.action == ACTION_ALLOW
-            and e.principal_type == PRINCIPAL_GROUP
-            and e.permission in ("*", "admin")
-            for e in entries
-        )
-        if not has_admin_group:
-            raise HTTPException(
-                status_code=400,
-                detail="Admin ACL must include at least one Allow "
-                "group entry to prevent locking out all admins",
-            )
+    _validate_root_acl(entries, resource)
+    _validate_admin_acl(entries, resource)
 
     acl_entries = [
         {
