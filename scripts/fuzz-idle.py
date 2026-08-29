@@ -734,6 +734,73 @@ async def check_idle_seconds(
         )
 
 
+async def configure_workspace(ctx: Ctx, spec: WsSpec) -> None:
+    """Apply the scenario's settings patches (invalid-probe + override)."""
+    api = ctx.api
+    if spec.invalid_patch:
+        # Values the settings coercion must reject (workspace_settings.py
+        # _coerce_nonnegative_int): negative, non-numeric string, empty
+        # string, non-integer float. Each must 400, never 5xx.
+        for bad in (-5, "notanumber", "", 1.5):
+            resp = await api.patch_settings(spec.ws_id, {"idle_timeout": bad})
+            if not 400 <= resp.status_code < 500:
+                ctx.anomalies.add(
+                    "invalid-patch",
+                    f"{spec.name}: PATCH idle_timeout={bad!r} -> "
+                    f"{resp.status_code} (expected 4xx)",
+                    scenario=spec.scenario_json(),
+                )
+        spec.note("invalid-patches-sent")
+    if spec.override is not None:
+        resp = await api.patch_settings(spec.ws_id, {"idle_timeout": spec.override})
+        if resp.status_code != 200:
+            ctx.anomalies.add(
+                "patch",
+                f"{spec.name}: PATCH override {spec.override} -> {resp.status_code}",
+                scenario=spec.scenario_json(),
+            )
+        spec.note(f"override={spec.override}")
+
+
+async def start_scenario_workspace(
+    ctx: Ctx, spec: WsSpec
+) -> tuple[WsTerminal | None, dict]:
+    """Start the workspace per its pattern; returns (terminal-or-None,
+    running-status)."""
+    api = ctx.api
+    term: WsTerminal | None = None
+    if spec.pattern in WS_PATTERNS:
+        term = WsTerminal(ctx.server, api.token, spec.ws_id)
+        spec.note("ws-connect")
+        await term.connect()
+        if spec.pattern != "quiet_ws":
+            await term.start_terminal()
+            await asyncio.sleep(1)
+            await term.send_input(" ")
+    else:
+        spec.note("api-start")
+        resp = await api.start(spec.ws_id)
+        if resp.status_code != 200:
+            ctx.anomalies.add(
+                "start",
+                f"{spec.name}: start -> {resp.status_code}",
+            )
+    st = await wait_running(ctx, spec)
+    cid = st.get("container_id") or ""
+    spec.note(f"running cid={cid[:12]}")
+
+    # Sanity: the status endpoint reports the effective timeout.
+    if st.get("idle_timeout") != spec.eff_timeout:
+        ctx.anomalies.add(
+            "status-timeout",
+            f"{spec.name}: status idle_timeout="
+            f"{st.get('idle_timeout')} != effective "
+            f"{spec.eff_timeout}",
+            scenario=spec.scenario_json(),
+        )
+    return term, st
+
+
 async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
     """One workspace lifecycle: create -> configure -> start -> activity
     pattern -> invariants -> restart check -> cleanup."""
@@ -743,61 +810,11 @@ async def run_ws_scenario(ctx: Ctx, spec: WsSpec, tick: int) -> None:
     term: WsTerminal | None = None
     try:
         # -- configure ------------------------------------------------------
-        if spec.invalid_patch:
-            # Values the settings coercion must reject (workspace_settings.py
-            # _coerce_nonnegative_int): negative, non-numeric string, empty
-            # string, non-integer float. Each must 400, never 5xx.
-            for bad in (-5, "notanumber", "", 1.5):
-                resp = await api.patch_settings(spec.ws_id, {"idle_timeout": bad})
-                if not 400 <= resp.status_code < 500:
-                    ctx.anomalies.add(
-                        "invalid-patch",
-                        f"{spec.name}: PATCH idle_timeout={bad!r} -> "
-                        f"{resp.status_code} (expected 4xx)",
-                        scenario=spec.scenario_json(),
-                    )
-            spec.note("invalid-patches-sent")
-        if spec.override is not None:
-            resp = await api.patch_settings(spec.ws_id, {"idle_timeout": spec.override})
-            if resp.status_code != 200:
-                ctx.anomalies.add(
-                    "patch",
-                    f"{spec.name}: PATCH override {spec.override} -> "
-                    f"{resp.status_code}",
-                    scenario=spec.scenario_json(),
-                )
-            spec.note(f"override={spec.override}")
+        await configure_workspace(ctx, spec)
 
         # -- start ----------------------------------------------------------
-        if spec.pattern in WS_PATTERNS:
-            term = WsTerminal(ctx.server, api.token, spec.ws_id)
-            spec.note("ws-connect")
-            await term.connect()
-            if spec.pattern != "quiet_ws":
-                await term.start_terminal()
-                await asyncio.sleep(1)
-                await term.send_input(" ")
-        else:
-            spec.note("api-start")
-            resp = await api.start(spec.ws_id)
-            if resp.status_code != 200:
-                ctx.anomalies.add(
-                    "start",
-                    f"{spec.name}: start -> {resp.status_code}",
-                )
-        st = await wait_running(ctx, spec)
+        term, st = await start_scenario_workspace(ctx, spec)
         cid = st.get("container_id") or ""
-        spec.note(f"running cid={cid[:12]}")
-
-        # Sanity: the status endpoint reports the effective timeout.
-        if st.get("idle_timeout") != spec.eff_timeout:
-            ctx.anomalies.add(
-                "status-timeout",
-                f"{spec.name}: status idle_timeout="
-                f"{st.get('idle_timeout')} != effective "
-                f"{spec.eff_timeout}",
-                scenario=spec.scenario_json(),
-            )
 
         state = {
             "last_activity": time.monotonic(),  # bringup is itself activity

@@ -41,6 +41,65 @@ from .workspace_form import EditWorkspaceScreen
 logger = logging.getLogger(__name__)
 
 
+def format_uptime(elapsed: int) -> str:
+    """Render whole seconds as e.g. ``2d 3h 5m`` (largest non-zero units)."""
+    parts = []
+    days, rem = divmod(elapsed, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+def optional_detail_rows(ws, deploy_banner: str) -> list[tuple[str, str]]:
+    """The conditional (label, value) rows for the workspace detail table."""
+    rows: list[tuple[str, str]] = []
+    if ws.health_message:
+        rows.append(("health note", ws.health_message))
+    if ws.image:
+        rows.append(("image", ws.image))
+    if ws.service_command:
+        rows.append(("service command", ws.service_command))
+    if ws.health_check:
+        rows.append(("health check", ws.health_check))
+    rows.append(("auto-start", "on" if ws.auto_start else "off"))
+    banner = effective_marking(
+        getattr(ws, "classification_banner", None), deploy_banner
+    )
+    if banner:
+        rows.append(("classification", banner))
+    if ws.mounts:
+        rows.append(("mounts", "\n".join(str(m) for m in ws.mounts)))
+    if ws.env:
+        rows.append(
+            (
+                "environment",
+                "\n".join(f"{k}={v}" for k, v in ws.env.items()),
+            )
+        )
+    if ws.allowed_domains:
+        rows.append(
+            (
+                "allowed domains",
+                "\n".join(str(d) for d in ws.allowed_domains),
+            )
+        )
+    if ws.rejected_domains:
+        rows.append(
+            (
+                "rejected domains",
+                "\n".join(str(d) for d in ws.rejected_domains),
+            )
+        )
+    if ws.owner_email:
+        rows.append(("owner", ws.owner_email))
+    return rows
+
+
 class WorkspaceDetailScreen(StatusScreen):
     """Read-only workspace detail + restart / duplicate / delete actions."""
 
@@ -389,55 +448,8 @@ class WorkspaceDetailScreen(StatusScreen):
         if ws.running and ws.service_started_at:
             elapsed = int(time.time() - ws.service_started_at)
             if elapsed >= 0:
-                parts = []
-                days, rem = divmod(elapsed, 86400)
-                hours, rem = divmod(rem, 3600)
-                minutes, _ = divmod(rem, 60)
-                if days:
-                    parts.append(f"{days}d")
-                if hours:
-                    parts.append(f"{hours}h")
-                parts.append(f"{minutes}m")
-                rows.append(("uptime", " ".join(parts)))
-        if ws.health_message:
-            rows.append(("health note", ws.health_message))
-        if ws.image:
-            rows.append(("image", ws.image))
-        if ws.service_command:
-            rows.append(("service command", ws.service_command))
-        if ws.health_check:
-            rows.append(("health check", ws.health_check))
-        rows.append(("auto-start", "on" if ws.auto_start else "off"))
-        banner = effective_marking(
-            getattr(ws, "classification_banner", None), deploy_banner
-        )
-        if banner:
-            rows.append(("classification", banner))
-        if ws.mounts:
-            rows.append(("mounts", "\n".join(str(m) for m in ws.mounts)))
-        if ws.env:
-            rows.append(
-                (
-                    "environment",
-                    "\n".join(f"{k}={v}" for k, v in ws.env.items()),
-                )
-            )
-        if ws.allowed_domains:
-            rows.append(
-                (
-                    "allowed domains",
-                    "\n".join(str(d) for d in ws.allowed_domains),
-                )
-            )
-        if ws.rejected_domains:
-            rows.append(
-                (
-                    "rejected domains",
-                    "\n".join(str(d) for d in ws.rejected_domains),
-                )
-            )
-        if ws.owner_email:
-            rows.append(("owner", ws.owner_email))
+                rows.append(("uptime", format_uptime(elapsed)))
+        rows.extend(optional_detail_rows(ws, deploy_banner))
         return rows
 
     @staticmethod

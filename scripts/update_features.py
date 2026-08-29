@@ -278,7 +278,7 @@ def read_lock(lock_path):
     return {e["name"]: e for e in (data or {}).get("features", [])}
 
 
-def main(argv=None):
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Materialize features declared in the checked-in features.yaml."
     )
@@ -309,7 +309,77 @@ def main(argv=None):
             "shape stays consistent (#1664)."
         ),
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
+
+
+def select_features(config: dict, only: str | None) -> list:
+    """The declared features, filtered to ``only`` when one is named."""
+    features = config.get("features", [])
+    if not features:
+        print("No features listed in features.yaml")
+        return []
+    if only:
+        matched = [p for p in features if feature_name(p) == only]
+        if not matched:
+            print(f"Feature '{only}' not found in features.yaml", file=sys.stderr)
+            sys.exit(1)
+        return matched
+    return features
+
+
+def materialize_feature(feature: dict, args, lock_map: dict, payload_dir: str):
+    """Fetch/link one declared feature; its lock entry, or None on skip."""
+    if "git" in feature:
+        if args.local_only:
+            print(
+                f"  SKIP: {feature['name']} (git entry, --local-only)",
+                file=sys.stderr,
+            )
+            # Record the skip in the lock so its shape stays consistent
+            # (every declared feature appears) without fetching. Preserve
+            # a real SHA from the prior lock if one exists (an interleaved
+            # `update_features <name>` may have already resolved it) — only
+            # write sha='skipped' when there's nothing better to keep.
+            prior = lock_map.get(feature["name"])
+            prior_sha = prior.get("sha") if prior else None
+            lock_map[feature["name"]] = {
+                "name": feature["name"],
+                "git": feature["git"],
+                "path": feature.get("path", ""),
+                "ref": feature.get("ref", "main"),
+                "sha": prior_sha if prior_sha and prior_sha != "skipped" else "skipped",
+            }
+            return None
+        return fetch_feature(feature, payload_dir)
+    if "path" in feature:
+        return link_feature(feature, payload_dir)
+    print(
+        f"  SKIP: entry needs 'git' or 'path' key: {feature}",
+        file=sys.stderr,
+    )
+    return None
+
+
+def prune_dropped_features(config: dict, lock_map: dict, payload_dir: str) -> None:
+    """Remove features that were in the old lockfile but dropped from
+    features.yaml."""
+    yaml_names = {
+        feature_name(p) for p in config.get("features", []) if "git" in p or "path" in p
+    }
+    for name in list(lock_map):
+        if name not in yaml_names:
+            feature_dir = os.path.join(payload_dir, name)
+            if os.path.islink(feature_dir):
+                os.unlink(feature_dir)
+                print(f"  Removed {name} (no longer in features.yaml)")
+            elif os.path.isdir(feature_dir):
+                shutil.rmtree(feature_dir)
+                print(f"  Removed {name} (no longer in features.yaml)")
+            del lock_map[name]
+
+
+def main(argv=None):
+    args = parse_args(argv)
 
     if not os.path.isfile(YAML_PATH):
         print(
@@ -326,19 +396,9 @@ def main(argv=None):
     with open(YAML_PATH) as f:
         config = yaml.safe_load(f)
 
-    features = config.get("features", [])
+    features = select_features(config, args.only)
     if not features:
-        print("No features listed in features.yaml")
         return 0
-
-    # Filter to a single feature if requested
-    only = args.only
-    if only:
-        matched = [p for p in features if feature_name(p) == only]
-        if not matched:
-            print(f"Feature '{only}' not found in features.yaml", file=sys.stderr)
-            sys.exit(1)
-        features = matched
 
     print(f"Fetching {len(features)} feature{'s' if len(features) != 1 else ''}...")
     if not args.payload_dir:
@@ -349,58 +409,12 @@ def main(argv=None):
     lock_map = dict(old_lock)
 
     for feature in features:
-        if "git" in feature:
-            if args.local_only:
-                print(
-                    f"  SKIP: {feature['name']} (git entry, --local-only)",
-                    file=sys.stderr,
-                )
-                # Record the skip in the lock so its shape stays consistent
-                # (every declared feature appears) without fetching. Preserve
-                # a real SHA from the prior lock if one exists (an interleaved
-                # `update_features <name>` may have already resolved it) — only
-                # write sha='skipped' when there's nothing better to keep.
-                prior = lock_map.get(feature["name"])
-                prior_sha = prior.get("sha") if prior else None
-                lock_map[feature["name"]] = {
-                    "name": feature["name"],
-                    "git": feature["git"],
-                    "path": feature.get("path", ""),
-                    "ref": feature.get("ref", "main"),
-                    "sha": prior_sha
-                    if prior_sha and prior_sha != "skipped"
-                    else "skipped",
-                }
-                continue
-            entry = fetch_feature(feature, payload_dir)
-        elif "path" in feature:
-            entry = link_feature(feature, payload_dir)
-        else:
-            print(
-                f"  SKIP: entry needs 'git' or 'path' key: {feature}",
-                file=sys.stderr,
-            )
-            continue
+        entry = materialize_feature(feature, args, lock_map, payload_dir)
         if entry:
             lock_map[entry["name"]] = entry
 
-    # Remove features that were in the old lockfile but dropped from features.yaml
-    if not only:
-        yaml_names = {
-            feature_name(p)
-            for p in config.get("features", [])
-            if "git" in p or "path" in p
-        }
-        for name in list(lock_map):
-            if name not in yaml_names:
-                feature_dir = os.path.join(payload_dir, name)
-                if os.path.islink(feature_dir):
-                    os.unlink(feature_dir)
-                    print(f"  Removed {name} (no longer in features.yaml)")
-                elif os.path.isdir(feature_dir):
-                    shutil.rmtree(feature_dir)
-                    print(f"  Removed {name} (no longer in features.yaml)")
-                del lock_map[name]
+    if not args.only:
+        prune_dropped_features(config, lock_map, payload_dir)
 
     write_lock(list(lock_map.values()), lock_path)
     print(f"Wrote {lock_path} with {len(lock_map)} features")
