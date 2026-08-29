@@ -1651,6 +1651,21 @@ class KlangkSettings(BaseSettings):
             )
         return v
 
+    @staticmethod
+    def _domain_list_items(v, setting: str) -> list[str]:
+        """A domain-list setting's items: a comma-separated string (env var)
+        or a real list (YAML), stripped + de-emptied; a wrong type raises
+        ValueError (startup aborts — see the coerce methods' docstrings)."""
+        if isinstance(v, str):
+            parts = [s.strip() for s in v.split(",")]
+            return [p for p in parts if p]
+        if isinstance(v, list):
+            return [str(s).strip() for s in v if str(s).strip()]
+        raise ValueError(
+            f"{setting}={v!r} must be a list or "
+            f"a comma-separated string (got {type(v).__name__})."
+        )
+
     @field_validator("netfilter_default_domains", mode="before")
     @classmethod
     def _coerce_netfilter_default_domains(cls, v):
@@ -1679,16 +1694,7 @@ class KlangkSettings(BaseSettings):
         """
         if v is None:
             return None
-        if isinstance(v, str):
-            parts = [s.strip() for s in v.split(",")]
-            items = [p for p in parts if p]
-        elif isinstance(v, list):
-            items = [str(s).strip() for s in v if str(s).strip()]
-        else:
-            raise ValueError(
-                f"KLANGKD_NETFILTER_DEFAULT_DOMAINS={v!r} must be a list or "
-                f"a comma-separated string (got {type(v).__name__})."
-            )
+        items = cls._domain_list_items(v, "KLANGKD_NETFILTER_DEFAULT_DOMAINS")
         if not items:
             return None
         try:
@@ -1963,16 +1969,7 @@ class KlangkSettings(BaseSettings):
         """
         if v is None:
             return None
-        if isinstance(v, str):
-            raw = [s.strip() for s in v.split(",")]
-            raw = [i for i in raw if i]
-        elif isinstance(v, list):
-            raw = [i for i in v if i]
-        else:  # pragma: no cover
-            raise ValueError(
-                f"KLANGKD_LLM_MODELS={v!r} must be a list or "
-                f"a comma-separated string (got {type(v).__name__})."
-            )
+        raw = _llm_model_entries(v)
         if not raw:
             return None
         items: list[str | dict] = []
@@ -1990,6 +1987,20 @@ class KlangkSettings(BaseSettings):
                     )
                 items.append(item)
         return items
+
+
+def _llm_model_entries(v) -> list:
+    """KLANGKD_LLM_MODELS entries: a comma-separated string (env) or a real
+    list (YAML), stripped + de-emptied; a wrong type raises ValueError."""
+    if isinstance(v, str):
+        raw = [s.strip() for s in v.split(",")]
+        return [i for i in raw if i]
+    if isinstance(v, list):
+        return [i for i in v if i]
+    raise ValueError(  # pragma: no cover
+        f"KLANGKD_LLM_MODELS={v!r} must be a list or "
+        f"a comma-separated string (got {type(v).__name__})."
+    )
 
 
 # ---------------------------------------------------------------------------
