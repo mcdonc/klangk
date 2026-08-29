@@ -116,6 +116,44 @@ def _copy_feature_tree(source, dest):
         shutil.rmtree(git_dir)
 
 
+def _feature_from_local_tree(
+    feature,
+    features_dir,
+    name,
+    git_url,
+    subpath,
+    ref,
+    local_origin,
+):
+    """The unresolvable-ref fallback: GitHub PR builds check out a synthesized
+    merge commit whose SHA exists only on the runner, so `git ls-remote` can
+    never resolve it. For features that live in *this* repo, fall back to the
+    already-checked-out working tree (which has the exact content being
+    built) instead of cloning; never silently degrade to the remote's default
+    branch."""
+    dest = os.path.join(features_dir, name)
+    local_path = os.path.join(ROOT, subpath) if subpath else ROOT
+    if not (
+        local_origin
+        and _normalize_git_url(git_url) == local_origin
+        and os.path.isdir(local_path)
+    ):
+        print(f"  ERROR: Could not resolve ref '{ref}' for {git_url}", file=sys.stderr)
+        return None
+    print(
+        f"  {name}: ref '{ref}' not on remote; "
+        f"using local working tree {subpath or '.'}/"
+    )
+    _copy_feature_tree(local_path, dest)
+    return {
+        "name": name,
+        "git": git_url,
+        "path": subpath,
+        "ref": ref,
+        "sha": "local",
+    }
+
+
 def fetch_feature(feature, features_dir):
     """Fetch a single feature from a git repo into features_dir.
 
@@ -141,26 +179,9 @@ def fetch_feature(feature, features_dir):
     # that live in *this* repo, fall back to the already-checked-out working
     # tree (which has the exact content being built) instead of cloning.
     if sha is None:
-        local_path = os.path.join(ROOT, subpath) if subpath else ROOT
-        if (
-            local_origin
-            and _normalize_git_url(git_url) == local_origin
-            and os.path.isdir(local_path)
-        ):
-            print(
-                f"  {name}: ref '{ref}' not on remote; "
-                f"using local working tree {subpath or '.'}/"
-            )
-            _copy_feature_tree(local_path, dest)
-            return {
-                "name": name,
-                "git": git_url,
-                "path": subpath,
-                "ref": ref,
-                "sha": "local",
-            }
-        print(f"  ERROR: Could not resolve ref '{ref}' for {git_url}", file=sys.stderr)
-        return None
+        return _feature_from_local_tree(
+            feature, features_dir, name, git_url, subpath, ref, local_origin
+        )
 
     print(f"  {name}: {git_url} @ {ref} -> {sha[:12]}")
 

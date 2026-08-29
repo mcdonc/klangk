@@ -21,6 +21,28 @@ import sys
 from pathlib import Path
 
 
+def _resolve_against_bases(map_dir: Path, stripped: str) -> Path | None:
+    """Try every directory between map_dir and `/`, plus $HOME. dart2js
+    emits paths with a `../` depth that doesn't quite match the map file's
+    directory (app `lib/` paths are off by one, pub-cache paths by several),
+    so walk up and try each candidate base — the first one where stripped
+    resolves is the source."""
+    bases: list[Path] = []
+    cur = map_dir
+    while True:
+        bases.append(cur)
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    if Path.home() not in bases:
+        bases.append(Path.home())
+    for base in bases:
+        cand = (base / stripped).resolve()
+        if cand.is_file():
+            return cand
+    return None
+
+
 def resolve(uri: str, flutter_sdk: Path, map_dir: Path) -> Path | None:
     """Map a sourcemap URI to an on-disk path, or None if unresolvable."""
     if uri.startswith("file:///"):
@@ -32,45 +54,35 @@ def resolve(uri: str, flutter_sdk: Path, map_dir: Path) -> Path | None:
         rel = uri[len("org-dartlang-sdk:///lib/") :]
         return flutter_sdk / "bin" / "cache" / "flutter_web_sdk" / "lib" / rel
     if "://" not in uri:
-        # dart2js emits paths relative to where it was invoked, but with one
-        # too many `../` for the actual map-file directory; the relative form
-        # treats `web/main.dart.js.map` as if it were nested an extra level
-        # deeper. Try map-dir-relative first; if that misses, strip the leading
-        # `../` segments and try project-root- and $HOME-relative as fallbacks.
-        direct = (map_dir / uri).resolve()
-        if direct.is_file():
-            return direct
-        # Strip leading `../` parts to get the inner path (e.g.
-        # `.pub-cache/hosted/pub.dev/...` or `lib/auth/...`).
-        stripped = uri
-        while stripped.startswith("../"):
-            stripped = stripped[3:]
-        # Try every directory between map_dir and `/`, plus $HOME. dart2js
-        # emits paths with a `../` depth that doesn't quite match the map
-        # file's directory (app `lib/` paths are off by one, pub-cache paths
-        # by several), so walk up and try each candidate base — the first
-        # one where stripped resolves is the source.
-        bases: list[Path] = []
-        cur = map_dir
-        while True:
-            bases.append(cur)
-            if cur.parent == cur:
-                break
-            cur = cur.parent
-        if Path.home() not in bases:
-            bases.append(Path.home())
-        for base in bases:
-            cand = (base / stripped).resolve()
-            if cand.is_file():
-                return cand
-        # Bare filename fallback: dart2js emits `main.dart` and
-        # `web_plugin_registrant.dart` without a directory prefix. Search the
-        # Flutter project (map_dir's grandparent) for the first match.
-        if "/" not in stripped:
-            project = map_dir.parent.parent
-            for candidate in project.rglob(stripped):
-                if candidate.is_file():
-                    return candidate
+        return _resolve_relative_uri(uri, map_dir)
+    return None
+
+
+def _resolve_relative_uri(uri: str, map_dir: Path) -> Path | None:
+    """Resolve dart2js's relative emitted paths, which carry one too many
+    `../` for the actual map-file directory (the relative form treats
+    `web/main.dart.js.map` as if it were nested an extra level deeper). Try
+    map-dir-relative first; if that misses, strip the leading `../` segments
+    and try project-root- and $HOME-relative as fallbacks."""
+    direct = (map_dir / uri).resolve()
+    if direct.is_file():
+        return direct
+    # Strip leading `../` parts to get the inner path (e.g.
+    # `.pub-cache/hosted/pub.dev/...` or `lib/auth/...`).
+    stripped = uri
+    while stripped.startswith("../"):
+        stripped = stripped[3:]
+    cand = _resolve_against_bases(map_dir, stripped)
+    if cand is not None:
+        return cand
+    # Bare filename fallback: dart2js emits `main.dart` and
+    # `web_plugin_registrant.dart` without a directory prefix. Search the
+    # Flutter project (map_dir's grandparent) for the first match.
+    if "/" not in stripped:
+        project = map_dir.parent.parent
+        for candidate in project.rglob(stripped):
+            if candidate.is_file():
+                return candidate
     return None
 
 

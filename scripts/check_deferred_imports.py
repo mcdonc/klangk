@@ -120,19 +120,20 @@ def check_deferred_imports(package_dir: str) -> list[str]:
             if _is_marked(source_lines, node.lineno, "allow-deferred-import"):
                 continue
 
-            rel = pyfile.relative_to(root.parent)
-            if isinstance(node, ast.Import):
-                names = ", ".join(a.name for a in node.names)
-                errors.append(f"{rel}:{node.lineno}: deferred import: import {names}")
-            else:
-                module = node.module or ""
-                prefix = "." * node.level + module
-                names = ", ".join(a.name for a in node.names)
-                errors.append(
-                    f"{rel}:{node.lineno}: deferred import:"
-                    f" from {prefix} import {names}"
-                )
+            errors.append(_deferred_import_error(root, pyfile, node))
     return errors
+
+
+def _deferred_import_error(root: Path, pyfile: Path, node) -> str:
+    """The error line for one flagged deferred import."""
+    rel = pyfile.relative_to(root.parent)
+    if isinstance(node, ast.Import):
+        names = ", ".join(a.name for a in node.names)
+        return f"{rel}:{node.lineno}: deferred import: import {names}"
+    module = node.module or ""
+    prefix = "." * node.level + module
+    names = ", ".join(a.name for a in node.names)
+    return f"{rel}:{node.lineno}: deferred import: from {prefix} import {names}"
 
 
 def _find_package_root(filepath: Path) -> Path | None:

@@ -747,62 +747,20 @@ class AnomalyTracker:
             lines.append(f"  {status}: {self.by_status[status]}")
         lines.append("")
 
-        if self.server_errors:
-            lines.append(f"SERVER ERRORS (5xx): {len(self.server_errors)}")
-            for e in self.server_errors[:50]:
-                lines.append(
-                    f"  [{e['time']}] {e['method']} {e['path']} → {e['status']}"
-                )
-                if "body" in e:
-                    lines.append(f"    body: {e['body']}")
-            if len(self.server_errors) > 50:
-                lines.append(f"  ... and {len(self.server_errors) - 50} more")
-        else:
-            lines.append("SERVER ERRORS (5xx): 0 ✓")
-
-        lines.append("")
-        if self.timeouts:
-            lines.append(f"TIMEOUTS: {len(self.timeouts)}")
-        else:
-            lines.append("TIMEOUTS: 0 ✓")
-
-        if self.connection_errors:
-            lines.append(f"CONNECTION ERRORS: {len(self.connection_errors)}")
-            lines.append("  (server may have crashed)")
-        else:
-            lines.append("CONNECTION ERRORS: 0 ✓")
-
-        # Check server stderr for unhandled exceptions
-        lines.append("")
-        stderr_lines = stderr_output.strip().splitlines()
-        exception_lines = [
-            line
-            for line in stderr_lines
-            if any(
-                kw in line.lower()
-                for kw in [
-                    "traceback",
-                    "error",
-                    "exception",
-                    "unhandled",
-                    "segfault",
-                    "killed",
-                    "fatal",
-                ]
-            )
-            # Filter out expected/normal log lines
-            and "INFO" not in line
-            and "WARNING" not in line
-            and "password" not in line.lower()
-        ]
-        if exception_lines:
-            lines.append(f"SERVER STDERR ANOMALIES: {len(exception_lines)}")
-            for exc_line in exception_lines[:30]:
-                lines.append(f"  {exc_line.rstrip()}")
-            if len(exception_lines) > 30:
-                lines.append(f"  ... and {len(exception_lines) - 30} more")
-        else:
-            lines.append("SERVER STDERR ANOMALIES: 0 ✓")
+        _report_server_errors(lines, self.server_errors)
+        _report_simple_counts(
+            lines,
+            [
+                ("TIMEOUTS", self.timeouts, None),
+                (
+                    "CONNECTION ERRORS",
+                    self.connection_errors,
+                    "(server may have crashed)",
+                ),
+            ],
+        )
+        exception_lines = _stderr_anomaly_lines(stderr_output)
+        _report_stderr_anomalies(lines, exception_lines)
 
         lines.append("")
         has_anomalies = bool(
@@ -814,6 +772,75 @@ class AnomalyTracker:
             lines.append("RESULT: CLEAN ✓")
         lines.append("=" * 60)
         return "\n".join(lines)
+
+
+def _report_server_errors(lines: list[str], errors: list[dict]) -> None:
+    """The 5xx section: first 50 entries with bodies, then a remainder
+    count."""
+    lines.append("")
+    if not errors:
+        lines.append("SERVER ERRORS (5xx): 0 ✓")
+        return
+    lines.append(f"SERVER ERRORS (5xx): {len(errors)}")
+    for e in errors[:50]:
+        lines.append(f"  [{e['time']}] {e['method']} {e['path']} → {e['status']}")
+        if "body" in e:
+            lines.append(f"    body: {e['body']}")
+    if len(errors) > 50:
+        lines.append(f"  ... and {len(errors) - 50} more")
+
+
+def _report_simple_counts(
+    lines: list[str], sections: list[tuple[str, list, str | None]]
+) -> None:
+    """The timeout / connection-error count sections (one leading blank
+    before the group)."""
+    for i, (label, entries, note) in enumerate(sections):
+        if i == 0:
+            lines.append("")
+        if entries:
+            lines.append(f"{label}: {len(entries)}")
+            if note:
+                lines.append(f"  {note}")
+        else:
+            lines.append(f"{label}: 0 ✓")
+
+
+_STDERR_ANOMALY_KEYWORDS = [
+    "traceback",
+    "error",
+    "exception",
+    "unhandled",
+    "segfault",
+    "killed",
+    "fatal",
+]
+
+
+def _stderr_anomaly_lines(stderr_output: str) -> list[str]:
+    """Server-stderr lines that look like unhandled exceptions, with
+    expected/normal log lines (INFO/WARNING/password noise) filtered out."""
+    return [
+        line
+        for line in stderr_output.strip().splitlines()
+        if any(kw in line.lower() for kw in _STDERR_ANOMALY_KEYWORDS)
+        and "INFO" not in line
+        and "WARNING" not in line
+        and "password" not in line.lower()
+    ]
+
+
+def _report_stderr_anomalies(lines: list[str], exception_lines: list) -> None:
+    """The stderr-anomaly section: first 30 lines, then a remainder count."""
+    lines.append("")
+    if not exception_lines:
+        lines.append("SERVER STDERR ANOMALIES: 0 ✓")
+        return
+    lines.append(f"SERVER STDERR ANOMALIES: {len(exception_lines)}")
+    for exc_line in exception_lines[:30]:
+        lines.append(f"  {exc_line.rstrip()}")
+    if len(exception_lines) > 30:
+        lines.append(f"  ... and {len(exception_lines) - 30} more")
 
 
 # ---------------------------------------------------------------------------
@@ -891,6 +918,19 @@ def seed_fuzz_fixtures(
     return workspace_ids, user_ids, group_ids
 
 
+def _fill_id_placeholder(
+    rng: random.Random, path: str, placeholder: str, ids: list[str]
+) -> str:
+    """Substitute one id placeholder: a known id, a random known id, or a
+    fresh fuzzed uuid when none are known."""
+    if placeholder not in path:
+        return path
+    return path.replace(
+        placeholder,
+        rng.choice(ids + [fuzz_uuid(rng)]) if ids else fuzz_uuid(rng),
+    )
+
+
 def fill_path_params(
     rng: random.Random,
     path_template: str,
@@ -900,28 +940,13 @@ def fill_path_params(
 ) -> str:
     """Substitute fuzzed values for the ``{param}`` placeholders."""
     path = path_template
-    if "{workspace_id}" in path:
-        path = path.replace(
-            "{workspace_id}",
-            rng.choice(workspace_ids + [fuzz_uuid(rng)])
-            if workspace_ids
-            else fuzz_uuid(rng),
-        )
-    if "{member_id}" in path:
-        path = path.replace(
-            "{member_id}",
-            rng.choice(user_ids + [fuzz_uuid(rng)]) if user_ids else fuzz_uuid(rng),
-        )
-    if "{user_id}" in path:
-        path = path.replace(
-            "{user_id}",
-            rng.choice(user_ids + [fuzz_uuid(rng)]) if user_ids else fuzz_uuid(rng),
-        )
-    if "{group_id}" in path:
-        path = path.replace(
-            "{group_id}",
-            rng.choice(group_ids + [fuzz_uuid(rng)]) if group_ids else fuzz_uuid(rng),
-        )
+    for placeholder, ids in (
+        ("{workspace_id}", workspace_ids),
+        ("{member_id}", user_ids),
+        ("{user_id}", user_ids),
+        ("{group_id}", group_ids),
+    ):
+        path = _fill_id_placeholder(rng, path, placeholder, ids)
     if "{role}" in path:
         path = path.replace("{role}", rng.choice(ROLES))
     if "{invitation_id}" in path:
