@@ -314,7 +314,7 @@ override it per-workspace (`settings.idle_timeout` — see
 | `egress_consent_row_cap`            | `2000`                          | `KLANGKD_EGRESS_CONSENT_ROW_CAP`            |
 | `container_cpu_limit`               | `2.0`                           | `KLANGKD_CONTAINER_CPU_LIMIT`               |
 | `container_memory_limit`            | `8g`                            | `KLANGKD_CONTAINER_MEMORY_LIMIT`            |
-| `admission_memory_enabled`          | `true`                          | `KLANGKD_ADMISSION_MEMORY_ENABLED`          |
+| `admission_memory_enabled`          | `false`                         | `KLANGKD_ADMISSION_MEMORY_ENABLED`          |
 | `admission_memory_margin`           | `1g`                            | `KLANGKD_ADMISSION_MEMORY_MARGIN`           |
 | `max_running_workspaces_per_user`   | `0`                             | `KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER`   |
 | `memory_eviction_enabled`           | `true`                          | `KLANGKD_MEMORY_EVICTION_ENABLED`           |

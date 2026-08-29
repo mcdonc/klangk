@@ -465,27 +465,18 @@ class TestConfigFile:
 
     # --- Admission control (#2525) ---
 
-    def test_admission_defaults_on_with_1g_margin(self):
-        # Out of the box the memory fit check is ON (failing fast beats
-        # the OOM killer) with a 1g reserve; the per-user running cap is
-        # unlimited. Pinned at the schema level: make_settings injects
-        # an explicit off value for suite determinism (#2525), so the
-        # field default is the authoritative shipped posture.
-        fields = KlangkSettings.model_fields
-        assert fields["admission_memory_enabled"].default is True
-        assert fields["admission_memory_margin"].default == "1g"
-        assert fields["max_running_workspaces_per_user"].default == 0
+    def test_admission_defaults_off_and_unlimited(self):
+        # Out of the box nothing changes: the memory fit check is off
+        # (the default 8g limit would refuse every start on small
+        # dev/CI hosts) and the per-user running cap is unlimited.
+        s = make_settings({})
+        assert s.admission_memory_enabled is False
+        assert s.admission_memory_margin == "1g"
+        assert s.max_running_workspaces_per_user == 0
 
-    def test_admission_memory_enabled_from_env(self, monkeypatch):
-        monkeypatch.delenv("KLANGKD_ADMISSION_MEMORY_ENABLED", raising=False)
+    def test_admission_memory_enabled_from_env(self):
         s = make_settings({"KLANGKD_ADMISSION_MEMORY_ENABLED": "true"})
         assert s.admission_memory_enabled is True
-        assert (
-            make_settings(
-                {"KLANGKD_ADMISSION_MEMORY_ENABLED": "false"}
-            ).admission_memory_enabled
-            is False
-        )
 
     def test_admission_memory_margin_from_env(self):
         s = make_settings({"KLANGKD_ADMISSION_MEMORY_MARGIN": "512m"})

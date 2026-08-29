@@ -84,13 +84,6 @@ def make_settings(
     value in ``env`` to override.
     """
     env = dict(env or {})
-    # #2525: admission's memory gate defaults ON in production; the
-    # suite needs it OFF so container-start tests never depend on the
-    # runner's real free memory. Injected here because an explicit env
-    # dict bypasses os.environ (and the autouse fixture's monkeypatch)
-    # entirely — pass an explicit value to opt a test back in. The
-    # shipped default is pinned in test_settings via model_fields.
-    env.setdefault("KLANGKD_ADMISSION_MEMORY_ENABLED", "false")
     # Fall back to os.environ (set by the autouse temp_data_dir fixture)
     # before creating temp dirs. Tracked so module-import-time call sites
     # (which run before any fixture) can't orphan them (#2662).

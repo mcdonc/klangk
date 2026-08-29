@@ -72,13 +72,21 @@ Semantics worth knowing:
   admits with a one-time warning — an exotic platform must not become
   unable to start workspaces.
 
-The check is on by default (`KLANGKD_ADMISSION_MEMORY_ENABLED=true`):
-failing fast beats the OOM killer. The consequence to plan for: with
-the default 8g limit + 1g reserve, a host with under ~9 GB available —
-including a default 2048 MiB podman machine on macOS — refuses starts.
-Lower `KLANGKD_CONTAINER_MEMORY_LIMIT`, size the host (or
-`podman machine set --memory ...`), or set
-`KLANGKD_ADMISSION_MEMORY_ENABLED=0`.
+The check is off by default (`KLANGKD_ADMISSION_MEMORY_ENABLED=false`):
+it is advisory against the _limit_, and with the default 8g limit +
+1g reserve a host with under ~9 GB available — including a default
+2048 MiB podman machine on macOS — would be refused every start.
+Multi-user deployments (the motivation) should enable it with limits
+sized to the host:
+
+```bash
+KLANGKD_ADMISSION_MEMORY_ENABLED=true
+```
+
+Before turning it on, check that the host's typical available memory
+comfortably exceeds `KLANGKD_CONTAINER_MEMORY_LIMIT` (plus the
+reserve) — or lower the limit, or size the host / podman machine
+(`podman machine set --memory ...`) first.
 
 ## Gate 2: per-user running quota
 
@@ -142,7 +150,7 @@ failures (HTTP 500):
 
 | Setting                                   | Default | Meaning                                                           |
 | ----------------------------------------- | ------- | ----------------------------------------------------------------- |
-| `KLANGKD_ADMISSION_MEMORY_ENABLED`        | `true`  | Enable the host-memory fit gate                                   |
+| `KLANGKD_ADMISSION_MEMORY_ENABLED`        | `false` | Enable the host-memory fit gate                                   |
 | `KLANGKD_ADMISSION_MEMORY_MARGIN`         | `1g`    | Reserve kept for the server itself when fitting a limit           |
 | `KLANGKD_MAX_RUNNING_WORKSPACES_PER_USER` | `0`     | Per-user cap on concurrently running workspaces (`0` = unlimited) |
 

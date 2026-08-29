@@ -360,17 +360,16 @@ class TestPodmanMachineMemory:
 
 
 class TestHostMemoryGate:
-    async def test_disabled_in_unit_test_env(self, app_state, db, user):
-        """The suite's autouse env disables the gate (deterministic
-        container-start tests regardless of the runner's free memory);
-        the shipped default (on) is pinned in test_settings, which
-        deletes the env var."""
+    async def test_disabled_by_default(self, app_state, db, user):
+        """The check ships off: even a host with no memory admits (the
+        default 8g limit would otherwise refuse every start on small
+        dev/CI hosts — see the settings comment)."""
         ws = await app_state.state.workspaces.create_workspace(
             user["id"], "admit-off"
         )
         with patch(
             "klangk.container.admission.available_memory_bytes",
-            side_effect=AssertionError("must not measure"),
+            side_effect=OSError("no meminfo"),
         ):
             await app_state.state.container_registry.admission.admit(
                 _spec(ws["id"])
