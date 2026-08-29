@@ -12,7 +12,7 @@ patch/import) so callers keep working unchanged:
 - :mod:`.idle`     - ``IdleMonitor``
 - :mod:`.eviction` - ``MemoryPressureEvictor`` (host memory-pressure
   eviction, #2526) + ``read_meminfo``/``available_fraction``
-- :mod:`.admission`- ``AdmissionControl`` (start-time host-capacity /
+- :mod:`.admission` — ``AdmissionControl`` (start-time host-capacity /
   per-user quota admission, #2525)
 - :mod:`.health`   - ``HealthMonitor`` + ``unhealthy_message``
 - :mod:`.sidecar`  - network sidecar lifecycle (mixin + constants)

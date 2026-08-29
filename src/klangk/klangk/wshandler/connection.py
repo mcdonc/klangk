@@ -390,9 +390,11 @@ class Connection:
             # Capacity refusal (#2525): the host cannot fit the
             # workspace's memory limit or the user hit the running
             # quota. Error frame with the actionable message ("stop a
-            # workspace first / free host memory"), not a drop — the
+            # workspace first / free host memory") and a machine-
+            # readable ``code`` so the UI can render it as a capacity
+            # refusal rather than a generic failure — not a drop; the
             # client stays connected and can retry once capacity frees.
-            send_error(self.sock, str(exc))
+            send_error(self.sock, str(exc), code="capacity")
             return
         logger.info(
             "workspace-open: start or reuse container "
@@ -500,8 +502,9 @@ class Connection:
             return
         except WorkspaceCapacityError as exc:
             # Capacity refusal (#2525) — same clear refusal on the WS
-            # restart path as the API's 503.
-            send_error(self.sock, str(exc))
+            # restart path as the API's 503, with the machine-readable
+            # capacity code.
+            send_error(self.sock, str(exc), code="capacity")
             return
         except (PodmanError, ValueError) as exc:
             # A failed (re)start must not drop the whole WebSocket with a

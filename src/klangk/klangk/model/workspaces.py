@@ -1197,6 +1197,24 @@ class WorkspacesModel:
             for row in rows
         ]
 
+    async def get_user_workspace_ids(self, user_id: str) -> list[str]:
+        """Every workspace id owned by *user_id*, started or not (#2525).
+
+        The admission quota counts running-or-mid-start workspaces over
+        ALL of the owner's rows: a fresh workspace's ``container_id`` is
+        only persisted after ``podman create`` (seconds after admission),
+        so the ``container_id IS NOT NULL`` prefilter of
+        :meth:`get_user_workspaces_with_containers` cannot see a sibling
+        start that is in flight — the exact race the gate exists to
+        close. Runtime state (running / lock-held) is joined in by the
+        caller against the in-memory registry, not the DB.
+        """
+        rows = await self.app.state.db.fetchall(
+            "SELECT id FROM workspaces WHERE user_id = ?",
+            (user_id,),
+        )
+        return [row["id"] for row in rows]
+
     async def list_auto_start_workspaces(self) -> list[dict]:
         """List all workspaces with auto_start enabled."""
         rows = await self.app.state.db.fetchall(

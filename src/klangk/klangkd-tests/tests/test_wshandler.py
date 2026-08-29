@@ -476,6 +476,19 @@ class TestSendError:
             {"type": "error", "message": "bad thing"}
         )
 
+    def test_code_field_added_when_given(self):
+        """#2525: a machine-readable ``code`` rides the frame so clients
+        can class the failure without parsing the message text."""
+        sock = _mock_sock()
+        send_error(sock, "host at capacity: ...", code="capacity")
+        sock.send_json.assert_called_once_with(
+            {
+                "type": "error",
+                "message": "host at capacity: ...",
+                "code": "capacity",
+            }
+        )
+
 
 # Proxy-trust, hosting-info, and client_is_loopback tests moved to
 # test_util.py now that those helpers are Util(app_state) methods (#1503).
@@ -2126,6 +2139,9 @@ class TestHandleWorkspaceConnect:
         errors = [c for c in calls if c.get("type") == "error"]
         assert len(errors) == 1
         assert "host at capacity" in errors[0]["message"]
+        # Machine-readable class so the UI can render it as a capacity
+        # refusal without parsing the message (#2525).
+        assert errors[0]["code"] == "capacity"
         # The socket stays open — a refusal is not a disconnect.
         sock.close.assert_not_awaited()
 
@@ -6103,6 +6119,7 @@ class TestHandleRestartContainer:
         ]
         assert len(errors) == 1
         assert "quota" in errors[0]["message"]
+        assert errors[0]["code"] == "capacity"
         sock.close.assert_not_awaited()
 
     async def test_restart_fractional_timeout(

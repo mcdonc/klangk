@@ -27,8 +27,11 @@ class WorkspaceConnector {
   /// Called when a shared terminal is deleted.
   final void Function(Map<String, dynamic> msg) onSharedTerminalDeleted;
 
-  /// Called when a permission/auth error arrives.
-  final void Function(String error) onPermissionError;
+  /// Called when a page-level error arrives: permission/auth refusals
+  /// and capacity refusals (#2525 — "host at capacity" / "quota
+  /// reached"), both actionable dead-ends for this page that the owner
+  /// renders on its error view.
+  final void Function(String error) onPageError;
 
   /// Called when a non-permission error arrives while a restart is in
   /// flight (#2676): the server now refuses a failed container restart
@@ -55,7 +58,7 @@ class WorkspaceConnector {
     required this.onConnected,
     required this.onContainerEvent,
     required this.onSharedTerminalDeleted,
-    required this.onPermissionError,
+    required this.onPageError,
     this.onRestartError,
     this.browserDelegateEnabled = true,
   });
@@ -149,11 +152,21 @@ class WorkspaceConnector {
       onSharedTerminalDeleted,
     );
 
-    // Listen for errors — only surface permission/auth errors.
+    // Listen for errors — permission/auth and capacity errors are
+    // page-level; the rest go to the restart hook.
     _errorSub = wsClient.errors.listen((error) {
       final lower = error.toLowerCase();
       if (lower.contains('permission') || lower.contains('denied')) {
-        onPermissionError(error);
+        onPageError(error);
+      } else if (lower.contains('host at capacity') ||
+          lower.contains('quota reached')) {
+        // #2525: an admission refusal (server sends it with the
+        // machine-readable error code `capacity`; the message text is
+        // matched because the errors stream carries only the message)
+        // is an actionable dead-end for this page — surface it on the
+        // error view instead of silently dropping it when no restart
+        // is in flight.
+        onPageError(error);
       } else {
         // #2676: anything else (e.g. a refused container restart) goes to
         // the optional restart-error hook; the owner decides relevance.

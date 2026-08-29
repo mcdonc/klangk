@@ -190,47 +190,68 @@ class AdmissionControl:
         after the running-container adoption check, so the workspace
         being started is by definition not currently running).
         """
-        await self.check_user_quota(spec.workspace_id)
+        ws = await self.app.state.model.workspaces.get_workspace_by_id(
+            spec.workspace_id
+        )
+        if ws is not None:
+            await self.check_user_quota(spec.workspace_id, ws)
         await self.check_host_memory(
-            spec.workspace_id, spec.workspace_settings
+            spec.workspace_id, spec.workspace_settings, ws
         )
 
-    async def check_user_quota(self, workspace_id: str) -> None:
+    async def _owned_ids(self, owner_id) -> list[str]:
+        """All of *owner_id*'s workspace ids, started or not (#2525).
+
+        Deliberately NOT prefiltered by ``container_id IS NOT NULL": a
+        fresh workspace's container id is persisted only after
+        ``podman create`` — seconds after admission — so a prefilter
+        hides exactly the sibling starts the in-flight counting exists
+        to see. Runtime state is joined in by the caller against the
+        in-memory registry.
+        """
+        if owner_id is None:
+            return []
+        return await self.app.state.model.workspaces.get_user_workspace_ids(
+            owner_id
+        )
+
+    def _committed(self, registry, ws_id: str) -> bool:
+        """True while *ws_id* occupies capacity (#2525).
+
+        Running (tracked in the in-memory registry — the same
+        running-truth the idle/eviction monitors key on) or
+        mid-start/stop (the per-workspace operation lock held). The
+        lock signal is what closes the two-different-workspaces-
+        starting-at-once race: the second start sees the first's lock
+        and counts it. A workspace whose stop is still in flight
+        transiently counts too (conservative, self-clearing in
+        seconds).
+        """
+        return (
+            ws_id in registry.states
+            or registry.workspace_operation_in_flight(ws_id)
+        )
+
+    async def check_user_quota(self, workspace_id: str, ws: dict) -> None:
         """Refuse starts past ``max_running_workspaces_per_user``.
 
-        Counts the owner's workspaces that are running (tracked in the
-        in-memory registry — the same running-truth the idle/eviction
-        monitors key on) **or mid-start/stop** (the per-workspace
-        operation lock held, which closes the two-different-workspaces-
-        starting-at-once race: the second start sees the first's lock
-        and counts it). The workspace being admitted is excluded — its
-        own start lock is held by definition, and it is not running (a
-        fresh create follows the adoption check). A workspace whose
-        stop is still in flight may transiently count against the cap
-        (conservative, self-clearing in seconds).
+        Counts the owner's workspaces that are running or mid-start/stop
+        (see :meth:`_committed`), over ALL of the owner's rows — a
+        never-started sibling mid-create holds its operation lock but
+        has no ``container_id`` yet, so the DB prefilter would hide it.
+        The workspace being admitted is excluded: its own start lock is
+        held by definition, and it is not running (a fresh create
+        follows the adoption check).
         """
         limit = self.max_running_per_user
         if limit is None:
             return
-        ws = await self.app.state.model.workspaces.get_workspace_by_id(
-            workspace_id
-        )
-        if ws is None:
-            # Unknown workspace is not admission's business — the start
-            # paths surface their own 404/config errors.
-            return
         registry = self.app.state.container_registry
-        owned = await self.app.state.model.workspaces.get_user_workspaces_with_containers(
-            ws.get("user_id")
-        )
+        owned = await self._owned_ids(ws.get("user_id"))
         running = sum(
             1
-            for w in owned
-            if w["id"] != workspace_id
-            and (
-                w["id"] in registry.states
-                or registry.workspace_operation_in_flight(w["id"])
-            )
+            for wid in owned
+            if wid != workspace_id and self._committed(registry, wid)
         )
         if running >= limit:
             raise WorkspaceCapacityError(
@@ -241,8 +262,53 @@ class AdmissionControl:
                 "the cap."
             )
 
+    async def _in_flight_sibling_limits(
+        self, workspace_id: str, ws: dict | None
+    ) -> int:
+        """Sum of the memory limits of sibling starts in flight (#2525).
+
+        ``MemAvailable`` cannot see a commitment that has not been
+        created yet: N concurrent starts of *different* workspaces all
+        measure the same pre-create availability and would each "fit"
+        against it. Subtracting each lock-held sibling's resolved limit
+        closes that window (the same lock signal the quota gate uses).
+        Only siblings mid-start/stop are subtracted — a *running*
+        workspace's usage is already reflected in MemAvailable, and
+        limit-sum accounting for running workspaces is deliberately not
+        this gate's semantics (the #2526 evictor owns overcommit after
+        the fact). A mid-stop sibling transiently over-subtracts
+        (conservative, self-clearing). Siblings with no limit
+        configured (unbounded) contribute nothing: an unbounded
+        commitment cannot be quantified, and the deploy chose not to
+        bound it.
+        """
+        registry = self.app.state.container_registry
+        committed = 0
+        owned = await self._owned_ids((ws or {}).get("user_id"))
+        for wid in owned:
+            if wid == workspace_id:
+                continue
+            if not registry.workspace_operation_in_flight(wid):
+                continue
+            sibling = (
+                await self.app.state.model.workspaces.get_workspace_by_id(wid)
+            )
+            if sibling is None:
+                continue
+            limit = resolve_memory_limit(self.app, sibling.get("settings"))
+            if not limit:
+                continue
+            try:
+                committed += parse_size_bytes(limit)
+            except ValueError:  # pragma: no cover — validated upstream
+                continue
+        return committed
+
     async def check_host_memory(
-        self, workspace_id: str, workspace_settings: dict | None
+        self,
+        workspace_id: str,
+        workspace_settings: dict | None,
+        ws: dict | None = None,
     ) -> None:
         """Refuse a start whose memory limit does not fit the host.
 
@@ -275,6 +341,10 @@ class AdmissionControl:
             return
         # A measurement that works again re-arms the warning.
         self._warned_unmeasurable = False
+        # Sibling starts in flight have not created their containers
+        # yet, so MemAvailable cannot see their commitment — subtract
+        # their resolved limits before fitting (#2525 review).
+        available -= await self._in_flight_sibling_limits(workspace_id, ws)
         margin = self.margin_bytes
         needed = limit_bytes + margin
         if available < needed:

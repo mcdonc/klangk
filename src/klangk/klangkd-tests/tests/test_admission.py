@@ -325,13 +325,201 @@ class TestHostMemoryGate:
             "cannot measure host memory" in r.message for r in caplog.records
         )
 
+    async def test_unmeasurable_warning_re_arms(
+        self, app_state, db, user, caplog
+    ):
+        """A failed measurement warns ONCE per outage; a later failure
+        (after a successful measurement cleared the flag) warns again
+        (#2525 review — a path that breaks later must still say so)."""
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "admit-rearm"
+        )
+        other = await app_state.state.workspaces.create_workspace(
+            user["id"], "admit-rearm-2"
+        )
+        with (
+            patch.object(
+                app_state.state.settings, "admission_memory_enabled", True
+            ),
+            patch(
+                "klangk.container.admission.available_memory_bytes",
+                side_effect=[
+                    OSError("no meminfo"),
+                    100 * GIB,
+                    OSError("no meminfo again"),
+                ],
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            await app_state.state.container_registry.admission.admit(
+                _spec(ws["id"])
+            )
+            await app_state.state.container_registry.admission.admit(
+                _spec(other["id"])
+            )
+            await app_state.state.container_registry.admission.admit(
+                _spec(ws["id"])
+            )
+        warnings = [
+            r
+            for r in caplog.records
+            if "cannot measure host memory" in r.message
+        ]
+        assert len(warnings) == 2
+
+    async def test_in_flight_sibling_limit_subtracted(
+        self, app_state, db, user
+    ):
+        """Concurrent starts of different workspaces must not each fit
+        against the same stale MemAvailable: a sibling start in flight
+        (lock held, container not yet created) has its resolved limit
+        subtracted before fitting this one (#2525 review — the memory
+        TOCTOU the quota gate's lock signal closes for counting)."""
+        sibling = await app_state.state.workspaces.create_workspace(
+            user["id"], "mem-sibling", settings={"memory_limit": "6g"}
+        )
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "mem-next"
+        )
+        registry = app_state.state.container_registry
+        # This workspace's own (default 8g) limit + 1g margin = 9g; the
+        # host reports 12g free — fits alone, NOT with a 6g sibling
+        # start in flight (12 - 6 = 3 < 9).
+        async with registry._get_workspace_lock(sibling["id"]):
+            with (
+                patch.object(
+                    app_state.state.settings,
+                    "admission_memory_enabled",
+                    True,
+                ),
+                patch(
+                    "klangk.container.admission.available_memory_bytes",
+                    return_value=12 * GIB,
+                ),
+            ):
+                with pytest.raises(
+                    WorkspaceCapacityError, match="host at capacity"
+                ):
+                    await registry.admission.admit(_spec(ws["id"]))
+        # Lock released — the same start fits again.
+        with (
+            patch.object(
+                app_state.state.settings, "admission_memory_enabled", True
+            ),
+            patch(
+                "klangk.container.admission.available_memory_bytes",
+                return_value=12 * GIB,
+            ),
+        ):
+            await registry.admission.admit(_spec(ws["id"]))
+
+    async def test_in_flight_sibling_edge_cases(self, app_state, db, user):
+        """Unbounded and deleted sibling starts contribute nothing to
+        the in-flight subtraction (skipped, never crashed), and an
+        unknown workspace admits — admission is not a 404 check."""
+        registry = app_state.state.container_registry
+        sibling = await app_state.state.workspaces.create_workspace(
+            user["id"], "mem-sib-nolimit"
+        )
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "mem-edge"
+        )
+        with (
+            patch.object(
+                app_state.state.settings, "admission_memory_enabled", True
+            ),
+            # Unbounded deploy default: the lock-held sibling resolves
+            # no limit and must contribute nothing (an unbounded
+            # commitment cannot be quantified).
+            patch.object(
+                app_state.state.settings, "container_memory_limit", None
+            ),
+            patch(
+                "klangk.container.admission.available_memory_bytes",
+                return_value=4 * GIB,
+            ),
+        ):
+            # Own bag limit 2g + 1g margin fits the 4g host.
+            async with registry._get_workspace_lock(sibling["id"]):
+                await registry.admission.admit(
+                    _spec(ws["id"], {"memory_limit": "2g"})
+                )
+            # A lock held on an id with no DB row (deleted mid-flight):
+            # skipped, not crashed.
+            async with registry._get_workspace_lock("ghost-ws"):
+                await registry.admission.admit(
+                    _spec(ws["id"], {"memory_limit": "2g"})
+                )
+            # An OWNED sibling whose row vanishes between enumeration
+            # and the per-sibling lookup (deleted mid-start): skipped,
+            # not crashed.
+            real_get = app_state.state.model.workspaces.get_workspace_by_id
+
+            async def vanishing(wid):
+                if wid == sibling["id"]:
+                    return None
+                return await real_get(wid)
+
+            with patch.object(
+                app_state.state.model.workspaces,
+                "get_workspace_by_id",
+                side_effect=vanishing,
+            ):
+                async with registry._get_workspace_lock(sibling["id"]):
+                    await registry.admission.admit(
+                        _spec(ws["id"], {"memory_limit": "2g"})
+                    )
+        # Unknown workspace: no owner row to enumerate — admit must
+        # pass rather than crash (start paths surface their own 404s).
+        with (
+            patch.object(
+                app_state.state.settings, "admission_memory_enabled", True
+            ),
+            patch(
+                "klangk.container.admission.available_memory_bytes",
+                return_value=100 * GIB,
+            ),
+        ):
+            await registry.admission.admit(_spec("ws-does-not-exist"))
+
+    async def test_running_sibling_limit_not_subtracted(
+        self, app_state, db, user
+    ):
+        """A RUNNING sibling's usage is already reflected in
+        MemAvailable; its limit is not subtracted (limit-sum accounting
+        for running workspaces is deliberately not this gate's
+        semantics — the #2526 evictor owns overcommit after the fact)."""
+        await _running_workspace(
+            app_state,
+            user["id"],
+            "mem-running",
+            settings={"memory_limit": "6g"},
+        )
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "mem-next-2"
+        )
+        with (
+            patch.object(
+                app_state.state.settings, "admission_memory_enabled", True
+            ),
+            patch(
+                "klangk.container.admission.available_memory_bytes",
+                return_value=12 * GIB,
+            ),
+        ):
+            await app_state.state.container_registry.admission.admit(
+                _spec(ws["id"])
+            )
+
 
 # --- per-user quota gate ---
 
 
-async def _running_workspace(app_state, user_id, name):
+async def _running_workspace(app_state, user_id, name, **kwargs):
     """Create a workspace and mark it running in the registry."""
-    ws = await app_state.state.workspaces.create_workspace(user_id, name)
+    ws = await app_state.state.workspaces.create_workspace(
+        user_id, name, **kwargs
+    )
     await app_state.state.model.workspaces.update_workspace_container(
         ws["id"], f"cid-{name}"
     )
@@ -406,12 +594,14 @@ class TestUserQuotaGate:
     async def test_start_in_flight_counts(self, app_state, db, user):
         """A sibling workspace whose start/stop lock is held counts
         against the cap — closes the two-workspaces-starting-at-once
-        race (the second start sees the first's lock)."""
+        race (the second start sees the first's lock).
+
+        The sibling here has NEVER started (no ``container_id`` row
+        value): its id is only persisted after ``podman create``, so a
+        DB prefilter on ``container_id IS NOT NULL`` would hide exactly
+        this in-flight start (found by review)."""
         starting = await app_state.state.workspaces.create_workspace(
             user["id"], "starting-ws"
-        )
-        await app_state.state.model.workspaces.update_workspace_container(
-            starting["id"], "cid-starting"
         )
         registry = app_state.state.container_registry
         async with registry._get_workspace_lock(starting["id"]):
@@ -534,11 +724,15 @@ class TestChokePoint:
     async def test_adoption_path_not_readmitted(self, app_state, db, user):
         """A reconnect to an already-running workspace is not
         re-admitted: its capacity is already committed (the gate sits
-        after the running-container adoption check)."""
+        after the running-container adoption check).
+
+        Non-vacuous by construction (found by review): the owner is AT
+        the cap via a *running sibling*, so an admission check that ran
+        before the adoption check would refuse — only the ordering
+        lets this connect."""
         registry = app_state.state.container_registry
-        running = await _running_workspace(app_state, user["id"], "adopt-me")
-        # A start that would be refused by the raw quota check (cap 1,
-        # one running) must still connect via the adoption path.
+        await _running_workspace(app_state, user["id"], "adopt-sibling")
+        target = await _running_workspace(app_state, user["id"], "adopt-me")
         app_state.state.podman = types.SimpleNamespace(
             inspect_container=AsyncMock(
                 return_value={"State": {"Running": True}}
@@ -549,11 +743,14 @@ class TestChokePoint:
             "max_running_workspaces_per_user",
             1,
         ):
-            await registry.admission.admit(_spec(running["id"]))
+            # Proof the quota gate alone WOULD refuse this workspace —
+            # the ordering under test is what must bypass it.
+            with pytest.raises(WorkspaceCapacityError, match="quota"):
+                await registry.admission.admit(_spec(target["id"]))
             cid, status = await registry.start_container(
                 _spec(
-                    running["id"],
-                    existing_container_id=f"cid-{running['id']}",
+                    target["id"],
+                    existing_container_id=f"cid-{target['id']}",
                 )
             )
         assert status == "connected"
