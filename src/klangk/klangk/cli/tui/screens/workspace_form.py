@@ -144,7 +144,116 @@ _EGRESS_MODE_OPTIONS = [
 ]
 
 
-class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
+def render_form_list(
+    screen, selector: str, items, fmt, empty_label: str, id_prefix: str
+) -> None:
+    """Render a form list editor's OptionList: cleared, then one option per
+    item (or the disabled empty placeholder when there are none)."""
+    ol = screen.query_one(selector, OptionList)
+    ol.clear_options()
+    if not items:
+        ol.add_option(Option(Text(empty_label), id="", disabled=True))
+        return
+    for i, item in enumerate(items):
+        ol.add_option(Option(Text(fmt(item)), id=f"{id_prefix}{i}"))
+
+
+class WorkspaceFormMixin:
+    """Shared body of the create/edit workspace form screens: the four list
+    renderers (same widget ids + backing attributes) and the tab strip's
+    spatial navigation (#1891, AGENTS.md)."""
+
+    # Down from the tab strip enters the active pane's first field; Up from
+    # that field returns to the strip. Shared by both forms (identical panes).
+    _PANE_FIRST_FIELD = {
+        "general_pane": "name",
+        "mounts_pane": "mount_input",
+        "env_pane": "env_input",
+        "netfilter_pane": "egress_mode",
+        "resources_pane": "idle_timeout",
+        "advanced_pane": "command",
+    }
+
+    def _skip_editors_on_tab(self) -> None:
+        """Editor buttons stay out of the Tab cycle (#1783).
+
+        Add is reachable via Enter in the input; Remove via mouse click.
+        Lists stay focusable for Delete/"e" keyboard actions but Tab skips
+        them via :class:`TabSkipMixin`.
+        """
+        for wid in (
+            "add_mount",
+            "rm_mount",
+            "add_env",
+            "rm_env",
+            "add_allow",
+            "rm_allow",
+            "add_reject",
+            "rm_reject",
+        ):
+            self.query_one(f"#{wid}").can_focus = False
+
+    def _render_mounts(self) -> None:
+        render_form_list(
+            self, "#mount_list", self._mounts, str, "(no mounts)", "m"
+        )
+
+    def _render_env(self) -> None:
+        render_form_list(
+            self,
+            "#env_list",
+            list(self._env.items()),
+            lambda kv: f"{kv[0]}={kv[1]}",
+            "(no env vars)",
+            "e",
+        )
+
+    def _render_allowed_domains(self) -> None:
+        render_form_list(
+            self,
+            "#allow_list",
+            self._allowed_domains,
+            str,
+            "(unrestricted)",
+            "a",
+        )
+
+    def _render_rejected_domains(self) -> None:
+        render_form_list(
+            self, "#reject_list", self._rejected_domains, str, "(none)", "r"
+        )
+
+    def _active_tab(self) -> str:
+        """The id of the currently active form tab pane."""
+        return self.query_one("#form_tabs", TabbedContent).active
+
+    def _focus_first_in_active_pane(self) -> None:
+        """Focus the first field of the active tab pane (Down from strip)."""
+        first = self._PANE_FIRST_FIELD.get(self._active_tab(), "name")
+        self.query_one(f"#{first}").focus()
+
+    def on_key(self, event) -> None:
+        # Spatial nav around the form tab strip (AGENTS.md "TUI spatial
+        # navigation"): Down from the strip drops into the active pane's
+        # first field; Up from that field returns to the strip. Left/Right
+        # on the strip switch tabs (Textual built-in). Tab/Shift-Tab still
+        # cycles fields via TabSkipMixin (#1783).
+        focused = self.focused
+        if isinstance(focused, Tabs) and event.key == "down":
+            event.stop()
+            self._focus_first_in_active_pane()
+            return
+        if event.key == "up":
+            fid = getattr(focused, "id", None)
+            first = self._PANE_FIRST_FIELD.get(self._active_tab(), "name")
+            if fid == first:
+                event.stop()
+                self.query_one(Tabs).focus()
+                return
+        super().on_key(event)
+
+
+class CreateWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     """Full-screen workspace create form (parity with Flutter
     ``CreateWorkspaceDialog``).
 
@@ -198,14 +307,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
     }
     # Spatial nav around the form tab strip (#1891): the first focusable
     # field of each pane — Down from the strip lands here, Up returns.
-    _PANE_FIRST_FIELD = {
-        "general_pane": "name",
-        "mounts_pane": "mount_input",
-        "env_pane": "env_input",
-        "netfilter_pane": "egress_mode",
-        "resources_pane": "idle_timeout",
-        "advanced_pane": "command",
-    }
 
     def __init__(
         self,
@@ -451,40 +552,12 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         # typing immediately (the tab strip is one Up away, #1891).
         self.query_one("#name", Input).focus()
 
-    def _skip_editors_on_tab(self) -> None:
-        """Editor buttons stay out of the Tab cycle (#1783).
-
-        Add is reachable via Enter in the input; Remove via mouse click.
-        Lists stay focusable for Delete/"e" keyboard actions but Tab skips
-        them via :class:`TabSkipMixin`.
-        """
-        for wid in (
-            "add_mount",
-            "rm_mount",
-            "add_env",
-            "rm_env",
-            "add_allow",
-            "rm_allow",
-            "add_reject",
-            "rm_reject",
-        ):
-            self.query_one(f"#{wid}").can_focus = False
-
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#create_msg", Static).update(
             Text(text, style="red" if error else "")
         )
 
     # --- mounts list editor ---
-
-    def _render_mounts(self) -> None:
-        ol = self.query_one("#mount_list", OptionList)
-        ol.clear_options()
-        if not self._mounts:
-            ol.add_option(Option(Text("(no mounts)"), id="", disabled=True))
-            return
-        for i, m in enumerate(self._mounts):
-            ol.add_option(Option(Text(m), id=f"m{i}"))
 
     def _add_mount(self) -> None:
         inp = self.query_one("#mount_input", Input)
@@ -509,15 +582,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         self._render_mounts()
 
     # --- env list editor ---
-
-    def _render_env(self) -> None:
-        ol = self.query_one("#env_list", OptionList)
-        ol.clear_options()
-        if not self._env:
-            ol.add_option(Option(Text("(no env vars)"), id="", disabled=True))
-            return
-        for i, (k, val) in enumerate(self._env.items()):
-            ol.add_option(Option(Text(f"{k}={val}"), id=f"e{i}"))
 
     def _add_env(self) -> None:
         inp = self.query_one("#env_input", Input)
@@ -545,15 +609,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
 
     # --- allowed-domains list editor (#1745) ---
 
-    def _render_allowed_domains(self) -> None:
-        ol = self.query_one("#allow_list", OptionList)
-        ol.clear_options()
-        if not self._allowed_domains:
-            ol.add_option(Option(Text("(unrestricted)"), id="", disabled=True))
-            return
-        for i, d in enumerate(self._allowed_domains):
-            ol.add_option(Option(Text(d), id=f"a{i}"))
-
     def _add_allowed_domain(self) -> None:
         inp = self.query_one("#allow_input", Input)
         v = inp.value.strip()
@@ -578,15 +633,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         self._render_allowed_domains()
 
     # --- rejected-domains list editor (#2386, mirrors allowed-domains) ---
-
-    def _render_rejected_domains(self) -> None:
-        ol = self.query_one("#reject_list", OptionList)
-        ol.clear_options()
-        if not self._rejected_domains:
-            ol.add_option(Option(Text("(none)"), id="", disabled=True))
-            return
-        for i, d in enumerate(self._rejected_domains):
-            ol.add_option(Option(Text(d), id=f"r{i}"))
 
     def _add_rejected_domain(self) -> None:
         inp = self.query_one("#reject_input", Input)
@@ -613,35 +659,6 @@ class CreateWorkspaceScreen(TabSkipMixin, StatusScreen):
         self._render_rejected_domains()
 
     # --- tab + keyboard navigation (#1891) ---
-
-    def _active_tab(self) -> str:
-        """The id of the currently active form tab pane."""
-        return self.query_one("#form_tabs", TabbedContent).active
-
-    def _focus_first_in_active_pane(self) -> None:
-        """Focus the first field of the active tab pane (Down from strip)."""
-        first = self._PANE_FIRST_FIELD.get(self._active_tab(), "name")
-        self.query_one(f"#{first}").focus()
-
-    def on_key(self, event) -> None:
-        # Spatial nav around the form tab strip (AGENTS.md "TUI spatial
-        # navigation"): Down from the strip drops into the active pane's
-        # first field; Up from that field returns to the strip. Left/Right
-        # on the strip switch tabs (Textual built-in). Tab/Shift-Tab still
-        # cycles fields via TabSkipMixin (#1783).
-        focused = self.focused
-        if isinstance(focused, Tabs) and event.key == "down":
-            event.stop()
-            self._focus_first_in_active_pane()
-            return
-        if event.key == "up":
-            fid = getattr(focused, "id", None)
-            first = self._PANE_FIRST_FIELD.get(self._active_tab(), "name")
-            if fid == first:
-                event.stop()
-                self.query_one(Tabs).focus()
-                return
-        super().on_key(event)
 
     # --- create ---
 
@@ -861,7 +878,7 @@ def _seeded_setting_values(settings: dict) -> dict[str, str]:
     }
 
 
-class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
+class EditWorkspaceScreen(WorkspaceFormMixin, TabSkipMixin, StatusScreen):
     """Full-screen workspace edit form (parity with Flutter
     ``WorkspaceSettingsPanel``).
 
@@ -917,14 +934,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
     }
     # Spatial nav around the form tab strip (#1891): the first focusable
     # field of each pane — Down from the strip lands here, Up returns.
-    _PANE_FIRST_FIELD = {
-        "general_pane": "name",
-        "mounts_pane": "mount_input",
-        "env_pane": "env_input",
-        "netfilter_pane": "egress_mode",
-        "resources_pane": "idle_timeout",
-        "advanced_pane": "command",
-    }
     # Delete/'e' act on the list under the active tab (#1891). The
     # netfilter pane holds two lists (allow + reject, #2386), so it is NOT
     # in this table -- :meth:`_list_handlers` dispatches it on focus instead.
@@ -1194,40 +1203,12 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         # typing immediately (the tab strip is one Up away, #1891).
         self.query_one("#name", Input).focus()
 
-    def _skip_editors_on_tab(self) -> None:
-        """Editor buttons stay out of the Tab cycle (#1783).
-
-        Add is reachable via Enter in the input; Remove via mouse click.
-        Lists stay focusable for Delete/"e" keyboard actions but Tab skips
-        them via :class:`TabSkipMixin`.
-        """
-        for wid in (
-            "add_mount",
-            "rm_mount",
-            "add_env",
-            "rm_env",
-            "add_allow",
-            "rm_allow",
-            "add_reject",
-            "rm_reject",
-        ):
-            self.query_one(f"#{wid}").can_focus = False
-
     def _msg(self, text: str, *, error: bool = False) -> None:
         self.query_one("#edit_msg", Static).update(
             Text(text, style="red" if error else "")
         )
 
     # --- list editors: add / remove / in-place edit (#1778) ---
-
-    def _render_mounts(self) -> None:
-        ol = self.query_one("#mount_list", OptionList)
-        ol.clear_options()
-        if not self._mounts:
-            ol.add_option(Option(Text("(no mounts)"), id="", disabled=True))
-            return
-        for i, m in enumerate(self._mounts):
-            ol.add_option(Option(Text(m), id=f"m{i}"))
 
     def _add_mount(self) -> None:
         inp = self.query_one("#mount_input", Input)
@@ -1257,15 +1238,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         self._editing_mount = None
         self._render_mounts()
 
-    def _render_env(self) -> None:
-        ol = self.query_one("#env_list", OptionList)
-        ol.clear_options()
-        if not self._env:
-            ol.add_option(Option(Text("(no env vars)"), id="", disabled=True))
-            return
-        for i, (k, val) in enumerate(self._env.items()):
-            ol.add_option(Option(Text(f"{k}={val}"), id=f"e{i}"))
-
     def _add_env(self) -> None:
         inp = self.query_one("#env_input", Input)
         v = inp.value.strip()
@@ -1294,15 +1266,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         del self._env[keys[idx]]
         self._editing_env = None
         self._render_env()
-
-    def _render_allowed_domains(self) -> None:
-        ol = self.query_one("#allow_list", OptionList)
-        ol.clear_options()
-        if not self._allowed_domains:
-            ol.add_option(Option(Text("(unrestricted)"), id="", disabled=True))
-            return
-        for i, d in enumerate(self._allowed_domains):
-            ol.add_option(Option(Text(d), id=f"a{i}"))
 
     def _add_allowed_domain(self) -> None:
         inp = self.query_one("#allow_input", Input)
@@ -1371,15 +1334,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
 
     # --- rejected-domains list editor (#2386, mirrors allowed-domains) ---
 
-    def _render_rejected_domains(self) -> None:
-        ol = self.query_one("#reject_list", OptionList)
-        ol.clear_options()
-        if not self._rejected_domains:
-            ol.add_option(Option(Text("(none)"), id="", disabled=True))
-            return
-        for i, d in enumerate(self._rejected_domains):
-            ol.add_option(Option(Text(d), id=f"r{i}"))
-
     def _add_rejected_domain(self) -> None:
         inp = self.query_one("#reject_input", Input)
         v = inp.value.strip()
@@ -1421,35 +1375,6 @@ class EditWorkspaceScreen(TabSkipMixin, StatusScreen):
         self._msg("Editing rejected-domain — press Add to update.")
 
     # --- tab + keyboard navigation (#1891) ---
-
-    def _active_tab(self) -> str:
-        """The id of the currently active form tab pane."""
-        return self.query_one("#form_tabs", TabbedContent).active
-
-    def _focus_first_in_active_pane(self) -> None:
-        """Focus the first field of the active tab pane (Down from strip)."""
-        first = self._PANE_FIRST_FIELD.get(self._active_tab(), "name")
-        self.query_one(f"#{first}").focus()
-
-    def on_key(self, event) -> None:
-        # Spatial nav around the form tab strip (AGENTS.md "TUI spatial
-        # navigation"): Down from the strip drops into the active pane's
-        # first field; Up from that field returns to the strip. Left/Right
-        # on the strip switch tabs (Textual built-in). Tab/Shift-Tab still
-        # cycles fields via TabSkipMixin (#1783).
-        focused = self.focused
-        if isinstance(focused, Tabs) and event.key == "down":
-            event.stop()
-            self._focus_first_in_active_pane()
-            return
-        if event.key == "up":
-            fid = getattr(focused, "id", None)
-            first = self._PANE_FIRST_FIELD.get(self._active_tab(), "name")
-            if fid == first:
-                event.stop()
-                self.query_one(Tabs).focus()
-                return
-        super().on_key(event)
 
     # --- keyboard remove/edit of the active tab's list (#1778, #1891) ---
 
