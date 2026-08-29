@@ -21,6 +21,10 @@ import os
 from dataclasses import dataclass
 
 from .. import workspace_settings as ws_settings
+from ..podman import (
+    SHARED_HOME as SHARED_HOME,
+    SHARED_HOME_NAME as SHARED_HOME_NAME,
+)
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST, ssl_env_vars
 from .ports import CONTAINER_PORT_START, DEFAULT_PORTS_PER_WORKSPACE
 
@@ -43,10 +47,15 @@ logger = logging.getLogger(__name__)
 # so every site that used to recompute ``/home/{agent_handle()}`` from
 # the DB reads these constants instead — one source of truth for both
 # the shared-layout home and the agent/service-session home (#2720
-# review: "make them both the same").
-SHARED_HOME_NAME = "klangk"
-SHARED_HOME = f"/home/{SHARED_HOME_NAME}"
-
+# review: "make them both the same"). The definitions live in
+# ``podman.py`` (below this package, where the ``work_dir`` default
+# needs them — importing them from here would drag
+# ``container/__init__`` into podman's module init and close the
+# podman↔container import cycle); re-exported here so the
+# ``workspaces``/``wshandler``/``health`` import sites keep working
+# without a cycle through the ``container`` package. Re-exported from
+# ``podman.py`` at the imports above (same-name ``as`` marks the
+# intentional re-export).
 _VALID_PULL_POLICIES = {"never", "missing", "always", "newer"}
 
 
