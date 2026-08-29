@@ -261,6 +261,23 @@ _LOOPBACK_ADDRS = {
 }
 
 
+def trusted_forwarded_ip(headers) -> str | None:
+    """The parsed IP from trusted proxy headers (X-Real-IP, then the first
+    hop of X-Forwarded-For), or None when absent or unparseable (garbage or
+    a proxy chain appending client-controlled text — fall back to the peer
+    instead of trusting an unvalidated string)."""
+    real_ip = headers.get("x-real-ip") or ""
+    if not real_ip:
+        xff = headers.get("x-forwarded-for") or ""
+        real_ip = xff.split(",")[0].strip() if xff else ""
+    if not real_ip:
+        return None
+    try:
+        return str(ipaddress.ip_address(real_ip))
+    except ValueError:
+        return None
+
+
 class Util:
     """App-state-owned helpers that transitively depend on settings (#1503).
 
@@ -537,19 +554,9 @@ class Util:
             and headers is not None
         )
         if trust:
-            real_ip = headers.get("x-real-ip") or ""
-            if not real_ip:
-                xff = headers.get("x-forwarded-for") or ""
-                real_ip = xff.split(",")[0].strip() if xff else ""
-            if real_ip:
-                try:
-                    return str(ipaddress.ip_address(real_ip))
-                except ValueError:
-                    # A trusted peer forwarded a value that is not an
-                    # IP (garbage, or a proxy chain appending
-                    # client-controlled text). Fall back to the peer
-                    # instead of trusting an unvalidated string.
-                    pass
+            forwarded = trusted_forwarded_ip(headers)
+            if forwarded is not None:
+                return forwarded
         if candidate is None:
             return None
         try:
@@ -611,13 +618,28 @@ class Util:
         hostname = self.app.state.settings.hosting_hostname
         proto = self.app.state.settings.hosting_proto
         base_path = self.app.state.settings.hosting_base_path
-        pinned = bool(hostname)
-        forwarded = False
         trust = (
             (not self.reject_proxy_headers())
             and self.connection_peer_is_trusted(client_host)
             and headers is not None
         )
+        hostname = self._hosting_hostname(headers, hostname, trust)
+        if not proto:
+            proto = self._hosting_proto(headers, trust)
+        if base_path is None:
+            base_path = self._hosting_base_path(headers, trust)
+        return hostname, proto, base_path
+
+    def _hosting_hostname(
+        self, headers, env_hostname: str, trust: bool
+    ) -> str:
+        """Resolve the hosting hostname: env pin, else trusted
+        X-Forwarded-Host, else the Host header, else ``localhost``. A
+        synthetic (non-pinned, non-forwarded) loopback hostname is pointed
+        at the browser listener (#2732)."""
+        hostname = env_hostname
+        pinned = bool(hostname)
+        forwarded = False
         if not hostname and headers is not None:
             if trust:
                 forwarded_host = headers.get("x-forwarded-host")
@@ -630,17 +652,21 @@ class Util:
             hostname = "localhost"
         if not pinned and not forwarded:
             hostname = self.browser_listener_hostname(hostname)
-        if not proto:
-            if headers is not None and trust:
-                proto = headers.get("x-forwarded-proto") or "http"
-            else:
-                proto = "http"
-        if base_path is None:
-            if headers is not None and trust:
-                base_path = headers.get("x-forwarded-prefix") or ""
-            else:
-                base_path = ""
-        return hostname, proto, base_path
+        return hostname
+
+    @staticmethod
+    def _hosting_proto(headers, trust: bool) -> str:
+        """Resolve the proto: trusted X-Forwarded-Proto, else ``http``."""
+        if headers is not None and trust:
+            return headers.get("x-forwarded-proto") or "http"
+        return "http"
+
+    @staticmethod
+    def _hosting_base_path(headers, trust: bool) -> str:
+        """Resolve the base path: trusted X-Forwarded-Prefix, else ``""``."""
+        if headers is not None and trust:
+            return headers.get("x-forwarded-prefix") or ""
+        return ""
 
     def browser_listener_hostname(self, hostname: str) -> str:
         """Point a synthetic loopback hostname at the browser listener (#2732).

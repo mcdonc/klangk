@@ -185,22 +185,188 @@ class NetworkSidecarMixin:
             )
         name = self._network_sidecar_name(workspace_id, slug)
         # Pick an upstream that differs from the REDIRECT target (1.1.1.1).
-        # KLANGKNETWORK_EGRESS_UPSTREAM (when set in klangkd's env) pins the
-        # sidecar's upstream resolver verbatim, mirroring the MIN_TTL /
-        # SWEEP_INTERVAL forwarding below — an operator may want workspaces to
-        # use a specific resolver (e.g. a corporate DNS), and the egress
-        # smoketest uses it to point the sidecar at a controlled-DNS fixture
-        # (#2424) so chosen hostnames resolve to single stable test IPs.
-        # Absent -> auto-detect a host resolver that differs from 1.1.1.1.
-        env_upstream = os.environ.get("KLANGKNETWORK_EGRESS_UPSTREAM")
-        if env_upstream:
-            upstream = env_upstream
-        else:
-            nf = getattr(self.app.state, "netfilter", None)
-            resolvers = nf.resolvers() if nf else []
-            upstream = next(
-                (r for r in resolvers if r != "1.1.1.1"), "8.8.8.8"
+        env, binds = self._network_sidecar_env(
+            workspace_id, allowed_domains, rejected_domains
+        )
+
+        # Label the network sidecar with this klangk instance so the startup reaper
+        # (reap_instance_containers) and the shutdown orphan sweep cull any
+        # network sidecar left behind by a failed stop — the same culling workspace
+        # containers get (#2254 review). #2342: klangk.managed + klangk.pid also
+        # let the dead-owner reap (reap_dead_owner_containers) cull a sidecar
+        # whose creating klangkd died uncleanly, the same as a workspace container.
+        labels = self._network_sidecar_labels(workspace_id, slug)
+
+        # #2265: a sidecar from a prior generation may linger (an unclean
+        # stop, or the workspace container was killed externally so
+        # stop_and_remove_container never ran for it). Clear it before create
+        # so create_container doesn't collide and the caller doesn't
+        # fail-closed. Removal is by the klangk.workspace label (#2286), not
+        # the name — the name now carries the workspace-name slug, which may
+        # differ from a prior generation's (a rename) and can't be
+        # reconstructed from the id alone. The instance reaper is the
+        # backstop for orphans; this just keeps a restart from deadlocking.
+        # #2676: when the clear fails — a container is still joined to the
+        # old sidecar's netns (podman's "dependent containers" refusal) or
+        # podman otherwise refuses the removal — refuse here with a clear
+        # error instead of swallowing it and letting create_container's
+        # --replace collide with the same refusal (a raw 500 + traceback at
+        # the caller, guaranteed whenever the dependent survives). Inside
+        # the try so the fail-closed warning below logs it like any other
+        # sidecar start failure.
+        try:
+            if not await self._remove_network_sidecar(workspace_id):
+                raise podman.PodmanError(
+                    500,
+                    "cannot remove the existing network sidecar for "
+                    f"workspace {workspace_id[:8]}: a container is still "
+                    "joined to its network namespace (podman's dependent "
+                    "containers refusal) or podman refused the removal; "
+                    "stop or remove the workspace's containers before "
+                    "starting it again",
+                )
+            # NET_RAW lets the proxy forge the eager-deny RST directly from
+            # the NFQUEUE callback (#2345) so a denied connect() gets
+            # ECONNREFUSED at once, independent of the conntrack/retransmit
+            # race that made the iptables REJECT rule flaky. Safe to grant
+            # here (unlike on the workspace): the sidecar runs only klangk's
+            # own proxy, no untrusted code.
+            sidecar_kwargs = dict(
+                cap_add=["NET_ADMIN", "NET_RAW"],
+                dns=["1.1.1.1"],
+                env=env,
+                labels=labels,
+                publish=publish,
+                pull="missing",
             )
+            if binds:
+                sidecar_kwargs["binds"] = binds
+            cid = await self.app.state.podman.create_container(
+                name, image, **sidecar_kwargs
+            )
+            await self._start_with_port_conflict_retry(
+                cid, publish or [], name
+            )
+            await self._wait_sidecar_proxy_ready(cid, name)
+            logger.info(
+                "network sidecar started for %s: %s (%s)",
+                workspace_id[:8],
+                name,
+                cid[:12],
+            )
+            return cid
+        except podman.PodmanError as exc:
+            logger.warning(
+                "network sidecar failed for %s: %s — fail-closed at caller",
+                workspace_id[:8],
+                exc,
+            )
+            raise
+
+    async def _remove_sidecar_attempts(
+        self, workspace_id: str, containers: list[dict]
+    ) -> list[tuple[str, podman.PodmanError]]:
+        """Force-remove each labeled sidecar; the (ident, error) pairs that
+        failed."""
+        failures: list[tuple[str, podman.PodmanError]] = []
+        for c in containers:
+            labels = c.get("Labels") or {}
+            if labels.get("klangk.role") != "network-sidecar":
+                continue
+            ident = container_ident(c)
+            if not ident:
+                continue
+            exc = await self._force_remove_sidecar(workspace_id, ident)
+            if exc is not None:
+                failures.append((ident, exc))
+        return failures
+
+    async def _blocked_sidecar_failures(
+        self,
+        workspace_id: str,
+        failures: list[tuple[str, podman.PodmanError]],
+    ) -> list[tuple[str, podman.PodmanError]] | None:
+        """Which failed removals still block (a same-label sidecar that
+        survived), or None when the state is unknowable (list failure)."""
+        remaining = await self._list_workspace_containers(workspace_id)
+        if remaining is None:
+            return None
+        remaining_sidecars = {
+            container_ident(c)
+            for c in remaining
+            if (c.get("Labels") or {}).get("klangk.role") == "network-sidecar"
+        }
+        return [(i, e) for i, e in failures if i in remaining_sidecars]
+
+    def _network_sidecar_labels(
+        self, workspace_id: str, slug: str
+    ) -> dict[str, str]:
+        """Instance/correlation labels for the network sidecar (see the
+        inline notes in the original block)."""
+        labels = {
+            "klangk.managed": "true",
+            "klangk.instance": self.app.state.util.instance_id(),
+            # The main klangkd daemon process's PID — the liveness signal the
+            # dead-owner reap keys on (#2342). Not conmon / the container's
+            # PID 1 / a podman subprocess: those die with the daemon anyway.
+            "klangk.pid": str(os.getpid()),
+            # #2286: a shared klangk.workspace label + a klangk.role label let
+            # one `podman ps --filter label=klangk.workspace=<id>` correlate
+            # the sidecar with its workspace; the slug is mirrored for
+            # exact-match filtering. (Supersedes the old write-only
+            # klangk.network-sidecar.)
+            "klangk.workspace": workspace_id,
+            "klangk.role": "network-sidecar",
+            "klangk.workspace-name": slug,
+        }
+        return labels
+
+    async def _wait_sidecar_proxy_ready(self, cid: str, name: str) -> None:
+        """#2277: wait for the sidecar's DNS proxy to be listening before
+        returning, so the workspace never joins a netns whose OUTPUT is
+        still ACCEPT (entrypoint mid-flight) — a fail-open window. The
+        proxy prints "dns-proxy listening" once bound; poll its logs.
+        Fail-closed: if the sidecar exits first or the proxy never binds,
+        raise so the caller refuses to start the workspace rather than
+        run it unfiltered."""
+        # #2277: wait for the proxy to be listening before returning, so the
+        # workspace never joins a netns whose OUTPUT is still ACCEPT
+        # (entrypoint mid-flight) — a fail-open window. The proxy prints
+        # "dns-proxy listening" once bound; poll its logs. Fail-closed: if
+        # the sidecar exits first or the proxy never binds, raise so the
+        # caller refuses to start the workspace rather than run it unfiltered.
+        deadline = time.monotonic() + _NETWORK_SIDECAR_READY_TIMEOUT
+        ready = False
+        while time.monotonic() < deadline:
+            logs = await self.app.state.podman.container_logs(cid)
+            if _NETWORK_SIDECAR_READY_TOKEN in logs:
+                ready = True
+                break
+            state = await self.app.state.podman.inspect_container(cid)
+            status = (state or {}).get("State", {}).get("Status", "")
+            if status in ("exited", "stopped"):
+                raise podman.PodmanError(
+                    500,
+                    f"network sidecar {name} exited before the DNS proxy "
+                    f"was ready; logs:\n{logs}",
+                )
+            await asyncio.sleep(_NETWORK_SIDECAR_READY_POLL)
+        if not ready:
+            raise podman.PodmanError(
+                500,
+                f"network sidecar {name} DNS proxy did not become ready "
+                f"within {_NETWORK_SIDECAR_READY_TIMEOUT:.0f}s; the "
+                "workspace would join an unfiltered netns",
+            )
+
+    def _network_sidecar_env(
+        self,
+        workspace_id: str,
+        allowed_domains: list[str] | None,
+        rejected_domains: list[str] | None,
+    ) -> tuple[list[str], list[str]]:
+        """(env, binds) for the network sidecar container."""
+        upstream = self._network_sidecar_upstream()
         env = [
             f"KLANGKNETWORK_EGRESS_ALLOW={','.join(allowed_domains or [])}",
             f"KLANGKNETWORK_EGRESS_REJECT={','.join(rejected_domains or [])}",
@@ -254,121 +420,16 @@ class NetworkSidecarMixin:
                 f"{self._sidecar_token_path(workspace_id)}"
                 ":/run/klangk/workspace-token:ro"
             )
-        # Label the network sidecar with this klangk instance so the startup reaper
-        # (reap_instance_containers) and the shutdown orphan sweep cull any
-        # network sidecar left behind by a failed stop — the same culling workspace
-        # containers get (#2254 review). #2342: klangk.managed + klangk.pid also
-        # let the dead-owner reap (reap_dead_owner_containers) cull a sidecar
-        # whose creating klangkd died uncleanly, the same as a workspace container.
-        labels = {
-            "klangk.managed": "true",
-            "klangk.instance": self.app.state.util.instance_id(),
-            # The main klangkd daemon process's PID — the liveness signal the
-            # dead-owner reap keys on (#2342). Not conmon / the container's
-            # PID 1 / a podman subprocess: those die with the daemon anyway.
-            "klangk.pid": str(os.getpid()),
-            # #2286: a shared klangk.workspace label + a klangk.role label let
-            # one `podman ps --filter label=klangk.workspace=<id>` correlate
-            # the sidecar with its workspace; the slug is mirrored for
-            # exact-match filtering. (Supersedes the old write-only
-            # klangk.network-sidecar.)
-            "klangk.workspace": workspace_id,
-            "klangk.role": "network-sidecar",
-            "klangk.workspace-name": slug,
-        }
-        # #2265: a sidecar from a prior generation may linger (an unclean
-        # stop, or the workspace container was killed externally so
-        # stop_and_remove_container never ran for it). Clear it before create
-        # so create_container doesn't collide and the caller doesn't
-        # fail-closed. Removal is by the klangk.workspace label (#2286), not
-        # the name — the name now carries the workspace-name slug, which may
-        # differ from a prior generation's (a rename) and can't be
-        # reconstructed from the id alone. The instance reaper is the
-        # backstop for orphans; this just keeps a restart from deadlocking.
-        # #2676: when the clear fails — a container is still joined to the
-        # old sidecar's netns (podman's "dependent containers" refusal) or
-        # podman otherwise refuses the removal — refuse here with a clear
-        # error instead of swallowing it and letting create_container's
-        # --replace collide with the same refusal (a raw 500 + traceback at
-        # the caller, guaranteed whenever the dependent survives). Inside
-        # the try so the fail-closed warning below logs it like any other
-        # sidecar start failure.
-        try:
-            if not await self._remove_network_sidecar(workspace_id):
-                raise podman.PodmanError(
-                    500,
-                    "cannot remove the existing network sidecar for "
-                    f"workspace {workspace_id[:8]}: a container is still "
-                    "joined to its network namespace (podman's dependent "
-                    "containers refusal) or podman refused the removal; "
-                    "stop or remove the workspace's containers before "
-                    "starting it again",
-                )
-            # NET_RAW lets the proxy forge the eager-deny RST directly from
-            # the NFQUEUE callback (#2345) so a denied connect() gets
-            # ECONNREFUSED at once, independent of the conntrack/retransmit
-            # race that made the iptables REJECT rule flaky. Safe to grant
-            # here (unlike on the workspace): the sidecar runs only klangk's
-            # own proxy, no untrusted code.
-            sidecar_kwargs = dict(
-                cap_add=["NET_ADMIN", "NET_RAW"],
-                dns=["1.1.1.1"],
-                env=env,
-                labels=labels,
-                publish=publish,
-                pull="missing",
-            )
-            if binds:
-                sidecar_kwargs["binds"] = binds
-            cid = await self.app.state.podman.create_container(
-                name, image, **sidecar_kwargs
-            )
-            await self._start_with_port_conflict_retry(
-                cid, publish or [], name
-            )
-            # #2277: wait for the proxy to be listening before returning, so the
-            # workspace never joins a netns whose OUTPUT is still ACCEPT
-            # (entrypoint mid-flight) — a fail-open window. The proxy prints
-            # "dns-proxy listening" once bound; poll its logs. Fail-closed: if
-            # the sidecar exits first or the proxy never binds, raise so the
-            # caller refuses to start the workspace rather than run it unfiltered.
-            deadline = time.monotonic() + _NETWORK_SIDECAR_READY_TIMEOUT
-            ready = False
-            while time.monotonic() < deadline:
-                logs = await self.app.state.podman.container_logs(cid)
-                if _NETWORK_SIDECAR_READY_TOKEN in logs:
-                    ready = True
-                    break
-                state = await self.app.state.podman.inspect_container(cid)
-                status = (state or {}).get("State", {}).get("Status", "")
-                if status in ("exited", "stopped"):
-                    raise podman.PodmanError(
-                        500,
-                        f"network sidecar {name} exited before the DNS proxy "
-                        f"was ready; logs:\n{logs}",
-                    )
-                await asyncio.sleep(_NETWORK_SIDECAR_READY_POLL)
-            if not ready:
-                raise podman.PodmanError(
-                    500,
-                    f"network sidecar {name} DNS proxy did not become ready "
-                    f"within {_NETWORK_SIDECAR_READY_TIMEOUT:.0f}s; the "
-                    "workspace would join an unfiltered netns",
-                )
-            logger.info(
-                "network sidecar started for %s: %s (%s)",
-                workspace_id[:8],
-                name,
-                cid[:12],
-            )
-            return cid
-        except podman.PodmanError as exc:
-            logger.warning(
-                "network sidecar failed for %s: %s — fail-closed at caller",
-                workspace_id[:8],
-                exc,
-            )
-            raise
+        return env, binds
+
+    def _network_sidecar_upstream(self) -> str:
+        """The sidecar's upstream resolver (pinned env var or detected)."""
+        env_upstream = os.environ.get("KLANGKNETWORK_EGRESS_UPSTREAM")
+        if env_upstream:
+            return env_upstream
+        nf = getattr(self.app.state, "netfilter", None)
+        resolvers = nf.resolvers() if nf else []
+        return next((r for r in resolvers if r != "1.1.1.1"), "8.8.8.8")
 
     async def _stop_network_sidecar(self, workspace_id: str) -> None:
         """Best-effort remove the network sidecar for a workspace (#2254, #2286).
@@ -413,32 +474,18 @@ class NetworkSidecarMixin:
         containers = await self._list_workspace_containers(workspace_id)
         if containers is None:
             return True
-        failures: list[tuple[str, podman.PodmanError]] = []
-        for c in containers:
-            labels = c.get("Labels") or {}
-            if labels.get("klangk.role") != "network-sidecar":
-                continue
-            ident = container_ident(c)
-            if not ident:
-                continue
-            exc = await self._force_remove_sidecar(workspace_id, ident)
-            if exc is not None:
-                failures.append((ident, exc))
+        failures = await self._remove_sidecar_attempts(
+            workspace_id, containers
+        )
         if not failures:
             return True
         # A removal refused. Re-list: the error may be a benign race (the
         # container vanished between list and rm — "no such container");
         # only a sidecar that is still present can collide with the create
         # that follows, so judge by observable state, not the error text.
-        remaining = await self._list_workspace_containers(workspace_id)
-        if remaining is None:
+        blocked = await self._blocked_sidecar_failures(workspace_id, failures)
+        if blocked is None:
             return True
-        remaining_sidecars = {
-            container_ident(c)
-            for c in remaining
-            if (c.get("Labels") or {}).get("klangk.role") == "network-sidecar"
-        }
-        blocked = [(i, e) for i, e in failures if i in remaining_sidecars]
         for ident, exc in blocked:
             logger.warning(
                 "network sidecar %s for %s could not be removed: %s",
