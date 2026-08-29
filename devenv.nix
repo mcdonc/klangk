@@ -601,6 +601,24 @@ in
       language = "system";
       pass_filenames = true;
     };
+    # Python: cyclomatic-complexity gate (#2794). Blocks must stay rank E
+    # or better (complexity <= 40); module/average gates are off (rank F)
+    # because they flap when only a few files are staged. Baselined to the
+    # tree at introduction: the three legacy F-ranked blocks below are
+    # excluded until refactored — shrink the excludes as they are fixed.
+    xenon = {
+      enable = true;
+      name = "xenon";
+      entry = "${pkgs.xenon}/bin/xenon --max-absolute E --max-modules F --max-average F";
+      files = "^src/klangk/klangk/.*\\.py$|^scripts/.*\\.py$";
+      excludes = [
+        "^src/klangk/klangk/cli/edit\\.py$"
+        "^src/klangk/klangk/cli/client\\.py$"
+        "^src/klangk/klangk/cli/tui/screens/workspace_form\\.py$"
+      ];
+      language = "system";
+      pass_filenames = true;
+    };
     # Dart
     dart-format = {
       enable = true;
