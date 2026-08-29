@@ -19,7 +19,13 @@ FROM $WORKSPACE_BASE_IMAGE
 # (base64 sha512 -> hex), or sha512sum of the fetched tarball.
 ARG PI_AGENT_VERSION=0.83.0
 ARG PI_AGENT_SHA512=b98845f85b19c68828497fc0c4171476263e66496e6f0697c80a04180d9e430b077321008546082a1fd62d77bf6bcfa4f1e4c29b16fe64dd99a3d9b342dcdb5b
-RUN curl -fsSL -o /tmp/pi-agent.tgz \
+# Network downloads in this Dockerfile use `--retry 5 --retry-delay 2
+# --retry-all-errors`: GitHub-hosted runners occasionally reset connections
+# mid-transfer (curl exit 35, #2797), and without retries a single blip
+# fails the whole image build. Integrity is unaffected — every tarball is
+# still sha-pinned and verified after a successful download.
+RUN curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+      -o /tmp/pi-agent.tgz \
       "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-${PI_AGENT_VERSION}.tgz" \
     && echo "${PI_AGENT_SHA512}  /tmp/pi-agent.tgz" | sha512sum -c - \
     && npm install -g /tmp/pi-agent.tgz \
@@ -69,7 +75,8 @@ RUN set -eu; \
       arm64) target=aarch64-unknown-linux-gnu; sha="$UV_SHA256_ARM64" ;; \
       *) echo "unsupported arch for uv: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/uv.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+      -o /tmp/uv.tar.gz \
       "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${target}.tar.gz"; \
     echo "${sha}  /tmp/uv.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/uv.tar.gz -C /tmp "uv-${target}"; \
@@ -95,7 +102,8 @@ RUN set -eu; \
       arm64) sha="$PROCESS_COMPOSE_SHA256_ARM64" ;; \
       *) echo "unsupported arch for process-compose: $ARCH" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/process-compose.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+      -o /tmp/process-compose.tar.gz \
       "https://github.com/F1bonacc1/process-compose/releases/download/v${PROCESS_COMPOSE_VERSION}/process-compose_linux_${ARCH}.tar.gz"; \
     echo "${sha}  /tmp/process-compose.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/process-compose.tar.gz -C /usr/local/bin process-compose; \

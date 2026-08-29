@@ -84,7 +84,11 @@ ENV LC_ALL=en_US.UTF-8
 # and update this ARG.
 ARG NODESOURCE_KEY_SHA256=b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d
 ARG NODEJS_VERSION=26.7.0-1nodesource1
-RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+# GitHub-hosted runners occasionally reset connections mid-transfer (curl
+# exit 35, #2797); `--retry 5 --retry-delay 2 --retry-all-errors` rides out
+# those blips. The sha256 pin below still gates whatever lands on disk.
+RUN curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+        https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
         -o /tmp/nodesource-repo.gpg.key \
     && echo "${NODESOURCE_KEY_SHA256}  /tmp/nodesource-repo.gpg.key" | sha256sum -c - \
     && gpg --dearmor -o /usr/share/keyrings/nodesource.gpg /tmp/nodesource-repo.gpg.key \
@@ -107,7 +111,8 @@ RUN curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
 # old key is retired. Bump: re-download the keyring, recompute sha256,
 # update this ARG.
 ARG GITHUBCLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+RUN curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+        https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /tmp/githubcli-archive-keyring.gpg \
     && echo "${GITHUBCLI_KEYRING_SHA256}  /tmp/githubcli-archive-keyring.gpg" | sha256sum -c - \
     && mv /tmp/githubcli-archive-keyring.gpg /usr/share/keyrings/githubcli-archive-keyring.gpg \
