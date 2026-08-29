@@ -51,17 +51,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && chown -R root:root /var/log/apt
 
-# #2045: setuid ping so the non-root klangk user (uid 1000) can ping.
-# klangkd grants the container CAP_NET_RAW (--cap-add net_raw), but that
-# cap attaches to uid 0 only. The setuid bit lets ping escalate to
-# container-root (uid 0 in the userns) and reach that cap. File
-# capabilities are ignored inside a user namespace, and
-# net.ipv4.ping_group_range can't be widened under rootless podman
-# (crun EINVAL at start; runtime sysctl write denied), so a build-time
-# setuid bit is the only working mechanism. Set here at build time
-# because the setuid bit can't be created from inside a user namespace
-# at runtime (EPERM).
-RUN chmod u+s /usr/bin/ping
+# #2347: ping stays NON-setuid. klangkd drops CAP_NET_RAW from every
+# workspace container, so there is no cap for a setuid ping to bridge
+# (#2045's grant is removed); an unused setuid-root binary would only be
+# attack surface. The iputils-ping package stays installed for its
+# non-raw diagnostics output (error messages), but `ping` itself cannot
+# work without the cap.
 
 # Generate UTF-8 locale — required for tmux to handle unicode/wide
 # characters correctly (e.g. tools that emit ASCII art / box-drawing).

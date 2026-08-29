@@ -727,7 +727,9 @@ class TestStartContainer:
         kwargs = p.create_container.call_args.kwargs
         assert "annotations" not in kwargs
         assert "hooks_dir" not in kwargs
-        assert "cap_drop" not in kwargs
+        # #2347: even an unfiltered workspace drops net_raw (the drop is
+        # unconditional).
+        assert kwargs["cap_drop"] == ["net_raw"]
 
     # --- #2286: correlation + human-readable names ---
 
@@ -2189,16 +2191,13 @@ class TestStartContainer:
         assert "KLANGKD_USERNS" in str(exc.value)
 
     async def test_filtered_workspace_with_allow_sudo_drops_net_raw(
-        self, workspace, tmp_path, monkeypatch, caplog
+        self, workspace, tmp_path, monkeypatch
     ):
-        # #2276 (B): a filtered workspace (allowed_domains) created with
-        # allow_sudo on would let the klangk user sudo to root and use the
-        # net_raw that enable_ping grants to setsockopt(SO_MARK), bypassing
-        # the egress filter. Instead drop net_raw from the bounding set so even
-        # root can't acquire it (NET_ADMIN is never granted) — the filter holds,
-        # at the cost of ping (setuid) for this workspace.
-        import logging
-
+        # #2347 (folding #2276 B into an unconditional drop): a filtered
+        # workspace (allowed_domains) created with allow_sudo on cannot
+        # setsockopt(SO_MARK) to bypass the egress filter — net_raw is dropped
+        # from the bounding set for EVERY workspace, so even root (via sudo)
+        # can't acquire it (NET_ADMIN is never granted).
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
@@ -2222,31 +2221,25 @@ class TestStartContainer:
         with patch_podman(
             self.registry, create_container=AsyncMock(side_effect=_fake_create)
         ):
-            with caplog.at_level(logging.INFO, logger="klangk.container"):
-                await self.registry.start_container(
-                    container.ContainerStartSpec(
-                        workspace["id"],
-                        "/tmp/home",
-                        allowed_domains=["github.com:443"],
-                    )
+            await self.registry.start_container(
+                container.ContainerStartSpec(
+                    workspace["id"],
+                    "/tmp/home",
+                    allowed_domains=["github.com:443"],
                 )
+            )
         ws = creates[1]  # creates[0] is the network sidecar
-        # net_raw is dropped, not added (podman rejects a cap in both).
+        # net_raw is dropped, never added (podman rejects a cap in both).
         assert ws["cap_drop"] == ["net_raw"]
         assert "net_raw" not in ws.get("cap_add", [])
-        # The ping-loss is logged once at create time so an operator chasing
-        # broken ping isn't guessing.
-        assert any(
-            "ping" in rec.message.lower() and "#2276" in rec.message
-            for rec in caplog.records
-        ), [rec.message for rec in caplog.records]
 
-    async def test_filtered_workspace_locked_down_keeps_net_raw(
+    async def test_filtered_workspace_locked_down_drops_net_raw(
         self, workspace, tmp_path, monkeypatch, app_state
     ):
-        """#2017 + #2276 (B): a filtered workspace locked out of sudo
-        (settings.allow_sudo false) has no sudo→root escalation vector,
-        so net_raw is NOT dropped — ping (setuid) keeps working."""
+        """#2017 + #2347: a filtered workspace locked out of sudo
+        (settings.allow_sudo true, per-workspace allow_sudo false) still
+        gets net_raw dropped — the drop is unconditional, not gated on
+        sudo posture."""
         monkeypatch.setattr(
             self.registry.app.state.settings,
             "network_sidecar_image",
@@ -2281,10 +2274,10 @@ class TestStartContainer:
                 )
             )
         ws = creates[1]  # creates[0] is the network sidecar
-        # Effective sudo is off → no defense-in-depth drop; enable_ping's
-        # net_raw add goes through (podman rejects a cap in both sets).
-        assert "cap_drop" not in ws or ws["cap_drop"] != ["net_raw"]
-        assert ws.get("cap_add") == ["net_raw"]
+        # The drop is independent of the sudo vector: locked-down or not,
+        # the workspace never holds net_raw (#2347).
+        assert ws["cap_drop"] == ["net_raw"]
+        assert "net_raw" not in ws.get("cap_add", [])
 
     async def test_start_network_sidecar_raises_if_proxy_exits_before_ready(
         self, workspace, tmp_path, monkeypatch
@@ -2527,29 +2520,16 @@ class TestStartContainer:
         assert kwargs["tmpfs"]["/tmp"] == "rw,exec,nosuid"
         assert kwargs["tmpfs"]["/run"] == "rw,noexec,nosuid,size=256m"
 
-    async def test_ping_cap_add_emitted_by_default(self, workspace):
-        # #2045: enable_ping defaults to True, so the workspace container
-        # is granted CAP_NET_RAW — unprivileged ping works. The sysctl /
-        # setcap alternatives don't work under rootless podman (#2045).
+    async def test_net_raw_dropped_by_default(self, workspace):
+        # #2347: the old enable_ping grant (#2045) is gone — the workspace
+        # container never holds CAP_NET_RAW, under any configuration. The
+        # default (unfiltered) start drops it from the bounding set.
         with patch_podman(self.registry) as p:
             await self.registry.start_container(
                 container.ContainerStartSpec(workspace["id"], "/tmp/home")
             )
         kwargs = p.create_container.call_args.kwargs
-        assert kwargs["cap_add"] == ["net_raw"]
-
-    async def test_ping_cap_add_omitted_when_disabled(
-        self, workspace, monkeypatch
-    ):
-        # #2045: enable_ping=False -> no cap_add kwarg -> no --cap-add flag,
-        # restoring the locked-down behavior (no unprivileged ICMP echo).
-        settings = self.registry.app.state.settings
-        monkeypatch.setattr(settings, "enable_ping", False)
-        with patch_podman(self.registry) as p:
-            await self.registry.start_container(
-                container.ContainerStartSpec(workspace["id"], "/tmp/home")
-            )
-        kwargs = p.create_container.call_args.kwargs
+        assert kwargs["cap_drop"] == ["net_raw"]
         assert "cap_add" not in kwargs
 
     async def test_resource_limits_passed_through(

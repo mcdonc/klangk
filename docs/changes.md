@@ -32,6 +32,15 @@ operators or integrators to act when upgrading.
 
 ### Breaking
 
+- **`enable_ping` is removed; workspaces never hold `CAP_NET_RAW` (#2347).**
+  The `KLANGKD_ENABLE_PING` setting is gone (ignored on an existing config)
+  and every newly created workspace container launches with
+  `--cap-drop net_raw`. Unprivileged `ping` inside a workspace no longer
+  works — the setuid-ping / `ping_group_range` / `setcap` alternatives all
+  fail under rootless podman (#2045). Egress-filtered workspaces with sudo
+  were already capped this way (#2276); the drop is now unconditional
+  security hardening. Applies to containers started after the upgrade.
+
 - **`GET /api/v1/groups` now returns a paged envelope (#2750).** The
   response is `{groups, page, page_size, total}` (same shape as
   `GET /api/v1/admin/groups`) instead of a bare list that was silently

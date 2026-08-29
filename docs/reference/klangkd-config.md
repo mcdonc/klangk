@@ -305,7 +305,6 @@ override it per-workspace (`settings.idle_timeout` — see
 | `classification_banner`             |                                 | `KLANGKD_CLASSIFICATION_BANNER`             |
 | `container_subnets`                 | _(auto-derived)_                | `KLANGKD_CONTAINER_SUBNETS`                 |
 | `userns`                            |                                 | `KLANGKD_USERNS`                            |
-| `enable_ping`                       | `true`                          | `KLANGKD_ENABLE_PING`                       |
 | `podman_bin`                        | `podman`                        | `KLANGKD_PODMAN_BIN`                        |
 | `disable_tmux`                      |                                 | `KLANGKD_DISABLE_TMUX`                      |
 | `browser_delegate_enabled`          | `true`                          | `KLANGKD_BROWSER_DELEGATE_ENABLED`          |

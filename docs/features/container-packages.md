@@ -53,7 +53,8 @@ so common development tasks work out of the box.
 
 - `openssh-client`
 - `net-tools`, `iproute2`
-- `iputils-ping`
+- `iputils-ping` (installed for diagnostics, but `ping` cannot work: the
+  workspace container never holds `CAP_NET_RAW` — #2347)
 - `telnet`
 - `lsof`
 - `strace`, `ltrace`
