@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from urllib.parse import urlparse
 
 from rich.text import Text
@@ -27,6 +28,7 @@ from ._base import (
     ServerListView,
     SpatialNavScreen,
     StatusScreen,
+    confirm_then,
 )
 
 
@@ -211,13 +213,9 @@ class LoginScreen(SpatialNavScreen, StatusScreen):
             return
         url = child.name
 
-        def _on_confirm(confirmed: bool) -> None:
-            if not confirmed:
-                return
-            self.run_worker(self._do_delete_server(url), exit_on_error=False)
-
         self.app.push_screen(
-            ConfirmScreen(f"Delete server {url}?"), _on_confirm
+            ConfirmScreen(f"Delete server {url}?"),
+            confirm_then(self, partial(self._do_delete_server, url)),
         )
 
     async def _do_delete_server(self, url: str) -> None:

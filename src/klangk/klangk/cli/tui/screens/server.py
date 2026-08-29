@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 
 from rich.text import Text
 
@@ -21,7 +22,12 @@ from textual.widgets import (
 
 from ...config import AliasConflictError
 from ...transport import is_valid_server_spec
-from ._base import ConfirmScreen, SpatialListView, StatusScreen
+from ._base import (
+    ConfirmScreen,
+    SpatialListView,
+    StatusScreen,
+    confirm_then,
+)
 
 
 class ServerSwitchScreen(StatusScreen):
@@ -120,14 +126,9 @@ class ServerSwitchScreen(StatusScreen):
             return
         url = child.name
 
-        def _on_confirm(confirmed: bool) -> None:
-            if confirmed:
-                self.run_worker(
-                    self._do_delete_and_refresh(url), exit_on_error=False
-                )
-
         self.app.push_screen(
-            ConfirmScreen(f"Delete server {url}?"), _on_confirm
+            ConfirmScreen(f"Delete server {url}?"),
+            confirm_then(self, partial(self._do_delete_and_refresh, url)),
         )
 
     async def _do_delete_and_refresh(self, url: str) -> None:
