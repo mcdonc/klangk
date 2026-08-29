@@ -142,6 +142,30 @@ def _run_consent_popup(ws, terminal: str | None, forward_agent: bool) -> int:
     return rc
 
 
+def resolve_shell_workspace(client, workspace: str | None):
+    """Resolve the shell target: the named workspace, or an interactive
+    pick (auto-select when exactly one exists)."""
+    if workspace:
+        return context.resolve_or_exit(client, workspace)
+    workspaces = client.list_workspaces(all_pages=True)
+    if not workspaces:
+        typer.echo("No workspaces found — create one with klangk create.")
+        raise typer.Exit(code=1)
+    if len(workspaces) == 1:
+        return workspaces[0]
+    typer.echo("Select a workspace:")
+    for i, w in enumerate(workspaces, 1):
+        typer.echo(f"  {i}. {w.name}")
+    choice = input("> ").strip()
+    if not choice:  # pragma: no cover
+        raise typer.Exit()
+    try:
+        idx = int(choice) - 1
+    except ValueError:  # pragma: no cover
+        raise typer.Exit(code=1)  # pragma: no cover
+    return workspaces[idx]
+
+
 @context.app.command()
 def shell(
     workspace: str | None = typer.Argument(
@@ -189,27 +213,7 @@ def shell(
     client = context._client()
 
     # Resolve workspace
-    if workspace:
-        ws = context.resolve_or_exit(client, workspace)
-    else:
-        workspaces = client.list_workspaces(all_pages=True)
-        if not workspaces:
-            typer.echo("No workspaces found — create one with klangk create.")
-            raise typer.Exit(code=1)
-        if len(workspaces) == 1:
-            ws = workspaces[0]
-        else:
-            typer.echo("Select a workspace:")
-            for i, w in enumerate(workspaces, 1):
-                typer.echo(f"  {i}. {w.name}")
-            choice = input("> ").strip()
-            if not choice:  # pragma: no cover
-                raise typer.Exit()
-            try:
-                idx = int(choice) - 1
-            except ValueError:  # pragma: no cover
-                raise typer.Exit(code=1)  # pragma: no cover
-            ws = workspaces[idx]
+    ws = resolve_shell_workspace(client, workspace)
 
     context._err.print(f"Connecting to [bold]{ws.name}[/bold]...")
     context._err.print(

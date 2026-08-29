@@ -80,16 +80,7 @@ class PasswordPolicy(NamedTuple):
         are ASCII (A-Z, a-z, 0-9, everything else special), matching the
         server and the web UI.
         """
-        upper = sum(1 for c in password if "A" <= c <= "Z")
-        lower = sum(1 for c in password if "a" <= c <= "z")
-        digit = sum(1 for c in password if "0" <= c <= "9")
-        special = len(password) - upper - lower - digit
-        counts = {
-            "uppercase letter": (upper, self.requirements.get("upper", 0)),
-            "lowercase letter": (lower, self.requirements.get("lower", 0)),
-            "digit": (digit, self.requirements.get("digit", 0)),
-            "special character": (special, self.requirements.get("special", 0)),
-        }
+        counts = _class_requirements_met(password, self.requirements)
         unmet = [
             f"at least {need} {name}{'s' if need != 1 else ''}"
             for name, (have, need) in counts.items()
@@ -98,6 +89,21 @@ class PasswordPolicy(NamedTuple):
         if unmet:
             return f"Password must contain {', '.join(unmet)}"
         return None
+
+
+def _class_requirements_met(password: str, requirements: dict) -> dict:
+    """name -> (have, need) for each ASCII character class (A-Z, a-z, 0-9,
+    everything else special) — matching the server's classes."""
+    upper = sum(1 for c in password if "A" <= c <= "Z")
+    lower = sum(1 for c in password if "a" <= c <= "z")
+    digit = sum(1 for c in password if "0" <= c <= "9")
+    special = len(password) - upper - lower - digit
+    return {
+        "uppercase letter": (upper, requirements.get("upper", 0)),
+        "lowercase letter": (lower, requirements.get("lower", 0)),
+        "digit": (digit, requirements.get("digit", 0)),
+        "special character": (special, requirements.get("special", 0)),
+    }
 
 
 def password_policy(server_url: str) -> PasswordPolicy:

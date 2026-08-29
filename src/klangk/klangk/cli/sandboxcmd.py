@@ -108,6 +108,102 @@ async def sandbox_setup(ws, config, sandbox_root, handle):
     return None
 
 
+def reuse_or_refuse_workspace(client, workspace: str, force: bool):
+    """The existing-workspace path: refuse without --force, else
+    re-apply config."""
+    ws = client.resolve_workspace(workspace)
+    if not force:
+        context._err.print(
+            f"[red]Workspace [bold]{workspace}[/bold] already"
+            " exists.[/red] Pass [bold]--force[/bold] to re-apply"
+            " config and re-run setup."
+        )
+        raise typer.Exit(code=1)
+    context._err.print(
+        f"Workspace [bold]{workspace}[/bold] exists, re-applying config..."
+    )
+    return ws
+
+
+def create_sandbox_workspace(client, workspace, config, sandbox_root, handle):
+    """Create the sandbox workspace (``allow`` egress so setup.sh's
+    installs proceed — #2325/#2406/#2404; see the original inline
+    notes)."""
+    all_mounts = build_all_mounts(config, sandbox_root, handle)
+    context._err.print(f"Creating workspace [bold]{workspace}[/bold]...")
+    ws = client.create_workspace(
+        workspace,
+        image=config.image,
+        service_command=config.service_command,
+        auto_start=config.auto_start,
+        mounts=all_mounts,
+        setup_state="pending"
+        if resolve_setup_command(config, handle)
+        else None,
+        health_check=config.health_check,
+        # #2325 / #2406 / #2404: a sandbox is an automated install
+        # context (setup.sh runs npm/git/... that need unrestricted
+        # outbound network). Default workspaces are interactive (hold
+        # every egress for consent), which would block the install with
+        # no decider present. Create the sandbox workspace in ``allow``
+        # mode so its egress is default-permit (installs proceed), with
+        # off-list destinations recorded through the consent pipeline
+        # for observability and rejected_domains still enforced.
+        # sandbox_setup_only resets egress_mode back to ``interactive``
+        # and stops the container once setup.sh returns (#2404), so the
+        # next start is consent-gated. Allow mode degrades to plain
+        # unrestricted when the server has no network sidecar
+        # configured, so the sandbox keeps working everywhere.
+        egress_mode="allow",
+    )
+    return ws
+
+
+def reallow_workspace_for_setup(client, ws_id: str) -> None:
+    """#2404: on --force re-setup the workspace may have been reset to
+    'interactive' by a prior sandbox run (sandbox_setup_only resets it
+    after setup). setup.sh needs unrestricted egress, and egress_mode only
+    takes effect at container start -- so flip back to 'allow' and restart
+    before re-running setup. Also reset setup_state to 'pending' so the
+    restart's create choke point DEFERS the service command until the
+    re-setup completes -- otherwise /restart reads the stale 'complete'
+    from the prior run and fires the service against half-reinstalled
+    state."""
+    client.update_workspace(ws_id, egress_mode="allow", setup_state="pending")
+    client.restart_workspace_by_id(ws_id)
+
+
+def run_sandbox_setup(
+    surl, token, workspace, ws_id, config, sandbox_root, handle, client
+) -> None:
+    """Connect and run the sandbox's setup.sh (via sandbox_setup_only)."""
+    context._err.print(f"Connecting to [bold]{workspace}[/bold] for setup...")
+    try:
+        asyncio.run(
+            sandbox_setup_only(
+                surl,
+                token,
+                ws_id,
+                config,
+                sandbox_root,
+                handle,
+                max_size=context.ws_max_size(),
+                client=client,
+            )
+        )
+    except websockets.InvalidStatus as e:  # pragma: no cover
+        if e.response.status_code in (4001, 4002):
+            context._err.print(
+                "[red]Session expired.[/red] Run"
+                " [bold]klangk login[/bold] to re-authenticate."
+            )
+            raise typer.Exit(code=1) from None
+        raise
+    except ConnectionError as e:
+        context._err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+
+
 @context.app.command()
 def sandbox(
     workspace: str = typer.Argument(help="Workspace name"),
@@ -151,94 +247,21 @@ def sandbox(
 
     # Check if workspace already exists.
     try:
-        ws = client.resolve_workspace(workspace)
-        if not force:
-            context._err.print(
-                f"[red]Workspace [bold]{workspace}[/bold] already"
-                " exists.[/red] Pass [bold]--force[/bold] to re-apply"
-                " config and re-run setup."
-            )
-            raise typer.Exit(code=1)
-        context._err.print(
-            f"Workspace [bold]{workspace}[/bold] exists, re-applying config..."
-        )
+        ws = reuse_or_refuse_workspace(client, workspace, force)
     except WorkspaceNotFoundError:
-        all_mounts = build_all_mounts(config, sandbox_root, handle)
-        context._err.print(f"Creating workspace [bold]{workspace}[/bold]...")
-        ws = client.create_workspace(
-            workspace,
-            image=config.image,
-            service_command=config.service_command,
-            auto_start=config.auto_start,
-            mounts=all_mounts,
-            setup_state="pending"
-            if resolve_setup_command(config, handle)
-            else None,
-            health_check=config.health_check,
-            # #2325 / #2406 / #2404: a sandbox is an automated install
-            # context (setup.sh runs npm/git/... that need unrestricted
-            # outbound network). Default workspaces are interactive (hold
-            # every egress for consent), which would block the install with
-            # no decider present. Create the sandbox workspace in ``allow``
-            # mode so its egress is default-permit (installs proceed), with
-            # off-list destinations recorded through the consent pipeline
-            # for observability and rejected_domains still enforced.
-            # sandbox_setup_only resets egress_mode back to ``interactive``
-            # and stops the container once setup.sh returns (#2404), so the
-            # next start is consent-gated. Allow mode degrades to plain
-            # unrestricted when the server has no network sidecar
-            # configured, so the sandbox keeps working everywhere.
-            egress_mode="allow",
+        ws = create_sandbox_workspace(
+            client, workspace, config, sandbox_root, handle
         )
-        context._err.print(f"Workspace [bold]{workspace}[/bold] created.")
         created = True
 
     need_setup = created or force
 
     if need_setup:
-        # #2404: on --force re-setup the workspace may have been reset to
-        # 'interactive' by a prior sandbox run (sandbox_setup_only resets
-        # it after setup). setup.sh needs unrestricted egress, and
-        # egress_mode only takes effect at container start -- so flip back
-        # to 'allow' and restart before re-running setup. Skipped on the
-        # create path (the workspace is freshly created in 'allow' above).
         if force and not created:
-            # #2404: flip back to allow for the re-setup. Also reset
-            # setup_state to 'pending' so the restart's create choke point
-            # DEFERS the service command until the re-setup completes --
-            # otherwise /restart reads the stale 'complete' from the prior
-            # run and fires the service against half-reinstalled state.
-            client.update_workspace(
-                ws.id, egress_mode="allow", setup_state="pending"
-            )
-            client.restart_workspace_by_id(ws.id)
-        context._err.print(
-            f"Connecting to [bold]{workspace}[/bold] for setup..."
+            reallow_workspace_for_setup(client, ws.id)
+        run_sandbox_setup(
+            surl, token, workspace, ws.id, config, sandbox_root, handle, client
         )
-        try:
-            asyncio.run(
-                sandbox_setup_only(
-                    surl,
-                    token,
-                    ws.id,
-                    config,
-                    sandbox_root,
-                    handle,
-                    max_size=context.ws_max_size(),
-                    client=client,
-                )
-            )
-        except websockets.InvalidStatus as e:  # pragma: no cover
-            if e.response.status_code in (4001, 4002):
-                context._err.print(
-                    "[red]Session expired.[/red] Run"
-                    " [bold]klangk login[/bold] to re-authenticate."
-                )
-                raise typer.Exit(code=1) from None
-            raise
-        except ConnectionError as e:
-            context._err.print(f"[red]{e}[/red]")
-            raise typer.Exit(code=1) from None
 
     context._err.print(
         f"[green]Done.[/green] Run [bold]klangk shell"
