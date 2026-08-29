@@ -35,6 +35,7 @@ from ._base import (
     SpatialListView,
     StatusScreen,
     TransferScreen,
+    confirm_then,
 )
 from .workspace_form import EditWorkspaceScreen
 
@@ -1149,11 +1150,6 @@ class WorkspaceDetailScreen(StatusScreen):
     # --- actions ---
 
     def action_restart(self) -> None:
-        def _on_confirm(confirmed: bool) -> None:
-            if not confirmed:
-                return
-            self.run_worker(self._do_restart, exit_on_error=False)
-
         self.app.push_screen(
             ConfirmScreen(
                 f"Restart '{self._name}'? This ends active terminal"
@@ -1161,7 +1157,7 @@ class WorkspaceDetailScreen(StatusScreen):
                 yes_label="Restart",
                 yes_variant="warning",
             ),
-            _on_confirm,
+            confirm_then(self, self._do_restart),
         )
 
     async def _do_restart(self) -> None:
@@ -1187,18 +1183,13 @@ class WorkspaceDetailScreen(StatusScreen):
             self.run_worker(self._do_start, exit_on_error=False)
 
     def _confirm_stop(self) -> None:
-        def _on_confirm(confirmed: bool) -> None:
-            if not confirmed:
-                return
-            self.run_worker(self._do_stop, exit_on_error=False)
-
         self.app.push_screen(
             ConfirmScreen(
                 f"Stop '{self._name}'? This ends active terminal sessions.",
                 yes_label="Stop",
                 yes_variant="warning",
             ),
-            _on_confirm,
+            confirm_then(self, self._do_stop),
         )
 
     async def _do_stop(self) -> None:
@@ -1232,17 +1223,12 @@ class WorkspaceDetailScreen(StatusScreen):
         self.app.refresh_workspaces()
 
     def action_delete(self) -> None:
-        def _on_confirm(confirmed: bool) -> None:
-            if not confirmed:
-                return
-            self.run_worker(self._do_delete, exit_on_error=False)
-
         self.app.push_screen(
             ConfirmScreen(
                 f"Delete '{self._name}'? This permanently deletes the"
                 " workspace and its container."
             ),
-            _on_confirm,
+            confirm_then(self, self._do_delete),
         )
 
     async def _do_delete(self) -> None:

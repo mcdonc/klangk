@@ -93,6 +93,22 @@ class ButtonRowModalScreen(ModalScreen[_ScreenResult]):
         self.dismiss(None)
 
 
+def confirm_then(screen, work):
+    """A ConfirmScreen callback that runs *work* on *screen*'s worker when
+    confirmed (the shared "confirm, then run the action" shape).
+
+    *work* is a zero-arg coroutine factory (a bound method, or
+    ``functools.partial``), evaluated only on confirm.
+    """
+
+    def _on_confirm(confirmed: bool) -> None:
+        if not confirmed:
+            return
+        screen.run_worker(work(), exit_on_error=False)
+
+    return _on_confirm
+
+
 class ConfirmScreen(ButtonRowModalScreen[bool]):
     """A yes/no confirmation dialog. Dismisses with True on confirm.
 

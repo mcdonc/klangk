@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 import datetime
 import logging
 import random
@@ -40,6 +41,7 @@ from ._base import (
     StatusScreen,
     TransferScreen,
     WorkspaceListView,
+    confirm_then,
 )
 from .server import ServerSwitchScreen
 from .workspace_form import CreateWorkspaceScreen, EditWorkspaceScreen
@@ -597,11 +599,6 @@ class MainScreen(StatusScreen):
         if not name:
             return
 
-        def _on_confirm(confirmed: bool) -> None:
-            if not confirmed:
-                return
-            self.run_worker(self._do_restart(name), exit_on_error=False)
-
         self.app.push_screen(
             ConfirmScreen(
                 f"Restart '{name}'? This ends active terminal sessions"
@@ -609,7 +606,7 @@ class MainScreen(StatusScreen):
                 yes_label="Restart",
                 yes_variant="warning",
             ),
-            _on_confirm,
+            confirm_then(self, partial(self._do_restart, name)),
         )
 
     async def _do_restart(self, name: str) -> None:
@@ -627,19 +624,13 @@ class MainScreen(StatusScreen):
             return
         ws = self._highlighted_ws()
         if ws is not None and ws.running:
-
-            def _on_confirm(confirmed: bool) -> None:
-                if not confirmed:
-                    return
-                self.run_worker(self._do_stop(name), exit_on_error=False)
-
             self.app.push_screen(
                 ConfirmScreen(
                     f"Stop '{name}'? This ends active terminal sessions.",
                     yes_label="Stop",
                     yes_variant="warning",
                 ),
-                _on_confirm,
+                confirm_then(self, partial(self._do_stop, name)),
             )
         else:
             self.run_worker(self._do_start(name), exit_on_error=False)
@@ -694,17 +685,12 @@ class MainScreen(StatusScreen):
         if not name:
             return
 
-        def _on_confirm(confirmed: bool) -> None:
-            if not confirmed:
-                return
-            self.run_worker(self._do_delete(name), exit_on_error=False)
-
         self.app.push_screen(
             ConfirmScreen(
                 f"Delete '{name}'? This permanently deletes the workspace"
                 " and its container.",
             ),
-            _on_confirm,
+            confirm_then(self, partial(self._do_delete, name)),
         )
 
     async def _do_delete(self, name: str) -> None:
