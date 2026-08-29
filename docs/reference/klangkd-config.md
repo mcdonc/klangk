@@ -307,6 +307,7 @@ override it per-workspace (`settings.idle_timeout` — see
 | `userns`                            |                                 | `KLANGKD_USERNS`                            |
 | `podman_bin`                        | `podman`                        | `KLANGKD_PODMAN_BIN`                        |
 | `disable_tmux`                      |                                 | `KLANGKD_DISABLE_TMUX`                      |
+| `nix_enabled`                       | `false`                         | `KLANGKD_NIX_ENABLED`                       |
 | `browser_delegate_enabled`          | `true`                          | `KLANGKD_BROWSER_DELEGATE_ENABLED`          |
 | `netfilter_enabled`                 | `true`                          | `KLANGKD_NETFILTER_ENABLED`                 |
 | `netfilter_default_domains`         | _(unset)_                       | `KLANGKD_NETFILTER_DEFAULT_DOMAINS`         |

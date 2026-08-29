@@ -3398,6 +3398,30 @@ class TestWorkspaceRoutes:
         assert resp.status_code == 200
         assert resp.json()["classification_banner"] == "SECRET"
 
+    async def test_duplicate_carries_stored_nix_while_off(
+        self, client, user, app
+    ):
+        # #2560 decision pin: duplicate carries the source's settings bag
+        # verbatim — a stored nix=true is persisted state, not a new
+        # opt-in, so it is NOT rejected while the feature is off (it stays
+        # inert exactly like the source's).
+        self._arm_nix(app, True)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "dup-nix-src", "settings": {"nix": True}},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        self._arm_nix(app, False)
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/duplicate",
+            json={"name": "dup-nix-clone"},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["settings"] == {"nix": True}
+
     async def test_update_workspace_allowed_domains(self, client, user):
         headers = await _auth_headers(client)
         resp = await client.post(
@@ -3749,6 +3773,141 @@ class TestWorkspaceRoutes:
         )
         assert resp.status_code == 400
         assert "empty" in resp.json()["detail"]
+
+    # --- the nix_enabled master switch (#2560) ---
+
+    def _arm_nix(self, app, on: bool) -> None:
+        """Flip the resolved armed status live (settings are read at call
+        time, so a mid-test flip takes effect immediately)."""
+        app.state.settings.nix_enabled = on
+        app.state.settings.nix_seed.path = "/tmp/nix-seed" if on else None
+
+    async def test_images_reports_nix_unavailable_by_default(
+        self, client, user
+    ):
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/images", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["nix_available"] is False
+
+    async def test_images_reports_available_when_armed(
+        self, client, user, app
+    ):
+        self._arm_nix(app, True)
+        headers = await _auth_headers(client)
+        resp = await client.get("/api/v1/images", headers=headers)
+        assert resp.json()["nix_available"] is True
+
+    async def test_create_rejects_nix_optin_while_off(self, client, user, app):
+        # Even with a backend configured, the off switch rejects the opt-in.
+        self._arm_nix(app, False)
+        app.state.settings.nix_seed.path = "/tmp/nix-seed"
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "no-nix", "settings": {"nix": True}},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "nix feature" in resp.json()["detail"]
+
+    async def test_create_accepts_nix_false_while_off(self, client, user):
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "explicit-off", "settings": {"nix": False}},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+    async def test_create_accepts_nix_true_when_armed(self, client, user, app):
+        self._arm_nix(app, True)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "nixy", "settings": {"nix": True}},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        ws_id = resp.json()["id"]
+        resp = await client.get("/api/v1/workspaces", headers=headers)
+        match = [w for w in resp.json() if w["id"] == ws_id]
+        assert match[0]["settings"] == {"nix": True}
+
+    async def test_put_rejects_new_optin_while_off(self, client, user, app):
+        self._arm_nix(app, True)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "flip-me"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        self._arm_nix(app, False)
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"settings": {"nix": True}},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "nix feature" in resp.json()["detail"]
+
+    async def test_put_tolerates_echo_of_stored_true(self, client, user, app):
+        # A legacy nix workspace stays editable while the flag is off: the
+        # TUI/web panel PUT a full-replace bag merged over the stored one.
+        self._arm_nix(app, True)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "legacy-nix", "settings": {"nix": True}},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        self._arm_nix(app, False)
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            json={"settings": {"nix": True, "idle_timeout": 300}},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+    async def test_patch_rejects_flip_while_off(self, client, user, app):
+        self._arm_nix(app, True)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "patch-me"},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        self._arm_nix(app, False)
+        resp = await client.patch(
+            f"/api/v1/workspaces/{ws_id}/settings",
+            json={"nix": True},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "nix feature" in resp.json()["detail"]
+
+    async def test_patch_tolerates_reassert_of_stored_true(
+        self, client, user, app
+    ):
+        self._arm_nix(app, True)
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            json={"name": "reassert", "settings": {"nix": True}},
+            headers=headers,
+        )
+        ws_id = resp.json()["id"]
+        self._arm_nix(app, False)
+        resp = await client.patch(
+            f"/api/v1/workspaces/{ws_id}/settings",
+            json={"nix": True},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["settings"] == {"nix": True}
 
     async def test_patch_workspace_settings_rejects_unknown_key(
         self, client, user
@@ -9974,6 +10133,35 @@ class TestWorkspaceExportImport:
         )
         assert resp.status_code == 200
         assert resp.json()["per_handle_home"] is False
+
+    async def test_import_rejects_nix_optin_while_disabled(self, client, user):
+        """#2560: the archive is user-supplied, editable input — import is a
+        create path (no previous bag to echo), so a nix=true opt-in rejects
+        while the feature is off, exactly like POST /workspaces."""
+        import io
+        import json
+        import tarfile
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            meta = json.dumps(
+                self._meta(name="stranded-nix", settings={"nix": True})
+            ).encode()
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta)
+            tar.addfile(info, io.BytesIO(meta))
+        buf.seek(0)
+
+        headers = await self._user_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces/import",
+            headers=headers,
+            files={
+                "file": ("archive.tar.gz", buf.getvalue(), "application/gzip")
+            },
+        )
+        assert resp.status_code == 400
+        assert "nix feature" in resp.json()["detail"]
 
     async def test_import_round_trips_per_handle_layout(
         self, client, admin_user, user, app, monkeypatch

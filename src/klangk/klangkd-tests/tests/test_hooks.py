@@ -551,6 +551,24 @@ class TestFireWorkspaceCreated:
         row = await app_state.state.model.workspaces.get_workspace(ws["id"])
         assert row["settings"] is None
 
+    async def test_nix_optin_rejected_while_disabled(self, app_state, user):
+        # #2560: the hook mirrors POST /workspaces — a nix=true opt-in is
+        # an invalid mutation while the feature is off (the default), so
+        # it is dropped instead of persisted.
+        await app_state.state.model.init_db()
+        hooks = await self._wire(app_state)
+
+        def hook(workspace, actor):
+            workspace["settings"] = {"nix": True}
+
+        hooks.workspace_created_hook = hook
+        hooks.workspace_created_hook_is_async = False
+        hooks.workspace_created_hook_source = "test-nix-optin"
+        ws = await self._seed(app_state, user)
+        await hooks.fire_workspace_created(ws, user)
+        row = await app_state.state.model.workspaces.get_workspace(ws["id"])
+        assert row["settings"] is None
+
     async def test_settings_normalized_on_persist(self, app_state, user):
         await app_state.state.model.init_db()
         hooks = await self._wire(app_state)

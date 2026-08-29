@@ -970,6 +970,19 @@ class KlangkSettings(BaseSettings):
     # the nix image ``klangk-workspace-nix`` for its baked ``/nix``). Image
     # selection is always the user's; this never overrides it.
     nix_seed: NixSeedConfig = Field(default_factory=NixSeedConfig)
+    # nix_enabled: master on/off switch for the per-workspace /nix feature
+    # (#2560). Defaults to False — the feature is maturing (#2237, #2221),
+    # so its surfaces stay hidden and new opt-ins are rejected until an
+    # operator arms it. While off, Nix.ensure_workspace_nix is a no-op (a
+    # workspace start with a stored nix flag logs once and proceeds without
+    # the mount; re-enabling resumes it — the per-workspace layers persist),
+    # the /api/v1/images nix_available field is false (all three create/edit
+    # surfaces hide the toggle), and the API rejects a new/changed nix=true
+    # opt-in (an echo of an already-stored true is tolerated). Workspace
+    # delete still tears down per-workspace layers. The resolved armed status
+    # is nix_enabled AND nix_seed.path (Nix.available). Reloadable on SIGHUP
+    # (#1587) — every read is live off settings.
+    nix_enabled: bool = False
     userns: str = "keep-id:uid=1000,gid=1000"
     podman_bin: str | None = "podman"
     disable_tmux: str = ""

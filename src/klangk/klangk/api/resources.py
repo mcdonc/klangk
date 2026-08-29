@@ -240,11 +240,13 @@ async def list_images(
     return {
         "default": app.state.container_registry.image_name,
         "allowed": sorted(app.state.container_registry.allowed_images),
-        # #2202: whether the per-workspace nix flag can trigger the per-workspace
-        # /nix mount. The create UI shows the "nix" toggle only when a backend
-        # is configured (btrfs snapshot or fuse-overlayfs, #2219); the flag is
-        # inert otherwise (workspaces use the nix image's baked /nix).
-        "nix_available": app.state.nix.configured,
+        # #2202/#2560: whether the per-workspace nix flag can trigger the
+        # per-workspace /nix mount. The create UI shows the "nix" toggle
+        # only when the feature is armed — a backend configured (btrfs
+        # snapshot or fuse-overlayfs, #2219) AND nix_enabled on (#2560,
+        # off by default); the flag is inert otherwise (workspaces use the
+        # nix image's baked /nix).
+        "nix_available": app.state.nix.available,
         # #2017: whether the deploy allows sudo at all (the per-workspace
         # knob may only lock a workspace down below this). The create/edit
         # UIs show the sudo toggle only when this is true — on a
