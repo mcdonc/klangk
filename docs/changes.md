@@ -1189,6 +1189,16 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
 
 ### Changed
 
+- **`nix_enabled` — the per-workspace `/nix` feature is now off by default
+  (#2560).** A new master switch (`KLANGKD_NIX_ENABLED` / `nix_enabled` in
+  `klangkd.yaml`, reloadable on SIGHUP) gates the whole feature. While off,
+  the nix toggle is absent from every create/edit surface (web, TUI, CLI),
+  the API rejects a new `nix: true` opt-in with a clear error (an edit
+  echoing an already-stored value is tolerated), and a workspace start with
+  a stored nix flag proceeds without the `/nix` mount (logged once at
+  info). Set it with a `nix_seed` block to arm the feature — see
+  [Nix workspaces](../features/nix.md).
+
 - **`host_restart` WS event renamed to `server_recycle` (#2661).** The
   graceful recycle path (SIGHUP and scheduled `recycle`) now broadcasts
   `server_recycle {phase: draining | recycling}` instead of

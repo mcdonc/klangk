@@ -20,7 +20,11 @@ that ``ContainerRegistry`` binds into the container as ``/nix`` (+
 ``/etc/nix/nix.conf``). On workspace delete, ``Workspaces`` tears it down. The
 per-workspace ``nix`` flag (checked by the caller) opts a given workspace in;
 this module only decides whether a backend is configured (``nix_seed.path``
-set). Omit ``nix_seed`` entirely to disable the feature (nix is then image-only).
+set) and armed (``nix_enabled``, #2560 — off by default; ``available`` is the
+resolved armed status). Omit ``nix_seed`` entirely to disable the feature
+(nix is then image-only). While ``nix_enabled`` is off, provisioning is a
+no-op (a stored workspace flag is skipped with a one-time info log); teardown
+still runs so workspace delete keeps cleaning up layers.
 
 Caveat: the fuse backend suits a bare-metal Linux host (podman runs on the host,
 no userns nesting between the FUSE mount and the workspace container). It does
@@ -83,6 +87,9 @@ class Nix:
 
     def __init__(self, app):
         self.app = app
+        # Workspaces already info-logged as skipped-by-nix_enabled (#2560) —
+        # one notice per workspace per process, not one per start.
+        self._skip_notified: set[str] = set()
 
     # --- configuration / dispatch -------------------------------------------
 
@@ -90,6 +97,16 @@ class Nix:
     def configured(self) -> bool:
         """Whether a nix backend is configured (``nix_seed.path`` is set)."""
         return bool(self.app.state.settings.nix_seed.path)
+
+    @property
+    def available(self) -> bool:
+        """Resolved armed status (#2560): the switch AND a backend.
+
+        ``nix_enabled`` (off by default) AND ``nix_seed.path`` set. This is
+        what the ``/api/v1/images`` ``nix_available`` field reports — all
+        three create/edit surfaces hide the toggle while false.
+        """
+        return self.configured and bool(self.app.state.settings.nix_enabled)
 
     @property
     def _seed(self) -> str:
@@ -109,9 +126,22 @@ class Nix:
 
         The mountpoint holds ``nix/`` (bind-mounted into the container as
         ``/nix``) and ``nix.conf``. Returns ``None`` when no backend is
-        configured. Idempotent: reuses an existing snapshot/fuse mount.
+        configured, or when the feature is switched off (``nix_enabled``,
+        #2560 — the skip is logged once per workspace at info; re-enabling
+        resumes the mount, the per-workspace layer persists). Idempotent:
+        reuses an existing snapshot/fuse mount.
         """
         if not self.configured:
+            return None
+        if not self.app.state.settings.nix_enabled:
+            if workspace_id not in self._skip_notified:
+                self._skip_notified.add(workspace_id)
+                logger.info(
+                    "nix: workspace %s has the nix setting but the feature "
+                    "is disabled (nix_enabled off, #2560) — starting "
+                    "without the /nix mount",
+                    workspace_id,
+                )
             return None
         if self._type == "btrfs-snapshot":
             return await self._ensure_btrfs(workspace_id)

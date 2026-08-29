@@ -1431,6 +1431,27 @@ class TestNixSeedConfig:
         assert s.nix_seed.type == "fuse-overlayfs"  # the default
 
 
+class TestNixEnabled:
+    """nix_enabled: the per-workspace /nix master switch (#2560)."""
+
+    def test_defaults_off(self):
+        """The feature is hidden by default — surfaces stay off until armed."""
+        s = make_settings({})
+        assert s.nix_enabled is False
+
+    def test_env_form(self):
+        s = make_settings({"KLANGKD_NIX_ENABLED": "1"})
+        assert s.nix_enabled is True
+        s = make_settings({"KLANGKD_NIX_ENABLED": "false"})
+        assert s.nix_enabled is False
+
+    def test_yaml_form(self, tmp_path):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("nix_enabled: true\n")
+        s = make_settings({}, config_file=str(cfg))
+        assert s.nix_enabled is True
+
+
 # ---------------------------------------------------------------------------
 # egress_consent prune knobs (#2303)
 # ---------------------------------------------------------------------------

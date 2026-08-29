@@ -4,7 +4,8 @@ Two backends (btrfs-snapshot, fuse-overlayfs) selected by ``nix_seed.type``.
 The btrfs/fuse subprocess calls and filesystem existence checks are faked (no
 real btrfs/fuse needed); the fuse FS ops (makedirs/copyfile/rmtree) run on a
 real tmp_path. The per-workspace ``nix`` flag is the caller's gate
-(container.py) — the module only cares whether ``nix_seed.path`` is set.
+(container.py); the module cares whether ``nix_seed.path`` is set and whether
+``nix_enabled`` arms it (#2560 — off by default; ``_app`` arms it explicitly).
 """
 
 from types import SimpleNamespace
@@ -30,13 +31,15 @@ class _Proc:
         return self._out, self._err
 
 
-def _app(seed=None, type=None):
+def _app(seed=None, type=None, enabled=True):
     """A KlangkSettings-backed app with nix_seed configured (or not).
 
     ``type`` omitted -> the fuse-overlayfs default. ``seed`` omitted ->
-    nix_seed unset (feature disabled).
+    nix_seed unset (feature disabled). ``enabled`` arms ``nix_enabled``
+    (#2560); it defaults to True so the backend tests exercise provisioning —
+    the flag-off paths are tested explicitly below.
     """
-    env = {}
+    env = {"KLANGKD_NIX_ENABLED": "1" if enabled else "0"}
     if seed:
         env["KLANGKD_NIX_SEED__PATH"] = seed
     if type:
@@ -76,9 +79,46 @@ async def test_no_op_when_not_configured(monkeypatch):
     calls = _patch_btrfs(monkeypatch)
     n = Nix(_app())  # no nix_seed
     assert n.configured is False
+    assert n.available is False
     assert await n.ensure_workspace_nix("ws1") is None
     await n.destroy_workspace_nix("ws1")
     assert calls == []
+
+
+# --- the nix_enabled master switch (#2560) ---------------------------------
+
+
+def test_available_is_switch_and_backend():
+    """available = nix_enabled AND nix_seed.path — the resolved armed status
+    reported by /api/v1/images nix_available."""
+    assert Nix(_app(SEED)).available is True
+    assert Nix(_app(SEED, enabled=False)).available is False
+    assert Nix(_app(None, enabled=False)).available is False
+    # the seed alone still counts as "configured" — the switch gates arming
+    assert Nix(_app(SEED, enabled=False)).configured is True
+    assert Nix(_app()).configured is False
+
+
+async def test_ensure_skips_and_logs_once_when_disabled(monkeypatch, caplog):
+    """Flag off + seed set: ensure is a no-op (start proceeds without /nix),
+    logged once per workspace at info — not once per start."""
+    calls = _patch_btrfs(monkeypatch, seed_exists=True)
+    n = Nix(_app(SEED, type="btrfs-snapshot", enabled=False))
+    with caplog.at_level("INFO", logger="klangk.nix"):
+        assert await n.ensure_workspace_nix("ws1") is None
+        assert await n.ensure_workspace_nix("ws1") is None
+    assert calls == []  # no snapshot attempt
+    skipped = [r for r in caplog.records if "nix_enabled off" in r.message]
+    assert len(skipped) == 1
+
+
+async def test_destroy_still_runs_when_disabled(monkeypatch):
+    """Teardown is gated on the backend, not the switch (#2560): workspace
+    delete keeps cleaning up layers while the feature is off."""
+    calls = _patch_btrfs(monkeypatch, ws_exists=True)
+    n = Nix(_app(SEED, type="btrfs-snapshot", enabled=False))
+    await n.destroy_workspace_nix("ws1")
+    assert any(a[1:3] == ("subvolume", "delete") for a in calls)
 
 
 async def test_path_set_without_type_is_fuse(monkeypatch, tmp_path):

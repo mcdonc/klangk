@@ -58,6 +58,42 @@ def test_validate_settings_allow_sudo_boolean():
         ws.validate_settings({"allow_sudo": "maybe"})
 
 
+# --- validate_nix_optin (the #2560 flag gate at the API boundary) ---
+
+
+def test_nix_optin_passes_when_available():
+    # Feature armed: today's behavior, unchanged.
+    ws.validate_nix_optin({"nix": True}, nix_available=True)
+
+
+def test_nix_optin_false_or_absent_passes_when_unavailable():
+    # false is the inert value; absent / None bags have nothing to gate.
+    ws.validate_nix_optin({"nix": False}, nix_available=False)
+    ws.validate_nix_optin({"idle_timeout": 5}, nix_available=False)
+    ws.validate_nix_optin(None, nix_available=False)
+
+
+def test_nix_optin_rejects_new_true_when_unavailable():
+    with pytest.raises(ValueError, match="nix feature"):
+        ws.validate_nix_optin({"nix": True}, nix_available=False)
+
+
+def test_nix_optin_tolerates_echo_of_stored_true():
+    # PUT full-replace bags merge over the existing bag (TUI + web panel) —
+    # an echoed true is persisted state, not a new opt-in, so a legacy
+    # nix workspace stays editable while the flag is off.
+    ws.validate_nix_optin(
+        {"nix": True}, nix_available=False, previous={"nix": True}
+    )
+
+
+def test_nix_optin_rejects_flip_when_previous_lacks_it():
+    with pytest.raises(ValueError, match="nix feature"):
+        ws.validate_nix_optin(
+            {"nix": True}, nix_available=False, previous={"idle_timeout": 5}
+        )
+
+
 def test_parse_allow_sudo():
     # #2017: the deploy-wide setting string parses with the same truthy
     # forms the container registry has always honored.

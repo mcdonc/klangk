@@ -420,3 +420,33 @@ def resolve_allow_sudo(workspace: dict | None, deploy_default: bool) -> bool:
     return bool(resolve(workspace, "allow_sudo", True)) and bool(
         deploy_default
     )
+
+
+def validate_nix_optin(
+    bag: dict[str, Any] | None,
+    *,
+    nix_available: bool,
+    previous: dict[str, Any] | None = None,
+) -> None:
+    """Reject a new ``nix=true`` opt-in while the feature is off (#2560).
+
+    While the nix feature is unavailable (``nix_enabled`` off or no
+    ``nix_seed`` configured), a create/update that **sets or changes**
+    ``nix`` to true is rejected — an old client must not be able to strand
+    a workspace in a state the flag then hides. Two forms are tolerated:
+    ``nix: false`` (the inert value — no-op) and an **echo** of an
+    already-stored ``nix: true`` (``previous`` has it true): the TUI and
+    web panel PUT a full-replace bag merged over the existing one, so a
+    legacy nix workspace stays editable while the flag is off.
+
+    Raises ``ValueError`` (the API boundary translates it to HTTP 400).
+    """
+    if nix_available or not (bag or {}).get("nix"):
+        return
+    if previous is not None and previous.get("nix"):
+        return
+    raise ValueError(
+        "settings.nix=true requires the nix feature to be enabled on the "
+        "server (KLANGKD_NIX_ENABLED=1 plus a configured nix_seed; see "
+        "docs/features/nix.md)"
+    )

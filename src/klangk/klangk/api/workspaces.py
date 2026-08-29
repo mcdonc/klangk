@@ -33,6 +33,7 @@ from .. import (
 )
 from ..exceptions import NodeDrainingError, WorkspaceCapacityError
 from ..workspace_settings import (
+    validate_nix_optin,
     validate_settings,
     validate_settings_patch,
 )
@@ -354,6 +355,9 @@ def _validate_create_fields(body, app) -> dict:
             raise HTTPException(status_code=400, detail=mount_err)
     try:
         settings = validate_settings(body.settings)
+        # #2560: while the feature is off, a create may not opt in to nix
+        # (there is no existing bag on create, so any nix=true rejects).
+        validate_nix_optin(settings, nix_available=app.state.nix.available)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
@@ -561,6 +565,18 @@ async def update_workspace(
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
+    if "settings" in fields:
+        # #2560: PUT settings is a full-replace bag; a new nix=true opt-in
+        # rejects while the feature is off, but an echo of the workspace's
+        # already-stored true is tolerated (clients merge over the bag).
+        try:
+            validate_nix_optin(
+                fields["settings"],
+                nix_available=app.state.nix.available,
+                previous=workspace["settings"],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     updated = await app.state.model.workspaces.update_workspace(
         workspace_id, workspace["user_id"], **fields
     )
@@ -612,6 +628,16 @@ async def update_workspace_settings(
     workspace = await app.state.model.workspaces.get_workspace(workspace_id)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace not found")
+    # #2560: same rule as PUT — a patch that flips nix to true rejects while
+    # the feature is off, unless it merely re-asserts the stored value.
+    try:
+        validate_nix_optin(
+            patch,
+            nix_available=app.state.nix.available,
+            previous=workspace["settings"],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     merged = await app.state.model.workspaces.update_workspace_settings(
         workspace_id, workspace["user_id"], patch
     )
@@ -644,6 +670,9 @@ async def duplicate_workspace(
     source = await app.state.model.workspaces.get_workspace(workspace_id)
     if source is None:  # pragma: no cover — race after ACL check
         raise HTTPException(status_code=404, detail="Workspace not found")
+    # #2560: the clone carries the source's settings bag verbatim — a
+    # stored nix=true is persisted state, not a new opt-in, so it is not
+    # rejected while the feature is off (it stays inert like the source's).
     try:
         ws = await app.state.workspaces.create_workspace(
             user["id"],
