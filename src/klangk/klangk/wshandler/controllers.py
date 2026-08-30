@@ -1346,12 +1346,15 @@ class SharedTerminalController:
         self.broadcast_shared_terminals(ws_session)
 
     async def unshare_window(self, msg: dict) -> None:
-        """Remove sharing from a window and kick joiners."""
+        """Remove sharing from a window and kick joiners.
+
+        Only ever operates on the caller's own windows, so — unlike
+        ``share_window`` — it needs no ``share-terminals`` permission:
+        unsharing *reduces* exposure, and gating it would strand a
+        member whose permission was revoked after sharing (#2875).
+        """
 
         if not self._conn.container_id or not self._conn._user_home:
-            return
-        if not await self._conn._has_perm("share-terminals"):
-            send_error(self._conn.sock, "Permission denied")
             return
 
         window_id = msg.get("window_id", "")

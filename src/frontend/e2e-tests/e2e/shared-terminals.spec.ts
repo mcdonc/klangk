@@ -310,6 +310,88 @@ test.describe("workspace roles", () => {
       await cleanup();
     }
   });
+
+  test("demoted member can still unshare an already-shared tab", async ({
+    page,
+    request,
+  }) => {
+    // A member who shares a tab and then loses share-terminals must not
+    // be stranded with a permanently shared tab (#2875).
+    const ownerEmail = `demote-owner-${Date.now()}@test.example.com`;
+    const owner = await registerUser(request, ownerEmail);
+    const { workspaceId, cleanup } = await createWorkspace(
+      request,
+      owner.headers,
+      "demote-test",
+    );
+    try {
+      const memberEmail = `demote-member-${Date.now()}@test.example.com`;
+      const member = await registerUser(request, memberEmail);
+      await addToRole(
+        request,
+        owner.headers,
+        workspaceId,
+        "collaborators",
+        memberEmail,
+      );
+
+      await openWorkspace(page, ownerEmail, workspaceId, {
+        waitForTerminal: true,
+      });
+
+      const memberWs = await connectWs(member.token, workspaceId);
+      try {
+        // Member starts an isolated terminal and shares its first window.
+        memberWs.send({ cmd: "terminal_start", cols: 80, rows: 24 });
+        let initWindows: WsMessage = { type: "none" };
+        let gotStarted = false;
+        await memberWs.recvUntil((m) => {
+          if (m.type === "terminal_started") gotStarted = true;
+          if (m.type === "terminal_windows") initWindows = m;
+          return gotStarted && initWindows.type === "terminal_windows";
+        }, 60_000);
+        const firstWindow = (
+          initWindows.windows as Array<Record<string, unknown>>
+        )[0];
+
+        memberWs.send({ cmd: "share_window", window_id: firstWindow.id });
+        await memberWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminals" &&
+            (m.terminals as Array<Record<string, unknown>>).some(
+              (t) => t.window_id === firstWindow.id,
+            ),
+        );
+
+        // Owner demotes member to spectator — share-terminals revoked.
+        const resp = await request.patch(
+          `${API_BASE}/api/v1/workspaces/${workspaceId}/roles`,
+          {
+            headers: owner.headers,
+            data: { email: memberEmail, role: "spectators" },
+          },
+        );
+        expect(resp.ok()).toBeTruthy();
+
+        // Unsharing the already-shared tab still succeeds.
+        memberWs.send({ cmd: "unshare_window", window_id: firstWindow.id });
+        await memberWs.recvUntil(
+          (m) =>
+            m.type === "shared_terminal_deleted" &&
+            m.window_id === firstWindow.id,
+        );
+
+        // Sharing it again is still denied without the permission.
+        memberWs.send({ cmd: "share_window", window_id: firstWindow.id });
+        const err = await memberWs.recvUntil((m) => m.type === "error");
+        expect((err.message as string).toLowerCase()).toContain("permission");
+      } finally {
+        memberWs.close();
+      }
+    } finally {
+      await cleanup();
+    }
+  });
 });
 
 test.describe("shared terminal visibility", () => {
