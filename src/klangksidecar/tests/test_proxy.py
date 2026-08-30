@@ -4665,11 +4665,15 @@ class TestBranchArcs:
         assert sent == {"type": "drop_ack", "id": "r6", "ok": True}
 
     def test_bump_activity_off_loop_is_noop_after_gate(self, proxy):
-        # Past the connected+ws gate with no running loop: silent return
-        # (the NFQUEUE callback is sync; defensive only).
+        # Past the connected+ws+flood gates with no running loop: silent
+        # return (the NFQUEUE callback is sync; defensive only). The last
+        # activity send is forced an hour back so the flood gate passes
+        # deterministically even on a freshly-booted runner whose
+        # monotonic clock is younger than the gate window.
         c = TestConsentClientRunLoop._client(proxy)
         c._connected.set()
         c._ws = MagicMock()  # past the first guard
+        c._last_activity_send = time.monotonic() - 3600.0
         c.bump_activity()  # no running loop -> nothing scheduled
 
     async def test_fail_close_skips_done_futures(self, proxy):

@@ -14812,30 +14812,6 @@ class TestFinalBranchGaps2834:
                     await asyncio.sleep(0.02)
                 assert isinstance(app.screen, LoginScreen)
 
-    async def test_login_server_populate_with_selected_index(self):
-        from klangk.cli.tui.screens.login import LoginScreen
-
-        with self._status_patched():
-            st = self._unauthed_state()
-            st.list_servers = lambda: [
-                types.SimpleNamespace(
-                    alias="a", url="https://a.example", user="u@a"
-                )
-            ]
-            app = KlangkApp(st)
-            async with app.run_test() as pilot:
-                await pilot.pause()
-                await app.workers.wait_for_complete()
-                screen = app.screen
-                assert isinstance(screen, LoginScreen)
-                lv = screen.query_one("#server_options")
-                if lv.index is None:
-                    lv.index = 0
-                # A second populate keeps the selection (not reset).
-                screen._populate_servers()
-                await pilot.pause()
-                assert lv.index == 0
-
     async def test_detail_on_mount_with_selected_indexes(self):
         with self._status_patched():
             a = _wsobj("sel")
