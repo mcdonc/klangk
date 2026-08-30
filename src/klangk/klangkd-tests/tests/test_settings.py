@@ -12,6 +12,7 @@ import pytest
 
 from _helpers import make_settings
 from klangk.settings import (
+    BOOL_STRING_FIELDS,
     KlangkSettings,
     _resolve_indirection,
     parse_bool_setting,
@@ -1778,17 +1779,10 @@ class TestBoolStringSettingCoercion:
     validation with ``Input should be a valid string``.
     """
 
-    FIELDS = [
-        "allow_sudo",
-        "allow_autostart",
-        "disable_registration",
-        "disable_invites",
-        "disable_tmux",
-        "prevent_insecure_jwt_secret",
-        "allow_insecure_no_auth",
-        "reject_proxy_headers",
-        "smtp_use_tls",
-    ]
+    # Imported from settings so the validator's family and this test
+    # class can't drift apart (a field added to one but not the other
+    # would silently skip coverage here).
+    FIELDS = list(BOOL_STRING_FIELDS)
 
     @pytest.mark.parametrize("field", FIELDS)
     @pytest.mark.parametrize("value", [True, False])
@@ -1837,6 +1831,7 @@ class TestBoolStringSettingCoercion:
         assert s.allow_insecure_no_auth == ""
         assert s.reject_proxy_headers is None
         assert s.smtp_use_tls == "true"
+        assert s.test_mode is None
 
 
 class TestParseBoolSetting:

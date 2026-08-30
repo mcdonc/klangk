@@ -68,6 +68,39 @@ class TestUseSmtp:
         assert svc.use_smtp() is False
 
 
+class TestSmtpConfigUseTls:
+    """use_tls parses through the shared parse_bool_setting (#2796).
+
+    The old inline parse matched only "true"/"1" — ``yes`` silently
+    *disabled* STARTTLS (mail credentials over plaintext) while every
+    other member of the str-typed boolean family treated it as truthy,
+    and an explicit YAML ``smtp_use_tls:`` null crashed at use time
+    (``None.lower()``).
+    """
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", "TRUE"])
+    def test_truthy_spellings_enable_starttls(self, value):
+        svc = _email_service({"KLANGKD_SMTP_USE_TLS": value})
+        assert svc.smtp_config()["use_tls"] is True
+
+    @pytest.mark.parametrize("value", ["false", "0", "no", "", "off"])
+    def test_falsy_spellings_disable_starttls(self, value):
+        svc = _email_service({"KLANGKD_SMTP_USE_TLS": value})
+        assert svc.smtp_config()["use_tls"] is False
+
+    def test_explicit_null_is_false_not_a_crash(self, tmp_path):
+        # ``smtp_use_tls:`` (explicit null) parses to None; the shared
+        # parse treats None as falsy instead of raising AttributeError.
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("smtp_use_tls:\n")
+        settings = make_settings({}, config_file=str(cfg))
+        app_state = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=settings)
+        )
+        svc = EmailService(app_state)
+        assert svc.smtp_config()["use_tls"] is False
+
+
 def _plain_msg(to="to@example.com", subject="Hi", body="Body"):
     """Build a minimal EmailMessage for transport-layer tests."""
     msg = EmailMessage()

@@ -23,10 +23,10 @@ from .. import (
     auth,
 )
 from ..podman import PodmanError as PodmanError
+from ..settings import parse_bool_setting
 from ..util import (
     sanitize_disposition_name,
 )
-from ..workspace_settings import parse_allow_sudo
 from ._common import get_app_dep
 from ._common import (
     workspace_resource,
@@ -252,7 +252,7 @@ async def list_images(
         # UIs show the sudo toggle only when this is true — on a
         # sudo-forbidding deploy the toggle is a no-op (sudo is off for
         # every workspace regardless).
-        "sudo_available": parse_allow_sudo(app.state.settings.allow_sudo),
+        "sudo_available": parse_bool_setting(app.state.settings.allow_sudo),
     }
 
 
