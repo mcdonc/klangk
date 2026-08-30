@@ -127,7 +127,7 @@ void main() {
     });
   }
 
-  Widget buildPanel({required bool canEditAcl}) {
+  Widget buildPanel({required bool canEditAcl, bool canShare = true}) {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
@@ -136,6 +136,7 @@ void main() {
         home: Scaffold(
           body: WorkspaceSharingPanel(
             workspaceId: 'ws1',
+            canShare: canShare,
             canEditAcl: canEditAcl,
           ),
         ),
@@ -164,8 +165,45 @@ void main() {
     // Members render as chips; the empty role shows its empty state.
     expect(find.text('alice@example.com'), findsOneWidget);
     expect(find.text('No members'), findsOneWidget);
-    // Every bucket carries an add-user affordance.
+    // Without change-acls (#2764) the role-write affordances are hidden:
+    // no add-user buttons, chips carry no delete icons.
+    expect(find.byTooltip('Add user'), findsNothing);
+    expect(
+      find.descendant(
+          of: find.byType(Chip), matching: find.byIcon(Icons.close)),
+      findsNothing,
+    );
+  });
+
+  testWidgets('role-write affordances appear with change-acls (#2764)',
+      (tester) async {
+    stubHttp();
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
+    await tester.pumpAndSettle();
     expect(find.byTooltip('Add user'), findsNWidgets(5));
+    expect(
+      find.descendant(
+          of: find.byType(Chip), matching: find.byIcon(Icons.close)),
+      findsNWidgets(4),
+    );
+  });
+
+  testWidgets('change-acls-only holder: no buckets, no roles fetch (#2764)',
+      (tester) async {
+    final requests = <String>[];
+    stubHttp(requests: requests);
+    await tester.pumpWidget(buildPanel(canEditAcl: true, canShare: false));
+    await tester.pumpAndSettle();
+
+    // No share-gated roles request fires; no bucket UI renders.
+    expect(
+      requests.where((r) => r.endsWith('/workspaces/ws1/roles')),
+      isEmpty,
+    );
+    expect(find.text('Owners'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    // The advanced editor remains available.
+    expect(find.text('Advanced: Access Control'), findsOneWidget);
   });
 
   testWidgets('hides the advanced ACL editor without change-acls (#2764)',
@@ -227,7 +265,7 @@ void main() {
         {'id': 'u-new', 'email': 'newuser@example.com'},
       ],
     );
-    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
     await tester.pumpAndSettle();
 
     // Owners bucket is first: open its add dialog.
@@ -251,7 +289,7 @@ void main() {
   testWidgets('add dialog submits a typed email directly', (tester) async {
     final requests = <String>[];
     stubHttp(requests: requests);
-    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Add user').first);
@@ -268,7 +306,7 @@ void main() {
   testWidgets('add dialog cancel closes without posting', (tester) async {
     final requests = <String>[];
     stubHttp(requests: requests);
-    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Add user').first);
@@ -290,7 +328,7 @@ void main() {
         {'id': 'u-new', 'email': 'newuser@example.com'},
       ],
     );
-    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Add user').first);
@@ -309,7 +347,7 @@ void main() {
 
   testWidgets('search transport failure is swallowed', (tester) async {
     stubHttp(searchError: true);
-    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Add user').first);
@@ -326,7 +364,7 @@ void main() {
   testWidgets('add failure surfaces the server detail in a snackbar',
       (tester) async {
     stubHttp(addStatus: 404, addBody: '{"detail": "User not found"}');
-    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Add user').first);
@@ -342,7 +380,7 @@ void main() {
   testWidgets('add failure with an unparseable body shows a generic error',
       (tester) async {
     stubHttp(addStatus: 500, addBody: 'Internal Server Error');
-    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('Add user').first);
@@ -359,7 +397,7 @@ void main() {
       (tester) async {
     final requests = <String>[];
     stubHttp(requests: requests);
-    await tester.pumpWidget(buildPanel(canEditAcl: false));
+    await tester.pumpWidget(buildPanel(canEditAcl: true));
     await tester.pumpAndSettle();
 
     final aliceChip = find.ancestor(

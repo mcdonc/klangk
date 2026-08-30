@@ -292,14 +292,19 @@ sync` report a clear permission-denied error.
 
 - **`change-acls` permission (#2764).** Raw ACL editing is now gated
   on a dedicated resource-level permission instead of `share`:
-  `GET`/`PUT /api/v1/workspaces/{id}/acl` (the Advanced ACL editor)
-  require `change-acls` on the workspace, and
-  `PUT /api/v1/admin/acl/resource` additionally requires it when the
-  target is an individual workspace. The simple sharing surface
-  (members, roles, group shares) stays on `share`; owners are covered
-  by their `*` wildcard, and migration 0017 backfills `change-acls`
-  onto existing `share` holders so no one loses access on upgrade.
-  See [ACL](../reference/acl.md).
+  `GET`/`PUT /api/v1/workspaces/{id}/acl` (the Advanced ACL editor) and
+  the role-group writes (`POST`/`DELETE`/`PATCH
+/api/v1/workspaces/{id}/roles*`, which can mint an `owners-` member)
+  require `change-acls`; `PUT /api/v1/admin/acl/resource` additionally
+  requires it when the target is an individual workspace. The simple
+  sharing surface (member and group shares with the fixed permission
+  set) stays on `share`. Owners are covered by their `*` wildcard, and
+  migration 0017 backfills `change-acls` onto existing effective
+  `share` holders, so workspace-side behavior is unchanged for them.
+  Integrators calling `PUT /admin/acl/resource` against individual
+  workspaces must now hold `change-acls` there (grant it on the
+  workspace, or on `/workspaces` / `/` for deploy-wide coverage). See
+  [ACL](../reference/acl.md).
 
 - **Native YAML booleans for string-typed boolean settings (#2796).**
   `allow_sudo`, `allow_autostart`, `disable_registration`,

@@ -686,6 +686,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
       sharing: _hasPerm('share') || _hasPerm('change-acls')
           ? WorkspaceSharingPanel(
               workspaceId: widget.workspaceId,
+              canShare: _hasPerm('share'),
               canEditAcl: _hasPerm('change-acls'),
             )
           : null,

@@ -1447,6 +1447,51 @@ class TestM0017ChangeAclsPermission:
         finally:
             await db.__aexit__(None, None, None)
 
+    async def test_backfill_skips_shadowed_allow_share(self, tmp_path):
+        """An Allow share shadowed by an earlier same-principal Deny (or
+        wildcard Deny) never took effect — backfilling it would grant a
+        new power, not preserve one, so it is skipped (#2764 review)."""
+        from klangk.model.migrations import m0017_change_acls_permission
+
+        db = await self._db(tmp_path)
+        try:
+            # Deny * at position 4 shadows the Allow share at 5.
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 4, 0, 1, 'u-shadowed', NULL, '*')",
+                (self.RESOURCE,),
+            )
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 5, 1, 1, 'u-shadowed', NULL, 'share')",
+                (self.RESOURCE,),
+            )
+            # A Deny share BELOW the Allow share shadows it too.
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 6, 0, 1, 'u-shadowed-2', NULL, 'share')",
+                (self.RESOURCE,),
+            )
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 7, 1, 1, 'u-shadowed-2', NULL, 'share')",
+                (self.RESOURCE,),
+            )
+            await m0017_change_acls_permission.migration.apply(db)
+            for uid in ("u-shadowed", "u-shadowed-2"):
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM acl_entries"
+                    " WHERE user_id = ? AND permission = 'change-acls'",
+                    (uid,),
+                )
+                assert (await cursor.fetchone())[0] == 0, uid
+        finally:
+            await db.__aexit__(None, None, None)
+
     async def test_backfill_empty_table(self, tmp_path):
         """No ACEs: nothing raises, nothing is written."""
         import aiosqlite

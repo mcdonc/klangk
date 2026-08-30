@@ -16,7 +16,6 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
-    Request,
     UploadFile,
 )
 from fastapi.responses import (
@@ -1368,16 +1367,10 @@ async def import_workspace(
 # --- Workspace sharing endpoints ---
 
 
-async def _check_workspace_share(request: Request, user: dict) -> str:
-    """Resource function for workspace share permission."""
-    workspace_id = request.path_params["workspace_id"]
-    return f"/workspaces/{workspace_id}"
-
-
 @router.get("/workspaces/{workspace_id}/members")
 async def get_workspace_members(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(acl.has_permission("share", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     return await app.state.model.workspaces.get_workspace_members(workspace_id)
@@ -1391,7 +1384,7 @@ class AddMemberRequest(BaseModel):
 async def add_workspace_member(
     workspace_id: str,
     body: AddMemberRequest,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(acl.has_permission("share", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     target = await app.state.model.users.get_user_by_identifier(body.email)
@@ -1453,7 +1446,7 @@ async def _remove_principals(app, workspace_id: str, predicate) -> None:
 async def remove_workspace_member(
     workspace_id: str,
     member_id: str,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(acl.has_permission("share", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     # Remove all ACL entries for this user on this workspace
@@ -1475,7 +1468,7 @@ ROLE_GROUP_SUFFIXES = ["owners", "coders", "collaborators", "spectators"]
 @router.get("/workspaces/{workspace_id}/roles")
 async def get_workspace_roles(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(acl.has_permission("share", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     """Return the workspace's role groups with their members."""
@@ -1503,12 +1496,21 @@ class AddToRoleRequest(BaseModel):
     email: str
 
 
+# Role-group writes carry the raw power: ``owners-<id>`` holds the ``*``
+# wildcard and every group is an ACE principal, so assigning roles is an
+# ACL change in effect — a bare ``share`` holder must not be able to mint
+# an owner (#2764). Both permissions are required.
+ROLE_WRITE_GATE = acl.has_permissions(
+    ["share", "change-acls"], workspace_resource
+)
+
+
 @router.post("/workspaces/{workspace_id}/roles/{role}")
 async def add_to_workspace_role(
     workspace_id: str,
     role: str,
     body: AddToRoleRequest,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(ROLE_WRITE_GATE),
     app=Depends(get_app_dep),
 ):
     """Add a user to a workspace role group."""
@@ -1532,7 +1534,7 @@ async def remove_from_workspace_role(
     workspace_id: str,
     role: str,
     member_id: str,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(ROLE_WRITE_GATE),
     app=Depends(get_app_dep),
 ):
     """Remove a user from a workspace role group."""
@@ -1557,7 +1559,7 @@ class ChangeRoleRequest(BaseModel):
 async def change_workspace_role(
     workspace_id: str,
     body: ChangeRoleRequest,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(ROLE_WRITE_GATE),
     app=Depends(get_app_dep),
 ):
     """Atomically change a user's workspace role.
@@ -1603,7 +1605,7 @@ async def change_workspace_role(
 @router.get("/workspaces/{workspace_id}/groups")
 async def get_workspace_groups(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(acl.has_permission("share", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     """Get groups with access to this workspace via ACL."""
@@ -1628,7 +1630,7 @@ class AddGroupShareRequest(BaseModel):
 async def add_workspace_group(
     workspace_id: str,
     body: AddGroupShareRequest,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(acl.has_permission("share", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     """Share a workspace with a group (view/terminal/files(+dl/ul))."""
@@ -1656,7 +1658,7 @@ async def add_workspace_group(
 async def remove_workspace_group(
     workspace_id: str,
     group_id: str,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(acl.has_permission("share", workspace_resource)),
     app=Depends(get_app_dep),
 ):
     """Remove all ACL entries for a group on this workspace."""
@@ -1685,8 +1687,8 @@ async def get_workspace_acl(
     """Get resolved ACL entries for a workspace.
 
     Gated on ``change-acls`` (#2764): the raw ACE list is the advanced
-    editor's view. The simple sharing surface (members, roles, group
-    shares) stays on ``share``.
+    editor's view. The simple sharing surface (members, group shares)
+    stays on ``share``; role-group writes need ``change-acls`` too.
     """
     resource = f"/workspaces/{workspace_id}"
     return await app.state.model.acl.get_acl_entries_resolved(resource)

@@ -818,7 +818,7 @@ async def get_resource_acl(
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
-def _workspace_target(resource: str) -> str | None:
+def workspace_scope(resource: str) -> str | None:
     """The workspace node an ACL write targets, if any (#2764).
 
     ``/workspaces/{id}`` and deeper paths normalize to the workspace
@@ -849,7 +849,7 @@ async def replace_resource_acl(
     _validate_root_acl(entries, resource)
     _validate_admin_acl(entries, resource)
 
-    workspace = _workspace_target(resource)
+    workspace = workspace_scope(resource)
     if workspace is not None:
         principals = await app.state.acl.get_principals(admin["id"])
         if not await app.state.acl.check_permission(
