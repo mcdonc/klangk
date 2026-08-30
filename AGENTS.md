@@ -477,6 +477,42 @@ UI-driving notes (verified against the harness):
 - Material dialogs do not always close on the escape key — tap their
   `Cancel` button instead.
 
+Driving the terminal (verified against the harness):
+
+- The terminal is a canvas (flterm): semantic snapshots show the tab
+  strip (the own-terminal tab, the "+" new-terminal button) but never
+  the terminal content, and `enter_text` needs an editable ref, so it
+  cannot type there. `get_screenshots` also does not work on this
+  target (app-owned capture, needs the permission bridge).
+- Key-by-key typing is unreliable: `press_key` dispatches lowercase
+  letters, `Enter`, and `Space`, but rejects `/`, `-`, `.`, `_`, and
+  uppercase letters (`unknown_key`) — and even a dispatched `Enter`
+  may not submit a line to the PTY.
+- The reliable path is `evaluate_dart_expression` with
+  `libraryUri: package:klangk_frontend/terminal/ghostty_terminal.dart`
+  (the pubspec name, not the repo name). Walk the element tree for the
+  live `GhosttyTerminalState`, then:
+  - `st._terminal.sendText('echo hi && whoami\n')` — types AND
+    executes (raw input, not bracketed paste); `paste()` only puts
+    text on the input line without submitting it.
+  - `st._terminal.createFormatter(format: FormatterFormat.plain,
+unwrap: true, trim: true).format()` — dumps the visible buffer
+    (command, output, prompt, tmux status bar); wrap in
+    `try/finally { f.dispose(); }`. This is the substitute for
+    screenshots.
+  - `st.widget.wsClient` exposes `connected`, `terminalWindows`
+    (own PTYs; 0 for spectators), and `sharedTerminals`.
+- Caveats: `sendText` returns success even with no PTY behind the
+  view (spectator) — always confirm execution by reading the buffer
+  output. The container must be running
+  (`POST /api/v1/workspaces/{id}/start`, poll `running`); commands
+  otherwise go nowhere. `debug_dump_focus_tree` showing
+  `ghostty-terminal [PRIMARY FOCUS]` is a good sanity check before
+  typing.
+- Own-terminal UI (the tab + "+") is gated on `code-in-isolation`:
+  owners, coders, and collaborators get an own terminal; spectators
+  get none (`terminalWindows` is 0 and `sendText` is inert).
+
 The app side is the debug-only `mcp_toolkit` bootstrap in
 `src/frontend/lib/main.dart` — it registers the `ext.mcp.toolkit.*` VM
 service extensions, is const-folded out of release builds, and is inert in
