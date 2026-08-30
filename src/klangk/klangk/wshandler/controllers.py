@@ -1371,6 +1371,11 @@ class SharedTerminalController:
         match = self.find_window(ws_session, user_id, window_id)
         if match is None:
             return
+        if not match.get("shared"):
+            # Already unshared — a no-op (idempotent, and cheap if a
+            # zero-permission client spams the command: no joiner
+            # kills, no broadcasts).
+            return
         match["shared"] = False
         # Kick spectators/collaborators
         try:

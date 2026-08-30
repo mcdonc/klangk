@@ -136,10 +136,13 @@ Sharing requires the `share-terminals` permission on the workspace —
 owners and collaborators have it by default, coders and spectators do
 not. A member without the permission sees no Share action (the context
 menu shows only Rename), and the server rejects the request if one is
-sent anyway. Unsharing is **not** permission-gated: a member who loses
-the permission keeps working Unshare affordances (context menu and
-broadcast-icon click) on tabs they already shared, so a revoked
-permission can never strand a tab in the shared state.
+sent anyway. Unsharing is **not** permission-gated — the server always
+lets a member unshare their own tab, so a revoked permission can never
+strand a tab in the shared state. The Unshare affordances (context menu
+and broadcast icon) stay operable wherever your own tabs are shown; a
+member demoted to a role without isolated terminals (a spectator) no
+longer sees their own tab strip and can unshare from the CLI instead
+(`klangk terminal unshare`).
 
 [![Tab with broadcast icon indicating it is shared](../assets/terminal-sharing/04-shared-tab-with-icon.png)](../assets/terminal-sharing/04-shared-tab-with-icon.png)
 
