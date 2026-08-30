@@ -70,31 +70,9 @@ def frame_is(frame_type: str):
 
 # Seconds to wait for the shared_terminals confirmation frame after a
 # share_window/unshare_window command. A server that silently drops the
-# command (no error frame) makes the CLI time out here — keep short so
-# the failure surfaces fast (#2876).
-_CONFIRM_TIMEOUT = 10
-
-
-def run_ws_command(body) -> None:
-    """Run an async ws command body, surfacing failures as a clean exit.
-
-    Server ``error`` frames — e.g. the "Permission denied" a member
-    without ``share-terminals`` gets — already raise ``ConnectionError``
-    fast out of the ``frame_is`` predicates (#2633); a silent server
-    drop times out instead. Both must reach the user as a one-line
-    message and a nonzero exit, not a raw traceback (#2876) — the same
-    presentation ``klangk shell`` already uses.
-    """
-    try:
-        asyncio.run(body())
-    except ConnectionError as e:
-        context._err.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1) from None
-    except asyncio.TimeoutError:
-        context._err.print(
-            "[red]Timed out waiting for the server to respond[/red]"
-        )
-        raise typer.Exit(code=1) from None
+# command (no error frame) surfaces as a timeout here rather than a
+# hang (#2876); module-level so tests can shrink it.
+CONFIRM_TIMEOUT = 10
 
 
 terminal_app = typer.Typer(
@@ -164,7 +142,7 @@ def terminals(
                 conn, json.dumps({"cmd": "terminal_stop"})
             )
 
-    run_ws_command(_list)
+    context.run_ws_command(_list)
 
 
 _VALID_ROLES = ["owner", "coder", "collaborator", "spectator"]
@@ -293,7 +271,7 @@ def share_terminal(
             )
             # Wait for shared_terminals confirmation
             await recv_until(
-                conn, frame_is("shared_terminals"), _CONFIRM_TIMEOUT
+                conn, frame_is("shared_terminals"), CONFIRM_TIMEOUT
             )
             context._err.print(
                 f"[green]Terminal '{terminal}' is now shared[/green]"
@@ -303,7 +281,7 @@ def share_terminal(
                 conn, json.dumps({"cmd": "terminal_stop"})
             )
 
-    run_ws_command(_share)
+    context.run_ws_command(_share)
 
 
 @terminal_app.command("unshare")
@@ -346,7 +324,7 @@ def unshare_terminal(
             )
             # Wait for shared_terminals confirmation
             await recv_until(
-                conn, frame_is("shared_terminals"), _CONFIRM_TIMEOUT
+                conn, frame_is("shared_terminals"), CONFIRM_TIMEOUT
             )
             context._err.print(
                 f"[green]Terminal '{terminal}' is no longer shared[/green]"
@@ -356,4 +334,4 @@ def unshare_terminal(
                 conn, json.dumps({"cmd": "terminal_stop"})
             )
 
-    run_ws_command(_unshare)
+    context.run_ws_command(_unshare)

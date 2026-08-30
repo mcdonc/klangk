@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 from _helpers import tracked_mkdtemp
 import klangk.cli.execsync
@@ -1757,7 +1758,7 @@ class TestMainCLI:
                 main.terminals("nope")
 
     def test_terminals_connection_failure(
-        self, logged_in_cfg, monkeypatch, reset_env
+        self, logged_in_cfg, monkeypatch, reset_env, capfd
     ):
         from klangk.cli import main
 
@@ -1786,8 +1787,11 @@ class TestMainCLI:
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
-            with pytest.raises(typer.Exit):
+            with pytest.raises(typer.Exit) as exc:
                 main.terminals("my-ws")
+        assert exc.value.exit_code == 1
+        # The server's error message reached stderr as a one-liner.
+        assert "fail" in capfd.readouterr().err
 
     def test_share_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env, capfd
@@ -1819,8 +1823,10 @@ class TestMainCLI:
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
-            with pytest.raises(typer.Exit):
+            with pytest.raises(typer.Exit) as exc:
                 main.share_terminal("my-ws", "build")
+        assert exc.value.exit_code == 1
+        assert "fail" in capfd.readouterr().err
 
     def test_unshare_connection_failure(
         self, logged_in_cfg, monkeypatch, reset_env, capfd
@@ -1852,8 +1858,10 @@ class TestMainCLI:
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
-            with pytest.raises(typer.Exit):
+            with pytest.raises(typer.Exit) as exc:
                 main.unshare_terminal("my-ws", "build")
+        assert exc.value.exit_code == 1
+        assert "fail" in capfd.readouterr().err
 
     @staticmethod
     def _ws_mock(ws):
@@ -1903,10 +1911,15 @@ class TestMainCLI:
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
+            t0 = time.monotonic()
             with pytest.raises(typer.Exit) as exc:
                 main.share_terminal("my-ws", "build")
+            elapsed = time.monotonic() - t0
         assert exc.value.exit_code == 1
         assert "Permission denied" in capfd.readouterr().err
+        # Pin the fast property (#2876): a swallowed error frame would
+        # stall the full CONFIRM_TIMEOUT before failing.
+        assert elapsed < 5
         # The denial answered an actually-sent share_window command.
         sent = [json.loads(s) for s in sock.sent if isinstance(s, str)]
         assert any(s.get("cmd") == "share_window" for s in sent)
@@ -1936,10 +1949,13 @@ class TestMainCLI:
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
+            t0 = time.monotonic()
             with pytest.raises(typer.Exit) as exc:
                 main.unshare_terminal("my-ws", "build")
+            elapsed = time.monotonic() - t0
         assert exc.value.exit_code == 1
         assert "Permission denied" in capfd.readouterr().err
+        assert elapsed < 5
         sent = [json.loads(s) for s in sock.sent if isinstance(s, str)]
         assert any(s.get("cmd") == "unshare_window" for s in sent)
 
@@ -1958,7 +1974,7 @@ class TestMainCLI:
         )
         # No shared_terminals after share_window: recv blocks, the
         # confirm wait expires against the shrunken timeout.
-        monkeypatch.setattr("klangk.cli.terminals._CONFIRM_TIMEOUT", 0.05)
+        monkeypatch.setattr("klangk.cli.terminals.CONFIRM_TIMEOUT", 0.05)
         sock = _ScriptedWS(self._startup_frames(self._WINDOWS))
         with (
             patch.object(
@@ -1972,7 +1988,87 @@ class TestMainCLI:
             with pytest.raises(typer.Exit) as exc:
                 main.share_terminal("my-ws", "build")
         assert exc.value.exit_code == 1
-        assert "Timed out" in capfd.readouterr().err
+        # A bare TimeoutError (no detail) falls back to the generic text.
+        err = capfd.readouterr().err
+        assert "Timed out waiting for the server to respond" in err
+
+    def test_run_ws_command_timeout_keeps_detail(
+        self, logged_in_cfg, monkeypatch, capfd
+    ):
+        """A TimeoutError carrying detail (wait_container_ready names the
+        failing wait) surfaces that detail, not the generic text."""
+
+        async def body():
+            raise asyncio.TimeoutError("Timed out waiting for container_ready")
+
+        with pytest.raises(typer.Exit) as exc:
+            context_mod.run_ws_command(body)
+        assert exc.value.exit_code == 1
+        err = capfd.readouterr().err
+        assert "container_ready" in err
+        assert "Timed out waiting for container_ready" in err
+
+    def test_share_terminal_handshake_rejected_session_expired(
+        self, logged_in_cfg, monkeypatch, reset_env, capfd
+    ):
+        """A 4001/4002 handshake rejection prints the session-expired
+        message, matching klangk shell (#2877 review follow-up)."""
+        from websockets import InvalidStatus, Response
+
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        with (
+            patch.object(
+                context_mod, "_client", return_value=self._ws_mock(ws)
+            ),
+            patch(
+                "klangk.cli.transport.websockets.connect",
+                side_effect=InvalidStatus(
+                    Response(4002, "Token expired", {}, b"")
+                ),
+            ),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(typer.Exit) as exc:
+                main.share_terminal("my-ws", "build")
+        assert exc.value.exit_code == 1
+        assert "Session expired" in capfd.readouterr().err
+
+    def test_share_terminal_handshake_rejected_other(
+        self, logged_in_cfg, monkeypatch, reset_env, capfd
+    ):
+        """A non-auth handshake rejection (e.g. 500) prints the rejection
+        instead of a raw InvalidStatus traceback."""
+        from websockets import InvalidStatus, Response
+
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        with (
+            patch.object(
+                context_mod, "_client", return_value=self._ws_mock(ws)
+            ),
+            patch(
+                "klangk.cli.transport.websockets.connect",
+                side_effect=InvalidStatus(
+                    Response(500, "Internal Server Error", {}, b"")
+                ),
+            ),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(typer.Exit) as exc:
+                main.share_terminal("my-ws", "build")
+        assert exc.value.exit_code == 1
+        assert "Connection rejected" in capfd.readouterr().err
 
     def test_unshare_terminal_not_found(
         self, logged_in_cfg, monkeypatch, reset_env
@@ -4071,6 +4167,68 @@ class TestMainCLI:
                 )
         assert result.exit_code == 0
         assert mock_exec.call_args.kwargs["login"] is False
+
+    def test_exec_connection_error_clean_exit(self, logged_in_cfg):
+        """A server error during exec (e.g. permission denied) prints a
+        one-line message and exits 1, not a raw traceback (#2876)."""
+        from klangk.cli import main
+        from klangk.cli.client import Workspace
+        from typer.testing import CliRunner
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch.object(
+                klangk.cli.execsync,
+                "ws_exec",
+                AsyncMock(side_effect=ConnectionError("Permission denied")),
+            ):
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app, ["exec", "my-ws", "echo", "hi"]
+                )
+        assert result.exit_code == 1
+        assert "Permission denied" in result.output
+
+    def test_exec_handshake_session_expired_clean_exit(self, logged_in_cfg):
+        """A 4001/4002 handshake rejection during exec prints the
+        session-expired message, matching klangk shell."""
+        from websockets import InvalidStatus, Response
+
+        from klangk.cli import main
+        from klangk.cli.client import Workspace
+        from typer.testing import CliRunner
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+
+        with patch.object(context_mod, "_client", return_value=client):
+            with patch.object(
+                klangk.cli.execsync,
+                "ws_exec",
+                AsyncMock(
+                    side_effect=InvalidStatus(
+                        Response(4002, "Token expired", {}, b"")
+                    )
+                ),
+            ):
+                runner = CliRunner()
+                result = runner.invoke(
+                    main.app, ["exec", "my-ws", "echo", "hi"]
+                )
+        assert result.exit_code == 1
+        assert "Session expired" in result.output
 
     def test_exec_strips_leading_dashdash_separator(self, logged_in_cfg):
         """With allow_extra_args + allow_interspersed_args=False, Click

@@ -8,7 +8,6 @@ single-responsibility modules, all imported back into
 
 from __future__ import annotations
 
-import asyncio
 import re
 import shutil
 import subprocess
@@ -120,8 +119,8 @@ def exec_cmd(
     surl = context.server_url()
     token = context.session_token()
 
-    exit_code = asyncio.run(
-        ws_exec(
+    exit_code = context.run_ws_command(
+        lambda: ws_exec(
             surl,
             token,
             ws.id,
