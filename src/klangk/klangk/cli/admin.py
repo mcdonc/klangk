@@ -322,8 +322,9 @@ def consent_decide(
     held egress requests (a blocked destination the sidecar is holding for
     a verdict), and lets you accept (allow once) or deny each one while it
     is held. Accepting lets that exact connection proceed; denying (or the
-    countdown hitting zero) fails it. Requires terminal access to the
-    workspace (owner/member/spectator).
+    countdown hitting zero) fails it. Requires the egress-consent
+    permission on the workspace (owner, coder, or collaborator — #2883;
+    spectators are watch-only).
     """
     context.require_auth()
     client = context._client()

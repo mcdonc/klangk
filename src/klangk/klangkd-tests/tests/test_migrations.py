@@ -69,6 +69,7 @@ class TestRunner:
             (15, "0015_classification_banner"),
             (16, "0016_monitor_permission"),
             (17, "0017_change_acls_permission"),
+            (18, "0018_egress_consent_permission"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -152,6 +153,7 @@ class TestRunner:
                 (15, "0015_classification_banner"),
                 (16, "0016_monitor_permission"),
                 (17, "0017_change_acls_permission"),
+                (18, "0018_egress_consent_permission"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -1012,6 +1014,145 @@ class TestM0014GroupsCreateAdmin:
             await db.__aexit__(None, None, None)
 
 
+class TestM0018EgressConsentPermission:
+    """m0018: backfill ``egress-consent`` onto existing role groups
+    (#2883).
+
+    Exercised against a hand-built post-m0010 schema (groups with the
+    ``source`` marker, minimal ``acl_entries``) by calling ``apply``
+    directly, mirroring the m0013 pattern.
+    """
+
+    WS_ID = "11111111-2222-3333-4444-555555555555"
+    RESOURCE = f"/workspaces/{WS_ID}"
+
+    async def _db(self, tmp_path):
+        db = aiosqlite.connect(str(tmp_path / "m0018-egress.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT, source TEXT)"
+        )
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT)"
+        )
+        for role in ("owners", "coders", "collaborators", "spectators"):
+            await db.execute(
+                "INSERT INTO groups (id, name, source) VALUES (?, ?, ?)",
+                (f"g-{role}", f"{role}-{self.WS_ID}", "workspace-role"),
+            )
+        await db.execute(
+            "INSERT INTO groups (id, name, source) VALUES (?, ?, ?)",
+            ("g-human", "human", "manual"),
+        )
+        # A pre-#2883 seeded ACL: owner wildcard + one ACE per role group.
+        for resource, pos, gid, perm in (
+            (self.RESOURCE, 0, "g-owners", "*"),
+            (self.RESOURCE, 1, "g-coders", "terminal"),
+            (self.RESOURCE, 2, "g-collaborators", "terminal"),
+            (self.RESOURCE, 3, "g-spectators", "terminal"),
+        ):
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, group_id, permission)"
+                " VALUES (?, ?, 1, 2, ?, ?)",
+                (resource, pos, gid, perm),
+            )
+        return db
+
+    async def _consent_aces(self, db) -> dict[str, int]:
+        """group_id -> count of egress-consent Allow ACEs."""
+        cursor = await db.execute(
+            "SELECT group_id, COUNT(*) FROM acl_entries"
+            " WHERE permission = 'egress-consent' AND action = 1"
+            " GROUP BY group_id"
+        )
+        return {row[0]: row[1] for row in await cursor.fetchall()}
+
+    async def test_backfill_grants_consent_roles_only(self, tmp_path):
+        from klangk.model.migrations import m0018_egress_consent_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await m0018_egress_consent_permission.migration.apply(db)
+            # Coders/collaborators gain it; owners are covered by the
+            # wildcard; spectators (watch-only) never do.
+            assert await self._consent_aces(db) == {
+                "g-coders": 1,
+                "g-collaborators": 1,
+            }
+            # Appended after the seeded entries, not interleaved.
+            cursor = await db.execute(
+                "SELECT position FROM acl_entries"
+                " WHERE permission = 'egress-consent'"
+                " AND group_id = 'g-coders'"
+            )
+            assert (await cursor.fetchone())[0] == 4
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_backfill_idempotent(self, tmp_path):
+        from klangk.model.migrations import m0018_egress_consent_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await m0018_egress_consent_permission.migration.apply(db)
+            await m0018_egress_consent_permission.migration.apply(db)
+            assert await self._consent_aces(db) == {
+                "g-coders": 1,
+                "g-collaborators": 1,
+            }
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_backfill_skips_manual_groups(self, tmp_path):
+        """A manual group named like a role group is untouched — the
+        backfill matches on the workspace-role source marker."""
+        from klangk.model.migrations import m0018_egress_consent_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO groups (id, name, source) VALUES (?, ?, ?)",
+                ("g-lookalike", f"coders-{self.WS_ID}-lookalike", "manual"),
+            )
+            await m0018_egress_consent_permission.migration.apply(db)
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM acl_entries WHERE group_id ="
+                " 'g-lookalike'"
+            )
+            assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_backfill_empty_tables(self, tmp_path):
+        """No groups: nothing raises, nothing is written."""
+        from klangk.model.migrations import m0018_egress_consent_permission
+
+        db = aiosqlite.connect(str(tmp_path / "m0018-egress-empty.db"))
+        db = await db.__aenter__()
+        try:
+            await db.execute(
+                "CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT,"
+                " source TEXT)"
+            )
+            await db.execute(
+                "CREATE TABLE acl_entries ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " resource TEXT, position INTEGER, action INTEGER,"
+                " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+                " system_principal INTEGER, permission TEXT)"
+            )
+            await m0018_egress_consent_permission.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+
 class TestRenameDetection:
     async def test_renamed_shipped_migration_raises(self, tmp_path):
         """A recorded id whose name changed must fail loudly — a silent
@@ -1357,7 +1498,7 @@ class TestM0017ChangeAclsPermission:
     async def _db(self, tmp_path):
         import aiosqlite
 
-        db = aiosqlite.connect(str(tmp_path / "m0017.db"))
+        db = aiosqlite.connect(str(tmp_path / "m0018-egress.db"))
         db = await db.__aenter__()
         await db.execute(
             "CREATE TABLE acl_entries ("
@@ -1498,7 +1639,7 @@ class TestM0017ChangeAclsPermission:
 
         from klangk.model.migrations import m0017_change_acls_permission
 
-        db = aiosqlite.connect(str(tmp_path / "m0017-empty.db"))
+        db = aiosqlite.connect(str(tmp_path / "m0018-egress-empty.db"))
         db = await db.__aenter__()
         try:
             await db.execute(

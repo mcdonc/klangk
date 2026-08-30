@@ -95,21 +95,22 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 
 **Permissions checked on workspace resources**:
 
-| Permission       | Controls                                                                                                                                  |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `view`           | Can see the workspace exists                                                                                                              |
-| `monitor`        | Can observe health/status: `GET /workspaces/{id}/status` and the `container_status` / `service_health` WebSocket frames (#2783)           |
-| `terminal`       | Can open a terminal / exec commands                                                                                                       |
-| `files`          | Can browse file listings (metadata) and gets the Files tab; reading file bodies additionally needs `files-download`                       |
-| `files-download` | Can fetch file bytes: `/files/download` (raw stream/tar) and `/files/content` (text reader) — needs `files` too                           |
-| `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)                                                                              |
-| `exec-and-sync`  | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace                                                  |
-| `edit`           | Can change workspace settings (name, image, command, mounts, env)                                                                         |
-| `share`          | Can manage who has access (Sharing tab: member and group shares)                                                                          |
-| `change-acls`    | Can rewrite the raw ACE list (`GET`/`PUT /workspaces/{id}/acl`, the Advanced ACL editor) and assign roles (#2764); owners hold it via `*` |
-| `delete`         | Can delete the workspace                                                                                                                  |
-| `export`         | Can export the workspace as a `.tar.gz` archive (#2707)                                                                                   |
-| `*`              | All of the above                                                                                                                          |
+| Permission       | Controls                                                                                                                                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `view`           | Can see the workspace exists                                                                                                                                                                                                                      |
+| `monitor`        | Can observe health/status: `GET /workspaces/{id}/status` and the `container_status` / `service_health` WebSocket frames (#2783)                                                                                                                   |
+| `terminal`       | Can open a terminal / exec commands                                                                                                                                                                                                               |
+| `egress-consent` | Can decide held egress requests in interactive mode: register a decider (web Network tab, consent banner, `klangk consent-decide`), send verdicts, revoke, and pause prompting — owners/coders/collaborators by default, spectators never (#2883) |
+| `files`          | Can browse file listings (metadata) and gets the Files tab; reading file bodies additionally needs `files-download`                                                                                                                               |
+| `files-download` | Can fetch file bytes: `/files/download` (raw stream/tar) and `/files/content` (text reader) — needs `files` too                                                                                                                                   |
+| `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)                                                                                                                                                                                      |
+| `exec-and-sync`  | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace                                                                                                                                                          |
+| `edit`           | Can change workspace settings (name, image, command, mounts, env)                                                                                                                                                                                 |
+| `share`          | Can manage who has access (Sharing tab: member and group shares)                                                                                                                                                                                  |
+| `change-acls`    | Can rewrite the raw ACE list (`GET`/`PUT /workspaces/{id}/acl`, the Advanced ACL editor) and assign roles (#2764); owners hold it via `*`                                                                                                         |
+| `delete`         | Can delete the workspace                                                                                                                                                                                                                          |
+| `export`         | Can export the workspace as a `.tar.gz` archive (#2707)                                                                                                                                                                                           |
+| `*`              | All of the above                                                                                                                                                                                                                                  |
 
 Withholding `files-download` hides every download affordance and returns
 403 from both byte-moving endpoints: `/files/download` (raw stream or

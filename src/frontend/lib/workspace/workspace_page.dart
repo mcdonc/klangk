@@ -173,6 +173,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // current value, not the one cached at login. Runs on mount and on
     // every workspaces-changed push.
     await auth.refreshDeployConfig();
+    // Fetch per-resource permissions BEFORE the workspace row: the
+    // consent init below gates on egress-consent (#2883), so the
+    // permission list must be loaded by then.
+    await _fetchPermissions();
     try {
       final ws = await _findWorkspace(auth, '/api/v1/workspaces') ??
           await _findWorkspace(auth, '/api/v1/workspaces/shared');
@@ -192,7 +196,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
     } catch (e) {
       debugPrint('[WorkspacePage] fetch workspace name failed: $e');
     }
-    // Fetch per-resource permissions for tab visibility
+  }
+
+  Future<void> _fetchPermissions() async {
+    final auth = context.read<AuthService>();
     debugPrint('[WorkspacePage] fetching workspace permissions');
     try {
       final resource = '/workspaces/${widget.workspaceId}';
@@ -229,9 +236,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
   }
 
   /// Create + connect the consent-decider service for an interactive-mode
-  /// workspace (#2246). Static (or unknown) mode mounts no banner.
+  /// workspace (#2246). Static (or unknown) mode mounts no banner; nor
+  /// does a member without `egress-consent` (#2883) — a spectator is
+  /// watch-only and must not decide egress, so neither the banner nor
+  /// the Network tab ever mount for them.
   void _maybeInitConsent(String? token) {
     if (_egressMode != 'interactive' || token == null) return;
+    if (!_hasPerm('egress-consent')) return;
     _consent ??= ConsentDeciderService(
       workspaceId: widget.workspaceId,
       token: token,

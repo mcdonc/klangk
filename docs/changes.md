@@ -157,6 +157,19 @@ operators or integrators to act when upgrading.
   `monitor` can be granted alone for monitoring-only members who
   should observe health without exec/attach access.
 
+- **New `egress-consent` permission gates egress decisions (#2883).**
+  Registering a consent decider (the web Network tab, the consent
+  banner, `klangk consent-decide`), deciding held requests, revoking
+  verdicts, and pausing prompting now require `egress-consent` instead
+  of `terminal` — a spectator (watch-only) can no longer decide a
+  workspace's egress, and the Network tab and consent banner no longer
+  render for members without the permission. Owners, coders, and
+  collaborators hold it by default (existing deployments are backfilled
+  by migration 0018); pause/unpause no longer additionally require
+  `share-terminals`. Members granted only `terminal` via a custom ACL
+  must be granted `egress-consent` explicitly to keep deciding. See
+  [ACLs](../reference/acl.md).
+
 - **Workspace status WebSocket broadcasts are now scoped to workspace
   members (#1714).** `container_status`, `service_health` (including
   the connect-time snapshot), and `workspace_evicted` frames were
