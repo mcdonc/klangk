@@ -392,32 +392,126 @@ debug run of the frontend: semantic snapshots, widget details, taps and
 typing, hot reload, app logs and errors. pi has no MCP client, so CLI mode
 is the interface — there is no MCP server wiring to maintain.
 
-Workflow:
-
-Run the frontend in debug on a real browser device (not `-d web-server`,
-which never exposes a VM service without the debug Chrome extension):
+Workflow — use the harness (issue #2881), from the repo root:
 
 ```bash
-devenv --quiet shell -- sh -c 'cd src/frontend && flutter run --debug -d chrome --web-port 8124'
+devenv --quiet shell -- fmtk-up
 ```
 
-Note the `A Dart VM Service ... is available at:` URL from its output and use
-it verbatim as a `ws://` URI (append `/ws`). Then, from the repo root (fmtk
-keeps state in `.flutter_mcp/`, gitignored):
+It boots a scratch klangkd (127.0.0.1:8998, own state under
+`.devenv/state/fmtk`, admin@example.com/admin123abc), an origin-splitting
+caddy on 127.0.0.1:8124 (`/api/*` + `/ws` to the backend, everything else
+to the flutter dev server on 8125), the fixture, and
+`flutter run --debug -d chrome` — then prints the VM-service `ws://` URI
+and a ready-to-paste fmtk prefix. Run devenv from the repo **root**
+(src/frontend has its own devenv.lock without flutter, so `devenv shell`
+there fails with `flutter: not found`).
+
+Launch speed: Ctrl-C stops only the flutter run — the backend, proxy,
+and seeded state stay up, so the next `fmtk-up` reuses them (skipping
+backend boot, proxy boot, and `pub get`) and is ready in roughly the
+flutter compile time alone. `fmtk-down` stops the kept services
+(`--wipe` also deletes the scratch state; `fmtk-up --fresh` is
+`fmtk-down --wipe` + launch).
+
+The harness exists because the frontend is same-origin only: `baseUrl`
+derives from the page origin (klangk-plugin-api `backend_url`), so a
+debug app loaded straight from the flutter dev server calls its own
+origin for `/api/v1/...` and gets 404s. The caddy proxy plus the
+`CHROME_EXECUTABLE` wrapper (`scripts/fmtk-chrome.sh`, which rewrites the
+opened URL to the proxy origin) make the debug run reach the backend.
+
+The fixture (seeded by `fmtk-up`, or standalone via
+`devenv --quiet shell -- fmtk-seed`) covers every role bucket of the
+`fmtk-verify` workspace's Sharing panel — password `fmtk-Pass123!`:
+
+- `fmtk-admin@example.com` — `admin` group member and workspace owner:
+  everything visible (Sharing tab with role buckets AND the Advanced ACL
+  editor).
+- `fmtk-collaborator@example.com` — collaborators bucket member.
+- `fmtk-coder@example.com` — coders bucket member.
+- `fmtk-spectator@example.com` — spectators bucket member; NO Sharing
+  tab.
+
+Each fixture opens the workspace page: fmtk-admin via its owner wildcard,
+the role members because every role group carries `terminal` — the WS
+`workspace_connect` gate requires it, so a member whose only grants omit
+`terminal` cannot open the workspace page at all ("Error: Permission
+denied" before any tab renders) — keep that in mind when inventing
+synthetic permission sets.
+
+With the harness up (from another shell, repo root):
 
 ```bash
-URI=ws://127.0.0.1:PORT/TOKEN/ws
+URI=<the ws:// URI fmtk-up printed>
 devenv --quiet -O dotenv.enable:bool false shell -- fmtk doctor --vm-service-uri $URI
 devenv --quiet -O dotenv.enable:bool false shell -- fmtk exec --name semantic_snapshot --vm-service-uri $URI --args '{}'
 devenv --quiet -O dotenv.enable:bool false shell -- fmtk exec --name tap_widget --vm-service-uri $URI --args '{"ref": "s_1"}'
-devenv --quiet -O dotenv.enable:bool false shell -- fmtk exec --name get_recent_logs --vm-service-uri $URI --args '{}'
+devenv --quiet -O dotenv.enable:bool false shell -- fmtk exec --name enter_text --vm-service-uri $URI --args '{"ref": "s_2", "text": "fmtk-admin@example.com"}'
 ```
 
 Snapshot nodes carry `ref`s (`s_0`, `s_1`, …) usable in `tap_widget`,
 `enter_text`, `fill_form`, and friends. `fmtk capabilities` lists all
-commands; `fmtk schema --name <command>` prints each command's arg schema.
-`get_app_errors`, `hot_reload_flutter`, and `evaluate_dart_expression` are
-the other high-signal ones.
+commands; `fmtk schema --name <command>` prints each command's arg schema
+(`get_recent_logs` takes no `limit` — pass `'{}'`). `get_app_errors`,
+`hot_reload_flutter`, and `evaluate_dart_expression` are the other
+high-signal ones (though `evaluate_dart_expression` can't import
+packages, so it can't drive GoRouter — for hash-route navigation use the
+Chrome tab's CDP: the port is the one on the running Chrome's
+`remote-debugging-port=` flag, which flutter chooses; `fmtk-up` prints
+it, and `/json/list` on that port finds the page target).
+
+UI-driving notes (verified against the harness):
+
+- Log in via the two `textField`s + the `Log In` button; the app lands
+  on `/workspaces`. Workspaces you own sit under "Owned by Me"; shared
+  ones under the "Shared with Me" segment — tap the segment first, then
+  the workspace card.
+- The app bar's right edge holds, in order: the email chip (navigates to
+  Settings), an admin icon (only for `admin`-group members), and the
+  logout icon (rightmost). In snapshots these appear as unlabeled
+  `button`s — pick by bounds (top-right corner), not label.
+- Icon-only tabs and icon buttons also show up as unlabeled `tappable`/
+  `button` nodes; identify them by order (the tab strip reads
+  Terminal, Files, Network, Sharing, Settings) or by bounds.
+- Material dialogs do not always close on the escape key — tap their
+  `Cancel` button instead.
+
+Driving the terminal (verified against the harness):
+
+- The terminal is a canvas (flterm): semantic snapshots show the tab
+  strip (the own-terminal tab, the "+" new-terminal button) but never
+  the terminal content, and `enter_text` needs an editable ref, so it
+  cannot type there. `get_screenshots` also does not work on this
+  target (app-owned capture, needs the permission bridge).
+- Key-by-key typing is unreliable: `press_key` dispatches lowercase
+  letters, `Enter`, and `Space`, but rejects `/`, `-`, `.`, `_`, and
+  uppercase letters (`unknown_key`) — and even a dispatched `Enter`
+  may not submit a line to the PTY.
+- The reliable path is `evaluate_dart_expression` with
+  `libraryUri: package:klangk_frontend/terminal/ghostty_terminal.dart`
+  (the pubspec name, not the repo name). Walk the element tree for the
+  live `GhosttyTerminalState`, then:
+  - `st._terminal.sendText('echo hi && whoami\n')` — types AND
+    executes (raw input, not bracketed paste); `paste()` only puts
+    text on the input line without submitting it.
+  - `st._terminal.createFormatter(format: FormatterFormat.plain,
+unwrap: true, trim: true).format()` — dumps the visible buffer
+    (command, output, prompt, tmux status bar); wrap in
+    `try/finally { f.dispose(); }`. This is the substitute for
+    screenshots.
+  - `st.widget.wsClient` exposes `connected`, `terminalWindows`
+    (own PTYs; 0 for spectators), and `sharedTerminals`.
+- Caveats: `sendText` returns success even with no PTY behind the
+  view (spectator) — always confirm execution by reading the buffer
+  output. The container must be running
+  (`POST /api/v1/workspaces/{id}/start`, poll `running`); commands
+  otherwise go nowhere. `debug_dump_focus_tree` showing
+  `ghostty-terminal [PRIMARY FOCUS]` is a good sanity check before
+  typing.
+- Own-terminal UI (the tab + "+") is gated on `code-in-isolation`:
+  owners, coders, and collaborators get an own terminal; spectators
+  get none (`terminalWindows` is 0 and `sendText` is inert).
 
 The app side is the debug-only `mcp_toolkit` bootstrap in
 `src/frontend/lib/main.dart` — it registers the `ext.mcp.toolkit.*` VM
