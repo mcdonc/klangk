@@ -8053,17 +8053,33 @@ class TestShareWindowHandlers:
         conn = _base_conn(user=user)
         await conn.handle_unshare_window({"window_id": "@0"})
 
-    async def test_unshare_window_permission_denied(self, user):
+    async def test_unshare_window_without_permission(self, user, app_state):
+        """Unsharing an own window needs no share-terminals permission —
+        a member whose permission was revoked after sharing must not be
+        left with a tab that stays readable to everyone (#2875)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
         sock = _mock_sock()
-        conn = _base_conn(user=user, ws=sock)
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
         conn.container_id = "cid"
         conn._user_home = "/home/admin"
-        with patch.object(
-            acl_mod.ACL, "check_permission", new=AsyncMock(return_value=False)
-        ):
-            await conn.handle_unshare_window({"window_id": "@0"})
-        calls = [c[0][0] for c in sock.send_json.call_args_list]
-        assert any("Permission" in c.get("message", "") for c in calls)
+        conn.workspace_id = "ws-1"
+        session = sockets.get_or_create_session("ws-1", app_state)
+        session.terminal_windows[user["id"]] = [
+            {"name": "1", "index": 0, "id": "@0", "shared": True}
+        ]
+        try:
+            with patch.object(
+                acl_mod.ACL,
+                "check_permission",
+                new=AsyncMock(return_value=False),
+            ):
+                await conn.handle_unshare_window({"window_id": "@0"})
+            assert session.terminal_windows[user["id"]][0]["shared"] is False
+            calls = [c[0][0] for c in sock.send_json.call_args_list]
+            assert not any("Permission" in c.get("message", "") for c in calls)
+        finally:
+            sockets.sessions.pop("ws-1", None)
 
     async def test_unshare_window_missing_id(self, user):
         sock = _mock_sock()
@@ -9052,10 +9068,29 @@ class TestSharedTerminalController:
         ctrl, _, _ = self._controller(user=user, container_id=None)
         await ctrl.unshare_window({"window_id": "@0"})
 
-    async def test_unshare_window_no_perm(self, user):
-        ctrl, sock, _ = self._controller(user=user, has_perm=False)
-        await ctrl.unshare_window({"window_id": "@0"})
-        assert "Permission" in sock.send_json.call_args[0][0]["message"]
+    async def test_unshare_window_without_perm_still_unshares(
+        self, user, temp_data_dir, app_state
+    ):
+        """Unsharing an own window skips the share-terminals gate —
+        it only reduces exposure (#2875)."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        ctrl, sock, _ = self._controller(
+            user=user, app_state=app_state, has_perm=False
+        )
+        ws = self._ws_session(app_state=app_state)
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": True}
+        ]
+        try:
+            with patch.object(_mock_term, "kill_joiner_sessions") as kill:
+                await ctrl.unshare_window({"window_id": "@0"})
+            assert ws.terminal_windows[user["id"]][0]["shared"] is False
+            kill.assert_awaited_once_with("cid", "uid")
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert not any("Permission" in c.get("message", "") for c in sent)
+        finally:
+            sockets.sessions.pop("ws-1", None)
 
     async def test_unshare_window_marks_unshared_and_kicks(
         self, user, temp_data_dir, app_state
@@ -9072,6 +9107,53 @@ class TestSharedTerminalController:
                 await ctrl.unshare_window({"window_id": "@0"})
             assert ws.terminal_windows[user["id"]][0]["shared"] is False
             kill.assert_awaited_once_with("cid", "uid")
+        finally:
+            sockets.sessions.pop("ws-1", None)
+
+    async def test_unshare_window_other_users_window_not_found(
+        self, user, temp_data_dir, app_state
+    ):
+        """The unshare loosening (#2875) is scoped to the caller's own
+        windows: another user's window id is rejected and their shared
+        flag is untouched — the property the permission removal rests on."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        ctrl, sock, _ = self._controller(user=user, app_state=app_state)
+        ws = self._ws_session(app_state=app_state)
+        ws.terminal_windows["other-user"] = [
+            {"id": "@5", "name": "theirs", "shared": True}
+        ]
+        try:
+            with patch.object(_mock_term, "kill_joiner_sessions") as kill:
+                await ctrl.unshare_window({"window_id": "@5"})
+            assert sock.send_json.call_args[0][0]["message"] == (
+                "Window not found"
+            )
+            assert ws.terminal_windows["other-user"][0]["shared"] is True
+            kill.assert_not_awaited()
+        finally:
+            sockets.sessions.pop("ws-1", None)
+
+    async def test_unshare_window_already_unshared_is_noop(
+        self, user, temp_data_dir, app_state
+    ):
+        """Unsharing a not-shared window is a cheap no-op — no joiner
+        kills, no shared_terminal_deleted broadcast."""
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        ctrl, sock, _ = self._controller(user=user, app_state=app_state)
+        ws = self._ws_session(app_state=app_state)
+        ws.terminal_windows[user["id"]] = [
+            {"id": "@0", "name": "a", "shared": False}
+        ]
+        try:
+            with patch.object(_mock_term, "kill_joiner_sessions") as kill:
+                await ctrl.unshare_window({"window_id": "@0"})
+            kill.assert_not_awaited()
+            sent = [c[0][0] for c in sock.send_json.call_args_list]
+            assert not any(
+                s.get("type") == "shared_terminal_deleted" for s in sent
+            )
         finally:
             sockets.sessions.pop("ws-1", None)
 

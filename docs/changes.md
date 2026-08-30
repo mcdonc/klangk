@@ -1572,6 +1572,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   nonzero instead of a raw Python traceback. A server that silently
   drops the command reports a timeout message instead of a stack trace.
 
+- **Unsharing a terminal tab no longer requires the `share-terminals`
+  permission (#2875).** A workspace member who shared a terminal tab and
+  then lost the permission was stuck: the tab stayed shared (readable by
+  every member with spectate access) with no working unshare control.
+  The server now always lets a member unshare their own tab — the UI
+  affordances stay operable wherever own tabs are visible, and `klangk
+terminal unshare` works for any role — since unsharing only reduces
+  exposure. Sharing still requires the permission.
+
 - **Boot auto-start no longer ignores a disabled `allow_autostart`
   (#2796).** `KLANGKD_ALLOW_AUTOSTART=false` (any non-truthy non-empty
   string) previously read as _enabled_ on the boot path — workspaces with

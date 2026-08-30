@@ -375,6 +375,68 @@ void main() {
       expect(find.text('Share'), findsOneWidget);
     });
 
+    testWidgets('broadcast icon unshares without share-terminals permission',
+        (tester) async {
+      // A member who shared a tab and then lost the permission must
+      // still be able to unshare their own tab (#2875).
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [
+        {'id': 'w1', 'name': 'bash', 'index': 0, 'active': true},
+      ];
+      client._shared = [
+        {
+          'user_id': 'user-1',
+          'window_id': 'w1',
+          'handle': 'me',
+          'window_name': 'bash',
+          'viewers': <Map<String, dynamic>>[],
+        },
+      ];
+      await tester.pumpWidget(_build(
+        client,
+        hasPerm: (p) => p != 'share-terminals',
+      ));
+
+      await tester.tap(find.byIcon(Icons.cell_tower));
+      expect(client.sentCommands, contains('unshare:w1'));
+    });
+
+    testWidgets(
+        'context menu offers Unshare without share-terminals permission',
+        (tester) async {
+      final client = _MockWsClient();
+      client._userId = 'user-1';
+      client._windows = [
+        {'id': 'w1', 'name': 'bash', 'index': 0, 'active': true},
+      ];
+      client._shared = [
+        {
+          'user_id': 'user-1',
+          'window_id': 'w1',
+          'handle': 'me',
+          'window_name': 'bash',
+          'viewers': <Map<String, dynamic>>[],
+        },
+      ];
+      await tester.pumpWidget(_build(
+        client,
+        hasPerm: (p) => p != 'share-terminals',
+      ));
+
+      final center = tester.getCenter(find.text('bash'));
+      await tester.tapAt(center, buttons: 2);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rename'), findsOneWidget);
+      expect(find.text('Unshare'), findsOneWidget);
+      expect(find.text('Share'), findsNothing);
+
+      await tester.tap(find.text('Unshare'));
+      await tester.pumpAndSettle();
+      expect(client.sentCommands, contains('unshare:w1'));
+    });
+
     testWidgets('context menu hides Share without share-terminals permission',
         (tester) async {
       final client = _MockWsClient();

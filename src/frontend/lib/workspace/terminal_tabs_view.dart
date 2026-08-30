@@ -52,6 +52,25 @@ class TerminalTabsView extends StatelessWidget {
     );
   }
 
+  /// Share/unshare handler for an own terminal tab.
+  ///
+  /// Sharing needs the ``share-terminals`` permission, but unsharing an
+  /// already-shared tab never does — it only reduces exposure, and a
+  /// member whose permission was revoked after sharing must still be
+  /// able to unshare (#2875).
+  VoidCallback? _toggleShareHandler(Map<String, dynamic> w) {
+    final wid = w['id'] as String? ?? '';
+    final isShared = _isWindowShared(wid);
+    if (!hasPerm('share-terminals') && !isShared) return null;
+    return () {
+      if (isShared) {
+        wsClient.sendUnshareWindow(wid);
+      } else {
+        wsClient.sendShareWindow(wid);
+      }
+    };
+  }
+
   List<Map<String, dynamic>> _getViewers(String ownerUserId, String windowId) {
     for (final s in wsClient.sharedTerminals) {
       if (s['user_id'] == ownerUserId && s['window_id'] == windowId) {
@@ -128,16 +147,7 @@ class TerminalTabsView extends StatelessWidget {
                               w['index'] as int,
                               newName,
                             ),
-                            onToggleShare: hasPerm('share-terminals')
-                                ? () {
-                                    final wid = w['id'] as String? ?? '';
-                                    if (_isWindowShared(wid)) {
-                                      wsClient.sendUnshareWindow(wid);
-                                    } else {
-                                      wsClient.sendShareWindow(wid);
-                                    }
-                                  }
-                                : null,
+                            onToggleShare: _toggleShareHandler(w),
                           ),
                       // "+" for new terminal
                       if (hasPerm('code-in-isolation'))
