@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck disable=SC1091 # sourced sibling helper
+source "$(dirname "${BASH_SOURCE[0]}")/_python_common.sh"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${DEVENV_ROOT:-$SCRIPT_DIR/..}"
 
@@ -26,8 +28,8 @@ UPDATE_FLAGS=(--payload-dir "$PAYLOAD_DIR")
 if [ "${KLANGKBUILD_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
   UPDATE_FLAGS+=(--local-only)
 fi
-python3 scripts/update_features.py "${UPDATE_FLAGS[@]}"
-python3 scripts/import_dart_features.py --payload-dir "$PAYLOAD_DIR"
+"${KLANGK_PYTHON}" scripts/update_features.py "${UPDATE_FLAGS[@]}"
+"${KLANGK_PYTHON}" scripts/import_dart_features.py --payload-dir "$PAYLOAD_DIR"
 
 # flterm is forked (github.com/runyaga/flterm) to build on the nix Flutter
 # (3.41 / Dart 3.11) -- upstream 0.0.3 needs Dart 3.12 for private-named
@@ -120,4 +122,4 @@ echo "Cache-bust: v=$HASH"
 # from __file__ so it lands the manifest correctly regardless of CWD. The
 # payload dir is the same one populated above — still populated, still
 # readable (the trap fires only on exit).
-python3 "$SCRIPT_DIR/import_dart_features.py" --payload-dir "$PAYLOAD_DIR" --features-only
+"${KLANGK_PYTHON}" "$SCRIPT_DIR/import_dart_features.py" --payload-dir "$PAYLOAD_DIR" --features-only

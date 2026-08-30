@@ -21,6 +21,8 @@
 # main before pushing anyway (see AGENTS.md / the workon flow).
 
 set -uo pipefail
+# shellcheck disable=SC1091 # sourced sibling helper
+source "$(dirname "${BASH_SOURCE[0]}")/_python_common.sh"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT" || exit 2
@@ -78,20 +80,20 @@ status=0
 if [ "$backend" = 1 ]; then
   echo
   echo "=== backend unit (testmon; first run in a fresh worktree baselines, ~test-unit cost) ==="
-  python -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
+  "${KLANGK_PYTHON}" -m pytest src/klangk/klangkd-tests/tests src/klangk/klangkc-tests/tests \
     -v -n auto --no-cov --testmon || status=1
 fi
 
 if [ "$build" = 1 ]; then
   echo
   echo "=== build-pipeline contract tests (scripts/tests) ==="
-  python -m pytest scripts/tests -v || status=1
+  "${KLANGK_PYTHON}" -m pytest scripts/tests -v || status=1
 fi
 
 if [ "$sidecar" = 1 ]; then
   echo
   echo "=== sidecar unit ==="
-  python -m pytest src/klangksidecar/tests -v -n auto || status=1
+  "${KLANGK_PYTHON}" -m pytest src/klangksidecar/tests -v -n auto || status=1
 fi
 
 if [ "$frontend" = 1 ]; then

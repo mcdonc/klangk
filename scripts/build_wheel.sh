@@ -16,6 +16,8 @@
 #   (or directly, inside a devenv shell)
 # Produces: src/klangk/dist/klangk-<version>-py3-none-any.whl
 set -euo pipefail
+# shellcheck disable=SC1091 # sourced sibling helper
+source "$(dirname "${BASH_SOURCE[0]}")/_python_common.sh"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -25,7 +27,7 @@ uv pip install build
 
 # Build the wheel from src/klangk (where pyproject.toml + the build hook live).
 cd "$REPO_ROOT/src/klangk"
-python3 -m build --wheel
+"${KLANGK_PYTHON}" -m build --wheel
 
 # Report what we produced. The script cd'd into src/klangk before building,
 # so dist/ is relative to that dir, not the caller's CWD — print absolute
