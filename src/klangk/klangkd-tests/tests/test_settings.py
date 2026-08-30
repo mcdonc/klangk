@@ -1839,3 +1839,12 @@ class TestPasswordRequireCounts:
         # unsettable.
         with pytest.raises(Exception, match="72"):
             make_settings({"KLANGKD_PASSWORD_REQUIRE_SPECIAL": "73"})
+
+
+class TestCoerceBoolBranchGaps2834:
+    def test_non_bool_like_value_raises(self):
+        # Neither bool, 0/1, nor string: rejected as a settings error.
+        from klangk.workspace_settings import _coerce_bool
+
+        with pytest.raises(ValueError, match="not a boolean"):
+            _coerce_bool("nix", 5)

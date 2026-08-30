@@ -4,9 +4,10 @@ import os
 
 import pytest
 
-# Use sysmon coverage engine for pytest-xdist compatibility — mirrors the
-# server suite's conftest (src/klangk/klangkd-tests/tests/conftest.py) so
-# coverage is tracked correctly across xdist workers (#1526).
+# Use the sysmon coverage engine — mirrors the server suite's conftest
+# (src/klangk/klangkd-tests/tests/conftest.py) so coverage is tracked
+# correctly across xdist workers (#1526). On the 3.14 toolchain it also
+# measures the branch gate (#2834) and tracks greenlets natively.
 os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
 

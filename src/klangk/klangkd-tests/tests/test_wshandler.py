@@ -10729,3 +10729,306 @@ class TestServerScheduleSnapshotOnConnect:
         # The SafeWebSocket wrapper was passed, not the raw one.
         (safe_ws,) = scheduler.send_snapshot_to.await_args.args
         assert safe_ws is not websocket
+
+
+class TestWshandlerBranchGaps2834:
+    """#2834 branch gate: connection/controller/session outcomes the
+    mainline tests only take one side of."""
+
+    async def test_ui_ready_without_session_still_flushes_status(
+        self, app_state
+    ):
+        # A workspace_id whose session is gone (post-teardown UI frame):
+        # no browser subscription, the pending status msg still flushes.
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(user=None, ws=sock, app_state=app_state)
+        conn.workspace_id = "ws-nosess"
+        conn.pending_status_msg = {"type": "status", "state": "connected"}
+        with patch.object(
+            app_state.state.sockets, "get_session", return_value=None
+        ):
+            await conn.handle_ui_ready()
+        assert conn.pending_status_msg is None
+        sent = [c[0][0] for c in sock.send_json.call_args_list]
+        assert any(
+            m.get("event", {}).get("name") == "container_ready" for m in sent
+        )
+
+    async def test_set_handle_existing_home_skips_skel(
+        self, user, temp_data_dir, app_state, monkeypatch
+    ):
+        # A rename whose per-handle home already exists (created=False):
+        # the skel exec is skipped -- only the symlink is refreshed.
+        app_state = _make_app_state()
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        conn.workspace_id = "ws-skel"
+        conn.container_id = "cid-skel"
+        conn.workspace = {"id": "ws-skel", "per_handle_home": True}
+        monkeypatch.setattr(
+            app_state.state.model.users,
+            "set_user_handle",
+            AsyncMock(return_value=True),
+        )
+        monkeypatch.setattr(
+            app_state.state.workspaces,
+            "ensure_home_symlink",
+            AsyncMock(return_value=("/home/newhandle", False)),
+        )
+        skel = AsyncMock()
+        monkeypatch.setattr(
+            app_state.state.workspaces, "populate_home_skel", skel
+        )
+        await conn.handle_set_handle({"handle": "newhandle"})
+        skel.assert_not_awaited()
+
+    @staticmethod
+    def _ctrl_conn(app_state, container_id=None):
+        sock = _mock_sock()
+        conn = _base_conn(user=None, ws=sock, app_state=app_state)
+        conn.container_id = container_id
+        conn.workspace_id = "ws-c"
+        return conn, sock
+
+    async def test_forward_exec_output_without_container_skips_activity(
+        self, app_state
+    ):
+        # An exec on a connection with no container: chunks relay, no
+        # activity recording attempt.
+        from klangk.wshandler.controllers import ExecController
+
+        app_state = _make_app_state()
+        conn, sock = self._ctrl_conn(app_state, container_id=None)
+        ctrl = ExecController(conn)
+        session = AsyncMock()
+        session.returncode = 0
+
+        async def fake_output():
+            yield b"x"
+
+        session.output = fake_output
+        recorded = []
+        with patch.object(
+            app_state.state.container_registry,
+            "record_activity",
+            side_effect=lambda cid: recorded.append(cid),
+        ):
+            await ctrl.forward_output(session)
+        assert recorded == []
+        assert any(
+            c[0][0]["type"] == "exec_output"
+            for c in sock.send_json.call_args_list
+        )
+
+    async def test_forward_terminal_output_without_container_skips_activity(
+        self, app_state
+    ):
+        from klangk.wshandler.controllers import TerminalController
+
+        app_state = _make_app_state()
+        conn, sock = self._ctrl_conn(app_state, container_id=None)
+        conn._user_home = "/home/x"
+        ctrl = TerminalController(conn)
+        session = AsyncMock()
+
+        async def fake_output():
+            yield "text"
+
+        session.output = fake_output
+        recorded = []
+        with patch.object(
+            app_state.state.container_registry,
+            "record_activity",
+            side_effect=lambda cid: recorded.append(cid),
+        ):
+            await ctrl.forward_output(session)
+        assert recorded == []
+        assert any(
+            c[0][0]["type"] == "terminal_output"
+            for c in sock.send_json.call_args_list
+        )
+
+    async def test_join_shared_terminal_without_session_skips_broadcast(
+        self, user, temp_data_dir, app_state
+    ):
+        # The join completes but the workspace session is gone: the
+        # terminal_started ack still goes out, no shared-list broadcast
+        # (nothing to broadcast to).
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        registry = app_state.state.container_registry
+        owner = await app_state.state.model.users.create_user(
+            "owner-nosess@test.com", "hash", verified=True
+        )
+        sock = _mock_sock()
+        conn = _base_conn(user=user, ws=sock, app_state=app_state)
+        conn.workspace_id = "ws-nosess"
+        conn.container_id = "cid"
+        conn._user_home = "/home/joiner"
+        registry.track_activity("cid", "ws-nosess")
+        broadcast = MagicMock()
+        conn.broadcast_shared_terminals = broadcast
+        real_session = sockets.get_or_create_session("ws-nosess", app_state)
+        real_session.terminal_windows[owner["id"]] = [
+            {"name": "build", "index": 0, "id": "@0", "shared": True},
+        ]
+        # The session is present for the join's lookup, then VANISHES
+        # before the post-start broadcast (the mid-join race).
+        get_session_calls = {"n": 0}
+
+        def _vanishing_session(workspace_id):
+            get_session_calls["n"] += 1
+            return real_session if get_session_calls["n"] == 1 else None
+
+        try:
+            with (
+                patch.object(
+                    acl_mod.ACL,
+                    "check_permission",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch.object(_ws_controllers, "TerminalSession") as MockTS,
+                patch.object(_mock_term, "select_window"),
+                patch.object(_mock_term, "tmux_command", return_value=""),
+                patch.object(
+                    sockets, "get_session", side_effect=_vanishing_session
+                ),
+            ):
+                mock_sess = _mock_terminal()
+                MockTS.return_value = mock_sess
+
+                async def fake_output():
+                    return
+                    yield
+
+                mock_sess.output = fake_output
+                await conn.handle_join_shared_terminal(
+                    {"user_id": owner["id"], "window_id": "@0"}
+                )
+                await asyncio.sleep(0)
+            started = [
+                c[0][0]
+                for c in sock.send_json.call_args_list
+                if c[0][0].get("type") == "terminal_started"
+            ]
+            assert len(started) == 1
+            broadcast.assert_not_called()
+        finally:
+            sockets.sessions.pop("ws-nosess", None)
+            registry.states.pop("ws-nosess", None)
+
+    async def test_mark_shared_unknown_window_still_broadcasts(
+        self, app_state
+    ):
+        # The freshly-created window id is absent from the session's list
+        # (a racing refresh): nothing is flagged, the broadcast still
+        # refreshes the view.
+        from klangk.wshandler.controllers import SharedTerminalController
+
+        app_state = _make_app_state()
+        conn, sock = self._ctrl_conn(app_state, container_id="cid")
+        ctrl = SharedTerminalController(conn)
+        broadcast = MagicMock()
+        ctrl.broadcast_shared_terminals = broadcast
+        sess = MagicMock()
+        sess.terminal_windows = {"uid": [{"id": "other", "shared": False}]}
+        with patch.object(
+            app_state.state.sockets, "get_session", return_value=sess
+        ):
+            ctrl._mark_window_shared("never-seen")
+        assert sess.terminal_windows["uid"][0]["shared"] is False
+        broadcast.assert_called_once()
+
+    async def test_refresh_user_handle_skips_other_users(self, app_state):
+        # Only the renamed user's connections update; others untouched.
+        from klangk.wshandler.helpers import refresh_user_handle
+
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        mine = _base_conn(user=None, ws=_mock_sock(), app_state=app_state)
+        mine.user["id"] = "u1"
+        mine.user["handle"] = "old"
+        other = _base_conn(user=None, ws=_mock_sock(), app_state=app_state)
+        other.user["id"] = "u2"
+        other.user["handle"] = "keepme"
+        sockets.connections[mine.sock] = mine
+        sockets.connections[other.sock] = other
+        try:
+            await refresh_user_handle(sockets, "u1", "newhandle")
+        finally:
+            sockets.connections.clear()
+        assert mine.user["handle"] == "newhandle"
+        assert other.user["handle"] == "keepme"
+
+    def test_connected_user_ids_skips_agent_subscriber(self, app_state):
+        # The agent user's subscription is real (it keeps the workspace
+        # alive) but is not a "connected user" for inactivity purposes.
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        agent_conn = _base_conn(
+            user=None, ws=_mock_sock(), app_state=app_state
+        )
+        agent_conn.user["id"] = model.AGENT_USER_ID
+        human = _base_conn(user=None, ws=_mock_sock(), app_state=app_state)
+        human.user["id"] = "u-human"
+        session = WebSocketState(app_state).get_or_create_session(
+            "ws-agent", app_state
+        )
+        session.subscribers.add(agent_conn.sock)
+        session.subscribers.add(human.sock)
+        sockets.connections[agent_conn.sock] = agent_conn
+        sockets.connections[human.sock] = human
+        try:
+            assert session._connected_user_ids(sockets) == {"u-human"}
+        finally:
+            sockets.connections.clear()
+            sockets.sessions.pop("ws-agent", None)
+
+    def test_send_windows_to_user_skips_other_subscribers(self, app_state):
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        mine = _base_conn(user=None, ws=_mock_sock(), app_state=app_state)
+        mine.user["id"] = "u1"
+        other_sock = _mock_sock()
+        session = WebSocketState(app_state).get_or_create_session(
+            "ws-win", app_state
+        )
+        session.subscribers.add(mine.sock)
+        session.subscribers.add(other_sock)
+        sockets.connections[mine.sock] = mine
+        try:
+            session._send_windows_to_user(sockets, "u1", [{"id": "w"}])
+        finally:
+            sockets.connections.clear()
+            sockets.sessions.pop("ws-win", None)
+        assert mine.sock.send_json.called
+        other_sock.send_json.assert_not_called()
+
+    async def test_clear_cancels_only_undone_browser_requests(self, app_state):
+        # A browser-delegate future that already resolved is left alone;
+        # the open one is cancelled by the state clear.
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        loop = asyncio.get_running_loop()
+        done = loop.create_future()
+        done.set_result({"type": "reply"})
+        open_fut = loop.create_future()
+        sockets.pending_browser_requests["a"] = (done, _mock_sock())
+        sockets.pending_browser_requests["b"] = (open_fut, _mock_sock())
+        await sockets.disconnect_all()
+        assert done.done() and done.exception() is None
+        assert open_fut.cancelled()
+
+    async def test_browser_reply_done_future_skips_set(self, app_state):
+        # A reply racing the request's own timeout: the future is already
+        # done, the late frame is dropped without raising.
+        app_state = _make_app_state()
+        sockets = app_state.state.sockets
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        fut.set_result({"type": "first"})
+        sock = _mock_sock()
+        sockets.pending_browser_requests["rid"] = (fut, sock)
+        sockets.handle_browser_response({"type": "reply", "id": "rid"}, sock)
+        assert fut.result()["type"] == "first"  # not clobbered

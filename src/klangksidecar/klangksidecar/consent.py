@@ -212,7 +212,10 @@ class SidecarConsentClient:
             # there.)
             if decision == "allowed":
                 allowlist._drop_session_hosts(host)
-            elif decision == "denied":
+            # The outer guard already restricted decision to allowed/denied,
+            # so exactly one of these branches runs -- the elif's false arc
+            # (neither) is unreachable.
+            elif decision == "denied":  # pragma: no branch
                 # Clear the host-scoped deny memory (#2446) BEFORE drop_for_host
                 # forks iptables, so a SYN arriving during that window re-prompts
                 # instead of staying auto-denied (mirror of the allow revoke).
@@ -377,7 +380,9 @@ async def _activity_sampler(client, get_bytes, interval: float) -> None:
     """
     loop = asyncio.get_running_loop()
     _, prev = await loop.run_in_executor(None, _activity_delta, get_bytes, 0)
-    while True:
+    # Runs for the sidecar's lifetime; cancelled at shutdown, never exits by
+    # falling through the condition (the arc to loop exit is unreachable).
+    while True:  # pragma: no branch
         await asyncio.sleep(interval)
         try:
             bumped, prev = await loop.run_in_executor(

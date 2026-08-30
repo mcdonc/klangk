@@ -1033,3 +1033,77 @@ class TestMacosMeasure:
         # The fraction wrapper still agrees.
         fraction = await macos_available_fraction(runner=fake_runner)
         assert fraction == pytest.approx(0.3)
+
+
+class TestAdmissionBranchGaps2834:
+    """#2834 branch gate: the Default-machine skip, the explicit clock,
+    and the first-unmeasurable warning."""
+
+    async def test_default_machine_without_memory_skipped(self):
+        # A Default machine whose Memory is unparseable is skipped in
+        # favor of a later Default machine with a usable value.
+        async def runner(*cmd):
+            return [
+                {"Default": True},  # no Memory key -> memory_of -> None
+                _machine(default=True),
+            ]
+
+        assert await podman_machine_memory_bytes(runner=runner) == 2 * GIB
+
+    async def test_explicit_clock_is_used(self):
+        # The _now injection point (tests pass their own monotonic clock)
+        # is honored rather than defaulting to time.monotonic.
+        async def runner(*cmd):
+            return [_machine(default=True)]
+
+        calls = []
+
+        def _now():
+            calls.append(True)
+            return 0.0
+
+        assert await podman_machine_memory_bytes(runner=runner, _now=_now)
+        assert calls
+
+    async def test_first_unmeasurable_warns_once(self, app_state, caplog):
+        # The FIRST measurement failure logs the degraded-mode warning
+        # (subsequent ones are silenced -- the already-tested path).
+        control = AdmissionControl(app_state)
+        app_state.state.settings.admission_memory_enabled = True
+        control._warned_unmeasurable = False
+        with patch.object(
+            admission_mod,
+            "available_memory_bytes",
+            new=AsyncMock(side_effect=OSError("no sysfs")),
+        ):
+            with caplog.at_level("WARNING"):
+                # A concrete limit so the measurement is actually reached.
+                await control.check_host_memory(
+                    "ws-x", {"settings": {"container_memory_limit": "1g"}}
+                )
+        assert any(
+            "cannot measure host memory" in r.message for r in caplog.records
+        )
+
+
+class TestAdmissionBranchGaps2834b:
+    async def test_already_warned_unmeasurable_stays_silent(
+        self, app_state, caplog
+    ):
+        # The SECOND measurement failure (flag already set) logs nothing:
+        # one warning per degraded episode, not per start.
+        control = AdmissionControl(app_state)
+        app_state.state.settings.admission_memory_enabled = True
+        control._warned_unmeasurable = True
+        with patch.object(
+            admission_mod,
+            "available_memory_bytes",
+            new=AsyncMock(side_effect=OSError("no sysfs")),
+        ):
+            with caplog.at_level("WARNING"):
+                await control.check_host_memory(
+                    "ws-x", {"settings": {"container_memory_limit": "1g"}}
+                )
+        assert not any(
+            "cannot measure host memory" in r.message for r in caplog.records
+        )

@@ -3299,3 +3299,221 @@ class TestPopupShowOffLoop:
             assert app.controller.pending == {}
             await app._popup_show_worker()
             assert len(attempts) == 1  # shown False, but nothing pending
+
+
+class TestBranchGaps2834:
+    """#2834 branch gate: decider view/controller guard outcomes."""
+
+    def test_apply_resolved_non_string_id_skips_pop(self):
+        from klangk.cli.tui.consent import ConsentDeciderController
+
+        c = ConsentDeciderController()
+        c.pending["r1"] = object()
+        status, _payload = c._apply_resolved({"request_id": 42})
+        assert status == "resolved"
+        assert "r1" in c.pending  # non-string id: nothing popped
+
+    async def test_pause_ack_ok_does_not_flash(self):
+        from klangk.cli.tui.consent import PAUSE_ACK
+
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            flashed = []
+            app._flash = lambda msg: flashed.append(msg)
+            refreshed = []
+            app._refresh = lambda: refreshed.append(1)
+            app._react(PAUSE_ACK, (True, 123.0))
+            assert flashed == []
+            assert refreshed == [1]
+
+    async def test_host_line_without_port(self):
+        from klangk.cli.tui.consent import ConsentRequest
+
+        req = ConsentRequest(
+            id="r1",
+            workspace_id="wsid",
+            dest_host="plain.example",
+            dest_port=None,
+            process_name=None,
+            pid=None,
+            requested_at=time.time(),
+        )
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            line = app._host_line(req)
+            assert "plain.example" in line
+
+    async def test_select_by_id_not_in_list_is_noop(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._select_by_id("never-seen")  # no crash, selection untouched
+
+    async def test_button_without_decision_prefix_ignored(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            decided = []
+            app._decide_id = lambda *a, **k: decided.append(a)
+
+            class _B:
+                id = "mystery-prefix"
+
+            import unittest.mock
+
+            event = unittest.mock.MagicMock()
+            event.button = _B()
+            app.on_button_pressed(event)
+            assert decided == []
+
+    async def test_duration_picker_submit_outside_decider_app(self):
+        # The picker's Enter when the app beneath is NOT the decider
+        # (nested in the main TUI): nothing decided, just dismissed.
+        import unittest.mock as um
+
+        from textual.app import App as TextualApp
+
+        from klangk.cli.tui.consent import (
+            DURATION_DEFAULT,
+            SELECTABLE_DURATIONS,
+            DurationPickerScreen,
+        )
+
+        class _OtherApp(TextualApp):
+            pass
+
+        decided = []
+        app = _OtherApp()
+        picker = DurationPickerScreen("r1", "allow", "evil.example")
+        with um.patch.object(
+            DurationPickerScreen,
+            "_decide_id",
+            lambda self, *a: decided.append(a),
+            create=True,
+        ):
+            async with app.run_test() as pilot:
+                app.push_screen(picker)
+                await pilot.pause()
+                event = um.MagicMock()
+                event.option_index = SELECTABLE_DURATIONS.index(
+                    DURATION_DEFAULT
+                )
+                picker.on_option_list_option_selected(event)
+                await pilot.pause()
+        assert decided == []
+
+    async def test_rule_highlight_loop_exhaust_is_noop(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            from klangk.cli.tui.consent import RulesScreen
+
+            rules_screen = RulesScreen()
+            app.push_screen(rules_screen)
+            await pilot.pause()
+            event = types.SimpleNamespace(
+                item=types.SimpleNamespace(rule_id="ghost"),
+                list_view=rules_screen.query_one("#rules-list"),
+            )
+            rules_screen.on_list_view_highlighted(
+                event
+            )  # not in children: no-op
+
+    async def test_rebuild_rule_list_none_rules_clears(self):
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            from klangk.cli.tui.consent import RulesScreen
+
+            rules_screen = RulesScreen()
+            app.push_screen(rules_screen)
+            await pilot.pause()
+            rules_screen._rebuild_rule_list(None)
+            await pilot.pause()
+            assert list(rules_screen.query_one("#rules-list").children) == []
+
+    def test_rule_item_without_port(self):
+        from klangk.cli.tui.consent import ConsentRule
+
+        rule = ConsentRule(
+            id="a1",
+            dest_host="plain.example",
+            dest_port=None,
+            process_name=None,
+            decision="allowed",
+            duration="5m",
+            decided_at=2.0,
+            decided_by="u@x",
+        )
+        from klangk.cli.tui.consent import RulesScreen
+
+        from textual.widgets import ListItem
+
+        item = RulesScreen._rule_item(rule, "allowed")
+        assert isinstance(item, ListItem)
+
+    def test_rule_line_without_port(self):
+        from klangk.cli.tui.consent import (
+            ConsentDeciderController,
+            ConsentRule,
+            RulesScreen,
+        )
+
+        rule = ConsentRule(
+            id="a1",
+            dest_host="plain.example",
+            dest_port=None,
+            process_name=None,
+            decision="allowed",
+            duration="5m",
+            decided_at=2.0,
+            decided_by="u@x",
+        )
+        controller = ConsentDeciderController()
+        line = RulesScreen._rule_line(rule, controller, deny=False)
+        assert "plain.example" in line
+
+
+class TestFinalBranchGaps2834:
+    async def test_rebuild_rules_to_empty_skips_focus_clamp(self):
+        # A rules frame that fails to parse clears the list without
+        # rebuilding rows (rules is None -> the 1731 arm), and the
+        # deferred focus-restore then finds no children, skipping the
+        # index clamp (the 1749 arm) instead of crashing or jumping.
+        # Driven against a stub list view so the clear()'s child removal
+        # and the deferred callback are synchronous, not scheduler-bound
+        # (textual schedules both, which is flaky under xdist load).
+        from klangk.cli.tui.consent import RulesScreen
+
+        class _StubLV:
+            def __init__(self):
+                self.children = [
+                    types.SimpleNamespace(rule_id="a1"),
+                    types.SimpleNamespace(rule_id="a2"),
+                ]
+                self.index = 1
+                self.highlighted_child = self.children[1]
+                self.captured = []
+
+            def clear(self):
+                self.children = []
+
+            def call_after_refresh(self, cb):
+                self.captured.append(cb)
+
+        app = _make_app()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = RulesScreen()
+            app.push_screen(screen)
+            await pilot.pause()
+            stub = _StubLV()
+            screen.query_one = lambda selector, cls=None: stub
+            screen._rebuild_rule_list(None)
+            assert stub.children == []  # cleared, no rows rebuilt
+            assert stub.captured  # the restore was scheduled
+            for cb in stub.captured:
+                cb()  # no children: the clamp is skipped, nothing raises
+            assert stub.index == 1  # untouched by the skipped clamp

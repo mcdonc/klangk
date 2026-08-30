@@ -150,7 +150,9 @@ class LoginScreen(SpatialNavScreen, StatusScreen):
         # Autofocus the first server entry (#1826).
         if lv.query(ListItem):
             lv.focus()
-            if lv.index is None:
+            # clear() above resets the index, so this is defensive against
+            # a textual version that preserves it across repopulation.
+            if lv.index is None:  # pragma: no branch
                 lv.index = 0
 
     @staticmethod

@@ -3,8 +3,11 @@
 import os
 import sys
 
-# Must be set before coverage.py initialises in each xdist worker so that
-# code executed inside SQLAlchemy's greenlet context is tracked.
+# Must be set before coverage.py initialises in each xdist worker. The
+# sysmon core measures branches on Python 3.14 (sys.monitoring gained
+# BRANCH_LEFT/RIGHT) and tracks greenlet-executed code natively
+# (#456/#1393) — and runs the branch gate ~40% faster than the C tracer.
+# No ``concurrency`` option anywhere: sysmon does not support it.
 os.environ.setdefault("COVERAGE_CORE", "sysmon")
 
 import types

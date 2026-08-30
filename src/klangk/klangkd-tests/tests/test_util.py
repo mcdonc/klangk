@@ -1107,3 +1107,11 @@ class TestBridgeIdleTimeout:
         u = _util({"KLANGKD_BRIDGE_TIMEOUT_SECONDS": "60"})
         ws = {"settings": {"idle_timeout": 300}}
         assert u.bridge_idle_timeout_for(ws) == 60.0
+
+
+class TestPeerTrustedBranchGaps2834:
+    def test_unlisted_ip_iterates_every_network(self):
+        # The CIDR loop-continue arm: an IP matching NO network walks
+        # them all (no short-circuit) and returns False.
+        u = _util({"KLANGKD_TRUSTED_PROXY_CIDRS": "10.0.0.0/8, 172.16.0.0/12"})
+        assert u.peer_trusted("203.0.113.9") is False

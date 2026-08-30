@@ -452,3 +452,36 @@ class TestExecSession:
             await session.start(["echo"])
         cmd = mock_exec.call_args[0]
         assert "SSH_AUTH_SOCK=/tmp/agent.sock" in cmd
+
+
+class TestExecOutputBranchGaps2834:
+    async def test_output_exits_via_running_flag_after_yield(self):
+        """#2834: the generator's while-condition exit -- data arrives
+        after _running was cleared, is yielded once, then the loop
+        re-checks the flag and exits (not via the timeout break)."""
+        session = ExecSession("cid", _podman)
+        proc = _mock_proc(b"data")
+        with patch(
+            "asyncio.create_subprocess_exec",
+            return_value=proc,
+        ):
+            await session.start(["echo", "data"])
+        await asyncio.sleep(0.1)
+        while not session._output_queue.empty():
+            session._output_queue.get_nowait()
+
+        session._running = True
+
+        async def _consume():
+            collected = []
+            async for data in session.output():
+                collected.append(data)
+            return collected
+
+        task = asyncio.create_task(_consume())
+        await asyncio.sleep(0.05)
+        session._running = False
+        session._output_queue.put_nowait(b"tail")
+        result = await asyncio.wait_for(task, timeout=3.0)
+        assert result == [b"tail"]
+        await session.stop()

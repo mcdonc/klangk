@@ -1686,3 +1686,30 @@ class TestRecordActivity:
         await a.refresh_token(token)
         row = await a.app.state.model.users.get_user_by_id(user["id"])
         assert row["last_activity_at"] is not None
+
+
+class TestRefreshBranchGaps2834:
+    """#2834 branch gate: the expired-token path without a jti claim."""
+
+    async def test_refresh_expired_token_without_jti_returns_401(
+        self, db, app_state
+    ):
+        # A hand-forged expired token with no jti: there is nothing to look
+        # up, so the refresh fails with the plain 401 (not a KeyError).
+        await app_state.state.model.users.create_user(
+            "a@b.com", auth.hash_password("pw"), verified=True
+        )
+        user = await app_state.state.model.users.get_user_by_email("a@b.com")
+        expired = jwt.encode(
+            {
+                "sub": user["id"],
+                "email": user["email"],
+                "exp": datetime.now(timezone.utc) - timedelta(hours=1),
+            },
+            _auth().secret,
+            algorithm=_auth().algorithm,
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await _auth().refresh_token(expired)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Token expired"

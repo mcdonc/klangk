@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import types
+import pytest
 from unittest.mock import AsyncMock
 
 from klangk import consent
@@ -151,3 +152,57 @@ class TestEgressConsentSweeper:
         app2 = _app()
         sw.reconfigure(app2)
         assert sw.app is app2
+
+
+class TestEgressSweeperBranchGaps2834:
+    """#2834 branch gate: a retention tick that wakes BEFORE the interval
+    (scheduler jitter) re-sleeps without sweeping."""
+
+    async def test_early_wake_resleeps_without_pruning(self, monkeypatch):
+        import klangk.interval as iv
+
+        app = _app()
+        sw = consent.EgressConsentSweeper(app)
+        real_sweep = sw.sweep
+        swept = []
+
+        async def counting_sweep():
+            swept.append(1)
+            await real_sweep()
+
+        monkeypatch.setattr(sw, "sweep", counting_sweep)
+
+        # Freeze the clock and no-op the sleep, both scoped to the
+        # IntervalWorker module's namespace (a global asyncio patch would
+        # leak into same-worker neighbors under xdist).
+        clock = types.SimpleNamespace(t=1000.0)
+        monkeypatch.setattr(
+            iv, "time", types.SimpleNamespace(monotonic=lambda: clock.t)
+        )
+        sleeps = {"n": 0}
+
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(_s):
+            sleeps["n"] += 1
+            if sleeps["n"] >= 3:
+                sw._task.cancel()
+            await real_sleep(0)  # yield: the awaiting test interleaves
+
+        # Delegate everything to the real asyncio except sleep, scoped
+        # to the IntervalWorker module's namespace only.
+        stub = types.SimpleNamespace(
+            **{
+                n: getattr(asyncio, n)
+                for n in dir(asyncio)
+                if not n.startswith("__")
+            }
+        )
+        stub.sleep = fake_sleep
+        monkeypatch.setattr(iv, "asyncio", stub)
+        sw.start()
+        with pytest.raises(asyncio.CancelledError):
+            await sw._task
+        # Swept once at startup; the frozen clock makes every later tick
+        # an early wake (the not-yet arm), so no second prune ran.
+        app.state.model.egress_consent.prune.assert_awaited_once()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import types
+import pytest
 from unittest.mock import AsyncMock
 
 from klangk import inactivity
@@ -157,3 +158,53 @@ class TestInactivitySweeper:
 
 def await_count(mock) -> int:
     return mock.await_count if hasattr(mock, "await_count") else 0
+
+
+class TestInactivityBranchGaps2834:
+    """#2834 branch gate: a loop tick that wakes BEFORE the sweep interval
+    (scheduler jitter) re-sleeps without sweeping."""
+
+    async def test_early_wake_resleeps_without_sweeping(self, monkeypatch):
+        import klangk.interval as iv
+
+        app = _app(disable_inactive=AsyncMock(return_value=[]))
+        sw = inactivity.InactivitySweeper(app)
+        real_sweep = sw.sweep
+        swept = []
+
+        async def counting_sweep():
+            swept.append(1)
+            await real_sweep()
+
+        monkeypatch.setattr(sw, "sweep", counting_sweep)
+        clock = types.SimpleNamespace(t=1000.0)
+        monkeypatch.setattr(
+            iv, "time", types.SimpleNamespace(monotonic=lambda: clock.t)
+        )
+        sleeps = {"n": 0}
+
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(_s):
+            sleeps["n"] += 1
+            if sleeps["n"] >= 3:
+                sw._task.cancel()
+            await real_sleep(0)  # yield: the awaiting test interleaves
+
+        # Delegate everything to the real asyncio except sleep, scoped
+        # to the IntervalWorker module's namespace only.
+        stub = types.SimpleNamespace(
+            **{
+                n: getattr(asyncio, n)
+                for n in dir(asyncio)
+                if not n.startswith("__")
+            }
+        )
+        stub.sleep = fake_sleep
+        monkeypatch.setattr(iv, "asyncio", stub)
+        sw.start()
+        with pytest.raises(asyncio.CancelledError):
+            await sw._task
+        # The startup sweep ran once; the frozen clock makes every later
+        # tick an early wake, so the users sweep saw one pass only.
+        assert app.state.model.users.disable_inactive_users.await_count == 1

@@ -356,7 +356,10 @@ class KlangkApp(App):
         if target not in self.screen_stack:
             return False
         to_remove: list[Screen] = []
-        for screen in reversed(self.screen_stack):
+        # The membership guard above means the reversed walk always hits
+        # target (identity compare), so the loop can never exhaust: the
+        # arc to the pop loop without a break is unreachable.
+        for screen in reversed(self.screen_stack):  # pragma: no branch
             if screen is target:
                 break
             to_remove.append(screen)
@@ -386,7 +389,10 @@ class KlangkApp(App):
             # base and push a fresh MainScreen — pushing on top of the
             # current stack would strand the login screen underneath it and
             # corrupt the next logout (#2034).
-            if self.screen_stack:
+            # Textual keeps >=1 screen mounted; an empty stack here is
+            # the defensive teardown-race case (#2034), not a state a
+            # running app reaches.
+            if self.screen_stack:  # pragma: no branch
                 self._pop_above(self.screen_stack[0])
             self.push_screen(MainScreen())
             return
@@ -420,7 +426,7 @@ class KlangkApp(App):
         # ``target not in stack`` early return in ``_pop_above`` is what
         # prevents the ScreenStackError the old pop-until-MainScreen loop hit
         # when MainScreen wasn't in the stack (#2034).
-        if self.screen_stack:
+        if self.screen_stack:  # pragma: no branch
             self._pop_above(self.screen_stack[0])
         self.push_screen(LoginScreen())
 
@@ -477,7 +483,7 @@ class KlangkApp(App):
                 # ``_pop_above`` pops a fixed snapshot, so the teardown is
                 # bounded regardless of what a concurrent worker does between
                 # this call and the push (#2034).
-                if self.screen_stack:
+                if self.screen_stack:  # pragma: no branch
                     self._pop_above(self.screen_stack[0])
                 self.live_extra = ""
                 self.last_login = None

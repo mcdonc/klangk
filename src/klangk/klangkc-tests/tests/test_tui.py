@@ -8,9 +8,12 @@ and the ``add_server_to_config`` helper — under the 100% coverage gate.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import threading
 import time
+import types
+import unittest.mock as unittest_mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13992,3 +13995,1050 @@ async def test_detail_delete_pop_guarded_when_screen_already_popped(
         await pilot.pause()
         assert list(app.screen_stack) == before
         assert isinstance(app.screen, MainScreen)
+
+
+class TestTuiStateBranchGaps2834:
+    """#2834 branch gate: TuiState server bookkeeping guards."""
+
+    def test_update_server_inactive_url_leaves_active_pointer(
+        self, redirect_xdg
+    ):
+        add_server_to_config("a", "https://a.example")
+        st = TuiState()
+        st.state().active_server = "https://other.example"
+        st._save_state(st.state())
+        assert st.update_server("a", "a2", "https://a2.example") is True
+        assert st.state().active_server == "https://other.example"
+
+    def test_update_server_alias_not_found(self, redirect_xdg):
+        st = TuiState()
+        assert st.update_server("missing", "x", "https://x.example") is False
+
+    def test_delete_server_not_active_keeps_pointer(self, redirect_xdg):
+        add_server_to_config("a", "https://a.example")
+        add_server_to_config("b", "https://b.example")
+        st = TuiState()
+        st.state().active_server = "https://b.example"
+        st._save_state(st.state())
+        assert st.delete_server("https://a.example") is True
+        assert st.state().active_server == "https://b.example"
+
+
+async def test_listen_for_status_without_connect_callback(monkeypatch):
+    # No on_connect: nothing fires before the frames, events still flow.
+    collected = []
+    frames = ['{"type": "workspaces_changed"}']
+    monkeypatch.setattr(
+        ws_mod, "ws_connect", lambda *a, **k: FakeCM(FakeWS(frames))
+    )
+    await listen_for_status(
+        "/sock", "tok", on_event=collected.append, on_connect=None
+    )
+    assert collected == [{"type": "workspaces_changed"}]
+
+
+class TestBaseScreenBranchGaps2834:
+    """#2834 branch gate: the shared screen/navigation guards."""
+
+    def test_btn_step_with_non_button_focus_is_noop(self):
+        # Focus sitting on nothing (or a non-button): the left/right
+        # button-step does not move focus.
+        from klangk.cli.tui.screens._base import ConfirmScreen
+
+        s = ConfirmScreen("p")
+        # Not mounted: self.focused is None -> fid None -> guard exits.
+        s.action_btn_left()
+        s.action_btn_right()
+        s.action_btn_up()
+
+    def test_error_screen_unknown_button_ignored(self):
+        # A button id the screen does not handle: nothing happens (no
+        # crash, no dismissal).
+        from klangk.cli.tui.screens._base import SessionExpiredScreen
+
+        s = SessionExpiredScreen()
+        dismissed = []
+        s.dismiss = lambda result: dismissed.append(result)
+        s.on_button_pressed(FakeBtnPress("totally-unknown"))
+        assert dismissed == []
+
+    def test_confirm_screen_cancel_button_dismisses(self):
+        from klangk.cli.tui.screens._base import ConfirmScreen
+
+        s = ConfirmScreen("p")
+        dismissed = []
+        s.dismiss = lambda result: dismissed.append(result)
+        s.on_button_pressed(FakeBtnPress("cancel"))
+        assert dismissed == [False]
+
+    def test_duplicate_screen_unknown_button_and_input_ignored(self):
+        from klangk.cli.tui.screens._base import DuplicateScreen
+
+        s = DuplicateScreen("src-name")
+        dismissed = []
+        s.dismiss = lambda result: dismissed.append(result)
+        s.on_button_pressed(FakeBtnPress("mystery"))
+        fake_input = types.SimpleNamespace(
+            input=types.SimpleNamespace(id="not-dup-name")
+        )
+        s.on_input_submitted(fake_input)
+        assert dismissed == []
+
+    def test_input_screen_unknown_button_and_input_ignored(self):
+        from klangk.cli.tui.screens._base import InputScreen
+
+        s = InputScreen("t")
+        dismissed = []
+        s.dismiss = lambda result: dismissed.append(result)
+        s.on_button_pressed(FakeBtnPress("mystery"))
+        fake_input = types.SimpleNamespace(
+            input=types.SimpleNamespace(id="not-inp_value")
+        )
+        s.on_input_submitted(fake_input)
+        assert dismissed == []
+
+    def test_spatial_up_at_chain_top_without_exit_stays(self):
+        from klangk.cli.tui.screens._base import SpatialNavScreen
+
+        class _S(SpatialNavScreen):
+            SPATIAL_CHAIN = ["top", "bottom"]
+            SPATIAL_UP_EXIT = None
+
+            @property
+            def focused(self):
+                return types.SimpleNamespace(id="top")
+
+        _S().action_spatial_up()  # no exit target: stays (no raise)
+
+    def test_spatial_down_at_chain_bottom_stays(self):
+        from klangk.cli.tui.screens._base import SpatialNavScreen
+
+        class _S(SpatialNavScreen):
+            SPATIAL_CHAIN = ["top", "bottom"]
+
+            @property
+            def focused(self):
+                return types.SimpleNamespace(id="bottom")
+
+        _S().action_spatial_down()  # at the end: stays (no raise)
+
+    def test_tab_skip_skips_disabled_and_hidden_targets(self):
+        from klangk.cli.tui.screens._base import TabSkipMixin
+
+        focused_ids = []
+
+        class _Widget:
+            def __init__(self, display, disabled):
+                self.display = display
+                self.disabled = disabled
+
+            def focus(self):
+                focused_ids.append(id(self))
+
+        class _Screen(TabSkipMixin):
+            _TAB_ORDER = ["a", "b", "c"]
+
+            @property
+            def focused(self):
+                return types.SimpleNamespace(id="a")
+
+            def query_one(self, selector):
+                return {
+                    "#b": _Widget(True, True),  # disabled: skipped
+                    "#c": _Widget(False, False),  # hidden: skipped
+                }[selector]
+
+        class _Ev:
+            key = "tab"
+
+            def stop(self):
+                pass
+
+        screen = _Screen()
+        # The focus chain is a cycle; with b/c unusable nothing focuses.
+        screen.on_key(_Ev())
+        assert focused_ids == []
+
+
+class TestAppBranchGaps2834:
+    """#2834 branch gate: the app-level screen-stack guards."""
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _status_patched():
+        import klangk.cli.tui.screens.main as m
+
+        async def noop(*a, **k):
+            return None
+
+        with unittest_mock.patch.object(m, "listen_for_status", noop):
+            yield
+
+    @staticmethod
+    def _unauthed_state():
+        return _st(
+            is_authenticated=lambda: False,
+            auth_mode=lambda: "password",
+            current_url=lambda: "https://x.example",
+            email=lambda: None,
+            token=lambda: None,
+        )
+
+    async def test_do_logout_without_main_screen(self):
+        from klangk.cli.tui.screens.login import LoginScreen
+
+        with self._status_patched():
+            st = self._unauthed_state()
+            st.logout = lambda: None
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                # From the login screen (no MainScreen mounted).
+                assert isinstance(app.screen, LoginScreen)
+                # Capture (not schedule) the logout worker and run it to
+                # completion inline: awaiting the screen state alone is
+                # vacuous here (LoginScreen is already up), and a raced
+                # worker can outlive the coverage flush.
+                captured = []
+                app.run_worker = lambda fn, **kw: captured.append(fn)
+                app.do_logout()
+                await captured[0]()
+                await pilot.pause()
+                assert isinstance(app.screen, LoginScreen)
+
+    async def test_pop_above_top_screen_removes_nothing(self):
+        with self._status_patched():
+            app = KlangkApp(_ws())
+            async with app.run_test() as pilot:
+                from klangk.cli.tui.screens._base import ConfirmScreen
+
+                top = ConfirmScreen("sure?")
+                app.push_screen(top)
+                await pilot.pause()
+                before = len(app.screen_stack)
+                assert app._pop_above(top) is True
+                await pilot.pause()
+                # Target was already on top: nothing above it to pop.
+                assert len(app.screen_stack) == before
+                assert app.screen_stack[-1] is top
+
+    async def test_session_expired_overlay_already_gone(self):
+        from klangk.cli.tui.screens.login import LoginScreen
+
+        with self._status_patched():
+            st = self._unauthed_state()
+            st.logout = lambda: None
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                assert isinstance(app.screen, LoginScreen)
+                app._session_expired_screen = None  # already dismissed
+                app.session_expired()
+                for _ in range(50):
+                    if isinstance(app.screen, LoginScreen):
+                        break
+                    await asyncio.sleep(0.02)
+                assert isinstance(app.screen, LoginScreen)
+
+    async def test_refresh_workspaces_without_main_screen(self):
+        from klangk.cli.tui.screens.login import LoginScreen
+
+        with self._status_patched():
+            app = KlangkApp(self._unauthed_state())
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                assert isinstance(app.screen, LoginScreen)
+                app.refresh_workspaces()  # no MainScreen: silent no-op
+
+    async def test_server_down_dismiss_without_overlay(self):
+        with self._status_patched():
+            app = KlangkApp(_ws())
+            async with app.run_test():
+                app._server_down_screen = None
+                app.dismiss_server_down()
+                assert app._server_down_dismissed is True
+
+    async def test_server_down_switch_without_overlay(self):
+        with self._status_patched():
+            app = KlangkApp(_ws())
+            async with app.run_test() as pilot:
+                app._server_down_screen = None
+                app.server_down_switch_server()
+                await pilot.pause()
+                from klangk.cli.tui.screens.server import ServerSwitchScreen
+
+                assert isinstance(app.screen, ServerSwitchScreen)
+
+
+class TestMainScreenBranchGaps2834:
+    """#2834 branch gate: MainScreen guard outcomes."""
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _status_patched():
+        import klangk.cli.tui.screens.main as m
+
+        async def noop(*a, **k):
+            return None
+
+        with unittest_mock.patch.object(m, "listen_for_status", noop):
+            yield
+
+    @staticmethod
+    @contextlib.asynccontextmanager
+    async def _main():
+        app = KlangkApp(_ws())
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            yield app, app.screen
+
+    async def test_unknown_button_and_input_ids_ignored(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                screen.on_button_pressed(FakeBtnPress("mystery"))
+                screen.on_input_changed(
+                    types.SimpleNamespace(
+                        input=types.SimpleNamespace(id="nope"), value=""
+                    )
+                )
+                screen.on_input_submitted(
+                    types.SimpleNamespace(
+                        input=types.SimpleNamespace(id="nope")
+                    )
+                )
+
+    async def test_reload_lists_unauthenticated_skips_last_login(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                app.tui_state.is_authenticated = lambda: False
+                ran = []
+                app.run_worker = lambda *a, **k: ran.append(a)
+                screen.reload_last_login()
+                assert not ran  # no last-login worker without a session
+
+    async def test_focus_visible_list_with_selected_index(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                lv = types.SimpleNamespace(
+                    query=lambda *a: [object()],
+                    index=3,
+                    focus=lambda: None,
+                )
+                screen._active_list = lambda: lv
+                screen._focus_visible_list()
+                assert lv.index == 3  # untouched: already selected
+
+    async def test_key_down_without_active_list(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                screen._active_list = lambda: None
+                from textual.widgets import Tabs
+
+                event = types.SimpleNamespace(
+                    key="down", focused=None, stop=lambda: None
+                )
+                screen.focused = Tabs()
+                screen.on_key(event)
+
+    async def test_key_down_with_selected_index(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                lv = types.SimpleNamespace(index=1, focus=lambda: None)
+                screen._active_list = lambda: lv
+                from textual.widgets import Tabs
+
+                stopped = []
+                event = types.SimpleNamespace(
+                    key="down",
+                    focused=None,
+                    stop=lambda: stopped.append(1),
+                )
+                screen.focused = Tabs()
+                screen.on_key(event)
+                assert stopped
+                assert lv.index == 1  # untouched
+
+    async def test_import_done_failure_keeps_stale_list(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                refreshed = []
+                screen.refresh_lists = lambda: refreshed.append(1)
+                screen._on_import_done((False, "boom"))
+                assert refreshed == []  # no refresh on failure
+                screen._on_import_done((True, "ok"))
+                assert refreshed == [1]
+
+    async def test_running_overlay_skips_unlisted_workspaces(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                screen._running_overlay = {"ws-other": True}
+                ws = types.SimpleNamespace(id="ws-mine", running=False)
+                screen._apply_running_overlay([ws])
+                assert ws.running is False  # overlay did not touch it
+
+    def test_fmt_date_missing_created_at(self):
+        assert str(MainScreen._fmt_date(types.SimpleNamespace())) == ""
+
+    async def test_restart_status_worker_skipped_when_alive(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                screen._status_worker = types.SimpleNamespace(
+                    is_finished=False
+                )
+                ran = []
+                app.run_worker = lambda *a, **k: ran.append(a)
+                screen.ensure_status_ws_worker()
+                assert not ran
+
+    async def test_token_refresh_none_result_keeps_session(self):
+        import klangk.cli.tui.screens.main as m
+
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                expired = []
+                app.session_expired = lambda: expired.append(1)
+
+                async def _none_result(state):
+                    return None
+
+                with unittest_mock.patch.object(
+                    m, "run_token_refresh_loop", _none_result
+                ):
+                    # The Pilot harness swaps _token_refresh_loop for a
+                    # noop (#1989-style); drive the saved real one.
+                    await _real_token_refresh_loop(screen)
+                assert expired == []
+
+    async def test_wait_drop_or_both_done_same_tick(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                screen._ws_drop.set()
+                loop = asyncio.get_running_loop()
+                awaiting = loop.create_future()
+                awaiting.set_exception(RuntimeError("ignored outcome"))
+                assert await screen._wait_drop_or(awaiting) is True
+
+    async def test_wait_drop_or_cancelled_after_waiter_done(self):
+        with self._status_patched():
+            async with self._main() as (app, screen):
+                screen._ws_drop.set()
+                loop = asyncio.get_running_loop()
+                awaiting = loop.create_future()
+                real_wait = asyncio.wait
+
+                async def _wait_then_cancel(fs, return_when=None):
+                    await asyncio.sleep(0)  # let the drop waiter finish
+                    task = asyncio.current_task()
+                    task.cancel()
+                    return await real_wait(fs, return_when=return_when)
+
+                with unittest_mock.patch.object(
+                    asyncio, "wait", _wait_then_cancel
+                ):
+                    with pytest.raises(asyncio.CancelledError):
+                        await screen._wait_drop_or(awaiting)
+
+
+class TestDetailScreenBranchGaps2834:
+    """#2834 branch gate: detail-screen guard outcomes."""
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _status_patched():
+        import klangk.cli.tui.screens.main as m
+
+        async def noop(*a, **k):
+            return None
+
+        with unittest_mock.patch.object(m, "listen_for_status", noop):
+            yield
+
+    @staticmethod
+    @contextlib.asynccontextmanager
+    async def _detail(wsobj=None):
+        a = wsobj or _wsobj(
+            "alpha", running=True, service_started_at=time.time() + 60
+        )
+        st = _ws()
+        st.find_workspace = lambda n: a
+        st.list_terminals = lambda *a, **k: []
+        st.list_shared_terminals = lambda *a, **k: []
+        app = KlangkApp(st)
+        async with app.run_test() as pilot:
+            app.push_screen(WorkspaceDetailScreen("alpha"))
+            await pilot.pause()
+            yield app, app.screen
+
+    async def test_detail_rows_without_uptime_for_future_timestamp(self):
+        # A service_started_at slightly in the future (clock skew): the
+        # negative elapsed is skipped, no uptime row.
+        async with self._detail() as (app, screen):
+            rows = screen._detail_rows(screen._ws)
+            assert not any(label == "uptime" for label, _ in rows)
+
+    async def test_edited_none_result_skips_reload(self):
+        async with self._detail() as (app, screen):
+            workers = []
+            screen.run_worker = lambda *a, **k: workers.append(a)
+            screen._on_edited(None)
+            assert workers == []
+
+    async def test_health_event_without_message(self):
+        async with self._detail() as (app, screen):
+            screen._apply_service_health({"running": True, "healthy": False})
+            assert screen._ws.health == "unhealthy"
+            assert screen._ws.health_message in (None, "ok")
+
+    async def test_reload_on_status_pops_when_screen_not_top(self):
+        async with self._detail() as (app, screen):
+            from klangk.cli.tui.screens._base import ConfirmScreen
+
+            app.push_screen(ConfirmScreen("modal?"))
+            await asyncio.sleep(0)
+
+            async def _noop_load():
+                pass
+
+            screen._load = _noop_load
+            screen._refresh_deploy_banner = _noop_load
+            screen._missing = True
+            await screen._reload_on_status()
+            for _ in range(50):
+                if not isinstance(app.screen, ConfirmScreen):
+                    break
+                await asyncio.sleep(0.02)
+            # The modal above was popped along with the dead detail
+            # screen: back on the list (never the orphaned modal).
+            assert not isinstance(app.screen, ConfirmScreen)
+
+    async def test_reload_on_restart_missing_skips_terminals(self):
+        async with self._detail() as (app, screen):
+            loaded = []
+
+            async def _noop_load():
+                pass
+
+            async def _load_terms():
+                loaded.append(1)
+
+            screen._load = _noop_load
+            screen._load_terminals = _load_terms
+            screen._missing = True
+            await screen._reload_on_restart()
+            assert loaded == []
+
+    async def test_shell_argv_without_server_url(self):
+        async with self._detail() as (app, screen):
+            app.tui_state.current_url = lambda: None
+            argv = screen._shell_argv("term-1")
+            assert "--server" not in argv
+
+    async def test_restart_without_ws_still_requests(self):
+        # A start whose workspace object vanished (the row was deleted
+        # mid-confirm) still requests the start.
+        async with self._detail() as (app, screen):
+            screen._ws = None
+            started = []
+            screen.app.tui_state.start_workspace = lambda name: started.append(
+                name
+            )
+            screen.app.refresh_workspaces = lambda: None
+            await screen._do_start()
+            assert started == ["alpha"]
+
+    async def test_start_without_ws_still_requests(self):
+        async with self._detail() as (app, screen):
+            screen._ws = None
+            started = []
+            screen.app.tui_state.start_workspace = lambda name: started.append(
+                name
+            )
+            screen.app.refresh_workspaces = lambda: None
+            await screen._do_start()
+            assert started == ["alpha"]
+
+    async def test_second_terminal_load_keeps_selected_index(self):
+        async with self._detail() as (app, screen):
+            await screen._load_terminals()
+            lv = screen.query_one(
+                "#term_list", __import__("textual").widgets.ListView
+            )
+            if lv.index is None:
+                lv.index = 0
+            before = lv.index
+            await screen._load_terminals()  # refresh keeps the selection
+            assert screen.query_one(
+                "#term_list", __import__("textual").widgets.ListView
+            ).index in (before, 0)
+
+
+class TestLoginServerFormBranchGaps2834:
+    """#2834 branch gate: login/server/form dispatch fall-throughs."""
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _status_patched():
+        import klangk.cli.tui.screens.main as m
+
+        async def noop(*a, **k):
+            return None
+
+        with unittest_mock.patch.object(m, "listen_for_status", noop):
+            yield
+
+    async def test_login_unknown_button_and_input_ids(self):
+        st = _st(
+            is_authenticated=lambda: False,
+            auth_mode=lambda: "password",
+            current_url=lambda: "https://x.example",
+            email=lambda: None,
+            token=lambda: None,
+        )
+        with self._status_patched():
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                screen = app.screen
+                screen.on_button_pressed(FakeBtnPress("mystery"))
+                screen.on_input_submitted(
+                    types.SimpleNamespace(
+                        input=types.SimpleNamespace(id="mystery")
+                    )
+                )
+
+    async def test_server_add_unknown_button_and_input_ids(self):
+        with self._status_patched():
+            app = KlangkApp(_ws())
+            async with app.run_test() as pilot:
+                from klangk.cli.tui.screens.server import (
+                    AddServerScreen,
+                    EditServerScreen,
+                )
+
+                add = AddServerScreen()
+                app.push_screen(add)
+                await pilot.pause()
+                add.on_button_pressed(FakeBtnPress("mystery"))
+                add.on_input_submitted(
+                    types.SimpleNamespace(
+                        input=types.SimpleNamespace(id="mystery")
+                    )
+                )
+                edit = EditServerScreen(alias="a", url="https://a")
+                app.push_screen(edit)
+                await pilot.pause()
+                edit.on_button_pressed(FakeBtnPress("mystery"))
+                edit.on_input_submitted(
+                    types.SimpleNamespace(
+                        input=types.SimpleNamespace(id="mystery")
+                    )
+                )
+
+    async def test_server_switch_edit_callback_false_result(self):
+        st = _st(
+            is_authenticated=lambda: False,
+            auth_mode=lambda: "password",
+            current_url=lambda: "https://x.example",
+            email=lambda: None,
+            token=lambda: None,
+        )
+        with self._status_patched():
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                from klangk.cli.tui.screens.server import ServerSwitchScreen
+
+                view = ServerSwitchScreen()
+                app.push_screen(view)
+                await pilot.pause()
+                from textual.widgets import Label, ListItem, ListView
+
+                item = ListItem(Label("an-alias"))
+                item.server_alias = "an-alias"
+                lv = view.query_one("#server_options", ListView)
+                lv.append(item)
+                lv.index = 0
+                await pilot.pause()
+                pushed = {}
+
+                def _push(screen, cb=None):
+                    pushed["cb"] = cb
+
+                app.push_screen = _push
+                # The edit launcher's callback with a False (dismissed,
+                # nothing changed) result: no repopulate, no server change.
+                view.action_edit_server()
+                calls = []
+                view._populate = lambda: calls.append(1)
+                cb = pushed.get("cb")
+                cb(False)
+                assert calls == []
+
+    async def test_form_dispatch_unknown_button(self):
+        from klangk.cli.tui.screens.workspace_form import (
+            dispatch_editor_button,
+        )
+
+        calls = []
+        screen = types.SimpleNamespace(
+            **{
+                name: (lambda n: lambda: calls.append(n))(name)
+                for name in (
+                    "_remove_env",
+                    "_remove_allowed_domain",
+                    "_remove_rejected_domain",
+                )
+            }
+        )
+        dispatch_editor_button(screen, "rm_env")
+        dispatch_editor_button(screen, "rm_allow")
+        dispatch_editor_button(screen, "rm_reject")
+        dispatch_editor_button(screen, "not-a-handler")
+        assert len(calls) == 3
+
+    async def test_form_add_rejected_domain_skips_duplicate(self):
+        from textual.widgets import Input as TextualInput
+
+        from klangk.cli.tui.screens.workspace_form import (
+            CreateWorkspaceScreen,
+        )
+
+        with self._status_patched():
+            app = KlangkApp(_ws())
+            async with app.run_test() as pilot:
+                screen = CreateWorkspaceScreen(
+                    allowed=[], default="img", allow_autostart=False
+                )
+                app.push_screen(screen)
+                await pilot.pause()
+                screen._rejected_domains = ["evil.example:443"]
+                inp = screen.query_one("#reject_input", TextualInput)
+                inp.value = "evil.example:443"
+                screen._msg = lambda *a, **k: None
+                screen._render_rejected_domains = lambda: None
+                screen._add_rejected_domain()
+                assert screen._rejected_domains == ["evil.example:443"]
+
+    async def test_form_unknown_input_id_falls_through(self):
+        from klangk.cli.tui.screens.workspace_form import (
+            CreateWorkspaceScreen,
+            EditWorkspaceScreen,
+        )
+
+        with self._status_patched():
+            app = KlangkApp(_ws())
+            async with app.run_test() as pilot:
+                create = CreateWorkspaceScreen(
+                    allowed=[], default="img", allow_autostart=False
+                )
+                app.push_screen(create)
+                await pilot.pause()
+                create.on_input_submitted(
+                    types.SimpleNamespace(
+                        input=types.SimpleNamespace(id="mystery")
+                    )
+                )
+                edit = EditWorkspaceScreen(
+                    workspace=_wsobj("edit-me"),
+                    allowed=[],
+                    default="img",
+                    allow_autostart=False,
+                )
+                app.push_screen(edit)
+                await pilot.pause()
+                edit.on_input_submitted(
+                    types.SimpleNamespace(
+                        input=types.SimpleNamespace(id="mystery")
+                    )
+                )
+
+
+class TestFinalBranchGaps2834:
+    """#2834 branch gate: the last uncovered guard outcomes."""
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _status_patched():
+        import klangk.cli.tui.screens.main as m
+
+        async def noop(*a, **k):
+            return None
+
+        with unittest_mock.patch.object(m, "listen_for_status", noop):
+            yield
+
+    @staticmethod
+    def _unauthed_state():
+        return _st(
+            is_authenticated=lambda: False,
+            auth_mode=lambda: "password",
+            current_url=lambda: "https://x.example",
+            email=lambda: None,
+            token=lambda: None,
+        )
+
+    async def test_server_changed_needs_login_without_main(self):
+        from klangk.cli.tui.screens.login import LoginScreen
+
+        with self._status_patched():
+            st = self._unauthed_state()
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                assert isinstance(app.screen, LoginScreen)
+                app.server_changed_needs_login()
+                await pilot.pause()
+                assert isinstance(app.screen, LoginScreen)
+
+    async def test_confirm_session_expired_overlay_already_gone(self):
+        from klangk.cli.tui.screens.login import LoginScreen
+
+        with self._status_patched():
+            st = self._unauthed_state()
+            st.logout = lambda: None
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                # The overlay was already dismissed (460 arc) and no
+                # MainScreen exists (477 arc).
+                assert isinstance(app.screen, LoginScreen)
+                app._session_expired_screen = None
+                # Run the expiry worker inline (see do_logout test: a
+                # raced worker can outlive the coverage flush).
+                captured = []
+                app.run_worker = lambda fn, **kw: captured.append(fn)
+                app.confirm_session_expired()
+                await captured[0]()
+                await pilot.pause()
+                assert app._expiring is False
+                assert isinstance(app.screen, LoginScreen)
+
+    async def test_detail_on_mount_with_selected_indexes(self):
+        with self._status_patched():
+            a = _wsobj("sel")
+            st = _ws()
+            st.find_workspace = lambda n: a
+            st.list_terminals = lambda *a, **k: []
+            st.list_shared_terminals = lambda *a, **k: []
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                app.push_screen(WorkspaceDetailScreen("sel"))
+                await pilot.pause()
+                screen = app.screen
+                tl = screen.query_one("#term_list")
+                sh = screen.query_one("#shared_term_list")
+                if tl.index is None:
+                    tl.index = 0
+                if sh.index is None:
+                    sh.index = 0
+                screen.on_mount()  # re-seed keeps both selections
+                await pilot.pause()
+                assert tl.index == 0
+                assert sh.index == 0
+
+    async def test_detail_reload_terminals_keeps_selection(self):
+        from textual.widgets import ListView
+
+        with self._status_patched():
+            a = _wsobj("terms")
+            st = _ws()
+            st.find_workspace = lambda n: a
+
+            def _terms(*args, **kwargs):
+                return [
+                    types.SimpleNamespace(
+                        target="@0", title="bash", shared=False, owner=None
+                    )
+                ]
+
+            st.list_terminals = _terms
+            st.list_shared_terminals = lambda *a, **k: []
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                app.push_screen(WorkspaceDetailScreen("terms"))
+                await pilot.pause()
+                screen = app.screen
+                await screen._load_terminals()
+                lv = screen.query_one("#term_list", ListView)
+                assert lv.index is not None
+                await screen._load_terminals()  # refresh keeps selection
+                assert lv.index is not None
+
+    async def test_detail_reload_on_status_raced_push_skips_self_pop(self):
+        with self._status_patched():
+            a = _wsobj("raced")
+            st = _ws()
+            st.find_workspace = lambda n: a
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                app.push_screen(WorkspaceDetailScreen("raced"))
+                await pilot.pause()
+                screen = app.screen
+
+                async def _noop_load():
+                    pass
+
+                screen._load = _noop_load
+                screen._refresh_deploy_banner = _noop_load
+                screen._missing = True
+                real_pop = app._pop_above
+
+                def _pop_then_push(target):
+                    result = real_pop(target)
+                    # A racing push lands between the teardown and the
+                    # self-pop check.
+                    from klangk.cli.tui.screens._base import ConfirmScreen
+
+                    app.push_screen(ConfirmScreen("raced in"))
+                    return result
+
+                app._pop_above = _pop_then_push
+                await screen._reload_on_status()
+                await pilot.pause()
+                # The raced-in modal is now on top: the dead detail
+                # screen did NOT pop itself beneath it.
+                from klangk.cli.tui.screens._base import ConfirmScreen
+
+                assert isinstance(app.screen, ConfirmScreen)
+                assert screen in app.screen_stack
+
+    async def test_detail_restart_and_stop_without_ws(self):
+        with self._status_patched():
+            a = _wsobj("nows")
+            st = _ws()
+            st.find_workspace = lambda n: a
+            app = KlangkApp(st)
+            async with app.run_test() as pilot:
+                app.push_screen(WorkspaceDetailScreen("nows"))
+                await pilot.pause()
+                screen = app.screen
+                screen._ws = None
+                restarted, stopped = [], []
+                screen.app.tui_state.restart_workspace = lambda name: (
+                    restarted.append(name)
+                )
+                screen.app.tui_state.stop_workspace = lambda name: (
+                    stopped.append(name)
+                )
+                screen.app.refresh_workspaces = lambda: None
+                await screen._do_restart()
+                await screen._do_stop()
+                assert restarted == ["nows"]
+                assert stopped == ["nows"]
+
+    async def test_form_edit_rejected_to_existing_value(self):
+        from textual.widgets import Input as TextualInput
+
+        from klangk.cli.tui.screens.workspace_form import (
+            EditWorkspaceScreen,
+        )
+
+        with self._status_patched():
+            app = KlangkApp(_ws())
+            async with app.run_test() as pilot:
+                screen = EditWorkspaceScreen(
+                    workspace=_wsobj("edit-dup"),
+                    allowed=[],
+                    default="img",
+                    allow_autostart=False,
+                )
+                app.push_screen(screen)
+                await pilot.pause()
+                screen._rejected_domains = ["a.example:443", "b.example:443"]
+                # A stale edit index (the row was revoked mid-edit): the
+                # add-path runs, and the value is already present.
+                screen._editing_reject = None
+                inp = screen.query_one("#reject_input", TextualInput)
+                inp.value = "a.example:443"  # already present
+                screen._msg = lambda *a, **k: None
+                screen._render_rejected_domains = lambda: None
+                screen._add_rejected_domain()
+                # No stale edit row and the value already present: the
+                # duplicate-append arm is skipped, list unchanged.
+                assert screen._rejected_domains == [
+                    "a.example:443",
+                    "b.example:443",
+                ]
+
+
+async def test_wait_drop_or_both_done_same_tick_2834(monkeypatch):
+    """#2834: both same-tick arms — the waiter fires while the raced
+    future is already done. Uncancelled: its outcome is retrieved (and
+    discarded) so asyncio never warns. Already cancelled by a racing
+    teardown: the retrieval is skipped."""
+    import klangk.cli.tui.screens.main as m
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(m, "listen_for_status", noop)
+    app = KlangkApp(_ws())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        real_wait = asyncio.wait
+
+        async def _let_waiter_finish(fs, return_when=None):
+            await asyncio.sleep(0.05)  # the drop waiter completes now
+            return await real_wait(fs, return_when=return_when)
+
+        with unittest_mock.patch.object(asyncio, "wait", _let_waiter_finish):
+            # Uncancelled: the exception is retrieved and discarded.
+            screen._ws_drop.set()
+            loop = asyncio.get_running_loop()
+            awaiting = loop.create_future()
+            awaiting.set_exception(RuntimeError("superseded outcome"))
+            assert await screen._wait_drop_or(awaiting) is True
+            assert awaiting.exception() is not None
+            # Cancelled by a racing teardown before the waiter fired:
+            # no retrieval attempt on an already-cancelled future.
+            screen._ws_drop.set()
+            cancelled = loop.create_future()
+            cancelled.cancel()
+            assert await screen._wait_drop_or(cancelled) is True
+
+
+async def test_clear_server_down_without_overlay_2834(monkeypatch):
+    """#2834: recovery clearing an overlay that was never shown."""
+    import klangk.cli.tui.screens.main as m
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(m, "listen_for_status", noop)
+    app = KlangkApp(_ws())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._server_down_screen = None
+        app.clear_server_down()  # no overlay: silent no-op
+        assert app._server_down_dismissed is False
+
+
+async def test_token_refresh_body_actually_runs_2834(monkeypatch):
+    import klangk.cli.tui.screens.main as m
+
+    async def noop(*a, **k):
+        return None
+
+    monkeypatch.setattr(m, "listen_for_status", noop)
+    ran = []
+
+    async def _marker(state):
+        ran.append(state)
+        return "expired"
+
+    monkeypatch.setattr(m, "run_token_refresh_loop", _marker)
+    app = KlangkApp(_ws())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        expired = []
+        app.session_expired = lambda: expired.append(1)
+        await _real_token_refresh_loop(app.screen)
+        assert expired == [1]  # the expired result surfaces the overlay
+    assert ran

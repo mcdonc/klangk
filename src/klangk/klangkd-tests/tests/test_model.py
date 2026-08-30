@@ -2539,3 +2539,34 @@ class TestPasswordHistory:
         assert await users.get_password_hash(user["id"]) == "curhash"
         oidc = await users.create_user("oidc@example.com", None, verified=True)
         assert await users.get_password_hash(oidc["id"]) is None
+
+
+class TestModelBranchGaps2834:
+    """#2834 branch gate: model-layer guard outcomes."""
+
+    async def test_list_acl_unknown_principal_type_row(
+        self, db, app_state, user
+    ):
+        # A row with a principal type added by a NEWER klangkd (an
+        # upgrade race) lists without a principal label rather than
+        # crashing the ACL view.
+
+        async with app_state.state.db.transaction() as tx:
+            await tx.execute(
+                "INSERT INTO acl_entries"
+                " (resource, position, action, principal_type,"
+                "  user_id, group_id, system_principal, permission)"
+                " VALUES ('/x', 0, 1, 99, ?, NULL, NULL, 1)",
+                (user["id"],),
+            )
+        entries = await app_state.state.model.acl.get_acl_entries_resolved(
+            "/x"
+        )
+        assert len(entries) == 1
+        assert "principal" not in entries[0]
+
+    async def test_dispose_engine_without_engine_is_noop(self, app_state):
+        db = app_state.state.db
+        db.engine = None
+        await db.dispose_engine()  # never started -> no raise
+        assert db.engine is None

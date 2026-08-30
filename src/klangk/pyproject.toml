@@ -57,7 +57,7 @@ klangk-load-nix-seed-btrfs = "klangk.seed:load_main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "--capture=no --cov=klangk --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100 --timeout=60"
+addopts = "--capture=no --cov=klangk --cov-branch --cov-report=term-missing --no-cov-on-fail --cov-fail-under=100 --timeout=60"
 # Treat new warnings as errors so they can't re-accumulate (#1493). The
 # two ignores are pre-existing mock-induced GC artifacts (MagicMock stubs
 # whose coroutine objects are collected in a later test) -- not real bugs
@@ -70,6 +70,16 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 79
+
+# Coverage config for runs whose CWD is src/klangk itself (e.g. `cd
+# src/klangk && pytest ...`). coverage discovers [tool.coverage.run]
+# relative to the CWD, not the pytest rootdir, so the repo-root
+# pyproject's copy of this section is what the documented from-root
+# invocations read; this local copy keeps CWD-here runs identical.
+# Keep in sync with the root pyproject.toml (#2834). The sysmon core
+# (pinned in the conftests) needs no concurrency option.
+[tool.coverage.run]
+branch = true
 
 [tool.hatch.version]
 source = "vcs"

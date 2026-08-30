@@ -13737,3 +13737,390 @@ class TestAdminServerSchedule:
             )
         assert resp.status_code == 200
         mock_notify.assert_awaited_once()
+
+
+class TestBranchGaps2834:
+    """Branch-coverage gaps surfaced by the #2834 branch gate: the
+    false/true outcomes of guards the mainline tests only take one side
+    of (a valid custom image, an invalid mount list, a stop with no live
+    session, a failed du probe, a corrupt archive after creation, the
+    dev version fallback, a valid /admin ACL, and a non-configured OIDC
+    provider at logout)."""
+
+    async def test_version_endpoint_missing_file_falls_back_to_dev(
+        self, client, app
+    ):
+        # version_file configured but absent (a stripped deployment):
+        # the endpoint falls back to the dev placeholder instead of 500.
+        app.state.settings.version_file = "/nonexistent/version.json"
+        resp = await client.get("/api/v1/version")
+        assert resp.status_code == 200
+        assert resp.json()["version"] == "dev"
+
+    async def test_admin_acl_accepts_group_allow(
+        self, client, admin_user, app
+    ):
+        # The mirror of rejects_removing_all_group_access: a /admin ACL
+        # that keeps an Allow group entry saves fine (the validator's
+        # pass-through path).
+        group = await app.state.model.users.get_group_by_name("admin")
+        headers = await _admin_login(client)
+        resp = await client.put(
+            "/api/v1/admin/acl/resource?resource=/admin",
+            headers=headers,
+            json=[
+                {
+                    "action": model.ACTION_ALLOW,
+                    "principal_type": model.PRINCIPAL_GROUP,
+                    "permission": "admin",
+                    "group_id": group["id"],
+                },
+            ],
+        )
+        assert resp.status_code == 200
+
+    async def test_logout_nonlocal_user_with_unconfigured_provider(
+        self, client, app, user, app_state
+    ):
+        # A non-local user whose provider is no longer configured: no
+        # IdP logout URL is derived (get_provider -> None), plain logout.
+        from _helpers import wire_db_and_model
+
+        async with app_state.state.db.transaction() as db:
+            await db.execute(
+                "UPDATE users SET provider = 'gone-idp' WHERE id = ?",
+                (user["id"],),
+            )
+        wire_db_and_model(app)
+        headers = await _auth_headers(client)
+        resp = await client.post("/api/v1/auth/logout", headers=headers)
+        assert resp.status_code == 200
+        assert "oidc_logout_url" not in resp.json()
+
+    async def test_create_workspace_with_allowed_custom_image(
+        self, client, admin_user, app
+    ):
+        # An image that IS in allowed_images passes the gate (the
+        # not-allowed branch's false side) and is stored on the row.
+        app.state.settings.allowed_images = "klangk-custom:1"
+        headers = await _admin_login(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "custom-image-ws", "image": "klangk-custom:1"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["image"] == "klangk-custom:1"
+
+    async def test_create_workspace_rejects_invalid_mount(
+        self, client, admin_user, app
+    ):
+        # validate_mounts returning an error string -> 400 before any
+        # container is created.
+        with patch.object(
+            app.state.container_registry,
+            "validate_mounts",
+            return_value="mount source outside the allowed roots",
+        ):
+            headers = await _admin_login(client)
+            resp = await client.post(
+                "/api/v1/workspaces",
+                headers=headers,
+                json={
+                    "name": "bad-mount-ws",
+                    "mounts": ["/etc:/etc:ro"],
+                },
+            )
+        assert resp.status_code == 400
+        assert "mount source" in resp.json()["detail"]
+
+    async def test_stop_workspace_running_container_no_session(
+        self, client, admin_user, app
+    ):
+        # A real stop (container running) with NO live WS session: the
+        # container_stopped broadcast is skipped, teardown still runs.
+        headers = await _admin_login(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "stop-nosess"}
+        )
+        ws_id = create_resp.json()["id"]
+        registry = app.state.container_registry
+        registry.track_activity("cid-stop-2", ws_id)
+        with (
+            patch.object(
+                registry, "stop_and_remove_container", new_callable=AsyncMock
+            ) as mock_stop,
+            patch.object(
+                registry, "notify_workspace_killed", new_callable=AsyncMock
+            ),
+            patch.object(app.state.sockets, "get_session", return_value=None),
+        ):
+            resp = await client.post(
+                f"/api/v1/workspaces/{ws_id}/stop", headers=headers
+            )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "stopped"
+        mock_stop.assert_awaited_once()
+        registry.states.pop(ws_id, None)
+
+    async def test_export_size_probe_failure_falls_back_to_zero(
+        self, client, admin_user, user, app, monkeypatch
+    ):
+        # home_dir exists but `du -sb` fails (permissions): the estimate
+        # falls back to 0 and the export still streams.
+        import subprocess as subprocess_mod
+
+        headers = await _admin_login(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "du-fail"}
+        )
+        ws_id = create_resp.json()["id"]
+        home = app.state.workspaces.home_path(ws_id)
+        home.mkdir(parents=True, exist_ok=True)
+
+        real_run = subprocess_mod.run
+
+        def _failing_du(cmd, *a, **kw):
+            if "du" in cmd:
+                CompletedProxy = subprocess_mod.CompletedProcess
+                return CompletedProxy(cmd, returncode=1, stdout="", stderr="x")
+            return real_run(cmd, *a, **kw)
+
+        monkeypatch.setattr(
+            "klangk.api.workspaces.subprocess.run", _failing_du
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/export", headers=headers
+        )
+        assert resp.status_code == 200
+
+    async def test_export_missing_home_dir_skips_size_probe(
+        self, client, admin_user, user, app
+    ):
+        # The workspace's home dir never materialized (created but never
+        # started): the du probe is skipped entirely, size 0.
+        headers = await _admin_login(client)
+        create_resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "no-home"}
+        )
+        ws_id = create_resp.json()["id"]
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/export", headers=headers
+        )
+        assert resp.status_code == 200
+
+    async def test_import_extraction_timeout_deletes_created_workspace(
+        self, client, admin_user, user, app, monkeypatch
+    ):
+        # The home extraction times out AFTER the row was created: the
+        # 400 path must also delete the just-created workspace (no
+        # half-imported orphan).
+        import io
+        import json as json_mod
+        import tarfile
+
+        buf = io.BytesIO()
+        from klangk.settings import KlangkSettings
+
+        ns = types.SimpleNamespace(
+            state=types.SimpleNamespace(settings=KlangkSettings(os.environ))
+        )
+        ns.state.util = util_mod.Util(ns)
+        meta_bytes = json_mod.dumps(
+            {
+                "instance_id": ns.state.util.instance_id(),
+                "name": "timeout-import",
+                "image": None,
+                "service_command": None,
+                "auto_start": False,
+                "mounts": [],
+                "env": {},
+                "health_check": None,
+                "allowed_domains": [],
+                "rejected_domains": [],
+                "settings": {},
+                "egress_mode": "static",
+                "per_handle_home": True,
+                "classification_banner": None,
+            }
+        ).encode()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="workspace.json")
+            info.size = len(meta_bytes)
+            tar.addfile(info, io.BytesIO(meta_bytes))
+        buf.seek(0)
+
+        import subprocess as subprocess_mod
+
+        def _timing_out_tar(cmd, *a, **kw):
+            # Only the post-creation home-tree probe times out; the earlier
+            # metadata read (tar xzf -O workspace.json) still succeeds so the
+            # workspace row is created first.
+            if "tzf" in cmd:
+                raise subprocess_mod.TimeoutExpired(cmd="tar", timeout=30)
+            return subprocess_mod.CompletedProcess(
+                cmd, returncode=0, stdout=meta_bytes
+            )
+
+        monkeypatch.setattr(
+            "klangk.api.workspaces.subprocess.run", _timing_out_tar
+        )
+        deleted = []
+        with patch.object(
+            app.state.workspaces,
+            "delete_workspace",
+            new=AsyncMock(
+                side_effect=lambda ws_id, uid: deleted.append(ws_id)
+            ),
+        ):
+            headers = await _admin_login(client)
+            resp = await client.post(
+                "/api/v1/workspaces/import",
+                headers=headers,
+                files={
+                    "file": (
+                        "archive.tar.gz",
+                        buf.getvalue(),
+                        "application/gzip",
+                    )
+                },
+            )
+        assert resp.status_code == 400
+        assert "corrupt" in resp.json()["detail"]
+        assert deleted  # the created row was cleaned up
+
+    async def test_update_workspace_with_allowed_custom_image(
+        self, client, admin_user, app
+    ):
+        # The PUT validation's image gate: an allowed custom image passes
+        # (the not-allowed branch's false side).
+        headers = await _admin_login(client)
+        create = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "upd-image"}
+        )
+        ws_id = create.json()["id"]
+        app.state.settings.allowed_images = "klangk-custom:2"
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}",
+            headers=headers,
+            json={"image": "klangk-custom:2"},
+        )
+        assert resp.status_code == 200
+
+    async def test_update_workspace_rejects_invalid_mount(
+        self, client, admin_user, app
+    ):
+        headers = await _admin_login(client)
+        create = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "upd-mount"}
+        )
+        ws_id = create.json()["id"]
+        with patch.object(
+            app.state.container_registry,
+            "validate_mounts",
+            return_value="mount source outside the allowed roots",
+        ):
+            resp = await client.put(
+                f"/api/v1/workspaces/{ws_id}",
+                headers=headers,
+                json={"mounts": ["/etc:/etc:ro"]},
+            )
+        assert resp.status_code == 400
+        assert "mount source" in resp.json()["detail"]
+
+    async def test_export_after_home_dir_removal_skips_size_probe(
+        self, client, admin_user, app
+    ):
+        # The workspace existed (its home was materialized) but the dir
+        # was removed out-of-band: the du probe is skipped, size 0.
+        import shutil
+
+        headers = await _admin_login(client)
+        create = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "gone-home"}
+        )
+        ws_id = create.json()["id"]
+        home = app.state.workspaces.home_path(ws_id)
+        home.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(home)
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/export", headers=headers
+        )
+        assert resp.status_code == 200
+
+    async def test_update_workspace_with_valid_mounts_passes_gate(
+        self, client, admin_user, app
+    ):
+        # The PUT mount gate's pass-through side: validate_mounts returns
+        # no error and the update proceeds.
+        headers = await _admin_login(client)
+        create = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "upd-mount-ok"},
+        )
+        ws_id = create.json()["id"]
+        with patch.object(
+            app.state.container_registry,
+            "validate_mounts",
+            return_value=None,
+        ):
+            resp = await client.put(
+                f"/api/v1/workspaces/{ws_id}",
+                headers=headers,
+                json={"mounts": ["/srv/data:/data:ro"]},
+            )
+        assert resp.status_code == 200
+
+    async def test_import_corrupt_json_deletes_nothing(
+        self, client, admin_user, app
+    ):
+        # The metadata read itself times out: the failure happens BEFORE
+        # the row is created (ws None) -> nothing to delete, plain 400.
+        import subprocess as subprocess_mod
+
+        def _timing_out_tar(cmd, *a, **kw):
+            raise subprocess_mod.TimeoutExpired(cmd="tar", timeout=30)
+
+        deleted = []
+        with (
+            patch.object(
+                app.state.workspaces,
+                "delete_workspace",
+                new=AsyncMock(
+                    side_effect=lambda ws_id, uid: deleted.append(ws_id)
+                ),
+            ),
+            patch("klangk.api.workspaces.subprocess.run", _timing_out_tar),
+        ):
+            headers = await _admin_login(client)
+            resp = await client.post(
+                "/api/v1/workspaces/import",
+                headers=headers,
+                files={
+                    "file": (
+                        "archive.tar.gz",
+                        b"not-really-a-tarball",
+                        "application/gzip",
+                    )
+                },
+            )
+        assert resp.status_code == 400
+        assert "corrupt" in resp.json()["detail"]
+        assert deleted == []  # no row was ever created
+
+
+class TestInFlightCounterBranchGaps2834:
+    """#2834 branch gate: nested in-flight tracking (count past one)."""
+
+    async def test_increment_decrement_around_one(self):
+        from klangk.middleware import InFlightRequests
+
+        c = InFlightRequests()
+        c.increment()
+        assert not c._idle.is_set()
+        c.increment()  # nested request: count 2
+        c.decrement()  # back to 1: still busy
+        assert not c._idle.is_set()
+        c.decrement()  # to 0: idle
+        assert c._idle.is_set()

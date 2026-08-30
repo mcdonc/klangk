@@ -113,3 +113,35 @@ class TestSidecarConnections:
         app2 = _app()
         reg.reconfigure(app2)
         assert reg.app is app2
+
+
+class TestSidecarConnectionsBranchGaps2834:
+    """#2834 branch gate: done-future skips in deregister/resolve/stop."""
+
+    async def test_deregister_skips_done_future(self):
+        # A pending ack whose future already resolved (the sidecar acked
+        # just as it disconnected) is left alone, not re-failed.
+        reg = SidecarConnections(_app())
+        sock = _Sock()
+        reg.register("ws-1", sock)
+        fut = reg.send_drop("ws-1", "h", "allowed")
+        fut.set_result(True)  # raced ack
+        reg.deregister("ws-1")  # must not raise / re-resolve
+        assert fut.result() is True
+        assert reg._pending == {}
+
+    async def test_resolve_ack_unknown_id_is_noop(self):
+        reg = SidecarConnections(_app())
+        reg.resolve_ack("never-sent", True)  # late ack after cleanup
+
+    async def test_stop_skips_done_futures(self):
+        reg = SidecarConnections(_app())
+        sock1, sock2 = _Sock(), _Sock()
+        reg.register("ws-1", sock1)
+        reg.register("ws-2", sock2)
+        f1 = reg.send_drop("ws-1", "h", "allowed")
+        f2 = reg.send_drop("ws-2", "h", "denied")
+        f1.set_result(True)  # already acked
+        await reg.stop()
+        assert f2.result() is False  # the open one was fail-closed
+        assert reg._pending == {} and reg._conns == {}

@@ -756,7 +756,9 @@ class WorkspaceDetailScreen(StatusScreen):
             # "both terminals grey, Down makes the second green" symptom).
             # After mount the first row highlights correctly.
             await mount
-            if lv.index is None:
+            # clear() above resets the index; the guard is defensive
+            # against a textual version that preserves it.
+            if lv.index is None:  # pragma: no branch
                 lv.index = 0
 
     async def _load_shared_terminals(self) -> None:
@@ -802,7 +804,9 @@ class WorkspaceDetailScreen(StatusScreen):
                 ]
             mount = lv.extend(items)
             await mount
-            if lv.index is None:
+            # clear() above resets the index; the guard is defensive
+            # against a textual version that preserves it.
+            if lv.index is None:  # pragma: no branch
                 lv.index = 0
 
     @staticmethod

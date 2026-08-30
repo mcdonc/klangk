@@ -328,7 +328,9 @@ async def _async_sweeper() -> None:
     block the loop (and so it can run concurrently with :func:`_learn_all`,
     serialized by :data:`_LOCK`).
     """
-    while True:
+    # Runs for the sidecar's lifetime; cancelled at shutdown, never exits
+    # by falling through the condition (the arc to loop exit is unreachable).
+    while True:  # pragma: no branch
         await asyncio.sleep(SWEEP_INTERVAL)
         try:
             await asyncio.get_running_loop().run_in_executor(None, sweep_once)

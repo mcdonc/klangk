@@ -1162,3 +1162,18 @@ async def test_prune_pending_toctou_guard(ec, ws, user, app_state):
     assert removed == 0
     row = await ec.get_request(stale["id"])
     assert row is not None and row["decision"] == DECISION_ALLOWED
+
+
+@pytest.mark.asyncio
+class TestPruneBranchGaps2834:
+    async def test_prune_row_cap_zero_skips_cap_prune(self, ec, ws, user):
+        # row_cap=0 disables the cap half (retention-only pruning): rows
+        # past retention still go, nothing else does.
+        ws_row = await ws.create_workspace(user["id"], "prune-nocap")
+        import time as time_mod
+
+        await ec.create_request(ws_row["id"], "9.9.9.9", 443)
+        # Nothing is past retention; a zero cap must not delete anything.
+        ec.app.state.settings.egress_consent_retention_days = 30
+        ec.app.state.settings.egress_consent_row_cap = 0
+        assert await ec.prune(now=time_mod.time()) == 0

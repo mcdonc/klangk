@@ -1013,3 +1013,38 @@ class TestEvictionSettings:
     def test_bad_sustain_polls_rejected(self):
         with pytest.raises(ValueError):
             make_settings({"KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS": "0"})
+
+
+class TestEvictionBranchGaps2834:
+    """#2834 branch gate: malformed meminfo lines, a stat file without a
+    matching counter, and stop-before-start."""
+
+    def test_read_meminfo_skips_malformed_lines(self, tmp_path):
+        # Lines without the 3-part "Name: N kB" shape are skipped, valid
+        # ones still parse.
+        path = tmp_path / "meminfo"
+        path.write_text(
+            "MemTotal:       16384000 kB\n"
+            "Weird: 5\n"
+            "Other:       6 MB\n"
+            "MemFree:        1000 kB\n"
+        )
+        info = read_meminfo(str(path))
+        assert info["MemTotal"] == 16384000 * 1024
+        assert info["MemFree"] == 1000 * 1024
+        assert "Weird" not in info
+        assert "Other" not in info
+
+    def test_stat_value_without_match_returns_zero(self, tmp_path):
+        from klangk.container.eviction import _stat_value
+
+        path = tmp_path / "memory.stat"
+        path.write_text("anon 5\nkernel 7\n")
+        assert _stat_value(str(path), ("file", "inactive_file")) == 0
+
+    async def test_stop_when_never_started_is_noop(self):
+        from klangk.container.eviction import MemoryPressureEvictor
+
+        app = _make_app_state()
+        evictor = MemoryPressureEvictor(app)
+        await evictor.stop()  # no task -> no raise

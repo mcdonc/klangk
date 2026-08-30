@@ -453,3 +453,54 @@ async def test_rmtree_rw_logs_when_retry_fails(monkeypatch, tmp_path, caplog):
 
         captured["onerror"](_boom, str(target / "x"), None)
     assert any("could not remove" in r.message for r in caplog.records)
+
+
+async def test_fuse_destroy_lazy_unmount_success_no_orphan_warning(
+    monkeypatch, tmp_path, caplog
+):
+    """#2834: the first unmount fails (busy) but the LAZY one succeeds:
+    no "left as an orphan" warning, the ws dir is still reaped."""
+    seed = _fuse_seed(tmp_path)
+    ws = tmp_path / "ws-ws1"
+    (ws / "nix").mkdir(parents=True)
+    (ws / "nix.conf").write_text("x")
+    calls = []
+
+    async def fake_exec(*args, **kwargs):
+        calls.append(args)
+        # Plain unmount fails; the lazy (-z) retry succeeds.
+        rc = 1 if "-z" not in args else 0
+        return _Proc(rc, b"", b"mount busy")
+
+    monkeypatch.setattr(nix.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(nix.os.path, "ismount", lambda p: True)
+    n = Nix(_app(str(seed)))
+    with caplog.at_level("WARNING", logger="klangk.nix"):
+        await n.destroy_workspace_nix("ws1")
+    assert any(a[:3] == ("fusermount3", "-u", "-z") for a in calls)
+    assert not any("orphan" in r.message for r in caplog.records)
+
+
+async def test_rmtree_onerror_root_path_skips_parent_chmod(tmp_path):
+    """#2834: the rmtree error handler never chmods the shared seed
+    parent when the failing entry IS the rmtree root."""
+    import os as os_mod
+    import stat as stat_mod
+
+    parent = tmp_path / "seed"
+    parent.mkdir()
+    root = parent / "ws-x"
+    root.mkdir()
+    (root / "file").write_text("x")
+    # The root's own rmdir fails (parent read-only) -> onerror(p == root)
+    # -> the parent chmod is skipped (not ours to touch).
+    parent.chmod(0o555)
+    try:
+        nix._rmtree_rw(str(root))
+        # The seed parent was left at its original mode: the guard held.
+        assert stat_mod.S_IMODE(parent.stat().st_mode) == 0o555
+    finally:
+        parent.chmod(0o755)
+        os_mod.chmod(root, 0o755)
+        for child in root.iterdir():
+            child.chmod(0o755)

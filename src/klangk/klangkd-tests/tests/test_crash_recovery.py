@@ -1297,3 +1297,67 @@ class TestRegistryShutdownCancelsCrashLoop:
             await reg.shutdown()
         await asyncio.sleep(0)  # let the cancellation propagate
         assert task.cancelled()
+
+
+class TestCrashBranchGaps2834:
+    """#2834 branch gate: the unknown-signal exit, idempotent start, a
+    superseded restart's done-callback, and the tracker-less death event."""
+
+    def test_unknown_signal_code_falls_back_to_plain_exit(self):
+        # Exit code 200 = signal 72, which no known table entry matches:
+        # the generic "exited with code" message.
+        cause, msg = classify_death(inspect_dead(exit_code=200))
+        assert (cause, msg) == (
+            "exited",
+            "main process exited with code 200",
+        )
+
+    async def test_start_twice_keeps_single_task(self, crash_env):
+        app_state = make_app_state(crash_env)
+        monitor = app_state.state.container_registry.crash
+        monitor.start()
+        first = monitor.crash_task
+        assert first is not None
+        monitor.start()
+        assert monitor.crash_task is first
+        await monitor.stop()
+
+    async def test_superseded_restart_task_pop_is_skipped(self, crash_env):
+        # A second restart scheduled for the same workspace replaces the
+        # pending entry; the FIRST task's done-callback then sees a
+        # different task and must not pop it (the second survives).
+        app_state = make_app_state(crash_env)
+        monitor = app_state.state.container_registry.crash
+        with patch_podman_methods(app_state, inspect_dead()):
+            monitor.schedule_restart("ws-race", RestartTracker())
+            first = monitor.pending["ws-race"]
+            monitor.schedule_restart("ws-race", RestartTracker())
+            second = monitor.pending["ws-race"]
+            assert second is not first
+            # Let both delayed_restart tasks finish (near-zero backoff;
+            # their workspace lookups fail harmlessly and are logged).
+            for _ in range(200):
+                if first.done() and second.done():
+                    break
+                await asyncio.sleep(0.01)
+            assert first.done() and second.done()
+        # The superseded task's callback did NOT clear the successor's
+        # entry; the successor's own callback did.
+        assert "ws-race" not in monitor.pending
+
+    async def test_broadcast_death_event_without_tracker(self, crash_env):
+        # A death with no restart tracker (restarts disabled / gave up
+        # unknown) still broadcasts, minus the restart_* fields.
+        app_state = make_app_state(crash_env)
+        monitor = app_state.state.container_registry.crash
+        session = MagicMock()
+        with patch.object(
+            app_state.state.sockets, "get_session", return_value=session
+        ):
+            monitor.broadcast_death_event(
+                "ws-crash", "exited", "main process exited", None
+            )
+        value = session.broadcast.call_args[0][0]["event"]["value"]
+        assert value["cause"] == "exited"
+        assert "restart_attempts" not in value
+        assert "gave_up" not in value

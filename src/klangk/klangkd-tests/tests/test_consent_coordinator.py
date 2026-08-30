@@ -1649,3 +1649,93 @@ class TestConsentCoordinatorPauseIntegration:
         # a different, never-decided host is still auto-allowed
         fut2 = await coord.hold(ws["id"], "unseen.example.com", 443)
         assert fut2.result()["reason"] == "paused"
+
+
+class TestCoordinatorBranchGaps2834:
+    """#2834 branch gate: hold/fail-close/refresh outcomes the mainline
+    revoke + stop tests only take one side of."""
+
+    async def test_stop_skips_hold_removed_mid_iteration(self):
+        # fail_all iterates a snapshot; a hold resolved+removed while an
+        # earlier one is being fail-closed is simply skipped (its task
+        # cancel is skipped, its _fail_close is a no-op).
+        app = _app(request=_request("r1"))
+        coord = ConsentCoordinator(app)
+        await coord.hold(FULL_WS, "1.2.3.4", 443)
+        app.state.model.egress_consent.create_request = AsyncMock(
+            return_value=_request("r2")
+        )
+        await coord.hold(FULL_WS, "5.6.7.8", 80)
+        real_fail_close = coord._fail_close
+
+        async def _fail_close_expecting_one(request_id, reason="shutdown"):
+            # When the FIRST hold is fail-closed, the second vanishes (a
+            # racing resolve) -- the snapshot's second entry is then None.
+            if request_id == "r1":
+                coord._holds.pop("r2", None)
+            return await real_fail_close(request_id, reason=reason)
+
+        coord._fail_close = _fail_close_expecting_one
+        await coord.stop()  # must not raise on the vanished r2
+        assert coord._holds == {}
+
+    async def test_resolve_with_already_done_future_skips_set_result(self):
+        # A hold whose future was already resolved (a racing timeout)
+        # must not be overwritten by the decide path -- the verdict that
+        # landed first wins.
+        app = _app(request=_request())
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        fut.set_result(
+            {"decision": "deny", "reason": "timeout", "duration": "once"}
+        )
+        await coord.resolve("rid-1", "allowed", "a@x")
+        assert fut.result()["decision"] == "deny"  # not clobbered
+
+    async def test_fail_close_with_already_done_future_skips_set_result(self):
+        # Same race on the timeout path: an already-resolved future keeps
+        # its first verdict; the expire bookkeeping still runs.
+        app = _app(timeout=0.05, request=_request())
+        coord = ConsentCoordinator(app)
+        fut = await coord.hold(FULL_WS, "1.2.3.4", 443)
+        fut.set_result(
+            {"decision": "allow", "reason": "decided", "duration": "once"}
+        )
+        verdict = await fut
+        assert verdict["decision"] == "allow"  # timeout did not clobber
+        await asyncio.sleep(0.12)
+        app.state.model.egress_consent.expire_pending.assert_awaited_once_with(
+            "rid-1"
+        )
+
+    async def test_revoke_retract_false_is_silent(self, caplog):
+        # The domain-list remove reports nothing removed (the row was
+        # already retracted): no info log, revoke still succeeds.
+        app = _app()
+        forever_row = _active_row()
+        forever_row["duration"] = "forever"
+        app.state.model.egress_consent.get_request = AsyncMock(
+            return_value=forever_row
+        )
+        app.state.model.egress_consent.revoke = AsyncMock(
+            return_value=_active_row(decision="revoked")
+        )
+        app.state.model.workspaces.remove_allowed_domain = AsyncMock(
+            return_value=False
+        )
+        coord = ConsentCoordinator(app)
+        with caplog.at_level("INFO"):
+            assert await coord.revoke("rid-1", "a@x") is True
+        assert not any(
+            "retracted from list" in r.message for r in caplog.records
+        )
+
+    async def test_refresh_rules_none_frame_skips_broadcast(self):
+        # A missing workspace returns no frame; nothing is broadcast (the
+        # decider keeps its last view).
+        app = _app()
+        coord = ConsentCoordinator(app)
+        coord.rules_frame = AsyncMock(return_value=None)
+        app.state.consent_deciders.broadcast = Mock()
+        await coord._broadcast_rules(FULL_WS)
+        app.state.consent_deciders.broadcast.assert_not_called()

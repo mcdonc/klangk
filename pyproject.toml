@@ -27,3 +27,17 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
     "ignore:coroutine .* was never awaited:RuntimeWarning",
 ]
+
+# Shared coverage config for every pytest-cov run whose CWD is the repo
+# root — coverage discovers [tool.coverage.run] relative to the CWD, not
+# the pytest rootdir, and the documented invocations (CI, devenv tasks)
+# all run from here. Branch measurement (#2834) rides the sysmon core
+# (pinned in both klangk conftests): Python 3.14's sys.monitoring gained
+# BRANCH_LEFT/RIGHT events, and sysmon tracks code executed inside
+# SQLAlchemy's greenlet context natively (#456/#1393) — no
+# ``concurrency`` option, which sysmon does not support (the C tracer
+# needed ``concurrency=["greenlet", "thread"]`` for the same result,
+# ~40% slower). No 3.13 fallback: the toolchain is pinned to 3.14
+# (#2844), and CI runs the suites on 3.14 exclusively.
+[tool.coverage.run]
+branch = true

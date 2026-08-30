@@ -980,3 +980,31 @@ class TestSyncOidcGroups:
             user["id"]
         )
         assert group["id"] in all_ids
+
+
+class TestOIDCBranchGaps2834:
+    """#2834 branch gate: the config getter's dashless-key miss and a
+    sync against an already-existing group."""
+
+    def test_get_dashless_key_missing_uses_default(self):
+        # "audience" has no dash -> no snake_case fallback is attempted;
+        # the explicit default wins.
+        assert oidc.get({"x": 1}, "audience", "the-default") == "the-default"
+
+    def test_get_dashless_key_missing_without_default_raises(self):
+        with pytest.raises(KeyError):
+            oidc.get({"x": 1}, "audience")
+
+    async def test_sync_existing_group_not_recreated(self, db, app_state):
+        # A group that already exists is looked up, not auto-created.
+        user = await app_state.state.model.users.create_user(
+            "sync-exists@example.com", "hash"
+        )
+        group = await app_state.state.model.users.create_group("already-there")
+        await oidc.OIDC(app_state).sync_oidc_groups(
+            user["id"], {"already-there"}
+        )
+        ids = await app_state.state.model.users.get_user_oidc_sync_group_ids(
+            user["id"]
+        )
+        assert ids == [group["id"]]

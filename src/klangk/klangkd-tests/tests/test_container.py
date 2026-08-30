@@ -6804,3 +6804,201 @@ async def test_nix_binds_mounts_snapshot_when_enabled():
     ]
     assert env == ["KLANGKWS_NIX=1"]
     app_state.state.nix.ensure_workspace_nix.assert_awaited_once_with("ws1")
+
+
+class TestContainerBranchGaps2834:
+    """#2834 branch gate: registry/health/idle/spec outcomes the mainline
+    tests only take one side of."""
+
+    def setup_method(self):
+        app_state = _make_app_state()
+        self.app_state = app_state
+        self.registry = app_state.state.container_registry
+
+    # --- registry ---
+
+    def test_record_activity_mapped_container_without_state_is_noop(self):
+        # The cid -> workspace mapping exists but the state is gone (a
+        # racing teardown): nothing to bump, nothing raised.
+        self.registry._cid_to_wsid["cid-gone"] = "ws-gone"
+        self.registry.record_activity("cid-gone")
+
+    def test_mark_service_started_mapped_container_without_state_noop(self):
+        self.registry._cid_to_wsid["cid-gone"] = "ws-gone"
+        self.registry.mark_service_started("cid-gone")
+
+    async def test_stop_user_containers_skips_containerless_workspace(
+        self, monkeypatch
+    ):
+        # A user's workspace without a running container contributes no
+        # kill/stop (the row's container_id is None).
+        workspaces = AsyncMock()
+        workspaces.get_user_workspaces_with_containers = AsyncMock(
+            return_value=[
+                {"id": "ws-none", "container_id": None},
+                {"id": "ws-live", "container_id": "cid-live"},
+            ]
+        )
+        self.app_state.state.model = types.SimpleNamespace(
+            workspaces=workspaces
+        )
+        killed = AsyncMock()
+        monkeypatch.setattr(self.registry, "notify_workspace_killed", killed)
+        stopped = AsyncMock(return_value=True)
+        monkeypatch.setattr(
+            self.registry, "stop_and_remove_container", stopped
+        )
+        await self.registry.stop_user_containers("u1")
+        killed.assert_awaited_once_with("ws-live", container_id="cid-live")
+
+    async def test_drain_unremovable_leftover_not_counted(self):
+        # A racing-start leftover whose removal fails is not counted as
+        # stopped (the caller treats the count as "all clear").
+        leftover = {"Id": "cid-left", "Names": "klangk-managed-x"}
+        stop = AsyncMock(return_value=False)  # removal failed
+        with patch.object(self.registry, "stop_and_remove_container", stop):
+            with patch.object(
+                self.registry.app.state.podman,
+                "list_containers",
+                AsyncMock(return_value=[leftover]),
+            ):
+                assert await self.registry._sweep_drain_leftovers() == 0
+        stop.assert_awaited_once_with("cid-left")
+
+    # --- health ---
+
+    async def test_start_health_loop_twice_keeps_single_task(self):
+        health = self.registry.health
+        health.start_health_loop()
+        first = health.health_task
+        assert first is not None
+        health.start_health_loop()
+        assert health.health_task is first
+        first.cancel()
+        try:
+            await first
+        except asyncio.CancelledError:
+            pass
+        health.health_task = None
+
+    # --- idle ---
+
+    def test_on_idle_stop_unknown_workspace_is_noop(self):
+        idle = self.registry.idle
+        idle.on_idle_stop("ws-gone", lambda wid: None)  # no state, no raise
+
+    def test_set_workspace_idle_timeout_unknown_workspace_is_noop(self):
+        idle = self.registry.idle
+        # No state -> no timeout write, no wake (must not raise trying to
+        # touch the wake event either).
+        idle.set_workspace_idle_timeout("ws-gone", 300)
+
+    async def test_idle_reap_skips_callbacks_for_vanished_state(self):
+        # Two overdue workspaces; stopping the first also removes the
+        # second's state (a racing delete): the loop must skip the second
+        # workspace's idle callbacks but still notify + stop it.
+        self.registry.track_activity("cid-a", "ws-a")
+        self.registry.track_activity("cid-b", "ws-b")
+        for ws in ("ws-a", "ws-b"):
+            self.registry.states[ws].last_activity = (
+                time.time() - self.registry.idle_timeout_seconds - 100
+            )
+        callbacks = []
+
+        async def _cb(wid):
+            callbacks.append(wid)
+
+        self.registry.on_idle_stop("ws-b", _cb)
+
+        real_stop = self.registry.stop_and_remove_container
+
+        async def _stop_and_pop(cid, **kw):
+            # The first reap also deletes the second workspace's state.
+            self.registry.states.pop("ws-b", None)
+            return await real_stop(cid, **kw)
+
+        with patch_podman(self.registry) as p:
+            with patch.object(
+                self.registry, "stop_and_remove_container", _stop_and_pop
+            ):
+                with patch.object(
+                    self.registry,
+                    "notify_workspace_killed",
+                    AsyncMock(),
+                ):
+                    task = asyncio.create_task(
+                        self.registry.cleanup_idle_containers()
+                    )
+                    await asyncio.sleep(0.05)
+                    self.registry.get_cleanup_wake().set()
+                    await asyncio.sleep(0.05)
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+        # ws-b's state vanished before its turn: no idle callbacks ran for
+        # it, but its container was still stopped.
+        assert callbacks == []
+        assert p.remove_container.await_count >= 2
+
+    async def test_orphan_token_sweep_throttles_to_interval(self, monkeypatch):
+        # Two loop passes within ORPHAN_TOKEN_SWEEP_INTERVAL: the sweep
+        # runs once (the throttle), not per pass.
+        sweeps = AsyncMock()
+        monkeypatch.setattr(
+            self.registry, "_sweep_orphaned_sidecar_tokens", sweeps
+        )
+        monkeypatch.setattr(
+            type(self.registry.idle),
+            "_cleanup_interval",
+            lambda self: 0.01,
+            raising=True,
+        )
+        task = asyncio.create_task(self.registry.cleanup_idle_containers())
+        await asyncio.sleep(0.1)  # several passes at 10ms
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        sweeps.assert_awaited_once()
+
+    # --- spec ---
+
+    def test_hosting_floor_partial_values_get_floors(self):
+        # Only the omitted hosting values take the resolver floor; each
+        # explicit one survives (including an empty base_path, #2722).
+        from klangk.container.spec import _hosting_floor
+
+        app = types.SimpleNamespace(
+            state=types.SimpleNamespace(util=MagicMock())
+        )
+        app.state.util.derive_hosting_info = MagicMock(
+            return_value=("floor.example", "https", "/floor")
+        )
+        # Hostname given, proto + base omitted.
+        assert _hosting_floor(app, "ext.example", None, None) == (
+            "ext.example",
+            "https",
+            "/floor",
+        )
+        app.state.util.derive_hosting_info = MagicMock(
+            return_value=("floor.example", "https", "/floor")
+        )
+        # Proto given, hostname + base omitted.
+        assert _hosting_floor(app, None, "http", None) == (
+            "floor.example",
+            "http",
+            "/floor",
+        )
+        app.state.util.derive_hosting_info = MagicMock(
+            return_value=("floor.example", "https", "/floor")
+        )
+        # Base given (empty string is legitimate), hostname + proto
+        # omitted.
+        assert _hosting_floor(app, None, None, "") == (
+            "floor.example",
+            "https",
+            "",
+        )

@@ -1010,3 +1010,153 @@ class TestEnsureSharedHome:
             "cannot make" in r.message and str(home) in r.message
             for r in caplog.records
         )
+
+
+class TestWorkspacesServiceBranchGaps2834:
+    """#2834 branch gate: home-symlink + skel + archive + delete
+    outcomes the mainline tests only take one side of."""
+
+    async def test_symlink_to_missing_target_relinks_without_adoption(
+        self, user, app_state
+    ):
+        # A dangling handle symlink (the old user dir was deleted):
+        # nothing to adopt, straight relink; the fresh user dir means
+        # the skel still populates (created True).
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "dangling-ws"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        (home / ".users").mkdir(parents=True, exist_ok=True)
+        (home / "admin").symlink_to(".users/gone-uid")  # target absent
+        result, created = await app_state.state.workspaces.ensure_home_symlink(
+            home, "admin", "new-uid"
+        )
+        assert result == "/home/admin"
+        assert created is True  # no adoption -> skel needed
+        assert os.readlink(home / "admin") == ".users/new-uid"
+
+    async def test_adoption_skips_names_already_present(self, user, app_state):
+        # The old user dir has a file whose name already exists in the
+        # new user dir: the NEW file wins, the old one stays put.
+        ws = await app_state.state.workspaces.create_workspace(
+            user["id"], "adopt-collide-ws"
+        )
+        home = app_state.state.workspaces.home_path(ws["id"])
+        (home / ".users").mkdir(parents=True, exist_ok=True)
+        old_dir = home / ".users" / "old-uid"
+        old_dir.mkdir()
+        (old_dir / "keep.txt").write_text("old")
+        new_dir = home / ".users" / "new-uid"
+        new_dir.mkdir()
+        (new_dir / "keep.txt").write_text("new")
+        (home / "admin").symlink_to(".users/old-uid")
+        (
+            _result,
+            created,
+        ) = await app_state.state.workspaces.ensure_home_symlink(
+            home, "admin", "new-uid"
+        )
+        assert created is False  # adoption path
+        # The new user's existing file was NOT clobbered.
+        assert (new_dir / "keep.txt").read_text() == "new"
+        # The colliding old file was left in the old dir.
+        assert (old_dir / "keep.txt").read_text() == "old"
+
+    async def test_populate_home_skel_explicit_home(self):
+        mock_pod = MagicMock()
+        with patch.object(
+            mock_pod,
+            "exec_container",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),
+        ) as mock_exec:
+            await ws_mod.populate_home_skel(
+                "cid-123", "uid-456", mock_pod, home="/home/custom"
+            )
+        args = mock_exec.await_args.args
+        assert args[1][1] == "/home/custom"  # the explicit home won
+
+    async def test_archive_validation_skipped_for_never_materialized_paths(
+        self, user, app_state, caplog
+    ):
+        # build_workspace_archive with a home_dir whose PARENT doesn't
+        # exist: the containment check only applies to materialized
+        # paths, so it is skipped (tar then fails on the missing source).
+        wsvc = app_state.state.workspaces
+        home = wsvc.safe_path("ws-never", "home", "deep", "gone")
+        with caplog.at_level(logging.ERROR, logger="klangk.workspaces"):
+            ok = await wsvc.build_workspace_archive(
+                {"name": "x"}, home, wsvc.safe_path("ws-never", "a.tar.gz")
+            )
+        assert ok is False
+        assert not any(
+            "Path validation failed" in r.message for r in caplog.records
+        )
+
+    async def test_archive_missing_ws_dir_skips_rmtree(
+        self, user, app_state, monkeypatch
+    ):
+        # The archived workspace's data dir is already gone: no rmtree
+        # attempt, no error (idempotent teardown).
+        wsvc = app_state.state.workspaces
+        home = wsvc.home_path("ws-x")
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "f.txt").write_text("x")
+        # The workspace's own data dir reads as already-gone (a per-handle
+        # home layout): the teardown rmtree is skipped entirely.
+        real_safe = wsvc.safe_path
+
+        def _safe_missing_ws_dir(*parts):
+            if len(parts) == 1 and parts[0] == "ws-x":
+                import pathlib
+
+                return pathlib.Path("/nonexistent-ws-data-dir")
+            return real_safe(*parts)
+
+        monkeypatch.setattr(wsvc, "safe_path", _safe_missing_ws_dir)
+        monkeypatch.setattr(
+            wsvc.app.state.model.workspaces,
+            "list_workspaces",
+            AsyncMock(
+                return_value={
+                    "items": [{"id": "ws-x", "name": "x"}],
+                    "has_more": False,
+                    "next_offset": None,
+                }
+            ),
+        )
+        removed = []
+
+        async def _spy_rmtree(path, label):
+            removed.append(label)
+
+        monkeypatch.setattr(ws_mod, "_async_rmtree", _spy_rmtree)
+        archives = await wsvc.archive_user_data(user["id"], user["email"])
+        assert archives  # the archive was still built
+        # No "workspace data" teardown ran (the dir read as absent).
+        assert not any(label.startswith("workspace data") for label in removed)
+
+    async def test_delete_workspace_model_false_skips_cleanup(
+        self, user, app_state, monkeypatch
+    ):
+        # The row already gone (a racing delete): no nix teardown, no
+        # rmtree -- just the False passthrough.
+        wsvc = app_state.state.workspaces
+        monkeypatch.setattr(
+            wsvc.app.state.model.workspaces,
+            "delete_workspace",
+            AsyncMock(return_value=False),
+        )
+        monkeypatch.setattr(
+            wsvc.app.state.model.workspaces,
+            "get_workspace",
+            AsyncMock(return_value={"id": "ws-gone", "name": "x"}),
+        )
+        removed = []
+
+        async def _spy_rmtree(path, label):
+            removed.append(path)
+
+        monkeypatch.setattr(ws_mod, "_async_rmtree", _spy_rmtree)
+        assert await wsvc.delete_workspace("ws-gone", user["id"]) is False
+        assert removed == []
