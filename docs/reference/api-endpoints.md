@@ -1629,8 +1629,9 @@ No request body.
 
 Return the container status for a workspace.
 
-**Auth:** JWT required. User must have `terminal` permission on
-`/workspaces/{id}`.
+**Auth:** JWT required. User must have `monitor` permission on
+`/workspaces/{id}` (#2783 — the dedicated status-observation permission,
+granted alongside `terminal` by every share path).
 
 No request body.
 

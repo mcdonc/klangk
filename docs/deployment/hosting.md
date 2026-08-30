@@ -30,7 +30,7 @@ outer nginx (443)
 ## Ports
 
 - `KLANGKD_PORT` (default unset): **Browser access point** — the proxy serves UI, API, WebSocket, and proxies hosted app URLs directly to container ports. Unset ⇒ headless mode (no browser listener). Suggested `8997` ([#1542](https://github.com/mcdonc/klangk/issues/1542)).
-- `KLANGKD_EGRESS_PORT` (default `8995`): Container-egress port — the proxy listener for container→backend traffic (`/llm-proxy`, browser-delegate bridge). Must differ from `KLANGKD_PORT`.
+- `KLANGKD_EGRESS_PORT` (default `8995`): Container-egress port — the proxy listener for container→backend traffic (`/llm-proxy`, browser-delegate bridge, the sidecar's `/ws/egress-sidecar`). Must differ from `KLANGKD_PORT`.
 - `KLANGKD_PROXY_PORT`: **Deprecated** alias for `KLANGKD_EGRESS_PORT`; rename it. (Renamed from `KLANGKD_NGINX_PORT`; the old name is no longer recognized.)
 - `9000+`: User app ports (5 per workspace, mapped to container ports 8000-8004)
 

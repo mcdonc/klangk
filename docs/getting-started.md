@@ -55,24 +55,30 @@ and an OpenAI-compatible LLM API key.
 git clone git@github.com:mcdonc/klangk.git
 cd klangk
 
-# Create .env from the example
-cp -n .env.example .env
-
-# Edit .env with your credentials
-cat > .env << 'EOF'
-KLANGKD_LLM_MODELS="openai/gemma4:31b:https://ollama.com/v1:"
-KLANGKD_JWT_SECRET=change-this-to-a-random-secret
-KLANGKD_DEFAULT_USER=admin@example.com
-# The default auth mode is `none` (no password, loopback-only) — you're
-# logged in automatically as the default user above. To require a real
-# password instead, uncomment the next two lines:
-# KLANGKD_AUTH_MODES=password
-# KLANGKD_DEFAULT_PASSWORD=admin
-EOF
-
 # Install Nix and devenv (if not already installed)
 ./bootstrap
+
+# Enter the shell — the first entry seeds klangkd.yaml (gitignored)
+# from klangkd.yaml.devenv: the dev config for the backend
+devenv shell
 ```
+
+Then edit `klangkd.yaml` to add your LLM provider (required for the AI
+features — see [LLM Proxy](architecture/llm-proxy.md) for all forms):
+
+```yaml
+# klangkd.yaml (seeded on first shell entry)
+llm-models:
+  - model_name: "*" # single provider, all its models
+    params:
+      api-base: https://api.openai.com/v1 # or http://localhost:11434 (Ollama)
+      api-key: your-key-here
+```
+
+The seeded dev config runs `auth_modes: password` with
+`admin@example.com` / `admin123abc` — change them in `klangkd.yaml`
+before first boot, or set a real password afterwards with
+`klangk admin users set-password`.
 
 ### Starting the Dev Environment
 
@@ -97,16 +103,16 @@ instructions.
 
 ## Logging in
 
-Out of the box (the default `none` auth mode) there is **nothing to log in
-with** — open <http://localhost:8997> and you're already in, as the default
-user (`KLANGKD_DEFAULT_USER`). The CLI likewise needs no `klangk login`.
+With the Docker examples above (`KLANGKD_AUTH_MODES=password`) and the
+seeded devenv config (also `password` mode), log in with the email you
+configured (`admin@example.com` / `admin123abc` in dev) and the password
+you set. The default user is in the `admin` group and can manage other
+users and groups via the Admin page.
 
-If you switched to a real auth mode (`password`, `oidc`, or `both` — e.g. the
-Docker examples above set `KLANGKD_AUTH_MODES=password`), log in with the
-email you configured. If you set `KLANGKD_DEFAULT_PASSWORD`, use that
-password; otherwise check the server log for the generated one. The default
-user is in the `admin` group and can manage other users and groups via the
-Admin page.
+A bare `klangkd` (e.g. a `pip install klangk` install with no config) uses
+the default `none` auth mode — there is **nothing to log in with**: open
+the page and you're already in, as the default user
+(`KLANGKD_DEFAULT_USER`). The CLI likewise needs no `klangk login`.
 
 See [Auth Modes](features/auth-modes.md) for the full picture, including how
 to switch modes.

@@ -4,5 +4,7 @@ Each container receives a workspace JWT at startup, written to `/tmp/klangk/work
 
 - `/llm-proxy` — LLM API proxy (injects the real API key upstream)
 - `/api/v1/browser-delegate` — browser-delegate bridge for Pi extensions
+- `/ws/egress-sidecar` — the network sidecar's blocked-egress event channel
+  (#2311; the token may also arrive as a `?token=` query param on this socket)
 
 The token uses the same `KLANGKD_JWT_SECRET` as user JWTs but is distinguished by a `purpose: "workspace"` claim. Token lifetime is controlled by `KLANGKD_WORKSPACE_TOKEN_HOURS` (default 24h). Tokens are automatically renewed at 80% of their lifetime — the backend generates a new token and writes it to the container via `podman exec`. Pi resolves `!klangk-workspace-token` fresh on every LLM request (no cache), so all processes pick up renewed tokens automatically. The proxy's IP-based ACLs restrict these endpoints to container traffic as defense-in-depth alongside JWT validation.

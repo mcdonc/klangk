@@ -60,9 +60,12 @@ container_memory_limit: 8g
 container_pids_limit: 16384
 
 # --- Per-workspace egress filtering (#1365) ---
-# Set to a directory the OCI runtime can read to enable opt-in per-workspace
-# allowed_domains enforcement. Unset (default) = unrestricted egress.
-# netfilter_hooks_dir: /var/lib/klangk/netfilter-hooks
+# Deploy-wide default allow-list applied to workspaces that don't declare
+# their own (same grammar as a workspace allow-list). Unset (default) =
+# workspaces are unrestricted unless they declare a list.
+# netfilter_default_domains:
+#   - github.com:443
+#   - pypi.org
 
 # --- Uncomment to enable OIDC authentication ---
 # auth_modes: both
@@ -73,7 +76,11 @@ container_pids_limit: 16384
 #     client-id: klangk
 #     client-secret: changeme
 
-# --- Uncomment for LLM proxy ---
-# llm_api_key: your-key-here
-# llm_base_url: https://api.example.com/v1
-# llm_model: gpt-4
+# --- LLM proxy (required for AI features) ---
+# Single provider, all its models (passthrough) — see
+# docs/architecture/llm-proxy.md for the router (multi-provider) form.
+# llm-models:
+#   - model_name: "*"
+#     params:
+#       api-base: https://api.openai.com/v1
+#       api-key: your-key-here

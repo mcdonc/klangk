@@ -320,6 +320,27 @@ your user id, so it stays valid. See
 
 The CLI connects to the running Klangk backend over HTTP + WebSocket — it works locally and against remote servers.
 
+## Interactive TUI
+
+Run `klangk` with no arguments on a real terminal and it launches an
+interactive TUI (in non-TTY contexts — pipes, CI — it prints help
+instead, so the command stays scriptable). The TUI is the same client
+as the subcommands, driving the server over HTTP + WebSocket:
+
+- workspace list (owned + shared) with inline filter (`/`) and sort
+  cycling (`o`)
+- `n` new workspace, `i` import, `e` edit — the create/edit forms cover
+  every workspace option (image, service command, health check, mounts,
+  env, allowed domains, egress mode, resource caps)
+- per-row actions on the highlighted workspace: `r` restart, `s` stop/start,
+  `u` duplicate, `d` delete
+- `c` switch server, `l` logout
+- `?` key cheatsheet
+
+The consent popup for interactive-mode egress filtering also lives in
+the TUI/`klangk shell` wrapper (see
+[Egress Filtering](../features/egress-filtering.md)).
+
 ## Exiting the shell
 
 To disconnect from `klangk shell`, use the SSH-style escape sequence:
