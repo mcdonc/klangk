@@ -280,27 +280,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
       },
       onContainerEvent: (name, value) {
         if (!mounted) return;
-        if (name == 'container_stopped' && !_containerStopped) {
-          final reason = value?['reason'] ?? '';
-          // #2661: a stop whose reason is the server's own recycle is
-          // NOT user-actionable — the server stays up, the WebSocket
-          // drops with 1012 and auto-reconnects, and auto-start brings
-          // the workspace back. Raising the blocking "stopped — click
-          // Restart" overlay here would demand a click for a cycle
-          // that needs none; the reconnect overlay owns the gap.
-          if (reason == 'server recycle') return;
-          setState(() {
-            _containerStopped = true;
-            _stopReason = reason.toString().isNotEmpty
-                ? 'Container stopped ($reason)'
-                : 'Container stopped';
-          });
-        } else if (name == 'container_ready' && _restarting) {
-          setState(() {
-            _restarting = false;
-            _containerStopped = false;
-          });
-        }
+        final next = containerEventTransition(
+          name: name,
+          value: value,
+          current: (
+            containerStopped: _containerStopped,
+            restarting: _restarting,
+            stopReason: _stopReason,
+          ),
+        );
+        if (next == null) return;
+        setState(() {
+          _containerStopped = next.containerStopped;
+          _restarting = next.restarting;
+          _stopReason = next.stopReason;
+        });
       },
       // #2676: the server refuses a failed restart with an error frame
       // (instead of dropping the socket), so the spinner must clear here —

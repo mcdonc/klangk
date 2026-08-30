@@ -1611,6 +1611,14 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   include `files` (or `*`) — the same gate as the Sharing tab — and
   `?file=`/`?dir=` deep-links and terminal path taps no-op instead.
 
+- **Workspace stopped overlay now clears when the container returns on its
+  own (#2701).** The blocking "Container stopped — Restart" overlay
+  only cleared when the restart came from its own button; if the container
+  came back another way (socket reconnect after a server cycle, auto-start,
+  a restart initiated from the settings panel), the overlay stayed on top
+  of a live terminal. Any `container_ready` event on the socket now
+  clears it.
+
 - **`klangk terminal share` / `unshare` / `ls` (#2876).** A server
   refusal — e.g. `Permission denied` for a member without the
   `share-terminals` permission — now prints a one-line error and exits
