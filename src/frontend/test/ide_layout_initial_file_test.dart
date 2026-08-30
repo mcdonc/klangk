@@ -64,6 +64,55 @@ Widget _ide(GlobalKey<FileViewerPanelState> fvKey, WsClient ws, String? file,
       ),
     );
 
+/// Rebuilds IdeLayout with the Files pane granted mid-session — the shape
+/// of the permissions-fetch race where `files` lands after the first build
+/// (#2886).
+class _LatePaneHarness extends StatefulWidget {
+  const _LatePaneHarness({
+    super.key,
+    required this.fvKey,
+    required this.ws,
+    this.initialFile,
+  });
+  final GlobalKey<FileViewerPanelState> fvKey;
+  final WsClient ws;
+  final String? initialFile;
+  @override
+  State<_LatePaneHarness> createState() => _LatePaneHarnessState();
+}
+
+class _LatePaneHarnessState extends State<_LatePaneHarness> {
+  bool _showFiles = false;
+  void grantFiles() => setState(() => _showFiles = true);
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 1000,
+          height: 700,
+          child: IdeLayout(
+            fileViewerKey: widget.fvKey,
+            fileViewer: _showFiles
+                ? FileViewerPanel(
+                    key: widget.fvKey,
+                    wsClient: widget.ws,
+                    workspaceId: 'ws-1',
+                    authToken: 'tok',
+                    userHome: '/home/tester',
+                    canDownload: true,
+                    canWrite: true,
+                  )
+                : null,
+            terminal: const Text('TERMINAL_CONTENT'),
+            initialFile: widget.initialFile,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 void main() {
   setUp(clearFileListCacheForTest);
   tearDown(() {
@@ -137,6 +186,59 @@ void main() {
     await tester.pumpWidget(_ide(fvKey, ws, null, dir: '/home/docs'));
     await tester.pumpAndSettle();
     expect(find.text('docs'), findsOneWidget);
+    ws.close();
+  });
+
+  testWidgets(
+      'initialFile no-ops without a Files pane (no files permission, #2886)',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 1000,
+            height: 700,
+            child: IdeLayout(
+              fileViewer: null,
+              terminal: const Text('TERMINAL_CONTENT'),
+              initialFile: '/home/docs/note.txt',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // No crash, no tab switch off Terminal, no Files tab to switch to.
+    expect(find.text('Files'), findsNothing);
+    expect(find.text('TERMINAL_CONTENT'), findsOneWidget);
+  });
+
+  testWidgets(
+      'pending initialFile opens once the pane arrives late (permissions race)',
+      (tester) async {
+    testBaseUrlOverride = 'http://localhost:8997';
+    testHttpClientOverride = _client();
+    final fvKey = GlobalKey<FileViewerPanelState>();
+    final ws = _MockWsClient();
+    final harnessKey = GlobalKey<_LatePaneHarnessState>();
+    await tester.pumpWidget(
+      _LatePaneHarness(
+        key: harnessKey,
+        fvKey: fvKey,
+        ws: ws,
+        initialFile: '/home/docs/note.txt',
+      ),
+    );
+    await tester.pumpAndSettle();
+    // First build has no Files pane: the deep-link waits, nothing opens.
+    expect(find.text('ide body'), findsNothing);
+
+    harnessKey.currentState!.grantFiles();
+    await tester.pumpAndSettle();
+
+    // The pane's arrival re-runs the pending deep-link.
+    expect(find.text('ide body'), findsOneWidget);
     ws.close();
   });
 }

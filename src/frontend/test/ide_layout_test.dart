@@ -3,6 +3,44 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/layout/ide_layout.dart';
 import 'package:klangk_frontend/widgets/skeuo_tab.dart';
 
+/// A stateful harness that rebuilds IdeLayout with/without the Files pane
+/// — the shape the async permissions fetch produces mid-session (the gate
+/// flips after the first build, #2886).
+class _FilesHarness extends StatefulWidget {
+  const _FilesHarness({super.key, required this.showFiles});
+  final bool showFiles;
+  @override
+  State<_FilesHarness> createState() => _FilesHarnessState();
+}
+
+class _FilesHarnessState extends State<_FilesHarness> {
+  late bool _showFiles;
+  @override
+  void initState() {
+    super.initState();
+    _showFiles = widget.showFiles;
+  }
+
+  void setShowFiles(bool v) => setState(() => _showFiles = v);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: SizedBox(
+          width: 1280,
+          height: 720,
+          child: IdeLayout(
+            fileViewer: _showFiles ? const Text('FILES_CONTENT') : null,
+            terminal: const Text('TERMINAL_CONTENT'),
+            sharing: const Text('SHARING_CONTENT'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 void main() {
   group('SkeuoTab', () {
     testWidgets('renders badge when provided', (tester) async {
@@ -325,6 +363,108 @@ void main() {
     testWidgets('no sharing tab when sharing is null', (tester) async {
       await tester.pumpWidget(buildLayout());
       expect(find.text('Sharing'), findsNothing);
+    });
+
+    group('files-permission gating (#2886)', () {
+      testWidgets('no Files tab or pane when fileViewer is null',
+          (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 1280,
+                height: 720,
+                child: IdeLayout(
+                  fileViewer: null,
+                  terminal: const Text('TERMINAL_CONTENT'),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Files'), findsNothing);
+        expect(find.text('TERMINAL_CONTENT'), findsOneWidget);
+      });
+
+      testWidgets('revoking the pane mid-session keeps a later tab selected',
+          (tester) async {
+        final harnessKey = GlobalKey<_FilesHarnessState>();
+        await tester
+            .pumpWidget(_FilesHarness(key: harnessKey, showFiles: true));
+        await tester.pumpAndSettle();
+        expect(find.text('Files'), findsOneWidget);
+
+        await tester.tap(find.text('Sharing'));
+        await tester.pumpAndSettle();
+        expect(find.text('SHARING_CONTENT'), findsOneWidget);
+
+        // Permissions arrive / the ACL changes: no `files` → no Files tab.
+        harnessKey.currentState!.setShowFiles(false);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Files'), findsNothing);
+        // The Sharing selection followed its shifted index, not off the end.
+        expect(find.text('SHARING_CONTENT'), findsOneWidget);
+      });
+
+      testWidgets(
+          'revoking the pane while Terminal is selected stays on Terminal',
+          (tester) async {
+        final harnessKey = GlobalKey<_FilesHarnessState>();
+        await tester
+            .pumpWidget(_FilesHarness(key: harnessKey, showFiles: true));
+        await tester.pumpAndSettle();
+        // Default selection is Terminal (index 0) — the landing tab.
+        expect(find.text('TERMINAL_CONTENT'), findsOneWidget);
+
+        harnessKey.currentState!.setShowFiles(false);
+        await tester.pumpAndSettle();
+
+        // Regression (#2887 review): index 0 must not decrement to -1 and
+        // blow up IndexedStack — Terminal stays selected and visible.
+        expect(find.text('TERMINAL_CONTENT'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets(
+          'revoking the pane while Files is selected falls back to Terminal',
+          (tester) async {
+        final harnessKey = GlobalKey<_FilesHarnessState>();
+        await tester
+            .pumpWidget(_FilesHarness(key: harnessKey, showFiles: true));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Files'));
+        await tester.pumpAndSettle();
+        expect(find.text('FILES_CONTENT'), findsOneWidget);
+
+        harnessKey.currentState!.setShowFiles(false);
+        await tester.pumpAndSettle();
+
+        expect(find.text('FILES_CONTENT'), findsNothing);
+        expect(find.text('TERMINAL_CONTENT'), findsOneWidget);
+      });
+
+      testWidgets('granting the pane mid-session keeps a later tab selected',
+          (tester) async {
+        final harnessKey = GlobalKey<_FilesHarnessState>();
+        await tester
+            .pumpWidget(_FilesHarness(key: harnessKey, showFiles: false));
+        await tester.pumpAndSettle();
+        expect(find.text('Files'), findsNothing);
+
+        await tester.tap(find.text('Sharing'));
+        await tester.pumpAndSettle();
+        expect(find.text('SHARING_CONTENT'), findsOneWidget);
+
+        harnessKey.currentState!.setShowFiles(true);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Files'), findsOneWidget);
+        expect(find.text('SHARING_CONTENT'), findsOneWidget);
+      });
     });
 
     testWidgets('selecting same tab does not rebuild', (tester) async {

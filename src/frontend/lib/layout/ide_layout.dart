@@ -4,10 +4,14 @@ import '../terminal/ghostty_terminal.dart';
 import '../file_viewer/file_viewer_panel.dart';
 import '../widgets/skeuo_tab.dart';
 
-/// IDE layout: tabs (Terminal + Files + feature-contributed tabs) with optional
-/// debug pane at the bottom separated by a draggable divider.
+/// IDE layout: tabs (Terminal + optional Files + feature-contributed tabs)
+/// with optional debug pane at the bottom separated by a draggable divider.
 class IdeLayout extends StatefulWidget {
-  final Widget fileViewer;
+  /// Files pane. Null mounts no Files tab at all — the caller passes null
+  /// for principals without the `files` permission (#2886), so the panel
+  /// never fetches a listing it has no grant for. Deep-links and terminal
+  /// path taps that target the viewer no-op in that case.
+  final Widget? fileViewer;
   final Widget terminal;
   final Widget? settings;
   final Widget? sharing;
@@ -56,6 +60,13 @@ class IdeLayoutState extends State<IdeLayout> {
   int _selectedIndex = 0;
   double _debugHeight = 0; // collapsed by default
 
+  // #2886: whether the CURRENT initialFile/initialDir deep-link has been
+  // opened (or was absent). Re-armed when either changes; consulted when
+  // the Files pane arrives late (permissions fetch racing the first
+  // build), so an unconsumed deep-link opens once its target exists
+  // instead of being dropped.
+  bool _initialHandled = false;
+
   // Feature-tab badge subscriptions (#1976): a feature tab may expose a live
   // badge (unread count) via WorkspaceTabPlugin.badge. We listen and rebuild
   // the strip on change. Map key is the tab (identity-stable from the
@@ -85,6 +96,8 @@ class IdeLayoutState extends State<IdeLayout> {
     super.didUpdateWidget(oldWidget);
     if (widget.initialFile != oldWidget.initialFile ||
         widget.initialDir != oldWidget.initialDir) {
+      // A new deep-link re-arms the open-once latch.
+      _initialHandled = false;
       _maybeOpenInitial();
     }
     // Re-subscribe only when the featureTabs LIST identity changes. This
@@ -95,6 +108,32 @@ class IdeLayoutState extends State<IdeLayout> {
     // would churn (#1976 review nit).
     if (!identical(widget.featureTabs, oldWidget.featureTabs)) {
       _subscribeFeatureBadges();
+    }
+    // #2886: the Files pane mounts only with the `files` permission, which
+    // can arrive after the first build (async permissions fetch) or be
+    // revoked mid-session (ACL edited live). The Files tab occupies index
+    // 1, so its appearance/disappearance shifts every later tab's index —
+    // nudge the selection so it keeps pointing at the same logical tab
+    // (and stays in range for the IndexedStack). Only a null-ness change
+    // counts: the caller rebuilds the pane widget on every parent rebuild,
+    // so instance identity would fire every frame.
+    if (oldWidget.fileViewer == null && widget.fileViewer != null) {
+      if (_selectedIndex >= 1) setState(() => _selectedIndex += 1);
+      // A pending deep-link that no-op'd while the pane was absent (the
+      // permissions fetch raced the first build) now has its target.
+      _maybeOpenInitial();
+    } else if (oldWidget.fileViewer != null && widget.fileViewer == null) {
+      final wasOnFiles = _selectedIndex == 1;
+      // Terminal (index 0) is unaffected — do NOT subtract into -1 and
+      // hand IndexedStack an out-of-range index. Index > 1 shifts down to
+      // keep pointing at the same later tab; index 1 (the removed Files
+      // tab) falls back to Terminal.
+      setState(
+        () => _selectedIndex = _selectedIndex > 1 ? _selectedIndex - 1 : 0,
+      );
+      // Landing on Terminal from the removed tab focuses its input, the
+      // same as selecting the tab would.
+      if (wasOnFiles) _focusPane(0);
     }
   }
 
@@ -154,13 +193,18 @@ class IdeLayoutState extends State<IdeLayout> {
 
   /// Opens the deep-linked [IdeLayout.initialFile] (preferred) or
   /// [IdeLayout.initialDir] in the Files tab once the panel is built. Deferred
-  /// to after the frame so the fileViewer's state is attached.
+  /// to after the frame so the fileViewer's state is attached. Skipped (and
+  /// retried on pane arrival) while there is no Files pane — no `files`
+  /// permission yet (#2886).
   void _maybeOpenInitial() {
+    if (_initialHandled) return;
     final file = widget.initialFile;
     final dir = widget.initialDir;
     final hasFile = file != null && file.isNotEmpty;
     final hasDir = dir != null && dir.isNotEmpty;
     if (!hasFile && !hasDir) return;
+    if (widget.fileViewer == null) return;
+    _initialHandled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (hasFile) {
@@ -172,13 +216,17 @@ class IdeLayoutState extends State<IdeLayout> {
   }
 
   /// Switches to the Files tab and opens [path] in the existing viewer.
+  /// No-op without a Files pane (no `files` permission, #2886).
   void openFile(String path) {
+    if (widget.fileViewer == null) return;
     _selectTab(1);
     widget.fileViewerKey?.currentState?.openFile(path);
   }
 
   /// Switches to the Files tab and browses directory [path].
+  /// No-op without a Files pane (no `files` permission, #2886).
   void openDirectory(String path) {
+    if (widget.fileViewer == null) return;
     _selectTab(1);
     widget.fileViewerKey?.currentState?.openDir(path);
   }
@@ -188,7 +236,7 @@ class IdeLayoutState extends State<IdeLayout> {
     final changed = index != oldIndex;
     if (changed) {
       setState(() => _selectedIndex = index);
-      if (index == 1) {
+      if (index == 1 && widget.fileViewer != null) {
         widget.fileViewerKey?.currentState?.refresh();
       }
       // Feature-tab visibility (#1976).
@@ -218,12 +266,6 @@ class IdeLayoutState extends State<IdeLayout> {
         isSelected: _selectedIndex == 0,
         onTap: () => _selectTab(0),
       ),
-      SkeuoTab(
-        label: 'Files',
-        icon: Icons.folder_outlined,
-        isSelected: _selectedIndex == 1,
-        onTap: () => _selectTab(1),
-      ),
     ];
     final content = <Widget>[
       Container(
@@ -231,8 +273,24 @@ class IdeLayoutState extends State<IdeLayout> {
         padding: const EdgeInsets.only(left: 6, top: 4),
         child: widget.terminal,
       ),
-      Material(color: KColors.bgCanvas, child: widget.fileViewer),
     ];
+    // Files tab: mounted only when the caller passes a pane — without the
+    // `files` permission there is no tab to click and no listing fetch
+    // (#2886). Tab/content indices below shift down accordingly (the
+    // feature-tab start index is computed from tabs.length, not assumed).
+    if (widget.fileViewer != null) {
+      tabs.add(
+        SkeuoTab(
+          label: 'Files',
+          icon: Icons.folder_outlined,
+          isSelected: _selectedIndex == 1,
+          onTap: () => _selectTab(1),
+        ),
+      );
+      content.add(
+        Material(color: KColors.bgCanvas, child: widget.fileViewer!),
+      );
+    }
 
     void addTab(
       String label,

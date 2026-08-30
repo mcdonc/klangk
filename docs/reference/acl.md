@@ -100,7 +100,7 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `view`           | Can see the workspace exists                                                                                                              |
 | `monitor`        | Can observe health/status: `GET /workspaces/{id}/status` and the `container_status` / `service_health` WebSocket frames (#2783)           |
 | `terminal`       | Can open a terminal / exec commands                                                                                                       |
-| `files`          | Can browse file listings (metadata); reading file bodies additionally needs `files-download`                                              |
+| `files`          | Can browse file listings (metadata) and gets the Files tab; reading file bodies additionally needs `files-download`                       |
 | `files-download` | Can fetch file bytes: `/files/download` (raw stream/tar) and `/files/content` (text reader) — needs `files` too                           |
 | `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)                                                                              |
 | `exec-and-sync`  | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace                                                  |
@@ -135,7 +135,8 @@ but not
 `files-download` can browse listings and metadata only. To grant viewing
 without bulk export there is no longer a middle setting: grant both
 `files` + `files-download` (viewer fully works) or withhold `files`
-(browsing itself is denied).
+(browsing itself is denied — the web UI's Files tab does not mount at
+all, #2886).
 
 `export` is a workspace permission checked on `/workspaces/{id}`: the owner's wildcard ACE and the seeded `owners-<id>` role group both cover it, so owners can export their own workspaces without any extra grant, and a **Deny** `export` ACE for **Everyone** on the workspace resource (positioned ahead of the wildcards) revokes it per workspace. Admins do **not** get export implicitly — they must be an owner or hold an explicit grant. See [Export & Import](../features/export-import.md#export).
 

@@ -1589,6 +1589,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Files tab is hidden without the `files` permission (#2886).** A
+  spectator's workspace page mounted the Files tab unconditionally, so
+  opening it failed with `Cannot list this directory: Permission denied`.
+  The tab now mounts only for principals whose workspace permissions
+  include `files` (or `*`) — the same gate as the Sharing tab — and
+  `?file=`/`?dir=` deep-links and terminal path taps no-op instead.
+
 - **`klangk terminal share` / `unshare` / `ls` (#2876).** A server
   refusal — e.g. `Permission denied` for a member without the
   `share-terminals` permission — now prints a one-line error and exits
