@@ -12,6 +12,8 @@ Pre-commit hooks run automatically on `git commit` via [git-hooks.nix](https://g
 - **prettier** — TypeScript, JavaScript, and YAML formatting
 - **ruff format** — Python formatting
 - **ruff check --fix** — Python linting with auto-fix
+- **xenon** — Python complexity gate (rank B; see AGENTS.md)
+- **binary-integrity** — protects generated binary artifacts from drift
 - **shellcheck** — shell script linting
 - **shfmt** — shell script formatting
 - **trufflehog** — secret scanning

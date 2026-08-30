@@ -46,7 +46,7 @@ same filename).
 The wheel is built by `scripts/build_wheel.sh`, which installs
 `python-build` transiently (it's not a declared dependency of the runtime
 venv) and runs `python3 -m build --wheel` from `src/klangk/`. The hatch
-build hook (`src/klangk/hatch_build_frontend.py`) force-includes the Flutter
+build hook (`src/klangk/hatch_build_package_data.py`) includes the Flutter
 web build at `klangk/frontend/` and **requires** it for non-editable wheel
 builds — so the `build-wheel` job runs `klangk:flutter-build` first (which
 runs `flutterbuildweb.sh` against the checked-in `features.yaml`, #1660).
