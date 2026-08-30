@@ -23,9 +23,10 @@ image, the proxy).
 
 ## Security
 
-| Workflow   | File         | Description                              |
-| ---------- | ------------ | ---------------------------------------- |
-| **CodeQL** | `codeql.yml` | GitHub code scanning for vulnerabilities |
+| Workflow              | File                    | Description                                   |
+| --------------------- | ----------------------- | --------------------------------------------- |
+| **CodeQL**            | `codeql.yml`            | GitHub code scanning for vulnerabilities      |
+| **Python Deps Audit** | `python-deps-audit.yml` | pip-audit of the locked Python dependency set |
 
 ## Container images
 

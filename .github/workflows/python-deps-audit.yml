@@ -1,0 +1,71 @@
+name: Python Deps Audit
+
+# pip-audit the locked Python dependency resolution (#2856) — the
+# third-party layer that trufflehog (git-history secrets) and CodeQL
+# (first-party SAST) don't cover. scripts/pip-audit.sh audits exactly
+# what uv.lock pins, per shipping member: the klangk wheel closure
+# (klangkd server + klangk CLI) and the klangksidecar wheel closure,
+# extras included.
+#
+# PRs run only when the resolution can have changed (uv.lock / any
+# workspace pyproject.toml / the audit's own files). The weekly schedule
+# always runs — catching new CVEs published against an unchanged lockfile
+# is its whole point — and fails loudly on any finding not accepted in
+# scripts/pip-audit-ignore.txt.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Tuesdays 06:00 UTC (trivy scans Mondays 06:00; fuzz is daily).
+    - cron: "0 6 * * 2"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # Only PRs are path-filtered. Scheduled and manual runs must always
+      # audit, so the filter step is skipped for them and every step below
+      # falls through to "run" (see the || conditions).
+      - uses: dorny/paths-filter@v4
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            deps:
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - 'src/klangk/pyproject.toml'
+              - 'src/klangksidecar/pyproject.toml'
+              - 'scripts/pip-audit.sh'
+              - 'scripts/pip-audit-ignore.txt'
+              - '.github/workflows/python-deps-audit.yml'
+
+      - uses: actions/setup-python@v6
+        if: github.event_name != 'pull_request' || steps.filter.outputs.deps == 'true'
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        if: github.event_name != 'pull_request' || steps.filter.outputs.deps == 'true'
+        # Pinned to the uv the devenv ships; a newer uv.lock revision fails
+        # loudly under --frozen until this pin is bumped to match.
+        run: pipx install uv==0.11.21
+
+      - name: Run pip-audit
+        if: github.event_name != 'pull_request' || steps.filter.outputs.deps == 'true'
+        run: bash scripts/pip-audit.sh
+
+      - name: Skip notice
+        if: github.event_name == 'pull_request' && steps.filter.outputs.deps != 'true'
+        run: echo "No dependency changes — skipping pip-audit"
