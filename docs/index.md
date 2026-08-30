@@ -55,7 +55,7 @@ terminals let you pair-program in real time.
 
 ### Terminal
 
-Terminals run inside [tmux](features/the-shell.md) for session
+Terminals run inside [tmux](features/terminal.md) for session
 persistence and window management. Access them from the web UI or
 connect from your local terminal with
 [`klangk shell`](reference/cli.md).

@@ -237,7 +237,7 @@ port: "8997"
 | `auth_modes`                  | `none`                   | `KLANGKD_AUTH_MODES`                  |
 | `jwt_secret`                  | _(insecure dev default)_ | `KLANGKD_JWT_SECRET`                  |
 | `prevent_insecure_jwt_secret` |                          | `KLANGKD_PREVENT_INSECURE_JWT_SECRET` |
-| `default_user`                | `admin@example.com`      | `KLANGKD_DEFAULT_USER`                |
+| `default_user`                | `<unixuser>@example.com` | `KLANGKD_DEFAULT_USER`                |
 | `default_password`            |                          | `KLANGKD_DEFAULT_PASSWORD`            |
 | `access_token_hours`          | `24`                     | `KLANGKD_ACCESS_TOKEN_HOURS`          |
 | `workspace_token_hours`       | `24`                     | `KLANGKD_WORKSPACE_TOKEN_HOURS`       |

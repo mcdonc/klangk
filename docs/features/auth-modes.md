@@ -108,7 +108,8 @@ without standing up the multi-user tier or logging in each session.
 > [#1391](https://github.com/mcdonc/klangk/issues/1391).
 
 In `none` mode the server freely issues a JWT for the seeded default user
-(`KLANGKD_DEFAULT_USER`, defaulting to `admin@example.com`) with no credentials
+(`KLANGKD_DEFAULT_USER`, defaulting to `<unixuser>@example.com`, derived
+from the invoking Unix user) with no credentials
 required from the caller:
 
 - The **frontend** calls `POST /api/v1/auth/local` on load and stores the

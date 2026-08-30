@@ -356,8 +356,9 @@ netfilter_default_domains:
 Entries use the same grammar as a workspace allow-list (`host` /
 `.domain` / `*.domain` / `host:port` / IPv4 CIDR — see the [API](#api)
 section; #1935, #2377) and are validated server-side at startup.
-A malformed value logs a warning and falls back to "no default" rather
-than aborting the server (#1772). Read at boot and on SIGHUP
+A malformed value **aborts startup** rather than silently disabling the
+default (#1939, reversing the #1772 fall-back); a SIGHUP reload with a bad
+value is denied and keeps the old config. Read at boot and on SIGHUP
 (reloadable).
 
 **Application.** The default is a **pre-fill, not a server-side

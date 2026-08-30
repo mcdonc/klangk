@@ -20,13 +20,11 @@ it to your `features.yaml`:
 ```yaml
 features:
   - name: git-credential
-    git: https://github.com/mcdonc/klangk.git
     path: features/git-credential
-    ref: main
 ```
 
-Then run `update-features` to fetch the feature, then rebuild the workspace
-image (e.g. `devenv up`, which rebuilds automatically).
+Then run `update-features` to materialize the feature payload, then rebuild
+the workspace image (`build-workspace-image`).
 
 ## Sign in with GitHub (recommended)
 

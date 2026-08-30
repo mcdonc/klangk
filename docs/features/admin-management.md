@@ -14,8 +14,9 @@ The Users tab lists all registered accounts. From here you can:
   Admin-created users are verified immediately (no email confirmation
   needed).
 - **Edit users** — change a user's email, password, or handle.
-- **Delete users** — remove a user and all their data. Workspace
-  files are archived to a tar.xz file before deletion. You cannot
+- **Delete users** — remove a user and all their data. Each workspace
+  is archived to a `.tar.gz` (the export/import format, re-importable
+  via `klangk import`) before its data directory is removed. You cannot
   delete your own account.
 
 ## Groups
