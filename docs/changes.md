@@ -1569,8 +1569,13 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 - **`klangk terminal share` / `unshare` / `ls` (#2876).** A server
   refusal — e.g. `Permission denied` for a member without the
   `share-terminals` permission — now prints a one-line error and exits
-  nonzero instead of a raw Python traceback. A server that silently
-  drops the command reports a timeout message instead of a stack trace.
+  nonzero instead of a raw Python traceback. Timeouts name the failing
+  wait, and a 4001/4002 handshake rejection reports the session-expired
+  hint instead of a stack trace.
+
+- **`klangk exec` (#2876).** Server errors and expired sessions during
+  exec now print a one-line message and exit nonzero instead of a raw
+  traceback, matching the terminal commands.
 
 - **Boot auto-start no longer ignores a disabled `allow_autostart`
   (#2796).** `KLANGKD_ALLOW_AUTOSTART=false` (any non-truthy non-empty

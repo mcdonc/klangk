@@ -8,9 +8,11 @@ single-responsibility modules, all imported back into
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import typer
+import websockets
 from rich.console import Console
 
 from .auth import fetch_config, local_login, seed_config, _UNREACHABLE
@@ -36,6 +38,39 @@ app = typer.Typer(
 )
 
 _err = Console(stderr=True)
+
+
+def run_ws_command(body):
+    """Run an async ws command body, surfacing failures as a clean exit.
+
+    Returns whatever *body* returns (e.g. an exit code). Server ``error``
+    frames — e.g. the "Permission denied" a member without
+    ``share-terminals`` gets — raise ``ConnectionError`` fast out of the
+    ``frame_is`` predicates (#2633); a silent server drop raises
+    ``TimeoutError``, carrying the failing wait's detail when it has
+    any. Both, plus a handshake rejection, reach the user as a one-line
+    message and a nonzero exit instead of a raw traceback (#2876) —
+    the same presentation ``klangk shell`` uses (shellcmd.py),
+    including the 4001/4002 session-expired special case.
+    """
+    try:
+        return asyncio.run(body())
+    except ConnectionError as e:
+        _err.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
+    except asyncio.TimeoutError as e:
+        detail = str(e) or "Timed out waiting for the server to respond"
+        _err.print(f"[red]{detail}[/red]")
+        raise typer.Exit(code=1) from None
+    except websockets.InvalidStatus as e:
+        if e.response.status_code in (4001, 4002):
+            _err.print(
+                "[red]Session expired. Run `klangk login`"
+                " to re-authenticate.[/red]"
+            )
+        else:
+            _err.print(f"[red]Connection rejected: {e}[/red]")
+        raise typer.Exit(code=1) from None
 
 
 def _cfg() -> CLIConfig:
