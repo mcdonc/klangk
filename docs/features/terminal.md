@@ -27,8 +27,9 @@ Klangk uses tmux for three reasons:
 
 Tmux runs with no prefix key and no keybindings beyond scrollback — it
 looks and feels like a plain terminal, with a subtle status bar at the
-bottom showing the workspace name (left) and the disconnect hint
-`Exit: Enter, then ~.` (right) — the CLI's `~.` escape to close the session.
+bottom showing the workspace name and the disconnect hint
+`Exit: Enter, then ~.` on the left, and a clickable **+ new** segment on
+the right that opens a new window (#2161).
 
 ## How it maps to what you see
 
@@ -43,11 +44,13 @@ bottom showing the workspace name (left) and the disconnect hint
 ## Status bar
 
 Every terminal displays a thin status bar at the bottom of the screen.
-The left side shows the **workspace name** and the right side shows the
-current **terminal name** (the active tab's window name — until you
-rename a tab it shows the shell program, e.g. `bash`). This helps you
-keep track of which workspace and terminal you are in, especially when
-you have multiple shells open across different workspaces.
+The left side shows the **workspace name** and the disconnect hint
+`Exit: Enter, then ~.`; the right side shows a clickable **+ new**
+segment that opens a new tmux window (#2161) — it works identically in
+`klangk shell` and the browser terminal, since both are tmux clients on
+the same session. This helps you keep track of which workspace you are
+in, especially when you have multiple shells open across multiple
+workspaces.
 
 The status bar is managed by tmux and cannot be dismissed through
 normal interaction (the tmux prefix key is disabled). It uses one row

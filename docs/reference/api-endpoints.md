@@ -442,10 +442,15 @@ On failure: 401 with `X-Token-Error` header (`missing`, `expired`, or `invalid`)
 ### GET `/api/v1/config`
 
 Get public instance configuration: whether registration and invitations
-are enabled, available OIDC providers, login banner text, and feature
-frontend config.
+are enabled, available OIDC providers, login banner text, auth mode,
+and the branding / feature flags the pre-auth UI needs. An
+**authenticated** caller additionally receives the deploy-wide netfilter
+default + enabled flag (the egress perimeter is not exposed pre-auth),
+plus any feature-declared frontend config keys and `features_enable`
+when set.
 
-**Auth:** None.
+**Auth:** None (public payload; authenticated callers get a few extra
+fields).
 
 No request body.
 
@@ -453,11 +458,26 @@ No request body.
 {
   "registration_enabled": true,
   "invitations_enabled": true,
+  "product_name": "Klangk",
   "login_banner_title": "",
   "login_banner": "",
+  "login_banner_every_visit": false,
   "oidc_providers": [],
   "auth_modes": "both",
-  "instance_id": "string"
+  "instance_id": "string",
+  "allow_autostart": false,
+  "browser_delegate_enabled": true,
+  "default_per_handle_home": false,
+  "default_classification_banner": "",
+  "min_password_length": 8,
+  "password_requirements": { "upper": 0, "lower": 0, "digit": 0, "special": 0 },
+  "password_history_count": 0,
+  "logo_url": "",
+  "terms_url": "",
+  "privacy_url": "",
+  "aup_url": "",
+  "support_url": "",
+  "support_email": ""
 }
 ```
 
@@ -611,16 +631,31 @@ so `has_more`/`next_offset` reflect the filtered set.
 [
   {
     "id": "uuid",
+    "user_id": "uuid",
     "name": "my-workspace",
     "container_id": null,
+    "num_ports": 5,
     "image": null,
     "service_command": null,
+    "auto_start": false,
+    "setup_state": "complete",
+    "health_check": null,
     "mounts": null,
     "env": null,
+    "allowed_domains": null,
+    "rejected_domains": null,
+    "settings": null,
+    "egress_mode": "interactive",
+    "per_handle_home": false,
+    "classification_banner": null,
     "created_at": "2025-01-01 12:00:00"
   }
 ]
 ```
+
+The same workspace-object shape is returned by `GET /workspaces/shared`,
+`POST /workspaces`, `POST /workspaces/{id}/duplicate`, and
+`POST /workspaces/import` (shared adds `owner_email`).
 
 Paginated response (`?limit=10&offset=0`):
 
@@ -652,21 +687,9 @@ No request body.
 `?q=<substring>` (name substring). Without params returns a bare list, with
 params returns the `{ items, has_more, next_offset }` envelope.
 
-```json
-[
-  {
-    "id": "uuid",
-    "name": "shared-workspace",
-    "container_id": null,
-    "image": null,
-    "service_command": null,
-    "mounts": null,
-    "env": null,
-    "created_at": "2025-01-01 12:00:00",
-    "owner_email": "owner@example.com"
-  }
-]
-```
+Workspace objects use the same shape as
+[GET /api/v1/workspaces](#get-apiv1workspaces), plus an `owner_email`
+field.
 
 ---
 
@@ -1414,19 +1437,8 @@ text, one line. Omitted/empty = inherit the deploy-wide default
 (`KLANGKD_CLASSIFICATION_BANNER`), resolved at display time; when
 neither is set, no banner is rendered.
 
-```json
-{
-  "id": "uuid",
-  "user_id": "uuid",
-  "name": "my-workspace",
-  "image": null,
-  "service_command": null,
-  "mounts": null,
-  "env": null,
-  "num_ports": 5,
-  "created_at": "2025-01-01 12:00:00"
-}
-```
+Returns the created workspace record (the full workspace-object shape
+shown under [GET /api/v1/workspaces](#get-apiv1workspaces)).
 
 ---
 
@@ -1458,19 +1470,8 @@ Environment variables are sanitized during import.
 **Auth:** JWT required. Multipart form upload: `file` (`.tar.gz` archive),
 optional `name` form field.
 
-```json
-{
-  "id": "uuid",
-  "user_id": "uuid",
-  "name": "my-workspace",
-  "image": null,
-  "service_command": null,
-  "mounts": null,
-  "env": null,
-  "num_ports": 5,
-  "created_at": "2025-01-01 12:00:00"
-}
-```
+Returns the created workspace record (the full workspace-object shape
+shown under [GET /api/v1/workspaces](#get-apiv1workspaces)).
 
 ---
 
@@ -1485,19 +1486,8 @@ Clone an existing workspace's configuration into a new workspace.
 { "name": "cloned-workspace" }
 ```
 
-```json
-{
-  "id": "uuid",
-  "user_id": "uuid",
-  "name": "my-workspace",
-  "image": null,
-  "service_command": null,
-  "mounts": null,
-  "env": null,
-  "num_ports": 5,
-  "created_at": "2025-01-01 12:00:00"
-}
-```
+Returns the created workspace record (the full workspace-object shape
+shown under [GET /api/v1/workspaces](#get-apiv1workspaces)).
 
 ---
 
@@ -1552,8 +1542,10 @@ Grant a group access to a workspace.
 
 ### POST `/api/v1/workspaces/{id}/members`
 
-Grant a user access to a workspace. The user receives view, terminal,
-and files permissions.
+Grant a user access to a workspace. The user receives `view`, `monitor`,
+`terminal`, `files`, `files-download`, and `files-write` permissions
+(a direct user share — the role-bucket sharing UI uses
+`POST /workspaces/{id}/roles/{role}` instead).
 
 **Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
 

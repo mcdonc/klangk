@@ -306,7 +306,7 @@ override it per-workspace (`settings.idle_timeout` — see
 | `per_handle_home`                   | `false`                         | `KLANGKD_PER_HANDLE_HOME`                   |
 | `classification_banner`             |                                 | `KLANGKD_CLASSIFICATION_BANNER`             |
 | `container_subnets`                 | _(auto-derived)_                | `KLANGKD_CONTAINER_SUBNETS`                 |
-| `userns`                            |                                 | `KLANGKD_USERNS`                            |
+| `userns`                            | `keep-id:uid=1000,gid=1000`     | `KLANGKD_USERNS`                            |
 | `podman_bin`                        | `podman`                        | `KLANGKD_PODMAN_BIN`                        |
 | `disable_tmux`                      |                                 | `KLANGKD_DISABLE_TMUX`                      |
 | `nix_enabled`                       | `false`                         | `KLANGKD_NIX_ENABLED`                       |

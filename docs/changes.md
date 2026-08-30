@@ -313,7 +313,7 @@ sync` report a clear permission-denied error.
   consent, shared terminals, health/idle, SIGHUP reload, admin users,
   export/import. The `super-e2e.yml` workflow runs it on demand and on
   release branches; it is not a per-PR gate. See
-  [Super-E2E](../development/super-e2e.md).
+  [Super-E2E](development/super-e2e.md).
 
 - **`change-acls` permission (#2764).** Raw ACL editing is now gated
   on a dedicated resource-level permission instead of `share`:
