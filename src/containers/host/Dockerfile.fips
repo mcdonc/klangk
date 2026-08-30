@@ -20,7 +20,7 @@
 #               workspace, so a FIPS host must ship a FIPS workspace).
 #
 # The validated 3.1.2 module is forward-compatible with newer libcrypto
-# (the validation covers "3.0 ... future 3.5"), so python:3.13-slim's
+# (the validation covers "3.0 ... future 3.5"), so python:3.14-slim's
 # distro libcrypto and the CPython built against it stay in place.
 # There is no node in the host image, so no nodejs_conf alias is needed
 # (unlike the workspace variant).
@@ -30,7 +30,7 @@
 # unless its own OpenSSL probes FIPS-enforcing — which this image
 # satisfies; a stock host container in FIPS mode aborts at startup.
 
-# Base: the regular host image (python:3.13-slim + podman + caddy +
+# Base: the regular host image (python:3.14-slim + podman + caddy +
 # supervisord + the klangk wheel + embedded workspace/sidecar tars),
 # built by scripts/build-host-image.sh. Override for a published base
 # if ever needed.
@@ -75,7 +75,7 @@ USER root
 RUN test "$(dpkg --print-architecture)" = "amd64"
 
 # The `openssl` CLI (fipsinstall at build time, the runtime probe's
-# CLI fallback layer) is not in python:3.13-slim.
+# CLI fallback layer) is not in python:3.14-slim.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && \
     rm -rf /var/lib/apt/lists/*
 

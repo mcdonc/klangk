@@ -1,10 +1,12 @@
-# python:3.13-slim pinned by IMMUTABLE DIGEST (multi-arch manifest list)
+# python:3.14-slim pinned by IMMUTABLE DIGEST (multi-arch manifest list)
 # so the registry cannot serve different content for the tag (#2063).
-# Bump: docker buildx imagetools inspect python:3.13-slim
+# Bump: docker buildx imagetools inspect python:3.14-slim
 # (read the `Digest:` line of the manifest list)
-FROM python:3.13-slim@sha256:7ce4b6dfe35e55397b7cda544f8a13f191b7ae28dc5aad71fe664dbc9bc2623f AS base
+FROM python:3.14-slim@sha256:cae66f2ef0ec51a9891263eeee7f987dacf0a9879e8aa9353d5606e0530619a5 AS base
 
-# Rebuild to pick up latest security patches (CVE-2026-45447 openssl).
+# Rebased onto the 3.14 interpreter base for the toolchain upgrade
+# (#2844); digest-only rebuilds also pick up security patches (e.g.
+# CVE-2026-45447 openssl).
 # The reverse proxy is Caddy (klangkd's default engine since #1559), installed
 # from the official Caddy apt repo (not in Debian's default repos). nginx is
 # gone — klangkd renders a Caddyfile and drives Caddy over its admin API.
