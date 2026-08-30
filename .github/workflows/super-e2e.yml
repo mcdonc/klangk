@@ -1,0 +1,63 @@
+name: "E2E: Super (host appliance)"
+
+# Feature tests against the real Docker host appliance (#2561): the
+# image built from src/containers/host (supervisord + klangkd + caddy +
+# nested rootless podman) booted with the shipped posture, exercised
+# black-box over its published port (auth, workspace lifecycle, files,
+# egress filtering + consent, shared terminals, health/idle, SIGHUP,
+# admin, export/import).
+#
+# NOT a per-PR gate: the build is expensive (flutter + wheel + two
+# images + docker build). Manual trigger + release branches, like
+# dist-smoke (#1611). Promote to per-PR only if it proves stable.
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner kind: stock (ubuntu-latest) or the self-hosted nix VM"
+        type: choice
+        options: [stock, nix]
+        default: stock
+  push:
+    branches: [release/**]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  super-e2e:
+    # Stock GitHub-hosted runners by default (docker preinstalled); the
+    # self-hosted NixOS runner (label "nix") via workflow_dispatch input,
+    # like the other e2e suites (#2772).
+    runs-on: ${{ inputs.runner == 'nix' && 'nix' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/devenv-setup
+        with:
+          # build-host-image (a devenv script, not a task) handles all its
+          # own prerequisites: flutter web, wheel, workspace image, sidecar.
+          build-tasks: ""
+
+      - name: Build host image
+        shell: bash
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
+          retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+          "$retry" devenv shell -- build-host-image
+
+      - name: Run super-E2E suite
+        shell: bash
+        run: |
+          . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh 2>/dev/null || true
+          retry="$GITHUB_WORKSPACE/.github/actions/devenv-setup/scripts/retry-on-invalid-path.sh"
+          "$retry" devenv shell -- test-super-e2e
+
+      - name: Clean leftover appliance containers
+        if: always()
+        shell: bash
+        run: |
+          docker ps -aq --filter name=klangk-super-e2e- \
+            | xargs -r docker rm -f 2>/dev/null || true

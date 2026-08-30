@@ -528,6 +528,18 @@ in
       -v --no-cov -n 2 --dist=loadscope "$@"
   '';
 
+  # Super-E2E (#2561): black-box feature tests against the real Docker
+  # host appliance (supervisord + klangkd + nested rootless podman).
+  # Requires docker + a built host image (`build-host-image`; override
+  # the image with KLANGK_SUPER_E2E_IMAGE). Serial on purpose: one
+  # appliance serves the whole session — xdist workers would each boot
+  # their own and starve the runner.
+  scripts.test-super-e2e.exec = ''
+    cd $DEVENV_ROOT
+    exec ${venvPython} -m pytest src/klangk/klangkd-tests/super-e2e \
+      -v --no-cov "$@"
+  '';
+
   # Run the whole corpus as concurrently as is safe (#1393): the unit
   # suites combine into one parallel invocation (test-unit), then the
   # e2e suites run with xdist (--dist=loadscope, 2 workers each).

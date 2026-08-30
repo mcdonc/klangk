@@ -305,6 +305,16 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **Super-E2E suite (#2561).** A new pytest suite
+  (`src/klangk/klangkd-tests/super-e2e/`, run via `test-super-e2e`)
+  exercises the real Docker host container (supervisord + klangkd +
+  caddy + nested rootless podman) black-box over its published port:
+  auth, workspace lifecycle, file ops, egress filtering + interactive
+  consent, shared terminals, health/idle, SIGHUP reload, admin users,
+  export/import. The `super-e2e.yml` workflow runs it on demand and on
+  release branches; it is not a per-PR gate. See
+  [Super-E2E](../development/super-e2e.md).
+
 - **`change-acls` permission (#2764).** Raw ACL editing is now gated
   on a dedicated resource-level permission instead of `share`:
   `GET`/`PUT /api/v1/workspaces/{id}/acl` (the Advanced ACL editor) and
@@ -2365,3 +2375,9 @@ users(id)`, so the decider handler passing the decider's email violated the
 - **Proxy denies container source IPs on the catch-all (#1376).** Containers
   can only reach `/llm-proxy/`, `/api/v1/browser-delegate`, and
   `/api/v1/workspaces/post-chat-message`.
+
+- **Host image ships `iproute2` (#2561).** Without it, caddy's
+  container-subnet auto-detection failed inside the appliance and fell
+  back to denying all RFC1918 peers — a host container run with a
+  published port (`docker run -p 8997:8997`) refused every browser/API
+  request with 403. Found by the new super-E2E suite.
