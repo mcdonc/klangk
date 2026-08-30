@@ -32,7 +32,8 @@ fi
 "${KLANGK_PYTHON}" scripts/import_dart_features.py --payload-dir "$PAYLOAD_DIR"
 
 # flterm is forked (github.com/runyaga/flterm) to build on the nix Flutter
-# (3.41 / Dart 3.11) -- upstream 0.0.3 needs Dart 3.12 for private-named
+# (forked at 3.41 / Dart 3.11; the toolchain is now 3.47 / Dart 3.13, and
+# the fork still builds) -- upstream 0.0.3 needed Dart 3.12 for private-named
 # parameters; the fork removes that. No host Flutter required. KLANGKBUILD_WEB_FLUTTER
 # can still override the binary; defaults to `flutter` on PATH (nix toolchain).
 FLUTTER="${KLANGKBUILD_WEB_FLUTTER:-flutter}"

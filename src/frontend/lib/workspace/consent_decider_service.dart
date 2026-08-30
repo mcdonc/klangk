@@ -215,6 +215,9 @@ class ConsentRule {
   final double? decidedAt;
   final String? decidedBy;
 
+  /// True when this rule records an allow verdict ([kDecisionAllowed]).
+  bool get isAllowed => decision == kDecisionAllowed;
+
   const ConsentRule({
     required this.id,
     required this.destHost,

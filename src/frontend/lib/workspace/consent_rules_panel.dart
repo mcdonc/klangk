@@ -147,13 +147,15 @@ class _ConsentRulesPanelState extends State<ConsentRulesPanel> {
   }
 
   String _describe(ConsentRule rule) {
-    final host = rule.destPort != null
-        ? '${rule.destHost}:${rule.destPort}'
-        : rule.destHost;
-    final verb = rule.decision == kDecisionAllowed ? 'allow' : 'deny';
-    final proc = rule.processName == null || rule.processName!.isEmpty
-        ? ''
-        : ' (${rule.processName})';
+    var host = rule.destHost;
+    if (rule.destPort != null) {
+      host = '$host:${rule.destPort}';
+    }
+    var proc = '';
+    if (rule.processName != null && rule.processName!.isNotEmpty) {
+      proc = ' (${rule.processName})';
+    }
+    final verb = rule.isAllowed ? 'allow' : 'deny';
     return 'Remove the $verb rule for $host$proc? It will be re-consented on the next request.';
   }
 

@@ -6,5 +6,10 @@ inputs:
         follows: nixpkgs
   nixpkgs:
     url: github:NixOS/nixpkgs/nixos-26.05
+  # Sole source of the Flutter toolchain (#2869): 26.05 carries 3.41.9,
+  # which is too old for mcp_toolkit (>= 3.44, #2868). Everything else
+  # stays on the stable channel.
+  nixpkgs-unstable:
+    url: github:NixOS/nixpkgs/nixos-unstable
 allow_unfree: true
 reload: false
