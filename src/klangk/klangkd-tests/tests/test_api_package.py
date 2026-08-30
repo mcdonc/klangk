@@ -304,3 +304,5 @@ def test_all_permissions_single_source():
     assert {"files-download", "files-write"} <= set(api.ALL_PERMISSIONS)
     # #2783's health/status gate must be reportable the same way.
     assert "monitor" in api.ALL_PERMISSIONS
+    # #2764's raw-ACL-editing gate must be reportable the same way.
+    assert "change-acls" in api.ALL_PERMISSIONS

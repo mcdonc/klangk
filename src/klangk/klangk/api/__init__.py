@@ -302,6 +302,7 @@ ALL_PERMISSIONS = [
     "files-download",
     "files-write",
     "share",
+    "change-acls",
     "manage_members",
     "export",
     "admin",

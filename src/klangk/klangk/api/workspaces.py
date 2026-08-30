@@ -1677,10 +1677,17 @@ async def remove_workspace_group(
 @router.get("/workspaces/{workspace_id}/acl")
 async def get_workspace_acl(
     workspace_id: str,
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(
+        acl.has_permission("change-acls", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
-    """Get resolved ACL entries for a workspace."""
+    """Get resolved ACL entries for a workspace.
+
+    Gated on ``change-acls`` (#2764): the raw ACE list is the advanced
+    editor's view. The simple sharing surface (members, roles, group
+    shares) stays on ``share``.
+    """
     resource = f"/workspaces/{workspace_id}"
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
@@ -1689,10 +1696,18 @@ async def get_workspace_acl(
 async def replace_workspace_acl(
     workspace_id: str,
     entries: list[WorkspaceAclEntry],
-    user: dict = Depends(acl.has_permission("share", _check_workspace_share)),
+    user: dict = Depends(
+        acl.has_permission("change-acls", workspace_resource)
+    ),
     app=Depends(get_app_dep),
 ):
-    """Replace all ACL entries for a workspace."""
+    """Replace all ACL entries for a workspace.
+
+    Gated on ``change-acls`` (#2764), not ``share``: rewriting the raw
+    ACE list can grant ``*`` and add Deny entries — a power beyond
+    inviting collaborators. Owners hold it via their ``*`` wildcard;
+    migration 0017 backfilled it onto existing ``share`` holders.
+    """
     resource = f"/workspaces/{workspace_id}"
     acl_entries = [
         {

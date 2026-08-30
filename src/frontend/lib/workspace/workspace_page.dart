@@ -680,8 +680,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
               onRestart: _restartContainer,
             )
           : null,
-      sharing: _hasPerm('share')
-          ? WorkspaceSharingPanel(workspaceId: widget.workspaceId)
+      // #2764: the Sharing tab serves both sharing powers — `share`
+      // holders get the role buckets, `change-acls` holders (at least)
+      // the Advanced ACL editor.
+      sharing: _hasPerm('share') || _hasPerm('change-acls')
+          ? WorkspaceSharingPanel(
+              workspaceId: widget.workspaceId,
+              canEditAcl: _hasPerm('change-acls'),
+            )
           : null,
       consentRules:
           _consent != null ? ConsentRulesPanel(service: _consent!) : null,

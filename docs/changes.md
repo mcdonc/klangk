@@ -290,6 +290,17 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`change-acls` permission (#2764).** Raw ACL editing is now gated
+  on a dedicated resource-level permission instead of `share`:
+  `GET`/`PUT /api/v1/workspaces/{id}/acl` (the Advanced ACL editor)
+  require `change-acls` on the workspace, and
+  `PUT /api/v1/admin/acl/resource` additionally requires it when the
+  target is an individual workspace. The simple sharing surface
+  (members, roles, group shares) stays on `share`; owners are covered
+  by their `*` wildcard, and migration 0017 backfills `change-acls`
+  onto existing `share` holders so no one loses access on upgrade.
+  See [ACL](../reference/acl.md).
+
 - **Native YAML booleans for string-typed boolean settings (#2796).**
   `allow_sudo`, `allow_autostart`, `disable_registration`,
   `disable_invites`, `disable_tmux`, `prevent_insecure_jwt_secret`,

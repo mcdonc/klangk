@@ -91,7 +91,7 @@ other resource) are rejected with a 400 error.
 
 When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/workspaces/{id}`. This grants full access: view, edit, delete, share, terminal, files, export.
 
-**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `monitor`, `terminal`, `files`, `files-download`, and `files-write`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs.
+**Sharing**: the owner can share a workspace with users or groups. The simple sharing UI (Sharing tab) grants `view`, `monitor`, `terminal`, `files`, `files-download`, and `files-write`. For finer control, the Advanced ACL editor lets you add/remove/reorder individual ACEs — gated on `change-acls`, a separate power from `share` (#2764): rewriting the raw ACE list can grant `*` and add Deny entries, so a member who can invite collaborators does not thereby gain raw ACL editing. Owners hold `change-acls` through their `*` wildcard ACE.
 
 **Permissions checked on workspace resources**:
 
@@ -105,7 +105,8 @@ When a workspace is created, the owner gets a `(Allow, user:{id}, *)` ACE on `/w
 | `files-write`    | Can mutate files: upload, rename, delete (needs `files` too)                                                                    |
 | `exec-and-sync`  | Can run one-shot commands (`klangk exec`) and sync (`klangk sync`) against the workspace                                        |
 | `edit`           | Can change workspace settings (name, image, command, mounts, env)                                                               |
-| `share`          | Can manage who has access (Sharing tab)                                                                                         |
+| `share`          | Can manage who has access (Sharing tab: members, roles, group shares)                                                           |
+| `change-acls`    | Can rewrite the raw ACE list — `GET`/`PUT /workspaces/{id}/acl` and the Advanced ACL editor (#2764); owners hold it via `*`     |
 | `delete`         | Can delete the workspace                                                                                                        |
 | `export`         | Can export the workspace as a `.tar.gz` archive (#2707)                                                                         |
 | `*`              | All of the above                                                                                                                |
@@ -146,6 +147,13 @@ Not every permission is checked on a workspace resource:
 | ---------- | ------------------- | ----------------------------------------------- |
 | `create`   | `/workspaces`       | Create/import workspaces                        |
 | `admin`    | `/admin`            | Instance admin functions (`/admin/*` endpoints) |
+
+`PUT /admin/acl/resource` additionally requires `change-acls` on the
+target when that target is an individual workspace (`/workspaces/{id}`)
+— the same resource-level gate as `PUT /workspaces/{id}/acl`, so a raw
+ACE rewrite of a workspace always carries the workspace's own grant.
+Collection and static resources (`/`, `/workspaces`, `/groups`,
+`/admin/*`) stay admin-only.
 
 ## Checking Your Permissions
 

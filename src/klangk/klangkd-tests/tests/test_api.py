@@ -5175,6 +5175,104 @@ class TestWorkspaceACL:
         assert entries[1]["permission"] == "view"
         assert entries[1]["principal"] == "Authenticated"
 
+    async def test_workspace_acl_requires_change_acls(
+        self, client, user, app_state
+    ):
+        """#2764: ``share`` alone no longer opens the raw ACL editor.
+
+        A member holding ``share`` can still manage members (the simple
+        sharing surface) but GET/PUT on the raw ACE list require the
+        dedicated ``change-acls`` permission.
+        """
+        from klangk.auth import hash_password
+
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "cacl-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resource = f"/workspaces/{ws_id}"
+
+        member = await app_state.state.model.users.create_user(
+            "cacl-member@example.com", hash_password("testpass"), verified=True
+        )
+        entries = await app_state.state.model.acl.get_acl_entries(resource)
+        next_pos = max(e["position"] for e in entries) + 1
+        for i, perm in enumerate(("view", "share")):
+            await app_state.state.model.acl.add_acl_entry(
+                resource,
+                next_pos + i,
+                model.ACTION_ALLOW,
+                perm,
+                model.PRINCIPAL_USER,
+                user_id=member["id"],
+            )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "cacl-member@example.com",
+                "password": "testpass",
+            },
+        )
+        member_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+
+        # share keeps the simple sharing surface...
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/members", headers=member_headers
+        )
+        assert resp.status_code == 200
+        # ...but not the raw ACE list, even with share granted.
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/acl", headers=member_headers
+        )
+        assert resp.status_code == 403
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}/acl",
+            headers=member_headers,
+            json=[
+                {
+                    "action": model.ACTION_ALLOW,
+                    "principal_type": model.PRINCIPAL_USER,
+                    "permission": "*",
+                    "user_id": member["id"],
+                }
+            ],
+        )
+        assert resp.status_code == 403
+
+        # Granting change-acls opens the editor (read and write).
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            next_pos + 2,
+            model.ACTION_ALLOW,
+            "change-acls",
+            model.PRINCIPAL_USER,
+            user_id=member["id"],
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/acl", headers=member_headers
+        )
+        assert resp.status_code == 200
+        current = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in resp.json()
+        ]
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}/acl",
+            headers=member_headers,
+            json=current,
+        )
+        assert resp.status_code == 200
+
 
 class TestWorkspaceRoles:
     @pytest.fixture(autouse=True)
@@ -9327,6 +9425,63 @@ class TestAdminResourceACL:
             "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
         )
         assert resp.status_code == 403
+
+    async def test_replace_workspace_resource_needs_change_acls(
+        self, client, admin_user, user, ws_admin, app_state
+    ):
+        """#2764: rewriting a workspace's ACL via the admin endpoint
+        additionally requires ``change-acls`` on that workspace."""
+        owner_headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=owner_headers,
+            json={"name": "admin-cacl-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resource = f"/workspaces/{ws_id}"
+
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/api/v1/admin/acl/resource?resource={resource}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        payload = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in resp.json()
+        ]
+        # Site admin alone cannot rewrite an individual workspace's ACL.
+        resp = await client.put(
+            f"/api/v1/admin/acl/resource?resource={resource}",
+            headers=headers,
+            json=payload,
+        )
+        assert resp.status_code == 403
+
+        # An admin holding change-acls on the workspace passes.
+        entries = await app_state.state.model.acl.get_acl_entries(resource)
+        next_pos = max(e["position"] for e in entries) + 1
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            next_pos,
+            model.ACTION_ALLOW,
+            "change-acls",
+            model.PRINCIPAL_USER,
+            user_id=admin_user["id"],
+        )
+        resp = await client.put(
+            f"/api/v1/admin/acl/resource?resource={resource}",
+            headers=headers,
+            json=payload,
+        )
+        assert resp.status_code == 200
 
     async def test_root_acl_rejects_removing_authenticated_view(
         self, client, app, admin_user

@@ -651,7 +651,8 @@ params returns the `{ items, has_more, next_offset }` envelope.
 
 Get the resolved ACL entries for a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `change-acls` permission on
+`/workspaces/{id}` (#2764).
 
 No request body.
 
@@ -1666,7 +1667,9 @@ Add a user to a workspace role. Valid roles: `owners`, `coders`,
 Replace all ACL entries for a specific resource. Query param: `resource`.
 
 **Auth:** JWT required. User must have `admin` permission on the
-requested resource.
+requested resource. When the target is an individual workspace
+(`/workspaces/{id}`), the user must additionally hold `change-acls` on
+that workspace (#2764).
 
 ```json
 [
@@ -1745,7 +1748,8 @@ no container restart is needed and the web UI updates it live.
 
 Replace all ACL entries for a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `change-acls` permission on
+`/workspaces/{id}` (#2764) — `share` no longer suffices.
 
 ```json
 [

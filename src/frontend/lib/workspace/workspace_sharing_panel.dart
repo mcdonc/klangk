@@ -10,7 +10,17 @@ import '../widgets/acl_editor.dart';
 class WorkspaceSharingPanel extends StatefulWidget {
   final String workspaceId;
 
-  const WorkspaceSharingPanel({super.key, required this.workspaceId});
+  /// Whether the user holds ``change-acls`` on the workspace (#2764) —
+  /// gates the "Advanced: Access Control" editor. The role buckets stay
+  /// visible to every ``share`` holder; raw ACE editing is a separate
+  /// power the server enforces independently.
+  final bool canEditAcl;
+
+  const WorkspaceSharingPanel({
+    super.key,
+    required this.workspaceId,
+    this.canEditAcl = false,
+  });
 
   @override
   State<WorkspaceSharingPanel> createState() => WorkspaceSharingPanelState();
@@ -220,36 +230,38 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
               else
                 for (final role in _sortedRoles) _buildRoleBucket(role),
               const SizedBox(height: 16),
-              // Collapsible ACL editor
-              GestureDetector(
-                onTap: () => setState(() => _aclExpanded = !_aclExpanded),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _aclExpanded ? Icons.expand_less : Icons.expand_more,
-                        size: 20,
-                        color: KColors.textSecondary,
-                      ),
-                      const SizedBox(width: 4),
-                      const Text(
-                        'Advanced: Access Control',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
+              if (widget.canEditAcl) ...[
+                // Collapsible ACL editor
+                GestureDetector(
+                  onTap: () => setState(() => _aclExpanded = !_aclExpanded),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _aclExpanded ? Icons.expand_less : Icons.expand_more,
+                          size: 20,
                           color: KColors.textSecondary,
-                          fontSize: 13,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        const Text(
+                          'Advanced: Access Control',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: KColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              if (_aclExpanded)
-                AclEditor(
-                  key: _aclEditorKey,
-                  resource: '/workspaces/${widget.workspaceId}',
-                ),
+                if (_aclExpanded)
+                  AclEditor(
+                    key: _aclEditorKey,
+                    resource: '/workspaces/${widget.workspaceId}',
+                  ),
+              ],
             ],
           ),
         ),
