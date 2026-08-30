@@ -1,0 +1,19 @@
+# pip-audit vulnerability allowlist (#2856).
+#
+# One advisory ID per line. Every entry must carry a justification comment
+# block directly above the ID (why the finding is accepted) ending in a
+# "# Re-review: YYYY-MM-DD" date. scripts/tests/test_pip_audit.py enforces
+# the format and the expiry: when the date passes, re-review the advisory —
+# bump the date if it is still unfixable / not applicable, otherwise delete
+# the entry and fix the dependency. Anything NOT listed here fails the
+# audit (PR and scheduled runs alike).
+
+# ecdsa 0.19.2, pulled in transitively by python-jose[cryptography]
+# (klangk wheel). Minerva timing attack on ECDSA signing / keygen / ECDH.
+# No fix will ever ship: upstream declares side-channel attacks out of
+# scope for the project. Not applicable to klangk: klangkd signs its own
+# JWTs with HS256 (klangk/auth.py) and only *verifies* OIDC id_tokens
+# (RS256/ES256, klangk/oidc.py); the advisory states signature
+# verification is unaffected.
+# Re-review: 2027-08-30
+PYSEC-2026-1325
