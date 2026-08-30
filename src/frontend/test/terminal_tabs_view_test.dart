@@ -398,9 +398,8 @@ void main() {
       expect(find.text('Rename'), findsOneWidget);
       expect(find.text('Share'), findsNothing);
 
-      // No broadcast-icon toggle either.
+      // No share affordance in the (closed) context menu either.
       expect(find.byIcon(Icons.share_outlined), findsNothing);
-      expect(find.byIcon(Icons.cell_tower), findsNothing);
     });
 
     testWidgets('context menu share action calls toggle', (tester) async {

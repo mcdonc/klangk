@@ -100,8 +100,8 @@ named by your user ID, so switching tabs is instant.
 - Click a tab to switch to it
 - Click **✕** on a tab to close it (only shown when more than one tab exists)
 - Right-click a tab to open a context menu with **Rename** and
-  **Share/Unshare** (the Share entry and the broadcast-icon toggle are
-  hidden for members without the `share-terminals` permission — see
+  **Share/Unshare** (the Share entry is hidden for members without the
+  `share-terminals` permission — see
   [Role permissions](#role-permissions) below)
 
 ### Renaming tabs
@@ -134,7 +134,8 @@ tab appear in their tab bar.
 Sharing requires the `share-terminals` permission on the workspace —
 owners and collaborators have it by default, coders and spectators do
 not. A member without the permission sees no Share action (the context
-menu shows only Rename, and the broadcast icon is absent), and the
+menu shows only Rename; a tab that is already shared keeps its
+broadcast icon as an indicator, but clicking it does nothing), and the
 server rejects the request if one is sent anyway.
 
 [![Tab with broadcast icon indicating it is shared](../assets/terminal-sharing/04-shared-tab-with-icon.png)](../assets/terminal-sharing/04-shared-tab-with-icon.png)
@@ -182,10 +183,11 @@ handles of all current viewers.
 
 \* Owners have the wildcard (`*`) permission which implies all permissions.
 
-The table shows each seeded role's default grants; permissions can be
-tuned per workspace in the ACL editor. Sharing is enforced server-side —
-without `share-terminals` the share/unshare commands are rejected — and
-so is joining, via `spectate-on-shared-terminals`.
+The table shows the terminal-sharing-related default grants for each
+seeded role; permissions can be tuned per workspace in the ACL editor.
+Sharing is enforced server-side — without `share-terminals` the
+share/unshare commands are rejected — and so is joining, via
+`spectate-on-shared-terminals`.
 
 - **Owners** can share/unshare tabs, type in shared terminals, and rename tabs.
 - **Coders** can watch shared terminals (read-only) but cannot share their own
