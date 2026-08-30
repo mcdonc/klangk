@@ -297,6 +297,27 @@ def _coerce_setting_float(
     return value
 
 
+def parse_bool_setting(value: str | None) -> bool:
+    """Truthiness shared by the str-typed boolean settings (#2796).
+
+    Several settings (``allow_sudo``, ``allow_autostart``, ...) are
+    str-typed for env-var fidelity but consumed as booleans; every
+    consumer matches the same truthy forms (``1`` / ``true`` / ``yes``,
+    case-insensitive, whitespace-tolerant). Centralizing the parse keeps
+    the reads identical — the #2796 unification of
+    ``api._common.autostart_allowed``, the boot auto-start gate in
+    ``workspaces.auto_start_workspaces`` (which previously used plain
+    string truthiness, so ``allow_autostart: "false"`` read as
+    *enabled*), the ``smtp_use_tls`` consumer in ``emailsvc``, and the
+    ``test_mode`` registration gate in ``api.auth``.
+
+    Note the deliberate difference from the native-``bool`` fields'
+    coercion (``_coerce_fips_mode`` et al.): those also accept ``on``/
+    ``off`` spellings; this family never has, so it still doesn't.
+    """
+    return (value or "").strip().lower() in ("1", "true", "yes")
+
+
 def _coerce_podman_size(v, name: str) -> str | None:
     """Validate a podman size-string (``2g``/``512mb``/``1024``) or None.
 
@@ -574,6 +595,24 @@ class NixSeedConfig(BaseModel):
     # nix.conf). For "btrfs-snapshot" it must be a btrfs subvolume (loaded by
     # klangk-load-nix-seed-btrfs); for "fuse-overlayfs", a plain directory.
     path: str | None = None
+
+
+# The str-typed settings consumed as booleans (their consumers match
+# "1"/"true"/"yes" via parse_bool_setting). One tuple feeds the
+# field validator below and the tests, so the family can't drift
+# (#2796).
+BOOL_STRING_FIELDS = (
+    "allow_sudo",
+    "allow_autostart",
+    "disable_registration",
+    "disable_invites",
+    "disable_tmux",
+    "prevent_insecure_jwt_secret",
+    "allow_insecure_no_auth",
+    "reject_proxy_headers",
+    "smtp_use_tls",
+    "test_mode",
+)
 
 
 class KlangkSettings(BaseSettings):
@@ -1595,16 +1634,20 @@ class KlangkSettings(BaseSettings):
             default=cls.model_fields[info.field_name].default,
         )
 
-    @field_validator("smtp_use_tls", mode="before")
+    @field_validator(*BOOL_STRING_FIELDS, mode="before")
     @classmethod
-    def _coerce_smtp_use_tls(cls, v):
-        """Accept a native YAML bool for the tls toggle (#2603).
+    def _coerce_bool_string_fields(cls, v):
+        """Accept a native YAML bool for the str-typed boolean settings
+        (#2796, generalizing the #2603 ``smtp_use_tls`` one-off).
 
-        The field stays str-typed (consumers match "1"/"true"/"yes"
-        case-insensitively), but ``smtp-use-tls: true`` in YAML parses as
-        a bool and used to fail validation. Translate the two bools to
-        their canonical strings; everything else passes through to the
-        consumers' own matching.
+        The family is :data:`BOOL_STRING_FIELDS`. These fields stay
+        str-typed — env vars are always strings, and ``file:``/``cmd:``
+        indirection plus the consumers' own matching
+        ("1"/"true"/"yes" case-insensitively, see
+        :func:`parse_bool_setting`) keep working — but a bare
+        ``allow_sudo: true`` in YAML parses as a bool and used to fail
+        validation. Translate the two bools to their canonical strings;
+        everything else (strings, ``None``) passes through unchanged.
         """
         if v is True:
             return "true"

@@ -29,6 +29,7 @@ from .. import (
     oidc,
     wshandler,
 )
+from ..settings import parse_bool_setting
 from ..util import API_PREFIX
 from ._common import get_app_dep, workstation
 from ._common import (
@@ -100,7 +101,7 @@ async def register(
             status_code=403,
             detail="Password registration is disabled",
         )
-    if request.app.state.settings.test_mode:
+    if parse_bool_setting(request.app.state.settings.test_mode):
         # Test mode: auto-verify so E2E tests get immediate access
         source_ip, user_agent = workstation(request)
         result = await request.app.state.auth.register(

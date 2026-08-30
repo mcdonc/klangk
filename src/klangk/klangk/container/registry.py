@@ -21,7 +21,8 @@ from ..exceptions import NodeDrainingError
 from ..model.workspaces import EGRESS_MODE_ALLOW, EGRESS_MODE_INTERACTIVE
 from ..podman import PodmanError
 from ..ssl_trust import SSL_MOUNT_DEST as _SSL_MOUNT_DEST
-from ..workspace_settings import parse_allow_sudo, resolve_allow_sudo
+from ..settings import parse_bool_setting
+from ..workspace_settings import resolve_allow_sudo
 from .admission import AdmissionControl
 from .crash import CrashRecoveryMonitor
 from .health import HealthMonitor
@@ -1335,7 +1336,7 @@ class ContainerRegistry(NetworkSidecarMixin):
         # that forbids it. Read live off settings (the app-ownership rule);
         # applies to newly-created containers.
         allow_sudo = resolve_allow_sudo(
-            ws_row, parse_allow_sudo(self.app.state.settings.allow_sudo)
+            ws_row, parse_bool_setting(self.app.state.settings.allow_sudo)
         )
         publish = [
             (host_port, CONTAINER_PORT_START + i)

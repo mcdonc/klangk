@@ -396,16 +396,6 @@ def resolve_tmp_size(
     return resolve(workspace, "tmp_size", deploy_default)
 
 
-def parse_allow_sudo(value: str | None) -> bool:
-    """Parse the deploy-wide ``allow_sudo`` setting string (#2017).
-
-    The settings field is a free-form string; the truthy forms match the
-    deploy-wide check the container registry has always done
-    (``1`` / ``true`` / ``yes``, case-insensitive, whitespace-tolerant).
-    """
-    return (value or "").strip().lower() in ("1", "true", "yes")
-
-
 def resolve_allow_sudo(workspace: dict | None, deploy_default: bool) -> bool:
     """Resolve the effective sudo posture for a workspace (#2017).
 

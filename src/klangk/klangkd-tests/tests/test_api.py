@@ -747,6 +747,31 @@ class TestAuthRoutes:
         assert resp.status_code == 200
         assert "access_token" in resp.json()
 
+    async def test_register_test_mode_falsy_string_not_enabled(
+        self, client, app, db, monkeypatch
+    ):
+        """A falsy "false" string must not enable test mode (#2796).
+
+        The gate previously used plain string truthiness, so any
+        non-empty value — including "false"/"0" — auto-verified
+        registrations; it now parses through parse_bool_setting.
+        """
+        monkeypatch.setattr(app.state.settings, "test_mode", "false")
+        with patch.object(
+            emailsvc_mod.EmailService,
+            "send_verification_email",
+            new_callable=AsyncMock,
+        ):
+            resp = await client.post(
+                "/api/v1/auth/register",
+                json={"email": "new@example.com", "password": "newpass1"},
+            )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "pending_verification",
+            "email": "new@example.com",
+        }
+
     async def test_register_unauthenticated(self, client, db):
         """Registration is open — no auth required (verification gates access)."""
         with patch.object(

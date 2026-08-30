@@ -96,11 +96,14 @@ def test_nix_optin_rejects_flip_when_previous_lacks_it():
 
 def test_parse_allow_sudo():
     # #2017: the deploy-wide setting string parses with the same truthy
-    # forms the container registry has always honored.
+    # forms the container registry has always honored — now via the
+    # shared parse_bool_setting (#2796; the local duplicate was removed).
+    from klangk.settings import parse_bool_setting
+
     for v in ("1", "true", "True", "YES", " yes "):
-        assert ws.parse_allow_sudo(v) is True
+        assert parse_bool_setting(v) is True
     for v in ("", "0", "false", "no", None):
-        assert ws.parse_allow_sudo(v) is False
+        assert parse_bool_setting(v) is False
 
 
 def test_resolve_allow_sudo_ceiling():

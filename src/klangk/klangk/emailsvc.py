@@ -17,6 +17,7 @@ from jinja2 import (
 )
 
 from .exceptions import SendmailError
+from .settings import parse_bool_setting
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,9 @@ class EmailService:
             "user": self.app.state.settings.smtp_user,
             "password": self.resolve_password(),
             "from_addr": self.app.state.settings.smtp_from,
-            "use_tls": self.app.state.settings.smtp_use_tls.lower()
-            in ("true", "1"),
+            "use_tls": parse_bool_setting(
+                self.app.state.settings.smtp_use_tls
+            ),
         }
 
     def use_smtp(self) -> bool:
