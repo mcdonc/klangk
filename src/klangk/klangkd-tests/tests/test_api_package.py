@@ -306,3 +306,5 @@ def test_all_permissions_single_source():
     assert "monitor" in api.ALL_PERMISSIONS
     # #2764's raw-ACL-editing gate must be reportable the same way.
     assert "change-acls" in api.ALL_PERMISSIONS
+    # #2883's egress-consent gate must be reportable the same way.
+    assert "egress-consent" in api.ALL_PERMISSIONS

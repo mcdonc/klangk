@@ -186,6 +186,7 @@ handles of all current viewers.
 | `spectate-on-shared-terminals` | \*     | yes    | yes           | yes        |
 | `files`                        | \*     | yes    | yes           |            |
 | `exec-and-sync`                | \*     | yes    | yes           |            |
+| `egress-consent`               | \*     | yes    | yes           |            |
 
 \* Owners have the wildcard (`*`) permission which implies all permissions.
 

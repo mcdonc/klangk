@@ -197,11 +197,13 @@ Several deciders may be connected at once (two CLI sessions and the web
 UI, say): each pending request is fanned out to all of them and the first
 decision wins (#2244).
 
-**Authorization.** A workspace-scoped decider needs `terminal` access to
-the workspace (owner, member, or spectator); a deploy-wide decider needs
-admin. A verdict can only decide a request inside the decider's own
-workspace. Pausing prompting (below) additionally requires
-`share-terminals` (owner or collaborator).
+**Authorization.** A workspace-scoped decider needs the `egress-consent`
+permission on the workspace (owner, coder, or collaborator — #2883;
+spectators are watch-only and never see the Network tab or the consent
+banner); a deploy-wide decider needs admin. A verdict can only decide a
+request inside the decider's own workspace. Pausing prompting (below)
+shares the same single gate — anyone who may register a decider may
+also pause.
 
 ### Decision durations
 

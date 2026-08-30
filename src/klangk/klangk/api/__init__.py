@@ -293,6 +293,7 @@ ALL_PERMISSIONS = [
     "edit",
     "delete",
     "terminal",
+    "egress-consent",
     "code-in-isolation",
     "exec-and-sync",
     "spectate-on-shared-terminals",

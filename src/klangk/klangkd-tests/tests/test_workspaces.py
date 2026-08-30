@@ -200,11 +200,12 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
     # Position counter is global across all groups (no collisions).
     positions = sorted(e["position"] for e in entries)
     assert positions == list(range(len(entries)))
-    # 1 owner ACE + 1 + 8 + 10 + 3 group ACEs (coders/collaborators carry
+    # 1 owner ACE + 1 + 9 + 11 + 3 group ACEs (coders/collaborators carry
     # `files-download`/`files-write` alongside `files` (#2705),
-    # `exec-and-sync` (#2706/#2712), and `monitor` (#2783) joins every
-    # role that has `terminal`, spectators included).
-    assert len(entries) == 1 + 1 + 8 + 10 + 3
+    # `exec-and-sync` (#2706/#2712), `monitor` (#2783) joins every
+    # role that has `terminal`, spectators included, and
+    # `egress-consent` (#2883) joins coders/collaborators).
+    assert len(entries) == 1 + 1 + 9 + 11 + 3
     # Coder/collaborator grants include both transfer permissions and
     # the exec-channel permission.
     for suffix in ["coders", "collaborators"]:
@@ -222,7 +223,20 @@ async def test_create_workspace_with_acl_seeds_owner_and_role_groups(
             "files-download",
             "files-write",
             "exec-and-sync",
+            "egress-consent",
         } <= perms
+
+    # Spectators are watch-only: no consent permission is seeded (#2883).
+    spectator_group = await app_state.state.model.users.get_group_by_name(
+        f"spectators-{ws['id']}"
+    )
+    spectator_perms = {
+        e["permission"]
+        for e in entries
+        if e["principal_type"] == model.PRINCIPAL_GROUP
+        and e["group_id"] == spectator_group["id"]
+    }
+    assert "egress-consent" not in spectator_perms
 
 
 async def test_create_workspace_with_acl_rollback_on_seeding_failure(

@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/workspace/workspace_overlays.dart';
+import 'package:klangk_frontend/workspace/consent_surface.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
@@ -166,6 +167,66 @@ void main() {
 
       await tester.tap(find.text('Back to workspaces'));
       expect(called, isTrue);
+    });
+  });
+
+  /// #2883: the consent surface (banner + Network tab) mount gate. The
+  /// predicate is pure and unit-tested directly — spectators
+  /// (terminal-only) and static/allow-mode members never mount it.
+  group('consentSurfaceAllowed (#2883)', () {
+    test('interactive + egress-consent mounts', () {
+      expect(
+        consentSurfaceAllowed(
+          egressMode: 'interactive',
+          permissions: ['view', 'monitor', 'terminal', 'egress-consent'],
+        ),
+        isTrue,
+      );
+    });
+
+    test('interactive + owner wildcard mounts', () {
+      expect(
+        consentSurfaceAllowed(
+          egressMode: 'interactive',
+          permissions: ['*'],
+        ),
+        isTrue,
+      );
+    });
+
+    test('spectator (terminal-only, no egress-consent) never mounts', () {
+      expect(
+        consentSurfaceAllowed(
+          egressMode: 'interactive',
+          permissions: [
+            'view',
+            'monitor',
+            'terminal',
+            'spectate-on-shared-terminals'
+          ],
+        ),
+        isFalse,
+      );
+    });
+
+    test('no permissions at all never mounts (fail-closed)', () {
+      expect(
+        consentSurfaceAllowed(
+          egressMode: 'interactive',
+          permissions: [],
+        ),
+        isFalse,
+      );
+    });
+
+    test('static egress mode never mounts, even with the permission', () {
+      expect(
+        consentSurfaceAllowed(
+          egressMode: 'static',
+          permissions: ['egress-consent', '*'],
+        ),
+        isFalse,
+      );
     });
   });
 }

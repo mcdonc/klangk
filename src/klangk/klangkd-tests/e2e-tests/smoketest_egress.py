@@ -827,7 +827,7 @@ OUTCOME_NAMES: dict[str, str] = {
     "PAUSE-REFUSED": "an off-list host was refused or hung while paused instead of auto-allowing -- the pause did not take effect at the gate. #2332",
     "PAUSE-POLICY-BYPASS": "a static policy (allow-list / rejected_domains) was bypassed or changed while paused -- pause must affect only the interactive hold, not the DNS-layer lists. #2332",
     "PAUSE-RESUME-BROKEN": "after resume, an off-list host was not re-held for consent (the pause lingered, or the re-hold failed). #2332",
-    "PAUSE-ACK-FAILED": "the pause/unpause pause_ack came back not-ok (authz/protocol: missing share-terminals, unknown duration, or a deploy-wide decider). #2332/#2389",
+    "PAUSE-ACK-FAILED": "the pause/unpause pause_ack came back not-ok (protocol: unknown duration, or a deploy-wide decider). #2332/#2389/#2883",
     "FANOUT-SERIALIZED": "N concurrent off-list connects did not all surface a held request simultaneously (the NFQUEUE consumer serialized them -- a #2331/#2337 regression).",
     "CONCURRENT-NOT-DEDUPED": "concurrent connections to the same destination each produced a prompt (the coordinator's per-destination dedup is broken -- each should collapse to one).",
     "ONCE-CROSS-CONN": "a `once` verdict on one connection released a separate concurrent connection to the same host (the verdict leaked across connections -- #2361).",

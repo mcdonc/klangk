@@ -21,12 +21,15 @@ it reverts to static allow-list.
   drop it (first-decision-wins).
 
 Authorization (#2244 closes the #2308 authz gap): a workspace-scoped decider
-(``?workspace=<id>``) must have ``terminal`` access to that workspace (owner,
-member, or spectator -- anyone who can open a terminal there); a deploy-wide
-decider (no ``workspace``) must be an admin. A verdict is honored only if it
-targets the decider's own workspace (defense-in-depth), enforced in ``resolve``
-via ``decider_workspace``. Auth mirrors the main ``/ws`` handler: a user JWT in
-the ``token`` query param.
+(``?workspace=<id>``) must have the ``egress-consent`` permission on that
+workspace (owner, coder, or collaborator -- #2883; spectators are
+watch-only and never register); a deploy-wide decider (no ``workspace``)
+must be an admin. A verdict is honored only if it targets the decider's
+own workspace (defense-in-depth), enforced in ``resolve`` via
+``decider_workspace``. Pause/unpause share the same single gate as the
+connection itself (#2883): anyone who may register may also pause.
+Auth mirrors the main ``/ws`` handler: a user JWT in the ``token``
+query param.
 
 Outbound writes go through :class:`SafeWebSocket` (bounded queue +
 ``SlowClientError``) like the main ``/ws`` handler.
@@ -86,9 +89,12 @@ async def _refuse_invalid_handshake(
 ) -> bool:
     """Authorization + static-mode gate for a consent decider.
 
-    Workspace-scoped deciders need terminal access to the workspace (owner
-    or member); deploy-wide deciders need admin. Mirrors the main /ws
-    handler's workspace gate (wshandler/connection.py).
+    Workspace-scoped deciders need the ``egress-consent`` permission on
+    the workspace (owner, coder, or collaborator -- #2883; a spectator
+    has only watch access and is refused here, so it can never reach the
+    verdict/revoke/pause handlers); deploy-wide deciders need admin.
+    Mirrors the main /ws handler's workspace gate
+    (wshandler/connection.py).
 
     #2394: a static-mode workspace never holds egress for a human decision
     (its non-allow-listed egress is denied immediately with a static
@@ -105,12 +111,11 @@ async def _refuse_invalid_handshake(
     above). _refuse() therefore also logs the reason server-side (#2490):
     the log line is the only place a 403 storm is attributable.
 
-    Returns (refused, principals) — principals (needed by the pause /
-    unpause handlers) is only meaningful when not refused."""
+    Returns True when the handshake was refused."""
     principals = await app.state.acl.get_principals(user["id"])
     if workspace is not None:
         allowed = await app.state.acl.check_permission(
-            f"/workspaces/{workspace}", principals, "terminal"
+            f"/workspaces/{workspace}", principals, "egress-consent"
         )
     else:
         allowed = await app.state.acl.check_permission(
@@ -118,14 +123,14 @@ async def _refuse_invalid_handshake(
         )
     if not allowed:
         await _refuse(websocket, 4003, "Forbidden", user.get("email"))
-        return True, principals
+        return True
     if workspace is not None:
         ws = await app.state.model.workspaces.get_workspace(workspace)
         if ws is None:
             # Vanished between the authz check and now (a delete race) -- the
             # workspace authz just passed against can no longer be registered.
             await _refuse(websocket, 4003, "Forbidden", user.get("email"))
-            return True, principals
+            return True
         if ws.get("egress_mode") != EGRESS_MODE_INTERACTIVE:
             await _refuse(
                 websocket,
@@ -133,8 +138,8 @@ async def _refuse_invalid_handshake(
                 "workspace egress mode is not interactive",
                 user.get("email"),
             )
-            return True, principals
-    return False, principals
+            return True
+    return False
 
 
 def _log_handshake_timing(t0: float, marks: list[tuple[str, float]]) -> None:
@@ -159,7 +164,6 @@ async def _dispatch_decider_message(
     workspace: str | None,
     user_id: str,
     decider_id: str,
-    principals,
 ) -> None:
     """Act on one parsed decider frame by its ``type``.
 
@@ -191,10 +195,10 @@ async def _dispatch_decider_message(
         # #2332: pause interactive consent prompting for this
         # decider's workspace for a window. A deploy-wide decider
         # (workspace None) has no single workspace to pause -> nack.
-        await _handle_pause(app, safe_ws, msg, workspace, principals)
+        await _handle_pause(app, safe_ws, msg, workspace)
     elif mtype == "unpause":
         # #2332: clear an active pause for this decider's workspace.
-        await _handle_unpause(app, safe_ws, workspace, principals)
+        await _handle_unpause(app, safe_ws, workspace)
 
 
 async def _decider_authenticate(websocket: WebSocket, app, _hs_mark):
@@ -221,7 +225,6 @@ async def _decider_receive_loop(
     workspace,
     user: dict,
     decider_id: str,
-    principals,
 ) -> None:
     """Receive + dispatch decider frames until the socket drops or the
     client falls behind."""
@@ -249,7 +252,6 @@ async def _decider_receive_loop(
                 workspace,
                 user["id"],
                 decider_id,
-                principals,
             )
         except SlowClientError:
             # Outbound queue full -- the client can't keep up. Drop it
@@ -282,10 +284,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         return
     workspace = websocket.query_params.get("workspace")  # None = deploy-wide
 
-    refused, principals = await _refuse_invalid_handshake(
-        websocket, app, workspace, user
-    )
-    if refused:
+    if await _refuse_invalid_handshake(websocket, app, workspace, user):
         return
     _hs_mark("authz")
     _hs_mark("workspace")
@@ -314,7 +313,7 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         if rules is not None:
             safe_ws.send_json(rules)
         await _decider_receive_loop(
-            app, registry, safe_ws, workspace, user, decider_id, principals
+            app, registry, safe_ws, workspace, user, decider_id
         )
     finally:
         # Connection gone (clean disconnect, error, or crash) -> drop the
@@ -323,26 +322,21 @@ async def handle_consent_decider(websocket: WebSocket, app) -> None:
         await safe_ws.stop_sender()
 
 
-async def _can_pause(app, workspace, principals) -> bool:
-    """Pause/unpause authz (#2332, review I1).
+def _can_pause(workspace: str | None) -> bool:
+    """Pause/unpause eligibility (#2332, #2883).
 
-    Pause silences ALL consent prompts workspace-wide for a window (a
-    workspace-wide policy change, broader than deciding one request), so it
-    needs a higher bar than the connection's ``terminal`` gate: the
-    ``share-terminals`` permission (collaborators + owners). Spectators and
-    coders (terminal only) may still connect and decide individual requests.
+    The old higher ``share-terminals`` bar is gone: pause/unpause ride
+    the connection's own ``egress-consent`` gate, so every decider that
+    registered may also pause. Only a deploy-wide decider (workspace
+    None) has no single workspace to pause.
     """
-    if workspace is None:
-        return False  # deploy-wide decider has no single workspace to pause
-    return await app.state.acl.check_permission(
-        f"/workspaces/{workspace}", principals, "share-terminals"
-    )
+    return workspace is not None
 
 
-async def _handle_pause(app, safe_ws, msg, workspace, principals) -> None:
+async def _handle_pause(app, safe_ws, msg, workspace) -> None:
     """Pause consent prompting for the decider's workspace (#2332)."""
-    if not await _can_pause(app, workspace, principals):
-        # Missing share-terminals, or a deploy-wide decider with no target.
+    if not _can_pause(workspace):
+        # A deploy-wide decider has no single workspace to pause.
         safe_ws.send_json({"type": "pause_ack", "ok": False, "until": None})
         return
     result = await app.state.consent_coordinator.pause(
@@ -357,9 +351,9 @@ async def _handle_pause(app, safe_ws, msg, workspace, principals) -> None:
     )
 
 
-async def _handle_unpause(app, safe_ws, workspace, principals) -> None:
+async def _handle_unpause(app, safe_ws, workspace) -> None:
     """Clear an active consent pause for the decider's workspace (#2332)."""
-    if not await _can_pause(app, workspace, principals):
+    if not _can_pause(workspace):
         safe_ws.send_json({"type": "pause_ack", "ok": False, "until": None})
         return
     result = await app.state.consent_coordinator.unpause(workspace)
