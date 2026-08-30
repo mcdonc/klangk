@@ -101,9 +101,12 @@ http.Client _mockClient(
           'email': 'admin@example.com',
           'permissions': {
             '/admin': ['*'],
-            '/admin/users': ['view'],
-            '/admin/groups': ['view'],
-            '/admin/invitations': ['view'],
+            // What the server actually returns for a wildcard-covered
+            // admin: the `admin` permission on each /admin/* resource
+            // (#2890 — the tab gates match the endpoint checks).
+            '/admin/users': ['admin'],
+            '/admin/groups': ['admin'],
+            '/admin/invitations': ['admin'],
           },
           'groups': [
             {'id': 'g1', 'name': 'admin'}
@@ -430,7 +433,9 @@ void main() {
 
     testWidgets('hides the Server tab without the admin permission',
         (tester) async {
-      // Only /admin/users view — no /admin grant, so no Server tab.
+      // Delegated users-admin only: `admin` on /admin/users, no /admin
+      // grant, so no Server tab — but the Users tab stays available
+      // (its endpoints are exactly /admin/users-scoped).
       testAuthHttpClientOverride = MockClient((request) async {
         if (request.url.path.contains('/api/v1/config')) {
           return http.Response(
@@ -444,7 +449,7 @@ void main() {
               'user_id': 'admin-user',
               'email': 'admin@example.com',
               'permissions': {
-                '/admin/users': ['view'],
+                '/admin/users': ['admin'],
               },
               'groups': [],
             }),
@@ -460,6 +465,46 @@ void main() {
       await pumpPage(tester);
 
       expect(find.text('Server'), findsNothing);
+      expect(find.text('Users'), findsOneWidget);
+    });
+
+    testWidgets(
+        'view-only grants show no tabs '
+        '(tabs match the admin-checked endpoints, #2890)', (tester) async {
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          return http.Response(
+            jsonEncode({
+              'user_id': 'admin-user',
+              'email': 'admin@example.com',
+              'permissions': {
+                '/admin/users': ['view'],
+                '/admin/groups': ['view'],
+                '/admin/invitations': ['view'],
+              },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await pumpPage(tester);
+
+      // Every endpoint under /admin/* checks `admin` — a view-only
+      // principal gets a dead-end page, not tabs that 403 on load.
+      expect(find.text('Users'), findsNothing);
+      expect(find.text('Groups'), findsNothing);
+      expect(find.text('Invitations'), findsNothing);
+      expect(find.text('Server'), findsNothing);
+      expect(find.textContaining('No admin sections'), findsOneWidget);
     });
   });
 

@@ -900,6 +900,31 @@ void main() {
       expect(service.isAdmin, isFalse);
     });
 
+    test(
+        'isAdmin true for a plain admin grant, false for view-only '
+        '(#2890: matches the server check, not just wildcards)', () async {
+      testAuthHttpClientOverride = _emptyConfigClient(
+        permissions: {
+          '/admin': ['admin'],
+        },
+      );
+      final token = makeJwt({'sub': 'user-1'});
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isAdmin, isTrue);
+
+      // A view-only grant on /admin is not an admin.
+      testAuthHttpClientOverride = _emptyConfigClient(
+        permissions: {
+          '/admin': ['view'],
+        },
+      );
+      final viewer = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(viewer.isAdmin, isFalse);
+    });
+
     test('hasPermission checks specific permission', () async {
       testAuthHttpClientOverride = _emptyConfigClient(
         permissions: {

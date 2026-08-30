@@ -207,6 +207,12 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     final wsClient = context.read<WsClient>();
     _workspacesChangedSub = wsClient.workspacesChanged.listen((_) {
       _refreshWorkspaces();
+      // #2890: the same push means the caller's own grants may have
+      // changed (role assignment, member/group share, transfer) — the
+      // AuthService permission map drives the create FAB and admin
+      // visibility, so refresh it alongside the list instead of
+      // serving stale gating until the next login.
+      context.read<AuthService>().refreshPermissions();
     });
     _containerStatusSub = wsClient.containerStatus.listen(_onContainerStatus);
     _serviceHealthSub = wsClient.serviceHealth.listen(_onServiceHealth);
@@ -295,7 +301,17 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
 
   /// Fetch members for the given workspaces only (bounded to a page so
   /// we never fan out N+1 across the whole list). Merges into the cache.
-  Future<void> _fetchMembers(List<Map<String, dynamic>> workspaces) async {
+  ///
+  /// Owned-section only (#2890): the members endpoint checks ``share``
+  /// on the workspace, which only owners (and share-holders) hold —
+  /// shared-section cards never render member avatars, so fetching
+  /// there was one guaranteed-403 request per card, swallowed
+  /// silently.
+  Future<void> _fetchMembers(
+    _Section section,
+    List<Map<String, dynamic>> workspaces,
+  ) async {
+    if (section.isShared) return;
     final members = <String, List<Map<String, dynamic>>>{};
     await Future.wait(
       workspaces.map((ws) async {
@@ -321,7 +337,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   Future<bool> _loadFirstPage(_Section section) async {
     final page = await _fetchPage(section, 0);
     if (page == null) return false;
-    await _fetchMembers(page.items);
+    await _fetchMembers(section, page.items);
     if (!mounted) return false;
     setState(() {
       section.workspaces = page.items;
@@ -381,7 +397,7 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
     try {
       final page = await _fetchPage(section, section.nextOffset!);
       if (page != null) {
-        await _fetchMembers(page.items);
+        await _fetchMembers(section, page.items);
         if (mounted) {
           setState(() {
             section.workspaces = [...section.workspaces, ...page.items];

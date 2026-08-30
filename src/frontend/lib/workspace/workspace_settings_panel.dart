@@ -22,6 +22,13 @@ class WorkspaceSettingsPanel extends StatefulWidget {
   /// the affordance must not be offered.
   final bool canExport;
 
+  /// Whether the user holds the ``admin`` permission on this workspace
+  /// (#2890). Gates the Transfer Ownership card — the transfer endpoint
+  /// checks ``admin`` (owners hold it via their ``*`` wildcard), so an
+  /// ``edit``-only member must not be offered an action the server
+  /// would 403.
+  final bool canTransfer;
+
   /// Invoked when the user accepts the "restart needed" notice from inside
   /// the panel. Routed through the workspace page so it owns the restart
   /// lifecycle (in-flight indicator + container_ready handling) (#1780).
@@ -31,6 +38,7 @@ class WorkspaceSettingsPanel extends StatefulWidget {
     super.key,
     required this.workspaceId,
     this.canExport = true,
+    this.canTransfer = true,
     required this.onRestart,
   });
 
@@ -194,6 +202,7 @@ class WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
       nixAvailable: _nixAvailable,
       sudoAvailable: _sudoAvailable,
       canExport: widget.canExport,
+      canTransfer: widget.canTransfer,
       allowAutostart:
           context.select<AuthService, bool>((a) => a.allowAutostart),
       saveMessage: _saveMessage,
@@ -311,6 +320,11 @@ class _SettingsForm extends StatefulWidget {
   /// #2707: whether the user holds ``export`` on this workspace — gates
   /// the Export card (the endpoint 403s without it).
   final bool canExport;
+
+  /// #2890: whether the user holds ``admin`` on this workspace — gates
+  /// the Transfer Ownership card (the endpoint checks ``admin``, a
+  /// power beyond ``edit``).
+  final bool canTransfer;
   final bool allowAutostart;
   final String? saveMessage;
   final bool pendingRestart;
@@ -326,6 +340,7 @@ class _SettingsForm extends StatefulWidget {
     required this.nixAvailable,
     this.sudoAvailable = false,
     this.canExport = true,
+    this.canTransfer = true,
     required this.allowAutostart,
     required this.saveMessage,
     required this.pendingRestart,
@@ -736,7 +751,7 @@ class _SettingsFormState extends State<_SettingsForm> {
                     const SizedBox(height: 16),
                     if (widget.canExport) _buildExportCard(),
                     const SizedBox(height: 16),
-                    _buildTransferCard(),
+                    if (widget.canTransfer) _buildTransferCard(),
                     const SizedBox(height: 16),
                     _buildDangerZoneCard(),
                   ],

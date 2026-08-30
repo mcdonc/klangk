@@ -77,9 +77,12 @@ http.Client _mockClient(
           'email': 'admin@example.com',
           'permissions': {
             '/admin': ['*'],
-            '/admin/users': ['view'],
-            '/admin/groups': ['view'],
-            '/admin/invitations': ['view'],
+            // What the server returns for a wildcard-covered admin: the
+            // `admin` permission on each /admin/* resource (#2890 — the
+            // tab gates match the endpoint checks).
+            '/admin/users': ['admin'],
+            '/admin/groups': ['admin'],
+            '/admin/invitations': ['admin'],
           },
           'groups': [
             {'id': 'g1', 'name': 'admin'}

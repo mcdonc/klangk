@@ -131,7 +131,11 @@ http.Client _client({
   });
 }
 
-Widget _buildPanel({VoidCallback? onRestart, bool canExport = true}) =>
+Widget _buildPanel({
+  VoidCallback? onRestart,
+  bool canExport = true,
+  bool canTransfer = true,
+}) =>
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
@@ -145,6 +149,7 @@ Widget _buildPanel({VoidCallback? onRestart, bool canExport = true}) =>
           body: WorkspaceSettingsPanel(
             workspaceId: _wsId,
             canExport: canExport,
+            canTransfer: canTransfer,
             onRestart: onRestart ?? () {},
           ),
         ),
@@ -2187,6 +2192,16 @@ void main() {
       await tester.pump();
       expect(find.text('Transfer Ownership'), findsNWidgets(2));
       expect(find.textContaining('lose owner access'), findsOneWidget);
+    });
+
+    testWidgets(
+        'hides the transfer card without the admin permission '
+        '(#2890: the endpoint checks admin, not edit)', (tester) async {
+      await tester.pumpWidget(_buildPanel(canTransfer: false));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Transfer Ownership'), findsNothing);
+      expect(find.textContaining('lose owner access'), findsNothing);
     });
 
     testWidgets('opens search dialog on button tap', (tester) async {

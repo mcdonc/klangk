@@ -164,10 +164,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // #2768: re-resolve the effective marking when the workspace row
     // changes (the server notifies on a classification_banner edit, so
     // the banner updates live after saving in the settings panel).
-    _markingSub = context
-        .read<WsClient>()
-        .workspacesChanged
-        .listen((_) => _fetchWorkspaceName());
+    // #2890: the same push re-fetches this member's workspace
+    // permissions (role/share changes) so tab gating stays live.
+    _markingSub = context.read<WsClient>().workspacesChanged.listen((_) {
+      _fetchPermissions();
+      _fetchWorkspaceName();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
 
@@ -731,6 +733,10 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ? WorkspaceSettingsPanel(
               workspaceId: widget.workspaceId,
               canExport: _hasPerm('export'),
+              // #2890: the transfer endpoint checks `admin` on the
+              // workspace, a power beyond `edit` — hide the card for
+              // edit-only members instead of offering a 403.
+              canTransfer: _hasPerm('admin'),
               onRestart: _restartContainer,
             )
           : null,

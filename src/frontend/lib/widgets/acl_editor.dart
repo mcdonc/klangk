@@ -1,4 +1,5 @@
 // coverage:ignore-file
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -146,10 +147,15 @@ class AclEditorState extends State<AclEditor> {
   /// seeded role groups are omitted (#2752); this resource's own role
   /// groups stay selectable because they already hold ACEs (and remain
   /// visible in the entries table, which is untouched by design).
+  ///
+  /// Served by the authenticated ``GET /groups`` — the same paged
+  /// envelope as the admin listing — because the admin endpoint requires
+  /// a grant a non-admin ``change-acls`` holder does not hold; their
+  /// picker 403'd and offered no groups at all (#2890).
   Future<List<Map<String, dynamic>>> _loadPickerGroups(AuthService auth) async {
     final groups = await _fetchEnvelopeAll(
       auth,
-      '/api/v1/admin/groups',
+      '/api/v1/groups',
       'groups',
       query: const {'source': 'manual'},
     );
@@ -173,18 +179,13 @@ class AclEditorState extends State<AclEditor> {
   Future<void> _addEntry() async {
     final auth = context.read<AuthService>();
 
-    // Fetch users and groups for the dropdown
-    List<Map<String, dynamic>> users = [];
+    // Load the groups selectable in the add-entry picker up front. The
+    // user principal needs no pre-fetch: there is no authenticated
+    // user-list endpoint (enumerating every user is an admin power the
+    // server does not extend to change-acls holders, #2890), so the
+    // dialog searches via /users/search instead — the same pattern as
+    // the sharing panel's add-user dialog.
     List<Map<String, dynamic>> groups = [];
-    try {
-      users = await _fetchEnvelopeAll(auth, '/api/v1/admin/users', 'users');
-    } catch (e) {
-      debugPrint('[AclEditor] fetch users failed: $e');
-    }
-    // The system agent realizes capabilities through physical access, not
-    // principalship — the backend rejects an ACE for it, so the picker
-    // omits it (#2892).
-    users = users.where((u) => !isSystemAgent(u)).toList();
     try {
       groups = await _loadPickerGroups(auth);
     } catch (e) {
@@ -195,6 +196,7 @@ class AclEditorState extends State<AclEditor> {
 
     var principalType = 1; // user
     String? selectedUserId;
+    String? selectedUserEmail;
     String? selectedGroupId;
     var selectedPermission = 'view';
     var selectedAction = 1; // allow
@@ -237,28 +239,18 @@ class AclEditorState extends State<AclEditor> {
                   onChanged: (v) => setDialogState(() {
                     principalType = v ?? 1;
                     selectedUserId = null;
+                    selectedUserEmail = null;
                     selectedGroupId = null;
                   }),
                 ),
                 const SizedBox(height: 12),
-                if (principalType == 1 && users.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    isExpanded: true,
-                    initialValue: selectedUserId,
-                    decoration: const InputDecoration(
-                      labelText: 'User',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: users
-                        .map((u) => DropdownMenuItem(
-                            value: u['id'] as String,
-                            child: Text(
-                              u['email'] as String,
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                            )))
-                        .toList(),
-                    onChanged: (v) => setDialogState(() => selectedUserId = v),
+                if (principalType == 1)
+                  _UserSearchField(
+                    auth: auth,
+                    onSelected: (id, email) => setDialogState(() {
+                      selectedUserId = id;
+                      selectedUserEmail = email;
+                    }),
                   ),
                 if (principalType == 2 && groups.isNotEmpty)
                   DropdownButtonFormField<String>(
@@ -335,8 +327,7 @@ class AclEditorState extends State<AclEditor> {
                       : 'Authenticated';
                 } else if (principalType == 1 && selectedUserId != null) {
                   entry['user_id'] = selectedUserId;
-                  final u = users.firstWhere((u) => u['id'] == selectedUserId);
-                  entry['principal'] = u['email'];
+                  entry['principal'] = selectedUserEmail;
                 } else if (principalType == 2 && selectedGroupId != null) {
                   entry['group_id'] = selectedGroupId;
                   final g =
@@ -576,6 +567,108 @@ class AclEditorState extends State<AclEditor> {
           const SizedBox(height: 8),
           _buildDirtyFooter(),
         ],
+      ],
+    );
+  }
+}
+
+/// The add-entry dialog's user-principal picker (#2890).
+///
+/// There is no authenticated user-list endpoint (enumerating every user
+/// is an admin power the server does not extend to ``change-acls``
+/// holders), so the principal is found via ``/users/search`` with a
+/// debounced search field — the same pattern as the sharing panel's
+/// add-user dialog. Owns its controller/timer so they die with the
+/// dialog instead of outliving its exit animation.
+class _UserSearchField extends StatefulWidget {
+  const _UserSearchField({required this.auth, required this.onSelected});
+
+  final AuthService auth;
+
+  /// Reports the picked (id, email), or null when the selection clears
+  /// (empty query or a fresh search invalidated the previous pick).
+  final void Function(String? id, String? email) onSelected;
+
+  @override
+  State<_UserSearchField> createState() => _UserSearchFieldState();
+}
+
+class _UserSearchFieldState extends State<_UserSearchField> {
+  final _controller = TextEditingController();
+  Timer? _debounce;
+  List<Map<String, dynamic>> _results = [];
+  String? _selectedId;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onChanged(String q) {
+    _debounce?.cancel();
+    final query = q.trim();
+    if (query.isEmpty) {
+      setState(() => _results = []);
+      _select(null, null);
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 300), () async {
+      try {
+        final resp = await widget.auth.authGet(
+          '/api/v1/users/search?q=${Uri.encodeQueryComponent(query)}',
+        );
+        if (!mounted) return;
+        if (resp.statusCode == 200) {
+          setState(() {
+            // The system agent realizes capabilities through physical
+            // access, not principalship — the backend rejects an ACE for
+            // it, so the search never offers it (#2892).
+            _results = (jsonDecode(resp.body) as List)
+                .map((e) => Map<String, dynamic>.from(e as Map))
+                .where((r) => !isSystemAgent(r))
+                .toList();
+          });
+        }
+      } catch (e) {
+        debugPrint('[AclEditor] user search failed: $e');
+      }
+    });
+  }
+
+  void _select(String? id, String? email) {
+    setState(() => _selectedId = id);
+    widget.onSelected(id, email);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'User',
+            hintText: 'Type email...',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.person_search, size: 18),
+          ),
+          onChanged: _onChanged,
+        ),
+        for (final r in _results)
+          ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            selected: r['id'] == _selectedId,
+            title: Text(
+              r['email'] as String,
+              style: const TextStyle(fontSize: 13),
+            ),
+            onTap: () => _select(r['id'] as String?, r['email'] as String?),
+          ),
       ],
     );
   }

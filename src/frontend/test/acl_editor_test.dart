@@ -111,18 +111,10 @@ void main() {
       if (path == '/api/v1/workspaces/ws1/acl') {
         return http.Response(jsonEncode(_entries()), 200);
       }
-      if (path == '/api/v1/admin/users') {
-        return http.Response(
-          jsonEncode({
-            'users': [_user('alice@example.com')],
-            'page': 1,
-            'page_size': 200,
-            'total': 1,
-          }),
-          200,
-        );
+      if (path == '/api/v1/users/search') {
+        return http.Response(jsonEncode([]), 200);
       }
-      if (path == '/api/v1/admin/groups') {
+      if (path == '/api/v1/groups') {
         final page = int.parse(request.url.queryParameters['page'] ?? '1');
         requestedGroupPages.add(page);
         capturedSource = request.url.queryParameters['source'];
@@ -195,31 +187,22 @@ void main() {
     expect(find.text('aa-manual-alpha'), findsNWidgets(2));
   });
 
-  testWidgets('user picker omits the system agent (#2892)', (tester) async {
+  testWidgets('user principal is picked via /users/search (#2890)',
+      (tester) async {
     testAuthHttpClientOverride = MockClient((request) async {
       final path = request.url.path;
       if (path == '/api/v1/workspaces/ws1/acl') {
         return http.Response(jsonEncode(_entries()), 200);
       }
-      if (path == '/api/v1/admin/users') {
+      if (path == '/api/v1/users/search') {
         return http.Response(
-          jsonEncode({
-            'users': [_agentUser(), _user('alice@example.com')],
-            'page': 1,
-            'page_size': 200,
-            'total': 2,
-          }),
+          jsonEncode([_user('bob@example.com')]),
           200,
         );
       }
-      if (path == '/api/v1/admin/groups') {
+      if (path == '/api/v1/groups') {
         return http.Response(
-          jsonEncode({
-            'groups': <Map<String, dynamic>>[],
-            'page': 1,
-            'page_size': 200,
-            'total': 0,
-          }),
+          jsonEncode({'groups': [], 'page': 1, 'page_size': 200, 'total': 0}),
           200,
         );
       }
@@ -229,24 +212,69 @@ void main() {
     await tester.pumpWidget(buildEditor());
     await tester.pumpAndSettle();
 
-    // Open the add-entry dialog; principal type defaults to User.
+    // Open the add-entry dialog — the user principal is the default type.
     await tester.tap(find.widgetWithIcon(TextButton, Icons.add));
     await tester.pumpAndSettle();
 
-    final userField = find.byWidgetPredicate(
-      (widget) =>
-          widget is DropdownButtonFormField<String> &&
-          widget.decoration.labelText == 'User',
-    );
-    await tester.tap(userField);
+    // Type a query; after the debounce the results list renders.
+    await tester.enterText(find.byType(TextField), 'bo');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+
+    expect(find.text('bob@example.com'), findsOneWidget);
+
+    // Add is inert until a result is picked (no user_id → no-op).
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add ACE'), findsOneWidget);
+
+    // Pick the result and add: the dialog closes and the entry is
+    // appended to the entries table.
+    await tester.tap(find.text('bob@example.com'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add ACE'), findsNothing);
+    expect(find.text('bob@example.com'), findsOneWidget);
+  });
+
+  testWidgets('user search omits the system agent (#2892)', (tester) async {
+    testAuthHttpClientOverride = MockClient((request) async {
+      final path = request.url.path;
+      if (path == '/api/v1/workspaces/ws1/acl') {
+        return http.Response(jsonEncode(_entries()), 200);
+      }
+      if (path == '/api/v1/users/search') {
+        // The agent matches the prefix too — the picker must filter it.
+        return http.Response(
+          jsonEncode([_agentUser(), _user('carol@example.com')]),
+          200,
+        );
+      }
+      if (path == '/api/v1/groups') {
+        return http.Response(
+          jsonEncode({'groups': [], 'page': 1, 'page_size': 200, 'total': 0}),
+          200,
+        );
+      }
+      return http.Response('Not found', 404);
+    });
+
+    await tester.pumpWidget(buildEditor());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithIcon(TextButton, Icons.add));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'kl');
+    await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
 
     // The agent realizes capabilities through physical access, never
-    // principalship — the backend rejects an ACE for it, so the picker
+    // principalship — the backend rejects an ACE for it, so the search
     // must not offer it.
     expect(find.text('klangk@example.com'), findsNothing);
-    // Alice appears twice: once in the untouched entries table, once in
-    // the open picker menu.
-    expect(find.text('alice@example.com'), findsNWidgets(2));
+    expect(find.text('carol@example.com'), findsOneWidget);
   });
 }

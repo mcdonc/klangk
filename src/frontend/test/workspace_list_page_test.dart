@@ -245,6 +245,65 @@ void main() {
       ws.dispose();
     });
 
+    testWidgets(
+        'workspacesChanged also refreshes the permission map '
+        '(#2890: gating stays live after role/share changes)', (tester) async {
+      final ws = _MockWsClient();
+      var permFetches = 0;
+      var admin = false;
+      testAuthHttpClientOverride = MockClient((request) async {
+        if (request.url.path.contains('/api/v1/config')) {
+          return http.Response(
+            jsonEncode({'login_banner_title': '', 'login_banner': ''}),
+            200,
+          );
+        }
+        if (request.url.path.contains('/api/v1/my-permissions')) {
+          permFetches++;
+          return http.Response(
+            jsonEncode({
+              'user_id': 'test',
+              'email': 'test@example.com',
+              'permissions': admin
+                  ? {
+                      '/': ['view'],
+                      '/workspaces': ['create'],
+                      '/admin': ['admin'],
+                    }
+                  : {
+                      '/': ['view'],
+                      '/workspaces': ['create'],
+                    },
+              'groups': [],
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/api/v1/workspaces') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage(wsClient: ws));
+      await tester.pumpAndSettle();
+      expect(permFetches, 1);
+
+      // The user is granted admin out-of-band; the push arrives and the
+      // permission map re-fetches without a re-login.
+      admin = true;
+      ws.emitWorkspacesChanged();
+      await tester.pumpAndSettle();
+
+      expect(permFetches, 2);
+      expect(find.byTooltip('Admin'), findsOneWidget);
+
+      ws.dispose();
+    });
+
     testWidgets('has FAB for creating workspaces', (tester) async {
       final token = makeJwt({'sub': 'u1', 'email': 'u@example.com'});
       SharedPreferences.setMockInitialValues({'klangk_jwt': token});
@@ -667,6 +726,47 @@ void main() {
       expect(find.text('Shared First'), findsOneWidget);
       expect(find.text('Shared Second'), findsOneWidget);
       expect(find.text('Load more shared workspaces'), findsNothing);
+    });
+
+    testWidgets(
+        'does not fetch members for shared-section cards '
+        '(#2890: the endpoint checks share, which members lack)',
+        (tester) async {
+      final memberFetches = <String>[];
+      testAuthHttpClientOverride = withPermissions((request) async {
+        if (request.url.path == '/api/v1/workspaces') {
+          return http.Response(jsonEncode(_envelope([])), 200);
+        }
+        if (request.url.path == '/api/v1/workspaces/shared') {
+          return http.Response(
+            jsonEncode(_envelope([
+              {
+                'id': 'sh-1',
+                'name': 'Shared First',
+                'container_id': null,
+                'created_at': '2026-01-01',
+                'owner_email': 'a@example.com',
+              },
+            ])),
+            200,
+          );
+        }
+        if (request.url.path.endsWith('/members')) {
+          memberFetches.add(request.url.path);
+          return http.Response(jsonEncode([]), 200);
+        }
+        return http.Response('Not found', 404);
+      });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      // Switch to the Shared tab so the shared section loads.
+      await tester.tap(find.text('Shared with Me'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Shared First'), findsOneWidget);
+      expect(memberFetches, isEmpty);
     });
 
     testWidgets('sorting by name requests sort=name and resets to page 1',

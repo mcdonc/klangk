@@ -88,12 +88,15 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   void _resolvePermissions() {
     final auth = context.read<AuthService>();
-    _canUsers = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/users', 'view');
-    _canGroups = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/groups', 'view');
-    _canInvitations = auth.hasPermission('/admin', '*') ||
-        auth.hasPermission('/admin/invitations', 'view');
+    // Each tab gates on exactly the permission its endpoints check
+    // (#2890): every /admin/users|groups|invitations route requires the
+    // `admin` permission on its path-derived resource (an `admin` grant
+    // on /admin covers them via the ancestor walk, as does a wildcard).
+    // The old `view` gating showed tabs to view-only principals whose
+    // every action then 403'd.
+    _canUsers = auth.hasPermission('/admin/users', 'admin');
+    _canGroups = auth.hasPermission('/admin/groups', 'admin');
+    _canInvitations = auth.hasPermission('/admin/invitations', 'admin');
     // The schedule API needs the `admin` permission on /admin (ancestors
     // included), so gate the tab on exactly that.
     _canServer = auth.hasPermission('/admin', 'admin');

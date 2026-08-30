@@ -1646,6 +1646,32 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   cover all settings fields and API/WebSocket endpoints (including
   `klangk consent-decide`, `/ws/consent-decider`, `/ws/egress-sidecar`, and
   the `/llm-proxy/*` routes).
+- **Admin UI gating now matches server enforcement (#2890).** The admin
+  icon/route guards required the literal `*` wildcard, and the admin
+  Users/Groups/Invitations tabs gated on `view` — both hid the surface
+  from users holding a plain `admin` grant (which the endpoints accept)
+  and showed dead-end tabs to view-only principals. Gates now check the
+  `admin` permission exactly as the server does. The full
+  endpoint→permission and UI→permission matrix is documented in
+  [ACL reference](../reference/acl.md).
+
+- **Transfer Ownership card hidden without the `admin` permission
+  (#2890).** The card was offered to any `edit` holder, but the
+  endpoint checks `admin` on the workspace — edit-only members got a
+  403 on submit.
+
+- **ACL editor user/group pickers work for non-admin owners (#2890).**
+  The add-entry picker listed users/groups via admin-only endpoints,
+  so a non-admin `change-acls` holder got empty pickers. Groups now
+  load from the authenticated `GET /groups` endpoint and users are
+  picked via `/users/search`, same as the sharing panel.
+
+- **Fewer guaranteed-403 requests and live permission refresh (#2890).**
+  The shared-workspace list no longer fetches member lists (the
+  endpoint requires `share`, which members lack), and a
+  `workspaces_changed` push now also re-fetches the permission map —
+  admin visibility, the create button, and workspace tab gating update
+  live after role/share changes instead of at next login.
 
 - **Files tab is hidden without the `files` permission (#2886).** A
   spectator's workspace page mounted the Files tab unconditionally, so

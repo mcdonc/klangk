@@ -169,6 +169,70 @@ Collection and static resources (`/`, `/workspaces`, `/groups`,
 
 **CLI**: `klangk ls --shared` shows workspaces shared with you.
 
+## Permission matrix (#2890)
+
+The authoritative mapping of every protected surface to the permission
+its server-side check requires, and the UI element that gates on it.
+UI gating must match server enforcement exactly: a server check with
+no UI gating yields a confusing 403; UI gating with no server check is
+a cosmetic restriction (a security hole).
+
+### REST endpoints
+
+| Endpoint                                                       | Required permission                                                                                                              | UI element gating it                                                                                                           |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /workspaces`, `GET /workspaces/shared`                    | authenticated (own / ACE-shared rows only)                                                                                       | Workspace list page (always shown)                                                                                             |
+| `POST /workspaces`, `POST /workspaces/import`                  | `create` on `/workspaces`                                                                                                        | New/Import workspace FABs                                                                                                      |
+| `PUT /workspaces/{id}`, `PATCH …/settings`                     | `edit`                                                                                                                           | Settings tab (save button)                                                                                                     |
+| `POST /workspaces/{id}/duplicate`                              | `create` on `/workspaces/{id}`                                                                                                   | — (API/CLI only)                                                                                                               |
+| `DELETE /workspaces/{id}`                                      | `delete`                                                                                                                         | Delete button on owned list cards                                                                                              |
+| `POST …/restart`, `…/stop`, `…/start`                          | `terminal`                                                                                                                       | Restart notice / stopped-overlay Restart / Danger-zone Shut Down (workspace page mounts only after a `terminal`-gated connect) |
+| `GET …/status`                                                 | `monitor`                                                                                                                        | — (health rides the WS snapshot/frames)                                                                                        |
+| `GET …/export`                                                 | `export`                                                                                                                         | Settings → Export card                                                                                                         |
+| `GET/POST/DELETE …/members`, `GET/POST/DELETE …/groups`        | `share`                                                                                                                          | Sharing tab role buckets / group shares                                                                                        |
+| `GET …/roles`                                                  | `share`                                                                                                                          | Sharing tab (buckets)                                                                                                          |
+| `POST/DELETE/PATCH …/roles*`                                   | `share` **and** `change-acls`                                                                                                    | Add-user / chip-delete in the buckets                                                                                          |
+| `GET/PUT …/acl`                                                | `change-acls`                                                                                                                    | Advanced ACL editor                                                                                                            |
+| `POST …/transfer`                                              | `admin` on the workspace                                                                                                         | Settings → Transfer Ownership card                                                                                             |
+| `GET /users/search`                                            | authenticated                                                                                                                    | Sharing/settings search fields                                                                                                 |
+| `GET …/files`                                                  | `files`                                                                                                                          | Files tab                                                                                                                      |
+| `GET …/files/content`, `GET …/files/download`                  | `files` + `files-download`                                                                                                       | viewer open, download affordances                                                                                              |
+| `POST …/files/upload`, `POST …/files/rename`, `DELETE …/files` | `files` + `files-write`                                                                                                          | upload zone, rename/delete menu, editor save                                                                                   |
+| `GET /images`, `GET/POST/DELETE /volumes`                      | authenticated (volumes are label-scoped to the owner server-side)                                                                | create/settings image pickers (volumes: API/CLI)                                                                               |
+| All `/admin/*` routes                                          | `admin` on the path-derived `/admin/…` resource (an `admin` grant on `/admin`, or a wildcard, covers them via the ancestor walk) | admin icon + route guards (`isAdmin`), per-tab gates                                                                           |
+| `GET /admin/acl/tree`, `GET/PUT /admin/acl/resource`           | `admin` (`PUT` additionally `change-acls` on a workspace target)                                                                 | Admin ACL page / editor                                                                                                        |
+| `/groups` CRUD + members                                       | `create`/`edit`/`delete`/`view`/`manage_members` on `/groups[/{id}]`                                                             | sharing pickers (read), admin Groups tab                                                                                       |
+| `/auth/*` (login, refresh, change-\*, me, …)                   | self-service: authenticated (token subject); register/forgot/reset public by design                                              | login/settings screens                                                                                                         |
+| `/llm-proxy/*`                                                 | workspace JWT via the egress-site `forward_auth` + container-source ACL                                                          | — (container-side calls)                                                                                                       |
+| `/browser-delegate*`                                           | workspace JWT (`require_workspace_token`)                                                                                        | browser bridge (server-driven)                                                                                                 |
+
+`manage_users` and `manage_invitations` appear in the permission list the
+server enumerates for `/my-permissions` but nothing checks them — they
+are reserved names, not enforceable grants.
+
+### WebSocket commands
+
+| Surface                                   | Required permission                             | UI gating                       |
+| ----------------------------------------- | ----------------------------------------------- | ------------------------------- |
+| `/ws` connect                             | valid user JWT                                  | login                           |
+| `workspace_connect`                       | `terminal` on the workspace                     | workspace page itself           |
+| `restart_container`                       | (post-connect ⇒ `terminal`)                     | Restart affordances             |
+| `exec` one-shot                           | `exec-and-sync`                                 | `klangk exec`/`sync` (CLI)      |
+| new isolated window                       | `code-in-isolation`                             | terminal tab “+” / new-terminal |
+| `share_window` / `delete_shared_terminal` | `share-terminals`                               | Share button on own terminal    |
+| `join_shared_terminal`, spectate feed     | `spectate-on-shared-terminals`                  | shared-terminal list/auto-join  |
+| input on a shared terminal                | `code-in-shared-terminals` or `share-terminals` | read-only terminal view         |
+| `/ws/consent-decider`                     | `egress-consent` on the workspace               | consent banner / Network tab    |
+| `/ws/egress-sidecar`                      | workspace JWT + container-source ACL            | sidecar (in-container)          |
+
+### Permission-map freshness
+
+The web app fetches `/my-permissions` at login/startup and re-fetches
+it on every `workspaces_changed` push (share, role, member, transfer
+mutations) — both the app-wide map (admin visibility, create FAB) and
+the workspace page's per-resource list (tab gating) refresh live
+(#2890).
+
 ## Troubleshooting: "Why can't I access this workspace?"
 
 1. **Check your permissions**: `GET /api/v1/my-permissions?resource=/workspaces/{id}` — does it include the permission you need?
