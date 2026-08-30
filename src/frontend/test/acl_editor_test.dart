@@ -232,6 +232,21 @@ void main() {
     // appended to the entries table.
     await tester.tap(find.text('bob@example.com'));
     await tester.pumpAndSettle();
+
+    // Typing a new query invalidates the pick (#2890 review): Add goes
+    // inert again even though a user was picked before.
+    await tester.enterText(find.byType(TextField), 'ca');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add ACE'), findsOneWidget);
+
+    // Re-pick from the refreshed results and add for real.
+    await tester.enterText(find.byType(TextField), 'bo');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('bob@example.com'));
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Add'));
     await tester.pumpAndSettle();
 

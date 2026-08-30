@@ -608,10 +608,13 @@ class _UserSearchFieldState extends State<_UserSearchField> {
 
   void _onChanged(String q) {
     _debounce?.cancel();
+    // Any query change invalidates the previous pick (#2890 review):
+    // the visible results no longer contain the picked user, so Add
+    // must not silently submit them under the new query's name.
+    if (_selectedId != null) _select(null, null);
     final query = q.trim();
     if (query.isEmpty) {
       setState(() => _results = []);
-      _select(null, null);
       return;
     }
     _debounce = Timer(const Duration(milliseconds: 300), () async {

@@ -303,10 +303,10 @@ class _WorkspaceListPageState extends State<WorkspaceListPage> {
   /// we never fan out N+1 across the whole list). Merges into the cache.
   ///
   /// Owned-section only (#2890): the members endpoint checks ``share``
-  /// on the workspace, which only owners (and share-holders) hold —
-  /// shared-section cards never render member avatars, so fetching
-  /// there was one guaranteed-403 request per card, swallowed
-  /// silently.
+  /// on the workspace, which ordinary shared members (spectators,
+  /// coders, collaborators) do not hold — shared-section cards never
+  /// render member avatars, so fetching there was one 403 request per
+  /// card for all of them, swallowed silently.
   Future<void> _fetchMembers(
     _Section section,
     List<Map<String, dynamic>> workspaces,

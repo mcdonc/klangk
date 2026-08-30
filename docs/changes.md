@@ -136,6 +136,15 @@ operators or integrators to act when upgrading.
 
 ### Security
 
+- **`/llm-proxy/*` endpoints require a workspace JWT (#2890).** The
+  LLM proxy endpoints had no app-level authentication: the egress
+  site's `forward_auth` guarded the container path, but the router is
+  also mounted on the main listener, whose browser-site catch-all
+  proxies `/llm-proxy/*` with no auth subrequest — on a remotely bound
+  deploy with an LLM router configured, anyone could enumerate models
+  and burn completions credit anonymously. Both endpoints now require
+  the same workspace JWT in-workspace clients already send.
+
 - **Image builds verify third-party inputs (#2063).** Base images (workspace base, python host, Alpine sidecar, Debian FIPS builders + nix-seed sandbox) are now pulled by immutable `@sha256:` digest, with the base-image workflow's auto-PR pinning the digest. The uv and process-compose release tarballs are SHA-256-verified per architecture before extraction (no more `curl | sh` / `curl | tar` pipes), the Pi agent npm tarball is fetched directly and SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are hash-verified before entering a keyring (Caddy's sources list is written inline). Pins live in the Dockerfiles; rotation procedures and known residuals are documented in [Building Images](development/building-images.md).
 
 - **Browser-delegate requests are bound to the caller's workspace
@@ -1651,9 +1660,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   Users/Groups/Invitations tabs gated on `view` — both hid the surface
   from users holding a plain `admin` grant (which the endpoints accept)
   and showed dead-end tabs to view-only principals. Gates now check the
-  `admin` permission exactly as the server does. The full
-  endpoint→permission and UI→permission matrix is documented in
-  [ACL reference](../reference/acl.md).
+  `admin` permission exactly as the server does: an `admin` grant on
+  `/admin` (or a wildcard) opens the whole surface, a delegated grant
+  on `/admin/users|groups|invitations` opens exactly that tab, and the
+  Access Control tab requires `admin` on `/admin` like its endpoints.
+  The full endpoint→permission and UI→permission matrix is documented
+  in [ACL reference](../reference/acl.md).
 
 - **Transfer Ownership card hidden without the `admin` permission
   (#2890).** The card was offered to any `edit` holder, but the
@@ -1666,12 +1678,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   load from the authenticated `GET /groups` endpoint and users are
   picked via `/users/search`, same as the sharing panel.
 
-- **Fewer guaranteed-403 requests and live permission refresh (#2890).**
-  The shared-workspace list no longer fetches member lists (the
-  endpoint requires `share`, which members lack), and a
-  `workspaces_changed` push now also re-fetches the permission map —
-  admin visibility, the create button, and workspace tab gating update
-  live after role/share changes instead of at next login.
+- **Fewer doomed member-list requests and live permission refresh
+  (#2890).** The shared-workspace list no longer fetches member lists
+  (the endpoint requires `share`, which ordinary shared members lack),
+  and a `workspaces_changed` push now also re-fetches the permission
+  map — admin visibility, the create button, and workspace tab gating
+  update live after role/share changes instead of at next login.
 
 - **Files tab is hidden without the `files` permission (#2886).** A
   spectator's workspace page mounted the Files tab unconditionally, so

@@ -925,6 +925,22 @@ void main() {
       expect(viewer.isAdmin, isFalse);
     });
 
+    test('isAdmin true for a delegated sub-resource admin (#2890)', () async {
+      // admin on /admin/users only: the server accepts their /admin/users
+      // calls, so the surface entry (icon, route guard) must open for
+      // them — the page then shows only the Users tab.
+      testAuthHttpClientOverride = _emptyConfigClient(
+        permissions: {
+          '/admin/users': ['admin'],
+        },
+      );
+      final token = makeJwt({'sub': 'user-1'});
+      SharedPreferences.setMockInitialValues({'klangk_jwt': token});
+      final service = AuthService();
+      await Future.delayed(Duration.zero);
+      expect(service.isAdmin, isTrue);
+    });
+
     test('hasPermission checks specific permission', () async {
       testAuthHttpClientOverride = _emptyConfigClient(
         permissions: {

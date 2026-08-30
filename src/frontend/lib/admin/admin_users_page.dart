@@ -46,6 +46,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   bool _canGroups = false;
   bool _canInvitations = false;
   bool _canServer = false;
+  bool _canAcl = false;
 
   // Pending invitation count for the tab badge — updated by the
   // _InvitationsTab widget via callback.
@@ -100,6 +101,11 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     // The schedule API needs the `admin` permission on /admin (ancestors
     // included), so gate the tab on exactly that.
     _canServer = auth.hasPermission('/admin', 'admin');
+    // The Access Control tab rides along whenever any tab is visible,
+    // but its endpoints (`/admin/acl/tree`, `/admin/acl/resource`)
+    // check `admin` on /admin — a delegated sub-resource admin must not
+    // get a dead-end ACL tab (the same principle as the tab gates).
+    _canAcl = auth.hasPermission('/admin', 'admin');
   }
 
   Future<void> _loadUsers({int page = 1}) async {
@@ -465,7 +471,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (_canGroups) types.add('groups');
     if (_canInvitations) types.add('invitations');
     if (_canServer) types.add('server');
-    if (types.isNotEmpty) types.add('acl');
+    if (_canAcl) types.add('acl');
     return types;
   }
 
@@ -473,7 +479,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     final pendingCount = _invitationsPending;
     final tabs = <SkeuoTab>[];
     final views = <Widget>[];
-    final tabTypes = _tabTypes;
 
     void addTab({
       required String label,
@@ -526,7 +531,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         view: const ServerSchedulePanel(),
       );
     }
-    if (tabTypes.isNotEmpty) {
+    if (_canAcl) {
       addTab(
         label: 'Access Control',
         icon: Icons.security,

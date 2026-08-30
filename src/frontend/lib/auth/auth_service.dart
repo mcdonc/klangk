@@ -145,14 +145,20 @@ class AuthService extends ChangeNotifier {
 
   /// Whether the user may use the admin surface at all.
   ///
-  /// Matches the server exactly: every ``/admin/*`` endpoint checks the
-  /// ``admin`` permission on its ``/admin``-prefixed resource (inherited
-  /// from ancestors), so the gate is ``admin`` on ``/admin`` — which a
-  /// wildcard ACE also satisfies. Gating on the literal ``*`` only
-  /// (#2890) hid the UI from users holding a plain ``admin`` grant on
-  /// ``/admin`` — a supported, editor-creatable delegation — even though
-  /// the server accepted their calls.
-  bool get isAdmin => hasPermission('/admin', 'admin');
+  /// Matches the server exactly (#2890): every ``/admin/*`` endpoint
+  /// checks the ``admin`` permission on its ``/admin``-prefixed resource
+  /// (inherited from ancestors), so entry to the surface is granted for
+  /// an ``admin`` grant on ``/admin`` — or on any static ``/admin/*``
+  /// sub-resource (a delegated users/groups/invitations admin; the page
+  /// then shows only the tabs their grants cover). A wildcard ACE
+  /// satisfies every check. Gating on the literal ``*`` only hid the UI
+  /// from delegated admins whose calls the server accepts.
+  bool get isAdmin => [
+        '/admin',
+        '/admin/users',
+        '/admin/groups',
+        '/admin/invitations',
+      ].any((resource) => hasPermission(resource, 'admin'));
 
   /// Check if the user has a specific permission on a resource.
   bool hasPermission(String resource, String permission) {

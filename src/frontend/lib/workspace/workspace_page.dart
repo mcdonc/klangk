@@ -165,11 +165,12 @@ class _WorkspacePageState extends State<WorkspacePage> {
     // changes (the server notifies on a classification_banner edit, so
     // the banner updates live after saving in the settings panel).
     // #2890: the same push re-fetches this member's workspace
-    // permissions (role/share changes) so tab gating stays live.
-    _markingSub = context.read<WsClient>().workspacesChanged.listen((_) {
-      _fetchPermissions();
-      _fetchWorkspaceName();
-    });
+    // permissions (role/share changes) so tab gating stays live —
+    // _fetchWorkspaceName() does that first, before the row fetch.
+    _markingSub = context
+        .read<WsClient>()
+        .workspacesChanged
+        .listen((_) => _fetchWorkspaceName());
     WidgetsBinding.instance.addPostFrameCallback((_) => _connectToWorkspace());
   }
 

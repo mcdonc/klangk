@@ -19,6 +19,23 @@ from klangk.model import free_port
 from _e2e_server import start_server, stop_server
 
 
+def _authorize(server) -> None:
+    """Set the client's default workspace-JWT header (#2890).
+
+    Both /llm-proxy endpoints require a workspace JWT — the same token
+    the egress site's forward_auth validates for real container callers.
+    Minted here via the test-only route (test mode is on for these
+    servers).
+    """
+    resp = server["client"].get(
+        "/api/v1/test/workspace-token/llm-e2e", timeout=10
+    )
+    assert resp.status_code == 200
+    server["client"].headers["Authorization"] = (
+        "Bearer " + resp.json()["token"]
+    )
+
+
 class _FakeLLMHandler(BaseHTTPRequestHandler):
     """Minimal OpenAI-compatible handler."""
 
@@ -110,11 +127,33 @@ def server(fake_llm):
         LOGFIRE_TOKEN="",
         KLANGKD_LLM_MODELS=model_entry,
     )
+    _authorize(srv)
     yield srv
     stop_server(srv)
 
 
 class TestLLMProxyE2E:
+    def test_endpoints_reject_missing_workspace_token(self, server):
+        """#2890: no token → 401 on both endpoints (the main-listener
+        exposure the gate closes — anonymous callers must not enumerate
+        models or burn completions credit)."""
+        client = server["client"]
+        saved = client.headers.pop("Authorization", None)
+        try:
+            resp = client.get("/llm-proxy/models", timeout=10)
+            assert resp.status_code == 401
+            resp = client.post(
+                "/llm-proxy/chat/completions",
+                json={
+                    "model": "fake-model",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                timeout=30,
+            )
+            assert resp.status_code == 401
+        finally:
+            client.headers["Authorization"] = saved
+
     def test_models_endpoint_returns_configured_model(self, server):
         resp = server["client"].get("/llm-proxy/models", timeout=10)
         assert resp.status_code == 200
@@ -162,6 +201,7 @@ class TestLLMProxyE2E:
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             LOGFIRE_TOKEN="",
         )
+        _authorize(srv)
         try:
             resp = srv["client"].get("/llm-proxy/models", timeout=10)
             assert resp.status_code == 200
@@ -196,6 +236,7 @@ class TestLLMProxyPassthroughE2E:
             KLANGKD_IDLE_TIMEOUT_SECONDS="300",
             LOGFIRE_TOKEN="",
         )
+        _authorize(srv)
         yield srv
         stop_server(srv)
 

@@ -466,6 +466,9 @@ void main() {
 
       expect(find.text('Server'), findsNothing);
       expect(find.text('Users'), findsOneWidget);
+      // The Access Control tab rides along no more: its endpoints check
+      // `admin` on /admin, which this delegated admin lacks (#2890).
+      expect(find.text('Access Control'), findsNothing);
     });
 
     testWidgets(

@@ -10,6 +10,18 @@ from klangk.api.llm_proxy import router
 from klangk.llm_router import LLMRouter
 from _helpers import make_settings
 
+# A token the fake auth layer accepts (the endpoints only validate its
+# shape via decode_workspace_token — #2890's main-listener gate).
+_WS_TOKEN = "ws-test-token"
+
+
+class _FakeAuth:
+    """Just enough auth state for require_workspace_token (#2890)."""
+
+    @staticmethod
+    def decode_workspace_token(token: str):
+        return "ws-test" if token == _WS_TOKEN else None
+
 
 def _app(extra_env=None):
     """Build a minimal FastAPI app with the llm-proxy router."""
@@ -20,13 +32,20 @@ def _app(extra_env=None):
     )
     app = FastAPI()
     app.state.llm_router = LLMRouter(mock_app_state)
+    app.state.auth = _FakeAuth()
     app.include_router(router)
     return app
 
 
-def _client(app):
+def _client(app, token: str | None = _WS_TOKEN):
+    """A client whose requests carry the workspace JWT by default.
+
+    Pass ``token=None`` (or a wrong token) to exercise the 401 paths.
+    """
     return AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"} if token else None,
     )
 
 
@@ -61,6 +80,56 @@ class TestListModels:
         assert model["object"] == "model"
         assert model["owned_by"] == "klangk"
         assert model["id"] == "gpt-4o"
+
+
+class TestWorkspaceTokenGate:
+    """Both endpoints require a workspace JWT (#2890).
+
+    The router is mounted on the main listener too, where the
+    browser-site catch-all proxies /llm-proxy/* with no auth
+    subrequest — this gate is what closes anonymous access there.
+    """
+
+    async def test_models_401_without_token(self):
+        app = _app(
+            {
+                "KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx,ollama/llama3:http://x:11434:"
+            }
+        )
+        async with _client(app, token=None) as client:
+            resp = await client.get("/llm-proxy/models")
+        assert resp.status_code == 401
+        assert "workspace token" in resp.json()["detail"].lower()
+
+    async def test_models_401_with_invalid_token(self):
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        async with _client(app, token="wrong-token") as client:
+            resp = await client.get("/llm-proxy/models")
+        assert resp.status_code == 401
+
+    async def test_chat_completions_401_without_token(self):
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        async with _client(app, token=None) as client:
+            resp = await client.post(
+                "/llm-proxy/chat/completions",
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+        assert resp.status_code == 401
+
+    async def test_chat_completions_401_with_invalid_token(self):
+        app = _app({"KLANGKD_LLM_MODELS": "openai/gpt-4o::sk-xxx"})
+        async with _client(app, token="wrong-token") as client:
+            resp = await client.post(
+                "/llm-proxy/chat/completions",
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+        assert resp.status_code == 401
 
 
 class TestChatCompletions:

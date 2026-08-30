@@ -9,8 +9,10 @@ import inspect
 import json
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from .common import require_workspace_token
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +20,20 @@ router = APIRouter(prefix="/llm-proxy", tags=["llm-proxy"])
 
 
 @router.get("/models")
-async def list_models(request: Request):
+async def list_models(
+    request: Request,
+    _workspace_id: str = Depends(require_workspace_token),
+):
     """Return the list of models the LLM router knows about.
+
+    Requires a workspace JWT (``Authorization: Bearer …``, #2890): the
+    legitimate caller is an in-workspace client reaching the backend
+    through the egress site, whose ``forward_auth`` already validates
+    the same token — but the router is also mounted on the main
+    listener, whose browser-site catch-all proxies ``/llm-proxy/*``
+    with no auth subrequest. Without this check that path exposed
+    model enumeration and unauthenticated completions whenever an LLM
+    router is configured.
 
     In passthrough mode, queries the upstream's ``/models`` endpoint
     for dynamic discovery.  In router mode, returns the configured
@@ -34,8 +48,14 @@ async def list_models(request: Request):
 
 
 @router.post("/chat/completions")
-async def chat_completions(request: Request):
+async def chat_completions(
+    request: Request,
+    _workspace_id: str = Depends(require_workspace_token),
+):
     """Proxy a chat completion request to the litellm Router.
+
+    Requires a workspace JWT like ``GET /models`` (#2890) — see there
+    for the main-listener exposure this closes.
 
     Accepts the standard OpenAI ``/v1/chat/completions`` request body
     and delegates to ``LLMRouter.acompletion()``.  In passthrough mode
