@@ -85,3 +85,6 @@ output.log
 
 # Fuzz test output
 fuzz-server.log
+
+# flutter-mcp-toolkit CLI state (#2868)
+.flutter_mcp/

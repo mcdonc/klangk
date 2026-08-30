@@ -12,6 +12,38 @@ let
   # (flutter + its dart SDK); the rest of the toolchain stays on 26.05.
   flutterUnstable =
     inputs.nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.flutter;
+  # flutter-mcp-toolkit CLI (`fmtk`, #2868): lets agents inspect and drive
+  # a debug-run of the frontend (semantic snapshots, taps/typing, hot
+  # reload, logs). Not in nixpkgs and not on pub.dev — upstream ships
+  # prebuilt Dart AOT binaries via GitHub Releases only. Pinned here as a
+  # fixed-hash fetchurl derivation; plain glibc ELF on Linux (no patchelf
+  # needed) and ad-hoc Mach-O on macOS. See AGENTS.md "Inspecting the
+  # running frontend" for the workflow.
+  flutterMcpToolkitVersion = "5.1.0";
+  flutterMcpToolkit = pkgs.stdenv.mkDerivation {
+    pname = "flutter-mcp-toolkit";
+    version = flutterMcpToolkitVersion;
+    src = pkgs.fetchurl {
+      url = "https://github.com/Arenukvern/mcp_flutter/releases/download/v${flutterMcpToolkitVersion}/flutter_mcp_${flutterMcpToolkitVersion}_${
+        if pkgs.stdenv.isDarwin then "darwin-arm64" else "linux-x64"
+      }.tar.gz";
+      hash =
+        if pkgs.stdenv.isDarwin then
+          "sha256-L8QhIYwJZz/X+lnQYY6ftW2qQD66cWGoutwdY0wGZaI="
+        else
+          "sha256-+3sC3DaXvWxgqvFpaqKwr1rS19JcCBPZ8zNC5gK8ko0=";
+    };
+    sourceRoot = ".";
+    dontConfigure = true;
+    dontBuild = true;
+    # Dart AOT executables are ELF + an appended snapshot blob; strip would
+    # truncate the snapshot and leave a bare dartaotruntime ("not an AOT
+    # snapshot" on every invocation).
+    dontStrip = true;
+    installPhase = ''
+      install -Dm555 -t $out/bin flutter_mcp_${flutterMcpToolkitVersion}_*/bin/*
+    '';
+  };
   # klangkd binds a UDS and owns the Caddy reverse proxy as a child
   # (#1396, #1642); the old two-process layout (uvicorn + scripts/nginx.sh)
   # is collapsed into this single entry. Dev config lives in klangkd.yaml
@@ -108,6 +140,7 @@ in
       coreutils # GNU du -b + stat -f -c %T (macOS BSD lacks both)
       docker-client
       expect
+      flutterMcpToolkit
       flutterUnstable
       git # "error: Failed to find git" during devenv:git-hooks:install
       gzip

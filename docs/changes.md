@@ -265,6 +265,13 @@ sync` report a clear permission-denied error.
 
 ### Added
 
+- **`fmtk` — flutter-mcp-toolkit CLI in the devenv shell (#2868).** Agents
+  can inspect and drive a debug run of the frontend (semantic snapshots,
+  widget refs, taps/typing, hot reload, app logs) via the pinned
+  `flutter-mcp-toolkit` release binary. The frontend registers the debug-only
+  `mcp_toolkit` VM service extensions (release builds are unaffected). See
+  AGENTS.md "Inspecting the running frontend" for the workflow.
+
 - **Admission control: `KLANGKD_ADMISSION_MEMORY_ENABLED`,
   `KLANGKD_ADMISSION_MEMORY_MARGIN` (#2525).** Opt-in start-time
   host-capacity check: before a workspace container is created,
