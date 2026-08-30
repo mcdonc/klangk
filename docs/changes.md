@@ -254,14 +254,16 @@ sync` report a clear permission-denied error.
   message (e.g. `Failed to create window`); the full exception detail is
   logged server-side instead.
 
-- **OIDC `cli_redirect` userinfo bypass (#2571).** The localhost-only
-  guard on the CLI login redirect used prefix matching, so a crafted
-  `cli_redirect` like `http://localhost:1@attacker.example/` passed the
-  check while actually routing to the attacker's host — a victim
-  completing a normal IdP login had their session token redirected to
-  it. The target is now parsed and must be plain `http` to `localhost`
-  or `127.0.0.1` with a port and no userinfo; anything else falls back to
-  the web flow.
+- **`/files/content` now requires `files-download` (#2713).** The file
+  viewer's text-reader endpoint
+  (`GET /api/v1/workspaces/{id}/files/content`) is gated by the
+  `files-download` permission like `/files/download` (#2705), closing
+  the remaining scripted bulk-read avenue for members with `files`
+  alone. Operators who relied on text viewing without download must
+  also grant `files-download` (or withhold `files` entirely). The web
+  file viewer degrades gracefully: listings and metadata stay visible
+  and the content pane reports the denial. See
+  [ACLs](../reference/acl.md).
 
 ### Added
 
