@@ -20,6 +20,43 @@ class WsDebugEntry {
       : timestamp = DateTime.now();
 }
 
+/// An error frame from the server (or a local connection/auth failure)
+/// surfaced on [WsClient.errors].
+///
+/// [code] is the server's machine-readable error class (#2525 capacity,
+/// #2891 forbidden / not_found) — null on legacy servers and local
+/// failures. [accessRevoked] classifies the dead-end refusals that can
+/// never succeed on retry (share revoked, ACL changed, workspace gone).
+class WsError {
+  final String message;
+  final String? code;
+
+  const WsError({required this.message, this.code});
+
+  /// Whether this error means the user can no longer open this
+  /// workspace. Machine-readable code first; the message-text fallback
+  /// keeps code-less (older) servers classified the same way (#2891).
+  bool get accessRevoked =>
+      code == 'forbidden' || code == 'not_found' || _messageLooksAccessRevoked;
+
+  bool get _messageLooksAccessRevoked {
+    final lower = message.toLowerCase();
+    return lower.contains('permission') ||
+        lower.contains('denied') ||
+        lower.contains('workspace not found');
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is WsError && other.message == message && other.code == code;
+
+  @override
+  int get hashCode => Object.hash(message, code);
+
+  @override
+  String toString() => code == null ? message : '$message (code: $code)';
+}
+
 /// Manages WebSocket connection to the Klangk backend, sending commands
 /// and streaming terminal output and browser bridge requests.
 class WsClient extends ChangeNotifier {
@@ -103,7 +140,7 @@ class WsClient extends ChangeNotifier {
     _listenToChannel();
   }
 
-  final _errorController = StreamController<String>.broadcast();
+  final _errorController = StreamController<WsError>.broadcast();
   final _terminalOutputController = StreamController<String>.broadcast();
   // #2527: host lifecycle notices (host_shutdown / server_recycle phases /
   // host_started) as a broadcast stream AND a listenable field for status
@@ -142,7 +179,7 @@ class WsClient extends ChangeNotifier {
       StreamController<Map<String, dynamic>>.broadcast();
   final _debugLogController = StreamController<WsDebugEntry>.broadcast();
 
-  Stream<String> get errors => _errorController.stream;
+  Stream<WsError> get errors => _errorController.stream;
   Stream<String> get terminalOutput => _terminalOutputController.stream;
   Stream<Map<String, dynamic>> get browserRequests =>
       _browserRequestController.stream;
@@ -300,11 +337,15 @@ class WsClient extends ChangeNotifier {
       final code = _channel?.closeCode;
       if (code == 4001 || code == 4002) {
         _authFailed = true;
-        _errorController.add('Session expired, please log in again');
+        _errorController.add(
+          const WsError(message: 'Session expired, please log in again'),
+        );
         _auth?.logout();
       } else {
         debugPrint('WebSocket connection failed: $e');
-        _errorController.add('Connection failed. Please try again.');
+        _errorController.add(
+          const WsError(message: 'Connection failed. Please try again.'),
+        );
       }
       return;
     }
@@ -332,8 +373,10 @@ class WsClient extends ChangeNotifier {
     'container_ready': _onContainerReady,
     'terminal_output': (json) =>
         _terminalOutputController.add(json['data'] as String? ?? ''),
-    'error': (json) =>
-        _errorController.add(json['message'] as String? ?? 'Unknown error'),
+    'error': (json) => _errorController.add(WsError(
+          message: json['message'] as String? ?? 'Unknown error',
+          code: json['code'] as String?,
+        )),
     'browser_request': _browserRequestController.add,
     'terminal_windows': _onTerminalWindows,
     'shared_terminals': _onSharedTerminals,
@@ -400,7 +443,7 @@ class WsClient extends ChangeNotifier {
 
           _handlers[type]?.call(json);
         } catch (e) {
-          _errorController.add('Parse error: $e');
+          _errorController.add(WsError(message: 'Parse error: $e'));
         }
       },
       onDone: () {
@@ -429,14 +472,16 @@ class WsClient extends ChangeNotifier {
         }
         notifyListeners();
         if (authFailure) {
-          _errorController.add('Session expired, please log in again');
+          _errorController.add(
+            const WsError(message: 'Session expired, please log in again'),
+          );
           _auth?.logout();
         } else {
           _scheduleReconnect();
         }
       },
       onError: (e) {
-        _errorController.add('WebSocket error: $e');
+        _errorController.add(WsError(message: 'WebSocket error: $e'));
         _stopHeartbeat();
         _connected = false;
         _pendingWorkspaceId ??= _currentWorkspaceId;

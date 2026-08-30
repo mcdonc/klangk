@@ -359,4 +359,33 @@ void main() {
       );
     });
   });
+
+  group('access revoked view (buildAccessRevokedView, #2891)', () {
+    testWidgets('shows revocation message and no restart action',
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(home: buildAccessRevokedView(onBack: () {})),
+      );
+
+      expect(
+        find.text('Access to this workspace has been revoked'),
+        findsOneWidget,
+      );
+      expect(find.text('Back to workspaces'), findsOneWidget);
+      // The defining constraint: no Restart button — the refusal is
+      // permanent, so retrying can never succeed.
+      expect(find.text('Restart'), findsNothing);
+      expect(find.byIcon(Icons.refresh), findsNothing);
+    });
+
+    testWidgets('back button calls callback', (tester) async {
+      var called = false;
+      await tester.pumpWidget(
+        MaterialApp(home: buildAccessRevokedView(onBack: () => called = true)),
+      );
+
+      await tester.tap(find.text('Back to workspaces'));
+      expect(called, isTrue);
+    });
+  });
 }

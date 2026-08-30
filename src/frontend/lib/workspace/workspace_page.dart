@@ -71,6 +71,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
   bool _restarting = false;
   bool _disconnected = false;
 
+  /// #2891: [buildAccessRevokedView] should replace the page instead of
+  /// the plain error view — set when the page error was an access-revoked
+  /// refusal (see `onPageError`).
+  bool _accessRevoked = false;
+
   /// Tracks which shared terminal (from another user) we're viewing.
   /// null means we're on our own isolated terminal.
   Map<String, String>? _activeSharedTerminal;
@@ -306,7 +311,7 @@ class _WorkspacePageState extends State<WorkspacePage> {
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
-              content: Text('Restart failed: $error'),
+              content: Text('Restart failed: ${error.message}'),
               duration: const Duration(seconds: 6),
               behavior: SnackBarBehavior.floating,
             ),
@@ -349,7 +354,14 @@ class _WorkspacePageState extends State<WorkspacePage> {
         }
       },
       onPageError: (error) {
-        if (mounted) setState(() => _error = error);
+        if (!mounted) return;
+        // #2891: an access-revoked refusal (revoked share / changed ACL /
+        // deleted workspace) swaps the whole page for the access-revoked
+        // view — no restart overlay, no loop.
+        setState(() {
+          _error = error.message;
+          _accessRevoked = error.accessRevoked;
+        });
       },
     );
 
@@ -554,7 +566,11 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_error != null) return _buildErrorView();
+    if (_error != null) {
+      return _accessRevoked
+          ? buildAccessRevokedView(onBack: () => context.go('/workspaces'))
+          : _buildErrorView();
+    }
     if (_connecting) return _buildConnectingView();
 
     final wsClient = context.read<WsClient>();

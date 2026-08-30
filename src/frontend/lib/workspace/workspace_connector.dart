@@ -27,18 +27,19 @@ class WorkspaceConnector {
   /// Called when a shared terminal is deleted.
   final void Function(Map<String, dynamic> msg) onSharedTerminalDeleted;
 
-  /// Called when a page-level error arrives: permission/auth refusals
-  /// and capacity refusals (#2525 — "host at capacity" / "quota
-  /// reached"), both actionable dead-ends for this page that the owner
-  /// renders on its error view.
-  final void Function(String error) onPageError;
+  /// Called when a page-level error arrives: access-revoked refusals
+  /// (#2891 — revoked share / changed ACL / deleted workspace, via
+  /// [WsError.accessRevoked]) and capacity refusals (#2525 — "host at
+  /// capacity" / "quota reached"), both actionable dead-ends for this
+  /// page that the owner renders on its error view.
+  final void Function(WsError error) onPageError;
 
-  /// Called when a non-permission error arrives while a restart is in
+  /// Called when a non-page-level error arrives while a restart is in
   /// flight (#2676): the server now refuses a failed container restart
   /// with an `error` frame instead of dropping the socket, so the page
   /// must clear its restart spinner on this callback. May fire for
   /// unrelated errors too — the owner filters by its own state.
-  final void Function(String error)? onRestartError;
+  final void Function(WsError error)? onRestartError;
 
   /// #2710: whether the deploy's browser-delegate bridge is enabled
   /// (KLANGKD_BROWSER_DELEGATE_ENABLED via /config). When false, no
@@ -48,7 +49,7 @@ class WorkspaceConnector {
 
   BrowserDelegate? _browserDelegate;
   StreamSubscription<Map<String, dynamic>>? _customEventSub;
-  StreamSubscription<String>? _errorSub;
+  StreamSubscription<WsError>? _errorSub;
   StreamSubscription<Map<String, dynamic>>? _sharedDeletedSub;
 
   WorkspaceConnector({
@@ -152,20 +153,21 @@ class WorkspaceConnector {
       onSharedTerminalDeleted,
     );
 
-    // Listen for errors — permission/auth and capacity errors are
-    // page-level; the rest go to the restart hook.
+    // Listen for errors — access-revoked and capacity errors are
+    // page-level dead-ends; the rest go to the restart hook.
     _errorSub = wsClient.errors.listen((error) {
-      final lower = error.toLowerCase();
-      if (lower.contains('permission') || lower.contains('denied')) {
+      if (error.accessRevoked) {
+        // #2891: the server refuses workspace_connect / restart_container
+        // with a machine-readable `forbidden` / `not_found` code (message
+        // fallback on older servers). Retrying can never succeed — the
+        // page swaps its restart overlay for the access-revoked view.
         onPageError(error);
-      } else if (lower.contains('host at capacity') ||
-          lower.contains('quota reached')) {
-        // #2525: an admission refusal (server sends it with the
-        // machine-readable error code `capacity`; the message text is
-        // matched because the errors stream carries only the message)
-        // is an actionable dead-end for this page — surface it on the
-        // error view instead of silently dropping it when no restart
-        // is in flight.
+      } else if (error.code == 'capacity' ||
+          _messageLooksLikeCapacity(error.message)) {
+        // #2525: an admission refusal is an actionable dead-end for this
+        // page — surface it on the error view instead of silently
+        // dropping it when no restart is in flight. Matched by code, with
+        // the message-text fallback for older servers.
         onPageError(error);
       } else {
         // #2676: anything else (e.g. a refused container restart) goes to
@@ -190,5 +192,13 @@ class WorkspaceConnector {
     _sharedDeletedSub = null;
     _browserDelegate?.stop();
     _browserDelegate = null;
+  }
+
+  /// #2525 message-text fallback for capacity refusals from servers that
+  /// predate the machine-readable `capacity` code.
+  static bool _messageLooksLikeCapacity(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('host at capacity') ||
+        lower.contains('quota reached');
   }
 }

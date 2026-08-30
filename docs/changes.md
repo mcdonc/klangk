@@ -1604,6 +1604,15 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **Access-revoked restart loop (#2891).** When a user's workspace access
+  was revoked (share removed, ACL changed, workspace deleted) while a
+  "Container stopped" overlay was up, pressing its Restart button was
+  refused forever with no explanation — the overlay and button kept
+  reappearing. The server now tags those WebSocket refusals with
+  machine-readable `forbidden` / `not_found` codes, and the frontend
+  swaps the overlay for an "Access to this workspace has been revoked"
+  view with only a "Back to workspaces" action.
+
 - **Files tab is hidden without the `files` permission (#2886).** A
   spectator's workspace page mounted the Files tab unconditionally, so
   opening it failed with `Cannot list this directory: Permission denied`.

@@ -359,11 +359,14 @@ class Connection:
         if not await self.app.state.acl.check_permission(
             f"/workspaces/{workspace_id}", principals, "terminal"
         ):
-            send_error(self.sock, "Permission denied")
+            # #2891: machine-readable ``forbidden`` so clients can swap
+            # the restart/overlay loop for an access-revoked view instead
+            # of matching the message text.
+            send_error(self.sock, "Permission denied", code="forbidden")
             return
         workspace = await self.app.state.workspaces.get_workspace(workspace_id)
         if workspace is None:
-            send_error(self.sock, "Workspace not found")
+            send_error(self.sock, "Workspace not found", code="not_found")
             return
 
         logger.info(
@@ -466,7 +469,8 @@ class Connection:
             return
         # Restarting affects everyone in the workspace; require terminal.
         if not await self._has_perm("terminal"):
-            send_error(self.sock, "Permission denied")
+            # #2891: same machine-readable refusal as workspace_connect.
+            send_error(self.sock, "Permission denied", code="forbidden")
             return
 
         # Save before cleanup — cleanup clears state fields.
@@ -490,7 +494,7 @@ class Connection:
         # workspaces' non-owner members.
         workspace = await self.app.state.workspaces.get_workspace(workspace_id)
         if workspace is None:
-            send_error(self.sock, "Workspace not found")
+            send_error(self.sock, "Workspace not found", code="not_found")
             return
 
         try:

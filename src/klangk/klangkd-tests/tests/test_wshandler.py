@@ -1979,7 +1979,9 @@ class TestHandleWorkspaceConnect:
         sock = _mock_sock()
         conn = _base_conn(user=user, ws=sock)
         await conn.handle_workspace_connect({"workspaceId": "fake"})
-        assert "Permission denied" in sock.send_json.call_args[0][0]["message"]
+        frame = sock.send_json.call_args[0][0]
+        assert "Permission denied" in frame["message"]
+        assert frame["code"] == "forbidden"
 
     async def test_connect_success(self, user, agent_user, app_state):
         app_state = _make_app_state()
@@ -2061,7 +2063,14 @@ class TestHandleWorkspaceConnect:
         conn = _base_conn(user={"id": "other-user", "email": "x"}, ws=sock)
         await conn.handle_workspace_connect({"workspaceId": workspace["id"]})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
-        assert any("Permission denied" in str(c) for c in calls)
+        denied = [
+            c
+            for c in calls
+            if isinstance(c, dict) and c.get("type") == "error"
+        ]
+        assert any("Permission denied" in str(c) for c in denied)
+        # #2891: machine-readable refusal code for the client.
+        assert all(c.get("code") == "forbidden" for c in denied)
 
     async def test_connect_race_deleted(self, user, app_state):
         """ACL passes but workspace deleted before lookup."""
@@ -2081,6 +2090,8 @@ class TestHandleWorkspaceConnect:
         await conn.handle_workspace_connect({"workspaceId": fake_id})
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("Workspace not found" in str(c) for c in calls)
+        # #2891: machine-readable refusal code for the client.
+        assert any(c.get("code") == "not_found" for c in calls)
 
     async def test_connect_container_start_valueerror(
         self, user, agent_user, app_state
@@ -5842,6 +5853,10 @@ class TestHandleRestartContainer:
             isinstance(m, dict) and "Permission denied" in m.get("message", "")
             for m in sent
         )
+        # #2891: machine-readable refusal code for the client.
+        assert any(
+            isinstance(m, dict) and m.get("code") == "forbidden" for m in sent
+        )
         # No destructive side effects: nothing torn down or (re)started.
         mock_cleanup.assert_not_called()
         mock_start.assert_not_called()
@@ -5970,6 +5985,10 @@ class TestHandleRestartContainer:
 
         calls = [c[0][0] for c in sock.send_json.call_args_list]
         assert any("not found" in str(c) for c in calls)
+        # #2891: machine-readable refusal code for the client.
+        assert any(
+            isinstance(c, dict) and c.get("code") == "not_found" for c in calls
+        )
 
     async def test_restart_reads_workspace_fresh_from_db(
         self, user, app_state

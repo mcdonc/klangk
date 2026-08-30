@@ -122,6 +122,44 @@ Widget buildContainerStoppedOverlay({
   );
 }
 
+/// Full-page view shown when the user's access to the workspace has been
+/// revoked (#2891): the share was removed, the ACL changed, or the workspace
+/// was deleted while the page was open — typically discovered when a
+/// container-stopped Restart press is refused with `forbidden`/`not_found`.
+/// Unlike the container-stopped overlay there is deliberately NO restart
+/// action: the refusal is permanent from this client, so retrying can never
+/// succeed; the only sensible action is leaving the page.
+Widget buildAccessRevokedView({required VoidCallback onBack}) {
+  return Scaffold(
+    appBar: AppBar(title: const Text('Workspace')),
+    body: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.lock_outline, size: 48),
+          const SizedBox(height: 16),
+          const Text(
+            'Access to this workspace has been revoked',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'It may have been unshared with you, your permissions may have\n'
+            'changed, or the workspace may have been deleted.\n'
+            'Restarting will not restore access.',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: onBack,
+            child: const Text('Back to workspaces'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 /// Overlay shown when the WebSocket drops but the container is still running.
 /// Pass [reconnecting] to show the attempt counter + "Reconnect now" instead
 /// of the plain "Reconnect" action.
