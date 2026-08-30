@@ -1498,7 +1498,7 @@ class TestM0017ChangeAclsPermission:
     async def _db(self, tmp_path):
         import aiosqlite
 
-        db = aiosqlite.connect(str(tmp_path / "m0018-egress.db"))
+        db = aiosqlite.connect(str(tmp_path / "m0017.db"))
         db = await db.__aenter__()
         await db.execute(
             "CREATE TABLE acl_entries ("
@@ -1639,7 +1639,7 @@ class TestM0017ChangeAclsPermission:
 
         from klangk.model.migrations import m0017_change_acls_permission
 
-        db = aiosqlite.connect(str(tmp_path / "m0018-egress-empty.db"))
+        db = aiosqlite.connect(str(tmp_path / "m0017-empty.db"))
         db = await db.__aenter__()
         try:
             await db.execute(

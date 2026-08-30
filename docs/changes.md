@@ -166,8 +166,10 @@ operators or integrators to act when upgrading.
   render for members without the permission. Owners, coders, and
   collaborators hold it by default (existing deployments are backfilled
   by migration 0018); pause/unpause no longer additionally require
-  `share-terminals`. Members granted only `terminal` via a custom ACL
-  must be granted `egress-consent` explicitly to keep deciding. See
+  `share-terminals`. Members or groups granted only `terminal` — whether
+  via a custom ACL or the simple Sharing tab (its grants do not include
+  `egress-consent`) — must be granted `egress-consent` explicitly to
+  keep deciding; grant it in the Advanced ACL editor. See
   [ACLs](../reference/acl.md).
 
 - **Workspace status WebSocket broadcasts are now scoped to workspace

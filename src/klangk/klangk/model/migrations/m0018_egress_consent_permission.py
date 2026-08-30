@@ -1,4 +1,4 @@
-"""Migration 0017: grant ``egress-consent`` to existing role groups.
+"""Migration 0018: grant ``egress-consent`` to existing role groups.
 
 Egress consent is now gated on the dedicated ``egress-consent``
 permission (#2883) instead of ``terminal`` — enforced at the
@@ -15,9 +15,14 @@ For every ``coders-``/``collaborators-<workspace_id>`` role group, an
 ``Allow`` ACE for ``egress-consent`` is appended at the end of that
 resource's ACL (max position + 1) unless one already exists. Owners
 need nothing (their seeded ACE is the ``*`` wildcard); spectators never
-had consent. Admins who granted ``terminal`` to other principals via
-custom ACEs (e.g. simple member shares) must add ``egress-consent``
-explicitly to preserve deciding for them.
+had consent. The match is by role-group name + source marker, not by
+ACEs: a coders/collaborators group whose ``terminal`` grant an admin
+deliberately stripped still gains ``egress-consent`` (matching the
+issue's wording: the backfill covers the role groups of every existing
+workspace; stripping the group's deciding is then an owner edit).
+Admins who granted ``terminal`` to other principals via custom ACEs
+(e.g. simple member shares) must add ``egress-consent`` explicitly to
+preserve deciding for them.
 """
 
 import re

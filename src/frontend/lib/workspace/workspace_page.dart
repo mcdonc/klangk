@@ -33,6 +33,19 @@ import 'workspace_sharing_panel.dart';
 import 'terminal_tabs_view.dart';
 import 'workspace_connector.dart';
 
+/// Whether the consent-decider surface (the [ConsentBanner] and the
+/// Network tab) may mount for this member: the workspace must be in
+/// interactive egress mode (#2246) AND the member must hold
+/// `egress-consent` (or the `*` wildcard) — spectators are watch-only
+/// and never decide egress (#2883). Pure so the gate is unit-tested.
+bool consentSurfaceAllowed({
+  required String egressMode,
+  required List<String> permissions,
+}) {
+  if (egressMode != 'interactive') return false;
+  return permissions.contains('egress-consent') || permissions.contains('*');
+}
+
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
 
@@ -235,14 +248,16 @@ class _WorkspacePageState extends State<WorkspacePage> {
     return null;
   }
 
-  /// Create + connect the consent-decider service for an interactive-mode
-  /// workspace (#2246). Static (or unknown) mode mounts no banner; nor
-  /// does a member without `egress-consent` (#2883) — a spectator is
-  /// watch-only and must not decide egress, so neither the banner nor
-  /// the Network tab ever mount for them.
+  /// Create + connect the consent-decider service when the consent
+  /// surface is allowed (see [consentSurfaceAllowed]).
   void _maybeInitConsent(String? token) {
-    if (_egressMode != 'interactive' || token == null) return;
-    if (!_hasPerm('egress-consent')) return;
+    if (token == null) return;
+    if (!consentSurfaceAllowed(
+      egressMode: _egressMode,
+      permissions: _workspacePermissions,
+    )) {
+      return;
+    }
     _consent ??= ConsentDeciderService(
       workspaceId: widget.workspaceId,
       token: token,

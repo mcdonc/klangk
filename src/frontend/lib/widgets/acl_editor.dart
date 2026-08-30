@@ -29,6 +29,7 @@ class AclEditorState extends State<AclEditor> {
     'view',
     'monitor',
     'terminal',
+    'egress-consent',
     'code-in-isolation',
     'spectate-on-shared-terminals',
     'code-in-shared-terminals',
