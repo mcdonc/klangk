@@ -5,7 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/workspace/workspace_overlays.dart';
-import 'package:klangk_frontend/workspace/workspace_page.dart';
+import 'package:klangk_frontend/workspace/consent_surface.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));

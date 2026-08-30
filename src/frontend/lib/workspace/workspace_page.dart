@@ -32,19 +32,7 @@ import 'workspace_settings_panel.dart';
 import 'workspace_sharing_panel.dart';
 import 'terminal_tabs_view.dart';
 import 'workspace_connector.dart';
-
-/// Whether the consent-decider surface (the [ConsentBanner] and the
-/// Network tab) may mount for this member: the workspace must be in
-/// interactive egress mode (#2246) AND the member must hold
-/// `egress-consent` (or the `*` wildcard) — spectators are watch-only
-/// and never decide egress (#2883). Pure so the gate is unit-tested.
-bool consentSurfaceAllowed({
-  required String egressMode,
-  required List<String> permissions,
-}) {
-  if (egressMode != 'interactive') return false;
-  return permissions.contains('egress-consent') || permissions.contains('*');
-}
+import 'consent_surface.dart';
 
 class WorkspacePage extends StatefulWidget {
   final String workspaceId;
