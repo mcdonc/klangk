@@ -254,6 +254,15 @@ sync` report a clear permission-denied error.
   message (e.g. `Failed to create window`); the full exception detail is
   logged server-side instead.
 
+- **OIDC `cli_redirect` userinfo bypass (#2571).** The localhost-only
+  guard on the CLI login redirect used prefix matching, so a crafted
+  `cli_redirect` like `http://localhost:1@attacker.example/` passed the
+  check while actually routing to the attacker's host — a victim
+  completing a normal IdP login had their session token redirected to
+  it. The target is now parsed and must be plain `http` to `localhost`
+  or `127.0.0.1` with a port and no userinfo; anything else falls back to
+  the web flow.
+
 - **`/files/content` now requires `files-download` (#2713).** The file
   viewer's text-reader endpoint
   (`GET /api/v1/workspaces/{id}/files/content`) is gated by the
@@ -341,8 +350,9 @@ create`/`edit --classification-banner`, and the create/edit UIs; the
   roles) grant both permissions; a schema migration mirrors existing
   `files` grants so current behavior is unchanged. Without the
   permission the file viewer hides its download affordances and binary
-  renderers (image, PDF, video, spreadsheet) cannot fetch bytes — text
-  viewing still works. The CLI/TUI expose no file-download affordances.
+  renderers (image, PDF, video, spreadsheet) cannot fetch bytes — and
+  since #2713 the text reader (`/files/content`) requires the
+  permission too. The CLI/TUI expose no file-download affordances.
 
 - **`KLANGKD_WORKSPACE_CREATED_HOOK` (#2762).** New customize-dir hook:
   a deployment-local Python file (point the env var at it, like

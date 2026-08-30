@@ -120,16 +120,17 @@ bytes through the download endpoint, cannot render.
 
 Withholding `files-write` disables every mutating route — upload
 (`/files/upload`), rename (`/files/rename`), and delete (`DELETE
-/files`) — so a `files`-only member can browse and read but not modify
-the workspace. In the file viewer the matching affordances disappear: no
+/files`) — so a `files`-only member can browse listings but not read
+file bodies or modify the workspace. In the file viewer the matching affordances disappear: no
 drag-and-drop zone or upload hints, no Rename/Delete in the context menu,
 and text-editor renderers go read-only (their Save uploads through that
 endpoint).
 
-The download gate covers every endpoint that moves file bytes out of the
-workspace — byte-perfect, unbounded export (any file size, whole
-directories as tar.gz) via `/files/download`, and lossy text reads (up to
-1 MB per file) via `/files/content`. A member with `files` but not
+The download gate covers every files endpoint that moves file bytes
+out of the workspace — byte-perfect, unbounded export (any file size,
+whole directories as tar.gz) via `/files/download`, and lossy text
+reads (up to 1 MB per file) via `/files/content`. A member with `files`
+but not
 `files-download` can browse listings and metadata only. To grant viewing
 without bulk export there is no longer a middle setting: grant both
 `files` + `files-download` (viewer fully works) or withhold `files`
