@@ -305,6 +305,13 @@ sync` report a clear permission-denied error.
   workspaces must now hold `change-acls` there (grant it on the
   workspace, or on `/workspaces` / `/` for deploy-wide coverage). See
   [ACL](../reference/acl.md).
+- **`fmtk-up` / `fmtk-down` / `fmtk-seed` — one-command fmtk harness (#2881).**
+  `devenv shell -- fmtk-up` boots a scratch backend, an origin-splitting
+  proxy, a seeded fixture, and a debug `flutter run -d chrome`, then
+  prints the VM-service URI for `fmtk` (see AGENTS.md "Inspecting the
+  running frontend"). Ctrl-C keeps the backend+proxy for a fast
+  re-launch; `fmtk-down` stops them (`--wipe` resets the fixture), and
+  `fmtk-seed` re-seeds standalone.
 
 - **Native YAML booleans for string-typed boolean settings (#2796).**
   `allow_sudo`, `allow_autostart`, `disable_registration`,

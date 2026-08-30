@@ -639,6 +639,18 @@ in
     exec zensical build "$@"
   '';
 
+  # fmtk harness (#2881): one command to a debug frontend driven against a
+  # live backend — scratch klangkd + origin-splitting caddy + `flutter run
+  # --debug -d chrome` + the fixture matrix, printing the VM-service URI.
+  # See scripts/fmtk-up.sh and AGENTS.md "Inspecting the running frontend".
+  scripts.fmtk-up.exec = ''exec bash "$DEVENV_ROOT/scripts/fmtk-up.sh"'';
+  # Stop the harness services fmtk-up keeps alive (backend + proxy);
+  # --wipe also deletes the scratch state.
+  scripts.fmtk-down.exec = ''exec bash "$DEVENV_ROOT/scripts/fmtk-down.sh" "$@"'';
+  # Idempotent fixture seeding (also run by fmtk-up): sharer/acler/viewer
+  # users + the fmtk-verify workspace against a running backend.
+  scripts.fmtk-seed.exec = ''exec ${venvPython} "$DEVENV_ROOT/scripts/fmtk-seed.py" "$@"'';
+
   scripts.serve-docs.exec = ''
     cd $DEVENV_ROOT
     exec zensical serve --dev-addr 0.0.0.0:9111 "$@"
