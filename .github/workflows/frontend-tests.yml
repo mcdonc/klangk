@@ -28,15 +28,14 @@ jobs:
               - 'scripts/lcov-report.py'
               - '.github/workflows/frontend-tests.yml'
 
-      # Pin Flutter to the nixpkgs version (devenv ships 3.41.9) so CI and
-      # local dev run the same SDK. A stable bump to 3.47.0 changed the
-      # coverage tool's multi-line ternary attribution and broke the 100%
-      # gate (#2378); pinning here keeps them in lockstep. Bump alongside
-      # the nixpkgs Flutter when upgrading.
+      # Pin Flutter to the nixpkgs-unstable version (devenv ships 3.47.0,
+      # #2869) so CI and local runs stay in lockstep — the local coverage
+      # tooling's multi-line ternary attribution and the 100% gate depend on
+      # it (#2378). Bump alongside the nixpkgs Flutter when upgrading.
       - uses: subosito/flutter-action@v2
         if: steps.filter.outputs.frontend == 'true'
         with:
-          flutter-version: "3.41.9"
+          flutter-version: "3.47.0"
           cache: true
 
       - name: Create stub klangk_features package

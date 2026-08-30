@@ -384,6 +384,48 @@ Nothing to do in `docs/changes.md` itself — the `[Unreleased]` heading you cre
 at cut time is already in place for the next cycle's entries. Just start adding new
 entries under it.
 
+## Inspecting the running frontend (`fmtk` / flutter-mcp-toolkit)
+
+The devenv ships the `fmtk` CLI (flutter-mcp-toolkit, a pinned release
+derivation in `devenv.nix`, #2868). It lets an agent inspect and drive a
+debug run of the frontend: semantic snapshots, widget details, taps and
+typing, hot reload, app logs and errors. pi has no MCP client, so CLI mode
+is the interface — there is no MCP server wiring to maintain.
+
+Workflow:
+
+Run the frontend in debug on a real browser device (not `-d web-server`,
+which never exposes a VM service without the debug Chrome extension):
+
+```bash
+devenv --quiet shell -- sh -c 'cd src/frontend && flutter run --debug -d chrome --web-port 8124'
+```
+
+Note the `A Dart VM Service ... is available at:` URL from its output and use
+it verbatim as a `ws://` URI (append `/ws`). Then, from the repo root (fmtk
+keeps state in `.flutter_mcp/`, gitignored):
+
+```bash
+URI=ws://127.0.0.1:PORT/TOKEN/ws
+devenv --quiet -O dotenv.enable:bool false shell -- fmtk doctor --vm-service-uri $URI
+devenv --quiet -O dotenv.enable:bool false shell -- fmtk exec --name semantic_snapshot --vm-service-uri $URI --args '{}'
+devenv --quiet -O dotenv.enable:bool false shell -- fmtk exec --name tap_widget --vm-service-uri $URI --args '{"ref": "s_1"}'
+devenv --quiet -O dotenv.enable:bool false shell -- fmtk exec --name get_recent_logs --vm-service-uri $URI --args '{}'
+```
+
+Snapshot nodes carry `ref`s (`s_0`, `s_1`, …) usable in `tap_widget`,
+`enter_text`, `fill_form`, and friends. `fmtk capabilities` lists all
+commands; `fmtk schema --name <command>` prints each command's arg schema.
+`get_app_errors`, `hot_reload_flutter`, and `evaluate_dart_expression` are
+the other high-signal ones.
+
+The app side is the debug-only `mcp_toolkit` bootstrap in
+`src/frontend/lib/main.dart` — it registers the `ext.mcp.toolkit.*` VM
+service extensions, is const-folded out of release builds, and is inert in
+widget tests. Pixel screenshots on web additionally ride Chrome CDP
+(fmtk auto-discovers it; `--web-browser-debugging-port` overrides);
+semantic snapshots and interactions need no CDP.
+
 ## Demo video recording
 
 Before **every** full recording run (CLI + browser scenes, or a re-run of just

@@ -1,10 +1,11 @@
 import 'dart:convert';
 import 'package:flterm/flterm.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:klangk_plugin_api/klangk_plugin_api.dart';
 import 'package:klangk_features/klangk_features.dart';
+import 'package:mcp_toolkit/mcp_toolkit.dart';
 import 'package:provider/provider.dart';
 import 'app.dart';
 import 'auth/auth_service.dart';
@@ -16,6 +17,19 @@ import 'utils/web_helpers_stub.dart'
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // flutter-mcp-toolkit debug bridge (#2868): registers the ext.mcp.toolkit.*
+  // VM service extensions that the `fmtk` CLI (in the devenv shell) uses to
+  // inspect and drive this app during development — semantic snapshots,
+  // widget details, taps/typing, hot reload, logs. Const-folded out of
+  // release builds (kReleaseMode), and inert in widget tests: the extensions
+  // idle until an MCP client calls them. See AGENTS.md "Inspecting the
+  // running frontend".
+  if (!kReleaseMode) {
+    MCPToolkitBinding.instance
+      ..initialize()
+      ..initializeFlutterToolkit();
+  }
 
   // Register features early so their routes are available when GoRouter
   // is created (before any workspace page is opened). Active-set filter
