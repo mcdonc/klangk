@@ -1566,6 +1566,12 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
 
 ### Fixed
 
+- **`klangk terminal share` / `unshare` / `ls` (#2876).** A server
+  refusal — e.g. `Permission denied` for a member without the
+  `share-terminals` permission — now prints a one-line error and exits
+  nonzero instead of a raw Python traceback. A server that silently
+  drops the command reports a timeout message instead of a stack trace.
+
 - **Boot auto-start no longer ignores a disabled `allow_autostart`
   (#2796).** `KLANGKD_ALLOW_AUTOSTART=false` (any non-truthy non-empty
   string) previously read as _enabled_ on the boot path — workspaces with

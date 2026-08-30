@@ -1,5 +1,6 @@
 """Tests for klangk CLI commands (main.py)."""
 
+import asyncio
 import json
 
 from _helpers import tracked_mkdtemp
@@ -38,6 +39,37 @@ def _raise_no_network(*_a, **_k):
     fast instead of waiting on a real ~6s connection timeout. The admin
     path itself is covered by the ``test_*_shows_admin_*`` tests (#1989)."""
     raise RuntimeError("no network in tests")
+
+
+class _ScriptedWS:
+    """Async-CM websocket stub that replays frames, then blocks forever.
+
+    Blocking after the script runs out (rather than raising
+    StopAsyncIteration) reproduces a server that never sends the awaited
+    frame — a swallowed error frame would surface as the full timeout,
+    not an immediate failure (#2876).
+    """
+
+    def __init__(self, frames):
+        self._frames = list(frames)
+        self.sent = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def recv(self):
+        if self._frames:
+            return self._frames.pop(0)
+        await asyncio.sleep(60)  # cancelled by the caller's wait_for
+
+    async def send(self, data):
+        self.sent.append(data)
+
+    async def close(self):
+        pass
 
 
 @pytest.fixture
@@ -1754,11 +1786,11 @@ class TestMainCLI:
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
-            with pytest.raises(ConnectionError):
+            with pytest.raises(typer.Exit):
                 main.terminals("my-ws")
 
     def test_share_connection_failure(
-        self, logged_in_cfg, monkeypatch, reset_env
+        self, logged_in_cfg, monkeypatch, reset_env, capfd
     ):
         from klangk.cli import main
 
@@ -1787,11 +1819,11 @@ class TestMainCLI:
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
-            with pytest.raises(ConnectionError):
+            with pytest.raises(typer.Exit):
                 main.share_terminal("my-ws", "build")
 
     def test_unshare_connection_failure(
-        self, logged_in_cfg, monkeypatch, reset_env
+        self, logged_in_cfg, monkeypatch, reset_env, capfd
     ):
         from klangk.cli import main
 
@@ -1820,8 +1852,127 @@ class TestMainCLI:
             ),
         ):
             os.environ["TERM"] = "xterm-256color"
-            with pytest.raises(ConnectionError):
+            with pytest.raises(typer.Exit):
                 main.unshare_terminal("my-ws", "build")
+
+    @staticmethod
+    def _ws_mock(ws):
+        client = MagicMock()
+        client.resolve_workspace.return_value = ws
+        return client
+
+    @staticmethod
+    def _startup_frames(windows):
+        """Handshake + terminal_start frames for a terminal command."""
+        return [
+            json.dumps({"type": "container_ready"}),
+            json.dumps(
+                {"type": "event", "event": {"name": "container_ready"}}
+            ),
+            json.dumps({"type": "terminal_started"}),
+            json.dumps({"type": "terminal_windows", "windows": windows}),
+        ]
+
+    _WINDOWS = [
+        {"id": "@0", "index": 0, "name": "1", "active": True},
+        {"id": "@1", "index": 1, "name": "build", "active": False},
+    ]
+
+    def test_share_terminal_permission_denied(
+        self, logged_in_cfg, monkeypatch, reset_env, capfd
+    ):
+        """Server 'Permission denied' for share_window exits fast and
+        clean — one-line message, nonzero exit, no traceback (#2876)."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        frames = self._startup_frames(self._WINDOWS) + [
+            json.dumps({"type": "error", "message": "Permission denied"}),
+        ]
+        sock = _ScriptedWS(frames)
+        with (
+            patch.object(
+                context_mod, "_client", return_value=self._ws_mock(ws)
+            ),
+            patch(
+                "klangk.cli.transport.websockets.connect", return_value=sock
+            ),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(typer.Exit) as exc:
+                main.share_terminal("my-ws", "build")
+        assert exc.value.exit_code == 1
+        assert "Permission denied" in capfd.readouterr().err
+        # The denial answered an actually-sent share_window command.
+        sent = [json.loads(s) for s in sock.sent if isinstance(s, str)]
+        assert any(s.get("cmd") == "share_window" for s in sent)
+
+    def test_unshare_terminal_permission_denied(
+        self, logged_in_cfg, monkeypatch, reset_env, capfd
+    ):
+        """Server 'Permission denied' for unshare_window exits fast and
+        clean (#2876)."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        frames = self._startup_frames(self._WINDOWS) + [
+            json.dumps({"type": "error", "message": "Permission denied"}),
+        ]
+        sock = _ScriptedWS(frames)
+        with (
+            patch.object(
+                context_mod, "_client", return_value=self._ws_mock(ws)
+            ),
+            patch(
+                "klangk.cli.transport.websockets.connect", return_value=sock
+            ),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(typer.Exit) as exc:
+                main.unshare_terminal("my-ws", "build")
+        assert exc.value.exit_code == 1
+        assert "Permission denied" in capfd.readouterr().err
+        sent = [json.loads(s) for s in sock.sent if isinstance(s, str)]
+        assert any(s.get("cmd") == "unshare_window" for s in sent)
+
+    def test_share_terminal_timeout_clean(
+        self, logged_in_cfg, monkeypatch, reset_env, capfd
+    ):
+        """A silent server drop (no error frame, no confirmation) reports
+        a timeout message and exits nonzero instead of a raw
+        asyncio.TimeoutError traceback (#2876)."""
+        from klangk.cli import main
+
+        ws = Workspace(
+            id="ws1" + "0" * 52,
+            name="my-ws",
+            created_at="2025-01-01T00:00:00Z",
+        )
+        # No shared_terminals after share_window: recv blocks, the
+        # confirm wait expires against the shrunken timeout.
+        monkeypatch.setattr("klangk.cli.terminals._CONFIRM_TIMEOUT", 0.05)
+        sock = _ScriptedWS(self._startup_frames(self._WINDOWS))
+        with (
+            patch.object(
+                context_mod, "_client", return_value=self._ws_mock(ws)
+            ),
+            patch(
+                "klangk.cli.transport.websockets.connect", return_value=sock
+            ),
+        ):
+            os.environ["TERM"] = "xterm-256color"
+            with pytest.raises(typer.Exit) as exc:
+                main.share_terminal("my-ws", "build")
+        assert exc.value.exit_code == 1
+        assert "Timed out" in capfd.readouterr().err
 
     def test_unshare_terminal_not_found(
         self, logged_in_cfg, monkeypatch, reset_env
