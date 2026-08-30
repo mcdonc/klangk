@@ -9,6 +9,134 @@ import 'package:klangk_frontend/workspace/workspace_overlays.dart';
 void main() {
   Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
+  group('containerEventTransition', () {
+    const idle = (
+      containerStopped: false,
+      restarting: false,
+      stopReason: '',
+    );
+
+    test('container_stopped raises the overlay with the reason', () {
+      final next = containerEventTransition(
+        name: 'container_stopped',
+        current: idle,
+        value: {'reason': 'idle timeout'},
+      );
+      expect(next, isNotNull);
+      expect(next!.containerStopped, isTrue);
+      expect(next.stopReason, 'Container stopped (idle timeout)');
+    });
+
+    test('container_stopped without a reason uses the generic message', () {
+      final next = containerEventTransition(
+        name: 'container_stopped',
+        current: idle,
+      );
+      expect(next!.stopReason, 'Container stopped');
+    });
+
+    test('server recycle stop does not raise the overlay (#2661)', () {
+      expect(
+        containerEventTransition(
+          name: 'container_stopped',
+          current: idle,
+          value: {'reason': 'server recycle'},
+        ),
+        isNull,
+      );
+    });
+
+    test('container_stopped while already stopped is a no-op', () {
+      const stopped = (
+        containerStopped: true,
+        restarting: false,
+        stopReason: 'Container stopped (idle timeout)',
+      );
+      expect(
+        containerEventTransition(
+          name: 'container_stopped',
+          current: stopped,
+          value: {'reason': 'crash'},
+        ),
+        isNull,
+      );
+    });
+
+    test('container_stopped keeps an in-flight restart spinner up', () {
+      final next = containerEventTransition(
+        name: 'container_stopped',
+        current: (
+          containerStopped: false,
+          restarting: true,
+          stopReason: '',
+        ),
+        value: {'reason': 'crash'},
+      );
+      expect(next!.restarting, isTrue);
+    });
+
+    test('container_ready clears an overlay-initiated restart', () {
+      final next = containerEventTransition(
+        name: 'container_ready',
+        current: (
+          containerStopped: true,
+          restarting: true,
+          stopReason: 'Container stopped',
+        ),
+      );
+      expect(next!.containerStopped, isFalse);
+      expect(next.restarting, isFalse);
+    });
+
+    test(
+        'container_ready clears the overlay even without an overlay-initiated '
+        'restart (#2701)', () {
+      // The container came back on its own (auto-start, restart from
+      // elsewhere): no restart was pressed here, but the overlay must go.
+      final next = containerEventTransition(
+        name: 'container_ready',
+        current: (
+          containerStopped: true,
+          restarting: false,
+          stopReason: 'Container stopped (idle timeout)',
+        ),
+      );
+      expect(next, isNotNull);
+      expect(next!.containerStopped, isFalse);
+      expect(next.restarting, isFalse);
+    });
+
+    test('container_ready clears a lone restart spinner', () {
+      final next = containerEventTransition(
+        name: 'container_ready',
+        current: (
+          containerStopped: false,
+          restarting: true,
+          stopReason: '',
+        ),
+      );
+      expect(next!.restarting, isFalse);
+    });
+
+    test('routine container_ready is a no-op (no rebuild)', () {
+      expect(
+        containerEventTransition(name: 'container_ready', current: idle),
+        isNull,
+      );
+    });
+
+    test('unrelated events are ignored', () {
+      expect(
+        containerEventTransition(
+          name: 'terminal_output',
+          current: idle,
+          value: {'data': 'x'},
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('container stopped overlay (buildContainerStoppedOverlay)', () {
     testWidgets('shows reason and restart button', (tester) async {
       await tester.pumpWidget(wrap(
