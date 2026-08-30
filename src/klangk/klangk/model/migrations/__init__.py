@@ -64,6 +64,7 @@ from klangk.model.migrations import m0013_exec_and_sync_permission
 from klangk.model.migrations import m0014_groups_create_admin
 from klangk.model.migrations import m0015_classification_banner
 from klangk.model.migrations import m0016_monitor_permission
+from klangk.model.migrations import m0017_change_acls_permission
 from klangk.model.migrations.base import Migration
 
 __all__ = ["MIGRATIONS", "Migration", "run_migrations"]
@@ -88,6 +89,7 @@ MIGRATIONS: list[Migration] = [
     m0014_groups_create_admin.migration,
     m0015_classification_banner.migration,
     m0016_monitor_permission.migration,
+    m0017_change_acls_permission.migration,
 ]
 
 

@@ -68,6 +68,7 @@ class TestRunner:
             (14, "0014_groups_create_admin"),
             (15, "0015_classification_banner"),
             (16, "0016_monitor_permission"),
+            (17, "0017_change_acls_permission"),
         ]
         async with aiosqlite.connect(str(app_state.state.db.db_path)) as db:
             assert await _recorded(db) == expected
@@ -150,6 +151,7 @@ class TestRunner:
                 (14, "0014_groups_create_admin"),
                 (15, "0015_classification_banner"),
                 (16, "0016_monitor_permission"),
+                (17, "0017_change_acls_permission"),
             ]
 
     async def test_m0008_agent_identity_and_human_collision(
@@ -1334,6 +1336,179 @@ class TestM0016MonitorPermission:
                 " system_principal INTEGER, permission TEXT)"
             )
             await m0016_monitor_permission.migration.apply(db)
+            cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
+            assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+
+class TestM0017ChangeAclsPermission:
+    """m0017: backfill ``change-acls`` onto existing ``share`` holders (#2764).
+
+    Raw ACL editing moved from ``share`` to the dedicated
+    ``change-acls`` permission; this migration preserves the ability for
+    every principal that already had ``share`` (role groups and direct
+    user shares alike).
+    """
+
+    WS_ID = "11111111-2222-3333-4444-555555555555"
+    RESOURCE = f"/workspaces/{WS_ID}"
+
+    async def _db(self, tmp_path):
+        import aiosqlite
+
+        db = aiosqlite.connect(str(tmp_path / "m0017.db"))
+        db = await db.__aenter__()
+        await db.execute(
+            "CREATE TABLE acl_entries ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " resource TEXT, position INTEGER, action INTEGER,"
+            " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+            " system_principal INTEGER, permission TEXT)"
+        )
+        # A pre-#2764 workspace ACL: owner wildcard, a share-holding
+        # role group, and a direct member share (user-principal share).
+        for resource, pos, principal_type, user_id, group_id, perm in (
+            (self.RESOURCE, 0, 1, "u-owner", None, "*"),
+            (self.RESOURCE, 1, 2, None, "g-editors", "share"),
+            (self.RESOURCE, 2, 1, "u-member", None, "share"),
+            (self.RESOURCE, 3, 1, "u-member", None, "view"),
+        ):
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, ?, 1, ?, ?, ?, ?)",
+                (resource, pos, principal_type, user_id, group_id, perm),
+            )
+        return db
+
+    async def _change_acls_aces(self, db) -> dict[tuple, int]:
+        cursor = await db.execute(
+            "SELECT user_id, group_id, COUNT(*) FROM acl_entries"
+            " WHERE permission = 'change-acls' AND action = 1"
+            " GROUP BY user_id, group_id"
+        )
+        return {(row[0], row[1]): row[2] for row in await cursor.fetchall()}
+
+    async def test_backfill_covers_groups_and_direct_users(self, tmp_path):
+        from klangk.model.migrations import m0017_change_acls_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await m0017_change_acls_permission.migration.apply(db)
+            # The share-holding group and the direct member share are
+            # covered; the wildcard owner needs nothing.
+            assert await self._change_acls_aces(db) == {
+                (None, "g-editors"): 1,
+                ("u-member", None): 1,
+            }
+            # Appended after the seeded entries, not interleaved.
+            cursor = await db.execute(
+                "SELECT position FROM acl_entries"
+                " WHERE permission = 'change-acls' AND group_id = 'g-editors'"
+            )
+            assert (await cursor.fetchone())[0] == 4
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_backfill_idempotent(self, tmp_path):
+        from klangk.model.migrations import m0017_change_acls_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await m0017_change_acls_permission.migration.apply(db)
+            await m0017_change_acls_permission.migration.apply(db)
+            assert await self._change_acls_aces(db) == {
+                (None, "g-editors"): 1,
+                ("u-member", None): 1,
+            }
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_backfill_skips_deny_share(self, tmp_path):
+        """Only ``Allow`` share ACEs earn the backfill — a Deny row is
+        not a grant."""
+        from klangk.model.migrations import m0017_change_acls_permission
+
+        db = await self._db(tmp_path)
+        try:
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 4, 0, 1, 'u-denied', NULL, 'share')",
+                (self.RESOURCE,),
+            )
+            await m0017_change_acls_permission.migration.apply(db)
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM acl_entries"
+                " WHERE user_id = 'u-denied' AND permission = 'change-acls'"
+            )
+            assert (await cursor.fetchone())[0] == 0
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_backfill_skips_shadowed_allow_share(self, tmp_path):
+        """An Allow share shadowed by an earlier same-principal Deny (or
+        wildcard Deny) never took effect — backfilling it would grant a
+        new power, not preserve one, so it is skipped (#2764 review)."""
+        from klangk.model.migrations import m0017_change_acls_permission
+
+        db = await self._db(tmp_path)
+        try:
+            # Deny * at position 4 shadows the Allow share at 5.
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 4, 0, 1, 'u-shadowed', NULL, '*')",
+                (self.RESOURCE,),
+            )
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 5, 1, 1, 'u-shadowed', NULL, 'share')",
+                (self.RESOURCE,),
+            )
+            # A Deny share BELOW the Allow share shadows it too.
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 6, 0, 1, 'u-shadowed-2', NULL, 'share')",
+                (self.RESOURCE,),
+            )
+            await db.execute(
+                "INSERT INTO acl_entries (resource, position, action,"
+                " principal_type, user_id, group_id, permission)"
+                " VALUES (?, 7, 1, 1, 'u-shadowed-2', NULL, 'share')",
+                (self.RESOURCE,),
+            )
+            await m0017_change_acls_permission.migration.apply(db)
+            for uid in ("u-shadowed", "u-shadowed-2"):
+                cursor = await db.execute(
+                    "SELECT COUNT(*) FROM acl_entries"
+                    " WHERE user_id = ? AND permission = 'change-acls'",
+                    (uid,),
+                )
+                assert (await cursor.fetchone())[0] == 0, uid
+        finally:
+            await db.__aexit__(None, None, None)
+
+    async def test_backfill_empty_table(self, tmp_path):
+        """No ACEs: nothing raises, nothing is written."""
+        import aiosqlite
+
+        from klangk.model.migrations import m0017_change_acls_permission
+
+        db = aiosqlite.connect(str(tmp_path / "m0017-empty.db"))
+        db = await db.__aenter__()
+        try:
+            await db.execute(
+                "CREATE TABLE acl_entries ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " resource TEXT, position INTEGER, action INTEGER,"
+                " principal_type INTEGER, user_id TEXT, group_id TEXT,"
+                " system_principal INTEGER, permission TEXT)"
+            )
+            await m0017_change_acls_permission.migration.apply(db)
             cursor = await db.execute("SELECT COUNT(*) FROM acl_entries")
             assert (await cursor.fetchone())[0] == 0
         finally:

@@ -39,6 +39,7 @@ class AclEditorState extends State<AclEditor> {
     'exec-and-sync',
     'edit',
     'share',
+    'change-acls',
     'delete',
     'create',
     'export',

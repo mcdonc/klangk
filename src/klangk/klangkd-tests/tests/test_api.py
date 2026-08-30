@@ -5175,11 +5175,195 @@ class TestWorkspaceACL:
         assert entries[1]["permission"] == "view"
         assert entries[1]["principal"] == "Authenticated"
 
+    async def test_workspace_acl_requires_change_acls(
+        self, client, user, app_state
+    ):
+        """#2764: ``share`` alone no longer opens the raw ACL editor.
+
+        A member holding ``share`` can still manage members (the simple
+        sharing surface) but GET/PUT on the raw ACE list require the
+        dedicated ``change-acls`` permission.
+        """
+        from klangk.auth import hash_password
+
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces", headers=headers, json={"name": "cacl-ws"}
+        )
+        ws_id = resp.json()["id"]
+        resource = f"/workspaces/{ws_id}"
+
+        member = await app_state.state.model.users.create_user(
+            "cacl-member@example.com", hash_password("testpass"), verified=True
+        )
+        entries = await app_state.state.model.acl.get_acl_entries(resource)
+        next_pos = max(e["position"] for e in entries) + 1
+        for i, perm in enumerate(("view", "share")):
+            await app_state.state.model.acl.add_acl_entry(
+                resource,
+                next_pos + i,
+                model.ACTION_ALLOW,
+                perm,
+                model.PRINCIPAL_USER,
+                user_id=member["id"],
+            )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "cacl-member@example.com",
+                "password": "testpass",
+            },
+        )
+        member_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+
+        # share keeps the simple sharing surface...
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/members", headers=member_headers
+        )
+        assert resp.status_code == 200
+        # ...but not the raw ACE list, even with share granted.
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/acl", headers=member_headers
+        )
+        assert resp.status_code == 403
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}/acl",
+            headers=member_headers,
+            json=[
+                {
+                    "action": model.ACTION_ALLOW,
+                    "principal_type": model.PRINCIPAL_USER,
+                    "permission": "*",
+                    "user_id": member["id"],
+                }
+            ],
+        )
+        assert resp.status_code == 403
+
+        # Granting change-acls opens the editor (read and write).
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            next_pos + 2,
+            model.ACTION_ALLOW,
+            "change-acls",
+            model.PRINCIPAL_USER,
+            user_id=member["id"],
+        )
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/acl", headers=member_headers
+        )
+        assert resp.status_code == 200
+        current = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in resp.json()
+        ]
+        resp = await client.put(
+            f"/api/v1/workspaces/{ws_id}/acl",
+            headers=member_headers,
+            json=current,
+        )
+        assert resp.status_code == 200
+
 
 class TestWorkspaceRoles:
     @pytest.fixture(autouse=True)
     async def _make_user_admin(self, ws_admin):
         """#2569: workspace creation requires admin."""
+
+    async def test_role_writes_require_change_acls(
+        self, client, user, app_state
+    ):
+        """#2764: a bare ``share`` holder cannot mint owners — role-group
+        writes need ``change-acls`` too (they carry the raw power: the
+        owners group holds the ``*`` wildcard)."""
+        from klangk.auth import hash_password
+
+        headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=headers,
+            json={"name": "role-gate-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resource = f"/workspaces/{ws_id}"
+
+        member = await app_state.state.model.users.create_user(
+            "role-gate@test.com", hash_password("testpass"), verified=True
+        )
+        entries = await app_state.state.model.acl.get_acl_entries(resource)
+        next_pos = max(e["position"] for e in entries) + 1
+        for i, perm in enumerate(("view", "share")):
+            await app_state.state.model.acl.add_acl_entry(
+                resource,
+                next_pos + i,
+                model.ACTION_ALLOW,
+                perm,
+                model.PRINCIPAL_USER,
+                user_id=member["id"],
+            )
+        login = await client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "role-gate@test.com",
+                "password": "testpass",
+            },
+        )
+        member_headers = {
+            "Authorization": f"Bearer {login.json()['access_token']}"
+        }
+
+        # Reading the buckets stays on share; writing any role (not just
+        # owners — a role IS an ACE principal) needs change-acls.
+        resp = await client.get(
+            f"/api/v1/workspaces/{ws_id}/roles", headers=member_headers
+        )
+        assert resp.status_code == 200
+        for method, path, kwargs in (
+            (
+                "post",
+                f"/api/v1/workspaces/{ws_id}/roles/owners",
+                {"json": {"email": "role-gate@test.com"}},
+            ),
+            (
+                "delete",
+                f"/api/v1/workspaces/{ws_id}/roles/owners/{member['id']}",
+                {},
+            ),
+            (
+                "patch",
+                f"/api/v1/workspaces/{ws_id}/roles",
+                {"json": {"email": "role-gate@test.com", "role": "coders"}},
+            ),
+        ):
+            resp = await getattr(client, method)(
+                path, headers=member_headers, **kwargs
+            )
+            assert resp.status_code == 403, (method, path)
+
+        # Granting change-acls reopens the role writes.
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            next_pos + 2,
+            model.ACTION_ALLOW,
+            "change-acls",
+            model.PRINCIPAL_USER,
+            user_id=member["id"],
+        )
+        resp = await client.post(
+            f"/api/v1/workspaces/{ws_id}/roles/spectators",
+            headers=member_headers,
+            json={"email": "role-gate@test.com"},
+        )
+        assert resp.status_code == 200
 
     async def test_role_groups_created_on_workspace_create(self, client, user):
         headers = await _auth_headers(client)
@@ -9247,6 +9431,32 @@ class TestACLEndpoints:
 
 
 class TestAdminResourceACL:
+    def test_workspace_scope_classification(self):
+        """#2764: ``workspace_scope`` classifies the admin-ACL target.
+
+        Malformed variants that fall out of the workspace classification
+        (empty id segments, missing leading slash) address ACL nodes no
+        real resource's ancestor walk ever visits, so they stay
+        admin-only without becoming a dodge.
+        """
+        from klangk.api.admin import workspace_scope
+
+        # Individual workspaces (and deeper paths) normalize to the node.
+        assert workspace_scope("/workspaces/abc") == "/workspaces/abc"
+        assert workspace_scope("/workspaces/abc/files") == "/workspaces/abc"
+        assert workspace_scope("/workspaces/abc/") == "/workspaces/abc"
+        # The collection, root, and non-workspace resources: None.
+        assert workspace_scope("/workspaces") is None
+        assert workspace_scope("/workspaces/") is None
+        assert workspace_scope("/") is None
+        assert workspace_scope("/admin/users/x") is None
+        assert workspace_scope("") is None
+        # Malformed: empty id segments are not a workspace target.
+        assert workspace_scope("/workspaces//abc") is None
+        # A missing leading slash still classifies as a workspace
+        # (stricter — it can only add the gate, not remove it).
+        assert workspace_scope("workspaces/abc") == "/workspaces/abc"
+
     async def _admin_headers(self, client):
         resp = await client.post(
             "/api/v1/auth/login",
@@ -9327,6 +9537,63 @@ class TestAdminResourceACL:
             "/api/v1/admin/acl/resource?resource=/workspaces", headers=headers
         )
         assert resp.status_code == 403
+
+    async def test_replace_workspace_resource_needs_change_acls(
+        self, client, admin_user, ws_admin, app_state
+    ):
+        """#2764: rewriting a workspace's ACL via the admin endpoint
+        additionally requires ``change-acls`` on that workspace."""
+        owner_headers = await _auth_headers(client)
+        resp = await client.post(
+            "/api/v1/workspaces",
+            headers=owner_headers,
+            json={"name": "admin-cacl-ws"},
+        )
+        ws_id = resp.json()["id"]
+        resource = f"/workspaces/{ws_id}"
+
+        headers = await self._admin_headers(client)
+        resp = await client.get(
+            f"/api/v1/admin/acl/resource?resource={resource}",
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        payload = [
+            {
+                "action": e["action"],
+                "principal_type": e["principal_type"],
+                "permission": e["permission"],
+                "user_id": e.get("user_id"),
+                "group_id": e.get("group_id"),
+                "system_principal": e.get("system_principal"),
+            }
+            for e in resp.json()
+        ]
+        # Site admin alone cannot rewrite an individual workspace's ACL.
+        resp = await client.put(
+            f"/api/v1/admin/acl/resource?resource={resource}",
+            headers=headers,
+            json=payload,
+        )
+        assert resp.status_code == 403
+
+        # An admin holding change-acls on the workspace passes.
+        entries = await app_state.state.model.acl.get_acl_entries(resource)
+        next_pos = max(e["position"] for e in entries) + 1
+        await app_state.state.model.acl.add_acl_entry(
+            resource,
+            next_pos,
+            model.ACTION_ALLOW,
+            "change-acls",
+            model.PRINCIPAL_USER,
+            user_id=admin_user["id"],
+        )
+        resp = await client.put(
+            f"/api/v1/admin/acl/resource?resource={resource}",
+            headers=headers,
+            json=payload,
+        )
+        assert resp.status_code == 200
 
     async def test_root_acl_rejects_removing_authenticated_view(
         self, client, app, admin_user

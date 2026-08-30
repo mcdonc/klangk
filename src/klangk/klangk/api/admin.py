@@ -818,6 +818,20 @@ async def get_resource_acl(
     return await app.state.model.acl.get_acl_entries_resolved(resource)
 
 
+def workspace_scope(resource: str) -> str | None:
+    """The workspace node an ACL write targets, if any (#2764).
+
+    ``/workspaces/{id}`` and deeper paths normalize to the workspace
+    node; the ``/workspaces`` collection and non-workspace resources
+    return ``None`` (site ``admin`` alone governs those — the admin ACL
+    page edits only collection/static resources).
+    """
+    parts = resource.strip("/").split("/")
+    if len(parts) >= 2 and parts[0] == "workspaces" and parts[1]:
+        return f"/workspaces/{parts[1]}"
+    return None
+
+
 @router.put("/admin/acl/resource")
 async def replace_resource_acl(
     resource: str,
@@ -825,9 +839,26 @@ async def replace_resource_acl(
     admin: dict = Depends(acl.has_permission("admin", admin_resource)),
     app=Depends(get_app_dep),
 ):
-    """Replace ACL entries for any resource (admin only)."""
+    """Replace ACL entries for any resource (admin only).
+
+    #2764: when the target is an individual workspace, the write also
+    requires ``change-acls`` on it — the same resource-level gate as
+    ``PUT /workspaces/{id}/acl`` — so a raw ACE rewrite of a workspace
+    always carries the workspace's own grant.
+    """
     _validate_root_acl(entries, resource)
     _validate_admin_acl(entries, resource)
+
+    workspace = workspace_scope(resource)
+    if workspace is not None:
+        principals = await app.state.acl.get_principals(admin["id"])
+        if not await app.state.acl.check_permission(
+            workspace, principals, "change-acls"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"change-acls permission required on {workspace}",
+            )
 
     acl_entries = [
         {

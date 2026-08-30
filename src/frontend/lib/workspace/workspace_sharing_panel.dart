@@ -10,7 +10,23 @@ import '../widgets/acl_editor.dart';
 class WorkspaceSharingPanel extends StatefulWidget {
   final String workspaceId;
 
-  const WorkspaceSharingPanel({super.key, required this.workspaceId});
+  /// Whether the user holds ``share`` on the workspace — the buckets
+  /// (member list, role assignment) render only for share holders.
+  final bool canShare;
+
+  /// Whether the user holds ``change-acls`` on the workspace (#2764) —
+  /// gates the "Advanced: Access Control" editor and the role-write
+  /// affordances (add-user buttons, chip deletes), which the server
+  /// gates on ``change-acls`` as well. Raw ACE editing and role
+  /// assignment are separate powers from inviting collaborators.
+  final bool canEditAcl;
+
+  const WorkspaceSharingPanel({
+    super.key,
+    required this.workspaceId,
+    this.canShare = true,
+    this.canEditAcl = false,
+  });
 
   @override
   State<WorkspaceSharingPanel> createState() => WorkspaceSharingPanelState();
@@ -60,7 +76,14 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
   @override
   void initState() {
     super.initState();
-    _loadRoles();
+    if (widget.canShare) {
+      _loadRoles();
+    } else {
+      // change-acls-only holders never see the buckets; without this
+      // the panel would sit on the spinner (and fire a share-gated
+      // request that 403s).
+      _loading = false;
+    }
   }
 
   Future<void> _loadRoles() async {
@@ -217,39 +240,41 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
             children: [
               if (_loading)
                 const Center(child: CircularProgressIndicator())
-              else
+              else if (widget.canShare)
                 for (final role in _sortedRoles) _buildRoleBucket(role),
               const SizedBox(height: 16),
-              // Collapsible ACL editor
-              GestureDetector(
-                onTap: () => setState(() => _aclExpanded = !_aclExpanded),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _aclExpanded ? Icons.expand_less : Icons.expand_more,
-                        size: 20,
-                        color: KColors.textSecondary,
-                      ),
-                      const SizedBox(width: 4),
-                      const Text(
-                        'Advanced: Access Control',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
+              if (widget.canEditAcl) ...[
+                // Collapsible ACL editor
+                GestureDetector(
+                  onTap: () => setState(() => _aclExpanded = !_aclExpanded),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _aclExpanded ? Icons.expand_less : Icons.expand_more,
+                          size: 20,
                           color: KColors.textSecondary,
-                          fontSize: 13,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        const Text(
+                          'Advanced: Access Control',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: KColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              if (_aclExpanded)
-                AclEditor(
-                  key: _aclEditorKey,
-                  resource: '/workspaces/${widget.workspaceId}',
-                ),
+                if (_aclExpanded)
+                  AclEditor(
+                    key: _aclEditorKey,
+                    resource: '/workspaces/${widget.workspaceId}',
+                  ),
+              ],
             ],
           ),
         ),
@@ -297,16 +322,17 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                     ),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.person_add, size: 16),
-                  onPressed: () => _showAddDialog(roleName),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
+                if (widget.canEditAcl)
+                  IconButton(
+                    icon: const Icon(Icons.person_add, size: 16),
+                    onPressed: () => _showAddDialog(roleName),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 28,
+                      minHeight: 28,
+                    ),
+                    tooltip: 'Add user',
                   ),
-                  tooltip: 'Add user',
-                ),
               ],
             ),
             if (members.isEmpty)
@@ -329,8 +355,9 @@ class WorkspaceSharingPanelState extends State<WorkspaceSharingPanel> {
                         style: const TextStyle(fontSize: 11),
                       ),
                       deleteIcon: const Icon(Icons.close, size: 14),
-                      onDeleted: () =>
-                          _removeFromRole(roleName, m['id'] as String),
+                      onDeleted: widget.canEditAcl
+                          ? () => _removeFromRole(roleName, m['id'] as String)
+                          : null,
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       visualDensity: VisualDensity.compact,
                     ),

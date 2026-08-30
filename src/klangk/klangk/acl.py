@@ -134,6 +134,38 @@ def has_permission(permission: str, resource_fn=None):
     return check
 
 
+def has_permissions(
+    permissions: list[str],
+    resource_fn,
+):
+    """FastAPI dependency checking several permissions on one resource.
+
+    Every permission must be granted (AND, not OR) — e.g. the role-group
+    writes require both ``share`` and ``change-acls`` (#2764): sharing
+    surface plus the raw-power gate. ``resource_fn`` is the same async
+    callable(request, user) -> resource_path that
+    :func:`has_permission` takes; one principals fetch is shared across
+    the checks.
+    """
+
+    async def check(
+        request: Request, user: dict = Depends(auth.get_current_user)
+    ) -> dict:
+        acl = request.app.state.acl
+        resource = await resource_fn(request, user)
+        principals = await acl.get_principals(user["id"])
+        for permission in permissions:
+            if not await acl.check_permission(
+                resource, principals, permission
+            ):
+                raise HTTPException(
+                    status_code=403, detail="Permission denied"
+                )
+        return user
+
+    return check
+
+
 # ---------------------------------------------------------------------------
 # ACL(app_state): the app_state-owned permission layer.
 #

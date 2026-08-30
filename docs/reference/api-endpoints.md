@@ -651,7 +651,8 @@ params returns the `{ items, has_more, next_offset }` envelope.
 
 Get the resolved ACL entries for a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `change-acls` permission on
+`/workspaces/{id}` (#2764).
 
 No request body.
 
@@ -859,7 +860,8 @@ Update a group's name or description.
 Change a user's role in a workspace. Set `role` to `null` to remove the
 user from all roles.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share` **and** `change-acls` permission on
+`/workspaces/{id}` (#2764).
 
 ```json
 { "email": "user@example.com", "role": "coders" }
@@ -1649,7 +1651,8 @@ failing check isn't a black box.
 Add a user to a workspace role. Valid roles: `owners`, `coders`,
 `collaborators`, `spectators`.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share` **and** `change-acls` permission on
+`/workspaces/{id}` (#2764).
 
 ```json
 { "email": "user@example.com" }
@@ -1665,8 +1668,9 @@ Add a user to a workspace role. Valid roles: `owners`, `coders`,
 
 Replace all ACL entries for a specific resource. Query param: `resource`.
 
-**Auth:** JWT required. User must have `admin` permission on the
-requested resource.
+**Auth:** JWT required. User must have `admin` permission on `/admin`.
+When the target is an individual workspace (`/workspaces/{id}`), the
+user must additionally hold `change-acls` on that workspace (#2764).
 
 ```json
 [
@@ -1745,7 +1749,8 @@ no container restart is needed and the web UI updates it live.
 
 Replace all ACL entries for a workspace.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `change-acls` permission on
+`/workspaces/{id}` (#2764) — `share` no longer suffices.
 
 ```json
 [
@@ -1883,7 +1888,8 @@ No request body.
 
 Remove a user from a workspace role.
 
-**Auth:** JWT required. User must have `share` permission on `/workspaces/{id}`.
+**Auth:** JWT required. User must have `share` **and** `change-acls` permission on
+`/workspaces/{id}` (#2764).
 
 No request body.
 
