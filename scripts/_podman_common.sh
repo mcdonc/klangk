@@ -18,6 +18,9 @@
 # We deliberately do NOT fall back to /etc/containers/policy.json: that file
 # is not guaranteed to exist and is the wrong place on Nix/rootless setups.
 
+# shellcheck disable=SC1091,SC2034 # sourced helper; its vars (incl. KLANGK_PYTHON) are consumed by sourcing scripts
+source "$(dirname "${BASH_SOURCE[0]}")/_python_common.sh"
+
 # shellcheck disable=SC2034 # SIG_POLICY_ARGS / BUILD_SECURITY_ARGS consumed by sourcing script
 SIG_POLICY_ARGS=()
 
@@ -118,7 +121,7 @@ klangk::stage_features() {
   if [ "${KLANGKBUILD_BUILD_INCLUDE_REMOTE:-0}" != "1" ]; then
     flags+=(--local-only)
   fi
-  python3 scripts/update_features.py "${flags[@]}"
+  "${KLANGK_PYTHON}" scripts/update_features.py "${flags[@]}"
   staging="$payload_dir/.docker"
   rm -rf "$staging"
   mkdir -p "$staging/features"
