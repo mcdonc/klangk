@@ -1,7 +1,9 @@
-/// Tests for the container-stopped and disconnected overlays in
-/// `WorkspacePage.build`. These exercise the REAL extracted overlay builders
-/// (`buildContainerStoppedOverlay` / `buildDisconnectedOverlay`) rather than
-/// duplicated standalone copies, so the actual page rendering is covered.
+/// Tests for the container-stopped and disconnected overlays and the
+/// container lifecycle event transition (`containerEventTransition`) that
+/// drives them. These exercise the REAL extracted builders / pure function
+/// from `workspace_overlays.dart` rather than duplicated standalone copies
+/// (the full `WorkspacePage` cannot be mounted in tests — see the note in
+/// `workspace_overlays.dart`), so the actual page logic is covered.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:klangk_frontend/workspace/workspace_overlays.dart';

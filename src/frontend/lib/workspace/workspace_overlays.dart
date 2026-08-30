@@ -32,12 +32,14 @@ typedef ContainerOverlayState = ({
 ///   a cycle that needs none; the reconnect overlay owns the gap. An event
 ///   while the overlay is already up is likewise a no-op.
 /// - `container_ready` clears the overlay AND any in-flight restart spinner.
-///   #2701: the container can come back on its own (auto-start, restart
-///   initiated elsewhere) — the overlay must clear on ANY `container_ready`,
-///   not just one that follows an overlay-initiated restart, or it stays up
-///   demanding a manual Restart click over a live terminal. A routine
-///   `container_ready` (nothing raised, nothing in flight) is a no-op so it
-///   does not trigger a rebuild.
+///   #2701: the container can come back without this client pressing the
+///   overlay's Restart button (socket reconnect after a server cycle, the
+///   workspace auto-starting, a restart initiated from this client's
+///   settings panel) — the overlay must clear on ANY `container_ready` on
+///   this socket, not just one that follows an overlay-initiated restart,
+///   or it stays up demanding a manual Restart click over a live terminal.
+///   A routine `container_ready` (nothing raised, nothing in flight) is a
+///   no-op so it does not trigger a rebuild.
 ContainerOverlayState? containerEventTransition({
   required String name,
   required ContainerOverlayState current,
