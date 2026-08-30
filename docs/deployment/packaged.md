@@ -23,18 +23,19 @@ than silent.
 ## Building the wheel (operators releasing klangk)
 
 The Flutter web build (`src/frontend/build/web/`) is gitignored, so it exists
-only at wheel-build time. Hatchling `force-include`s it into the wheel under
-`klangk/frontend/` (`src/klangk/pyproject.toml`). Produce it **before** building
-the wheel:
+only at wheel-build time. A hatch custom build hook
+(`src/klangk/hatch_build_package_data.py`) includes it into the wheel under
+`klangk/frontend/`. Produce it **before** building the wheel:
 
 ```bash
 scripts/flutterbuildweb.sh        # writes src/frontend/build/web
-uv build --project src/klangk     # force-includes it into klangk/frontend/
+uv build --project src/klangk     # hook includes it into klangk/frontend/
 ```
 
-If the artifact is absent at build time, hatchling fails the build
-(`Forced include not found`) — the build cannot silently produce a UI-less
-wheel.
+If the artifact is absent at build time the hook fails the build
+(`Frontend artifact not found`) — the build cannot silently produce a
+UI-less wheel. (Editable installs, where the gitignored artifact is absent,
+are exempt — the hook only requires it for a non-editable wheel.)
 
 ## Other deployment modes
 

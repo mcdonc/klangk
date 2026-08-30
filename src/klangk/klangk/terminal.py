@@ -773,7 +773,7 @@ class Terminal:
             )
 
     async def set_workspace_token(self, container_id: str, token: str) -> None:
-        """Write a workspace token to ``/run/klangk/workspace-token`` inside
+        """Write a workspace token to ``/tmp/klangk/workspace-token`` inside
         the container via ``klangk-set-workspace-token``.
         """
         rc, _stdout, stderr = await self.podman.exec_container(
