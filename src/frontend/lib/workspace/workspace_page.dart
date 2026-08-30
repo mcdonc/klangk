@@ -652,16 +652,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
 
   Widget _buildIdeLayout(WsClient wsClient, String? authToken) {
     return IdeLayout(
-      fileViewer: FileViewerPanel(
-        key: _fileViewerKey,
-        wsClient: wsClient,
-        workspaceId: widget.workspaceId,
-        authToken: authToken,
-        userHome: wsClient.userHome,
-        registry: _fileRenderers,
-        canDownload: _hasPerm('files-download'),
-        canWrite: _hasPerm('files-write'),
-      ),
+      // #2886: no `files` permission → no Files tab at all (spectators,
+      // terminal-only shares) — same my-permissions gate as Sharing/Network,
+      // so the panel never fetches a listing the backend will 403.
+      fileViewer: _hasPerm('files')
+          ? FileViewerPanel(
+              key: _fileViewerKey,
+              wsClient: wsClient,
+              workspaceId: widget.workspaceId,
+              authToken: authToken,
+              userHome: wsClient.userHome,
+              registry: _fileRenderers,
+              canDownload: _hasPerm('files-download'),
+              canWrite: _hasPerm('files-write'),
+            )
+          : null,
       featureTabs: _featureTabs,
       terminal: TerminalTabsView(
         wsClient: wsClient,
