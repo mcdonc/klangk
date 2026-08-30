@@ -387,5 +387,33 @@ void main() {
       await tester.tap(find.text('Back to workspaces'));
       expect(called, isTrue);
     });
+
+    testWidgets('renders the underlying refusal as detail (#2891 review)',
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: buildAccessRevokedView(
+            detail: 'Permission denied',
+            onBack: () {},
+          ),
+        ),
+      );
+
+      expect(find.text('Permission denied'), findsOneWidget);
+    });
+
+    testWidgets('no detail line when detail is absent or empty',
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(home: buildAccessRevokedView(onBack: () {})),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: buildAccessRevokedView(detail: '', onBack: () {}),
+        ),
+      );
+
+      expect(find.text('Permission denied'), findsNothing);
+    });
   });
 }

@@ -128,8 +128,12 @@ Widget buildContainerStoppedOverlay({
 /// container-stopped Restart press is refused with `forbidden`/`not_found`.
 /// Unlike the container-stopped overlay there is deliberately NO restart
 /// action: the refusal is permanent from this client, so retrying can never
-/// succeed; the only sensible action is leaving the page.
-Widget buildAccessRevokedView({required VoidCallback onBack}) {
+/// succeed; the only sensible action is leaving the page. [detail] (the
+/// server's refusal message) renders under the explanation for diagnosis.
+Widget buildAccessRevokedView({
+  String? detail,
+  required VoidCallback onBack,
+}) {
   return Scaffold(
     appBar: AppBar(title: const Text('Workspace')),
     body: Center(
@@ -149,6 +153,14 @@ Widget buildAccessRevokedView({required VoidCallback onBack}) {
             'Restarting will not restore access.',
             textAlign: TextAlign.center,
           ),
+          if (detail != null && detail.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              detail,
+              style: const TextStyle(fontSize: 12, color: Colors.white54),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: 16),
           FilledButton(
             onPressed: onBack,

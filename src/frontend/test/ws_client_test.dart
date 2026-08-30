@@ -1478,14 +1478,34 @@ void main() {
       await Future.delayed(Duration.zero);
 
       expect(errors.last.accessRevoked, isTrue);
+    });
 
-      // An error without a code (legacy server) is still classified by
-      // its message.
-      channel.serverSend({'type': 'error', 'message': 'Permission denied'});
-      await Future.delayed(Duration.zero);
-
-      expect(errors.last.code, isNull);
-      expect(errors.last.accessRevoked, isTrue);
+    test('accessRevoked is code-driven only, never text-driven (#2891)',
+        () async {
+      // Sub-action denials and podman failures share the wording of a
+      // revocation; without a code they must NOT classify as one, or the
+      // page would swap to the access-revoked view on a lie.
+      const notRevoked = [
+        WsError(message: 'Permission denied'), // legacy server, no code
+        WsError(message: 'Workspace not found'),
+        WsError(message: 'exec requires the exec-and-sync permission'),
+        WsError(
+          message: 'Container restart failed: [Errno 13] permission denied',
+        ),
+      ];
+      for (final e in notRevoked) {
+        expect(e.accessRevoked, isFalse, reason: e.message);
+      }
+      expect(
+        const WsError(message: 'Permission denied', code: 'forbidden')
+            .accessRevoked,
+        isTrue,
+      );
+      expect(
+        const WsError(message: 'Workspace not found', code: 'not_found')
+            .accessRevoked,
+        isTrue,
+      );
     });
 
     test('invalid JSON produces parse error', () async {

@@ -25,26 +25,23 @@ class WsDebugEntry {
 ///
 /// [code] is the server's machine-readable error class (#2525 capacity,
 /// #2891 forbidden / not_found) — null on legacy servers and local
-/// failures. [accessRevoked] classifies the dead-end refusals that can
-/// never succeed on retry (share revoked, ACL changed, workspace gone).
+/// failures. [accessRevoked] is deliberately **code-driven only**: the
+/// connect/restart refusal codes the server stamps for this purpose.
+/// Code-less "Permission denied" texts are NOT classified as revoked —
+/// sub-action denials (join/share/exec) and podman restart failures also
+/// carry that wording, and mislabeling them as revocations would swap the
+/// page for a view whose copy is then a lie (#2891 review).
 class WsError {
   final String message;
   final String? code;
 
   const WsError({required this.message, this.code});
 
-  /// Whether this error means the user can no longer open this
-  /// workspace. Machine-readable code first; the message-text fallback
-  /// keeps code-less (older) servers classified the same way (#2891).
-  bool get accessRevoked =>
-      code == 'forbidden' || code == 'not_found' || _messageLooksAccessRevoked;
-
-  bool get _messageLooksAccessRevoked {
-    final lower = message.toLowerCase();
-    return lower.contains('permission') ||
-        lower.contains('denied') ||
-        lower.contains('workspace not found');
-  }
+  /// Whether this error is a stamped workspace-connect / restart refusal:
+  /// the user can no longer open this workspace, and retrying can never
+  /// succeed. Only the machine-readable codes qualify — never the message
+  /// text (see the class doc).
+  bool get accessRevoked => code == 'forbidden' || code == 'not_found';
 
   @override
   bool operator ==(Object other) =>

@@ -235,19 +235,32 @@ void main() {
 
       await connector.connect();
 
-      // Message-text fallback for older servers without the
-      // machine-readable code (#2891).
+      // Legacy routing for older servers without the machine-readable
+      // codes (#2891 review): refusal texts still go page-level, but are
+      // NOT classified access-revoked — the page renders the plain error
+      // view (with the real message), never the revoked view.
       ws.emitError(const WsError(message: 'Permission denied'));
       await Future<void>.delayed(Duration.zero);
 
       expect(errors, [const WsError(message: 'Permission denied')]);
-      expect(errors.first.accessRevoked, isTrue);
+      expect(errors.first.accessRevoked, isFalse);
 
-      // Non-access-revoked errors are ignored
+      // A sub-action denial (legacy, code-less) is routed the same way —
+      // page-level, matching pre-#2894 behavior — and is not a
+      // revocation.
+      ws.emitError(
+        const WsError(message: 'exec requires the exec-and-sync permission'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(errors, hasLength(2));
+      expect(errors.last.accessRevoked, isFalse);
+
+      // Unrelated errors are ignored
       ws.emitError(const WsError(message: 'Connection timeout'));
       await Future<void>.delayed(Duration.zero);
 
-      expect(errors, hasLength(1));
+      expect(errors, hasLength(2));
 
       connector.dispose();
       ws.close();

@@ -460,9 +460,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
         }
       }
       // Auto-join the first shared terminal for spectators (no
-      // code-in-isolation) so they don't see a blank cursor.
+      // code-in-isolation) so they don't see a blank cursor. Gated on the
+      // spectate permission too (#2891 review): a custom ACL can grant
+      // `terminal` without `spectate-on-shared-terminals`, and an
+      // ungated auto-join would be server-denied the moment anyone
+      // shares a terminal — swapping the page for an error view with no
+      // user action at all.
       if (_activeSharedTerminal == null &&
           !_hasPerm('code-in-isolation') &&
+          _hasPerm('spectate-on-shared-terminals') &&
           wsClient.sharedTerminals.isNotEmpty) {
         final first = wsClient.sharedTerminals[0];
         final userId = first['user_id'] as String?;
@@ -567,11 +573,15 @@ class _WorkspacePageState extends State<WorkspacePage> {
   @override
   Widget build(BuildContext context) {
     if (_error != null) {
-      return _accessRevoked
-          ? buildAccessRevokedView(onBack: () => context.go('/workspaces'))
+      final body = _accessRevoked
+          ? buildAccessRevokedView(
+              detail: _error,
+              onBack: () => context.go('/workspaces'),
+            )
           : _buildErrorView();
+      return _withMarking(body);
     }
-    if (_connecting) return _buildConnectingView();
+    if (_connecting) return _withMarking(_buildConnectingView());
 
     final wsClient = context.read<WsClient>();
     final authToken = context.read<AuthService>().token;
@@ -631,6 +641,21 @@ class _WorkspacePageState extends State<WorkspacePage> {
             ),
           ),
         ),
+        MarkingBanner(text: _marking),
+      ],
+    );
+  }
+
+  /// #2768/#2894 review: the classification marking must survive every
+  /// screen state — dead-end views included (an access revocation is now
+  /// a common full-page path, exactly when classified deployments most
+  /// need the banner). Mirrors the main build's Column wrap; an empty
+  /// marking renders nothing and reserves no space.
+  Widget _withMarking(Widget child) {
+    return Column(
+      children: [
+        MarkingBanner(text: _marking),
+        Expanded(child: child),
         MarkingBanner(text: _marking),
       ],
     );
