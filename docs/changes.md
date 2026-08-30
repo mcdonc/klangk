@@ -4,7 +4,7 @@ All notable changes to klangk are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and each version's section is also prepended to its GitHub Release notes (see
-[Releasing](../development/releasing.md)).
+[Releasing](development/releasing.md)).
 
 Entries use the following conventions:
 
@@ -136,7 +136,7 @@ operators or integrators to act when upgrading.
 
 ### Security
 
-- **Image builds verify third-party inputs (#2063).** Base images (workspace base, python host, Alpine sidecar, Debian FIPS builders + nix-seed sandbox) are now pulled by immutable `@sha256:` digest, with the base-image workflow's auto-PR pinning the digest. The uv and process-compose release tarballs are SHA-256-verified per architecture before extraction (no more `curl | sh` / `curl | tar` pipes), the Pi agent npm tarball is fetched directly and SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are hash-verified before entering a keyring (Caddy's sources list is written inline). Pins live in the Dockerfiles; rotation procedures and known residuals are documented in [Building Images](../development/building-images.md).
+- **Image builds verify third-party inputs (#2063).** Base images (workspace base, python host, Alpine sidecar, Debian FIPS builders + nix-seed sandbox) are now pulled by immutable `@sha256:` digest, with the base-image workflow's auto-PR pinning the digest. The uv and process-compose release tarballs are SHA-256-verified per architecture before extraction (no more `curl | sh` / `curl | tar` pipes), the Pi agent npm tarball is fetched directly and SHA-512-verified, and the NodeSource / GitHub CLI / Caddy apt repo keys are hash-verified before entering a keyring (Caddy's sources list is written inline). Pins live in the Dockerfiles; rotation procedures and known residuals are documented in [Building Images](development/building-images.md).
 
 - **Browser-delegate requests are bound to the caller's workspace
   (#1715).** `/api/v1/browser-delegate` and `/api/v1/browser-delegate/stream`
@@ -170,7 +170,7 @@ operators or integrators to act when upgrading.
   via a custom ACL or the simple Sharing tab (its grants do not include
   `egress-consent`) — must be granted `egress-consent` explicitly to
   keep deciding; grant it in the Advanced ACL editor. See
-  [ACLs](../reference/acl.md).
+  [ACLs](reference/acl.md).
 
 - **Workspace status WebSocket broadcasts are now scoped to workspace
   members (#1714).** `container_status`, `service_health` (including
@@ -301,7 +301,7 @@ sync` report a clear permission-denied error.
   also grant `files-download` (or withhold `files` entirely). The web
   file viewer degrades gracefully: listings and metadata stay visible
   and the content pane reports the denial. See
-  [ACLs](../reference/acl.md).
+  [ACLs](reference/acl.md).
 
 ### Added
 
@@ -329,7 +329,7 @@ sync` report a clear permission-denied error.
   Integrators calling `PUT /admin/acl/resource` against individual
   workspaces must now hold `change-acls` there (grant it on the
   workspace, or on `/workspaces` / `/` for deploy-wide coverage). See
-  [ACL](../reference/acl.md).
+  [ACL](reference/acl.md).
 - **`fmtk-up` / `fmtk-down` / `fmtk-seed` — one-command fmtk harness (#2881).**
   `devenv shell -- fmtk-up` boots a scratch backend, an origin-splitting
   proxy, a seeded fixture, and a debug `flutter run -d chrome`, then
@@ -400,7 +400,7 @@ create`/`edit --classification-banner`, and the create/edit UIs; the
   POSTs get the same 403), and advertise
   `browser_delegate_enabled: false` via `/api/v1/config` so the web UI
   stops answering bridge requests. Reloadable on SIGHUP. See
-  [Browser Bridge](../architecture/browser-bridge.md).
+  [Browser Bridge](architecture/browser-bridge.md).
 
 - **`files-write` permission (#2705).** The mutating files endpoints —
   upload (`POST …/files/upload`), rename (`POST …/files/rename`), and
@@ -596,7 +596,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   fails — the node never lingers half-restarted. Invalid config still
   denies the restart with nothing touched. Docs:
   [Signals](deployment/signals.md).
-- **Decommissioning guide (#2593).** New [deployment chapter](../deployment/decommissioning.md)
+- **Decommissioning guide (#2593).** New [deployment chapter](deployment/decommissioning.md)
   documenting the decommissioning notification chain (users, admins, integrators,
   infrastructure owners) and the shutdown sequence: workspace export, graceful
   stop, data disposal, and secret revocation.
@@ -658,7 +658,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   (4001 → client logout) until an admin re-enables the account via
   `PATCH /api/v1/admin/users/{id}`. Admin-group members and the system
   agent are exempt; the setting is reloadable on SIGHUP. See
-  [Authentication](docs/features/authentication.md).
+  [Authentication](features/authentication.md).
 
 - **Last successful login time (#2583).** Every login (password,
   SSO, no-auth, and the auto-login after register/verify/reset/invite
@@ -675,7 +675,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   review for shared or stolen credentials. The new
   `GET /api/v1/admin/users/{id}/sessions` endpoint lists a user's
   active sessions with their workstations. See
-  [Authentication](docs/features/authentication.md).
+  [Authentication](features/authentication.md).
 
 - **`KLANGKD_MAX_SESSIONS_PER_USER` (#2585).** New setting that caps
   how many concurrent login sessions a user may have (default `0` = no
@@ -683,7 +683,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   is revoked via the token blocklist (its next HTTP request gets 401;
   its next WebSocket connect is rejected with 4001). Token refresh
   keeps the same slot, and expired sessions never count. Reloadable on
-  SIGHUP. See [Authentication](docs/features/authentication.md).
+  SIGHUP. See [Authentication](features/authentication.md).
 
 - **Schema migrations (#30).** Schema changes are now applied as
   ordered, once-only migrations recorded in a new `schema_migrations`
@@ -706,7 +706,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   (certificate #4985): system OpenSSL, python, and Node.js (including
   the pi coding agent) route through the validated module, non-approved
   algorithms fail closed, and the build verifies activation
-  automatically. Docs: [FIPS 140-3 Mode](../deployment/fips.md).
+  automatically. Docs: [FIPS 140-3 Mode](deployment/fips.md).
 
 - **`KLANGKD_EGRESS_CONSENT_RETENTION_DAYS` / `KLANGKD_EGRESS_CONSENT_ROW_CAP`
   (#2303).** The `egress_consent` table is now bounded on long-lived deploys:
@@ -1153,7 +1153,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   from `$KLANGKD_CONFIG_DIR/klangkd.yaml` (default
   `~/.config/klangkd/klangkd.yaml`). A template is generated on first run.
   Keys accept both `snake_case` and `kebab-case`; env vars override config-file
-  values. See [Configuration](docs/reference/klangkd-config.md).
+  values. See [Configuration](reference/klangkd-config.md).
 
 - **`klangk` TUI (#1746).** Running `klangk` with no subcommand launches an
   interactive terminal UI (Textual). Login, workspace management, terminal
@@ -1257,7 +1257,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   containers access LLMs via `/llm-proxy/`, backed by an in-process litellm
   Router. Passthrough mode for single-provider; explicit model list for multi-
   provider. Configure via `KLANGKD_LLM_MODELS` or `llm-models` in
-  `klangkd.yaml`. See [LLM Proxy](docs/architecture/llm-proxy.md).
+  `klangkd.yaml`. See [LLM Proxy](architecture/llm-proxy.md).
 
 - **`KLANGKD_EGRESS_PORT` (#1542).** Container-egress port for `/llm-proxy`,
   `/api/v1/browser-delegate`, `/api/v1/workspaces/post-chat-message`. Default
@@ -1303,7 +1303,7 @@ stop)`) and a `server: stop at 23:00 (in 1h 12m)` status line in the
   echoing an already-stored value is tolerated), and a workspace start with
   a stored nix flag proceeds without the `/nix` mount (logged once at
   info). Set it with a `nix_seed` block to arm the feature — see
-  [Nix workspaces](../features/nix.md).
+  [Nix workspaces](features/nix.md).
 
 - **Branch coverage in the Python 100% gates (#2834).** Both the
   `klangk` and `klangksidecar` unit suites now measure branch coverage
@@ -1524,7 +1524,7 @@ share`/`unshare` likewise accept `@N` and reject an ambiguous name. The
 
 - **Environment variables split into four families (#1653).** `KLANGKD_*`
   (server), `KLANGKBUILD_*` (build), `KLANGKWS_*` (container-injected),
-  `KLANGK_*` (CLI). See [Environment variables](docs/reference/environment.md).
+  `KLANGK_*` (CLI). See [Environment variables](reference/environment.md).
 
 - **Soliplex vendored locally (#1686).** Declared via `path:` in
   `plugins.yaml`; no network fetch. Still dormant by default.
@@ -1628,6 +1628,17 @@ git-credential` (#1700).** `pig-latin` removed; `word-count` dormant.
   machine-readable `forbidden` / `not_found` codes, and the frontend
   swaps the overlay for an "Access to this workspace has been revoked"
   view with only a "Back to workspaces" action.
+- **Documentation audit (#2889).** Every page under `docs/` plus the
+  top-level README/CONTRIBUTING/SECURITY was checked against the code it
+  describes, and the stale claims found were corrected in the same pass —
+  notably: default container CPU/memory/PIDs caps are non-empty since #2042,
+  `KLANGKD_AUTH_MODES` never defaults to `both` via OIDC config, `default_user`
+  defaults to `<unixuser>@example.com`, malformed
+  `KLANGKD_NETFILTER_DEFAULT_DOMAINS` aborts startup since #1939, the upload
+  cap env var is `KLANGKD_FILE_UPLOAD_SIZE_MAX`, and the reference tables now
+  cover all settings fields and API/WebSocket endpoints (including
+  `klangk consent-decide`, `/ws/consent-decider`, `/ws/egress-sidecar`, and
+  the `/llm-proxy/*` routes).
 
 - **Files tab is hidden without the `files` permission (#2886).** A
   spectator's workspace page mounted the Files tab unconditionally, so
