@@ -1,7 +1,8 @@
 # API Endpoints
 
 All HTTP and WebSocket endpoints, alphabetized by path. All REST paths
-are under `/api/v1` except `/health`.
+are under `/api/v1` except `/health`, `/empty`, and the
+[`/llm-proxy/*`](#llm-proxy-endpoints) routes.
 
 **Auth types**:
 
@@ -339,6 +340,28 @@ No request body.
     "groups": [{ "id": "uuid", "name": "admin" }]
   }
 ]
+```
+
+---
+
+### GET `/api/v1/admin/users/{id}/workspaces`
+
+List workspaces owned by a user (admin). Used by the admin UI to show
+what a delete-user will destroy (#1224). Returns the standard pagination
+envelope.
+
+**Auth:** JWT required. User must have `admin` permission on `/`.
+
+Query params: `limit` (1–200, default 100), `offset` (default 0).
+
+```json
+{
+  "items": [
+    /* workspace objects as in GET /api/v1/workspaces */
+  ],
+  "has_more": true,
+  "next_offset": 100
+}
 ```
 
 ---
@@ -1407,6 +1430,26 @@ neither is set, no banner is rendered.
 
 ---
 
+### POST `/api/v1/workspaces/{id}/transfer`
+
+Transfer workspace ownership to another user. The new owner is added to
+the workspace's `owners` role; connected clients of both users get a
+workspaces-changed refresh. The caller must be a workspace admin (the
+owner's wildcard ACE covers it).
+
+**Auth:** JWT required. User must have `admin` permission on
+`/workspaces/{id}`.
+
+```json
+{ "email": "newowner@example.com" }
+```
+
+Returns the updated workspace record. `404` if the target user does not
+exist; `409` on transfer conflicts (e.g. transferring to a member whose
+role would collide).
+
+---
+
 ### POST `/api/v1/workspaces/import`
 
 Create a new workspace from a previously exported `.tar.gz` archive.
@@ -1899,6 +1942,15 @@ No request body.
 
 ---
 
+### GET `/empty`
+
+Returns an empty page. Used as a lightweight OAuth callback landing URL
+so the popup doesn't need to boot the Flutter SPA.
+
+**Auth:** None.
+
+---
+
 ### GET `/health`
 
 Readiness check. Returns OK if the server is running.
@@ -1922,6 +1974,56 @@ delegate events.
 **Auth:** JWT required via `?token=` query param.
 
 Close codes: 4001 (missing/invalid token), 4002 (expired token).
+
+---
+
+### WebSocket `/ws/consent-decider`
+
+Registers a live egress-consent decider for its connection lifetime
+(#2308, #2244) — the interactive half of egress filtering. While a
+decider is connected (and pinging inside
+`KLANGKD_CONSENT_DECIDER_TIMEOUT`), held egress requests are offered to
+it for accept/deny; the `klangk consent-decide` command drives this
+socket. Requires the `egress-consent` permission on the workspace
+(see [Egress Filtering](../features/egress-filtering.md)).
+
+**Auth:** JWT required. Optional query param: `workspace` (omit for
+deploy-wide deciding).
+
+---
+
+### WebSocket `/ws/egress-sidecar`
+
+The network sidecar's blocked-egress event channel (#2311): the sidecar
+sends blocked-egress events here and receives verdicts (hold-and-prompt
+or static deny). Also carries revoke acks (#2339). Container-side only —
+authenticated with the workspace JWT validated by the egress listener's
+`forward_auth`.
+
+**Auth:** Workspace JWT.
+
+---
+
+## LLM Proxy Endpoints
+
+Served under `/llm-proxy/` (no `/api/v1` prefix) — on the egress
+listener, gated by the proxy's workspace-JWT `forward_auth` + container
+IP ACL, so only workspace containers can reach them. See
+[LLM Proxy](../architecture/llm-proxy.md).
+
+### GET `/llm-proxy/models`
+
+List the models the LLM router knows about. In passthrough mode queries
+the upstream's `/models` endpoint (dynamic discovery); in router mode
+returns the configured model names. Response matches the OpenAI
+`/v1/models` shape.
+
+### POST `/llm-proxy/chat/completions`
+
+Proxy a chat-completions request to the configured provider(s) — standard
+OpenAI `/v1/chat/completions` body; in router mode the `model` field
+selects the provider. Streaming (`stream: true`) forwards the upstream
+SSE stream. `503` when no LLM router is configured.
 
 ---
 

@@ -130,7 +130,6 @@ data_dir: /var/lib/klangk/data
 # --- Container / workspace ---
 image_name: klangk-workspace
 image_pull_policy: missing
-data_dir: /var/lib/klangk/data
 port_range_start: 9000
 allow_sudo: true
 
@@ -163,10 +162,10 @@ login_banner_every_visit: true
 
 Every key below corresponds to a `KLANGK_*` environment variable (uppercased, with `KLANGK_` prefix). See [Environment Variables](environment.md) for detailed descriptions of each.
 
-### Deployment shape (derived from `KLANGKD_PORT` + `KLANGKD_AUTH_MODE`)
+### Deployment shape (derived from `KLANGKD_PORT` + `KLANGKD_AUTH_MODES`)
 
 The deployment shape is **derived** from two knobs: the browser port
-(`KLANGKD_PORT`) and the auth gate (`KLANGKD_AUTH_MODE`). klangk picks the
+(`KLANGKD_PORT`) and the auth gate (`KLANGKD_AUTH_MODES`). klangk picks the
 proxy template and enforces its one safety rule from their combination —
 there is no separate "mode" to set.
 
@@ -176,7 +175,7 @@ listener is rendered; the proxy serves only the container-egress listener on
 UI, API, WebSocket, and hosted apps on `listen {KLANGKD_LISTEN}:{KLANGKD_PORT};`
 plus a separate container-egress listener on `KLANGKD_EGRESS_PORT`.
 
-**`KLANGKD_AUTH_MODE`** is the sole authority on the auth gate (`none` /
+**`KLANGKD_AUTH_MODES`** is the sole authority on the auth gate (`none` /
 `password` / `oidc` / `both`). When unset it defaults to `none`; OIDC settings
 never promote it.
 
@@ -184,7 +183,7 @@ For each combination, klangk renders the **maximum-feature proxy template
 the combination can service** (the proxy is Caddy, the sole engine
 since #1642):
 
-| `KLANGKD_PORT`   | `KLANGKD_AUTH_MODE`    | proxy template | browser?    | status                                                |
+| `KLANGKD_PORT`   | `KLANGKD_AUTH_MODES`   | proxy template | browser?    | status                                                |
 | ---------------- | ---------------------- | -------------- | ----------- | ----------------------------------------------------- |
 | unset (headless) | none                   | headless       | no          | ✅ (most secure)                                      |
 | unset (headless) | password / oidc / both | headless       | no          | ✅ (most secure, less convenient)                     |
@@ -195,7 +194,7 @@ since #1642):
 
 - **Template selection keys off `KLANGKD_PORT` only**: unset ⇒ headless
   (container-egress only — no browser UI); set ⇒ full (browser UI + API +
-  hosted apps). `KLANGKD_AUTH_MODE` does **not** change which template renders.
+  hosted apps). `KLANGKD_AUTH_MODES` does **not** change which template renders.
 - **The one gate** (`none` on non-loopback `KLANGKD_LISTEN`) is enforced by
   `enforce_no_auth_bind_safety()` at boot — refused unless
   `KLANGKD_ALLOW_INSECURE_NO_AUTH=1` is set (e.g. a throwaway VM on an
@@ -281,6 +280,9 @@ port: "8997"
 | `hosting_base_path`      | _(auto-derived)_                 | `KLANGKD_HOSTING_BASE_PATH`      |
 | `bridge_timeout_seconds` |                                  | `KLANGKD_BRIDGE_TIMEOUT_SECONDS` |
 | `idle_timeout_seconds`   | `3600`                           | `KLANGKD_IDLE_TIMEOUT_SECONDS`   |
+| `log_level`              | `INFO`                           | `KLANGKD_LOG_LEVEL`              |
+| `proxy_bin`              | _(auto-discovered)_              | `KLANGKD_PROXY_BIN`              |
+| `websocket_msg_size_max` | `16777216`                       | `KLANGKD_WEBSOCKET_MSG_SIZE_MAX` |
 
 `idle_timeout_seconds` is the deploy-wide default; a workspace can
 override it per-workspace (`settings.idle_timeout` — see
@@ -324,14 +326,20 @@ override it per-workspace (`settings.idle_timeout` — see
 | `memory_eviction_sustain_polls`     | `3`                             | `KLANGKD_MEMORY_EVICTION_SUSTAIN_POLLS`     |
 | `memory_eviction_poll_interval`     | `10` (floored at 1)             | `KLANGKD_MEMORY_EVICTION_POLL_INTERVAL`     |
 | `container_pids_limit`              | `16384`                         | `KLANGKD_CONTAINER_PIDS_LIMIT`              |
+| `container_tmp_size`                | `2g`                            | `KLANGKD_CONTAINER_TMP_SIZE`                |
+| `network_sidecar_image`             | `klangk-network-sidecar`        | `KLANGKD_NETWORK_SIDECAR_IMAGE`             |
+| `nix_seed`                          | _(unset)_                       | `KLANGKD_NIX_SEED__TYPE`/`__PATH`           |
+| `egress_consent_rate_limit`         | `50`                            | `KLANGKD_EGRESS_CONSENT_RATE_LIMIT`         |
+| `egress_consent_timeout`            | `120`                           | `KLANGKD_EGRESS_CONSENT_TIMEOUT`            |
+| `consent_decider_timeout`           | `45`                            | `KLANGKD_CONSENT_DECIDER_TIMEOUT`           |
 | `container_restart_enabled`         | `false`                         | `KLANGKD_CONTAINER_RESTART_ENABLED`         |
 | `container_restart_max_retries`     | `5`                             | `KLANGKD_CONTAINER_RESTART_MAX_RETRIES`     |
 | `container_restart_backoff_seconds` | `5.0`                           | `KLANGKD_CONTAINER_RESTART_BACKOFF_SECONDS` |
 | `quiesce_timeout`                   | `15.0`                          | `KLANGKD_QUIESCE_TIMEOUT`                   |
 | `fips_mode`                         | `false`                         | `KLANGKD_FIPS_MODE`                         |
-| `health_check_interval`             |                                 | `KLANGKD_HEALTH_CHECK_INTERVAL`             |
-| `health_check_startup_grace`        |                                 | `KLANGKD_HEALTH_CHECK_STARTUP_GRACE`        |
-| `health_check_timeout`              |                                 | `KLANGKD_HEALTH_CHECK_TIMEOUT`              |
+| `health_check_interval`             | `30`                            | `KLANGKD_HEALTH_CHECK_INTERVAL`             |
+| `health_check_startup_grace`        | `30`                            | `KLANGKD_HEALTH_CHECK_STARTUP_GRACE`        |
+| `health_check_timeout`              | `10`                            | `KLANGKD_HEALTH_CHECK_TIMEOUT`              |
 | `hosted_ports_per_workspace`        | `5`                             | `KLANGKD_HOSTED_PORTS_PER_WORKSPACE`        |
 | `test_mode`                         |                                 | `KLANGKD_TEST_MODE`                         |
 | `version_file`                      |                                 | `KLANGKD_VERSION_FILE`                      |
